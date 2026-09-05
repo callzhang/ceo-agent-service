@@ -12,10 +12,13 @@ from app.store import AutoReplyStore
 APP_ROOT = Path(__file__).parents[1] / "app"
 
 DINGTALK_SEND_METHODS = {
+    "ding_self",
+    "ding_user",
     "send_direct_message_by_bot",
     "send_group_message_by_bot",
     "send_message",
     "send_reply_to_trigger",
+    "send_reply_to_trigger_chunks",
     "reply_message",
 }
 
@@ -27,6 +30,8 @@ APPROVED_SENDER_PATHS = frozenset({
     "app/dws_client.py:DwsClient.reply_message",
     "app/dws_client.py:DwsClient.send_reply_to_trigger",
     "app/dws_client.py:DwsClient.send_reply_to_trigger_chunks",
+    "app/dws_client.py:DwsClient.ding_user",
+    "app/dws_client.py:DwsClient.ding_self",
     "app/dws_client.py:DwsClient.send_direct_message_by_bot",
     "app/dws_client.py:DwsClient.send_group_message_by_bot",
     "app/org_cache.py:CachedDwsClient.send_message",
@@ -34,6 +39,9 @@ APPROVED_SENDER_PATHS = frozenset({
     "app/org_cache.py:CachedDwsClient.send_reply_to_trigger",
     "app/org_cache.py:CachedDwsClient.send_direct_message_by_bot",
     "app/org_cache.py:CachedDwsClient.send_group_message_by_bot",
+    "app/org_cache.py:CachedDwsClient.ding_self",
+    "app/cli.py:<module>.test_ding_command",
+    "app/cli.py:<module>.probe_dws",
     "app/service_message_sender.py:ServiceMessageSender.send_dingtalk_prepared",
     "app/service_message_sender.py:ServiceMessageSender.send_dingtalk_reply_to_trigger_prepared",
     "app/service_message_sender.py:ServiceMessageSender.send_wechat_prepared",
@@ -82,6 +90,16 @@ FOCUSED_SENDER_PATH_TESTS = {
         "test_send_reply_to_trigger_chunks_splits_long_text_and_extracts_recall_key",
         "send_reply_to_trigger_chunks",
     ),
+    "app/dws_client.py:DwsClient.ding_user": (
+        "tests/test_dws_client.py",
+        "test_ding_user_uses_explicit_receiver_without_get_self",
+        "ding_user",
+    ),
+    "app/dws_client.py:DwsClient.ding_self": (
+        "tests/test_dws_client.py",
+        "test_ding_self_uses_configured_receiver",
+        "ding_self",
+    ),
     "app/dws_client.py:DwsClient.send_direct_message_by_bot": (
         "tests/test_message_send_architecture.py",
         "test_dws_raw_carrier_coverage_anchors",
@@ -116,6 +134,21 @@ FOCUSED_SENDER_PATH_TESTS = {
         "tests/test_message_send_architecture.py",
         "test_cached_dws_forwarder_coverage_anchors",
         "send_group_message_by_bot",
+    ),
+    "app/org_cache.py:CachedDwsClient.ding_self": (
+        "tests/test_message_send_architecture.py",
+        "test_cached_dws_forwarder_coverage_anchors",
+        "ding_self",
+    ),
+    "app/cli.py:<module>.test_ding_command": (
+        "tests/test_cli.py",
+        "test_test_ding_command_uses_dws_client",
+        "run_test_ding_command",
+    ),
+    "app/cli.py:<module>.probe_dws": (
+        "tests/test_cli.py",
+        "test_probe_dws_reports_unread_ok_and_ding_blocked",
+        "probe_dws",
     ),
     "app/wechat/accessibility.py:WechatSender.send": (
         "tests/wechat/test_accessibility.py",
@@ -224,6 +257,14 @@ def _resolve_target_definition(app_root: Path, target: str) -> ast.FunctionDef |
     if not source.is_file():
         return None
     tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+    if class_name == "<module>":
+        return next(
+            (
+                node for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == method_name
+            ),
+            None,
+        )
     for node in tree.body:
         if not isinstance(node, ast.ClassDef) or node.name != class_name:
             continue
@@ -257,9 +298,17 @@ def _terminal_name(node: ast.AST) -> str | None:
 
 def _function_calls_target(
     module: ast.Module, function: ast.FunctionDef, target: str,
+    entry_method: str,
 ) -> bool:
     _source_path, qualified_method = target.split(":", maxsplit=1)
     expected_class, expected_method = qualified_method.rsplit(".", maxsplit=1)
+    if expected_class == "<module>":
+        return any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == entry_method
+            for node in ast.walk(function)
+        )
     compatible_classes = {expected_class}
     changed = True
     while changed:
@@ -311,13 +360,15 @@ def _coverage_violations(
         if _resolve_target_definition(app_root, target) is None:
             violations.append(f"missing target:{target}")
             continue
-        test_path, test_name, _entry_method = coverage[target]
+        test_path, test_name, entry_method = coverage[target]
         resolved_test = _resolve_test_function(repo_root, test_path, test_name)
         if resolved_test is None:
             violations.append(f"missing test:{target}")
         else:
             test_module, test_function = resolved_test
-            if not _function_calls_target(test_module, test_function, target):
+            if not _function_calls_target(
+                test_module, test_function, target, entry_method,
+            ):
                 violations.append(f"missing exact call:{target}")
     return violations
 
@@ -362,6 +413,7 @@ def test_first_party_message_senders_do_not_bypass_service_message_sender():
 
 def test_dws_raw_carrier_coverage_anchors(monkeypatch) -> None:
     client = DwsClient(dws_bin="dws", ding_robot_code="robot-1")
+    client.ding_receiver_user_id = "user-1"
     commands: list[list[str]] = []
     monkeypatch.setattr(client, "run_json", lambda command: commands.append(command) or {})
 
@@ -369,8 +421,12 @@ def test_dws_raw_carrier_coverage_anchors(monkeypatch) -> None:
     client.reply_message("cid-1", "msg-1", "open-1", "body")
     client.send_direct_message_by_bot("user-1", "body")
     client.send_group_message_by_bot("cid-1", "body")
+    client.ding_user("user-1", "body")
+    client.ding_self("body")
 
-    assert [command[3] for command in commands] == ["send", "reply", "send-by-bot", "send-by-bot"]
+    assert [command[3] for command in commands] == [
+        "send", "reply", "send-by-bot", "send-by-bot", "send", "send",
+    ]
 
 
 def test_cached_dws_forwarder_coverage_anchors(tmp_path) -> None:
@@ -390,7 +446,11 @@ def test_cached_dws_forwarder_coverage_anchors(tmp_path) -> None:
         def send_group_message_by_bot(self, *args, **kwargs):
             return args, kwargs
 
+        def ding_user(self, *args, **kwargs):
+            return args, kwargs
+
     store = AutoReplyStore(tmp_path / "cache.sqlite3")
+    store.set_current_user_id("user-1")
     cached = CachedDwsClient(RawDws(), CachedOrgDirectory(store))
 
     assert cached.send_message("cid-1", "body")[0] == ("cid-1", "body")
@@ -402,6 +462,7 @@ def test_cached_dws_forwarder_coverage_anchors(tmp_path) -> None:
     )
     assert cached.send_direct_message_by_bot("user-1", "body")[0] == ("user-1", "body")
     assert cached.send_group_message_by_bot("cid-1", "body")[0] == ("cid-1", "body")
+    assert cached.ding_self("body") is None
 
 
 def test_each_allowed_service_message_path_has_a_focused_body_pair_test() -> None:
@@ -476,6 +537,23 @@ def test_architecture_guard_rejects_dynamic_dingtalk_provider_calls(
 
     assert _raw_send_violations(app_root) == [
         "app/business_sender.py:<module>.notify:2:send_message",
+    ]
+
+
+def test_architecture_guard_rejects_business_native_reply_chunk_sends(
+    tmp_path: Path,
+) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    bypass = app_root / "business_sender.py"
+    bypass.write_text(
+        "def notify(dws):\n"
+        "    return dws.send_reply_to_trigger_chunks('chat', 'trigger', 'bypassed')\n",
+        encoding="utf-8",
+    )
+
+    assert _raw_send_violations(app_root) == [
+        "app/business_sender.py:<module>.notify:2:send_reply_to_trigger_chunks",
     ]
 
 
@@ -566,4 +644,5 @@ def test_coverage_registry_rejects_a_same_named_call_on_the_wrong_receiver() -> 
         module,
         function,
         "app/wechat/accessibility.py:WechatSender.send",
+        "send",
     )

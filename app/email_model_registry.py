@@ -361,10 +361,16 @@ class EmailModelRegistry:
             candidate = self.get_model(model_id)
             if candidate.status != "candidate":
                 raise ModelRegistryError("only a candidate model can be promoted")
-            self.load_classifier(model_id)
-            current = self._read_manifest(self.root / "active.json")
+            classifier = self.load_classifier(model_id)
+            _validate_active_category_protocol(
+                candidate.metadata,
+                set(classifier.class_labels()),
+            )
+            current = self._read_manifest(
+                self.root / "active.json",
+                require_full_taxonomy=True,
+            )
             if current is not None:
-                self._verify_manifest(current)
                 _write_json_atomic(self.root / "previous.json", current.to_dict())
                 self._append_lifecycle(
                     current.model_id, "previous", "superseded_by:" + model_id
@@ -377,7 +383,10 @@ class EmailModelRegistry:
     def snapshot_manifests(self) -> ModelManifestSnapshot:
         with self._locked():
             return ModelManifestSnapshot(
-                active=self._read_manifest(self.root / "active.json"),
+                active=self._read_manifest(
+                    self.root / "active.json",
+                    require_full_taxonomy=True,
+                ),
                 previous=self._read_manifest(self.root / "previous.json"),
             )
 
@@ -390,9 +399,19 @@ class EmailModelRegistry:
     ) -> None:
         with self._locked():
             try:
+                if snapshot.active is not None:
+                    self._verify_manifest(
+                        snapshot.active,
+                        require_full_taxonomy=True,
+                    )
+                if snapshot.previous is not None:
+                    self._verify_manifest(snapshot.previous)
                 self._restore_manifest(self.root / "active.json", snapshot.active)
                 self._restore_manifest(self.root / "previous.json", snapshot.previous)
-                if self._read_manifest(self.root / "active.json") != snapshot.active:
+                if self._read_manifest(
+                    self.root / "active.json",
+                    require_full_taxonomy=True,
+                ) != snapshot.active:
                     raise ModelRegistryError("active manifest restore mismatch")
                 if (
                     self._read_manifest(self.root / "previous.json")
@@ -444,12 +463,14 @@ class EmailModelRegistry:
     ) -> ModelManifest:
         with self._locked():
             active = self._read_manifest_unverified(self.root / "active.json")
-            previous = self._read_manifest(self.root / "previous.json")
+            previous = self._read_manifest(
+                self.root / "previous.json",
+                require_full_taxonomy=True,
+            )
             if active is None or active.model_id != failed_model_id:
                 raise ModelRegistryError("failed model is not the active model")
             if previous is None or previous.model_id == failed_model_id:
                 raise ModelRegistryError("no distinct previous model is available")
-            self._verify_manifest(previous)
             switched = replace(previous, switched_at=_format_timestamp(occurred_at))
             _write_json_atomic(self.root / "active.json", switched.to_dict())
             self._append_lifecycle(failed_model_id, "failed", reason)
@@ -470,7 +491,10 @@ class EmailModelRegistry:
             return switched
 
     def active_manifest(self) -> ModelManifest | None:
-        return self._read_manifest(self.root / "active.json")
+        return self._read_manifest(
+            self.root / "active.json",
+            require_full_taxonomy=True,
+        )
 
     def active_model_id_unverified(self) -> str | None:
         manifest = self._read_manifest_unverified(self.root / "active.json")
@@ -632,7 +656,12 @@ class EmailModelRegistry:
         else:
             _write_json_atomic(path, manifest.to_dict())
 
-    def _verify_manifest(self, manifest: ModelManifest) -> None:
+    def _verify_manifest(
+        self,
+        manifest: ModelManifest,
+        *,
+        require_full_taxonomy: bool = False,
+    ) -> None:
         record = self.get_model(manifest.model_id)
         expected_artifact = self.root / manifest.artifact
         expected_metadata = self.root / manifest.metadata
@@ -643,14 +672,27 @@ class EmailModelRegistry:
             raise ModelRegistryError("model manifest paths do not match registry")
         if manifest.artifact_sha256 != record.metadata.artifact_sha256:
             raise ModelRegistryError("model manifest digest mismatch")
-        self.load_classifier(manifest.model_id)
+        classifier = self.load_classifier(manifest.model_id)
+        if require_full_taxonomy:
+            _validate_active_category_protocol(
+                record.metadata,
+                set(classifier.class_labels()),
+            )
 
-    def _read_manifest(self, path: Path) -> ModelManifest | None:
+    def _read_manifest(
+        self,
+        path: Path,
+        *,
+        require_full_taxonomy: bool = False,
+    ) -> ModelManifest | None:
         try:
             manifest = self._read_manifest_unverified(path)
             if manifest is None:
                 return None
-            self._verify_manifest(manifest)
+            self._verify_manifest(
+                manifest,
+                require_full_taxonomy=require_full_taxonomy,
+            )
             return manifest
         except (OSError, ValueError, ModelRegistryError) as exc:
             raise ModelRegistryError(f"invalid model manifest: {path.name}") from exc
@@ -1043,3 +1085,16 @@ def _validate_category_protocol(
             raise ModelRegistryError(
                 f"candidate metric eligibility_reason is invalid: {label}"
             )
+
+
+def _validate_active_category_protocol(
+    metadata: EmailModelMetadata,
+    artifact_labels: set[str],
+) -> None:
+    required = {category.value for category in EmailCategory}
+    if (
+        artifact_labels != required
+        or set(metadata.category_counts) != required
+        or set(metadata.per_category_metrics) != required
+    ):
+        raise ModelRegistryError("active category protocol requires full taxonomy")

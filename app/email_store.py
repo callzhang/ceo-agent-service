@@ -33,7 +33,7 @@ from app.email_classifier_contracts import (
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 17
+EMAIL_SCHEMA_VERSION = 18
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -665,6 +665,42 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
             where id=new.id;
         end
     """,
+    "trg_email_direct_action_blocks_plan_switch": """
+        create trigger trg_email_direct_action_blocks_plan_switch
+        before update of status, current_action_plan_id on email_classifications
+        when (
+            old.status is not new.status
+            or old.current_action_plan_id is not new.current_action_plan_id
+        ) and exists (
+            select 1 from email_actions
+            where classification_id=old.id and status='processing'
+        )
+        begin
+            select raise(abort, 'email_direct_action_in_flight');
+        end
+    """,
+    "trg_email_direct_action_blocks_account_update": """
+        create trigger trg_email_direct_action_blocks_account_update
+        before update on email_accounts
+        when exists (
+            select 1 from email_actions
+            where account_id=old.account_id and status='processing'
+        )
+        begin
+            select raise(abort, 'email_direct_action_in_flight');
+        end
+    """,
+    "trg_email_direct_action_blocks_account_delete": """
+        create trigger trg_email_direct_action_blocks_account_delete
+        before delete on email_accounts
+        when exists (
+            select 1 from email_actions
+            where account_id=old.account_id and status='processing'
+        )
+        begin
+            select raise(abort, 'email_direct_action_in_flight');
+        end
+    """,
     "trg_email_reply_dispatch_blocks_plan_switch": """
         create trigger trg_email_reply_dispatch_blocks_plan_switch
         before update of current_action_plan_id on email_classifications
@@ -799,6 +835,8 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
     """,
 }
 _REQUIRED_TRIGGER_TABLES: Mapping[str, str] = {
+    "trg_email_direct_action_blocks_account_update": "email_accounts",
+    "trg_email_direct_action_blocks_account_delete": "email_accounts",
     "trg_email_reply_dispatch_blocks_account_update": "email_accounts",
     "trg_email_reply_dispatch_blocks_account_delete": "email_accounts",
     "trg_email_reply_dispatch_blocks_thread_update": "email_messages",
@@ -1017,7 +1055,7 @@ def _next_attempt_at(
 
 def _retry_is_due(next_attempt_at: object, claimed_at: str) -> bool:
     if not next_attempt_at:
-        return True
+        return False
     try:
         return (
             _required_utc_timestamp(str(next_attempt_at), field="next_attempt_at")
@@ -1591,6 +1629,92 @@ def _audited_unsubscribe_lineage(
     }
 
 
+def _current_unsubscribe_task_lineage(
+    db: sqlite3.Connection,
+    *,
+    task: sqlite3.Row,
+    classification: sqlite3.Row,
+) -> dict[str, object] | None:
+    current_plan = db.execute(
+        """
+        select action_plan_id, action_plan_version, classification_id,
+               account_id, actions_json
+        from email_action_plans
+        where action_plan_id=?
+        """,
+        (classification["current_action_plan_id"],),
+    ).fetchone()
+    if current_plan is None:
+        return None
+    try:
+        payload = json.loads(str(task["trigger_message_json"]))
+        actions = _json_load(
+            current_plan["actions_json"],
+            field="actions_json",
+            expected_type=list,
+        )
+        thread_identity = str(classification["message_thread_identity"] or "")
+        from app.email_task_adapter import email_conversation_id
+
+        expected_action_identity = email_action_identity(
+            account_id=str(classification["account_id"]),
+            stable_message_identity=str(classification["stable_message_identity"]),
+            action_type=EmailAction.UNSUBSCRIBE,
+            action_plan_version=int(current_plan["action_plan_version"]),
+        )
+        expected_conversation_id = email_conversation_id(
+            str(classification["account_id"]),
+            thread_identity,
+        )
+    except (TypeError, ValueError, RecursionError, KeyError):
+        return None
+    if not isinstance(payload, dict) or EmailAction.UNSUBSCRIBE.value not in actions:
+        return None
+    expected_payload = {
+        "schema": "email_agent_action.v1",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "action_type": EmailAction.UNSUBSCRIBE.value,
+        "action_identity": expected_action_identity,
+        "action_plan_id": current_plan["action_plan_id"],
+        "action_plan_version": current_plan["action_plan_version"],
+        "classification_id": current_plan["classification_id"],
+        "account_id": current_plan["account_id"],
+        "stable_message_identity": classification["stable_message_identity"],
+        "thread_identity": thread_identity,
+    }
+    if (
+        any(payload.get(field) != value for field, value in expected_payload.items())
+        or task["trigger_message_id"] != expected_action_identity
+        or task["conversation_id"] != expected_conversation_id
+        or not str(task["execution_generation"] or "").strip()
+    ):
+        return None
+    runs = db.execute(
+        """
+        select id, role
+        from agent_runs
+        where reply_task_id=? and execution_generation=?
+        order by id
+        """,
+        (task["id"], task["execution_generation"]),
+    ).fetchall()
+    return {
+        "kind": "unsubscribe",
+        "operation": "unsubscribe",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "task_id": int(task["id"]),
+        "task_status": str(task["status"]),
+        "consumer_run_ids": [
+            int(row["id"]) for row in runs if row["role"] == "consumer"
+        ],
+        "audit_run_ids": [
+            int(row["id"]) for row in runs if row["role"] == "audit"
+        ],
+        "status": str(task["status"]),
+        "_sort_created_at": str(task["created_at"] or ""),
+    }
+
+
 def _validate_unsubscribe_operations(
     operations: Sequence[Mapping[str, object]],
 ) -> list[dict[str, str]]:
@@ -2063,6 +2187,7 @@ class EmailStore:
             if legacy_unsubscribe_schema:
                 self._finish_unsubscribe_schema_migration(db)
             self._create_indexes_and_triggers(db)
+            is_prototype = False
             if latest_version < 16:
                 is_prototype = latest_version == 0
                 if latest_version < 2:
@@ -2085,7 +2210,14 @@ class EmailStore:
                     )
                 latest_version = 16
             if latest_version == 16:
-                self._migrate_v16_to_v17(db)
+                if is_prototype:
+                    self._migrate_v16_to_v17(db, record_version=False)
+                    latest_version = 17
+                else:
+                    self._migrate_v16_to_v17(db)
+                    latest_version = 17
+            if latest_version == 17:
+                self._migrate_v17_to_v18(db)
             self._validate_durable_state(db)
 
     @classmethod
@@ -2639,7 +2771,12 @@ class EmailStore:
             "where trim(completed_at) = ''"
         )
 
-    def _migrate_v16_to_v17(self, db: sqlite3.Connection) -> None:
+    def _migrate_v16_to_v17(
+        self,
+        db: sqlite3.Connection,
+        *,
+        record_version: bool = True,
+    ) -> None:
         """Add explicit bounded-result integrity metadata and its lookup index."""
 
         columns = self._table_columns(db, "email_unsubscribe_receipts")
@@ -2720,8 +2857,18 @@ class EmailStore:
             "idx_email_unsubscribe_receipts_classification_action "
             "on email_unsubscribe_receipts(classification_id, action_identity)"
         )
+        if record_version:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) "
+                "values (17, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v17_to_v18(self, db: sqlite3.Connection) -> None:
+        """Record direct-action authorization fences created for schema v18."""
+
         db.execute(
-            "insert into email_schema_migrations(version, applied_at) values (17, ?)",
+            "insert into email_schema_migrations(version, applied_at) values (18, ?)",
             (self._now(),),
         )
 
@@ -3240,6 +3387,42 @@ class EmailStore:
             when new.classification_source not in ('model', 'user')
             begin
                 select raise(abort, 'invalid email classification source');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_direct_action_blocks_plan_switch
+            before update of status, current_action_plan_id on email_classifications
+            when (
+                old.status is not new.status
+                or old.current_action_plan_id is not new.current_action_plan_id
+            ) and exists (
+                select 1 from email_actions
+                where classification_id=old.id and status='processing'
+            )
+            begin
+                select raise(abort, 'email_direct_action_in_flight');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_direct_action_blocks_account_update
+            before update on email_accounts
+            when exists (
+                select 1 from email_actions
+                where account_id=old.account_id and status='processing'
+            )
+            begin
+                select raise(abort, 'email_direct_action_in_flight');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_direct_action_blocks_account_delete
+            before delete on email_accounts
+            when exists (
+                select 1 from email_actions
+                where account_id=old.account_id and status='processing'
+            )
+            begin
+                select raise(abort, 'email_direct_action_in_flight');
             end
             """,
             """
@@ -8502,6 +8685,26 @@ class EmailStore:
                     """
                 ).fetchall()
             }
+            task_rows: Sequence[sqlite3.Row] = ()
+            if generic_tables == {"reply_tasks", "agent_runs"}:
+                task_rows = db.execute(
+                    """
+                    select id, conversation_id, trigger_message_id,
+                           trigger_message_json, execution_generation,
+                           status, created_at
+                    from reply_tasks
+                    where channel='email'
+                      and json_valid(trigger_message_json)
+                      and json_extract(
+                            trigger_message_json, '$.classification_id'
+                          )=?
+                      and json_extract(
+                            trigger_message_json, '$.action_type'
+                          )='unsubscribe'
+                    order by created_at, id
+                    """,
+                    (classification_id,),
+                ).fetchall()
             lineage_by_action: dict[str, dict[str, object]] = {}
             if unsubscribe_rows and generic_tables == {"reply_tasks", "agent_runs"}:
                 for row in unsubscribe_rows:
@@ -8538,6 +8741,20 @@ class EmailStore:
                 """,
                 (classification_id,),
             ).fetchall()
+            terminal_unsubscribe_actions = {
+                str(row["action_identity"]) for row in unsubscribe_rows
+            }
+            inflight_unsubscribe_events = []
+            for task in task_rows:
+                if str(task["trigger_message_id"]) in terminal_unsubscribe_actions:
+                    continue
+                lineage = _current_unsubscribe_task_lineage(
+                    db,
+                    task=task,
+                    classification=classification,
+                )
+                if lineage is not None:
+                    inflight_unsubscribe_events.append(lineage)
 
         attempts_by_action: dict[str, list[dict[str, Any]]] = {}
         for row in attempts:
@@ -8553,6 +8770,7 @@ class EmailStore:
                 }
             )
         events: list[dict[str, Any]] = []
+        events.extend(inflight_unsubscribe_events)
         for row in action_rows:
             events.append(
                 {
@@ -9412,6 +9630,7 @@ class EmailStore:
         error: str,
         finished_at: str,
         retryable: bool = True,
+        updated_locator: StoredEmailLocator | None = None,
     ) -> dict[str, Any]:
         """Append a terminal attempt and update its current projection atomically."""
 
@@ -9427,6 +9646,18 @@ class EmailStore:
             raise ValueError("done attempts require readback receipt and no error")
         if status == "failed" and not error:
             raise ValueError("failed attempts require an error")
+        if updated_locator is not None:
+            if status != "done":
+                raise ValueError("only done attempts can update the provider locator")
+            if (
+                updated_locator.account_id != action.account_id
+                or updated_locator.stable_message_identity
+                != action.locator.stable_message_identity
+                or not updated_locator.folder.strip()
+                or updated_locator.uidvalidity <= 0
+                or updated_locator.uid <= 0
+            ):
+                raise ValueError("updated provider locator does not match the action")
         finished_at = _required_utc_timestamp(finished_at, field="finished_at")
         next_attempt_at = _next_attempt_at(
             finished_at,
@@ -9438,7 +9669,9 @@ class EmailStore:
             row = db.execute(
                 """
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
-                       c.thread_id, c.stable_message_identity
+                       c.thread_id, c.stable_message_identity,
+                       c.status as classification_status,
+                       c.current_action_plan_id
                 from email_actions as a
                 join email_classifications as c on c.id=a.classification_id
                 where a.action_id=?
@@ -9482,6 +9715,57 @@ class EmailStore:
                 raise EmailActionAttemptConflict(
                     f"direct action claim changed for {action.action_id}"
                 )
+            if (
+                row["classification_status"] != "processed"
+                or row["current_action_plan_id"] != action.action_plan_id
+            ):
+                raise EmailActionAttemptConflict(
+                    f"direct action is no longer current for {action.action_id}"
+                )
+            if updated_locator is not None:
+                classification_updated = db.execute(
+                    """
+                    update email_classifications
+                    set folder=?, uidvalidity=?, uid=?, updated_at=?
+                    where id=? and account_id=? and stable_message_identity=?
+                      and folder=? and uidvalidity=? and uid=?
+                    """,
+                    (
+                        updated_locator.folder,
+                        updated_locator.uidvalidity,
+                        updated_locator.uid,
+                        finished_at,
+                        action.classification_id,
+                        action.account_id,
+                        action.locator.stable_message_identity,
+                        action.locator.folder,
+                        action.locator.uidvalidity,
+                        action.locator.uid,
+                    ),
+                ).rowcount
+                message_updated = db.execute(
+                    """
+                    update email_messages
+                    set folder=?, uidvalidity=?, uid=?, updated_at=?
+                    where account_id=? and stable_message_identity=?
+                      and folder=? and uidvalidity=? and uid=?
+                    """,
+                    (
+                        updated_locator.folder,
+                        updated_locator.uidvalidity,
+                        updated_locator.uid,
+                        finished_at,
+                        action.account_id,
+                        action.locator.stable_message_identity,
+                        action.locator.folder,
+                        action.locator.uidvalidity,
+                        action.locator.uid,
+                    ),
+                ).rowcount
+                if classification_updated != 1 or message_updated != 1:
+                    raise EmailActionAttemptConflict(
+                        f"provider locator changed for {action.action_id}"
+                    )
             cursor = db.execute(
                 """
                 insert into email_action_attempts (

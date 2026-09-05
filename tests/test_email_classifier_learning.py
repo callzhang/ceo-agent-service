@@ -49,16 +49,22 @@ def _classification(message_id: str, category: EmailCategory) -> EmailClassifica
 
 
 def _service_with_pending(
-    tmp_path: Path, count: int = 1, *, minimum_new_examples: int = 5
+    tmp_path: Path,
+    count: int = 1,
+    *,
+    minimum_new_examples: int = 5,
+    categories: tuple[EmailCategory, ...] = (
+        EmailCategory.WORK,
+        EmailCategory.JUNK,
+    ),
 ):
     store = EmailStore(tmp_path / "email.sqlite3")
-    categories = [EmailCategory.WORK, EmailCategory.JUNK]
     rows = []
     for index in range(count):
-        category = categories[index % 2]
+        category = categories[index % len(categories)]
         row = store.upsert_classification(
             _classification(f"message-{index}", category),
-            model_text=f"__subject__token-{index} {category.value}",
+            model_text=f"__subject__sample-{index} __category__{category.value}",
         )
         rows.append(row)
     registry = EmailModelRegistry(tmp_path / "models")
@@ -100,10 +106,10 @@ class _ConcurrentController:
 
 
 def _confirm_all(service, rows, *, now):
-    for index, row in enumerate(rows):
+    for row in rows:
         service.confirm_and_maybe_retrain(
             row["id"],
-            EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            EmailCategory(str(row["predicted_category"])),
             feedback_request_id=f"confirm-all-{row['id']}",
             expected_current_action_plan_id=None,
             now=now,
@@ -226,14 +232,18 @@ def test_learning_service_exact_replay_does_not_record_or_request_retraining(
 
 
 def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
-    service, store, rows, registry = _service_with_pending(tmp_path, count=6)
+    service, store, rows, registry = _service_with_pending(
+        tmp_path,
+        count=16,
+        categories=tuple(EmailCategory),
+    )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
 
     promoted_result = None
-    for index, row in enumerate(rows):
+    for row in rows:
         result = service.confirm_and_maybe_retrain(
             row["id"],
-            EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            EmailCategory(str(row["predicted_category"])),
             feedback_request_id=f"learning-batch-{row['id']}",
             expected_current_action_plan_id=None,
             now=now,
@@ -244,7 +254,7 @@ def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
     polled = service.poll_retrain(now=now + timedelta(seconds=31))
     assert polled.training_run is not None
     assert polled.training_run.status in {"queued", "running"}
-    assert len(polled.training_run.sample_snapshots) == 6
+    assert len(polled.training_run.sample_snapshots) == 16
     assert all(
         len(sample["sample_digest"]) == 64
         for sample in polled.training_run.sample_snapshots
@@ -268,7 +278,7 @@ def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
     assert promoted_result.training_run.status == "succeeded"
     assert registry.active_manifest() is not None
     assert store.list_unincluded_training_examples() == []
-    assert load_retrain_state(tmp_path / "models" / "retrain-state.json").last_trained_feedback_count == 6
+    assert load_retrain_state(tmp_path / "models" / "retrain-state.json").last_trained_feedback_count == 16
 
 
 def test_feedback_service_keeps_confirmation_when_training_is_not_ready(tmp_path: Path):
@@ -291,7 +301,9 @@ def test_feedback_service_keeps_confirmation_when_training_is_not_ready(tmp_path
     assert store.list_training_examples()[0]["label"] == "work"
 
 
-def test_five_feedback_start_on_later_runtime_tick_without_sixth_feedback(tmp_path: Path):
+def test_partial_taxonomy_feedback_waits_without_repeated_training_launch(
+    tmp_path: Path,
+):
     class Controller:
         def __init__(self):
             self.starts = []
@@ -328,18 +340,28 @@ def test_five_feedback_start_on_later_runtime_tick_without_sixth_feedback(tmp_pa
     assert controller.starts == []
     tick = service.poll_retrain(now=now + timedelta(seconds=31))
 
-    assert tick.training_run is not None
-    assert tick.training_run.run_id == "run-1"
-    assert controller.starts == [now + timedelta(seconds=31)]
+    assert tick.training_run is None
+    assert tick.decision.due is False
+    assert tick.decision.reason == "training_not_ready"
+    assert controller.starts == []
+
+    second_tick = service.poll_retrain(now=now + timedelta(seconds=62))
+    assert second_tick.training_run is None
+    assert second_tick.decision.reason == "training_not_ready"
+    assert controller.starts == []
 
 
 def test_manual_training_uses_same_readiness_path_with_only_trigger_override(tmp_path: Path):
-    service, _store, rows, _registry = _service_with_pending(tmp_path, count=5)
+    service, _store, rows, _registry = _service_with_pending(
+        tmp_path,
+        count=16,
+        categories=tuple(EmailCategory),
+    )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
-    for index, row in enumerate(rows):
+    for row in rows:
         service.confirm_and_maybe_retrain(
             row["id"],
-            EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            EmailCategory(str(row["predicted_category"])),
             feedback_request_id=f"learning-manual-{row['id']}",
             expected_current_action_plan_id=None,
             now=now,
@@ -353,7 +375,11 @@ def test_manual_training_uses_same_readiness_path_with_only_trigger_override(tmp
 
 
 def test_concurrent_manual_requests_launch_only_one_training_child(tmp_path: Path):
-    service, store, rows, registry = _service_with_pending(tmp_path, count=5)
+    service, store, rows, registry = _service_with_pending(
+        tmp_path,
+        count=16,
+        categories=tuple(EmailCategory),
+    )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     _confirm_all(service, rows, now=now)
     controller = _ConcurrentController()
@@ -381,7 +407,11 @@ def test_concurrent_manual_requests_launch_only_one_training_child(tmp_path: Pat
 
 
 def test_concurrent_manual_and_poll_launch_only_one_training_child(tmp_path: Path):
-    service, store, rows, registry = _service_with_pending(tmp_path, count=5)
+    service, store, rows, registry = _service_with_pending(
+        tmp_path,
+        count=16,
+        categories=tuple(EmailCategory),
+    )
     feedback_at = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     _confirm_all(service, rows, now=feedback_at)
     controller = _ConcurrentController()
@@ -410,12 +440,16 @@ def test_concurrent_manual_and_poll_launch_only_one_training_child(tmp_path: Pat
 
 
 def test_learning_poll_clears_orphan_and_next_tick_can_retry(tmp_path: Path):
-    service, store, rows, registry = _service_with_pending(tmp_path, count=5)
+    service, store, rows, registry = _service_with_pending(
+        tmp_path,
+        count=16,
+        categories=tuple(EmailCategory),
+    )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
-    for index, row in enumerate(rows):
+    for row in rows:
         service.confirm_and_maybe_retrain(
             row["id"],
-            EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            EmailCategory(str(row["predicted_category"])),
             feedback_request_id=f"learning-orphan-{row['id']}",
             expected_current_action_plan_id=None,
             now=now,

@@ -62,6 +62,8 @@ export function StatusPanel() {
   const components = list(payload.components);
   const queues = list(payload.queues);
   const connectors = record(payload.connectors);
+  const email = record(payload.email);
+  const emailRows = list(email.entries);
   const wechat = record(payload.wechat);
   const connectorRows = Object.entries(connectors).map(([name, value]) => {
     const item = record(value);
@@ -89,6 +91,9 @@ export function StatusPanel() {
     <StatusSection title="Connector health">
       <StatusTable headers={["Connector", "Status", "Reason"]} mobileLabels={["Connector", "Status", "Reason"]} rows={connectorRows} />
       {wechatRows.length > 0 && <div className="status-table-secondary"><StatusTable headers={["Check", "Status", "Detail"]} mobileLabels={["Check", "Status", "Detail"]} rows={wechatRows} /></div>}
+    </StatusSection>
+    <StatusSection title="Email worker">
+      <StatusTable headers={["Scope", "Status", "Detail", "Updated"]} mobileLabels={["Scope", "Status", "Detail", "Updated"]} rows={emailRows.map((item) => [displayValue(item.scope), <StatusBadge value={displayValue(item.status)} key="status" />, displayValue(item.error_code || (item.accounts !== undefined ? `accounts ${item.accounts}` : item.failures !== undefined ? `failures ${item.failures}` : "-")), displayValue(item.updated_at || "-")])} />
     </StatusSection>
     <StatusSection title="Queues">
       <StatusTable headers={["Queue", "Status counts", "Pending", "Processing", "Retryable", "Failed", "Updated", "Latest error"]} mobileLabels={["Queue", "Status counts", "Pending", "Processing", "Retryable", "Failed", "Updated", "Latest error"]} rows={queues.map((item) => [<><strong>{displayValue(item.name)}</strong><small className="table-subtitle">{displayValue(item.table)}</small></>, displayValue(item.counts), displayValue(item.pending), displayValue(item.processing), displayValue(item.retryable), displayValue(item.failed), displayValue(item.latest_updated_at), displayValue(item.latest_error || "-")])} />

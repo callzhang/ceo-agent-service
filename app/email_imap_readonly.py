@@ -21,6 +21,7 @@ from hashlib import sha256
 from typing import Any
 
 from app.email_classifier_contracts import EmailProviderLocator
+from app.email_imap_mailbox import ImapMailboxCodecError, encode_imap_mailbox_argument
 from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 
 
@@ -162,7 +163,11 @@ class ImapReadonlyAdapter:
             raise ValueError("cursor_uidvalidity must be positive")
         if isinstance(last_seen_uid, bool) or last_seen_uid < 0:
             raise ValueError("last_seen_uid must be a non-negative integer")
-        status, _ = self.session.select(mailbox, readonly=True)
+        try:
+            mailbox_argument = encode_imap_mailbox_argument(mailbox)
+        except ImapMailboxCodecError as exc:
+            raise ValueError("invalid IMAP mailbox") from exc
+        status, _ = self.session.select(mailbox_argument, readonly=True)
         _require_ok(status, "IMAP readonly select failed")
         uidvalidity = _uidvalidity(self.session.response("UIDVALIDITY"))
         search_after = last_seen_uid if cursor_uidvalidity == uidvalidity else 0

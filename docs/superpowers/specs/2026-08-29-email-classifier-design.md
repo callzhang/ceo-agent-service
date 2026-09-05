@@ -7,8 +7,9 @@
 动作边界，不包含 CEO Agent 运行时实现计划。已确认：`label`、`mark_read`、
 `archive`、`move`、`trash` 是直接动作，不创建 Agent/Audit 任务；
 当前分支的配置和 runtime 禁用 `auto_reply`：它不能从配置、分类结果或人工确认生成 task，
-也不连接 SMTP；Email 尚未部署，也未在生产启用。历史 contract 仍保留用于兼容读取。本文中的 Consumer-direct 退订描述只记录
-当时的实现历史：`unsubscribe` 使用 Consumer-direct。当前和后续实施权威已由获批设计
+也不连接 SMTP；Email 页面和只读分类已在本地 runtime 启用，本分支新增的外部写动作尚未部署。
+旧的 Consumer-direct 退订方案已经废弃，
+当前和后续实施权威已由获批设计
 [`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md)
 取代，`unsubscribe` 目标生命周期为 `email_unsubscribe_audited_v2`：Consumer A 提案、
 Audit Agent B 审核执行和外部 readback；这项指向不表示已经部署或在生产启用。
@@ -109,14 +110,15 @@ IMAP 只读连接器
   直接执行，不创建 Agent/Audit 任务；
 - `auto_reply` 是保留的历史 Email task contract，但当前 Email 配置和 runtime 禁止它；
   它不创建 task、不连接 SMTP。`unsubscribe` 是当前唯一的 Email Agent task 动作，使用
-  Consumer-direct 并完成 provider effect/readback。
+  `email_unsubscribe_audited_v2`：Consumer 提案，Audit 审核并执行，最后保存 provider
+  effect/readback。
 
 因此第一版采用以下边界：
 
 1. 分类器负责毫秒级分类、拒判和生成不可变的 `ActionPlan`；
 2. 邮件执行层只消费 `direct_actions`，不得扩大或改写计划中的动作和参数；
-3. 后续 Agent 路由只消费当前允许的 `agent_actions`：`unsubscribe` 应用
-   Consumer-direct；`auto_reply` 当前禁用；
+3. Agent 路由只消费当前允许的 `agent_actions`：`unsubscribe` 应用
+   Consumer → Audit；`auto_reply` 当前禁用；
 4. 只有消息置信度达到类别阈值且该类别 `auto_action_eligible=true` 才形成计划，
    但不能授权计划之外的动作。
 
@@ -128,11 +130,10 @@ IMAP 只读连接器
 | B. 决策 | 用户在 Email“待反馈”中选择八类之一；反馈回 classifier store | 不写邮箱 |
 | C. Dry-run | 生成直接动作和 Agent 动作的拟执行计划，展示目标与原因 | 不执行 |
 | D. 直接动作 | 按类别配置逐项开启 label/mark_read/archive/move/trash | 不创建 Agent/Audit 任务，记录 provider 结果 |
-| E. Email task 动作 | 当前只允许按门槛开启 unsubscribe；auto_reply 关闭 | 仅创建 Consumer-direct 工作并完成 readback；不连接 SMTP |
+| E. Email task 动作 | 当前只允许按门槛开启 unsubscribe；auto_reply 关闭 | 创建 Consumer → Audit 工作并完成 readback；不连接 SMTP |
 
-本节是集成边界设计，不代表直接动作执行器或 Agent 动作路由已经上线。
-直接动作不经过 Audit B；`unsubscribe` 进入 Consumer-direct 生命周期并执行 provider
-readback。`auto_reply` 当前不进入任何 Email runtime 生命周期。
+直接动作不经过 Agent/Audit；`unsubscribe` 进入 Consumer → Audit 生命周期并执行
+provider readback。`auto_reply` 当前不进入任何 Email runtime 生命周期。
 
 ### CEO Agent Email Adapter Contract（第一版待实现）
 
@@ -176,18 +177,17 @@ adapter 给 `AgentTaskContext` 的最小字段应为：
 - `required_reviewed_skills` 至少指向 `ceo-mail-review`；`unsubscribe` 由 Consumer
   读取并执行退订 Skill；`auto_reply` 当前没有执行路径。
 
-直接动作不进入 Consumer A；邮件执行层只能执行计划中的 `direct_actions`。Consumer A
-只处理当前允许的 `unsubscribe`，不能重新分类或扩大动作；它由 Consumer 对邮件和 thread
-做最终判断后直接执行已冻结计划。`auto_reply` 当前禁用。
+直接动作不进入 Consumer；邮件执行层只能执行计划中的 `direct_actions`。Consumer
+只处理当前允许的 `unsubscribe`，不能重新分类或扩大动作；它对邮件和 thread
+做最终判断并提出单一动作，Audit 必须精确审核该持久化动作后才可执行。`auto_reply`
+当前禁用。
 用户确认类别时，系统应直接写 classifier feedback，不要求 Consumer A 再次猜类别。
 
-当前没有 Email reply 的 Audit B 输入。若未来重新开放 `auto_reply`，必须另行确认
-Consumer → Audit 策略。`unsubscribe` 不创建 Audit run 或 revision，但同样必须保存完整步骤、
-terminal result text、receipt 和 observation digest。当前业务按既有 lifecycle 保存 provider 返回的最小
-`operation`、`target` 和稳定 result identifier；若配置仍是 dry-run，则返回
-`dry_run`，不能伪造 `executed`。分类概率、动作阈值和 dry-run 结果不能替代外部执行后的
-provider readback。`unsubscribe` 不创建 Audit run 或 revision，但同样必须保存完整步骤、
-terminal result text、receipt 和 observation digest。
+当前没有 Email reply 的 Audit 输入。若未来重新开放 `auto_reply`，必须作为独立变更另行确认。
+`unsubscribe` 必须创建 Consumer 和 Audit run，并保存完整步骤、terminal result text、
+receipt 和 observation digest。Audit 接受的动作必须与父 Consumer 持久化的唯一动作完全
+一致，任一字段变化都在 provider/browser 调用前 fail closed。分类概率、动作阈值和 dry-run
+结果不能替代外部执行后的 provider readback。
 
 第一版的可验证验收边界是：
 
@@ -195,14 +195,14 @@ terminal result text、receipt 和 observation digest。
 2. 仅确认类别不会产生 `reply_task`；
 3. 明确要求处理的邮件才会按上述映射创建 `channel=email` 任务；
 4. 直接动作不创建 Consumer/Audit 任务，且只能执行计划内参数；
-5. `auto_reply` 能关联到 Audit B 的审核/执行记录；
-6. `unsubscribe` 能关联到 Consumer-direct 的步骤、terminal receipt 和 observation；
-7. 两个 Email task 动作都遵循各自的 lease、幂等和 result readback 契约；
+5. `auto_reply` 不创建 task、不连接 SMTP；
+6. `unsubscribe` 能关联到父 Consumer、Audit、步骤、terminal receipt 和 observation；
+7. 唯一的 Email task 动作 `unsubscribe` 遵循 lease、幂等和 result readback 契约；
 8. 外部动作未启用时只保存 dry-run 计划，不改变邮箱；
 9. provider 读取失败进入 `failed`，不能伪装成 `needs_human` 或分类 `unknown`。
 
-直接动作执行器和两个 Agent 动作的 CEO Agent 路由仍未实现；
-不修改 `reply_tasks` schema、worker channel gate、Attention 页面或 launchd 配置。
+Email 的正常分类、反馈、直接动作和 `unsubscribe` 生命周期属于 Email 页面；只有真正的
+系统失败进入 Attention。
 
 ## 设计结论
 
@@ -234,12 +234,11 @@ HashingVectorizer + SGD Logistic 保留为在线学习对照；当前实验显�
 用它替代批量重训。Linear SVM、TF-IDF Logistic 和 fastText 的比较应在
 用户自己的时间顺序数据上完成，而不是仅引用公开数据集的结果。
 
-当前已经实现了独立、无副作用的 classifier core；它支持模型版本标识、
-模型文件原子替换，以及独立的配置/决策契约，但邮箱动作和 CEO Agent
-runtime 仍未实现。自动动作的
+当前已经实现了独立 classifier core、版本化模型 registry、Email worker、确定性 IMAP
+动作和 audited unsubscribe runtime。自动动作的
 开放仍等待更多人工确认数据及时间 holdout；直接动作与 Agent 动作的边界已经确认：
 `label`、`mark_read`、`archive`、`move`、`trash` 不创建 Agent/Audit 任务；
-`auto_reply` 当前禁用；`unsubscribe` 进入 Consumer-direct，并执行 provider readback。
+`auto_reply` 当前禁用；`unsubscribe` 进入 Consumer → Audit，并执行 provider readback。
 
 ## 类别体系
 
@@ -541,7 +540,7 @@ classifier。它尚未连接邮箱或 CEO Agent，也不执行任何邮件动作
 provider locator、模型/配置版本的 `EmailDecision`。低置信度决策进入
 Email“待反馈”，状态为 `pending_feedback` 且 `action_plan=None`；已处理分类
 持有不可变 `ActionPlan`。直接动作由邮件执行层消费；`auto_reply` 当前禁用，`unsubscribe`
-进入 Consumer-direct 生命周期。
+进入 Consumer → Audit 生命周期。
 
 在此契约之上，`email_classifier_pipeline.py` 提供了一个无连接器的批量
 编排入口：逐封调用分类器，将低于类别阈值或类别不具备自动动作资格的决策交给本地
@@ -596,22 +595,24 @@ required_skills      = [ceo-mail-review]
 ```
 
 它只携带分类元数据、版本、provider locator 和用户明确请求，不携带原始
-邮件正文，也不创建 `reply_task`、调用 CEO Agent 或执行邮箱动作。未来的
-CEO Agent adapter 应遵循已确认的动作边界，只将当前允许的 `unsubscribe`
-映射为现有生命周期中的任务提案；`auto_reply` 当前不创建任务；在此之前不修改 runtime、schema、worker gate、
-Attention 页面或 launchd 配置。
+邮件正文，也不创建 `reply_task`、调用 CEO Agent 或执行邮箱动作。生产
+CEO Agent adapter 遵循已确认的动作边界，只将当前允许的 `unsubscribe`
+映射为 Consumer → Audit 任务；`auto_reply` 当前不创建任务。
 
 配置支持 JSON round-trip；`email_config.example.json` 是一个完整但非激活
 的八类示例，`scan --config <path>` 可以加载用户自己的描述、标签、阈值、
 动作开关。示例阈值是冷启动参数，不是校准后的概率，也不
 单独构成外部动作授权。
 
-反馈重训由 `email_classifier_training.py` 负责 readiness 和模型晋级：至少
-需要 5 条反馈、2 个类别且每个已出现类别至少 2 条样本；随后运行留一验证，
-检查候选序列化后可重新加载，最后才更新 `model.active.pkl`，已有 active
-模型先保留为 `model.previous.pkl`。条件不满足或候选检查失败时不改变 active
-模型。CLI `retrain` 使用同一流程并返回拒绝原因。该流程属于模型完整性和
-学习闭环，不改变 CEO Agent 的外部动作授权边界。
+反馈重训由 `email_classifier_training.py` 负责 readiness 和模型晋级：只有固定
+八类中的每一类都至少有 2 条用户确认样本（因此至少 16 条）才启动训练；调用方
+只能提高、不能降低每类 2 条的硬下限。缺类模型可以作为 candidate 保存、诊断和
+展示，但不能成为 active，也不能作为 previous 被 runtime fallback 重新激活。
+训练随后运行留一验证，检查候选序列化后可重新加载，并确认 artifact labels、
+`category_counts` 和 `per_category_metrics` 精确覆盖固定八类，最后才切换 active
+manifest；条件不满足或候选检查失败时不改变 active 模型。CLI `retrain` 使用
+同一流程并返回拒绝原因。该流程属于模型完整性和学习闭环，不改变 CEO Agent
+的外部动作授权边界。
 
 Phase-C 的 `email_action_dry_run.py` 只根据达到类别阈值且类别具备自动动作资格的
 `EmailDecision` 生成动作预览，不调用 connector。对 `subscription`，它只

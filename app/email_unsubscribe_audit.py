@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+import hashlib
+import hmac
 import inspect
 import json
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agent_contracts import ProposedAction
+from app.agent_contracts import ConsumerAgentResult, ConsumerOutcome, ProposedAction
 from app.agent_result import AgentError
 from app.email_classifier_contracts import (
     EmailAction,
@@ -107,6 +109,9 @@ class EmailUnsubscribeAuditOperation:
             return self._failed("unsubscribe_audit_run_invalid")
         assert task is not None and audit_run is not None
         try:
+            parent = self.task_store.get_agent_run(audit_run.parent_agent_run_id)
+            assert parent is not None
+            action = _bound_parent_consumer_action(parent, accepted_action)
             payload = _task_payload(task)
             identity = _validate_task_identity(task, payload)
             classification = self.email_store.get_classification(
@@ -116,7 +121,6 @@ class EmailUnsubscribeAuditOperation:
                 return self._failed("unsubscribe_classification_missing")
             plan = _current_action_plan(classification)
             _validate_current_plan(identity, classification, plan)
-            action = ProposedAction.model_validate(accepted_action)
             terminal_effect = _terminal_expected_effect(task, action)
             terminal_operations = terminal_effect["operations"]
             if (
@@ -396,6 +400,46 @@ class EmailUnsubscribeAuditOperation:
                 retryable=retryable,
             ).model_dump(mode="json"),
         }
+
+
+def _bound_parent_consumer_action(
+    parent: AgentRun,
+    accepted_action: Mapping[str, object],
+) -> ProposedAction:
+    try:
+        parent_result = ConsumerAgentResult.model_validate_json(
+            parent.final_result_json
+        )
+        accepted = ProposedAction.model_validate(accepted_action)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("unsubscribe Consumer proposal is invalid") from exc
+    if (
+        parent_result.outcome is not ConsumerOutcome.PROPOSAL
+        or parent_result.proposal is None
+        or len(parent_result.proposal.actions) != 1
+    ):
+        raise ValueError("unsubscribe Consumer proposal must contain one action")
+    proposed = parent_result.proposal.actions[0]
+    proposed_json = _canonical_action_json(proposed)
+    accepted_json = _canonical_action_json(accepted)
+    proposed_digest = hashlib.sha256(proposed_json.encode("utf-8")).digest()
+    accepted_digest = hashlib.sha256(accepted_json.encode("utf-8")).digest()
+    if proposed_json != accepted_json or not hmac.compare_digest(
+        proposed_digest,
+        accepted_digest,
+    ):
+        raise ValueError("accepted unsubscribe action changed from Consumer proposal")
+    return accepted
+
+
+def _canonical_action_json(action: ProposedAction) -> str:
+    return json.dumps(
+        action.model_dump(mode="json"),
+        allow_nan=False,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _task_payload(task: ReplyTask) -> dict[str, object]:

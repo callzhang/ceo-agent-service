@@ -18,8 +18,7 @@ from pydantic import (
 
 _ACCOUNT_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]{1,63}$"
 _IMAP_SECRET_REFERENCE_PATTERN = r"^CEO_EMAIL_[A-Z0-9_]+_IMAP_SECRET$"
-_SMTP_SECRET_REFERENCE_PATTERN = r"^CEO_EMAIL_[A-Z0-9_]+_SMTP_SECRET$"
-_SECRET_REFERENCE_PATTERN = re.compile(r"^CEO_EMAIL_[A-Z0-9_]+_(?:IMAP|SMTP)_SECRET$")
+_SECRET_REFERENCE_PATTERN = re.compile(_IMAP_SECRET_REFERENCE_PATTERN)
 
 
 class EmailAccountPayload(BaseModel):
@@ -39,11 +38,12 @@ class EmailAccountPayload(BaseModel):
     imap_tls: bool = True
     imap_username: str = Field(min_length=1, max_length=320)
     imap_secret_reference: str = Field(pattern=_IMAP_SECRET_REFERENCE_PATTERN)
-    smtp_host: str = Field(min_length=1, max_length=253)
-    smtp_port: int = Field(ge=1, le=65535)
-    smtp_tls: bool = True
-    smtp_username: str = Field(min_length=1, max_length=320)
-    smtp_secret_reference: str = Field(pattern=_SMTP_SECRET_REFERENCE_PATTERN)
+    # Retained only as inert storage compatibility for the legacy schema.
+    smtp_host: str = ""
+    smtp_port: int = Field(default=1, ge=1, le=65535)
+    smtp_tls: bool = False
+    smtp_username: str = ""
+    smtp_secret_reference: str = ""
     enabled: bool = True
     scan_folders: tuple[str, ...] = ("INBOX",)
     scan_interval_seconds: int = Field(default=60, ge=15, le=3600)
@@ -62,8 +62,6 @@ class EmailAccountPayload(BaseModel):
         "display_name",
         "imap_host",
         "imap_username",
-        "smtp_host",
-        "smtp_username",
     )
     @classmethod
     def require_nonblank_text(cls, value: str) -> str:
