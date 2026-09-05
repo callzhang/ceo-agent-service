@@ -4,7 +4,7 @@ export interface ManagedSkill { id: number; name: string; display_name: string; 
 export interface ManagedSkillRevision { id: number; skill_id: number; revision_number: number; content: string; sha256: string; parent_revision_id: number | null; source: string; created_at: string; }
 export interface RuntimeSkillBinding { skill_id: number; revision_id: number; enabled: boolean; load_order: number; purpose: string; }
 export interface RuntimeSkillConfig { id: number; parent_id: number | null; status: string; created_at: string; bindings: RuntimeSkillBinding[]; }
-export interface RuntimeSkillLoadReceipt { id: number; config_id: number; pid: number; loaded_json: Record<string, string>; error: string; created_at: string; }
+export interface RuntimeSkillLoadReceipt { id: number; config_id: number; pid: number; loaded_json: string; error: string; created_at: string; }
 
 export function listManagedSkills(signal?: AbortSignal) { return request<{ items: ManagedSkill[] }>("/api/console/settings/managed-skills", { signal }); }
 export function listManagedSkillRevisions(skillId: number, signal?: AbortSignal) { return request<{ items: ManagedSkillRevision[] }>(`/api/console/settings/managed-skills/${skillId}/revisions`, { signal }); }
