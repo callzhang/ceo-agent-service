@@ -52,9 +52,11 @@ from app.skill_features import FeatureRegistry
 DISCOVERY_PAGE_LIMIT = 100
 DISCOVERY_PAGE_SIZE = 50
 REPLAY_PAGE_SIZE_LIMIT = 100
-DEFAULT_MEETING_DISCOVERY_LOOKBACK = timedelta(days=7)
+DEFAULT_MEETING_DISCOVERY_LOOKBACK = timedelta(days=14)
 MINIMUM_MEETING_DURATION = timedelta(minutes=5)
-TERMINAL_STATUSES = frozenset({"no_action", "sent", "failed"})
+TERMINAL_STATUSES = frozenset(
+    {"no_action", "sent", "failed", "skipped", "needs_human"}
+)
 DEFAULT_MEETING_RETRY_DELAY = timedelta(minutes=1)
 DEFAULT_MEETING_MAX_ATTEMPTS = 3
 CALENDAR_SUMMARY_START = "【CEO 会议总结】"
@@ -143,7 +145,19 @@ def produce_meeting_alignment_jobs(
         info = dws.get_minutes_info(meeting_id)
         try:
             metadata = normalize_minutes_discovery_metadata(list_item, info)
-        except MeetingSourceIncomplete:
+        except MeetingSourceIncomplete as exc:
+            _store_meeting_discovery_terminal_job(
+                store,
+                meeting_id=meeting_id,
+                title=str(list_item.get("title") or ""),
+                list_item=list_item,
+                info=info,
+                status="skipped",
+                error=_error_json("meeting_metadata", str(exc)),
+                now=now,
+            )
+            if existing is None:
+                created += 1
             continue
         if metadata.meeting_id != meeting_id:
             continue
@@ -152,8 +166,39 @@ def produce_meeting_alignment_jobs(
         started_at = datetime.fromisoformat(metadata.started_at)
         ended_at = datetime.fromisoformat(metadata.ended_at)
         if started_at >= ended_at:
+            _store_meeting_discovery_terminal_job(
+                store,
+                meeting_id=meeting_id,
+                title=metadata.title,
+                list_item=list_item,
+                info=info,
+                status="skipped",
+                error=_error_json(
+                    "meeting_metadata", "meeting end time must be after start time"
+                ),
+                now=now,
+                ended_at=ended_at,
+            )
+            if existing is None:
+                created += 1
             continue
         if ended_at - started_at < MINIMUM_MEETING_DURATION:
+            _store_meeting_discovery_terminal_job(
+                store,
+                meeting_id=meeting_id,
+                title=metadata.title,
+                list_item=list_item,
+                info=info,
+                status="skipped",
+                error=_error_json(
+                    "meeting_duration",
+                    "recording is shorter than the five-minute meeting threshold",
+                ),
+                now=now,
+                ended_at=ended_at,
+            )
+            if existing is None:
+                created += 1
             continue
         if activated_at is not None and ended_at < activated_at:
             continue
@@ -176,12 +221,41 @@ def produce_meeting_alignment_jobs(
                 events,
                 current_user_id=current_user_id,
             )
-        except MeetingSourceIncomplete:
+        except MeetingSourceIncomplete as exc:
+            _store_meeting_discovery_terminal_job(
+                store,
+                meeting_id=meeting_id,
+                title=metadata.title,
+                list_item=list_item,
+                info=info,
+                status="needs_human",
+                error=_error_json("meeting_roster", str(exc)),
+                now=now,
+                ended_at=ended_at,
+            )
+            if existing is None:
+                created += 1
             continue
         if sum(
             participant.user_id == current_user_id
             for participant in evidence.participants
         ) != 1:
+            _store_meeting_discovery_terminal_job(
+                store,
+                meeting_id=meeting_id,
+                title=metadata.title,
+                list_item=list_item,
+                info=info,
+                status="needs_human",
+                error=_error_json(
+                    "meeting_roster",
+                    "meeting evidence does not identify exactly one current-user attendee",
+                ),
+                now=now,
+                ended_at=ended_at,
+            )
+            if existing is None:
+                created += 1
             continue
 
         eligible_at = ended_at + timedelta(seconds=settle_seconds)
@@ -212,6 +286,41 @@ def produce_meeting_alignment_jobs(
         if existing is None:
             created += 1
     return created
+
+
+def _store_meeting_discovery_terminal_job(
+    store: AutoReplyStore,
+    *,
+    meeting_id: str,
+    title: str,
+    list_item: dict[str, Any],
+    info: dict[str, Any],
+    status: str,
+    error: str,
+    now: datetime,
+    ended_at: datetime | None = None,
+) -> int:
+    """Persist a non-deliverable discovery result instead of silently dropping it."""
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id=meeting_id,
+        title=title,
+        source_json=json.dumps(
+            {
+                "meeting_id": meeting_id,
+                "minutes_list_item": list_item,
+                "minutes_info": info,
+                "discovery_error": json.loads(error),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        participants_json="[]",
+        ended_at=(ended_at or now).isoformat(),
+        eligible_at=(ended_at or now).isoformat(),
+        status=status,
+    )
+    store.update_meeting_alignment_job(job_id, error=error)
+    return job_id
 
 
 def queue_recent_meeting_alignment_replay(
