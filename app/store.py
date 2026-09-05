@@ -213,6 +213,8 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_lineage_insert",
     "trg_runtime_attempt_lineage_update",
     "trg_runtime_attempt_lineage_immutable",
+    "trg_managed_skill_revisions_immutable_update",
+    "trg_managed_skill_revisions_immutable_delete",
 )
 FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL = """
 CREATE TRIGGER trg_feedback_processing_round_integer_v2_insert
@@ -234,6 +236,20 @@ begin
         abort,
         'feedback_processing_round_number_must_be_positive'
     );
+end
+""".strip()
+MANAGED_SKILL_REVISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_managed_skill_revisions_immutable_update
+before update on managed_skill_revisions
+begin
+    select raise(abort, 'managed Skill revisions are immutable');
+end
+""".strip()
+MANAGED_SKILL_REVISIONS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_managed_skill_revisions_immutable_delete
+before delete on managed_skill_revisions
+begin
+    select raise(abort, 'managed Skill revisions are immutable');
 end
 """.strip()
 FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR = (
@@ -271,6 +287,12 @@ STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
     ),
     "trg_feedback_processing_round_integer_v2_update": _normalize_schema_sql(
         FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL
+    ),
+    "trg_managed_skill_revisions_immutable_update": _normalize_schema_sql(
+        MANAGED_SKILL_REVISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_managed_skill_revisions_immutable_delete": _normalize_schema_sql(
+        MANAGED_SKILL_REVISIONS_IMMUTABLE_DELETE_TRIGGER_SQL
     ),
 }
 
@@ -1413,6 +1435,28 @@ class AutoReplyStore:
         else:
             db.execute("commit")
 
+    @staticmethod
+    def _replace_managed_skill_revision_immutability_guards_atomically(
+        db: sqlite3.Connection,
+    ) -> None:
+        db.execute("begin immediate")
+        try:
+            db.execute(
+                "drop trigger if exists "
+                "trg_managed_skill_revisions_immutable_update"
+            )
+            db.execute(
+                "drop trigger if exists "
+                "trg_managed_skill_revisions_immutable_delete"
+            )
+            db.execute(MANAGED_SKILL_REVISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL)
+            db.execute(MANAGED_SKILL_REVISIONS_IMMUTABLE_DELETE_TRIGGER_SQL)
+        except BaseException:
+            db.execute("rollback")
+            raise
+        else:
+            db.execute("commit")
+
     @classmethod
     def _feedback_processing_round_guard_state_is_valid(
         cls,
@@ -1427,14 +1471,14 @@ class AutoReplyStore:
         if round_table_present is None:
             return False
         cls._validate_feedback_processing_round_storage(db)
+        trigger_names = tuple(STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS)
+        placeholders = ", ".join("?" for _ in trigger_names)
         trigger_definitions = {
             str(row["name"]): _normalize_schema_sql(str(row["sql"] or ""))
             for row in db.execute(
-                """
-                select name, sql from sqlite_master
-                 where type='trigger' and name in (?, ?)
-                """,
-                tuple(STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS),
+                "select name, sql from sqlite_master "
+                f"where type='trigger' and name in ({placeholders})",
+                trigger_names,
             )
         }
         return all(
@@ -2750,6 +2794,7 @@ class AutoReplyStore:
                 """
             )
             self._replace_feedback_processing_round_guards_atomically(db)
+            self._replace_managed_skill_revision_immutability_guards_atomically(db)
             workbench_turn_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(workbench_turns)").fetchall()
@@ -3703,9 +3748,15 @@ class AutoReplyStore:
         )
 
     def create_managed_skill(self, name: str, display_name: str) -> ManagedSkill:
-        if not isinstance(name, str) or not name.strip():
+        if not isinstance(name, str):
             raise ValueError("managed Skill name must be nonempty")
-        if not isinstance(display_name, str) or not display_name.strip():
+        if not isinstance(display_name, str):
+            raise ValueError("managed Skill display name must be nonempty")
+        name = name.strip()
+        display_name = display_name.strip()
+        if not name:
+            raise ValueError("managed Skill name must be nonempty")
+        if not display_name:
             raise ValueError("managed Skill display name must be nonempty")
         with self._immediate_write_transaction() as db:
             try:

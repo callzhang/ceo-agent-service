@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import app.store as store_module
 from app.managed_skills import ManagedSkillValidationError
 from app.store import AutoReplyStore
 
@@ -128,3 +129,62 @@ def test_schema_initialization_is_idempotent_and_has_revision_indexes(
         }
 
     assert {"idx_managed_skill_revisions_number", "idx_managed_skill_revisions_sha256"} <= indexes
+
+
+def test_revision_rows_reject_sql_update_and_delete_without_data_loss(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "skills.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "Test Skill")
+    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+
+    with store._connect() as db, pytest.raises(
+        sqlite3.IntegrityError, match="managed Skill revisions are immutable"
+    ):
+        db.execute(
+            "update managed_skill_revisions set content=? where id=?",
+            (SKILL_V2, revision.id),
+        )
+    with store._connect() as db, pytest.raises(
+        sqlite3.IntegrityError, match="managed Skill revisions are immutable"
+    ):
+        db.execute("delete from managed_skill_revisions where id=?", (revision.id,))
+
+    persisted = store.get_managed_skill_revision(revision.id)
+    assert persisted is not None
+    assert persisted.content == SKILL_V1
+    assert persisted.sha256 == revision.sha256
+
+
+def test_padded_skill_names_are_normalized_before_persistence(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "skills.sqlite3")
+
+    skill = store.create_managed_skill("  ceo-test  ", "  Test Skill  ")
+    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+
+    assert skill.name == "ceo-test"
+    assert skill.display_name == "Test Skill"
+    assert revision.skill_id == skill.id
+
+
+def test_reopening_an_existing_database_repairs_missing_immutability_triggers(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "skills.sqlite3"
+    store = AutoReplyStore(path)
+    skill = store.create_managed_skill("ceo-test", "Test Skill")
+    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+    with store._connect() as db:
+        db.execute("drop trigger trg_managed_skill_revisions_immutable_update")
+        db.execute("drop trigger trg_managed_skill_revisions_immutable_delete")
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+
+    reopened = AutoReplyStore(path)
+
+    with reopened._connect() as db, pytest.raises(
+        sqlite3.IntegrityError, match="managed Skill revisions are immutable"
+    ):
+        db.execute(
+            "update managed_skill_revisions set content=? where id=?",
+            (SKILL_V2, revision.id),
+        )
