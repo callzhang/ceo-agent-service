@@ -267,6 +267,64 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
     )
 
 
+def test_task_producer_failure_does_not_advance_cursor_and_retries_idempotently(
+    tmp_path: Path,
+):
+    message = _message()
+    source = FakeSource([message])
+    store = EmailStore(tmp_path / "email.sqlite3")
+    config = EmailScanConfig(
+        config_version="scan-task-retry-v1",
+        thresholds={category: 0.0 for category in EmailCategory},
+        actions={EmailCategory.SUBSCRIPTION: (EmailAction.UNSUBSCRIBE,)},
+        category_eligibility=_category_eligibility(
+            eligible=(EmailCategory.SUBSCRIPTION,),
+            threshold=0.0,
+        ),
+    )
+    attempts = 0
+
+    def produce(classification, raw_message):
+        nonlocal attempts
+        attempts += 1
+        persisted = store.get_classification(classification.classification_id)
+        assert persisted is not None
+        assert raw_message["messageId"] == message["messageId"]
+        if attempts == 1:
+            raise RuntimeError("injected task producer failure")
+
+    with pytest.raises(RuntimeError, match="injected task producer failure"):
+        scan_readonly_batch(
+            source,
+            StaticClassifier(StaticPrediction("subscription", 0.99)),
+            store,
+            config,
+            task_producer=produce,
+        )
+
+    assert store.get_scan_cursor("dingtalk-account", "INBOX") is None
+    first = store.list_classifications(
+        status=EmailClassificationStatus.PROCESSED,
+        limit=10,
+        offset=0,
+    )[0]
+    assert len(first) == 1
+
+    result = scan_readonly_batch(
+        source,
+        StaticClassifier(StaticPrediction("subscription", 0.99)),
+        store,
+        config,
+        task_producer=produce,
+    )
+
+    assert attempts == 2
+    assert result.persisted_count == 1
+    assert store.get_scan_cursor("dingtalk-account", "INBOX")["last_seen_uid"] == message[
+        "uid"
+    ]
+
+
 def test_scan_config_rejects_auto_reply_when_outbound_reply_is_disabled():
     with pytest.raises(ValueError, match="auto_reply is disabled"):
         EmailScanConfig(
