@@ -9,12 +9,18 @@ const listFeedback = vi.hoisted(() => vi.fn());
 const getFeedbackDetail = vi.hoisted(() => vi.fn());
 const reopenFeedback = vi.hoisted(() => vi.fn());
 const syncFeedback = vi.hoisted(() => vi.fn());
+const getFeedbackIterationCapability = vi.hoisted(() => vi.fn());
+const getFeedbackBatch = vi.hoisted(() => vi.fn());
 vi.mock("../api/console", () => ({
   listFeedback,
   getFeedbackDetail,
   reopenFeedback,
   syncFeedback,
   displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value),
+}));
+vi.mock("../api/feedback", () => ({
+  getFeedbackIterationCapability,
+  getFeedbackBatch,
 }));
 
 import { FeedbackPage } from "./FeedbackPage";
@@ -100,6 +106,42 @@ describe("FeedbackPage", () => {
     vi.clearAllMocks();
     listFeedback.mockResolvedValue(page([feedback()]));
     getFeedbackDetail.mockResolvedValue({ item: feedback(), meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    getFeedbackIterationCapability.mockResolvedValue({ enabled: true, config_id: 24 });
+    getFeedbackBatch.mockResolvedValue({ item: { batch_id: "batch-2", status: "resolved", requested_count: 1, items: [], decisions: [] }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
+  });
+
+  it("keeps 处理反馈 visible but disabled when feedback iteration is off", async () => {
+    getFeedbackIterationCapability.mockResolvedValue({ enabled: false, config_id: 25 });
+    listFeedback.mockResolvedValue(page([feedback({ status: "pending", processing_status: "pending" })], 1));
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+
+    const button = await screen.findByRole("button", { name: "处理反馈" });
+    expect(button).toBeDisabled();
+    expect(screen.getByText("反馈迭代已关闭；启用后可处理未解决反馈")).toBeInTheDocument();
+  });
+
+  it("renders persisted decision scope, routes, revision, config, and receipt", async () => {
+    const user = userEvent.setup();
+    listFeedback.mockResolvedValue(page([feedback({ processing_history: undefined })]));
+    getFeedbackDetail.mockResolvedValue({ item: feedback({ processing_history: [round(2, { scope_receipt: { runtime_config_id: 24, load_receipt_id: 9 } })] }), meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
+    getFeedbackBatch.mockResolvedValue({ item: {
+      batch_id: "batch-2", status: "resolved", requested_count: 1, items: [], decisions: [{
+        id: 8, batch_id: "batch-2", workbench_task_id: "task-2", workbench_turn_id: "turn-2", feedback_keys: ["feedback-1"], round_ids: [2], created_at: "2026-09-05T00:00:00Z",
+        decision: { scope: "skill_only", root_cause: "existing tool usage policy is missing", feedback_keys: ["feedback-1"], source_references: ["attempt#8308", "run#445"], target_skill_revisions: [{ skill_id: 4, from_revision: 12, to_revision: 13 }], why_not_code: "The route already exists.", acceptance: { scenario: "attempt#8308", expected_behavior: "uses the existing route", verification: ["focused regression"] } },
+      }],
+    }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+
+    await user.click((await screen.findAllByRole("button", { name: "展开详情" })).at(-1)!);
+    await user.click(screen.getByRole("button", { name: "加载处理历史" }));
+    expect(await screen.findByText("skill_only")).toBeInTheDocument();
+    const decisions = screen.getByRole("region", { name: "反馈迭代决策" });
+    expect(within(decisions).getByText("existing tool usage policy is missing")).toBeInTheDocument();
+    expect(within(decisions).getByText("attempt#8308")).toBeInTheDocument();
+    expect(within(decisions).getByText("run#445")).toBeInTheDocument();
+    expect(within(decisions).getByText("revision #13")).toBeInTheDocument();
+    expect(within(decisions).getByText("config #24")).toBeInTheDocument();
+    expect(within(decisions).getByText("load receipt #9")).toBeInTheDocument();
   });
 
   it("shows the reopen action only for resolved feedback", async () => {
@@ -362,6 +404,7 @@ describe("FeedbackPage", () => {
     expect(screen.getByRole("link", { name: "Processing batch" })).toHaveAttribute("href", "/api/console/feedback/batches/batch-2");
     expect(screen.getByRole("link", { name: "Processing batch" })).toHaveClass("secondary-button", "feedback-action-button");
     await user.click(screen.getAllByRole("button", { name: "展开详情" }).at(-1)!);
+    expect(screen.getByRole("button", { name: "加载反馈迭代决策" })).toBeInTheDocument();
 
     const history = screen.getByRole("list", { name: "处理历史" });
     const entries = within(history).getAllByRole("listitem");

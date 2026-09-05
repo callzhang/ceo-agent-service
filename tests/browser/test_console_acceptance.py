@@ -160,6 +160,81 @@ def _install_interaction_routes(page) -> None:
     page.route("**/api/console/**", handle)
 
 
+def _install_feedback_iteration_routes(page, mutations: list[str]) -> None:
+    enabled = True
+    candidate = {
+        "id": 2, "skill_id": 1, "revision_number": 2, "content": "---\nname: ceo-feedback-iteration\ndescription: Candidate\nmetadata:\n  managed_by: ceo-agent-service\n---\nCandidate", "sha256": "candidate-sha", "parent_revision_id": 1, "source": "user_edit", "created_at": SNAPSHOT,
+    }
+
+    def handle(route) -> None:
+        nonlocal enabled
+        path = urlsplit(route.request.url).path
+        method = route.request.method
+        if path.endswith("/api/console/settings/skills/features"):
+            payload = {"features": []}
+        elif path.endswith("/api/console/settings/managed-skills"):
+            payload = {"items": [{"id": 1, "name": "ceo-feedback-iteration", "display_name": "反馈迭代", "created_at": SNAPSHOT}]}
+        elif path.endswith("/api/console/settings/managed-skills/1/revisions") and method == "GET":
+            payload = {"items": [{"id": 1, "skill_id": 1, "revision_number": 1, "content": candidate["content"], "sha256": "base-sha", "parent_revision_id": None, "source": "baseline", "created_at": SNAPSHOT}] + ([candidate] if candidate.get("saved") else [])}
+        elif path.endswith("/api/console/settings/managed-skills/1/revisions") and method == "POST":
+            candidate["saved"] = True
+            payload = candidate
+        elif path.endswith("/api/console/settings/runtime-skill-configs/current"):
+            payload = {"pending_or_active": {"id": 24, "parent_id": None, "status": "active", "created_at": SNAPSHOT, "bindings": [{"skill_id": 1, "revision_id": 1, "enabled": True, "load_order": 0, "purpose": "system"}]}, "active": {"id": 24, "parent_id": None, "status": "active", "created_at": SNAPSHOT, "bindings": [{"skill_id": 1, "revision_id": 1, "enabled": True, "load_order": 0, "purpose": "system"}]}}
+        elif path.endswith("/api/console/settings/runtime-skill-configs") and method == "POST":
+            payload = {"id": 25, "parent_id": 24, "status": "pending_restart", "created_at": SNAPSHOT, "bindings": [{"skill_id": 1, "revision_id": 2, "enabled": True, "load_order": 0, "purpose": "system"}]}
+        elif "/api/console/settings/runtime-skill-configs/" in path and path.endswith("/load-receipts"):
+            payload = {"items": []}
+        elif path.endswith("/api/console/settings/feedback-iteration") and method == "GET":
+            payload = {"enabled": enabled, "config_id": 25}
+        elif path.endswith("/api/console/settings/feedback-iteration") and method == "POST":
+            enabled = False
+            payload = {"enabled": False, "config_id": 26, "status": "pending_restart"}
+        elif path.endswith("/api/console/feedback"):
+            payload = {"items": _feedback_items(1), "pending_count": 1, "meta": _meta(1)}
+        elif "/api/console/feedback/batches" in path and method != "GET":
+            mutations.append(path)
+            route.fulfill(status=409, content_type="application/json", body=json.dumps({"code": "feedback_iteration_disabled", "message": "反馈迭代已关闭"}, ensure_ascii=False))
+            return
+        else:
+            route.continue_()
+            return
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(payload, ensure_ascii=False))
+
+    page.route("**/api/console/**", handle)
+
+
+def test_feedback_iteration_candidate_activation_then_disabled_control_has_no_mutation():
+    with _browser() as playwright:
+        browser = _launch(playwright)
+        try:
+            page = browser.new_page(viewport={"width": 1280, "height": 720})
+            mutations: list[str] = []
+            page_errors: list[str] = []
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            _install_feedback_iteration_routes(page, mutations)
+            page.goto(f"{BASE_URL}/settings?tab=skills", wait_until="domcontentloaded")
+            _wait_for_root(page)
+            page.get_by_role("button", name="新建修订").click()
+            page.get_by_label("Skill 正文").fill("---\nname: ceo-feedback-iteration\ndescription: Candidate\nmetadata:\n  managed_by: ceo-agent-service\n---\nCandidate")
+            page.get_by_role("button", name="保存修订").click()
+            page.get_by_text("已保存 revision 2", exact=True).wait_for(state="visible")
+            page.get_by_role("button", name="下次启动启用 revision 2").click()
+            page.get_by_text("配置已更新，等待服务重启", exact=True).wait_for(state="visible")
+            page.evaluate("fetch('/api/console/settings/feedback-iteration', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({enabled: false})})")
+            page.goto(f"{BASE_URL}/user-feedback", wait_until="domcontentloaded")
+            _wait_for_root(page)
+            button = page.get_by_role("button", name="处理反馈")
+            button.wait_for(state="visible")
+            assert button.is_disabled()
+            assert page.get_by_text("反馈迭代已关闭；启用后可处理未解决反馈", exact=True).is_visible()
+            button.click(force=True)
+            assert mutations == []
+            assert not page_errors, page_errors
+        finally:
+            browser.close()
+
+
 def _install_route_matrix_routes(page) -> None:
     def handle(route) -> None:
         path = urlsplit(route.request.url).path

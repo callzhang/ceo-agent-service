@@ -10,6 +10,7 @@ import {
   type FeedbackItem,
   type FeedbackProcessingRound,
 } from "../api/console";
+import { getFeedbackBatch, getFeedbackIterationCapability, type FeedbackIterationDecisionRecord } from "../api/feedback";
 import { ResponsiveDataList } from "../components/data/ResponsiveDataList";
 import { SummaryText } from "../components/data/SummaryText";
 import { FilterBar } from "../components/filters/FilterBar";
@@ -96,6 +97,28 @@ function ProcessingHistory({ history }: { history: readonly FeedbackProcessingRo
   </ol>;
 }
 
+function DecisionHistory({ decisions, history }: { decisions: readonly FeedbackIterationDecisionRecord[]; history: readonly FeedbackProcessingRound[] }) {
+  if (!decisions.length) return null;
+  return <section className="feedback-decision-history" aria-label="反馈迭代决策">
+    <h3>反馈迭代决策</h3>
+    <ol className="feedback-history-list">
+      {decisions.map((record) => {
+        const receipt = history.find((round) => record.round_ids.includes(round.id))?.scope_receipt;
+        return <li className="feedback-history-item" key={record.id}>
+          <dl className="feedback-history-evidence">
+            <div><dt>范围：</dt><dd>{record.decision.scope}</dd></div>
+            <div><dt>根因：</dt><dd>{record.decision.root_cause}</dd></div>
+            <div><dt>来源：</dt><dd>{record.decision.source_references.map((reference) => <span key={reference}>{reference} </span>)}</dd></div>
+            <div><dt>Skill 修订：</dt><dd>{record.decision.target_skill_revisions.length ? record.decision.target_skill_revisions.map((revision) => <span key={revision.skill_id}>skill #{revision.skill_id}: revision #{revision.from_revision} → <span>revision #{revision.to_revision}</span> </span>) : "未提供"}</dd></div>
+            <div><dt>运行配置：</dt><dd>{record.decision.target_runtime_config_id ? `config #${record.decision.target_runtime_config_id}` : typeof receipt?.runtime_config_id === "number" ? `config #${receipt.runtime_config_id}` : "未提供"}</dd></div>
+            <div><dt>回执：</dt><dd>{typeof receipt?.load_receipt_id === "number" ? `load receipt #${receipt.load_receipt_id}` : "未提供"}</dd></div>
+          </dl>
+        </li>;
+      })}
+    </ol>
+  </section>;
+}
+
 function Pagination({ page, pageSize, total, onPageChange }: { page: number; pageSize: number; total: number; onPageChange: (page: number) => void }) {
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   if (pageCount <= 1) return null;
@@ -113,10 +136,13 @@ export function FeedbackPage() {
   const [totalCount, setTotalCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [historyLoadingKey, setHistoryLoadingKey] = useState("");
+  const [decisionLoadingBatchId, setDecisionLoadingBatchId] = useState("");
   const [reopenTarget, setReopenTarget] = useState<FeedbackItem | null>(null);
   const [reopenReason, setReopenReason] = useState("");
   const [reopenError, setReopenError] = useState("");
   const [reopening, setReopening] = useState(false);
+  const [feedbackIterationEnabled, setFeedbackIterationEnabled] = useState(false);
+  const [batchDecisions, setBatchDecisions] = useState<Record<string, FeedbackIterationDecisionRecord[]>>({});
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const successRef = useRef<HTMLDivElement>(null);
@@ -179,6 +205,14 @@ export function FeedbackPage() {
     });
     return invalidateListLoad;
   }, [invalidateListLoad, loadRows]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void getFeedbackIterationCapability(controller.signal).then((capability) => {
+      if (!controller.signal.aborted) setFeedbackIterationEnabled(capability.enabled);
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     if (success) successRef.current?.focus();
@@ -327,6 +361,8 @@ export function FeedbackPage() {
     setError("");
     try {
       const detail = await getFeedbackDetail(key);
+      const batchId = detail.item.batch_id || row.batch_id;
+      const batch = batchId ? await getFeedbackBatch(batchId) : null;
       if (historyGenerationRef.current.get(key) !== generation) return;
       setRows((current) => current.map((item) => {
         if (feedbackKey(item) !== key) return item;
@@ -336,10 +372,25 @@ export function FeedbackPage() {
           ...(Object.prototype.hasOwnProperty.call(detail.item, "processing_history") ? { processing_history: detail.item.processing_history } : {}),
         };
       }));
+      if (batchId && batch) setBatchDecisions((current) => ({ ...current, [batchId]: batch.item.decisions }));
     } catch (reason: unknown) {
       if (historyGenerationRef.current.get(key) === generation) setError(reason instanceof Error ? reason.message : "加载处理历史失败");
     } finally {
       if (historyGenerationRef.current.get(key) === generation) setHistoryLoadingKey("");
+    }
+  };
+
+  const loadDecisions = async (batchId: string) => {
+    if (!batchId || decisionLoadingBatchId === batchId || batchDecisions[batchId]) return;
+    setDecisionLoadingBatchId(batchId);
+    setError("");
+    try {
+      const batch = await getFeedbackBatch(batchId);
+      setBatchDecisions((current) => ({ ...current, [batchId]: batch.item.decisions }));
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "加载反馈迭代决策失败");
+    } finally {
+      setDecisionLoadingBatchId((current) => current === batchId ? "" : current);
     }
   };
 
@@ -355,13 +406,14 @@ export function FeedbackPage() {
         if (key === "comment") return <SummaryText value={row.comment} />;
         if (key === "context") return <SummaryText value={displayValue(row.context)} />;
         if (key === "created_at") return localTime(row.created_at);
-        if (key === "id") return <span className="console-page-actions feedback-action-list">{row.attempt_id && <Link className="secondary-button feedback-action-button" to={`/attempts/${row.attempt_id}`}>Attempt</Link>}{row.processing_task_id && <Link className="secondary-button feedback-action-button" to={`/?task=${encodeURIComponent(row.processing_task_id)}`}>Workbench task</Link>}{row.batch_id && <a className="secondary-button feedback-action-button" href={`/api/console/feedback/batches/${encodeURIComponent(row.batch_id)}`}>Processing batch</a>}{row.status === "resolved" && <button className="feedback-reopen-button" type="button" onClick={() => openReopen(row)}>重新打开反馈</button>}{!row.attempt_id && !row.processing_task_id && !row.batch_id && row.status !== "resolved" && <span className="muted">未关联</span>}</span>;
+        if (key === "id") return <span className="console-page-actions feedback-action-list">{row.attempt_id && <Link className="secondary-button feedback-action-button" to={`/attempts/${row.attempt_id}`}>Attempt</Link>}{row.processing_task_id && <Link className="secondary-button feedback-action-button" to={`/?task=${encodeURIComponent(row.processing_task_id)}`}>Workbench task</Link>}{row.batch_id && <a className="secondary-button feedback-action-button" href={`/api/console/feedback/batches/${encodeURIComponent(row.batch_id)}`}>Processing batch</a>}{row.status !== "resolved" && <button className="secondary-button feedback-action-button" type="button" disabled={!feedbackIterationEnabled}>处理反馈</button>}{row.status === "resolved" && <button className="feedback-reopen-button" type="button" onClick={() => openReopen(row)}>重新打开反馈</button>}{!row.attempt_id && !row.processing_task_id && !row.batch_id && row.status !== "resolved" && <span className="muted">未关联</span>}</span>;
         return displayValue(row[key]);
       }} renderExpanded={(row) => <div className="feedback-expanded">
         <div className="console-page-actions">{row.references.map((reference) => reference.route ? <a href={reference.route} key={`${reference.label}:${reference.route}`}>{reference.label}</a> : <span key={reference.label}>{reference.label}</span>)}{row.summary && <span>{displayValue(row.summary)}</span>}</div>
         <h3>处理历史</h3>
-        {row.processing_history ? <ProcessingHistory history={row.processing_history} /> : <button className="secondary-button feedback-history-load" type="button" disabled={historyLoadingKey === feedbackKey(row)} onClick={() => void loadHistory(row)}>{historyLoadingKey === feedbackKey(row) ? "正在加载处理历史…" : "加载处理历史"}</button>}
+        {row.processing_history ? <><ProcessingHistory history={row.processing_history} />{row.batch_id && !batchDecisions[row.batch_id] && <button className="secondary-button feedback-history-load" type="button" disabled={decisionLoadingBatchId === row.batch_id} onClick={() => void loadDecisions(row.batch_id)}>{decisionLoadingBatchId === row.batch_id ? "正在加载反馈迭代决策…" : "加载反馈迭代决策"}</button>}<DecisionHistory decisions={batchDecisions[row.batch_id] || []} history={row.processing_history} /></> : <button className="secondary-button feedback-history-load" type="button" disabled={historyLoadingKey === feedbackKey(row)} onClick={() => void loadHistory(row)}>{historyLoadingKey === feedbackKey(row) ? "正在加载处理历史…" : "加载处理历史"}</button>}
       </div>} />
+      {!feedbackIterationEnabled && rows.some((row) => row.status !== "resolved") && <p className="muted">反馈迭代已关闭；启用后可处理未解决反馈</p>}
       <Pagination page={page} pageSize={pageSize} total={totalCount} onPageChange={(nextPage) => update("page", nextPage)} />
     </section>
     {reopenTarget && <>

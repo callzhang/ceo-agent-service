@@ -110,6 +110,7 @@ export interface FeedbackProcessingRound {
   restart_evidence: Record<string, unknown>;
   health_evidence: Record<string, unknown>;
   backlog_evidence?: Record<string, unknown>;
+  scope_receipt?: Record<string, unknown>;
   receipt_version: 1 | 2;
   note: string;
   started_at: string;
