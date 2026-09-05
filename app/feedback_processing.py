@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from app.store import UserFeedbackItem
@@ -26,6 +26,8 @@ FEEDBACK_REOPEN_INVALID = "feedback_reopen_invalid"
 FEEDBACK_REOPEN_PROCESSING = "feedback_reopen_processing"
 FEEDBACK_REOPEN_HISTORY_INCOMPLETE = "feedback_reopen_history_incomplete"
 FEEDBACK_PROCESSING_SKILL_PATH = "skills/ceo-feedback-processing/SKILL.md"
+FEEDBACK_ITERATION_SKILL_PATH = "skills/ceo-feedback-iteration/SKILL.md"
+FEEDBACK_ITERATION_DISABLED_ERROR = "feedback_iteration_disabled"
 
 
 class FeedbackProcessingClaimError(ValueError):
@@ -36,6 +38,12 @@ class FeedbackProcessingClaimError(ValueError):
 
 class FeedbackProcessingBatchError(ValueError):
     """Raised when a batch id is reused with a different key set."""
+
+
+class FeedbackIterationDisabledError(ValueError):
+    """Raised when the separately managed feedback capability is disabled."""
+
+    error_code = FEEDBACK_ITERATION_DISABLED_ERROR
 
 
 class FeedbackProcessingReopenError(ValueError):
@@ -150,6 +158,72 @@ class FeedbackImportItem(_StrictProcessingModel):
         return self.summary
 
 
+class FeedbackIterationTargetSkillRevision(_StrictProcessingModel):
+    skill_id: int = Field(gt=0)
+    from_revision: int = Field(gt=0)
+    to_revision: int = Field(gt=0)
+
+
+class FeedbackIterationAcceptance(_StrictProcessingModel):
+    scenario: str = Field(min_length=1)
+    expected_behavior: str = Field(min_length=1)
+    verification: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def require_nonblank_values(self) -> "FeedbackIterationAcceptance":
+        if not self.scenario.strip() or not self.expected_behavior.strip() or any(
+            not value.strip() for value in self.verification
+        ):
+            raise ValueError("feedback iteration acceptance must be nonblank")
+        return self
+
+
+class FeedbackIterationDecision(_StrictProcessingModel):
+    """One explicit, persisted classification before an iteration changes work."""
+
+    scope: Literal["skill_only", "runtime_config", "code", "mixed", "needs_human"]
+    root_cause: str = Field(min_length=1)
+    feedback_keys: list[str] = Field(min_length=1)
+    source_references: list[str] = Field(min_length=1)
+    target_skill_revisions: list[FeedbackIterationTargetSkillRevision] = Field(
+        default_factory=list
+    )
+    target_runtime_config_id: int | None = Field(default=None, gt=0)
+    why_not_code: str = Field(min_length=1)
+    acceptance: FeedbackIterationAcceptance
+
+    @model_validator(mode="after")
+    def require_scope_references(self) -> "FeedbackIterationDecision":
+        if (
+            not self.root_cause.strip()
+            or not self.why_not_code.strip()
+            or any(not key.strip() for key in self.feedback_keys)
+            or any(not reference.strip() for reference in self.source_references)
+            or len(set(self.feedback_keys)) != len(self.feedback_keys)
+        ):
+            raise ValueError("feedback iteration decision references must be nonblank and unique")
+        if self.scope == "skill_only" and not self.target_skill_revisions:
+            raise ValueError("skill_only decision requires target Skill revisions")
+        if self.scope == "runtime_config" and self.target_runtime_config_id is None:
+            raise ValueError("runtime_config decision requires target runtime configuration")
+        if self.scope == "mixed" and (
+            not self.target_skill_revisions or self.target_runtime_config_id is None
+        ):
+            raise ValueError("mixed decision requires Skill revisions and runtime configuration")
+        return self
+
+
+class FeedbackIterationDecisionRecord(_StrictProcessingModel):
+    id: int = Field(gt=0)
+    batch_id: str = Field(min_length=1)
+    feedback_keys: list[str] = Field(min_length=1)
+    round_ids: list[int] = Field(min_length=1)
+    workbench_task_id: str = Field(min_length=1)
+    workbench_turn_id: str = Field(min_length=1)
+    decision: FeedbackIterationDecision
+    created_at: str = ""
+
+
 class FeedbackProcessingAssociation(_StrictProcessingModel):
     """Exact durable association for one feedback item receipt."""
 
@@ -259,16 +333,35 @@ def detail_references(item: "UserFeedbackItem") -> list[dict[str, str]]:
 
 
 def build_feedback_start_message(
-    batch_id: str, items: Sequence[FeedbackImportItem]
+    batch_id: str,
+    items: Sequence[FeedbackImportItem],
+    *,
+    runtime_context: dict[str, object] | None = None,
 ) -> str:
     """Render the deterministic startup instruction for one claimed batch."""
 
     lines = [
         f"Feedback processing batch: {batch_id}",
-        f"Use repository Skill: {FEEDBACK_PROCESSING_SKILL_PATH}",
-        "Use the brainstorming skill for this conversation, then use the local feedback API to write evidence and resolve the batch.",
+        f"Use repository Skill: {FEEDBACK_ITERATION_SKILL_PATH}",
+        "Use the bounded brainstorming profile in that Skill only when a material uncertainty remains, then use the local feedback API to persist the decision before changing work.",
         "Process the persisted feedback items below; do not copy the full feedback body.",
     ]
+    if runtime_context is not None:
+        config_id = runtime_context.get("config_id")
+        if type(config_id) is int and config_id > 0:
+            lines.append(f"runtime config: {config_id}")
+        revisions = runtime_context.get("loaded_revisions")
+        if isinstance(revisions, list):
+            for revision in revisions:
+                if not isinstance(revision, dict):
+                    continue
+                skill_id = revision.get("skill_id")
+                revision_number = revision.get("revision_number")
+                sha256 = revision.get("sha256")
+                if type(skill_id) is int and type(revision_number) is int and isinstance(sha256, str):
+                    lines.append(
+                        f"managed Skill {skill_id} revision {revision_number} sha256: {sha256}"
+                    )
     for item in items:
         lines.append(f"- key: {item.feedback_key}")
         lines.append(f"  persisted summary: {item.summary}")

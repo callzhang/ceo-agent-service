@@ -40,6 +40,8 @@ from app.managed_skills import (
     import_repository_managed_skills,
 )
 from app.feedback_processing import (
+    FeedbackIterationDecision,
+    FeedbackIterationDisabledError,
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
     FeedbackProcessingReopenError,
@@ -618,6 +620,24 @@ def register_console_routes(
         payload["processing_history"] = [json_safe(round_item) for round_item in history]
         return payload
 
+    def _feedback_iteration_runtime_context(store: Any) -> dict[str, object]:
+        """Project only the exact active runtime identity into a feedback turn."""
+        config = store.get_active_runtime_skill_config()
+        if config is None:
+            return {}
+        revisions: list[dict[str, object]] = []
+        for binding in store.list_runtime_skill_bindings(config.id):
+            if not binding.enabled:
+                continue
+            revision = store.get_managed_skill_revision(binding.revision_id)
+            if revision is not None:
+                revisions.append({
+                    "skill_id": revision.skill_id,
+                    "revision_number": revision.revision_number,
+                    "sha256": revision.sha256,
+                })
+        return {"config_id": config.id, "loaded_revisions": revisions}
+
     @app.post("/api/console/feedback/batches")
     async def console_feedback_batch_claim(request: Request):
         payload = await json_object(request)
@@ -643,6 +663,8 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback not found", "details": {"feedback_keys": missing}}, status_code=404)
         try:
             claimed = claim_store.claim_feedback_processing_items(cleaned_batch_id, keys)
+        except FeedbackIterationDisabledError as exc:
+            return JSONResponse({"ok": False, "code": exc.error_code, "message": "反馈迭代已关闭", "details": {}}, status_code=409)
         except FeedbackProcessingClaimError as exc:
             return JSONResponse({"ok": False, "code": exc.error_code, "message": "反馈已被其他处理批次占用", "details": {}}, status_code=409)
         except FeedbackProcessingBatchError as exc:
@@ -659,7 +681,7 @@ def register_console_routes(
         imports = [item for item in store.list_feedback_import_items(limit=10000, offset=0) if item.feedback_key in keys]
         imports.sort(key=lambda item: keys.index(item.feedback_key))
         refreshed_batch = store.get_feedback_processing_batch(cleaned_batch_id)
-        item = {"batch_id": cleaned_batch_id, "status": refreshed_batch.status if refreshed_batch else "processing", "feedback_keys": keys, "items": _feedback_items_for_batch(store, cleaned_batch_id), "start_message": build_feedback_start_message(cleaned_batch_id, imports)}
+        item = {"batch_id": cleaned_batch_id, "status": refreshed_batch.status if refreshed_batch else "processing", "feedback_keys": keys, "items": _feedback_items_for_batch(store, cleaned_batch_id), "start_message": build_feedback_start_message(cleaned_batch_id, imports, runtime_context=_feedback_iteration_runtime_context(store))}
         return command_result(item=item, message="反馈批次已领取")
 
     @app.get("/api/console/feedback/batches/{batch_id}")
@@ -668,7 +690,23 @@ def register_console_routes(
         batch = store.get_feedback_processing_batch(batch_id)
         if batch is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback batch not found", "details": {}}, status_code=404)
-        return item_envelope({"batch_id": batch.batch_id, "status": batch.status, "requested_count": batch.requested_count, "created_at": batch.created_at, "updated_at": batch.updated_at, "resolved_at": batch.resolved_at, "items": _feedback_items_for_batch(store, batch.batch_id)})
+        return item_envelope({"batch_id": batch.batch_id, "status": batch.status, "requested_count": batch.requested_count, "created_at": batch.created_at, "updated_at": batch.updated_at, "resolved_at": batch.resolved_at, "items": _feedback_items_for_batch(store, batch.batch_id), "decisions": [json_safe(item) for item in store.list_feedback_iteration_decisions(batch.batch_id)]})
+
+    @app.post("/api/console/feedback/batches/{batch_id}/decisions", status_code=201)
+    async def console_feedback_iteration_decision(batch_id: str, request: Request):
+        payload = await json_object(request)
+        raw_decision = payload.get("decision")
+        try:
+            decision = FeedbackIterationDecision.model_validate(raw_decision)
+            record = store_factory().record_feedback_iteration_decision(
+                batch_id,
+                decision,
+                workbench_task_id=payload.get("workbench_task_id", ""),
+                workbench_turn_id=payload.get("workbench_turn_id", ""),
+            )
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=422)
+        return json_safe(record)
 
     @app.patch("/api/console/feedback/batches/{batch_id}")
     async def console_feedback_batch_association(batch_id: str, request: Request):
@@ -1089,6 +1127,27 @@ def register_console_routes(
             "pending_or_active": _runtime_config_payload(store, selected) if selected else None,
             "active": _runtime_config_payload(store, active) if active else None,
         }
+
+    @app.get("/api/console/settings/feedback-iteration")
+    def console_feedback_iteration_capability():
+        store = managed_store()
+        selected = store.get_pending_or_active_runtime_skill_config()
+        return {
+            "enabled": store.feedback_iteration_enabled(),
+            "config_id": selected.id if selected is not None else None,
+        }
+
+    @app.post("/api/console/settings/feedback-iteration")
+    async def console_set_feedback_iteration_capability(request: Request):
+        payload = await json_object(request)
+        if set(payload) != {"enabled"} or type(payload.get("enabled")) is not bool:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": "enabled must be a boolean", "details": {}}, status_code=422)
+        try:
+            store = managed_store()
+            config = store.set_feedback_iteration_enabled(payload["enabled"])
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "code": "conflict", "message": str(exc), "details": {}}, status_code=409)
+        return {"enabled": store.feedback_iteration_enabled(config.id), "config_id": config.id, "status": config.status}
 
     @app.get("/api/console/settings/runtime-skill-configs/{config_id}/load-receipts")
     def console_runtime_skill_load_receipts(config_id: int):

@@ -43,6 +43,9 @@ from app.feedback_processing import (
     FeedbackProcessingReopenError,
     FeedbackProcessingRound,
     FeedbackProcessingTransition,
+    FeedbackIterationDecision,
+    FeedbackIterationDecisionRecord,
+    FeedbackIterationDisabledError,
     FeedbackImportItem,
     ResolutionEvidence,
     detail_references,
@@ -99,7 +102,7 @@ SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-04.2"
+STORE_SCHEMA_VERSION = "2026-09-05.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -127,6 +130,9 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "runtime_skill_configs",
     "runtime_skill_bindings",
     "runtime_skill_load_receipts",
+    "runtime_feedback_iteration_capabilities",
+    "feedback_iteration_decisions",
+    "feedback_iteration_decision_items",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_items_status",
@@ -163,6 +169,8 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_managed_skill_revisions_sha256",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
+    "idx_feedback_iteration_decisions_batch",
+    "idx_feedback_iteration_decision_items_feedback_round",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
@@ -229,6 +237,12 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_skill_bindings_immutable_delete",
     "trg_runtime_skill_load_receipts_immutable_update",
     "trg_runtime_skill_load_receipts_immutable_delete",
+    "trg_runtime_feedback_iteration_capabilities_immutable_update",
+    "trg_runtime_feedback_iteration_capabilities_immutable_delete",
+    "trg_feedback_iteration_decisions_immutable_update",
+    "trg_feedback_iteration_decisions_immutable_delete",
+    "trg_feedback_iteration_decision_items_immutable_update",
+    "trg_feedback_iteration_decision_items_immutable_delete",
 )
 FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL = """
 CREATE TRIGGER trg_feedback_processing_round_integer_v2_insert
@@ -357,6 +371,48 @@ begin
     select raise(abort, 'runtime Skill load receipts are append-only');
 end
 """.strip()
+RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_feedback_iteration_capabilities_immutable_update
+before update on runtime_feedback_iteration_capabilities
+begin
+    select raise(abort, 'feedback iteration capability records are immutable');
+end
+""".strip()
+RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_feedback_iteration_capabilities_immutable_delete
+before delete on runtime_feedback_iteration_capabilities
+begin
+    select raise(abort, 'feedback iteration capability records are immutable');
+end
+""".strip()
+FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_feedback_iteration_decisions_immutable_update
+before update on feedback_iteration_decisions
+begin
+    select raise(abort, 'feedback iteration decisions are append-only');
+end
+""".strip()
+FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_feedback_iteration_decisions_immutable_delete
+before delete on feedback_iteration_decisions
+begin
+    select raise(abort, 'feedback iteration decisions are append-only');
+end
+""".strip()
+FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_feedback_iteration_decision_items_immutable_update
+before update on feedback_iteration_decision_items
+begin
+    select raise(abort, 'feedback iteration decision items are append-only');
+end
+""".strip()
+FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_feedback_iteration_decision_items_immutable_delete
+before delete on feedback_iteration_decision_items
+begin
+    select raise(abort, 'feedback iteration decision items are append-only');
+end
+""".strip()
 FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR = (
     "schema_migration_invalid_feedback_processing_round_number"
 )
@@ -416,6 +472,24 @@ STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
     ),
     "trg_runtime_skill_load_receipts_immutable_delete": _normalize_schema_sql(
         RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_runtime_feedback_iteration_capabilities_immutable_update": _normalize_schema_sql(
+        RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_runtime_feedback_iteration_capabilities_immutable_delete": _normalize_schema_sql(
+        RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_feedback_iteration_decisions_immutable_update": _normalize_schema_sql(
+        FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_feedback_iteration_decisions_immutable_delete": _normalize_schema_sql(
+        FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_feedback_iteration_decision_items_immutable_update": _normalize_schema_sql(
+        FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_feedback_iteration_decision_items_immutable_delete": _normalize_schema_sql(
+        FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_DELETE_TRIGGER_SQL
     ),
 }
 
@@ -1597,6 +1671,8 @@ class AutoReplyStore:
             "trg_runtime_skill_bindings_immutable_delete",
             "trg_runtime_skill_load_receipts_immutable_update",
             "trg_runtime_skill_load_receipts_immutable_delete",
+            "trg_runtime_feedback_iteration_capabilities_immutable_update",
+            "trg_runtime_feedback_iteration_capabilities_immutable_delete",
         )
         definitions = (
             RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL,
@@ -1605,6 +1681,36 @@ class AutoReplyStore:
             RUNTIME_SKILL_BINDINGS_IMMUTABLE_DELETE_TRIGGER_SQL,
             RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL,
             RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL,
+            RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_DELETE_TRIGGER_SQL,
+        )
+        db.execute("begin immediate")
+        try:
+            for name in names:
+                db.execute(f"drop trigger if exists {name}")
+            for definition in definitions:
+                db.execute(definition)
+        except BaseException:
+            db.execute("rollback")
+            raise
+        else:
+            db.execute("commit")
+
+    @staticmethod
+    def _replace_feedback_iteration_decision_immutability_guards_atomically(
+        db: sqlite3.Connection,
+    ) -> None:
+        names = (
+            "trg_feedback_iteration_decisions_immutable_update",
+            "trg_feedback_iteration_decisions_immutable_delete",
+            "trg_feedback_iteration_decision_items_immutable_update",
+            "trg_feedback_iteration_decision_items_immutable_delete",
+        )
+        definitions = (
+            FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_DELETE_TRIGGER_SQL,
+            FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_DELETE_TRIGGER_SQL,
         )
         db.execute("begin immediate")
         try:
@@ -1896,6 +2002,12 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_runtime_skill_load_receipts_config
                     on runtime_skill_load_receipts(config_id, id);
+                create table if not exists runtime_feedback_iteration_capabilities (
+                    config_id integer primary key,
+                    enabled integer not null check(enabled in (0, 1)),
+                    created_at text not null default current_timestamp,
+                    foreign key(config_id) references runtime_skill_configs(id)
+                );
                 create table if not exists seen_messages (
                     message_id text primary key,
                     conversation_id text not null,
@@ -1963,6 +2075,28 @@ class AutoReplyStore:
                     on feedback_processing_items(status);
                 create index if not exists idx_feedback_processing_items_batch
                     on feedback_processing_items(batch_id);
+                create table if not exists feedback_iteration_decisions (
+                    id integer primary key autoincrement,
+                    batch_id text not null,
+                    workbench_task_id text not null,
+                    workbench_turn_id text not null,
+                    decision_json text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(batch_id) references feedback_processing_batches(batch_id)
+                );
+                create index if not exists idx_feedback_iteration_decisions_batch
+                    on feedback_iteration_decisions(batch_id, id);
+                create table if not exists feedback_iteration_decision_items (
+                    decision_id integer not null,
+                    feedback_key text not null,
+                    round_id integer not null,
+                    primary key(decision_id, feedback_key),
+                    foreign key(decision_id) references feedback_iteration_decisions(id),
+                    foreign key(feedback_key) references feedback_processing_items(feedback_key),
+                    foreign key(round_id) references feedback_processing_rounds(id)
+                );
+                create index if not exists idx_feedback_iteration_decision_items_feedback_round
+                    on feedback_iteration_decision_items(feedback_key, round_id, decision_id);
                 create table if not exists feedback_processing_rounds (
                     id integer primary key autoincrement,
                     feedback_key text not null,
@@ -2992,6 +3126,14 @@ class AutoReplyStore:
             self._replace_feedback_processing_round_guards_atomically(db)
             self._replace_managed_skill_revision_immutability_guards_atomically(db)
             self._replace_runtime_skill_immutability_guards_atomically(db)
+            self._replace_feedback_iteration_decision_immutability_guards_atomically(db)
+            db.execute(
+                """insert into runtime_feedback_iteration_capabilities (config_id, enabled)
+                   select id, 1 from runtime_skill_configs
+                   where id not in (
+                       select config_id from runtime_feedback_iteration_capabilities
+                   )"""
+            )
             workbench_turn_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(workbench_turns)").fetchall()
@@ -4171,8 +4313,11 @@ class AutoReplyStore:
         bindings: Mapping[object, object] | Sequence[object],
         *,
         expected_parent_id: int | None,
+        feedback_iteration_enabled: bool | None = None,
     ) -> RuntimeSkillConfig:
         normalized = self._normalize_runtime_skill_bindings(bindings)
+        if feedback_iteration_enabled is not None and type(feedback_iteration_enabled) is not bool:
+            raise ValueError("feedback iteration capability must be a boolean")
         with self._immediate_write_transaction() as db:
             latest = db.execute(
                 "select id from runtime_skill_configs order by id desc limit 1"
@@ -4192,6 +4337,16 @@ class AutoReplyStore:
                 (expected_parent_id,),
             )
             config_id = int(cursor.lastrowid)
+            if feedback_iteration_enabled is None:
+                inherited = db.execute(
+                    "select enabled from runtime_feedback_iteration_capabilities where config_id=?",
+                    (expected_parent_id,),
+                ).fetchone()
+                feedback_iteration_enabled = bool(inherited["enabled"]) if inherited else True
+            db.execute(
+                "insert into runtime_feedback_iteration_capabilities (config_id, enabled) values (?, ?)",
+                (config_id, int(feedback_iteration_enabled)),
+            )
             db.executemany(
                 """insert into runtime_skill_bindings
                    (config_id, skill_id, revision_id, enabled, load_order, purpose)
@@ -4233,6 +4388,44 @@ class AutoReplyStore:
                 for binding in bindings
             ],
             expected_parent_id=expected_parent_id,
+            feedback_iteration_enabled=self.feedback_iteration_enabled(source_config_id),
+        )
+
+    def feedback_iteration_enabled(self, config_id: int | None = None) -> bool:
+        if config_id is None:
+            selected = self.get_pending_or_active_runtime_skill_config()
+            if selected is None:
+                return True
+            config_id = selected.id
+        with self._connect() as db:
+            row = db.execute(
+                "select enabled from runtime_feedback_iteration_capabilities where config_id=?",
+                (config_id,),
+            ).fetchone()
+        return True if row is None else bool(row["enabled"])
+
+    def set_feedback_iteration_enabled(self, enabled: bool) -> RuntimeSkillConfig:
+        """Create a next-start configuration with the requested system capability state."""
+        if type(enabled) is not bool:
+            raise ValueError("feedback iteration capability must be a boolean")
+        selected = self.get_pending_or_active_runtime_skill_config()
+        if selected is None:
+            return self.create_runtime_skill_config(
+                [], expected_parent_id=None, feedback_iteration_enabled=enabled
+            )
+        return self.create_runtime_skill_config(
+            [
+                {
+                    "skill_id": binding.skill_id,
+                    "revision_id": binding.revision_id,
+                    "enabled": binding.enabled,
+                    "load_order": binding.load_order,
+                    "purpose": binding.purpose,
+                }
+                for binding in self.list_runtime_skill_bindings(selected.id)
+            ],
+            expected_parent_id=selected.id,
+            feedback_iteration_enabled=enabled,
         )
 
     def get_active_runtime_skill_config(self) -> RuntimeSkillConfig | None:
@@ -15019,6 +15212,106 @@ class AutoReplyStore:
     ) -> FeedbackProcessingBatch:
         return FeedbackProcessingBatch.model_validate(dict(row))
 
+    @staticmethod
+    def _feedback_iteration_decision_from_row(
+        row: sqlite3.Row,
+    ) -> FeedbackIterationDecisionRecord:
+        values = dict(row)
+        values["feedback_keys"] = json.loads(values.pop("feedback_keys_json"))
+        values["round_ids"] = json.loads(values.pop("round_ids_json"))
+        values["decision"] = json.loads(values.pop("decision_json"))
+        return FeedbackIterationDecisionRecord.model_validate(values)
+
+    def record_feedback_iteration_decision(
+        self,
+        batch_id: str,
+        decision: FeedbackIterationDecision,
+        *,
+        workbench_task_id: str,
+        workbench_turn_id: str,
+    ) -> FeedbackIterationDecisionRecord:
+        """Append one typed classification tied to the current rounds in a batch."""
+        if not isinstance(decision, FeedbackIterationDecision):
+            raise ValueError("feedback iteration decision is invalid")
+        cleaned_batch_id = batch_id.strip()
+        task_id = workbench_task_id.strip()
+        turn_id = workbench_turn_id.strip()
+        if not cleaned_batch_id or not task_id or not turn_id:
+            raise ValueError("feedback iteration decision requires batch and Workbench identity")
+        keys = tuple(decision.feedback_keys)
+        with self._immediate_write_transaction() as db:
+            batch = db.execute(
+                "select status from feedback_processing_batches where batch_id=?",
+                (cleaned_batch_id,),
+            ).fetchone()
+            if batch is None or str(batch["status"]) != "processing":
+                raise ValueError("feedback iteration decision requires a processing batch")
+            placeholders = ",".join("?" for _ in keys)
+            rows = db.execute(
+                f"""select feedback_key, current_round_id, batch_id, status
+                    from feedback_processing_items where feedback_key in ({placeholders})""",
+                keys,
+            ).fetchall()
+            if len(rows) != len(keys) or any(
+                str(row["batch_id"]) != cleaned_batch_id
+                or str(row["status"]) != "processing"
+                or type(row["current_round_id"]) is not int
+                or row["current_round_id"] <= 0
+                for row in rows
+            ):
+                raise ValueError("feedback iteration decision keys must belong to the current processing batch")
+            round_ids_by_key = {str(row["feedback_key"]): int(row["current_round_id"]) for row in rows}
+            cursor = db.execute(
+                """insert into feedback_iteration_decisions
+                   (batch_id, workbench_task_id, workbench_turn_id, decision_json)
+                   values (?, ?, ?, ?)""",
+                (
+                    cleaned_batch_id,
+                    task_id,
+                    turn_id,
+                    decision.model_dump_json(),
+                ),
+            )
+            decision_id = int(cursor.lastrowid)
+            db.executemany(
+                """insert into feedback_iteration_decision_items
+                   (decision_id, feedback_key, round_id) values (?, ?, ?)""",
+                [(decision_id, key, round_ids_by_key[key]) for key in keys],
+            )
+            row = db.execute(
+                """select decision.id, decision.batch_id, decision.workbench_task_id,
+                          decision.workbench_turn_id, decision.decision_json,
+                          decision.created_at,
+                          json_group_array(item.feedback_key) as feedback_keys_json,
+                          json_group_array(item.round_id) as round_ids_json
+                     from feedback_iteration_decisions decision
+                     join feedback_iteration_decision_items item on item.decision_id=decision.id
+                    where decision.id=?
+                    group by decision.id""",
+                (decision_id,),
+            ).fetchone()
+        assert row is not None
+        return self._feedback_iteration_decision_from_row(row)
+
+    def list_feedback_iteration_decisions(
+        self, batch_id: str
+    ) -> tuple[FeedbackIterationDecisionRecord, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                """select decision.id, decision.batch_id, decision.workbench_task_id,
+                          decision.workbench_turn_id, decision.decision_json,
+                          decision.created_at,
+                          json_group_array(item.feedback_key) as feedback_keys_json,
+                          json_group_array(item.round_id) as round_ids_json
+                     from feedback_iteration_decisions decision
+                     join feedback_iteration_decision_items item on item.decision_id=decision.id
+                    where decision.batch_id=?
+                    group by decision.id
+                    order by decision.id""",
+                (batch_id.strip(),),
+            ).fetchall()
+        return tuple(self._feedback_iteration_decision_from_row(row) for row in rows)
+
     def create_feedback_processing_batch(
         self,
         feedback_keys: Sequence[str] = (),
@@ -15132,6 +15425,8 @@ class AutoReplyStore:
         keys = list(dict.fromkeys(key.strip() for key in feedback_keys if key.strip()))
         if not cleaned_batch_id or not keys:
             return []
+        if not self.feedback_iteration_enabled():
+            raise FeedbackIterationDisabledError("feedback iteration is disabled")
         with self._immediate_write_transaction() as db:
             existing_batch = db.execute(
                 """
