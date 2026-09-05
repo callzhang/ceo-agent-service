@@ -420,6 +420,51 @@ def test_promote_rejects_candidate_that_does_not_cover_full_email_taxonomy(
     assert registry.get_model(model_id).status == "candidate"
 
 
+def test_legacy_partial_active_manifest_is_rejected_but_candidate_stays_readable(
+    tmp_path: Path,
+):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    model_id = _stage(registry, tmp_path)
+    record = registry.get_model(model_id)
+    manifest = registry._manifest_for(record.metadata)
+    (registry.root / "active.json").write_text(
+        json.dumps(manifest.to_dict(), sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelRegistryError, match="invalid model manifest: active"):
+        registry.active_manifest()
+
+    assert registry.load_classifier(model_id).class_labels() == ("junk", "work")
+    assert registry.get_model(model_id).status == "candidate"
+
+
+def test_fallback_refuses_legacy_partial_previous_manifest(tmp_path: Path):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    active = _stage_full(registry, tmp_path, suffix="-active")
+    registry.promote(active, reason="validated")
+    partial = _stage(
+        registry,
+        tmp_path,
+        suffix="-partial",
+        trained_at=TRAINED_AT + timedelta(seconds=1),
+    )
+    partial_record = registry.get_model(partial)
+    previous_manifest = registry._manifest_for(partial_record.metadata)
+    (registry.root / "previous.json").write_text(
+        json.dumps(previous_manifest.to_dict(), sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelRegistryError, match="invalid model manifest: previous"):
+        registry.fallback_to_previous(
+            reason="runtime_failure",
+            failed_model_id=active,
+        )
+
+    assert registry.active_manifest().model_id == active  # type: ignore[union-attr]
+
+
 def test_rejected_candidate_and_runtime_fallback_leave_history_durable(tmp_path: Path):
     registry = EmailModelRegistry(tmp_path / "registry")
     first = _stage_full(registry, tmp_path, suffix="-first")

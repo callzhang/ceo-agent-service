@@ -204,6 +204,22 @@ def test_training_readiness_requires_every_email_category():
             assert category.value in reason
 
 
+def test_training_readiness_enforces_two_example_floor_per_category():
+    examples = [
+        {"label": category.value, "model_text": f"sample-{category.value}"}
+        for category in EmailCategory
+    ]
+
+    readiness = assess_examples_readiness(
+        examples,
+        minimum_examples=len(examples),
+        minimum_per_category=1,
+    )
+
+    assert readiness.ready is False
+    assert "minimum 2 examples per category" in " ".join(readiness.reasons)
+
+
 def test_model_promotion_does_not_imply_category_action_eligibility():
     assessment = assess_candidate(
         TrainingReadiness(

@@ -606,12 +606,15 @@ Attention 页面或 launchd 配置。
 动作开关。示例阈值是冷启动参数，不是校准后的概率，也不
 单独构成外部动作授权。
 
-反馈重训由 `email_classifier_training.py` 负责 readiness 和模型晋级：至少
-需要 5 条反馈、2 个类别且每个已出现类别至少 2 条样本；随后运行留一验证，
-检查候选序列化后可重新加载，最后才更新 `model.active.pkl`，已有 active
-模型先保留为 `model.previous.pkl`。条件不满足或候选检查失败时不改变 active
-模型。CLI `retrain` 使用同一流程并返回拒绝原因。该流程属于模型完整性和
-学习闭环，不改变 CEO Agent 的外部动作授权边界。
+反馈重训由 `email_classifier_training.py` 负责 readiness 和模型晋级：只有固定
+八类中的每一类都至少有 2 条用户确认样本（因此至少 16 条）才启动训练；调用方
+只能提高、不能降低每类 2 条的硬下限。缺类模型可以作为 candidate 保存、诊断和
+展示，但不能成为 active，也不能作为 previous 被 runtime fallback 重新激活。
+训练随后运行留一验证，检查候选序列化后可重新加载，并确认 artifact labels、
+`category_counts` 和 `per_category_metrics` 精确覆盖固定八类，最后才切换 active
+manifest；条件不满足或候选检查失败时不改变 active 模型。CLI `retrain` 使用
+同一流程并返回拒绝原因。该流程属于模型完整性和学习闭环，不改变 CEO Agent
+的外部动作授权边界。
 
 Phase-C 的 `email_action_dry_run.py` 只根据达到类别阈值且类别具备自动动作资格的
 `EmailDecision` 生成动作预览，不调用 connector。对 `subscription`，它只

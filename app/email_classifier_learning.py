@@ -18,6 +18,7 @@ from app.email_classifier_retrain import (
     save_retrain_state,
 )
 from app.email_model_registry import EmailModelRegistry
+from app.email_classifier_training import assess_examples_readiness
 from app.email_pipeline import apply_human_confirmation
 from app.email_store import EmailStore
 
@@ -150,6 +151,9 @@ class EmailClassifierLearningService:
             return self._poll_retrain(state, now=now)
         pending = len(self.store.list_unincluded_training_examples())
         enough = pending >= self.policy.minimum_new_examples
+        training_readiness = assess_examples_readiness(
+            self.store.list_training_examples()
+        )
         idle = (
             state.last_feedback_at is not None
             and (
@@ -166,8 +170,18 @@ class EmailClassifierLearningService:
             ).total_seconds()
             >= self.policy.max_interval_seconds
         )
-        due = enough and (manual or idle or overdue)
-        reason = "manual" if manual and enough else "idle_debounce" if idle and enough else "max_interval" if overdue and enough else None
+        due = enough and training_readiness.ready and (manual or idle or overdue)
+        reason = (
+            "training_not_ready"
+            if enough and not training_readiness.ready
+            else "manual"
+            if manual and enough
+            else "idle_debounce"
+            if idle and enough
+            else "max_interval"
+            if overdue and enough
+            else None
+        )
         decision = RetrainDecision(due, reason, pending)
         if not due:
             return AutoRetrainResult(decision, state, None, None)

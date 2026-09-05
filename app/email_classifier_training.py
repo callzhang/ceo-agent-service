@@ -417,6 +417,7 @@ def assess_examples_readiness(
         raise ValueError("minimum_examples must be positive")
     if minimum_per_category <= 0:
         raise ValueError("minimum_per_category must be positive")
+    effective_minimum_per_category = max(2, minimum_per_category)
     counts = dict(Counter(example["label"] for example in examples))
     reasons: list[str] = []
     if len(examples) < minimum_examples:
@@ -430,11 +431,11 @@ def assess_examples_readiness(
     underrepresented = sorted(
         label
         for label in required_labels
-        if counts.get(label, 0) < minimum_per_category
+        if counts.get(label, 0) < effective_minimum_per_category
     )
     if underrepresented:
         reasons.append(
-            f"minimum {minimum_per_category} examples per category required: "
+            f"minimum {effective_minimum_per_category} examples per category required: "
             + ", ".join(underrepresented)
         )
     return TrainingReadiness(not reasons, len(examples), counts, tuple(reasons))
