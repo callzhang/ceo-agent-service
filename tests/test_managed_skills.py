@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sqlite3
 from threading import Barrier, Thread
 from pathlib import Path
@@ -13,6 +14,7 @@ from app.managed_skills import (
     ManagedSkillValidationError,
     REPOSITORY_IMPORT_SOURCE,
     import_repository_managed_skills,
+    resolve_pending_runtime_skills,
 )
 from app.store import AutoReplyStore
 
@@ -36,6 +38,56 @@ metadata:
 
 # Version two
 """
+
+
+def _copy_existing_feedback_schema_without_managed_skill_tables(path: Path) -> None:
+    """Build a pre-managed-Skill database containing a persisted feedback item.
+
+    The fixture begins from the repository's existing feedback schema, then
+    removes only the tables introduced by the managed-Skill migration.  This
+    keeps the fixture aligned with the real legacy feedback projection while
+    exercising the additive upgrade path rather than an empty database path.
+    """
+    legacy = AutoReplyStore(path)
+    legacy.upsert_feedback_event(
+        key="manual:8308",
+        feedback_token="manual-attempt:8308",
+        comment="existing feedback must survive the managed-Skill migration",
+        source="workbench",
+    )
+    with legacy._connect() as db:
+        for table in (
+            "runtime_feedback_iteration_capabilities",
+            "runtime_skill_load_receipts",
+            "runtime_skill_bindings",
+            "runtime_skill_configs",
+            "managed_skill_revisions",
+            "managed_skills",
+        ):
+            db.execute(f"drop table {table}")
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+
+
+def test_managed_skill_migration_is_additive_for_existing_feedback_database(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "existing-feedback.sqlite3"
+    _copy_existing_feedback_schema_without_managed_skill_tables(db_path)
+
+    migrated = AutoReplyStore(db_path)
+
+    assert migrated.get_feedback_processing_item("manual:8308") is not None
+    assert migrated.list_managed_skills() == ()
+
+    snapshot = resolve_pending_runtime_skills(migrated, pid=os.getpid())
+    active = migrated.get_active_runtime_skill_config()
+
+    assert snapshot.revisions
+    assert active is not None
+    assert active.id == snapshot.config_id
+    assert {
+        skill.name for skill in migrated.list_managed_skills()
+    } == set(BUNDLED_BUSINESS_SKILL_NAMES)
 
 
 def test_initial_import_creates_revisions_and_initial_config_for_service_owned_skills(

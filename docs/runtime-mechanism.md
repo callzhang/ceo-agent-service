@@ -42,10 +42,29 @@ pending -> running -> done
 切换不会中断正在进行的生命周期。缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，
 并阻止它继续创建新任务；其他功能不受影响。
 
-项目 `skills/*/SKILL.md` 是 Settings 的编辑源。编辑保存使用当前内容的 SHA 做乐观并发
-控制，校验通过后原子写回并同步 `~/.agents/skills` 中的 service-managed 运行时副本；同步
-失败会恢复源文件。共享 Skill 的内容修改会影响所有引用它的启用功能。外部 operation Skill、
-用户 Skill、系统 Skill 和插件 Skill 不属于这个编辑器。
+## Runtime-managed Skill 修订与启动配置
+
+Settings 不再直接编辑项目目录或 `~/.agents/skills`。每次保存会在 SQLite 中创建一条不可变的
+managed Skill revision，保存原始 `SKILL.md`、精确 SHA-256、父修订和来源。项目内七个
+service-owned 业务 Skill 只在首次初始化时导入为基线；导入不扫描、不覆盖用户、插件、系统或
+operation Skill，也不会把 Settings 编辑同步回任意运行时目录。
+
+一次启用操作创建一个不可变的 `runtime_skill_config`，其状态只能是
+`pending_restart`、`active` 或 `load_failed`。它绑定每个 Skill 的精确 revision、启用位、加载
+顺序和用途。运行中的 Agent 不读取可变 Settings：服务进程启动时解析候选配置，加载精确修订，
+并写入包含 PID、配置 ID 和每个 Skill SHA 的 append-only load receipt；只有匹配的成功 receipt
+才能把候选配置变成 `active`。候选加载失败会记录具体错误并保留前一个 active 配置；回滚同样
+创建新的 next-start 配置，不会改写历史记录。
+
+Consumer 在一次 invocation 开始时获得这一不可变 snapshot，之后不会在同一个 invocation 中
+重新读取 Settings。`feedback_iteration` 是同一配置中的系统能力，不是第八个业务任务生产开关。
+它关闭时，反馈的读取、历史和 reopen 仍可用，但 UI 的“处理反馈”保持可见且 disabled，后端也
+拒绝新的 claim；已有处理项按受控配置转换返回 pending/open，并保留其历史。
+
+功能与业务 Skill 的多对多关系仍由 `data/config/skill-features.json` 声明，运行时开关由
+`data/config/skill-state.json` 持久化。它们只控制**新任务/新作业创建**，不控制 Skill 是否可被
+runtime config 加载。关闭功能不会取消、删除或改写已存在的 `pending`、`running` 或重试任务。
+缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，并阻止它继续创建新任务；其他功能不受影响。
 
 每个执行 Agent 和审核 Agent 的结构化结果都带有通用的 `risk`（`low`、`medium`、
 `high`）和 `confidence`（0 到 1）字段，不区分任务领域。`needs_human` 只有在风险为
@@ -109,18 +128,17 @@ pending -> processing -> resolved -> pending
 turn、attempt/run、commit 和测试/重启/健康证据都归属该轮次。新轮次以空关联和
 空证据开始；旧批次、旧轮次和旧回执始终不可变，也不参与新轮次的结案。
 
-只有当前 `processing` 轮次可以接收关联或证据 PATCH，且一个批次只有在所有
-当前轮次都满足下列条件时才能原子进入 `resolved`：
+只有当前 `processing` 轮次可以接收关联或证据 PATCH。resolution receipt 按已持久化的
+feedback-iteration decision scope 校验，而不是对所有修复一律要求 commit：`skill_only` 要求
+精确 revision/SHA、active config、匹配的启动 load receipt、场景验证、health 和零 backlog；
+`runtime_config` 要求前后 config、目标 receipt、场景验证、health 和零 backlog；`code` 要求
+本地 `main` 祖先 commit、测试、不同 PID 的重启、health 和零 backlog；`mixed` 同时满足相应
+code 与 Skill/config 条件。`needs_human` 不接受 resolution receipt，项目保持 open。任一适用
+条件不满足时，整个批次保持 `processing`，不部分结案。关联、证据和结果必须通过 Feedback API
+持久化并回读一致。
 
-- 代码修改、所需测试和 commit 都已完成，commit 存在且是本地 `main` 的祖先；
-- launchd 标签是 `com.ceo-agent-service.main`，重启前后是两个不同的正 PID；
-- 本地 `/healthz` 返回 HTTP 200 且 `ok=true`；
-- 后端使用权威实时数据读取 backlog，`processing` / `failed` / `retryable` 全部为零；
-- 同一轮次的关联、证据和结果已通过 Feedback API 持久化并回读一致。
-
-任一检查失败都保留整个批次为 `processing`，不部分结案。Feedback API 是现有
-本地后端边界内的操作接口，供 Workbench 和仓库 Agent 共用；它不对公网暴露，
-也不增加 feedback 专用鉴权或第二套 Agent 流程。
+Feedback API 是现有本地后端边界内的操作接口，供 Workbench 和仓库 Agent 共用；它不对
+公网暴露，也不增加 feedback 专用鉴权或第二套 Agent 流程。
 
 ### Email task 的运行边界
 
