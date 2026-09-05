@@ -361,7 +361,11 @@ class EmailModelRegistry:
             candidate = self.get_model(model_id)
             if candidate.status != "candidate":
                 raise ModelRegistryError("only a candidate model can be promoted")
-            self.load_classifier(model_id)
+            classifier = self.load_classifier(model_id)
+            _validate_active_category_protocol(
+                candidate.metadata,
+                set(classifier.class_labels()),
+            )
             current = self._read_manifest(self.root / "active.json")
             if current is not None:
                 self._verify_manifest(current)
@@ -1043,3 +1047,16 @@ def _validate_category_protocol(
             raise ModelRegistryError(
                 f"candidate metric eligibility_reason is invalid: {label}"
             )
+
+
+def _validate_active_category_protocol(
+    metadata: EmailModelMetadata,
+    artifact_labels: set[str],
+) -> None:
+    required = {category.value for category in EmailCategory}
+    if (
+        artifact_labels != required
+        or set(metadata.category_counts) != required
+        or set(metadata.per_category_metrics) != required
+    ):
+        raise ModelRegistryError("active category protocol requires full taxonomy")

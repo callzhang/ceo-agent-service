@@ -423,8 +423,14 @@ def assess_examples_readiness(
         reasons.append(f"minimum {minimum_examples} feedback examples required")
     if len(counts) < 2:
         reasons.append("at least two categories are required")
+    required_labels = {category.value for category in EmailCategory}
+    unknown_labels = sorted(set(counts) - required_labels)
+    if unknown_labels:
+        reasons.append("unknown email categories: " + ", ".join(unknown_labels))
     underrepresented = sorted(
-        label for label, count in counts.items() if count < minimum_per_category
+        label
+        for label in required_labels
+        if counts.get(label, 0) < minimum_per_category
     )
     if underrepresented:
         reasons.append(

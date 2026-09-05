@@ -23,6 +23,7 @@ from app.email_classifier_training import (
     TrainingNotReady,
     TrainingReadiness,
     assess_candidate,
+    assess_examples_readiness,
     assess_feedback_readiness,
     evaluate_category_validation,
     train_and_promote,
@@ -123,13 +124,24 @@ def _confirm(
 
 def _store_with_confirmed_feedback(tmp_path: Path) -> EmailStore:
     store = EmailStore(tmp_path / "email.sqlite3")
+    category_terms = {
+        EmailCategory.IMPORTANT: ("紧急", "合同", "审批"),
+        EmailCategory.WORK: ("项目", "会议", "计划"),
+        EmailCategory.PERSONAL: ("家人", "朋友", "聚会"),
+        EmailCategory.NOTIFICATION: ("提醒", "通知", "状态"),
+        EmailCategory.SUBSCRIPTION: ("订阅", "简报", "newsletter"),
+        EmailCategory.BILLING: ("账单", "发票", "付款"),
+        EmailCategory.SHOPPING: ("订单", "物流", "商品"),
+        EmailCategory.JUNK: ("促销", "折扣", "广告"),
+    }
     examples = [
-        ("work-1", EmailCategory.WORK, "__from_domain__work.test __subject__项目 工作"),
-        ("work-2", EmailCategory.WORK, "__from_domain__work.test __subject__项目 会议"),
-        ("work-3", EmailCategory.WORK, "__from_domain__work.test __subject__项目 计划"),
-        ("junk-1", EmailCategory.JUNK, "__from_domain__ads.test __subject__促销 优惠"),
-        ("junk-2", EmailCategory.JUNK, "__from_domain__ads.test __subject__促销 折扣"),
-        ("junk-3", EmailCategory.JUNK, "__from_domain__ads.test __subject__促销 广告"),
+        (
+            f"{category.value}-{index}",
+            category,
+            f"__from_domain__{category.value}.test __subject__{term}",
+        )
+        for category, terms in category_terms.items()
+        for index, term in enumerate(terms, 1)
     ]
     for message_id, category, model_text in examples:
         row = store.upsert_classification(
@@ -174,6 +186,22 @@ def test_training_readiness_requires_two_examples_per_category(tmp_path: Path):
     assert readiness.ready is False
     assert readiness.example_count == 1
     assert "at least two categories" in " ".join(readiness.reasons)
+
+
+def test_training_readiness_requires_every_email_category():
+    examples = [
+        {"label": label, "model_text": f"{label}-{index}"}
+        for label in ("work", "junk")
+        for index in range(3)
+    ]
+
+    readiness = assess_examples_readiness(examples)
+
+    assert readiness.ready is False
+    reason = " ".join(readiness.reasons)
+    for category in EmailCategory:
+        if category.value not in {"work", "junk"}:
+            assert category.value in reason
 
 
 def test_model_promotion_does_not_imply_category_action_eligibility():
@@ -589,8 +617,10 @@ def test_train_and_promote_round_trips_candidate_and_previous_model(tmp_path: Pa
     )
 
     assert result.promoted is True
-    assert result.example_count == 6
-    assert result.category_counts == {"work": 3, "junk": 3}
+    assert result.example_count == 24
+    assert result.category_counts == {
+        category.value: 3 for category in EmailCategory
+    }
     assert active.exists()
     assert not previous.exists()
 
@@ -740,7 +770,7 @@ def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
 
     assert rejected.promoted is False
     assert registry.get_model(rejected.model_id).status == "rejected"
-    assert len(store.list_unincluded_training_examples()) == 6
+    assert len(store.list_unincluded_training_examples()) == 24
 
     failed_store = _store_with_confirmed_feedback(tmp_path / "failed")
     failed_registry = EmailModelRegistry(tmp_path / "failed-registry")
@@ -755,7 +785,7 @@ def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
             failed_registry,
             trained_at=datetime(2026, 8, 29, 21, 45, 32, tzinfo=timezone.utc),
         )
-    assert len(failed_store.list_unincluded_training_examples()) == 6
+    assert len(failed_store.list_unincluded_training_examples()) == 24
 
 
 def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_pending(
@@ -899,7 +929,7 @@ def test_retrain_if_due_advances_state_only_after_promotion(tmp_path: Path):
 
     assert result.decision.reason == "idle_debounce"
     assert result.training_result is not None
-    assert result.state.last_trained_feedback_count == 6
+    assert result.state.last_trained_feedback_count == 24
     assert active.exists()
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.email_classifier_model import CpuTfidfLogisticClassifier
+from app.email_classifier_contracts import EmailCategory
 from app.email_model_registry import (
     EmailModelMetadata,
     EmailModelRegistry,
@@ -104,6 +105,74 @@ def _stage(
         _metadata(digest=digest, model_id=model_id, trained_at=trained_at),
         parity_texts=("work project", "junk offer"),
         expected_labels=("work", "junk"),
+    )
+    return model_id
+
+
+def _full_classifier(version: str = "candidate") -> CpuTfidfLogisticClassifier:
+    texts = []
+    labels = []
+    for category in EmailCategory:
+        texts.extend(
+            (
+                f"{category.value} primary message",
+                f"{category.value} secondary message",
+            )
+        )
+        labels.extend((category.value, category.value))
+    return CpuTfidfLogisticClassifier(model_version=version).fit(texts, labels)
+
+
+def _full_metadata(
+    *,
+    digest: str,
+    model_id: str,
+    trained_at: datetime = TRAINED_AT,
+    parent_model_id: str | None = None,
+) -> EmailModelMetadata:
+    base = _metadata(digest=digest, model_id=model_id, trained_at=trained_at)
+    metric = next(iter(base.per_category_metrics.values()))
+    return EmailModelMetadata.from_mapping(
+        {
+            **base.to_dict(),
+            "parent_model_id": parent_model_id,
+            "sample_count": 16,
+            "new_sample_count": 16,
+            "category_counts": {category.value: 2 for category in EmailCategory},
+            "account_counts": {"account-a": 16},
+            "per_category_metrics": {
+                category.value: dict(metric) for category in EmailCategory
+            },
+        }
+    )
+
+
+def _stage_full(
+    registry: EmailModelRegistry,
+    tmp_path: Path,
+    *,
+    suffix: str = "",
+    trained_at: datetime = TRAINED_AT,
+    parent_model_id: str | None = None,
+) -> str:
+    source = tmp_path / f"candidate-full{suffix}.pkl"
+    classifier = _full_classifier()
+    classifier.save(source)
+    digest = sha256(source.read_bytes()).hexdigest()
+    model_id = build_model_id(trained_at=trained_at, artifact_sha256=digest)
+    parity_texts = tuple(f"{category.value} primary message" for category in EmailCategory)
+    registry.stage_candidate(
+        source,
+        _full_metadata(
+            digest=digest,
+            model_id=model_id,
+            trained_at=trained_at,
+            parent_model_id=parent_model_id,
+        ),
+        parity_texts=parity_texts,
+        expected_labels=tuple(
+            classifier.predict(text).label for text in parity_texts
+        ),
     )
     return model_id
 
@@ -301,7 +370,7 @@ def test_promote_switches_small_manifests_and_preserves_previous_artifacts(
     tmp_path: Path,
 ):
     registry = EmailModelRegistry(tmp_path / "registry")
-    first = _stage(registry, tmp_path, suffix="-first")
+    first = _stage_full(registry, tmp_path, suffix="-first")
     registry.promote(first, reason="initial_candidate_passed")
 
     first_manifest = registry.active_manifest()
@@ -311,25 +380,22 @@ def test_promote_switches_small_manifests_and_preserves_previous_artifacts(
 
     later = TRAINED_AT + timedelta(seconds=1)
     source = tmp_path / "candidate-second.pkl"
-    _classifier().fit(
-        ["work roadmap", "work sprint", "junk discount", "junk advertising"],
-        ["work", "work", "junk", "junk"],
-    ).save(source)
+    classifier = _full_classifier()
+    classifier.save(source)
     digest = sha256(source.read_bytes()).hexdigest()
     second = build_model_id(trained_at=later, artifact_sha256=digest)
-    metadata = _metadata(digest=digest, model_id=second)
-    metadata = EmailModelMetadata.from_mapping(
-        {
-            **metadata.to_dict(),
-            "trained_at": later.isoformat(),
-            "parent_model_id": first,
-        }
+    metadata = _full_metadata(
+        digest=digest,
+        model_id=second,
+        trained_at=later,
+        parent_model_id=first,
     )
+    parity_texts = tuple(f"{category.value} primary message" for category in EmailCategory)
     registry.stage_candidate(
         source,
         metadata,
-        parity_texts=("work roadmap", "junk discount"),
-        expected_labels=("work", "junk"),
+        parity_texts=parity_texts,
+        expected_labels=tuple(classifier.predict(text).label for text in parity_texts),
     )
     registry.promote(second, reason="validated_candidate_passed")
 
@@ -341,31 +407,46 @@ def test_promote_switches_small_manifests_and_preserves_previous_artifacts(
     assert json.loads((registry.root / "active.json").read_text())["model_id"] == second
 
 
+def test_promote_rejects_candidate_that_does_not_cover_full_email_taxonomy(
+    tmp_path: Path,
+):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    model_id = _stage(registry, tmp_path)
+
+    with pytest.raises(ModelRegistryError, match="active category protocol"):
+        registry.promote(model_id, reason="must_not_activate_partial_taxonomy")
+
+    assert registry.active_manifest() is None
+    assert registry.get_model(model_id).status == "candidate"
+
+
 def test_rejected_candidate_and_runtime_fallback_leave_history_durable(tmp_path: Path):
     registry = EmailModelRegistry(tmp_path / "registry")
-    first = _stage(registry, tmp_path, suffix="-first")
+    first = _stage_full(registry, tmp_path, suffix="-first")
     registry.promote(first, reason="initial")
 
     source = tmp_path / "candidate-second.pkl"
-    _classifier().fit(
-        ["work one", "work two", "junk one", "junk two"],
-        ["work", "work", "junk", "junk"],
-    ).save(source)
+    classifier = _full_classifier()
+    classifier.save(source)
     digest = sha256(source.read_bytes()).hexdigest()
     second_time = TRAINED_AT + timedelta(seconds=2)
     second = build_model_id(trained_at=second_time, artifact_sha256=digest)
     metadata = EmailModelMetadata.from_mapping(
         {
-            **_metadata(digest=digest, model_id=second).to_dict(),
-            "trained_at": second_time.isoformat(),
-            "parent_model_id": first,
+            **_full_metadata(
+                digest=digest,
+                model_id=second,
+                trained_at=second_time,
+                parent_model_id=first,
+            ).to_dict(),
         }
     )
+    parity_texts = tuple(f"{category.value} primary message" for category in EmailCategory)
     registry.stage_candidate(
         source,
         metadata,
-        parity_texts=("work one",),
-        expected_labels=("work",),
+        parity_texts=parity_texts,
+        expected_labels=tuple(classifier.predict(text).label for text in parity_texts),
     )
     registry.reject(second, reason="latency_p95_exceeded")
     assert registry.get_model(second).status == "rejected"
@@ -387,8 +468,8 @@ def test_rejected_candidate_and_runtime_fallback_leave_history_durable(tmp_path:
     registry.stage_candidate(
         third_source,
         third_metadata,
-        parity_texts=("work one",),
-        expected_labels=("work",),
+        parity_texts=parity_texts,
+        expected_labels=tuple(classifier.predict(text).label for text in parity_texts),
     )
     registry.promote(third, reason="validated")
     restored = registry.fallback_to_previous(
