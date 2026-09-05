@@ -54,6 +54,11 @@ from app.config import feedback_spike_vercel_base_url
 from app.feedback_spike import extract_configured_feedback_link_context
 from app.history import HistoryItem
 from app.legacy_receipt import legacy_receipt_has_explicit_failure
+from app.managed_skills import (
+    ManagedSkill,
+    ManagedSkillRevision,
+    validate_managed_skill_content,
+)
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
     MeetingAlignmentQueueStatus,
@@ -114,6 +119,8 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "workbench_attachments",
     "workbench_artifacts",
     "workbench_confirmations",
+    "managed_skills",
+    "managed_skill_revisions",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_items_status",
@@ -146,6 +153,8 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_todo_evidence_candidates_status",
     "idx_todo_evidence_candidates_work_input",
     "idx_todo_evidence_candidates_project",
+    "idx_managed_skill_revisions_number",
+    "idx_managed_skill_revisions_sha256",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
@@ -1624,6 +1633,29 @@ class AutoReplyStore:
                     codex_session_id text,
                     codex_session_contract_hash text not null default ''
                 );
+                create table if not exists managed_skills (
+                    id integer primary key autoincrement,
+                    name text not null unique,
+                    display_name text not null,
+                    created_at text not null default current_timestamp
+                );
+                create table if not exists managed_skill_revisions (
+                    id integer primary key autoincrement,
+                    skill_id integer not null,
+                    revision_number integer not null check(revision_number > 0),
+                    content text not null,
+                    sha256 text not null,
+                    parent_revision_id integer,
+                    source text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(skill_id) references managed_skills(id),
+                    foreign key(parent_revision_id)
+                        references managed_skill_revisions(id)
+                );
+                create unique index if not exists idx_managed_skill_revisions_number
+                    on managed_skill_revisions(skill_id, revision_number);
+                create unique index if not exists idx_managed_skill_revisions_sha256
+                    on managed_skill_revisions(skill_id, sha256);
                 create table if not exists seen_messages (
                     message_id text primary key,
                     conversation_id text not null,
@@ -3642,6 +3674,175 @@ class AutoReplyStore:
                 where codex_session_id is not null and codex_session_id <> ''
                 """
             )
+
+    @staticmethod
+    def _managed_skill_from_row(row: sqlite3.Row) -> ManagedSkill:
+        return ManagedSkill(
+            id=int(row["id"]),
+            name=str(row["name"]),
+            display_name=str(row["display_name"]),
+            created_at=str(row["created_at"]),
+        )
+
+    @staticmethod
+    def _managed_skill_revision_from_row(
+        row: sqlite3.Row,
+    ) -> ManagedSkillRevision:
+        parent_revision_id = row["parent_revision_id"]
+        return ManagedSkillRevision(
+            id=int(row["id"]),
+            skill_id=int(row["skill_id"]),
+            revision_number=int(row["revision_number"]),
+            content=str(row["content"]),
+            sha256=str(row["sha256"]),
+            parent_revision_id=(
+                int(parent_revision_id) if parent_revision_id is not None else None
+            ),
+            source=str(row["source"]),
+            created_at=str(row["created_at"]),
+        )
+
+    def create_managed_skill(self, name: str, display_name: str) -> ManagedSkill:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("managed Skill name must be nonempty")
+        if not isinstance(display_name, str) or not display_name.strip():
+            raise ValueError("managed Skill display name must be nonempty")
+        with self._immediate_write_transaction() as db:
+            try:
+                cursor = db.execute(
+                    "insert into managed_skills (name, display_name) values (?, ?)",
+                    (name, display_name),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "managed_skills.name" in str(exc):
+                    raise ValueError("managed Skill already exists") from exc
+                raise
+            row = db.execute(
+                "select id, name, display_name, created_at from managed_skills where id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return self._managed_skill_from_row(row)
+
+    def list_managed_skills(self) -> tuple[ManagedSkill, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select id, name, display_name, created_at from managed_skills order by id"
+            ).fetchall()
+        return tuple(self._managed_skill_from_row(row) for row in rows)
+
+    def get_managed_skill(self, skill_id: int) -> ManagedSkill | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select id, name, display_name, created_at from managed_skills where id=?",
+                (skill_id,),
+            ).fetchone()
+        return self._managed_skill_from_row(row) if row is not None else None
+
+    def create_managed_skill_revision(
+        self,
+        skill_id: int,
+        content: str,
+        *,
+        source: str,
+        parent_revision_id: int | None = None,
+    ) -> ManagedSkillRevision:
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError("managed Skill revision source must be nonempty")
+        with self._immediate_write_transaction() as db:
+            skill_row = db.execute(
+                "select name from managed_skills where id=?", (skill_id,)
+            ).fetchone()
+            if skill_row is None:
+                raise ValueError("managed Skill does not exist")
+            sha256 = validate_managed_skill_content(str(skill_row["name"]), content)
+            latest_row = db.execute(
+                """
+                select id, revision_number from managed_skill_revisions
+                where skill_id=? order by revision_number desc limit 1
+                """,
+                (skill_id,),
+            ).fetchone()
+            if parent_revision_id is None and latest_row is not None:
+                parent_revision_id = int(latest_row["id"])
+            if parent_revision_id is not None:
+                parent_row = db.execute(
+                    "select skill_id from managed_skill_revisions where id=?",
+                    (parent_revision_id,),
+                ).fetchone()
+                if parent_row is None:
+                    raise ValueError("managed Skill parent revision does not exist")
+                if int(parent_row["skill_id"]) != skill_id:
+                    raise ValueError(
+                        "parent revision does not belong to managed Skill"
+                    )
+            revision_number = (
+                int(latest_row["revision_number"]) + 1
+                if latest_row is not None
+                else 1
+            )
+            try:
+                cursor = db.execute(
+                    """
+                    insert into managed_skill_revisions (
+                        skill_id, revision_number, content, sha256,
+                        parent_revision_id, source
+                    ) values (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        skill_id,
+                        revision_number,
+                        content,
+                        sha256,
+                        parent_revision_id,
+                        source,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "managed_skill_revisions.skill_id, managed_skill_revisions.sha256" in str(exc):
+                    raise ValueError(
+                        "managed Skill revision content already exists"
+                    ) from exc
+                raise
+            row = db.execute(
+                """
+                select id, skill_id, revision_number, content, sha256,
+                       parent_revision_id, source, created_at
+                from managed_skill_revisions where id=?
+                """,
+                (cursor.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return self._managed_skill_revision_from_row(row)
+
+    def get_managed_skill_revision(
+        self, revision_id: int
+    ) -> ManagedSkillRevision | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select id, skill_id, revision_number, content, sha256,
+                       parent_revision_id, source, created_at
+                from managed_skill_revisions where id=?
+                """,
+                (revision_id,),
+            ).fetchone()
+        return self._managed_skill_revision_from_row(row) if row is not None else None
+
+    def list_managed_skill_revisions(
+        self, skill_id: int
+    ) -> tuple[ManagedSkillRevision, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select id, skill_id, revision_number, content, sha256,
+                       parent_revision_id, source, created_at
+                from managed_skill_revisions
+                where skill_id=? order by revision_number
+                """,
+                (skill_id,),
+            ).fetchall()
+        return tuple(self._managed_skill_revision_from_row(row) for row in rows)
 
     @staticmethod
     def _migrate_runtime_attempt_session_evidence(db: sqlite3.Connection) -> None:
