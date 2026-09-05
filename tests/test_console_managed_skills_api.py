@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.store import AutoReplyStore
-from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES
+from app.managed_skills import REPOSITORY_MANAGED_SKILL_NAMES
 from app.web_api.registration import register_console_routes
 
 
@@ -87,7 +87,7 @@ def test_fresh_console_managed_skill_api_initializes_service_owned_baseline(
 
     assert skills.status_code == 200
     assert {item["name"] for item in skills.json()["items"]} == set(
-        BUNDLED_BUSINESS_SKILL_NAMES
+        REPOSITORY_MANAGED_SKILL_NAMES
     )
     assert current.status_code == 200
     assert current.json()["pending_or_active"]["status"] == "pending_restart"
@@ -99,5 +99,6 @@ def test_managed_skill_api_rejects_unknown_ids_paths_and_config_conflicts(tmp_pa
         assert client.get("/api/console/settings/managed-skills/../revisions").status_code in {404, 422}
         assert client.post("/api/console/settings/managed-skills/999/revisions", json={"content": _content("ceo-test")}).status_code == 404
         assert client.get("/api/console/settings/managed-skill-revisions/999").status_code == 404
+        assert client.post("/api/console/settings/managed-skill-revisions/999/export").status_code == 404
         conflict = client.post("/api/console/settings/runtime-skill-configs", json={"expected_parent_id": 999, "bindings": []})
     assert conflict.status_code == 409

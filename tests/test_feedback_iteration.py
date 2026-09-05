@@ -316,6 +316,8 @@ def test_decision_context_uses_existing_summary_and_reference_only():
     assert "attempt#1 (/attempts/1)" in message
     assert "runtime config: 4" in message
     assert "managed Skill 2 revision 3 sha256: abc" in message
+    assert "Use managed system Skill: ceo-feedback-iteration" in message
+    assert "skills/ceo-feedback-iteration/SKILL.md" not in message
     assert "generated summary" not in message
 
 

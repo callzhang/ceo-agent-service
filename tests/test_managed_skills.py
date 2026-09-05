@@ -13,6 +13,8 @@ from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES, load_bundled_busin
 from app.managed_skills import (
     ManagedSkillValidationError,
     REPOSITORY_IMPORT_SOURCE,
+    REPOSITORY_MANAGED_SKILL_NAMES,
+    export_managed_skill_revision,
     import_repository_managed_skills,
     resolve_pending_runtime_skills,
 )
@@ -87,7 +89,7 @@ def test_managed_skill_migration_is_additive_for_existing_feedback_database(
     assert active.id == snapshot.config_id
     assert {
         skill.name for skill in migrated.list_managed_skills()
-    } == set(BUNDLED_BUSINESS_SKILL_NAMES)
+    } == set(REPOSITORY_MANAGED_SKILL_NAMES)
 
 
 def test_initial_import_creates_revisions_and_initial_config_for_service_owned_skills(
@@ -96,7 +98,8 @@ def test_initial_import_creates_revisions_and_initial_config_for_service_owned_s
     store = AutoReplyStore(tmp_path / "import.sqlite3")
     imported = import_repository_managed_skills(store)
 
-    assert {entry.name for entry in imported} == set(BUNDLED_BUSINESS_SKILL_NAMES)
+    expected_names = set(REPOSITORY_MANAGED_SKILL_NAMES)
+    assert {entry.name for entry in imported} == expected_names
     assert {entry.revision_number for entry in imported} == {1}
     assert {entry.source for entry in imported} == {"repository:skills"}
     config = store.get_pending_or_active_runtime_skill_config()
@@ -105,6 +108,12 @@ def test_initial_import_creates_revisions_and_initial_config_for_service_owned_s
     assert {binding.skill_id for binding in store.list_runtime_skill_bindings(config.id)} == {
         skill.id for skill in store.list_managed_skills()
     }
+    feedback_skill = store.get_managed_skill_by_name("ceo-feedback-iteration")
+    assert feedback_skill is not None
+    assert next(
+        binding for binding in store.list_runtime_skill_bindings(config.id)
+        if binding.skill_id == feedback_skill.id
+    ).purpose == "feedback_iteration"
 
 
 def test_repository_import_is_idempotent_and_preserves_user_owned_name(
@@ -150,7 +159,7 @@ def test_repository_import_reconciles_partial_service_owned_records_into_initial
     assert first.id != latest.id
     assert {
         store.get_managed_skill(binding.skill_id).name for binding in bindings
-    } == set(BUNDLED_BUSINESS_SKILL_NAMES)
+    } == set(REPOSITORY_MANAGED_SKILL_NAMES)
 
 
 def test_repository_import_preserves_an_existing_runtime_config(tmp_path: Path) -> None:
@@ -192,7 +201,7 @@ def test_repository_import_serializes_two_independent_store_initializers(
     assert all(not thread.is_alive() for thread in threads)
     final = AutoReplyStore(path)
     assert {skill.name for skill in final.list_managed_skills()} == set(
-        BUNDLED_BUSINESS_SKILL_NAMES
+        REPOSITORY_MANAGED_SKILL_NAMES
     )
     config = final.get_pending_or_active_runtime_skill_config()
     assert config is not None
@@ -200,7 +209,7 @@ def test_repository_import_serializes_two_independent_store_initializers(
     assert {
         final.get_managed_skill(binding.skill_id).name
         for binding in final.list_runtime_skill_bindings(config.id)
-    } == set(BUNDLED_BUSINESS_SKILL_NAMES)
+    } == set(REPOSITORY_MANAGED_SKILL_NAMES)
     with final._connect() as db:
         assert db.execute("select count(*) from runtime_skill_configs").fetchone()[0] == 1
 
@@ -219,6 +228,20 @@ def test_create_revision_keeps_prior_body_and_hash(tmp_path: Path) -> None:
     assert store.get_managed_skill_revision(first.id).content == SKILL_V1
     assert first.sha256 == hashlib.sha256(SKILL_V1.encode("utf-8")).hexdigest()
     assert first.sha256 != second.sha256
+
+
+def test_explicit_repository_export_writes_only_the_selected_immutable_revision(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "skills.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "Test Skill")
+    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+
+    exported = export_managed_skill_revision(store, revision.id, skills_root=tmp_path / "skills")
+
+    assert exported.name == "ceo-test"
+    assert exported.revision_id == revision.id
+    assert (tmp_path / "skills" / "ceo-test" / "SKILL.md").read_text(encoding="utf-8") == SKILL_V1
 
 
 def test_invalid_frontmatter_creates_no_revision(tmp_path: Path) -> None:

@@ -216,7 +216,9 @@ def test_snapshot_remains_exact_when_a_later_config_is_created(tmp_path: Path) -
     assert "Version two" not in snapshot.protocol()
 
 
-def test_consumer_keeps_startup_snapshot_when_configuration_changes(tmp_path: Path) -> None:
+def test_consumer_uses_startup_snapshot_without_reading_installed_business_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store, first = configured_store(tmp_path)
     active = store.create_runtime_skill_config(
         {first.skill_id: first.id}, expected_parent_id=None
@@ -224,6 +226,13 @@ def test_consumer_keeps_startup_snapshot_when_configuration_changes(tmp_path: Pa
     snapshot = resolve_pending_runtime_skills(store, pid=7654)
     consumer = ConsumerAgentRunner(
         store=store, workspace=tmp_path, runtime_skill_snapshot=snapshot
+    )
+    def installed_catalog_must_not_be_read():
+        raise AssertionError("managed runtime invocation read mutable installed catalog")
+
+    monkeypatch.setattr(
+        "app.consumer_agent.installed_business_skill_catalog",
+        installed_catalog_must_not_be_read,
     )
     original_contract = consumer_wire_contract_hash(consumer.runtime_skill_snapshot)
     second = store.create_managed_skill_revision(first.skill_id, SKILL_V2, source="settings")
@@ -234,6 +243,26 @@ def test_consumer_keeps_startup_snapshot_when_configuration_changes(tmp_path: Pa
     assert consumer_wire_contract_hash(consumer.runtime_skill_snapshot) == original_contract
     assert "Version one" in consumer.runtime_skill_snapshot.protocol()
     assert "Version two" not in consumer.runtime_skill_snapshot.protocol()
+
+
+def test_runtime_snapshot_excludes_disabled_managed_bindings(tmp_path: Path) -> None:
+    store, enabled = configured_store(tmp_path)
+    disabled_skill = store.create_managed_skill("ceo-disabled", "Disabled Skill")
+    disabled = store.create_managed_skill_revision(
+        disabled_skill.id, SKILL_V1.replace("ceo-test", "ceo-disabled"), source="settings"
+    )
+    config = store.create_runtime_skill_config(
+        [
+            {"skill_id": enabled.skill_id, "revision_id": enabled.id, "enabled": True, "load_order": 0},
+            {"skill_id": disabled.skill_id, "revision_id": disabled.id, "enabled": False, "load_order": 1},
+        ],
+        expected_parent_id=None,
+    )
+
+    snapshot = resolve_pending_runtime_skills(store, pid=7654)
+
+    assert snapshot.config_id == config.id
+    assert snapshot.revisions == (enabled,)
 
 
 def test_schema_initialization_repairs_runtime_guards_idempotently(tmp_path: Path) -> None:

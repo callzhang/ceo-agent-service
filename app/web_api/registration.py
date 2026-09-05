@@ -38,6 +38,7 @@ from app.skill_files import (
 from app.managed_skills import (
     ManagedSkillValidationError,
     import_repository_managed_skills,
+    export_managed_skill_revision,
 )
 from app.feedback_processing import (
     FeedbackIterationDecision,
@@ -1114,6 +1115,20 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "not_found", "message": "Managed Skill revision not found", "details": {}}, status_code=404)
         return _managed_revision_payload(revision)
 
+    @app.post("/api/console/settings/managed-skill-revisions/{revision_id}/export")
+    def console_export_managed_skill_revision(revision_id: int):
+        store = managed_store()
+        try:
+            exported = export_managed_skill_revision(store, revision_id)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "code": "not_found", "message": str(exc), "details": {}}, status_code=404)
+        return {
+            "name": exported.name,
+            "revision_id": exported.revision_id,
+            "sha256": exported.sha256,
+            "path": str(exported.path),
+        }
+
     @app.post("/api/console/settings/runtime-skill-configs", status_code=201)
     async def console_create_runtime_skill_config(request: Request):
         payload = await json_object(request)
@@ -1144,9 +1159,15 @@ def register_console_routes(
     def console_feedback_iteration_capability():
         store = managed_store()
         selected = store.get_pending_or_active_runtime_skill_config()
+        active = store.get_active_runtime_skill_config()
         return {
             "enabled": store.feedback_iteration_enabled(),
             "config_id": selected.id if selected is not None else None,
+            "status": selected.status if selected is not None else "unconfigured",
+            "active": (
+                {"enabled": store.feedback_iteration_enabled(active.id), "config_id": active.id, "status": active.status}
+                if active is not None else None
+            ),
         }
 
     @app.post("/api/console/settings/feedback-iteration")
@@ -1159,7 +1180,9 @@ def register_console_routes(
             config = store.set_feedback_iteration_enabled(payload["enabled"])
         except ValueError as exc:
             return JSONResponse({"ok": False, "code": "conflict", "message": str(exc), "details": {}}, status_code=409)
-        return {"enabled": store.feedback_iteration_enabled(config.id), "config_id": config.id, "status": config.status}
+        active = store.get_active_runtime_skill_config()
+        return {"enabled": store.feedback_iteration_enabled(config.id), "config_id": config.id, "status": config.status,
+                "active": ({"enabled": store.feedback_iteration_enabled(active.id), "config_id": active.id, "status": active.status} if active is not None else None)}
 
     @app.get("/api/console/settings/runtime-skill-configs/{config_id}/load-receipts")
     def console_runtime_skill_load_receipts(config_id: int):

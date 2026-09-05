@@ -26,7 +26,7 @@ FEEDBACK_REOPEN_INVALID = "feedback_reopen_invalid"
 FEEDBACK_REOPEN_PROCESSING = "feedback_reopen_processing"
 FEEDBACK_REOPEN_HISTORY_INCOMPLETE = "feedback_reopen_history_incomplete"
 FEEDBACK_PROCESSING_SKILL_PATH = "skills/ceo-feedback-processing/SKILL.md"
-FEEDBACK_ITERATION_SKILL_PATH = "skills/ceo-feedback-iteration/SKILL.md"
+FEEDBACK_ITERATION_SKILL_NAME = "ceo-feedback-iteration"
 FEEDBACK_ITERATION_DISABLED_ERROR = "feedback_iteration_disabled"
 FEEDBACK_ITERATION_ASSOCIATION_MISMATCH_ERROR = "feedback_iteration_association_mismatch"
 
@@ -382,7 +382,7 @@ def build_feedback_start_message(
 
     lines = [
         f"Feedback processing batch: {batch_id}",
-        f"Use repository Skill: {FEEDBACK_ITERATION_SKILL_PATH}",
+        f"Use managed system Skill: {FEEDBACK_ITERATION_SKILL_NAME}",
         "Use the bounded brainstorming profile in that Skill only when a material uncertainty remains, then use the local feedback API to persist the decision before changing work.",
         "Process the persisted feedback items below; do not copy the full feedback body.",
     ]

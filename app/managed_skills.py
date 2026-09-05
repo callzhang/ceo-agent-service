@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import tempfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from pathlib import Path
@@ -87,6 +89,30 @@ class RuntimeSkillSnapshot:
 
 
 REPOSITORY_IMPORT_SOURCE = "repository:skills"
+FEEDBACK_ITERATION_SKILL_NAME = "ceo-feedback-iteration"
+REPOSITORY_MANAGED_SKILL_NAMES = (
+    *BUNDLED_BUSINESS_SKILL_NAMES,
+    FEEDBACK_ITERATION_SKILL_NAME,
+)
+
+
+def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
+    """Return only the repository baselines owned by this service.
+
+    The feedback-iteration protocol is a system capability rather than a
+    business producer, but it is still a managed runtime binding and therefore
+    must receive the same immutable import treatment as the business Skills.
+    """
+    business = tuple((skill.name, skill.content) for skill in load_bundled_business_skills())
+    source_path = Path(__file__).resolve().parents[1] / "skills" / FEEDBACK_ITERATION_SKILL_NAME / "SKILL.md"
+    try:
+        feedback_content = source_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ManagedSkillValidationError(
+            f"unable to read managed feedback iteration Skill: {source_path}: {exc}"
+        ) from exc
+    validate_managed_skill_content(FEEDBACK_ITERATION_SKILL_NAME, feedback_content)
+    return (*business, (FEEDBACK_ITERATION_SKILL_NAME, feedback_content))
 
 
 @dataclass(frozen=True)
@@ -96,6 +122,14 @@ class RepositoryManagedSkillImport:
     revision_number: int
     sha256: str
     source: str
+
+
+@dataclass(frozen=True)
+class RepositoryManagedSkillExport:
+    name: str
+    revision_id: int
+    sha256: str
+    path: Path
 
 
 def import_repository_managed_skills(
@@ -118,26 +152,24 @@ def _import_repository_managed_skills_locked(
     """Reconcile one complete baseline while the store lock is held."""
     imported: list[tuple[str, ManagedSkillRevision]] = []
     baseline: list[tuple[str, ManagedSkillRevision]] = []
-    for bundled in load_bundled_business_skills():
-        if bundled.name not in BUNDLED_BUSINESS_SKILL_NAMES:
-            continue
-        existing = store.get_managed_skill_by_name(bundled.name)
+    for name, content in _repository_managed_skills():
+        existing = store.get_managed_skill_by_name(name)
         if existing is not None:
             revisions = store.list_managed_skill_revisions(existing.id)
             if any(revision.source == REPOSITORY_IMPORT_SOURCE for revision in revisions):
-                baseline.append((bundled.name, revisions[-1]))
+                baseline.append((name, revisions[-1]))
             continue
-        skill = store.create_managed_skill(bundled.name, bundled.name)
+        skill = store.create_managed_skill(name, name)
         revision = store.create_managed_skill_revision(
             skill.id,
-            bundled.content,
+            content,
             source=REPOSITORY_IMPORT_SOURCE,
         )
         imported.append((
-            bundled.name,
+            name,
             revision,
         ))
-        baseline.append((bundled.name, revision))
+        baseline.append((name, revision))
     if baseline and store.get_pending_or_active_runtime_skill_config() is None:
         store.create_runtime_skill_config(
             [
@@ -146,7 +178,11 @@ def _import_repository_managed_skills_locked(
                     "revision_id": revision.id,
                     "enabled": True,
                     "load_order": index,
-                    "purpose": "repository_import",
+                    "purpose": (
+                        "feedback_iteration"
+                        if name == FEEDBACK_ITERATION_SKILL_NAME
+                        else "repository_import"
+                    ),
                 }
                 for index, (_name, revision) in enumerate(baseline)
             ],
@@ -161,6 +197,47 @@ def _import_repository_managed_skills_locked(
             source=revision.source,
         )
         for name, revision in imported
+    )
+
+
+def export_managed_skill_revision(
+    store: "AutoReplyStore", revision_id: int, *, skills_root: Path | None = None
+) -> RepositoryManagedSkillExport:
+    """Explicitly export one immutable local revision into this repository.
+
+    Export is deliberately separate from save and activation: runtime state is
+    already complete without Git, while this adapter is the opt-in bridge for
+    engineers who want a managed revision committed to the repository.
+    """
+    revision = store.get_managed_skill_revision(revision_id)
+    if revision is None:
+        raise ValueError("managed Skill revision does not exist")
+    skill = store.get_managed_skill(revision.skill_id)
+    if skill is None:
+        raise ValueError("managed Skill does not exist")
+    root = skills_root or (Path(__file__).resolve().parents[1] / "skills")
+    destination = root / skill.name / "SKILL.md"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".managed-skill-export-", dir=destination.parent
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
+            handle.write(revision.content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, destination)
+    except BaseException:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+    return RepositoryManagedSkillExport(
+        name=skill.name,
+        revision_id=revision.id,
+        sha256=revision.sha256,
+        path=destination,
     )
 
 

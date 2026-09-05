@@ -156,8 +156,10 @@ def consumer_wire_contract_hash(
         "consumer_rules": _CONSUMER_AGENT_RULES,
         "role_boundary": CONSUMER_ROLE_BOUNDARY,
         "reviewed_dws_read_instructions": REVIEWED_DWS_READ_INSTRUCTIONS,
-        "business_skill_protocol": render_business_skill_protocol(
-            installed_business_skill_catalog()
+        "business_skill_protocol": (
+            runtime_skill_snapshot.protocol()
+            if runtime_skill_snapshot is not None
+            else render_business_skill_protocol(installed_business_skill_catalog())
         ),
         "work_profile_instruction": work_profile_instruction(),
         "service_read_commands": service_read_command_contract(),
@@ -481,9 +483,9 @@ class ConsumerAgentRunner:
                     rendered_rules,
                     skill_protocol="\n\n".join(
                         part for part in (
-                            render_business_skill_protocol(installed_business_skill_catalog()),
                             self.runtime_skill_snapshot.protocol()
-                            if self.runtime_skill_snapshot is not None else "",
+                            if self.runtime_skill_snapshot is not None
+                            else render_business_skill_protocol(installed_business_skill_catalog()),
                         ) if part
                     ),
                 ),
