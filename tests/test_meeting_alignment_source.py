@@ -86,6 +86,35 @@ def test_transcript_roster_evidence_accepts_current_user_and_external_speaker():
     ]
 
 
+def test_transcript_roster_evidence_accepts_current_user_who_did_not_speak():
+    evidence = build_transcript_roster_evidence(
+        discovery_info(),
+        {
+            "paragraphs": [
+                {"nickName": "Claire", "paragraph": "我补齐调研。"},
+                {"nickName": "外部专家", "paragraph": "我补充案例。"},
+            ]
+        },
+        current_user=meeting_alignment_source.MeetingParticipant(
+            name="Derek", user_id="u-derek"
+        ),
+        speakers=[
+            meeting_alignment_source.MeetingParticipant(
+                name="Claire", user_id="u-claire"
+            ),
+            meeting_alignment_source.MeetingParticipant(
+                name="外部专家", user_id=""
+            ),
+        ],
+    )
+
+    assert [participant.name for participant in evidence.participants] == [
+        "Derek",
+        "Claire",
+        "外部专家",
+    ]
+
+
 @pytest.mark.parametrize(
     "info_override",
     [

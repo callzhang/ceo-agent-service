@@ -377,11 +377,12 @@ def build_transcript_roster_evidence(
     if not speaker_names:
         raise MeetingSourceIncomplete("transcript has no identified speakers")
     expected = {_normalized_title(name) for name in speaker_names}
-    supplied = {
-        _normalized_title(participant.name)
-        for participant in [current_user, *speakers]
-    }
-    if not supplied or supplied != expected:
+    supplied = {_normalized_title(participant.name) for participant in speakers}
+    # The Minutes owner is an attendee even when they did not speak.  Every
+    # non-owner speaker must still be represented, while an optional missing
+    # speaker is allowed only for the current user's own transcript identity.
+    omitted = expected - supplied
+    if not supplied or not supplied <= expected or len(omitted) > 1:
         raise MeetingSourceIncomplete("transcript speaker roster is incomplete")
     participants = [current_user, *speakers]
     return CalendarMeetingEvidence(
