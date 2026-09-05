@@ -5570,14 +5570,15 @@ def test_build_search_messages_command_uses_current_query_flag():
     ]
 
 
-def test_read_broadcast_messages_searches_display_alias_without_at_prefix():
+@pytest.mark.parametrize("alias", ("@磊哥", "@所有人", "@all"))
+def test_read_broadcast_messages_preserves_configured_alias(alias: str):
     client = RecordingDwsClient({"messages": []})
 
-    assert client.read_broadcast_messages(("@磊哥",), limit=10, lookback_hours=1) == []
+    assert client.read_broadcast_messages((alias,), limit=10, lookback_hours=1) == []
     search_commands = [command for command in client.commands if "search" in command]
 
     assert len(search_commands) == 1
-    assert search_commands[0][search_commands[0].index("--query") + 1] == "磊哥"
+    assert search_commands[0][search_commands[0].index("--query") + 1] == alias
 
 
 @pytest.mark.parametrize(

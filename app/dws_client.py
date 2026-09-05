@@ -2059,9 +2059,8 @@ class DwsClient:
         result: list[DingTalkMessage] = []
         seen_message_ids: set[str] = set()
         for alias in aliases:
-            search_keyword = alias[1:] if alias.startswith("@") else alias
             for message in self.search_messages(
-                keyword=search_keyword,
+                keyword=alias,
                 start=start_time.isoformat(),
                 end=end_time.isoformat(),
                 limit=limit,
