@@ -5,6 +5,7 @@ import tomllib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -172,6 +173,27 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
         "risk": "high" if result["outcome"] == "needs_human" else "low",
         "confidence": 0.1 if result["outcome"] == "needs_human" else 1.0,
     }
+
+
+def test_initial_write_authorization_binds_direct_message_content_and_recipient():
+    action = SimpleNamespace(
+        capability="dingtalk-chat",
+        operation="send_direct_message",
+        payload={"content": "请安排一轮面试。"},
+        target={"open_dingtalk_id": "open-recipient"},
+    )
+    run = SimpleNamespace(id=7, operation_id="operation-7", proposal_revision=0)
+
+    expected = _expected_effect_action(action, action_index=0)
+    authorizations = _initial_write_authorizations(run, (expected,))
+
+    assert len(authorizations) == 1
+    authorization = authorizations[0]
+    assert authorization["argv"] == [
+        "dws", "chat", "+messages-send", "--open-dingtalk-id", "open-recipient",
+        "--text", "请安排一轮面试。", "--yes", "--format", "json",
+    ]
+    assert authorization["target_identifiers"] == {"open-dingtalk-id": "open-recipient"}
 
 
 

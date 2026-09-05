@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -22,6 +23,7 @@ from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
+from app.native_cli_metadata import describe_native_command
 from app.store import (
     AgentRole,
     AgentRun,
@@ -127,6 +129,21 @@ class AuditAgentRunner:
         rendered_rules: str,
         frozen_delivery_retry: bool = False,
     ) -> AgentTurnRunResult[AuditAgentResult]:
+        expected_effect_actions = tuple(
+            _expected_effect_action(action, action_index=index)
+            for index, action in enumerate(context.proposal.actions)
+        )
+        write_authorizations = (
+            _initial_write_authorizations(run, expected_effect_actions)
+            if not self.dry_run
+            else ()
+        )
+        if write_authorizations:
+            self.store.prepare_agent_effect_intents(
+                run.id, write_authorizations, owner=self.owner
+            )
+            prompt += _write_authorization_prompt(write_authorizations)
+
         process = AgentTurnProcess[AuditAgentResult](
             store=self.store,
             task=task,
@@ -187,11 +204,33 @@ class AuditAgentRunner:
                     command=sys.executable,
                     args=("-m", "app.agent_cli"),
                     cwd=str(SERVICE_ROOT),
+                    env=(
+                        (
+                            RECOVERY_WRITE_ALLOWLIST_ENV,
+                            json.dumps(
+                                write_authorizations,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                        ),
+                        (
+                            EFFECT_INTENT_CONTEXT_ENV,
+                            json.dumps(
+                                {"db_path": str(self.store.path), "run_id": run.id},
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                        ),
+                    )
+                    if write_authorizations
+                    else (),
                 ),
+                allow_write=not self.dry_run,
                 additional_agent_cli_tools=email_unsubscribe_tools,
             ),
             parse_result=parse_audit_agent_wire_result,
             persist_conversation_session=False,
+            expected_effect_actions=expected_effect_actions,
             allow_effectful_tools=not self.dry_run,
             image_paths=[Path(path) for path in context.task.image_paths],
             required_capabilities=self._required_capabilities(context),
@@ -263,22 +302,101 @@ def _json_digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def _expected_effect_action(action, registry=None, *, action_index: int = 0) -> dict[str, object]:
-    """Return only stable business identity; provider command details are runtime-owned."""
-    del registry
+def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, object]:
+    """Bind a typed direct-message proposal to its exact executable command."""
+    target = getattr(action, "target", {})
+    payload = getattr(action, "payload", {})
+    content = payload.get("content") or payload.get("text")
+    recipient = (
+        target.get("open_dingtalk_id")
+        or target.get("recipient_open_dingtalk_id")
+        or target.get("sender_open_dingtalk_id")
+    )
+    if (
+        getattr(action, "capability", "") != "dingtalk-chat"
+        or not isinstance(content, str)
+        or not content
+        or not isinstance(recipient, str)
+        or not recipient
+    ):
+        return {"action_index": action_index}
+    argv = [
+        "dws", "chat", "+messages-send", "--open-dingtalk-id", recipient,
+        "--text", content, "--yes", "--format", "json",
+    ]
+    descriptor = describe_native_command(
+        {"type": "command_execution", "argv": argv}
+    )
+    if descriptor is None:
+        return {"action_index": action_index}
     return {
         "action_index": action_index,
-        "operation": getattr(action, "operation", ""),
-        "target_identifiers": getattr(action, "target", {}),
+        "argv": argv,
+        "capability": f"agent_cli.{descriptor.cli}",
+        "operation": descriptor.command_path,
+        "operation_digest": descriptor.command_digest,
+        "arguments_digest": _json_digest({"argv": argv}),
+        "target_identifiers": descriptor.target_identifiers,
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
     }
 
 
-def _initial_write_authorizations(*args, **kwargs) -> tuple[dict[str, object], ...]:
-    return ()
+def _initial_write_authorizations(
+    run: AgentRun,
+    actions: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    entries: list[dict[str, object]] = []
+    for action in actions:
+        required = (
+            "action_index", "argv", "capability", "operation", "operation_digest",
+            "arguments_digest", "target_identifiers", "reviewed_server", "reviewed_tool",
+        )
+        if any(key not in action for key in required):
+            continue
+        identity = {
+            "run_id": run.id,
+            "operation_id": run.operation_id,
+            "proposal_revision": run.proposal_revision,
+            "action": action,
+        }
+        authorization_id = hashlib.sha256(
+            json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        receipt_operation_id = hashlib.sha256(
+            f"{run.operation_id}:{action['action_index']}:{action['operation_digest']}".encode()
+        ).hexdigest()
+        entries.append(
+            {
+                "authorization_id": authorization_id,
+                "receipt_operation_id": receipt_operation_id,
+                **action,
+            }
+        )
+    return tuple(entries)
 
 
 def _recovery_authorizations(*args, **kwargs) -> tuple[dict[str, object], ...]:
     return ()
+
+
+def _write_authorization_prompt(
+    authorizations: tuple[dict[str, object], ...],
+) -> str:
+    allowed = [
+        {
+            "action_index": entry["action_index"],
+            "authorization_id": entry["authorization_id"],
+            "argv": entry["argv"],
+        }
+        for entry in authorizations
+    ]
+    return (
+        "\n\n### Approved execution\n"
+        "For each approved action, call agent_cli.execute_reviewed_write exactly "
+        "once using the matching authorization_id and argv below.\n"
+        + json.dumps(allowed, ensure_ascii=False, separators=(",", ":"))
+    )
 
 
 def _recovery_prompt(run: AgentRun, context: AuditTurnContext, actions=(), registry=None) -> str:
