@@ -197,6 +197,21 @@ def test_initial_write_authorization_binds_direct_message_content_and_recipient(
     assert authorization["target_identifiers"] == {"open-dingtalk-id": "open-recipient"}
 
 
+@pytest.mark.parametrize(
+    ("action", "expected_argv"),
+    [
+        (SimpleNamespace(capability="dingtalk-chat", operation="send_to_group",
+            payload={"reply_text": "群内回复"}, target={"conversation_id": "cid-group"}),
+         ["dws", "chat", "+send-to-group", "--group", "cid-group", "--content", "群内回复", "--yes", "--format", "json"]),
+        (SimpleNamespace(capability="dingtalk_oa", operation="approval.comment",
+            payload={"comment_text": "请补材料"}, target={"process_instance_id": "process-1"}),
+         ["dws", "oa", "approval", "oa-comments", "--instance-id", "process-1", "--content", "请补材料", "--format", "json", "--yes"]),
+    ],
+)
+def test_expected_effect_action_binds_supported_group_and_oa_comment(action, expected_argv):
+    assert _expected_effect_action(action)["argv"] == expected_argv
+
+
 def test_audit_runner_adds_direct_message_execution_prompt_before_process(
     setup, monkeypatch
 ):

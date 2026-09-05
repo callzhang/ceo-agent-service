@@ -303,27 +303,40 @@ def _json_digest(value: object) -> str:
 
 
 def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, object]:
-    """Bind a typed direct-message proposal to its exact executable command."""
+    """Bind supported typed chat and OA-comment proposals to exact commands."""
     target = getattr(action, "target", {})
     payload = getattr(action, "payload", {})
-    content = payload.get("content") or payload.get("text")
+    capability = getattr(action, "capability", "")
+    operation = getattr(action, "operation", "")
+    content = payload.get("content") or payload.get("text") or payload.get("reply_text")
     recipient = (
         target.get("open_dingtalk_id")
         or target.get("recipient_open_dingtalk_id")
         or target.get("sender_open_dingtalk_id")
     )
-    if (
-        getattr(action, "capability", "") != "dingtalk-chat"
-        or not isinstance(content, str)
-        or not content
-        or not isinstance(recipient, str)
-        or not recipient
-    ):
+    argv: list[str] | None = None
+    if capability == "dingtalk-chat" and isinstance(content, str) and content:
+        conversation_id = str(target.get("conversation_id") or "").strip()
+        message_id = str(target.get("message_id") or target.get("source_message_id") or "").strip()
+        if operation in {"send_to_group", "messages-send-to-group"} and conversation_id:
+            argv = ["dws", "chat", "+send-to-group", "--group", conversation_id,
+                    "--content", content, "--yes", "--format", "json"]
+        elif operation in {"messages-reply", "message.reply"} and conversation_id and message_id:
+            argv = ["dws", "chat", "+messages-reply", "--conversation-id", conversation_id,
+                    "--message-id", message_id, "--content", content, "--yes", "--format", "json"]
+        elif isinstance(recipient, str) and recipient:
+            argv = ["dws", "chat", "+messages-send", "--open-dingtalk-id", recipient,
+                    "--text", content, "--yes", "--format", "json"]
+    elif capability in {"dingtalk_oa", "dingtalk-oa"} and operation in {
+        "oa-comments", "approval.comment"
+    }:
+        process_id = str(target.get("process_instance_id") or "").strip()
+        comment = payload.get("comment_text") or payload.get("content")
+        if process_id and isinstance(comment, str) and comment:
+            argv = ["dws", "oa", "approval", "oa-comments", "--instance-id", process_id,
+                    "--content", comment, "--format", "json", "--yes"]
+    if argv is None:
         return {"action_index": action_index}
-    argv = [
-        "dws", "chat", "+messages-send", "--open-dingtalk-id", recipient,
-        "--text", content, "--yes", "--format", "json",
-    ]
     descriptor = describe_native_command(
         {"type": "command_execution", "argv": argv}
     )
