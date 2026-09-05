@@ -7,9 +7,10 @@ from pathlib import Path
 import pytest
 
 import app.store as store_module
-from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES
+from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES, load_bundled_business_skills
 from app.managed_skills import (
     ManagedSkillValidationError,
+    REPOSITORY_IMPORT_SOURCE,
     import_repository_managed_skills,
 )
 from app.store import AutoReplyStore
@@ -69,6 +70,48 @@ def test_repository_import_is_idempotent_and_preserves_user_owned_name(
     assert second == ()
     assert store.get_managed_skill(user.id) == user
     assert store.list_managed_skill_revisions(user.id) == (user_revision,)
+
+
+def test_repository_import_reconciles_partial_service_owned_records_into_initial_config(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "partial.sqlite3")
+    bundled = load_bundled_business_skills()[0]
+    existing = store.create_managed_skill(bundled.name, bundled.name)
+    first = store.create_managed_skill_revision(
+        existing.id, bundled.content, source=REPOSITORY_IMPORT_SOURCE
+    )
+    latest = store.create_managed_skill_revision(
+        existing.id,
+        bundled.content.replace("description:", "description: Updated ", 1),
+        source="settings",
+    )
+
+    import_repository_managed_skills(store)
+
+    config = store.get_pending_or_active_runtime_skill_config()
+    assert config is not None
+    bindings = store.list_runtime_skill_bindings(config.id)
+    revisions_by_skill = {binding.skill_id: binding.revision_id for binding in bindings}
+    assert revisions_by_skill[existing.id] == latest.id
+    assert first.id != latest.id
+    assert {
+        store.get_managed_skill(binding.skill_id).name for binding in bindings
+    } == set(BUNDLED_BUSINESS_SKILL_NAMES)
+
+
+def test_repository_import_preserves_an_existing_runtime_config(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "configured.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "Test Skill")
+    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+    existing_config = store.create_runtime_skill_config(
+        {skill.id: revision.id}, expected_parent_id=None
+    )
+
+    import_repository_managed_skills(store)
+
+    assert store.get_pending_or_active_runtime_skill_config() == existing_config
+    assert store.list_runtime_skill_bindings(existing_config.id)[0].revision_id == revision.id
 
 
 def test_create_revision_keeps_prior_body_and_hash(tmp_path: Path) -> None:

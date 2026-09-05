@@ -35,7 +35,10 @@ from app.skill_files import (
     SkillFileService,
     SkillFileValidationError,
 )
-from app.managed_skills import ManagedSkillValidationError
+from app.managed_skills import (
+    ManagedSkillValidationError,
+    import_repository_managed_skills,
+)
 from app.feedback_processing import (
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
@@ -972,6 +975,12 @@ def register_console_routes(
             "created_at": skill.created_at,
         }
 
+    def managed_store() -> Any:
+        """Open the Settings control plane with its baseline safely reconciled."""
+        store = store_factory()
+        import_repository_managed_skills(store)
+        return store
+
     def _managed_revision_payload(revision: Any) -> dict[str, Any]:
         return {
             "id": revision.id,
@@ -1004,13 +1013,13 @@ def register_console_routes(
 
     @app.get("/api/console/settings/managed-skills")
     def console_managed_skills():
-        return {"items": [_managed_skill_payload(skill) for skill in store_factory().list_managed_skills()]}
+        return {"items": [_managed_skill_payload(skill) for skill in managed_store().list_managed_skills()]}
 
     @app.post("/api/console/settings/managed-skills", status_code=201)
     async def console_create_managed_skill(request: Request):
         payload = await json_object(request)
         try:
-            skill = store_factory().create_managed_skill(
+            skill = managed_store().create_managed_skill(
                 payload.get("name"), payload.get("display_name")
             )
         except ValueError as exc:
@@ -1023,7 +1032,7 @@ def register_console_routes(
 
     @app.get("/api/console/settings/managed-skills/{skill_id}/revisions")
     def console_managed_skill_revisions(skill_id: int):
-        store = store_factory()
+        store = managed_store()
         if store.get_managed_skill(skill_id) is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Managed Skill not found", "details": {}}, status_code=404)
         return {"items": [_managed_revision_payload(revision) for revision in store.list_managed_skill_revisions(skill_id)]}
@@ -1034,7 +1043,7 @@ def register_console_routes(
         if set(payload) - {"content", "parent_revision_id"}:
             return JSONResponse({"ok": False, "code": "validation_error", "message": "unsupported managed revision fields", "details": {}}, status_code=422)
         try:
-            revision = store_factory().create_managed_skill_revision(
+            revision = managed_store().create_managed_skill_revision(
                 skill_id,
                 payload.get("content"),
                 source="settings",
@@ -1050,7 +1059,7 @@ def register_console_routes(
 
     @app.get("/api/console/settings/managed-skill-revisions/{revision_id}")
     def console_managed_skill_revision(revision_id: int):
-        revision = store_factory().get_managed_skill_revision(revision_id)
+        revision = managed_store().get_managed_skill_revision(revision_id)
         if revision is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Managed Skill revision not found", "details": {}}, status_code=404)
         return _managed_revision_payload(revision)
@@ -1061,18 +1070,19 @@ def register_console_routes(
         if set(payload) != {"expected_parent_id", "bindings"}:
             return JSONResponse({"ok": False, "code": "validation_error", "message": "expected_parent_id and bindings are required", "details": {}}, status_code=422)
         try:
-            config = store_factory().create_runtime_skill_config(
+            store = managed_store()
+            config = store.create_runtime_skill_config(
                 payload["bindings"], expected_parent_id=payload["expected_parent_id"]
             )
         except ValueError as exc:
             message = str(exc)
             status = 409 if "parent conflict" in message else 422
             return JSONResponse({"ok": False, "code": "conflict" if status == 409 else "validation_error", "message": message, "details": {}}, status_code=status)
-        return _runtime_config_payload(store_factory(), config)
+        return _runtime_config_payload(store, config)
 
     @app.get("/api/console/settings/runtime-skill-configs/current")
     def console_current_runtime_skill_config():
-        store = store_factory()
+        store = managed_store()
         selected = store.get_pending_or_active_runtime_skill_config()
         active = store.get_active_runtime_skill_config()
         return {
@@ -1082,7 +1092,7 @@ def register_console_routes(
 
     @app.get("/api/console/settings/runtime-skill-configs/{config_id}/load-receipts")
     def console_runtime_skill_load_receipts(config_id: int):
-        store = store_factory()
+        store = managed_store()
         if store.get_runtime_skill_config(config_id) is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Runtime Skill configuration not found", "details": {}}, status_code=404)
         return {"items": [

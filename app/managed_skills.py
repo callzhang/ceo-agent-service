@@ -109,21 +109,28 @@ def import_repository_managed_skills(
     directories.
     """
     imported: list[tuple[str, ManagedSkillRevision]] = []
+    baseline: list[tuple[str, ManagedSkillRevision]] = []
     for bundled in load_bundled_business_skills():
         if bundled.name not in BUNDLED_BUSINESS_SKILL_NAMES:
             continue
-        if store.get_managed_skill_by_name(bundled.name) is not None:
+        existing = store.get_managed_skill_by_name(bundled.name)
+        if existing is not None:
+            revisions = store.list_managed_skill_revisions(existing.id)
+            if any(revision.source == REPOSITORY_IMPORT_SOURCE for revision in revisions):
+                baseline.append((bundled.name, revisions[-1]))
             continue
         skill = store.create_managed_skill(bundled.name, bundled.name)
+        revision = store.create_managed_skill_revision(
+            skill.id,
+            bundled.content,
+            source=REPOSITORY_IMPORT_SOURCE,
+        )
         imported.append((
             bundled.name,
-            store.create_managed_skill_revision(
-                skill.id,
-                bundled.content,
-                source=REPOSITORY_IMPORT_SOURCE,
-            ),
+            revision,
         ))
-    if imported and store.get_pending_or_active_runtime_skill_config() is None:
+        baseline.append((bundled.name, revision))
+    if baseline and store.get_pending_or_active_runtime_skill_config() is None:
         store.create_runtime_skill_config(
             [
                 {
@@ -133,7 +140,7 @@ def import_repository_managed_skills(
                     "load_order": index,
                     "purpose": "repository_import",
                 }
-                for index, (_name, revision) in enumerate(imported)
+                for index, (_name, revision) in enumerate(baseline)
             ],
             expected_parent_id=None,
         )

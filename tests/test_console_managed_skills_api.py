@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.store import AutoReplyStore
+from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES
 from app.web_api.registration import register_console_routes
 
 
@@ -47,10 +48,11 @@ def test_managed_skills_create_revision_config_and_read_load_receipt(tmp_path: P
             json={"content": _content("ceo-test")},
         )
         revision_id = revision.json()["id"]
+        predecessor = client.get("/api/console/settings/runtime-skill-configs/current")
         config = client.post(
             "/api/console/settings/runtime-skill-configs",
             json={
-                "expected_parent_id": None,
+                "expected_parent_id": predecessor.json()["pending_or_active"]["id"],
                 "bindings": [{"skill_id": skill_id, "revision_id": revision_id}],
             },
         )
@@ -72,6 +74,23 @@ def test_managed_skills_create_revision_config_and_read_load_receipt(tmp_path: P
     }]
     assert revision_detail.status_code == 200
     assert revision_detail.json()["id"] == revision_id
+
+
+def test_fresh_console_managed_skill_api_initializes_service_owned_baseline(
+    tmp_path: Path,
+) -> None:
+    client, _store = _client(tmp_path)
+
+    with client:
+        skills = client.get("/api/console/settings/managed-skills")
+        current = client.get("/api/console/settings/runtime-skill-configs/current")
+
+    assert skills.status_code == 200
+    assert {item["name"] for item in skills.json()["items"]} == set(
+        BUNDLED_BUSINESS_SKILL_NAMES
+    )
+    assert current.status_code == 200
+    assert current.json()["pending_or_active"]["status"] == "pending_restart"
 
 
 def test_managed_skill_api_rejects_unknown_ids_paths_and_config_conflicts(tmp_path: Path) -> None:
