@@ -108,7 +108,13 @@ function receiptRuntimeConfigId(receipt: Record<string, unknown> | undefined) {
 }
 
 function isCanonicalInternalRoute(route: string) {
-  return route.startsWith("/") && !route.startsWith("//");
+  if (!route.startsWith("/")) return false;
+  try {
+    const parsed = new URL(route, window.location.origin);
+    return parsed.origin === window.location.origin && parsed.pathname.startsWith("/");
+  } catch {
+    return false;
+  }
 }
 
 function ReceiptAudit({ receipt }: { receipt: Record<string, unknown> | undefined }) {
