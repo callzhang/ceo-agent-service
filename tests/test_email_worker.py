@@ -459,31 +459,6 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
 
     task = task_store.claim_reply_task(route.task.id)
     assert task is not None
-    consumer = task_store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.CONSUMER,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="",
-        owner="consumer-owner",
-    ).run
-    consumer = task_store.complete_agent_run(
-        consumer.id,
-        {"outcome": "proposal"},
-        owner="consumer-owner",
-    )
-    audit = task_store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=consumer.id,
-        operation_id="audit-production-path",
-        owner="audit-owner",
-    ).run
     [projected_entry] = payload["unsubscribe_entries"]
     operation_kind = "post_one_click" if provider_shape == "one_click" else "open_entry"
     accepted_action = ProposedAction.model_validate(
@@ -512,6 +487,52 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
             "expected_verification": "Read terminal provider evidence",
         }
     ).model_dump(mode="json")
+    consumer = task_store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer-owner",
+    ).run
+    consumer = task_store.complete_agent_run(
+        consumer.id,
+        {
+            "outcome": "proposal",
+            "summary": "Propose one audited unsubscribe operation.",
+            "proposal": {
+                "objective": "Unsubscribe the current subscription.",
+                "actions": [accepted_action],
+                "sourced_facts": [],
+                "authored_judgment": "The ActionPlan authorizes unsubscribe.",
+            },
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+                "stage": "",
+                "source": "",
+                "source_code": "",
+                "session_continuable": False,
+            },
+            "risk": "low",
+            "confidence": 1.0,
+        },
+        owner="consumer-owner",
+    )
+    audit = task_store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-production-path",
+        owner="audit-owner",
+    ).run
     monkeypatch.setattr(
         module, "_build_email_source_factory", lambda _settings: source_factory
     )

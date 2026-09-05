@@ -211,9 +211,19 @@ def _stage_learning_evidence_model(
     parent_model_id: str | None = None,
 ) -> str:
     source = tmp_path / f"learning-{suffix}.pkl"
+    texts = [
+        f"{category.value} {variant}"
+        for category in EmailCategory
+        for variant in ("primary", "secondary")
+    ]
+    labels = [
+        category.value
+        for category in EmailCategory
+        for _variant in ("primary", "secondary")
+    ]
     classifier = CpuTfidfLogisticClassifier(model_version="candidate").fit(
-        ["work project", "work meeting", "junk offer", "junk promotion"],
-        ["work", "work", "junk", "junk"],
+        texts,
+        labels,
     )
     classifier.save(source)
     digest = sha256(source.read_bytes()).hexdigest()
@@ -233,7 +243,7 @@ def _stage_learning_evidence_model(
             "auto_action_eligible": True,
             "eligibility_reason": "eligible",
         }
-        for category in ("work", "junk")
+        for category in (item.value for item in EmailCategory)
     }
     metadata = EmailModelMetadata(
         model_id=model_id,
@@ -245,10 +255,10 @@ def _stage_learning_evidence_model(
         trained_at=trained_at.isoformat(),
         training_started_at=(trained_at - timedelta(seconds=2)).isoformat(),
         training_finished_at=trained_at.isoformat(),
-        sample_count=40,
-        new_sample_count=4,
-        category_counts={"work": 20, "junk": 20},
-        account_counts={"account-a": 40},
+        sample_count=160,
+        new_sample_count=16,
+        category_counts={category.value: 20 for category in EmailCategory},
+        account_counts={"account-a": 160},
         validation_method="time-ordered-holdout",
         accuracy=0.96,
         macro_f1=0.955,
@@ -263,8 +273,8 @@ def _stage_learning_evidence_model(
     registry.stage_candidate(
         source,
         metadata,
-        parity_texts=("work project", "junk offer"),
-        expected_labels=("work", "junk"),
+        parity_texts=tuple(texts),
+        expected_labels=tuple(classifier.predict(text).label for text in texts),
     )
     return model_id
 
