@@ -98,9 +98,22 @@ function ProcessingHistory({ history }: { history: readonly FeedbackProcessingRo
   </ol>;
 }
 
+function receiptEvidence(receipt: Record<string, unknown> | undefined) {
+  return receipt?.evidence && typeof receipt.evidence === "object" && !Array.isArray(receipt.evidence) ? receipt.evidence as Record<string, unknown> : {};
+}
+
+function receiptRuntimeConfigId(receipt: Record<string, unknown> | undefined) {
+  const runtimeConfigId = receiptEvidence(receipt).runtime_config_id;
+  return typeof runtimeConfigId === "number" ? runtimeConfigId : undefined;
+}
+
+function isCanonicalInternalRoute(route: string) {
+  return route.startsWith("/") && !route.startsWith("//");
+}
+
 function ReceiptAudit({ receipt }: { receipt: Record<string, unknown> | undefined }) {
   if (!receipt || !Object.keys(receipt).length) return <>未提供</>;
-  const evidence = receipt.evidence && typeof receipt.evidence === "object" && !Array.isArray(receipt.evidence) ? receipt.evidence as Record<string, unknown> : {};
+  const evidence = receiptEvidence(receipt);
   const value = (key: string) => evidence[key];
   const display = (item: unknown) => typeof item === "string" || typeof item === "number" || typeof item === "boolean" ? String(item) : JSON.stringify(item ?? {});
   const associations = value("associations") && typeof value("associations") === "object" && !Array.isArray(value("associations")) ? value("associations") as Record<string, unknown> : {};
@@ -136,9 +149,9 @@ function DecisionHistory({ decisions, history, references }: { decisions: readon
             <div><dt>创建：</dt><dd>{localTime(record.created_at)}</dd></div>
             <div><dt>范围：</dt><dd>{record.decision.scope}</dd></div>
             <div><dt>根因：</dt><dd>{record.decision.root_cause}</dd></div>
-            <div><dt>来源：</dt><dd>{record.decision.source_references.map((reference) => { const route = referenceRoute(reference); return route ? <a href={route} key={reference}>{reference}</a> : <span key={reference}>{reference} </span>; })}</dd></div>
+            <div><dt>来源：</dt><dd>{record.decision.source_references.map((reference) => { const route = referenceRoute(reference); return isCanonicalInternalRoute(route) ? <a href={route} key={reference}>{reference}</a> : <span key={reference}>{reference} </span>; })}</dd></div>
             <div><dt>Skill 修订：</dt><dd>{record.decision.target_skill_revisions.length ? record.decision.target_skill_revisions.map((revision) => <span key={revision.skill_id}>skill #{revision.skill_id}: revision #{revision.from_revision} → <span>revision #{revision.to_revision}</span> </span>) : "未提供"}</dd></div>
-            <div><dt>运行配置：</dt><dd>{record.decision.target_runtime_config_id ? `config #${record.decision.target_runtime_config_id}` : typeof receipt?.runtime_config_id === "number" ? `config #${receipt.runtime_config_id}` : "未提供"}</dd></div>
+            <div><dt>运行配置：</dt><dd>{record.decision.target_runtime_config_id ? `config #${record.decision.target_runtime_config_id}` : receiptRuntimeConfigId(receipt) ? `config #${receiptRuntimeConfigId(receipt)}` : "未提供"}</dd></div>
             <div><dt>为什么不是代码：</dt><dd>{record.decision.why_not_code}</dd></div>
             <div><dt>验收场景：</dt><dd>{record.decision.acceptance.scenario}</dd></div>
             <div><dt>预期行为：</dt><dd>{record.decision.acceptance.expected_behavior}</dd></div>

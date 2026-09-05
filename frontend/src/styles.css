@@ -507,6 +507,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .feedback-history-evidence dt { color: var(--ink-soft); font-size: .68rem; }
 .feedback-history-evidence dd { margin: 2px 0 0; color: var(--ink); font-size: .74rem; overflow-wrap: anywhere; }
 .feedback-history-evidence code { font-size: .7rem; }
+.feedback-history-evidence pre { max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .feedback-history-links, .feedback-history-empty { color: var(--ink-soft); font-size: .72rem; }
 .feedback-history-reason { margin: 0; padding-top: 7px; border-top: 1px solid var(--line); color: var(--ink); font-size: .75rem; line-height: 1.5; }
 .feedback-history-load { width: fit-content; padding: 0 12px; }
