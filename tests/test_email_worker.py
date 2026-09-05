@@ -1161,7 +1161,7 @@ def test_agent_orchestrator_is_wired_with_email_continuation_driver(
     assert result.domain_continuation.email_store.path == settings.db_path
 
 
-def test_email_orchestrator_passes_process_runtime_skill_snapshot_to_consumer(
+def test_email_orchestrator_scopes_runtime_skill_snapshot_to_consumer(
     tmp_path, monkeypatch
 ):
     module = _module()
@@ -1179,8 +1179,14 @@ def test_email_orchestrator_passes_process_runtime_skill_snapshot_to_consumer(
         "app.consumer_agent.ConsumerAgentRunner",
         lambda **kwargs: captured.setdefault("consumer", kwargs),
     )
+
+    def build_audit(**kwargs):
+        captured["audit"] = kwargs
+        assert "runtime_skill_snapshot" not in kwargs
+        return object()
+
     monkeypatch.setattr(
-        "app.audit_agent.AuditAgentRunner", lambda **kwargs: object(),
+        "app.audit_agent.AuditAgentRunner", build_audit,
     )
     monkeypatch.setattr(
         "app.agent_orchestrator.AgentOrchestrator", lambda **kwargs: object(),
@@ -1193,6 +1199,7 @@ def test_email_orchestrator_passes_process_runtime_skill_snapshot_to_consumer(
     )
 
     assert captured["consumer"]["runtime_skill_snapshot"] is snapshot
+    assert "runtime_skill_snapshot" not in captured["audit"]
 
 
 def test_email_dependency_builder_resolves_one_snapshot_for_agent_orchestrator(

@@ -597,11 +597,13 @@ def _build_agent_orchestrator(
         "claude_adapter": runtime.claude_adapter,
         "friday_adapter": runtime.friday_adapter,
         "refresh_runtime_capabilities": runtime.refresh_runtime_capabilities,
-        "runtime_skill_snapshot": runtime_skill_snapshot,
     }
     return AgentOrchestrator(
         store=store,
-        consumer=ConsumerAgentRunner(**shared),
+        consumer=ConsumerAgentRunner(
+            **shared,
+            runtime_skill_snapshot=runtime_skill_snapshot,
+        ),
         audit=AuditAgentRunner(**shared, dry_run=bool(settings.dry_run)),
         domain_continuation=EmailUnsubscribeContinuationDriver(
             EmailStore(Path(settings.db_path))
