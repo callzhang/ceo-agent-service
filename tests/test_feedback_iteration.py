@@ -150,6 +150,114 @@ def test_skill_only_decision_resolves_with_loaded_revision_and_no_commit(tmp_pat
     assert store.resolve_feedback_processing_batch(
         "batch-1", commit_is_ancestor=False
     ) is True
+    alternate_load_receipt = store.record_runtime_skill_load(
+        target_config.id, pid=103, loaded={skill.id: revision_two.sha256}
+    )
+    with pytest.raises(ValueError, match="scope receipt"):
+        store.resolve_feedback_processing_batch(
+            "batch-1",
+            _resolution_receipt(
+                commit_sha="",
+                runtime_config_id=target_config.id,
+                load_receipt_id=alternate_load_receipt.id,
+                skill_revisions=[{"skill_id": skill.id, "revision_id": revision_two.id, "sha256": revision_two.sha256}],
+            ),
+            commit_is_ancestor=False,
+        )
+    reopened = store.reopen_feedback_processing_item("manual:1", reason="new feedback")
+    assert reopened is not None and reopened.status == "pending"
+    store.create_feedback_processing_batch(["manual:1"], batch_id="batch-2")
+    store.claim_feedback_processing_items("batch-2", ["manual:1"])
+    store.associate_feedback_processing_turn(
+        "manual:1", expected_batch_id="batch-2", workbench_task_id="task-2",
+        workbench_turn_id="turn-2", attempt_id=3, agent_run_id=4,
+    )
+    store.patch_feedback_processing_item_evidence(
+        "manual:1",
+        test_evidence={"scenario": {"exit_code": 0}},
+        restart_evidence={"launchd_label": "com.ceo-agent-service.main", "before_pid": 12, "after_pid": 13},
+        health_evidence={"url": "http://127.0.0.1:8765/healthz", "status_code": 200, "ok": True},
+    )
+    with pytest.raises(ValueError, match="commit"):
+        store.resolve_feedback_processing_batch(
+            "batch-2", _resolution_receipt(commit_sha=""), commit_is_ancestor=False
+        )
+    store.patch_feedback_processing_item_evidence("manual:1", commit_sha="c" * 40)
+    mixed_decision = FeedbackIterationDecision.model_validate(
+        {
+            **decision.model_dump(),
+            "scope": "mixed",
+            "target_runtime_config_id": target_config.id,
+        }
+    )
+    store.record_feedback_iteration_decision(
+        "batch-2", mixed_decision, workbench_task_id="task-2", workbench_turn_id="turn-2"
+    )
+    mixed_evidence = _resolution_receipt(
+        commit_sha="c" * 40, runtime_config_id=target_config.id,
+        previous_runtime_config_id=first_config.id, load_receipt_id=load_receipt.id,
+        restart_evidence={"launchd_label": "com.ceo-agent-service.main", "before_pid": 12, "after_pid": 13},
+        skill_revisions=[{"skill_id": skill.id, "revision_id": revision_two.id, "sha256": revision_two.sha256}],
+    )
+    assert store.resolve_feedback_processing_batch(
+        "batch-2", mixed_evidence, commit_is_ancestor=True
+    ) is True
+    mixed_alternate = store.record_runtime_skill_load(
+        target_config.id, pid=104, loaded={skill.id: revision_two.sha256}
+    )
+    with pytest.raises(ValueError, match="scope receipt"):
+        store.resolve_feedback_processing_batch(
+            "batch-2",
+            mixed_evidence.model_copy(update={"load_receipt_id": mixed_alternate.id}),
+            commit_is_ancestor=True,
+        )
+
+
+def test_runtime_config_decision_replay_rejects_an_alternate_load_receipt(tmp_path):
+    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
+    previous = store.create_runtime_skill_config({}, expected_parent_id=None)
+    store.record_runtime_skill_load(previous.id, pid=201, loaded={})
+    target = store.create_runtime_skill_config({}, expected_parent_id=previous.id)
+    receipt = store.record_runtime_skill_load(target.id, pid=202, loaded={})
+    store.upsert_feedback_event(key="manual:1", feedback_token="token")
+    store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
+    store.claim_feedback_processing_items("batch-1", ["manual:1"])
+    store.associate_feedback_processing_turn(
+        "manual:1", expected_batch_id="batch-1", workbench_task_id="task-1",
+        workbench_turn_id="turn-1", attempt_id=1, agent_run_id=2,
+    )
+    store.patch_feedback_processing_item_evidence(
+        "manual:1",
+        test_evidence={"scenario": {"exit_code": 0}},
+        restart_evidence={"launchd_label": "com.ceo-agent-service.main", "before_pid": 10, "after_pid": 11},
+        health_evidence={"url": "http://127.0.0.1:8765/healthz", "status_code": 200, "ok": True},
+    )
+    decision = FeedbackIterationDecision.model_validate(
+        {
+            **_decision(feedback_key="manual:1").model_dump(),
+            "scope": "runtime_config",
+            "target_skill_revisions": [],
+            "target_runtime_config_id": target.id,
+        }
+    )
+    store.record_feedback_iteration_decision(
+        "batch-1", decision, workbench_task_id="task-1", workbench_turn_id="turn-1"
+    )
+    evidence = _resolution_receipt(
+        commit_sha="", runtime_config_id=target.id,
+        previous_runtime_config_id=previous.id, load_receipt_id=receipt.id,
+        skill_revisions=[],
+    )
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", evidence, commit_is_ancestor=False
+    ) is True
+    alternate = store.record_runtime_skill_load(target.id, pid=203, loaded={})
+    with pytest.raises(ValueError, match="scope receipt"):
+        store.resolve_feedback_processing_batch(
+            "batch-1",
+            evidence.model_copy(update={"load_receipt_id": alternate.id}),
+            commit_is_ancestor=False,
+        )
 
 
 def test_disabled_feedback_iteration_rejects_batch_claim(tmp_path):

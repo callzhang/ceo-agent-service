@@ -180,7 +180,11 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "feedback_processing_items": ("current_round_id",),
-    "feedback_processing_rounds": ("backlog_evidence_json", "receipt_version"),
+    "feedback_processing_rounds": (
+        "backlog_evidence_json",
+        "receipt_version",
+        "scope_receipt_json",
+    ),
     "reply_attempts": (
         "human_decision_options_json",
         "feedback_scope",
@@ -2119,6 +2123,7 @@ class AutoReplyStore:
                     restart_evidence_json text not null default '{}',
                     health_evidence_json text not null default '{}',
                     backlog_evidence_json text not null default '{}',
+                    scope_receipt_json text not null default '{}',
                     receipt_version integer not null default 1
                         check (receipt_version in (1, 2)),
                     note text not null default '',
@@ -3510,6 +3515,15 @@ class AutoReplyStore:
                             "where id=?",
                             (int(row["id"]),),
                         )
+            if "scope_receipt_json" not in feedback_processing_round_columns:
+                try:
+                    db.execute(
+                        "alter table feedback_processing_rounds add column "
+                        "scope_receipt_json text not null default '{}'"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc):
+                        raise
 
             self._backfill_feedback_processing_rounds(db)
 
@@ -15111,6 +15125,7 @@ class AutoReplyStore:
             "restart_evidence",
             "health_evidence",
             "backlog_evidence",
+            "scope_receipt",
         ):
             raw = values.pop(f"{field}_json", "{}")
             parsed = json.loads(raw or "{}")
@@ -16504,6 +16519,32 @@ class AutoReplyStore:
             feedback_keys=round_keys,
             round_by_key={str(round_row["feedback_key"]): int(round_row["id"]) for round_row in rounds},
         )
+        persisted_scope_receipts = [
+            cls._scope_resolution_receipt(round_row) for round_row in rounds
+        ]
+        if decision_record is None:
+            if any(receipt is not None for receipt in persisted_scope_receipts):
+                raise ValueError("resolved feedback scope receipt has no matching decision")
+        else:
+            if any(receipt is None for receipt in persisted_scope_receipts):
+                raise ValueError("resolved feedback scope receipt is missing")
+            first_scope_receipt = persisted_scope_receipts[0]
+            assert first_scope_receipt is not None
+            if any(receipt != first_scope_receipt for receipt in persisted_scope_receipts):
+                raise ValueError("resolved feedback scope receipt is inconsistent")
+            decision_id, scope, persisted_scope_evidence = first_scope_receipt
+            if decision_id != decision_record.id or scope != decision_record.decision.scope:
+                raise ValueError("resolved feedback scope receipt does not match decision")
+            validate_resolution_receipt(
+                decision_record.decision,
+                persisted_scope_evidence,
+                commit_is_ancestor=True,
+            )
+            cls._validate_decision_resolution_receipt(
+                db, decision_record.decision, persisted_scope_evidence
+            )
+            if evidence is not None and persisted_scope_evidence != evidence:
+                raise ValueError("resolution scope receipt does not match batch history")
         transitions_by_round = (
             cls._validate_feedback_processing_batch_transition_ownership(
                 db,
@@ -16853,6 +16894,27 @@ class AutoReplyStore:
                 ):
                     raise ValueError("resolution managed Skill revision is not loaded")
 
+    @staticmethod
+    def _scope_resolution_receipt(
+        current_round: sqlite3.Row,
+    ) -> tuple[int, str, ResolutionEvidence] | None:
+        """Read one scope receipt durably bound to a resolved feedback round."""
+
+        try:
+            raw = json.loads(current_round["scope_receipt_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("resolved feedback scope receipt is invalid") from exc
+        if raw == {}:
+            return None
+        if not isinstance(raw, dict):
+            raise ValueError("resolved feedback scope receipt is invalid")
+        decision_id = raw.get("decision_id")
+        scope = raw.get("scope")
+        evidence = raw.get("evidence")
+        if type(decision_id) is not int or not isinstance(scope, str) or not isinstance(evidence, dict):
+            raise ValueError("resolved feedback scope receipt is invalid")
+        return decision_id, scope, ResolutionEvidence.model_validate(evidence)
+
     def resolve_feedback_processing_batch(
         self,
         batch_id: str,
@@ -17087,6 +17149,17 @@ class AutoReplyStore:
                 ensure_ascii=False,
                 sort_keys=True,
             )
+            scope_receipt_json = json.dumps(
+                {
+                    "decision_id": decision_record.id,
+                    "scope": decision_record.decision.scope,
+                    "evidence": normalized_evidence.model_dump(mode="json"),
+                }
+                if decision_record is not None
+                else {},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
             resolution_timestamp_row = db.execute(
                 "select current_timestamp as resolution_timestamp"
             ).fetchone()
@@ -17098,13 +17171,14 @@ class AutoReplyStore:
                     """
                     update feedback_processing_rounds
                        set status='resolved', resolved_at=?,
-                           backlog_evidence_json=?, updated_at=?
+                           backlog_evidence_json=?, scope_receipt_json=?, updated_at=?
                      where id=? and feedback_key=? and batch_id=?
                        and status='processing'
                     """,
                     (
                         resolution_timestamp,
                         backlog_json,
+                        scope_receipt_json,
                         resolution_timestamp,
                         int(current_round["id"]),
                         str(item["feedback_key"]),

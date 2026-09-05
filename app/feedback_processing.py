@@ -119,6 +119,7 @@ class FeedbackProcessingRound(_StrictProcessingModel):
     restart_evidence: dict[str, object] = Field(default_factory=dict)
     health_evidence: dict[str, object] = Field(default_factory=dict)
     backlog_evidence: dict[str, object] = Field(default_factory=dict)
+    scope_receipt: dict[str, object] = Field(default_factory=dict)
     receipt_version: Literal[1, 2] = 1
     note: str = ""
     started_at: str = ""
