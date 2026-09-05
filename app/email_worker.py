@@ -19,6 +19,8 @@ SCAN_INTERVAL_SECONDS = 60
 CONSUMER_POLL_INTERVAL_SECONDS = 10
 TRAINING_INTERVAL_SECONDS = 60
 MAX_HEALTH_TEXT_LENGTH = 160
+DIRECT_ACTION_DRAIN_MAX_ACTIONS = 25
+DIRECT_ACTION_DRAIN_MAX_SECONDS = 2.0
 
 
 class EmailWorkerStartupError(RuntimeError):
@@ -106,6 +108,28 @@ def _ignore_health(_scope: str, _payload: Mapping[str, object]) -> None:
     return None
 
 
+def _drain_direct_actions(
+    run_direct_actions_once: Callable[[], object],
+    *,
+    max_actions: int,
+    time_budget_seconds: float,
+    monotonic: Callable[[], float],
+) -> tuple[object, ...]:
+    if max_actions <= 0 or time_budget_seconds <= 0:
+        raise ValueError("direct action drain bounds must be positive")
+    started_at = monotonic()
+    results: list[object] = []
+    while (
+        len(results) < max_actions
+        and monotonic() - started_at < time_budget_seconds
+    ):
+        result = run_direct_actions_once()
+        if result is None:
+            break
+        results.append(result)
+    return tuple(results)
+
+
 class EmailWorkerReadiness:
     """Publish process readiness only after every component heartbeats once."""
 
@@ -151,6 +175,9 @@ def run_scan_and_direct_actions_loop(
     component_ready: Callable[[str], object] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     max_cycles: int | None = None,
+    direct_action_max_actions: int = DIRECT_ACTION_DRAIN_MAX_ACTIONS,
+    direct_action_time_budget_seconds: float = DIRECT_ACTION_DRAIN_MAX_SECONDS,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> None:
     cycles = 0
     while max_cycles is None or cycles < max_cycles:
@@ -183,9 +210,18 @@ def run_scan_and_direct_actions_loop(
                 },
             )
         try:
-            direct_result = run_direct_actions_once()
-            if getattr(direct_result, "status", "") == "failed":
-                failures += 1
+            direct_results = _drain_direct_actions(
+                run_direct_actions_once,
+                max_actions=direct_action_max_actions,
+                time_budget_seconds=direct_action_time_budget_seconds,
+                monotonic=monotonic,
+            )
+            failed_actions = sum(
+                getattr(result, "status", "") == "failed"
+                for result in direct_results
+            )
+            if failed_actions:
+                failures += failed_actions
                 record_health(
                     "component:email-provider-actions",
                     {"status": "degraded", "error_code": "provider_action_failed"},
@@ -876,14 +912,20 @@ def _build_imap_direct_action_executor_factory(email_store: object):
         secret = resolve_secret(str(account.get("imap_secret_reference") or ""), os.environ)
         if not secret:
             raise ConnectionError("email IMAP credential is unavailable")
-        provider = ImapDeterministicProvider.connect(
-            str(account["imap_host"]),
-            str(account["imap_username"]),
-            secret,
-            port=int(account["imap_port"]),
-            account_id=account_id,
+
+        def connect_provider():
+            return ImapDeterministicProvider.connect(
+                str(account["imap_host"]),
+                str(account["imap_username"]),
+                secret,
+                port=int(account["imap_port"]),
+                account_id=account_id,
+            )
+
+        return DeterministicEmailActionExecutor(
+            connect_provider(),
+            readback_provider_factory=connect_provider,
         )
-        return DeterministicEmailActionExecutor(provider)
 
     return executor_factory
 

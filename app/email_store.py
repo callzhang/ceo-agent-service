@@ -9622,6 +9622,7 @@ class EmailStore:
                     update email_classifications
                     set folder=?, uidvalidity=?, uid=?, updated_at=?
                     where id=? and account_id=? and stable_message_identity=?
+                      and folder=? and uidvalidity=? and uid=?
                     """,
                     (
                         updated_locator.folder,
@@ -9631,6 +9632,9 @@ class EmailStore:
                         action.classification_id,
                         action.account_id,
                         action.locator.stable_message_identity,
+                        action.locator.folder,
+                        action.locator.uidvalidity,
+                        action.locator.uid,
                     ),
                 ).rowcount
                 message_updated = db.execute(
@@ -9638,6 +9642,7 @@ class EmailStore:
                     update email_messages
                     set folder=?, uidvalidity=?, uid=?, updated_at=?
                     where account_id=? and stable_message_identity=?
+                      and folder=? and uidvalidity=? and uid=?
                     """,
                     (
                         updated_locator.folder,
@@ -9646,6 +9651,9 @@ class EmailStore:
                         finished_at,
                         action.account_id,
                         action.locator.stable_message_identity,
+                        action.locator.folder,
+                        action.locator.uidvalidity,
+                        action.locator.uid,
                     ),
                 ).rowcount
                 if classification_updated != 1 or message_updated != 1:

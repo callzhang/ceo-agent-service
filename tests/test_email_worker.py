@@ -2637,8 +2637,10 @@ def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
     factory = module._build_imap_direct_action_executor_factory(Store())
     executor_a = factory("account-a")
     executor_b = factory("account-b")
+    readback_provider_a = executor_a._readback_provider_factory()
 
     assert executor_a.provider is not executor_b.provider
+    assert readback_provider_a is not executor_a.provider
     assert calls == [
         (
             "imap-a.example.com",
@@ -2652,13 +2654,17 @@ def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
             "imap-secret-b",
             {"port": 1993, "account_id": "account-b"},
         ),
+        (
+            "imap-a.example.com",
+            "a@example.com",
+            "imap-secret-a",
+            {"port": 993, "account_id": "account-a"},
+        ),
     ]
     assert all("must-not-be-read" not in repr(call) for call in calls)
 
 
-def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_path):
-    module = _module()
-    database = tmp_path / "direct-action-no-agent.sqlite3"
+def _seed_direct_move_action(database: Path):
     email_store = EmailStore(database)
     task_store = AutoReplyStore(database)
     plan = build_versioned_email_action_plan(
@@ -2725,8 +2731,11 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
     )
 
     assert EmailActionTaskProducer(task_store, email_store).produce(plan, {}) == ()
+    return email_store, task_store
 
-    result = SimpleNamespace(
+
+def _completed_move_result():
+    return SimpleNamespace(
         status="done",
         provider_operation="MOVE",
         provider_target="account-direct:message-id:<direct-901@example.com>",
@@ -2744,6 +2753,14 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
             ),
         ),
     )
+
+
+def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_path):
+    module = _module()
+    database = tmp_path / "direct-action-no-agent.sqlite3"
+    email_store, task_store = _seed_direct_move_action(database)
+
+    result = _completed_move_result()
 
     class Executor:
         def execute(self, action):
@@ -2773,6 +2790,73 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
             """,
             ("account-direct:message-id:<direct-901@example.com>",),
         ).fetchone() == ("Archive", 10, 41)
+
+
+@pytest.mark.parametrize(
+    "scanner_raced_table",
+    ("email_classifications", "email_messages"),
+)
+def test_direct_action_locator_completion_rolls_back_on_scanner_race(
+    tmp_path,
+    scanner_raced_table: str,
+) -> None:
+    module = _module()
+    store_module = import_module("app.email_store")
+    database = tmp_path / f"direct-action-{scanner_raced_table}-race.sqlite3"
+    email_store, _task_store = _seed_direct_move_action(database)
+    result = _completed_move_result()
+
+    class Executor:
+        def execute(self, action):
+            with sqlite3.connect(database) as db:
+                if scanner_raced_table == "email_classifications":
+                    db.execute(
+                        """
+                        update email_classifications
+                        set folder='Scanner', uidvalidity=77, uid=707
+                        where id=901
+                        """
+                    )
+                else:
+                    db.execute(
+                        """
+                        update email_messages
+                        set folder='Scanner', uidvalidity=77, uid=707
+                        where stable_message_identity=?
+                        """,
+                        (action.locator.stable_message_identity,),
+                    )
+            return result
+
+    with pytest.raises(store_module.EmailActionAttemptConflict):
+        module._run_next_direct_action(
+            email_store,
+            lambda _account_id: Executor(),
+            available_account_ids=("account-direct",),
+        )
+
+    expected_classification = (
+        ("Scanner", 77, 707)
+        if scanner_raced_table == "email_classifications"
+        else ("INBOX", 9, 901)
+    )
+    expected_message = (
+        ("Scanner", 77, 707)
+        if scanner_raced_table == "email_messages"
+        else ("INBOX", 9, 901)
+    )
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select folder, uidvalidity, uid from email_classifications where id=901"
+        ).fetchone() == expected_classification
+        assert db.execute(
+            """
+            select folder, uidvalidity, uid from email_messages
+            where stable_message_identity=?
+            """,
+            ("account-direct:message-id:<direct-901@example.com>",),
+        ).fetchone() == expected_message
+        assert db.execute("select count(*) from email_action_attempts").fetchone()[0] == 0
 
 
 def test_direct_action_does_not_claim_an_unavailable_account():
@@ -2848,6 +2932,66 @@ def test_failed_direct_action_degrades_provider_component_health():
             "error_code": "provider_action_failed",
         },
     ) in health
+
+
+def test_direct_action_drain_processes_multiple_actions_but_stops_at_count_bound():
+    module = _module()
+    calls = []
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 0},
+        run_direct_actions_once=lambda: calls.append("action")
+        or SimpleNamespace(status="done"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+        direct_action_max_actions=3,
+        direct_action_time_budget_seconds=60.0,
+        monotonic=lambda: 0.0,
+    )
+
+    assert calls == ["action", "action", "action"]
+
+
+def test_direct_action_drain_stops_on_empty_queue_without_busy_loop():
+    module = _module()
+    calls = []
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 0},
+        run_direct_actions_once=lambda: calls.append("empty") or None,
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+        direct_action_max_actions=100,
+        direct_action_time_budget_seconds=60.0,
+        monotonic=lambda: 0.0,
+    )
+
+    assert calls == ["empty"]
+
+
+def test_direct_action_drain_stops_at_time_bound():
+    module = _module()
+    calls = []
+    clock = iter((0.0, 0.0, 0.6))
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 0},
+        run_direct_actions_once=lambda: calls.append("action")
+        or SimpleNamespace(status="done"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+        direct_action_max_actions=100,
+        direct_action_time_budget_seconds=0.5,
+        monotonic=lambda: next(clock),
+    )
+
+    assert calls == ["action"]
 
 
 def test_scan_config_uses_active_model_category_eligibility():
