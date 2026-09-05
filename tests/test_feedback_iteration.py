@@ -59,6 +59,10 @@ def test_persisted_decision_is_strict_and_append_only(tmp_path):
     store.upsert_feedback_event(key="manual:1", feedback_token="token")
     store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
     store.claim_feedback_processing_items("batch-1", ["manual:1"])
+    store.associate_feedback_processing_turn(
+        "manual:1", expected_batch_id="batch-1", workbench_task_id="task-1",
+        workbench_turn_id="turn-1", attempt_id=1, agent_run_id=2,
+    )
 
     recorded = store.record_feedback_iteration_decision(
         "batch-1", _decision(feedback_key="manual:1"), workbench_task_id="task-1", workbench_turn_id="turn-1"
@@ -68,6 +72,37 @@ def test_persisted_decision_is_strict_and_append_only(tmp_path):
     with store._connect() as db:
         with pytest.raises(Exception, match="append-only"):
             db.execute("update feedback_iteration_decisions set decision_json='{}' where id=?", (recorded.id,))
+
+
+def test_decision_rejects_forged_or_mixed_current_round_workbench_identity(tmp_path):
+    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
+    for key in ("manual:1", "manual:2"):
+        store.upsert_feedback_event(key=key, feedback_token=key)
+    store.create_feedback_processing_batch(["manual:1", "manual:2"], batch_id="batch-1")
+    store.claim_feedback_processing_items("batch-1", ["manual:1", "manual:2"])
+    store.associate_feedback_processing_turn(
+        "manual:1", expected_batch_id="batch-1", workbench_task_id="actual-task",
+        workbench_turn_id="actual-turn", attempt_id=1, agent_run_id=2,
+    )
+    store.associate_feedback_processing_turn(
+        "manual:2", expected_batch_id="batch-1", workbench_task_id="other-task",
+        workbench_turn_id="other-turn", attempt_id=3, agent_run_id=4,
+    )
+
+    with pytest.raises(ValueError, match="current processing round association"):
+        store.record_feedback_iteration_decision(
+            "batch-1", _decision(feedback_key="manual:1"),
+            workbench_task_id="forged-task", workbench_turn_id="forged-turn",
+        )
+
+    mixed = _decision(feedback_key="manual:1").model_copy(
+        update={"feedback_keys": ["manual:1", "manual:2"]}
+    )
+    with pytest.raises(ValueError, match="current processing round association"):
+        store.record_feedback_iteration_decision(
+            "batch-1", mixed,
+            workbench_task_id="actual-task", workbench_turn_id="actual-turn",
+        )
 
 
 def test_decision_rejects_missing_scope_specific_references():

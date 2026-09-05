@@ -46,6 +46,7 @@ from app.feedback_processing import (
     FeedbackIterationDecision,
     FeedbackIterationDecisionRecord,
     FeedbackIterationDisabledError,
+    FeedbackIterationAssociationMismatchError,
     FeedbackImportItem,
     ResolutionEvidence,
     detail_references,
@@ -15248,8 +15249,16 @@ class AutoReplyStore:
                 raise ValueError("feedback iteration decision requires a processing batch")
             placeholders = ",".join("?" for _ in keys)
             rows = db.execute(
-                f"""select feedback_key, current_round_id, batch_id, status
-                    from feedback_processing_items where feedback_key in ({placeholders})""",
+                f"""select item.feedback_key, item.current_round_id, item.batch_id,
+                           item.status, round.workbench_task_id,
+                           round.workbench_turn_id
+                    from feedback_processing_items item
+                    join feedback_processing_rounds round
+                      on round.id=item.current_round_id
+                     and round.feedback_key=item.feedback_key
+                     and round.batch_id=item.batch_id
+                     and round.status='processing'
+                   where item.feedback_key in ({placeholders})""",
                 keys,
             ).fetchall()
             if len(rows) != len(keys) or any(
@@ -15259,16 +15268,38 @@ class AutoReplyStore:
                 or row["current_round_id"] <= 0
                 for row in rows
             ):
-                raise ValueError("feedback iteration decision keys must belong to the current processing batch")
+                raise FeedbackIterationAssociationMismatchError(
+                    "feedback iteration decision keys must belong to the current processing round association"
+                )
             round_ids_by_key = {str(row["feedback_key"]): int(row["current_round_id"]) for row in rows}
+            identities = {
+                (
+                    str(row["workbench_task_id"] or "").strip(),
+                    str(row["workbench_turn_id"] or "").strip(),
+                )
+                for row in rows
+            }
+            if len(identities) != 1:
+                raise FeedbackIterationAssociationMismatchError(
+                    "feedback iteration decision requires one current processing round association"
+                )
+            canonical_task_id, canonical_turn_id = identities.pop()
+            if (
+                not canonical_task_id
+                or not canonical_turn_id
+                or (task_id, turn_id) != (canonical_task_id, canonical_turn_id)
+            ):
+                raise FeedbackIterationAssociationMismatchError(
+                    "feedback iteration decision must match the current processing round association"
+                )
             cursor = db.execute(
                 """insert into feedback_iteration_decisions
                    (batch_id, workbench_task_id, workbench_turn_id, decision_json)
                    values (?, ?, ?, ?)""",
                 (
                     cleaned_batch_id,
-                    task_id,
-                    turn_id,
+                    canonical_task_id,
+                    canonical_turn_id,
                     decision.model_dump_json(),
                 ),
             )

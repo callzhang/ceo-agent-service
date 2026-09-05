@@ -41,6 +41,7 @@ from app.managed_skills import (
 )
 from app.feedback_processing import (
     FeedbackIterationDecision,
+    FeedbackIterationAssociationMismatchError,
     FeedbackIterationDisabledError,
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
@@ -704,6 +705,8 @@ def register_console_routes(
                 workbench_task_id=payload.get("workbench_task_id", ""),
                 workbench_turn_id=payload.get("workbench_turn_id", ""),
             )
+        except FeedbackIterationAssociationMismatchError as exc:
+            return JSONResponse({"ok": False, "code": exc.error_code, "message": "反馈决策必须绑定当前处理轮", "details": {}}, status_code=409)
         except (ValueError, TypeError) as exc:
             return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=422)
         return json_safe(record)

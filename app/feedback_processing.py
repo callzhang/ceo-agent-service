@@ -28,6 +28,7 @@ FEEDBACK_REOPEN_HISTORY_INCOMPLETE = "feedback_reopen_history_incomplete"
 FEEDBACK_PROCESSING_SKILL_PATH = "skills/ceo-feedback-processing/SKILL.md"
 FEEDBACK_ITERATION_SKILL_PATH = "skills/ceo-feedback-iteration/SKILL.md"
 FEEDBACK_ITERATION_DISABLED_ERROR = "feedback_iteration_disabled"
+FEEDBACK_ITERATION_ASSOCIATION_MISMATCH_ERROR = "feedback_iteration_association_mismatch"
 
 
 class FeedbackProcessingClaimError(ValueError):
@@ -44,6 +45,12 @@ class FeedbackIterationDisabledError(ValueError):
     """Raised when the separately managed feedback capability is disabled."""
 
     error_code = FEEDBACK_ITERATION_DISABLED_ERROR
+
+
+class FeedbackIterationAssociationMismatchError(ValueError):
+    """Raised when a decision identity differs from its current processing rounds."""
+
+    error_code = FEEDBACK_ITERATION_ASSOCIATION_MISMATCH_ERROR
 
 
 class FeedbackProcessingReopenError(ValueError):
