@@ -514,6 +514,19 @@ Consumer 或 Audit 的运行、依赖、解析和外部系统错误统一进入 
 服务重启后，仍有有效租约的 run 不会被 stale recovery 抢占；租约过期且没有活动进程的
 run 才能被持久队列恢复。
 
+## 统一外发消息后缀
+
+服务向人员发送的 DingTalk 或 WeChat 文本，必须先通过
+`app.service_message_sender.ServiceMessageSender` 准备为持久化的
+`PreparedOutboundMessage`，再交给 provider adapter。准备阶段恰好附加一次服务签名；启用反馈服务时，
+还会恰好附加一组点赞/点踩链接。每个逻辑 delivery 使用稳定的 `delivery_key`，其最终正文和
+feedback token 一经写入即不可变；重试、恢复和撤回复用同一份最终正文，不能再次拼接后缀。
+
+Consumer 提案中的消息动作在 Audit 前完成这一机械准备，因此 Audit 看到的就是实际待发送文本；
+这不改变 Consumer/Audit 的业务职责，也不引入新的审核回合。源码架构测试禁止业务模块直接调用
+DingTalk 原始发送方法或 WeChat IPC runner。Email 不属于该文本发送策略，仍禁止 SMTP、自动回复
+和任何邮件发送路径。
+
 ## 持久化与审计
 
 Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的提示、工具调用、输出和

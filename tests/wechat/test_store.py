@@ -309,7 +309,7 @@ def test_new_generation_replaces_superseded_delivery_with_corrected_reply(tmp_pa
     delivery = store.get_wechat_delivery_for_task(task.id)
     assert delivery.status == "ready_to_send"
     assert delivery.execution_generation == new_generation
-    assert delivery.reply_text == "corrected reply"
+    assert delivery.reply_text == "corrected reply（by明哥分身）"
     assert delivery.error == ""
 
 
@@ -357,7 +357,7 @@ def test_new_generation_replaces_confirmed_unperformed_delivery(tmp_path):
     assert delivery is not None
     assert delivery.status == "ready_to_send"
     assert delivery.execution_generation == new_generation
-    assert delivery.reply_text == "new reply"
+    assert delivery.reply_text == "new reply（by明哥分身）"
     with store._connect() as db:
         row = db.execute(
             "select action_started_at from wechat_deliveries where id=?",
