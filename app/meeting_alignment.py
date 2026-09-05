@@ -35,7 +35,7 @@ from app.meeting_alignment_source import (
     CalendarMeetingEvidence,
     MeetingSourceIncomplete,
     build_calendar_meeting_evidence,
-    build_transcript_one_to_one_evidence,
+    build_transcript_roster_evidence,
     minutes_creator_from_list_item,
     minutes_meeting_id,
     normalize_minutes_discovery_metadata,
@@ -228,7 +228,7 @@ def produce_meeting_alignment_jobs(
                 title=metadata.title,
                 list_item=list_item,
                 info=info,
-                status="needs_human",
+                status="skipped",
                 error=_error_json("meeting_roster", str(exc)),
                 now=now,
                 ended_at=ended_at,
@@ -246,7 +246,7 @@ def produce_meeting_alignment_jobs(
                 title=metadata.title,
                 list_item=list_item,
                 info=info,
-                status="needs_human",
+                status="skipped",
                 error=_error_json(
                     "meeting_roster",
                     "meeting evidence does not identify exactly one current-user attendee",
@@ -1533,50 +1533,55 @@ def _build_meeting_roster_evidence(
 ) -> CalendarMeetingEvidence:
     try:
         return build_calendar_meeting_evidence(info, events, current_user_id)
-    except MeetingSourceIncomplete as calendar_error:
+    except MeetingSourceIncomplete:
         try:
             transcription = dws.get_all_minutes_transcription(
                 minutes_meeting_id(info)
             )
-            current_user_name = principal_display_name().strip()
             speaker_names = transcript_speaker_names(transcription)
-            current_key = _canonical_name(current_user_name)
-            other_names = [
-                name
+            speakers = [
+                _resolve_transcript_speaker(dws, name, current_user_id)
                 for name in speaker_names
-                if _canonical_name(name) != current_key
             ]
-            if (
-                not current_key
-                or sum(
-                    _canonical_name(name) == current_key
-                    for name in speaker_names
-                )
-                != 1
-                or len(speaker_names) != 2
-                or len(other_names) != 1
-            ):
-                raise MeetingSourceIncomplete(
-                    "transcript does not prove an ad-hoc one-to-one meeting"
-                )
-            counterpart = _resolve_transcript_counterpart(
-                dws,
-                other_names[0],
+            self_speakers = [
+                speaker for speaker in speakers if speaker.user_id == current_user_id
+            ]
+            current_user = MeetingParticipant(
+                name=(
+                    self_speakers[0].name
+                    if self_speakers
+                    else principal_display_name().strip()
+                ),
+                user_id=current_user_id,
+                open_dingtalk_id=(
+                    self_speakers[0].open_dingtalk_id if self_speakers else ""
+                ),
             )
-            return build_transcript_one_to_one_evidence(
+            speakers = [
+                speaker
+                for speaker in speakers
+                if speaker.user_id != current_user_id
+            ]
+            if not speakers:
+                raise MeetingSourceIncomplete(
+                    "transcript has no participant other than the current user"
+                )
+            return build_transcript_roster_evidence(
                 info,
                 transcription,
-                current_user_id=current_user_id,
-                current_user_name=current_user_name,
-                counterpart=counterpart,
+                current_user=current_user,
+                speakers=speakers,
             )
-        except (DwsError, MeetingSourceIncomplete):
-            raise calendar_error
+        except (DwsError, MeetingSourceIncomplete) as exc:
+            raise MeetingSourceIncomplete(
+                f"calendar roster unavailable and transcript roster unavailable: {exc}"
+            ) from exc
 
 
-def _resolve_transcript_counterpart(
+def _resolve_transcript_speaker(
     dws: MeetingProducerDws,
     name: str,
+    current_user_id: str,
 ) -> MeetingParticipant:
     wanted = _canonical_name(name)
     matches = [
@@ -1588,20 +1593,27 @@ def _resolve_transcript_counterpart(
             _canonical_name(profile.nick),
         }
     ]
-    if len(matches) != 1:
-        raise MeetingSourceIncomplete(
-            "transcript one-to-one counterpart identity is not unique"
+    if len(matches) == 1:
+        profile = matches[0]
+        return MeetingParticipant(
+            name=name.strip(),
+            user_id=profile.user_id.strip(),
+            open_dingtalk_id=(profile.open_dingtalk_id or "").strip(),
         )
-    profile = matches[0]
-    if not profile.user_id.strip():
-        raise MeetingSourceIncomplete(
-            "transcript one-to-one counterpart user id is missing"
+    current_matches = [
+        profile for profile in matches if profile.user_id == current_user_id
+    ]
+    if len(current_matches) == 1:
+        profile = current_matches[0]
+        return MeetingParticipant(
+            name=name.strip(),
+            user_id=current_user_id,
+            open_dingtalk_id=(profile.open_dingtalk_id or "").strip(),
         )
-    return MeetingParticipant(
-        name=name.strip(),
-        user_id=profile.user_id.strip(),
-        open_dingtalk_id=(profile.open_dingtalk_id or "").strip(),
-    )
+    # External speakers may not be present in the corporate directory.  Their
+    # transcript identity remains useful to the delivery agent, but is never a
+    # direct-message target without a separately resolved user id.
+    return MeetingParticipant(name=name.strip(), user_id="")
 
 
 def _canonical_name(value: str) -> str:
