@@ -30,12 +30,14 @@ class ServiceMessageSender:
         delivery_key: str,
         body: str,
         original_text: str = "",
+        feedback_base_url: str | None = None,
     ) -> PreparedOutboundMessage:
         return self.store.prepare_outbound_postfix(
             channel,
             delivery_key,
             body,
             original_text,
+            feedback_base_url=feedback_base_url,
         )
 
     def send_dingtalk(
@@ -75,6 +77,54 @@ class ServiceMessageSender:
             **target,
         )
         return SendReceipt(message=message, provider_result=provider_result)
+
+    def send_dingtalk_reply_to_trigger_prepared(
+        self,
+        message: PreparedOutboundMessage,
+        *,
+        conversation: Any,
+        trigger: Any,
+    ) -> SendReceipt:
+        """Dispatch a persisted reply through the native DingTalk reply path."""
+        self._require_persisted_message(message, channel="dingtalk")
+        if self.dingtalk is None:
+            raise RuntimeError("DingTalk adapter is required")
+        persisted_receipt = self.store.get_outbound_postfix_receipt(
+            message.channel,
+            message.delivery_key,
+        )
+        if persisted_receipt is not None:
+            return SendReceipt(message=message, provider_result=persisted_receipt)
+        provider_result = self.dingtalk.send_reply_to_trigger(
+            conversation,
+            trigger,
+            message.final_body,
+        )
+        verification = self._verify_native_reply_result(provider_result)
+        if verification != "sent":
+            raise RuntimeError(f"native DingTalk reply send is {verification}")
+        receipt = self.store.record_outbound_postfix_receipt(
+            message.channel,
+            message.delivery_key,
+            provider_result,
+        )
+        return SendReceipt(message=message, provider_result=receipt)
+
+    def _verify_native_reply_result(self, provider_result: Any) -> str:
+        verifier = getattr(self.dingtalk, "verify_message_send_result", None)
+        if callable(verifier):
+            verification = verifier(provider_result)
+            if isinstance(verification, dict):
+                state = str(verification.get("state") or "").strip()
+                if state in {"sent", "failed", "ambiguous"}:
+                    return state
+            return "ambiguous"
+        if not isinstance(provider_result, dict):
+            return "ambiguous"
+        if provider_result.get("success") is False:
+            return "failed"
+        result_text = str(provider_result)
+        return "sent" if "processQueryKey" in result_text else "ambiguous"
 
     def send_wechat(
         self,

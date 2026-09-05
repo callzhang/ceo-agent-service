@@ -60,6 +60,34 @@ class RecordingWechatRunner:
         return {"sent": True}
 
 
+class RecordingNativeReplyAdapter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
+
+    def send_reply_to_trigger(self, conversation, trigger, text):
+        self.calls.append((conversation, trigger, text))
+        return {"message_id": "native-reply-1"}
+
+    @staticmethod
+    def verify_message_send_result(result):
+        return {"state": "sent"}
+
+
+class UnverifiedNativeReplyAdapter(RecordingNativeReplyAdapter):
+    def __init__(self, result, verification) -> None:
+        super().__init__()
+        self.result = result
+        self.verification = verification
+
+    def send_reply_to_trigger(self, conversation, trigger, text):
+        self.calls.append((conversation, trigger, text))
+        return self.result
+
+    def verify_message_send_result(self, result):
+        assert result == self.result
+        return self.verification
+
+
 def test_dingtalk_facade_dispatches_only_the_prepared_final_body(
     tmp_path, monkeypatch,
 ) -> None:
@@ -158,6 +186,67 @@ def test_dingtalk_prepared_dispatch_rejects_unpersisted_and_tampered_messages(
         )
 
     assert dingtalk.calls == []
+
+
+def test_native_reply_facade_reuses_durable_receipt_after_partial_delivery(
+    tmp_path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "service-message-sender.sqlite3")
+    adapter = RecordingNativeReplyAdapter()
+    sender = ServiceMessageSender(store=store, dingtalk=adapter)
+    message = sender.prepare(
+        channel="dingtalk",
+        delivery_key="okr-review:1:chunk:1",
+        body="审核结果",
+        original_text="请审核",
+    )
+
+    first = sender.send_dingtalk_reply_to_trigger_prepared(
+        message,
+        conversation="cid-1",
+        trigger="msg-1",
+    )
+    replay = sender.send_dingtalk_reply_to_trigger_prepared(
+        message,
+        conversation="cid-1",
+        trigger="msg-1",
+    )
+
+    assert first.provider_result == replay.provider_result == {"message_id": "native-reply-1"}
+    assert adapter.calls == [("cid-1", "msg-1", message.final_body)]
+
+
+@pytest.mark.parametrize(
+    ("result", "verification", "message"),
+    [
+        ({"success": False}, {"state": "failed"}, "failed"),
+        ({"success": True, "result": {}}, {"state": "ambiguous"}, "ambiguous"),
+    ],
+)
+def test_native_reply_facade_does_not_cache_failed_or_ambiguous_provider_results(
+    tmp_path,
+    result,
+    verification,
+    message,
+) -> None:
+    store = AutoReplyStore(tmp_path / "service-message-sender.sqlite3")
+    adapter = UnverifiedNativeReplyAdapter(result, verification)
+    sender = ServiceMessageSender(store=store, dingtalk=adapter)
+    prepared = sender.prepare(
+        channel="dingtalk",
+        delivery_key="okr-review:1:chunk:1",
+        body="审核结果",
+        original_text="请审核",
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        sender.send_dingtalk_reply_to_trigger_prepared(
+            prepared,
+            conversation="cid-1",
+            trigger="msg-1",
+        )
+
+    assert store.get_outbound_postfix_receipt("dingtalk", prepared.delivery_key) is None
 
 
 def test_wechat_prepared_dispatch_rejects_unpersisted_and_tampered_messages(

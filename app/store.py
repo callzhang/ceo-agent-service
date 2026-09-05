@@ -144,6 +144,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_iteration_decisions",
     "feedback_iteration_decision_items",
     "outbound_postfixes",
+    "outbound_postfix_receipts",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_items_status",
@@ -4173,6 +4174,19 @@ class AutoReplyStore:
                 )
                 """
             )
+            db.execute(
+                """
+                create table if not exists outbound_postfix_receipts (
+                    channel text not null check(channel in ('dingtalk', 'wechat')),
+                    delivery_key text not null check(trim(delivery_key) <> ''),
+                    provider_result_json text not null,
+                    created_at text not null default current_timestamp,
+                    primary key(channel, delivery_key),
+                    foreign key(channel, delivery_key)
+                        references outbound_postfixes(channel, delivery_key)
+                )
+                """
+            )
 
     def prepare_outbound_postfix(
         self,
@@ -4180,6 +4194,8 @@ class AutoReplyStore:
         delivery_key: str,
         body: str,
         original_text: str,
+        *,
+        feedback_base_url: str | None = None,
     ) -> PreparedOutboundMessage:
         """Persist and return the immutable final form for one provider delivery."""
         normalized_channel, normalized_delivery_key = normalize_outbound_postfix_inputs(
@@ -4207,7 +4223,11 @@ class AutoReplyStore:
                 delivery_key=normalized_delivery_key,
                 body=body,
                 original_text=original_text,
-                feedback_base_url=feedback_spike_vercel_base_url(),
+                feedback_base_url=(
+                    feedback_spike_vercel_base_url()
+                    if feedback_base_url is None
+                    else feedback_base_url
+                ),
             )
             db.execute(
                 """insert into outbound_postfixes (
@@ -4251,6 +4271,53 @@ class AutoReplyStore:
             feedback_token=str(row["feedback_token"]),
             postfix_version=str(row["postfix_version"]),
         )
+
+    def get_outbound_postfix_receipt(
+        self,
+        channel: str,
+        delivery_key: str,
+    ) -> object | None:
+        """Return the durable provider receipt for one prepared delivery."""
+        normalized_channel, normalized_delivery_key = normalize_outbound_postfix_inputs(
+            channel=channel,
+            delivery_key=delivery_key,
+            body="receipt",
+        )
+        with self._connect() as db:
+            row = db.execute(
+                """select provider_result_json from outbound_postfix_receipts
+                   where channel=? and delivery_key=?""",
+                (normalized_channel, normalized_delivery_key),
+            ).fetchone()
+        return None if row is None else json.loads(str(row["provider_result_json"]))
+
+    def record_outbound_postfix_receipt(
+        self,
+        channel: str,
+        delivery_key: str,
+        provider_result: object,
+    ) -> object:
+        """Persist a provider result once so native replies are not replayed."""
+        normalized_channel, normalized_delivery_key = normalize_outbound_postfix_inputs(
+            channel=channel,
+            delivery_key=delivery_key,
+            body="receipt",
+        )
+        serialized = json.dumps(provider_result, ensure_ascii=False, default=str)
+        with self._immediate_write_transaction() as db:
+            db.execute(
+                """insert or ignore into outbound_postfix_receipts (
+                       channel, delivery_key, provider_result_json
+                   ) values (?, ?, ?)""",
+                (normalized_channel, normalized_delivery_key, serialized),
+            )
+            row = db.execute(
+                """select provider_result_json from outbound_postfix_receipts
+                   where channel=? and delivery_key=?""",
+                (normalized_channel, normalized_delivery_key),
+            ).fetchone()
+        assert row is not None
+        return json.loads(str(row["provider_result_json"]))
 
     @staticmethod
     def _managed_skill_from_row(row: sqlite3.Row) -> ManagedSkill:

@@ -352,16 +352,28 @@ class MessageDws:
         return {"state": "sent"}
 
 
-def test_weekly_okr_group_summary_includes_assistant_postfix():
+def test_weekly_okr_group_summary_includes_assistant_postfix(tmp_path):
     dws = MessageDws()
+    store = AutoReplyStore(tmp_path / "weekly.sqlite3")
 
-    assert DwsWeeklyOkrGateway(dws).send_group_summary(
+    assert DwsWeeklyOkrGateway(dws, store=store).send_group_summary(
         conversation_id="cid-ceo-2",
         title="2026-W35 管理周报",
         text="2026-W35 管理周报\n\n本周完成 3 项。",
     ) == "sent"
 
     assert dws.sent[0]["text"].endswith("（by明哥分身）")
+    prepared = store.get_outbound_postfix(
+        "dingtalk", "weekly-okr:cid-ceo-2:2026-W35 管理周报"
+    )
+    assert prepared is not None
+    assert prepared.final_body == dws.sent[0]["text"]
+    assert DwsWeeklyOkrGateway(dws, store=store).send_group_summary(
+        conversation_id="cid-ceo-2",
+        title="2026-W35 管理周报",
+        text="重试时不应重写正文",
+    ) == "sent"
+    assert dws.sent[1]["text"] == dws.sent[0]["text"]
 
 
 class FakeSource:

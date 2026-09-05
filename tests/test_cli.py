@@ -1533,8 +1533,11 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
     assert processed == 1
     assert request.status == "done"
     assert sent_reply is not None
-    assert sent_reply.reply_text == "韩露 2026 Q2 OKR 审核结果"
+    assert sent_reply.reply_text == "韩露 2026 Q2 OKR 审核结果（by明哥分身）"
     assert sent_reply.recall_key == "okr-recall-1"
+    prepared = loaded.get_outbound_postfix("dingtalk", f"okr-review:{request_id}:chunk:1")
+    assert prepared is not None
+    assert prepared.final_body == sent_reply.reply_text
     assert calls == [
         ("runner", "RoutedCodexExecution", "okr_review"),
         ("dws", 4),
@@ -1545,7 +1548,7 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
             True,
             "msg-okr-1",
             "open-hanlu-1",
-            "韩露 2026 Q2 OKR 审核结果",
+            "韩露 2026 Q2 OKR 审核结果（by明哥分身）",
         ),
     ]
     assert capsys.readouterr().out == "process-okr-reviews processed=1\n"
@@ -1621,6 +1624,68 @@ def test_process_okr_reviews_command_dry_run_does_not_send_reply(
         ("process", request_id, True),
     ]
     assert capsys.readouterr().out == "process-okr-reviews processed=1\n"
+
+
+def test_process_okr_reviews_command_does_not_record_unverified_native_reply(
+    tmp_path,
+    monkeypatch,
+):
+    class FakeStructuredRunner:
+        def __init__(self, **kwargs):
+            pass
+
+    class FailedDwsClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+            return {"success": False}
+
+        @staticmethod
+        def verify_message_send_result(send_result):
+            assert send_result == {"success": False}
+            return {"state": "failed"}
+
+    def fake_process(*, store, runner, request, single_chat):
+        store.mark_okr_review_request_done(request.id, codex_session_id="session-okr")
+        return "审核结果"
+
+    monkeypatch.setattr("app.structured_agent.StructuredCodexRunner", FakeStructuredRunner)
+    monkeypatch.setattr("app.okr_review.process_okr_review_request", fake_process)
+    monkeypatch.setattr(cli, "DwsClient", FailedDwsClient)
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    enqueue_trigger_task(
+        store,
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        single_chat=True,
+        trigger_message_id="msg-okr-1",
+        trigger_sender="韩露",
+        trigger_text="帮我审核 OKR",
+        sender_open_dingtalk_id="open-hanlu-1",
+    )
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        trigger_message_id="msg-okr-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="user-hanlu-1",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json='{"objectives":[]}',
+    )
+
+    with pytest.raises(RuntimeError, match="native DingTalk reply send is failed"):
+        process_okr_reviews_command(WorkerSettings(db_path=db_path, workspace=tmp_path))
+
+    loaded = AutoReplyStore(db_path)
+    assert loaded.get_sent_reply("cid-1", "msg-okr-1") is None
+    assert loaded.get_outbound_postfix_receipt(
+        "dingtalk", f"okr-review:{request_id}:chunk:1"
+    ) is None
 
 
 def test_process_okr_reviews_command_marks_process_failure_and_reraises(
@@ -1757,7 +1822,7 @@ def test_process_okr_reviews_command_requeues_stale_processing_request(
     assert errors[0].kind == "okr_review_stale_requeue"
     assert calls == [
         ("process", request_id, True),
-        ("send", "msg-okr-1", "卢鑫 2026 Q3 OKR 审核结果"),
+        ("send", "msg-okr-1", "卢鑫 2026 Q3 OKR 审核结果（by明哥分身）"),
     ]
 
 

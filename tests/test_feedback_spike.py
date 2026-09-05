@@ -6,6 +6,7 @@ import pytest
 from app.cli import build_parser, feedback_spike_command
 from app.dws_client import DwsClient
 from app.feedback_policy import FEEDBACK_REQUIRED_LINK_PREFIX
+from app.store import AutoReplyStore
 from app.feedback_spike import (
     append_feedback_links,
     build_callback_url,
@@ -349,7 +350,7 @@ def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification(
     assert "attempt_id=42" in message.callback_url_up
 
 
-def test_send_feedback_spike_links_uses_current_user_message_path():
+def test_send_feedback_spike_links_uses_current_user_message_path(tmp_path):
     class RecordingDwsClient(DwsClient):
         def __init__(self):
             super().__init__(dws_bin="dws")
@@ -379,6 +380,7 @@ def test_send_feedback_spike_links_uses_current_user_message_path():
             return {"result": {"processQueryKey": "key-1"}}
 
     client = RecordingDwsClient()
+    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
 
     result = send_feedback_spike_links(
         vercel_base_url="https://feedback.example.com",
@@ -387,6 +389,7 @@ def test_send_feedback_spike_links_uses_current_user_message_path():
         attempt_id=42,
         conversation_id="cid-1",
         dws_client=client,
+        store=store,
     )
 
     assert result["response"] == {"result": {"processQueryKey": "key-1"}}
@@ -404,6 +407,70 @@ def test_send_feedback_spike_links_uses_current_user_message_path():
     assert result["callback_url_up"] in client.sent[0]["text"]
     assert result["callback_url_down"] in client.sent[0]["text"]
     assert "send-by-bot" not in result["command"]
+    prepared = store.get_outbound_postfix("dingtalk", "feedback-spike:42")
+    assert prepared is not None
+    assert prepared.final_body == client.sent[0]["text"]
+    replay = send_feedback_spike_links(
+        vercel_base_url="https://feedback.example.com",
+        reply_text="重试时变更的文本",
+        original_text="帮我看看这个方案",
+        attempt_id=42,
+        conversation_id="cid-1",
+        dws_client=client,
+        store=store,
+    )
+    assert replay["text"] == result["text"]
+    assert client.sent[1]["text"] == client.sent[0]["text"]
+    assert replay["feedback_token"] == result["feedback_token"]
+    assert replay["callback_url_up"] == result["callback_url_up"]
+    assert replay["callback_url_down"] == result["callback_url_down"]
+    assert client.sent[1]["title"] == client.sent[0]["title"]
+    assert replay["command"] == result["command"]
+
+
+def test_send_feedback_spike_links_without_feedback_endpoint_reuses_signature_only_body(
+    tmp_path,
+):
+    class RecordingDwsClient(DwsClient):
+        def __init__(self):
+            super().__init__(dws_bin="dws")
+            self.sent = []
+
+        def send_message(self, conversation_id, text, **kwargs):
+            self.sent.append((conversation_id, text, kwargs))
+            return {"success": True}
+
+    client = RecordingDwsClient()
+    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
+    first = send_feedback_spike_links(
+        vercel_base_url="",
+        reply_text="收到",
+        attempt_id="signature-only-1",
+        conversation_id="cid-1",
+        dws_client=client,
+        store=store,
+    )
+    replay = send_feedback_spike_links(
+        vercel_base_url="",
+        reply_text="重试时变更的文本",
+        attempt_id="signature-only-1",
+        conversation_id="cid-1",
+        dws_client=client,
+        store=store,
+    )
+
+    assert first["feedback_token"] == ""
+    assert first["callback_url_up"] == ""
+    assert first["callback_url_down"] == ""
+    assert first["text"] == "收到（by明哥分身）"
+    assert "/api/dingtalk-feedback-spike" not in first["text"]
+    assert replay["text"] == first["text"]
+    assert replay["feedback_token"] == ""
+    assert client.sent[1][1] == client.sent[0][1] == first["text"]
+    prepared = store.get_outbound_postfix(
+        "dingtalk", "feedback-spike:signature-only-1"
+    )
+    assert prepared is not None and prepared.final_body == first["text"]
 
 
 def test_parser_supports_feedback_spike_send_links():
