@@ -510,7 +510,13 @@ def test_consumer_persists_native_mcp_reads_from_codex_session(
     assert result.result.outcome.value == "no_action"
 
 
-def _proposal_jsonl(payload: dict[str, object]) -> str:
+def _proposal_jsonl(
+    payload: dict[str, object],
+    *,
+    capability: str = "agent_cli.dws",
+    operation: str = "chat message send",
+    target: dict[str, object] | None = None,
+) -> str:
     result = {
         "outcome": "proposal",
         "summary": "Prepared a candidate.",
@@ -519,9 +525,9 @@ def _proposal_jsonl(payload: dict[str, object]) -> str:
             "actions": [
                 {
                     "description": "Send",
-                    "capability": "agent_cli.dws",
-                    "operation": "chat message send",
-                    "target": {"group": "cid-agent"},
+                    "capability": capability,
+                    "operation": operation,
+                    "target": target or {"group": "cid-agent"},
                     "payload": payload,
                     "expected_verification": "Message exists",
                 }
@@ -1899,6 +1905,57 @@ def test_consumer_prepares_command_string_and_persists_one_argv_contract(
     assert "command" not in payload
     assert isinstance(payload["argv"], list)
     text = payload["argv"][payload["argv"].index("--content") + 1]
+    assert text.startswith("Verified notice.（by明哥分身）")
+    assert text.count("/api/dingtalk-feedback-spike") == 2
+
+
+@pytest.mark.parametrize(
+    ("operation", "target", "payload", "text_key"),
+    (
+        (
+            "send_direct_message",
+            {"open_dingtalk_id": "recipient-1"},
+            {"content": "Verified notice."},
+            "content",
+        ),
+        (
+            "messages-reply",
+            {"conversation_id": "cid-agent", "message_id": "message-1"},
+            {"reply_text": "Verified notice."},
+            "reply_text",
+        ),
+    ),
+)
+def test_consumer_prepares_structured_dingtalk_message_postfix_before_audit(
+    store,
+    task,
+    context,
+    monkeypatch,
+    operation,
+    target,
+    payload,
+    text_key,
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(
+            _proposal_jsonl(
+                payload,
+                capability="dingtalk-chat",
+                operation=operation,
+                target=target,
+            )
+        ),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.proposal is not None
+    text = result.result.proposal.actions[0].payload[text_key]
+    assert isinstance(text, str)
     assert text.startswith("Verified notice.（by明哥分身）")
     assert text.count("/api/dingtalk-feedback-spike") == 2
 

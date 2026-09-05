@@ -591,25 +591,75 @@ def _prepare_outgoing_dingtalk_action(
     descriptor = describe_native_command({"type": "command_execution", **payload})
     command_path = dingtalk_outgoing_message_command_path(argv)
     if (
-        argv is None
-        or descriptor is None
-        or descriptor.cli != "dws"
-        or command_path is None
+        argv is not None
+        and descriptor is not None
+        and descriptor.cli == "dws"
+        and command_path is not None
     ):
+        reply_text = dingtalk_message_text(argv)
+        if not reply_text.strip():
+            return action
+        prepared = prepare_outgoing_reply_text(
+            reply_text=reply_text,
+            original_text=context.trigger_text,
+            feedback_base_url=feedback_spike_vercel_base_url(),
+        )
+        prepared_payload = dict(payload)
+        prepared_payload.pop("command", None)
+        prepared_payload["argv"] = list(
+            replace_dingtalk_message_text(argv, prepared.text)
+        )
+        return action.model_copy(update={"payload": prepared_payload})
+
+    text_key = _structured_dingtalk_outgoing_text_key(action)
+    if text_key is None:
         return action
-    reply_text = dingtalk_message_text(argv)
-    if not reply_text.strip():
+    reply_text = payload[text_key]
+    if not isinstance(reply_text, str) or not reply_text.strip():
         return action
     prepared = prepare_outgoing_reply_text(
         reply_text=reply_text,
         original_text=context.trigger_text,
         feedback_base_url=feedback_spike_vercel_base_url(),
     )
-    prepared_argv = list(replace_dingtalk_message_text(argv, prepared.text))
     prepared_payload = dict(payload)
-    prepared_payload.pop("command", None)
-    prepared_payload["argv"] = prepared_argv
+    prepared_payload[text_key] = prepared.text
     return action.model_copy(update={"payload": prepared_payload})
+
+
+def _structured_dingtalk_outgoing_text_key(action: ProposedAction) -> str | None:
+    """Return the content field for a typed action Audit can execute as chat."""
+    if action.capability != "dingtalk-chat":
+        return None
+    payload = action.payload
+    text_key = next(
+        (
+            key
+            for key in ("content", "text", "reply_text")
+            if isinstance(payload.get(key), str)
+        ),
+        None,
+    )
+    if text_key is None:
+        return None
+    target = action.target
+    conversation_id = str(target.get("conversation_id") or "").strip()
+    message_id = str(
+        target.get("message_id") or target.get("source_message_id") or ""
+    ).strip()
+    recipient = str(
+        target.get("open_dingtalk_id")
+        or target.get("recipient_open_dingtalk_id")
+        or target.get("sender_open_dingtalk_id")
+        or ""
+    ).strip()
+    if action.operation in {"messages-reply", "message.reply"}:
+        return text_key if conversation_id and message_id else None
+    if action.operation in {"send_to_group", "messages-send-to-group"}:
+        return text_key if conversation_id else None
+    return text_key if recipient else None
+
+
 def consumer_developer_instructions(
     audit_rules: str,
     *,
