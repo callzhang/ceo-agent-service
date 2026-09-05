@@ -460,7 +460,11 @@ def _raw_send_violations(app_root: Path = APP_ROOT) -> list[str]:
             if not isinstance(node.func, ast.Attribute):
                 continue
             method = node.func.attr
-            if method in DINGTALK_SEND_METHODS and owner not in APPROVED_SENDER_PATHS:
+            if (
+                method in DINGTALK_SEND_METHODS
+                and _is_dws_raw_receiver(node.func.value, known_dws)
+                and owner not in APPROVED_SENDER_PATHS
+            ):
                 violations.append(f"{owner}:{node.lineno}:{method}")
                 continue
             # The Accessibility/IPC runner accepts a plain string. Only the
@@ -691,6 +695,43 @@ def test_architecture_guard_rejects_conventional_dynamic_dws_receivers(
     ]
 
 
+def test_architecture_guard_rejects_conventional_direct_dws_receivers(
+    tmp_path: Path,
+) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    source = app_root / "business_sender.py"
+    source.write_text(
+        "def direct(dws):\n"
+        "    return dws.reply_message('chat', 'bypassed')\n"
+        "\n"
+        "class Sender:\n"
+        "    def indirect(self):\n"
+        "        return self.dws.ding_self('bypassed')\n",
+        encoding="utf-8",
+    )
+
+    assert _raw_send_violations(app_root) == [
+        "app/business_sender.py:<module>.direct:2:reply_message",
+        "app/business_sender.py:Sender.indirect:6:ding_self",
+    ]
+
+
+def test_architecture_guard_ignores_direct_callback_method_with_dingtalk_name(
+    tmp_path: Path,
+) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    source = app_root / "callbacks.py"
+    source.write_text(
+        "def notify(callback):\n"
+        "    return callback.send_message('not a provider call')\n",
+        encoding="utf-8",
+    )
+
+    assert _raw_send_violations(app_root) == []
+
+
 def test_architecture_guard_rejects_dynamic_dingtalk_provider_calls(
     tmp_path: Path,
 ) -> None:
@@ -756,10 +797,10 @@ def test_architecture_guard_rejects_an_unapproved_call_in_an_allowed_file(
     source.write_text(
         "class DwsClient:\n"
         "    def send_message(self):\n"
-        "        return self.transport.send_message('ok')\n"
+        "        return self.dws.send_message('ok')\n"
         "\n"
         "    def bypass(self):\n"
-        "        return self.transport.send_message('bypassed')\n",
+        "        return self.dws.send_message('bypassed')\n",
         encoding="utf-8",
     )
 
