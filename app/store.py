@@ -16837,6 +16837,11 @@ class AutoReplyStore:
             raise ValueError("resolution requires a successful active runtime load receipt")
         try:
             loaded = json.loads(str(receipt["loaded_json"] or "{}"))
+            if not isinstance(loaded, dict) or any(
+                not isinstance(skill_id, str) or not isinstance(sha256, str)
+                for skill_id, sha256 in loaded.items()
+            ):
+                raise ValueError
             normalized = {int(skill_id): str(sha256) for skill_id, sha256 in loaded.items()}
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ValueError("resolution runtime load receipt is invalid") from exc

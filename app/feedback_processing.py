@@ -212,6 +212,10 @@ class FeedbackIterationDecision(_StrictProcessingModel):
             raise ValueError("feedback iteration decision references must be nonblank and unique")
         if self.scope == "skill_only" and not self.target_skill_revisions:
             raise ValueError("skill_only decision requires target Skill revisions")
+        if len({target.skill_id for target in self.target_skill_revisions}) != len(
+            self.target_skill_revisions
+        ):
+            raise ValueError("feedback iteration target Skill revisions must be unique")
         if self.scope == "runtime_config" and self.target_runtime_config_id is None:
             raise ValueError("runtime_config decision requires target runtime configuration")
         if self.scope == "mixed" and (
@@ -532,6 +536,10 @@ def _validate_skill_resolution_evidence(evidence: ResolutionEvidence) -> None:
         raise ValueError("resolution requires a successful load receipt")
     if not evidence.skill_revisions:
         raise ValueError("resolution requires managed Skill revision evidence")
+    if len({revision.skill_id for revision in evidence.skill_revisions}) != len(
+        evidence.skill_revisions
+    ):
+        raise ValueError("resolution managed Skill revision evidence must be unique")
 
 
 def _validate_runtime_config_resolution_evidence(evidence: ResolutionEvidence) -> None:
