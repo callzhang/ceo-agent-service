@@ -174,6 +174,32 @@ def _is_wechat_sender_client_constructor(node: ast.AST) -> bool:
     )
 
 
+def _annotation_mentions(annotation: ast.AST | None, name: str) -> bool:
+    if annotation is None:
+        return False
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            return _annotation_mentions(ast.parse(annotation.value, mode="eval").body, name)
+        except SyntaxError:
+            return False
+    if _terminal_name(annotation) == name:
+        return True
+    if isinstance(annotation, ast.Subscript):
+        return _annotation_mentions(annotation.slice, name)
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        return _annotation_mentions(annotation.left, name) or _annotation_mentions(
+            annotation.right, name,
+        )
+    if isinstance(annotation, (ast.Tuple, ast.List)):
+        return any(_annotation_mentions(item, name) for item in annotation.elts)
+    return False
+
+
+def _is_dws_constructor(node: ast.AST) -> bool:
+    constructor = node.func if isinstance(node, ast.Call) else node
+    return _terminal_name(constructor) in {"DwsClient", "CachedDwsClient"}
+
+
 def _is_wechat_raw_receiver(node: ast.AST, known_clients: set[str]) -> bool:
     """Recognize only a typed or constructed WeChat IPC client."""
     if isinstance(node, ast.Name):
@@ -215,8 +241,8 @@ class _CallOwners(ast.NodeVisitor):
         self.relative = relative
         self.classes: list[str] = []
         self.functions: list[str] = []
-        self.calls: list[tuple[ast.Call, str, set[str]]] = []
-        self.client_scopes: list[set[str]] = []
+        self.calls: list[tuple[ast.Call, str, set[str], set[str]]] = []
+        self.client_scopes: list[tuple[set[str], set[str]]] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self.classes.append(node.name)
@@ -228,7 +254,15 @@ class _CallOwners(ast.NodeVisitor):
         known_clients = {
             argument.arg
             for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
-            if _terminal_name(argument.annotation) == "WechatSenderClient"
+            if _annotation_mentions(argument.annotation, "WechatSenderClient")
+        }
+        known_dws = {
+            argument.arg
+            for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+            if any(
+                _annotation_mentions(argument.annotation, name)
+                for name in ("DwsClient", "CachedDwsClient")
+            )
         }
         for candidate in ast.walk(node):
             if (
@@ -239,7 +273,15 @@ class _CallOwners(ast.NodeVisitor):
                 known_clients.update(
                     target.id for target in candidate.targets if isinstance(target, ast.Name)
                 )
-        self.client_scopes.append(known_clients)
+            if (
+                isinstance(candidate, ast.Assign)
+                and isinstance(candidate.value, ast.Call)
+                and _is_dws_constructor(candidate.value)
+            ):
+                known_dws.update(
+                    target.id for target in candidate.targets if isinstance(target, ast.Name)
+                )
+        self.client_scopes.append((known_clients, known_dws))
         self.generic_visit(node)
         self.client_scopes.pop()
         self.functions.pop()
@@ -250,12 +292,12 @@ class _CallOwners(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         class_name = ".".join(self.classes) or "<module>"
         function_name = ".".join(self.functions) or "<module>"
-        clients = self.client_scopes[-1] if self.client_scopes else set()
-        self.calls.append((node, f"{self.relative}:{class_name}.{function_name}", clients))
+        clients, dws = self.client_scopes[-1] if self.client_scopes else (set(), set())
+        self.calls.append((node, f"{self.relative}:{class_name}.{function_name}", clients, dws))
         self.generic_visit(node)
 
 
-def _calls_with_owners(tree: ast.AST, relative: str) -> list[tuple[ast.Call, str, set[str]]]:
+def _calls_with_owners(tree: ast.AST, relative: str) -> list[tuple[ast.Call, str, set[str], set[str]]]:
     visitor = _CallOwners(relative)
     visitor.visit(tree)
     return visitor.calls
@@ -389,12 +431,14 @@ def _raw_send_violations(app_root: Path = APP_ROOT) -> list[str]:
     for source in sorted(app_root.rglob("*.py")):
         relative = _relative(source, app_root)
         tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
-        for node, owner, known_clients in _calls_with_owners(tree, relative):
+        for node, owner, known_clients, known_dws in _calls_with_owners(tree, relative):
             dynamic = _dynamic_provider_method(node)
             if dynamic is not None:
                 receiver, dynamic_method = dynamic
                 if (
                     dynamic_method in DINGTALK_SEND_METHODS
+                    and isinstance(receiver, ast.Name)
+                    and receiver.id in known_dws
                     and owner not in APPROVED_SENDER_PATHS
                 ):
                     violations.append(f"{owner}:{node.lineno}:{dynamic_method}")
@@ -490,7 +534,7 @@ def test_architecture_guard_rejects_a_business_module_directly_calling_dingtalk(
     app_root.mkdir()
     bypass = app_root / "business_sender.py"
     bypass.write_text(
-        "def notify(dws):\n"
+        "def notify(dws: DwsClient):\n"
         "    return dws.send_message('conversation-1', 'bypassed')\n",
         encoding="utf-8",
     )
@@ -556,6 +600,46 @@ def test_architecture_guard_rejects_typed_and_assigned_wechat_ipc_clients(
     ]
 
 
+def test_architecture_guard_tracks_forward_optional_and_union_wechat_annotations(
+    tmp_path: Path,
+) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    bypass = app_root / "business_sender.py"
+    bypass.write_text(
+        "def quoted(client: 'WechatSenderClient'):\n"
+        "    return client.send('Alex', 'bypassed')\n"
+        "\n"
+        "def optional(client: Optional[WechatSenderClient]):\n"
+        "    return client.send('Alex', 'bypassed')\n"
+        "\n"
+        "def union(client: WechatSenderClient | None):\n"
+        "    return client.send('Alex', 'bypassed')\n",
+        encoding="utf-8",
+    )
+
+    assert _raw_send_violations(app_root) == [
+        "app/business_sender.py:<module>.quoted:2:runner.send",
+        "app/business_sender.py:<module>.optional:5:runner.send",
+        "app/business_sender.py:<module>.union:8:runner.send",
+    ]
+
+
+def test_architecture_guard_ignores_dynamic_callback_without_dws_provenance(
+    tmp_path: Path,
+) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    source = app_root / "callbacks.py"
+    source.write_text(
+        "def notify(callback):\n"
+        "    return getattr(callback, 'send_message')('not a provider call')\n",
+        encoding="utf-8",
+    )
+
+    assert _raw_send_violations(app_root) == []
+
+
 def test_architecture_guard_rejects_dynamic_dingtalk_provider_calls(
     tmp_path: Path,
 ) -> None:
@@ -563,7 +647,7 @@ def test_architecture_guard_rejects_dynamic_dingtalk_provider_calls(
     app_root.mkdir()
     bypass = app_root / "business_sender.py"
     bypass.write_text(
-        "def notify(dws):\n"
+        "def notify(dws: DwsClient):\n"
         "    return getattr(dws, 'send_message')('conversation-1', 'bypassed')\n",
         encoding="utf-8",
     )
@@ -580,7 +664,7 @@ def test_architecture_guard_rejects_business_native_reply_chunk_sends(
     app_root.mkdir()
     bypass = app_root / "business_sender.py"
     bypass.write_text(
-        "def notify(dws):\n"
+        "def notify(dws: DwsClient):\n"
         "    return dws.send_reply_to_trigger_chunks('chat', 'trigger', 'bypassed')\n",
         encoding="utf-8",
     )
