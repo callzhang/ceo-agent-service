@@ -450,8 +450,9 @@ def queue_recent_meeting_alignment_replay(
                 events,
                 current_user_id=current_user_id,
             )
-        except MeetingSourceIncomplete:
-            result["outcome"] = "calendar_not_unique"
+        except MeetingSourceIncomplete as exc:
+            result["outcome"] = "source_unavailable"
+            result["error"] = str(exc)
             results.append(result)
             continue
         if sum(

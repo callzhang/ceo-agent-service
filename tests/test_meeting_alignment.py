@@ -423,6 +423,25 @@ def test_producer_skips_no_roster_source_without_creating_needs_human(tmp_path):
     assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
 
 
+def test_replay_reports_transcript_source_failure_without_calendar_label(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws(
+        calendar_pages={
+            "": {"events": [], "has_more": False, "next_cursor": ""}
+        }
+    )
+
+    results = meeting_alignment.queue_recent_meeting_alignment_replay(
+        store,
+        dws,
+        now=NOW,
+        limit=50,
+    )
+
+    assert results[0]["outcome"] == "source_unavailable"
+    assert "transcript roster unavailable" in results[0]["error"]
+
+
 def test_producer_skips_ambiguous_calendar_matches_without_creating_needs_human(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = FakeDws(
