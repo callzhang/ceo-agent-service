@@ -875,6 +875,7 @@ def create_worker(
     settings: WorkerSettings,
     *,
     runtime_refresher=None,
+    runtime_skill_snapshot=None,
 ) -> DingTalkAutoReplyWorker:
     from app.okr_review import (
         DwsAgoalApiOkrSource,
@@ -913,15 +914,18 @@ def create_worker(
     )
     style_profile = _load_style_profile(settings.corpus_dir)
     style_records = load_corpus_records(settings.corpus_dir / "style_corpus.csv")
-    worker = DingTalkAutoReplyWorker(
-        store=store,
-        dws=cached_dws,
-        codex=codex,
-        dry_run=settings.dry_run,
-        style_profile=style_profile,
-        style_records=style_records,
-        agent_runtime=agent_runtime,
-    )
+    worker_kwargs = {
+        "store": store,
+        "dws": cached_dws,
+        "codex": codex,
+        "dry_run": settings.dry_run,
+        "style_profile": style_profile,
+        "style_records": style_records,
+        "agent_runtime": agent_runtime,
+    }
+    if runtime_skill_snapshot is not None:
+        worker_kwargs["runtime_skill_snapshot"] = runtime_skill_snapshot
+    worker = DingTalkAutoReplyWorker(**worker_kwargs)
     okr_source_kind = _okr_source_kind()
     if okr_source_kind == "agoal":
         worker.okr_live_source = DwsAgoalApiOkrSource(
@@ -938,8 +942,23 @@ def create_worker(
     return worker
 
 
-def _create_service_worker(settings: WorkerSettings, runtime_refresher):
-    return create_worker(settings, runtime_refresher=runtime_refresher)
+def _create_service_worker(settings: WorkerSettings, runtime_refresher, runtime_skill_snapshot=None):
+    return create_worker(
+        settings,
+        runtime_refresher=runtime_refresher,
+        runtime_skill_snapshot=runtime_skill_snapshot,
+    )
+
+
+def _resolve_service_runtime_skills(
+    settings: WorkerSettings, *, pid: int | None = None
+):
+    """Explicit startup seam: load one immutable managed-Skill process snapshot."""
+    from app.managed_skills import resolve_pending_runtime_skills
+
+    return resolve_pending_runtime_skills(
+        AutoReplyStore(settings.db_path), pid=os.getpid() if pid is None else pid
+    )
 
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()
@@ -2996,6 +3015,7 @@ def run_service(
     exit_process: Callable[[int], None] = os._exit,
     runtime_refresher=None,
 ) -> None:
+    runtime_skill_snapshot = _resolve_service_runtime_skills(settings)
     if runtime_refresher is not None:
         try:
             runtime_refresher.refresh_expired(force=True)
@@ -3027,7 +3047,7 @@ def run_service(
         (
             "producer",
             lambda: run_producer_loop(
-                _create_service_worker(settings, runtime_refresher),
+                _create_service_worker(settings, runtime_refresher, runtime_skill_snapshot),
                 producer_interval_seconds,
                 max_tasks=settings.max_batches,
                 network_ready=dependency_gate.ready,
@@ -3073,7 +3093,7 @@ def run_service(
         (
             f"consumer-{index + 1}",
             lambda: run_consumer_loop(
-                _create_service_worker(settings, runtime_refresher),
+                _create_service_worker(settings, runtime_refresher, runtime_skill_snapshot),
                 consumer_poll_interval_seconds,
                 max_tasks=settings.max_batches,
                 network_ready=dependency_gate.ready,

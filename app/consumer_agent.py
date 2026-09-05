@@ -30,6 +30,7 @@ from app.business_skills import (
     installed_business_skill_catalog,
     render_business_skill_protocol,
 )
+from app.managed_skills import RuntimeSkillSnapshot
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
@@ -147,7 +148,9 @@ resolution method.
 """.strip()
 
 
-def consumer_wire_contract_hash() -> str:
+def consumer_wire_contract_hash(
+    runtime_skill_snapshot: RuntimeSkillSnapshot | None = None,
+) -> str:
     """Fingerprint stable Consumer output, instructions, and read-tool policy."""
     contract = {
         "consumer_rules": _CONSUMER_AGENT_RULES,
@@ -159,6 +162,9 @@ def consumer_wire_contract_hash() -> str:
         "work_profile_instruction": work_profile_instruction(),
         "service_read_commands": service_read_command_contract(),
         "wire_schema": ConsumerAgentWireResult.model_json_schema(),
+        "runtime_skill_snapshot": (
+            runtime_skill_snapshot.protocol() if runtime_skill_snapshot is not None else ""
+        ),
     }
     encoded = json.dumps(contract, sort_keys=True, separators=(",", ":"))
     return sha256(encoded.encode("utf-8")).hexdigest()
@@ -245,6 +251,7 @@ class ConsumerAgentRunner:
         mcp_effect_registry: McpToolEffectRegistry | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
         codex_session_exists: Callable[[str], bool] | None = None,
+        runtime_skill_snapshot: RuntimeSkillSnapshot | None = None,
     ) -> None:
         self.store = store
         self.workspace = workspace
@@ -262,6 +269,7 @@ class ConsumerAgentRunner:
         self.codex_session_exists = codex_session_exists or (
             lambda session_id: find_codex_session_path(session_id) is not None
         )
+        self.runtime_skill_snapshot = runtime_skill_snapshot
 
     def _configured_route_names(self) -> tuple[str, ...]:
         config = self.runtime_config or (
@@ -383,7 +391,7 @@ class ConsumerAgentRunner:
         rendered_rules: str,
         feedback: AuditFeedback | None,
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
-        contract_hash = consumer_wire_contract_hash()
+        contract_hash = consumer_wire_contract_hash(self.runtime_skill_snapshot)
         route_sessions = self._consumer_route_sessions(
             task.conversation_id, contract_hash
         )
@@ -471,8 +479,12 @@ class ConsumerAgentRunner:
                 session_id=session_id,
                 developer_instructions=consumer_developer_instructions(
                     rendered_rules,
-                    skill_protocol=render_business_skill_protocol(
-                        installed_business_skill_catalog()
+                    skill_protocol="\n\n".join(
+                        part for part in (
+                            render_business_skill_protocol(installed_business_skill_catalog()),
+                            self.runtime_skill_snapshot.protocol()
+                            if self.runtime_skill_snapshot is not None else "",
+                        ) if part
                     ),
                 ),
                 configure_command=lambda command: make_consumer_agent_command(

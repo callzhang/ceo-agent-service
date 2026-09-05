@@ -57,6 +57,9 @@ from app.legacy_receipt import legacy_receipt_has_explicit_failure
 from app.managed_skills import (
     ManagedSkill,
     ManagedSkillRevision,
+    RuntimeSkillBinding,
+    RuntimeSkillConfig,
+    RuntimeSkillLoadReceipt,
     validate_managed_skill_content,
 )
 from app.meeting_alignment_models import (
@@ -96,7 +99,7 @@ SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-30.1"
+STORE_SCHEMA_VERSION = "2026-09-04.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -121,6 +124,9 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "workbench_confirmations",
     "managed_skills",
     "managed_skill_revisions",
+    "runtime_skill_configs",
+    "runtime_skill_bindings",
+    "runtime_skill_load_receipts",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_items_status",
@@ -155,6 +161,8 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_todo_evidence_candidates_project",
     "idx_managed_skill_revisions_number",
     "idx_managed_skill_revisions_sha256",
+    "idx_runtime_skill_bindings_config_order",
+    "idx_runtime_skill_load_receipts_config",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
@@ -215,6 +223,12 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_lineage_immutable",
     "trg_managed_skill_revisions_immutable_update",
     "trg_managed_skill_revisions_immutable_delete",
+    "trg_runtime_skill_configs_immutable_update",
+    "trg_runtime_skill_configs_immutable_delete",
+    "trg_runtime_skill_bindings_immutable_update",
+    "trg_runtime_skill_bindings_immutable_delete",
+    "trg_runtime_skill_load_receipts_immutable_update",
+    "trg_runtime_skill_load_receipts_immutable_delete",
 )
 FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL = """
 CREATE TRIGGER trg_feedback_processing_round_integer_v2_insert
@@ -250,6 +264,53 @@ CREATE TRIGGER trg_managed_skill_revisions_immutable_delete
 before delete on managed_skill_revisions
 begin
     select raise(abort, 'managed Skill revisions are immutable');
+end
+""".strip()
+RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_configs_immutable_update
+before update on runtime_skill_configs
+when new.id <> old.id
+  or new.parent_id is not old.parent_id
+  or new.created_at <> old.created_at
+  or old.status not in ('pending_restart')
+  or new.status not in ('active', 'load_failed')
+begin
+    select raise(abort, 'runtime Skill configurations are immutable');
+end
+""".strip()
+RUNTIME_SKILL_CONFIGS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_configs_immutable_delete
+before delete on runtime_skill_configs
+begin
+    select raise(abort, 'runtime Skill configurations are immutable');
+end
+""".strip()
+RUNTIME_SKILL_BINDINGS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_bindings_immutable_update
+before update on runtime_skill_bindings
+begin
+    select raise(abort, 'runtime Skill bindings are immutable');
+end
+""".strip()
+RUNTIME_SKILL_BINDINGS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_bindings_immutable_delete
+before delete on runtime_skill_bindings
+begin
+    select raise(abort, 'runtime Skill bindings are immutable');
+end
+""".strip()
+RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_load_receipts_immutable_update
+before update on runtime_skill_load_receipts
+begin
+    select raise(abort, 'runtime Skill load receipts are append-only');
+end
+""".strip()
+RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_load_receipts_immutable_delete
+before delete on runtime_skill_load_receipts
+begin
+    select raise(abort, 'runtime Skill load receipts are append-only');
 end
 """.strip()
 FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR = (
@@ -293,6 +354,24 @@ STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
     ),
     "trg_managed_skill_revisions_immutable_delete": _normalize_schema_sql(
         MANAGED_SKILL_REVISIONS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_configs_immutable_update": _normalize_schema_sql(
+        RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_configs_immutable_delete": _normalize_schema_sql(
+        RUNTIME_SKILL_CONFIGS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_bindings_immutable_update": _normalize_schema_sql(
+        RUNTIME_SKILL_BINDINGS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_bindings_immutable_delete": _normalize_schema_sql(
+        RUNTIME_SKILL_BINDINGS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_load_receipts_immutable_update": _normalize_schema_sql(
+        RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_load_receipts_immutable_delete": _normalize_schema_sql(
+        RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL
     ),
 }
 
@@ -1457,6 +1536,38 @@ class AutoReplyStore:
         else:
             db.execute("commit")
 
+    @staticmethod
+    def _replace_runtime_skill_immutability_guards_atomically(
+        db: sqlite3.Connection,
+    ) -> None:
+        names = (
+            "trg_runtime_skill_configs_immutable_update",
+            "trg_runtime_skill_configs_immutable_delete",
+            "trg_runtime_skill_bindings_immutable_update",
+            "trg_runtime_skill_bindings_immutable_delete",
+            "trg_runtime_skill_load_receipts_immutable_update",
+            "trg_runtime_skill_load_receipts_immutable_delete",
+        )
+        definitions = (
+            RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            RUNTIME_SKILL_CONFIGS_IMMUTABLE_DELETE_TRIGGER_SQL,
+            RUNTIME_SKILL_BINDINGS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            RUNTIME_SKILL_BINDINGS_IMMUTABLE_DELETE_TRIGGER_SQL,
+            RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL,
+        )
+        db.execute("begin immediate")
+        try:
+            for name in names:
+                db.execute(f"drop trigger if exists {name}")
+            for definition in definitions:
+                db.execute(definition)
+        except BaseException:
+            db.execute("rollback")
+            raise
+        else:
+            db.execute("commit")
+
     @classmethod
     def _feedback_processing_round_guard_state_is_valid(
         cls,
@@ -1700,6 +1811,41 @@ class AutoReplyStore:
                     on managed_skill_revisions(skill_id, revision_number);
                 create unique index if not exists idx_managed_skill_revisions_sha256
                     on managed_skill_revisions(skill_id, sha256);
+                create table if not exists runtime_skill_configs (
+                    id integer primary key autoincrement,
+                    parent_id integer,
+                    status text not null check(status in (
+                        'pending_restart', 'active', 'load_failed'
+                    )),
+                    created_at text not null default current_timestamp,
+                    foreign key(parent_id) references runtime_skill_configs(id)
+                );
+                create table if not exists runtime_skill_bindings (
+                    config_id integer not null,
+                    skill_id integer not null,
+                    revision_id integer not null,
+                    enabled integer not null check(enabled in (0, 1)),
+                    load_order integer not null check(load_order >= 0),
+                    purpose text not null default '',
+                    primary key(config_id, skill_id),
+                    unique(config_id, load_order),
+                    foreign key(config_id) references runtime_skill_configs(id),
+                    foreign key(skill_id) references managed_skills(id),
+                    foreign key(revision_id) references managed_skill_revisions(id)
+                );
+                create index if not exists idx_runtime_skill_bindings_config_order
+                    on runtime_skill_bindings(config_id, load_order);
+                create table if not exists runtime_skill_load_receipts (
+                    id integer primary key autoincrement,
+                    config_id integer not null,
+                    pid integer not null check(pid > 0),
+                    loaded_json text not null default '{}',
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    foreign key(config_id) references runtime_skill_configs(id)
+                );
+                create index if not exists idx_runtime_skill_load_receipts_config
+                    on runtime_skill_load_receipts(config_id, id);
                 create table if not exists seen_messages (
                     message_id text primary key,
                     conversation_id text not null,
@@ -2795,6 +2941,7 @@ class AutoReplyStore:
             )
             self._replace_feedback_processing_round_guards_atomically(db)
             self._replace_managed_skill_revision_immutability_guards_atomically(db)
+            self._replace_runtime_skill_immutability_guards_atomically(db)
             workbench_turn_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(workbench_turns)").fetchall()
@@ -3894,6 +4041,242 @@ class AutoReplyStore:
                 (skill_id,),
             ).fetchall()
         return tuple(self._managed_skill_revision_from_row(row) for row in rows)
+
+    @staticmethod
+    def _runtime_skill_config_from_row(row: sqlite3.Row) -> RuntimeSkillConfig:
+        parent_id = row["parent_id"]
+        return RuntimeSkillConfig(
+            id=int(row["id"]),
+            parent_id=int(parent_id) if parent_id is not None else None,
+            status=str(row["status"]),
+            created_at=str(row["created_at"]),
+        )
+
+    @staticmethod
+    def _runtime_skill_binding_from_row(row: sqlite3.Row) -> RuntimeSkillBinding:
+        return RuntimeSkillBinding(
+            config_id=int(row["config_id"]), skill_id=int(row["skill_id"]),
+            revision_id=int(row["revision_id"]), enabled=bool(row["enabled"]),
+            load_order=int(row["load_order"]), purpose=str(row["purpose"]),
+        )
+
+    @staticmethod
+    def _runtime_skill_load_receipt_from_row(
+        row: sqlite3.Row,
+    ) -> RuntimeSkillLoadReceipt:
+        return RuntimeSkillLoadReceipt(
+            id=int(row["id"]), config_id=int(row["config_id"]),
+            pid=int(row["pid"]), loaded_json=str(row["loaded_json"]),
+            error=str(row["error"]), created_at=str(row["created_at"]),
+        )
+
+    @staticmethod
+    def _normalize_runtime_skill_bindings(
+        bindings: Mapping[object, object] | Sequence[object],
+    ) -> tuple[tuple[int, int, bool, int, str], ...]:
+        raw_items: Sequence[object]
+        if isinstance(bindings, Mapping):
+            raw_items = tuple(
+                {"skill_id": skill_id, "revision_id": revision_id,
+                 "enabled": True, "load_order": index, "purpose": ""}
+                for index, (skill_id, revision_id) in enumerate(bindings.items())
+            )
+        elif isinstance(bindings, Sequence) and not isinstance(bindings, (str, bytes)):
+            raw_items = bindings
+        else:
+            raise ValueError("runtime Skill bindings must be a map or list")
+        normalized: list[tuple[int, int, bool, int, str]] = []
+        for index, item in enumerate(raw_items):
+            if not isinstance(item, Mapping):
+                raise ValueError("runtime Skill binding must be an object")
+            skill_id = item.get("skill_id")
+            revision_id = item.get("revision_id")
+            enabled = item.get("enabled", True)
+            load_order = item.get("load_order", index)
+            purpose = item.get("purpose", "")
+            if (type(skill_id) is not int or skill_id <= 0 or
+                    type(revision_id) is not int or revision_id <= 0 or
+                    type(enabled) is not bool or type(load_order) is not int or
+                    load_order < 0 or not isinstance(purpose, str)):
+                raise ValueError("runtime Skill binding is malformed")
+            normalized.append((skill_id, revision_id, enabled, load_order, purpose))
+        if len({item[0] for item in normalized}) != len(normalized):
+            raise ValueError("runtime Skill binding duplicates a managed Skill")
+        if len({item[3] for item in normalized}) != len(normalized):
+            raise ValueError("runtime Skill binding duplicates load order")
+        return tuple(sorted(normalized, key=lambda item: item[3]))
+
+    def create_runtime_skill_config(
+        self,
+        bindings: Mapping[object, object] | Sequence[object],
+        *,
+        expected_parent_id: int | None,
+    ) -> RuntimeSkillConfig:
+        normalized = self._normalize_runtime_skill_bindings(bindings)
+        with self._immediate_write_transaction() as db:
+            latest = db.execute(
+                "select id from runtime_skill_configs order by id desc limit 1"
+            ).fetchone()
+            current_parent_id = int(latest["id"]) if latest is not None else None
+            if current_parent_id != expected_parent_id:
+                raise ValueError("runtime Skill configuration parent conflict")
+            for skill_id, revision_id, _enabled, _order, _purpose in normalized:
+                revision = db.execute(
+                    "select skill_id from managed_skill_revisions where id=?",
+                    (revision_id,),
+                ).fetchone()
+                if revision is None or int(revision["skill_id"]) != skill_id:
+                    raise ValueError("runtime Skill binding references invalid managed Skill revision")
+            cursor = db.execute(
+                "insert into runtime_skill_configs (parent_id, status) values (?, 'pending_restart')",
+                (expected_parent_id,),
+            )
+            config_id = int(cursor.lastrowid)
+            db.executemany(
+                """insert into runtime_skill_bindings
+                   (config_id, skill_id, revision_id, enabled, load_order, purpose)
+                   values (?, ?, ?, ?, ?, ?)""",
+                [(config_id, skill_id, revision_id, int(enabled), load_order, purpose)
+                 for skill_id, revision_id, enabled, load_order, purpose in normalized],
+            )
+            row = db.execute(
+                "select id, parent_id, status, created_at from runtime_skill_configs where id=?",
+                (config_id,),
+            ).fetchone()
+            assert row is not None
+            return self._runtime_skill_config_from_row(row)
+
+    def get_runtime_skill_config(self, config_id: int) -> RuntimeSkillConfig | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select id, parent_id, status, created_at from runtime_skill_configs where id=?",
+                (config_id,),
+            ).fetchone()
+        return self._runtime_skill_config_from_row(row) if row is not None else None
+
+    def create_runtime_skill_rollback_config(
+        self, source_config_id: int, *, expected_parent_id: int | None
+    ) -> RuntimeSkillConfig:
+        """Create, rather than mutate, a pending configuration from history."""
+        bindings = self.list_runtime_skill_bindings(source_config_id)
+        if self.get_runtime_skill_config(source_config_id) is None:
+            raise ValueError("runtime Skill rollback source does not exist")
+        return self.create_runtime_skill_config(
+            [
+                {
+                    "skill_id": binding.skill_id,
+                    "revision_id": binding.revision_id,
+                    "enabled": binding.enabled,
+                    "load_order": binding.load_order,
+                    "purpose": binding.purpose,
+                }
+                for binding in bindings
+            ],
+            expected_parent_id=expected_parent_id,
+        )
+
+    def get_active_runtime_skill_config(self) -> RuntimeSkillConfig | None:
+        with self._connect() as db:
+            row = db.execute(
+                """select id, parent_id, status, created_at from runtime_skill_configs
+                   where status='active' order by id desc limit 1"""
+            ).fetchone()
+        return self._runtime_skill_config_from_row(row) if row is not None else None
+
+    def get_pending_or_active_runtime_skill_config(self) -> RuntimeSkillConfig | None:
+        with self._connect() as db:
+            row = db.execute(
+                """select id, parent_id, status, created_at from runtime_skill_configs
+                   where status='pending_restart' order by id desc limit 1"""
+            ).fetchone()
+            if row is None:
+                row = db.execute(
+                    """select id, parent_id, status, created_at from runtime_skill_configs
+                       where status='active' order by id desc limit 1"""
+                ).fetchone()
+        return self._runtime_skill_config_from_row(row) if row is not None else None
+
+    def list_runtime_skill_bindings(
+        self, config_id: int
+    ) -> tuple[RuntimeSkillBinding, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                """select config_id, skill_id, revision_id, enabled, load_order, purpose
+                   from runtime_skill_bindings where config_id=? order by load_order""",
+                (config_id,),
+            ).fetchall()
+        return tuple(self._runtime_skill_binding_from_row(row) for row in rows)
+
+    def record_runtime_skill_load(
+        self, config_id: int, *, pid: int, loaded: Mapping[object, object]
+    ) -> RuntimeSkillLoadReceipt:
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("runtime Skill load receipt pid must be positive")
+        if not isinstance(loaded, Mapping):
+            raise ValueError("runtime Skill load receipt must contain a map")
+        normalized_loaded: dict[int, str] = {}
+        for skill_id, digest in loaded.items():
+            if type(skill_id) is not int or skill_id <= 0 or not isinstance(digest, str):
+                raise ValueError("runtime Skill load receipt is malformed")
+            normalized_loaded[skill_id] = digest
+        with self._immediate_write_transaction() as db:
+            config = db.execute(
+                "select status from runtime_skill_configs where id=?", (config_id,)
+            ).fetchone()
+            if config is None or str(config["status"]) not in {
+                "pending_restart", "active"
+            }:
+                raise ValueError("runtime Skill configuration is not loadable")
+            expected = {
+                int(row["skill_id"]): str(row["sha256"])
+                for row in db.execute(
+                    """select binding.skill_id, revision.sha256
+                       from runtime_skill_bindings binding
+                       join managed_skill_revisions revision on revision.id=binding.revision_id
+                       where binding.config_id=? and binding.enabled=1""", (config_id,)
+                )
+            }
+            if normalized_loaded != expected:
+                raise ValueError("runtime Skill load receipt does not match bindings")
+            receipt = db.execute(
+                """insert into runtime_skill_load_receipts (config_id, pid, loaded_json, error)
+                   values (?, ?, ?, '')""",
+                (config_id, pid, json.dumps(normalized_loaded, sort_keys=True)),
+            )
+            if str(config["status"]) == "pending_restart":
+                db.execute(
+                    "update runtime_skill_configs set status='active' where id=?",
+                    (config_id,),
+                )
+            row = db.execute(
+                "select id, config_id, pid, loaded_json, error, created_at from runtime_skill_load_receipts where id=?",
+                (receipt.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return self._runtime_skill_load_receipt_from_row(row)
+
+    def record_runtime_skill_load_failure(
+        self, config_id: int, *, pid: int, error: str
+    ) -> RuntimeSkillLoadReceipt:
+        if type(pid) is not int or pid <= 0 or not isinstance(error, str) or not error:
+            raise ValueError("runtime Skill load failure is malformed")
+        with self._immediate_write_transaction() as db:
+            config = db.execute(
+                "select status from runtime_skill_configs where id=?", (config_id,)
+            ).fetchone()
+            if config is None or str(config["status"]) != "pending_restart":
+                raise ValueError("runtime Skill configuration is not pending restart")
+            receipt = db.execute(
+                """insert into runtime_skill_load_receipts (config_id, pid, loaded_json, error)
+                   values (?, ?, '{}', ?)""", (config_id, pid, error),
+            )
+            db.execute("update runtime_skill_configs set status='load_failed' where id=?", (config_id,))
+            row = db.execute(
+                "select id, config_id, pid, loaded_json, error, created_at from runtime_skill_load_receipts where id=?",
+                (receipt.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return self._runtime_skill_load_receipt_from_row(row)
 
     @staticmethod
     def _migrate_runtime_attempt_session_evidence(db: sqlite3.Connection) -> None:
