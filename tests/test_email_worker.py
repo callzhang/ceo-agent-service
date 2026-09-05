@@ -1080,10 +1080,18 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     module = _module()
     sentinel = object()
 
+    def direct_factory(_account_id):
+        return None
+
     monkeypatch.setattr(
         module,
         "_build_agent_orchestrator",
         lambda *_args, **_kwargs: sentinel,
+    )
+    monkeypatch.setattr(
+        module,
+        "_build_imap_direct_action_executor_factory",
+        lambda _store: direct_factory,
     )
     from app.email_model_registry import EmailModelRegistry
 
@@ -1122,6 +1130,7 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     )
 
     assert dependencies.orchestrator is sentinel
+    assert dependencies.run_direct_actions_once.args[1] is direct_factory
     assert not hasattr(dependencies, "unsubscribe_consumer")
     assert not hasattr(module, "_build_email_unsubscribe_consumer")
     assert not hasattr(module, "build_email_unsubscribe_operation")
@@ -2551,6 +2560,102 @@ def test_direct_action_executor_result_completes_the_exact_claim():
     assert completed[0][1]["finished_at"]
 
 
+def test_direct_action_completion_forwards_provider_locator_update():
+    module = _module()
+    original = SimpleNamespace(
+        stable_message_identity="account-1:message-id:<message@example.com>"
+    )
+    updated = SimpleNamespace(folder="Archive", uidvalidity=84, uid=19)
+    action = SimpleNamespace(account_id="account-1", locator=original)
+    completed = []
+    result = SimpleNamespace(
+        status="done",
+        provider_operation="MOVE ARCHIVE",
+        provider_target=original.stable_message_identity,
+        provider_result_id="revision-archive",
+        error="",
+        updated_locator=updated,
+    )
+
+    class Store:
+        def claim_next_direct_action(self, *, claimed_at):
+            assert claimed_at
+            return action
+
+        def complete_direct_action_attempt(self, claimed, **values):
+            completed.append((claimed, values))
+
+    module._run_next_direct_action(Store(), lambda _account_id: SimpleNamespace(execute=lambda _action: result))
+
+    assert completed[0][1]["updated_locator"] is updated
+
+
+def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
+    monkeypatch,
+):
+    module = _module()
+    calls = []
+    accounts = {
+        "account-a": {
+            "account_id": "account-a",
+            "enabled": True,
+            "imap_tls": True,
+            "imap_host": "imap-a.example.com",
+            "imap_port": 993,
+            "imap_username": "a@example.com",
+            "imap_secret_reference": "CEO_EMAIL_A_IMAP_SECRET",
+            "smtp_secret_reference": "CEO_EMAIL_A_SMTP_SECRET",
+        },
+        "account-b": {
+            "account_id": "account-b",
+            "enabled": True,
+            "imap_tls": True,
+            "imap_host": "imap-b.example.com",
+            "imap_port": 1993,
+            "imap_username": "b@example.com",
+            "imap_secret_reference": "CEO_EMAIL_B_IMAP_SECRET",
+            "smtp_secret_reference": "CEO_EMAIL_B_SMTP_SECRET",
+        },
+    }
+
+    class Store:
+        def get_account(self, account_id):
+            return accounts.get(account_id)
+
+    monkeypatch.setenv("CEO_EMAIL_A_IMAP_SECRET", "imap-secret-a")
+    monkeypatch.setenv("CEO_EMAIL_B_IMAP_SECRET", "imap-secret-b")
+    monkeypatch.setenv("CEO_EMAIL_A_SMTP_SECRET", "must-not-be-read-a")
+    monkeypatch.setenv("CEO_EMAIL_B_SMTP_SECRET", "must-not-be-read-b")
+    monkeypatch.setattr(
+        "app.email_provider_actions.ImapDeterministicProvider.connect",
+        lambda host, username, password, **kwargs: calls.append(
+            (host, username, password, kwargs)
+        )
+        or SimpleNamespace(),
+    )
+
+    factory = module._build_imap_direct_action_executor_factory(Store())
+    executor_a = factory("account-a")
+    executor_b = factory("account-b")
+
+    assert executor_a.provider is not executor_b.provider
+    assert calls == [
+        (
+            "imap-a.example.com",
+            "a@example.com",
+            "imap-secret-a",
+            {"port": 993, "account_id": "account-a"},
+        ),
+        (
+            "imap-b.example.com",
+            "b@example.com",
+            "imap-secret-b",
+            {"port": 1993, "account_id": "account-b"},
+        ),
+    ]
+    assert all("must-not-be-read" not in repr(call) for call in calls)
+
+
 def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_path):
     module = _module()
     database = tmp_path / "direct-action-no-agent.sqlite3"
@@ -2565,8 +2670,8 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
         confidence=1.0,
         model_id="email-model:direct-action-test",
         config_version="email-config:direct-action-test",
-        actions=(EmailAction.MARK_READ,),
-        action_parameters={},
+        actions=(EmailAction.MOVE,),
+        action_parameters={EmailAction.MOVE: {"target_folder": "Archive"}},
         created_at=datetime(2026, 9, 3, 8, 0, tzinfo=timezone.utc),
     )
     email_store.create_account(
@@ -2623,15 +2728,26 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
 
     result = SimpleNamespace(
         status="done",
-        provider_operation="STORE \\Seen",
+        provider_operation="MOVE",
         provider_target="account-direct:message-id:<direct-901@example.com>",
         provider_result_id="provider-revision:901",
         error="",
+        updated_locator=import_module("app.email_store").StoredEmailLocator(
+            account_id="account-direct",
+            folder="Archive",
+            uidvalidity=10,
+            uid=41,
+            rfc_message_id="<direct-901@example.com>",
+            thread_id="thread-direct-901",
+            stable_message_identity=(
+                "account-direct:message-id:<direct-901@example.com>"
+            ),
+        ),
     )
 
     class Executor:
         def execute(self, action):
-            assert action.action_type is EmailAction.MARK_READ
+            assert action.action_type is EmailAction.MOVE
             return result
 
     assert (
@@ -2647,6 +2763,16 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
     assert task_store.list_reply_tasks(channel="email") == []
     with sqlite3.connect(database) as db:
         assert db.execute("select count(*) from agent_runs").fetchone()[0] == 0
+        assert db.execute(
+            "select folder, uidvalidity, uid from email_classifications where id=901"
+        ).fetchone() == ("Archive", 10, 41)
+        assert db.execute(
+            """
+            select folder, uidvalidity, uid from email_messages
+            where stable_message_identity=?
+            """,
+            ("account-direct:message-id:<direct-901@example.com>",),
+        ).fetchone() == ("Archive", 10, 41)
 
 
 def test_direct_action_does_not_claim_an_unavailable_account():

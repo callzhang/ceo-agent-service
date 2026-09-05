@@ -9533,6 +9533,7 @@ class EmailStore:
         error: str,
         finished_at: str,
         retryable: bool = True,
+        updated_locator: StoredEmailLocator | None = None,
     ) -> dict[str, Any]:
         """Append a terminal attempt and update its current projection atomically."""
 
@@ -9548,6 +9549,18 @@ class EmailStore:
             raise ValueError("done attempts require readback receipt and no error")
         if status == "failed" and not error:
             raise ValueError("failed attempts require an error")
+        if updated_locator is not None:
+            if status != "done":
+                raise ValueError("only done attempts can update the provider locator")
+            if (
+                updated_locator.account_id != action.account_id
+                or updated_locator.stable_message_identity
+                != action.locator.stable_message_identity
+                or not updated_locator.folder.strip()
+                or updated_locator.uidvalidity <= 0
+                or updated_locator.uid <= 0
+            ):
+                raise ValueError("updated provider locator does not match the action")
         finished_at = _required_utc_timestamp(finished_at, field="finished_at")
         next_attempt_at = _next_attempt_at(
             finished_at,
@@ -9603,6 +9616,42 @@ class EmailStore:
                 raise EmailActionAttemptConflict(
                     f"direct action claim changed for {action.action_id}"
                 )
+            if updated_locator is not None:
+                classification_updated = db.execute(
+                    """
+                    update email_classifications
+                    set folder=?, uidvalidity=?, uid=?, updated_at=?
+                    where id=? and account_id=? and stable_message_identity=?
+                    """,
+                    (
+                        updated_locator.folder,
+                        updated_locator.uidvalidity,
+                        updated_locator.uid,
+                        finished_at,
+                        action.classification_id,
+                        action.account_id,
+                        action.locator.stable_message_identity,
+                    ),
+                ).rowcount
+                message_updated = db.execute(
+                    """
+                    update email_messages
+                    set folder=?, uidvalidity=?, uid=?, updated_at=?
+                    where account_id=? and stable_message_identity=?
+                    """,
+                    (
+                        updated_locator.folder,
+                        updated_locator.uidvalidity,
+                        updated_locator.uid,
+                        finished_at,
+                        action.account_id,
+                        action.locator.stable_message_identity,
+                    ),
+                ).rowcount
+                if classification_updated != 1 or message_updated != 1:
+                    raise EmailActionAttemptConflict(
+                        f"provider locator changed for {action.action_id}"
+                    )
             cursor = db.execute(
                 """
                 insert into email_action_attempts (
