@@ -4,9 +4,11 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 from app.store import AutoReplyStore
-from app.managed_skills import REPOSITORY_MANAGED_SKILL_NAMES
+from app.managed_skills import REPOSITORY_MANAGED_SKILL_NAMES, export_managed_skill_revision
+import app.web_api.registration as registration_module
 from app.web_api.registration import register_console_routes
 
 
@@ -74,6 +76,48 @@ def test_managed_skills_create_revision_config_and_read_load_receipt(tmp_path: P
     }]
     assert revision_detail.status_code == 200
     assert revision_detail.json()["id"] == revision_id
+
+
+def test_managed_skill_export_is_persisted_and_read_back_without_checking_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        registration_module,
+        "export_managed_skill_revision",
+        lambda store, revision_id: export_managed_skill_revision(
+            store, revision_id, skills_root=tmp_path / "exported-skills"
+        ),
+    )
+    client, _store = _client(tmp_path)
+    with client:
+        created = client.post(
+            "/api/console/settings/managed-skills",
+            json={"name": "ceo-test", "display_name": "Test Skill"},
+        )
+        revision = client.post(
+            f"/api/console/settings/managed-skills/{created.json()['id']}/revisions",
+            json={"content": _content("ceo-test")},
+        )
+        revision_id = revision.json()["id"]
+        before_export = client.get(
+            f"/api/console/settings/managed-skill-revisions/{revision_id}"
+        )
+        exported = client.post(
+            f"/api/console/settings/managed-skill-revisions/{revision_id}/export"
+        )
+        read_back = client.get(
+            f"/api/console/settings/managed-skill-revisions/{revision_id}"
+        )
+
+    assert before_export.status_code == 200
+    assert before_export.json()["export"] == {"status": "not_exported", "receipt": None}
+    assert exported.status_code == 200
+    assert exported.json()["path"].startswith(str(tmp_path))
+    assert exported.json()["export"]["status"] == "exported"
+    assert exported.json()["export"]["receipt"]["revision_id"] == revision_id
+    assert exported.json()["export"]["receipt"]["sha256"] == revision.json()["sha256"]
+    assert read_back.status_code == 200
+    assert read_back.json()["export"] == exported.json()["export"]
 
 
 def test_fresh_console_managed_skill_api_initializes_service_owned_baseline(

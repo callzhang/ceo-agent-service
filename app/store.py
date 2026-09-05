@@ -61,6 +61,7 @@ from app.history import HistoryItem
 from app.legacy_receipt import legacy_receipt_has_explicit_failure
 from app.managed_skills import (
     ManagedSkill,
+    ManagedSkillExportReceipt,
     ManagedSkillRevision,
     RuntimeSkillBinding,
     RuntimeSkillConfig,
@@ -105,7 +106,7 @@ SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-05.1"
+STORE_SCHEMA_VERSION = "2026-09-05.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -130,6 +131,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "workbench_confirmations",
     "managed_skills",
     "managed_skill_revisions",
+    "managed_skill_export_receipts",
     "runtime_skill_configs",
     "runtime_skill_bindings",
     "runtime_skill_load_receipts",
@@ -170,6 +172,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_todo_evidence_candidates_project",
     "idx_managed_skill_revisions_number",
     "idx_managed_skill_revisions_sha256",
+    "idx_managed_skill_export_receipts_revision",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
     "idx_feedback_iteration_decisions_batch",
@@ -238,6 +241,8 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_lineage_immutable",
     "trg_managed_skill_revisions_immutable_update",
     "trg_managed_skill_revisions_immutable_delete",
+    "trg_managed_skill_export_receipts_immutable_update",
+    "trg_managed_skill_export_receipts_immutable_delete",
     "trg_runtime_skill_configs_immutable_update",
     "trg_runtime_skill_configs_immutable_delete",
     "trg_runtime_skill_bindings_immutable_update",
@@ -285,6 +290,20 @@ CREATE TRIGGER trg_managed_skill_revisions_immutable_delete
 before delete on managed_skill_revisions
 begin
     select raise(abort, 'managed Skill revisions are immutable');
+end
+""".strip()
+MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_managed_skill_export_receipts_immutable_update
+before update on managed_skill_export_receipts
+begin
+    select raise(abort, 'managed Skill export receipts are append-only');
+end
+""".strip()
+MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_managed_skill_export_receipts_immutable_delete
+before delete on managed_skill_export_receipts
+begin
+    select raise(abort, 'managed Skill export receipts are append-only');
 end
 """.strip()
 RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
@@ -461,6 +480,12 @@ STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
     ),
     "trg_managed_skill_revisions_immutable_delete": _normalize_schema_sql(
         MANAGED_SKILL_REVISIONS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_managed_skill_export_receipts_immutable_update": _normalize_schema_sql(
+        MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_managed_skill_export_receipts_immutable_delete": _normalize_schema_sql(
+        MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL
     ),
     "trg_runtime_skill_configs_immutable_update": _normalize_schema_sql(
         RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL
@@ -1668,6 +1693,28 @@ class AutoReplyStore:
             db.execute("commit")
 
     @staticmethod
+    def _replace_managed_skill_export_receipt_immutability_guards_atomically(
+        db: sqlite3.Connection,
+    ) -> None:
+        db.execute("begin immediate")
+        try:
+            db.execute(
+                "drop trigger if exists "
+                "trg_managed_skill_export_receipts_immutable_update"
+            )
+            db.execute(
+                "drop trigger if exists "
+                "trg_managed_skill_export_receipts_immutable_delete"
+            )
+            db.execute(MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL)
+            db.execute(MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL)
+        except BaseException:
+            db.execute("rollback")
+            raise
+        else:
+            db.execute("commit")
+
+    @staticmethod
     def _replace_runtime_skill_immutability_guards_atomically(
         db: sqlite3.Connection,
     ) -> None:
@@ -1974,6 +2021,16 @@ class AutoReplyStore:
                     on managed_skill_revisions(skill_id, revision_number);
                 create unique index if not exists idx_managed_skill_revisions_sha256
                     on managed_skill_revisions(skill_id, sha256);
+                create table if not exists managed_skill_export_receipts (
+                    id integer primary key autoincrement,
+                    revision_id integer not null,
+                    sha256 text not null,
+                    path text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(revision_id) references managed_skill_revisions(id)
+                );
+                create index if not exists idx_managed_skill_export_receipts_revision
+                    on managed_skill_export_receipts(revision_id, id);
                 create table if not exists runtime_skill_configs (
                     id integer primary key autoincrement,
                     parent_id integer,
@@ -3133,6 +3190,7 @@ class AutoReplyStore:
             )
             self._replace_feedback_processing_round_guards_atomically(db)
             self._replace_managed_skill_revision_immutability_guards_atomically(db)
+            self._replace_managed_skill_export_receipt_immutability_guards_atomically(db)
             self._replace_runtime_skill_immutability_guards_atomically(db)
             self._replace_feedback_iteration_decision_immutability_guards_atomically(db)
             db.execute(
@@ -4256,6 +4314,56 @@ class AutoReplyStore:
                 (skill_id,),
             ).fetchall()
         return tuple(self._managed_skill_revision_from_row(row) for row in rows)
+
+    @staticmethod
+    def _managed_skill_export_receipt_from_row(
+        row: sqlite3.Row,
+    ) -> ManagedSkillExportReceipt:
+        return ManagedSkillExportReceipt(
+            id=int(row["id"]), revision_id=int(row["revision_id"]),
+            sha256=str(row["sha256"]), path=str(row["path"]),
+            created_at=str(row["created_at"]),
+        )
+
+    def record_managed_skill_export(
+        self, revision_id: int, *, sha256: str, path: str
+    ) -> ManagedSkillExportReceipt:
+        if type(revision_id) is not int or revision_id <= 0:
+            raise ValueError("managed Skill export revision is invalid")
+        if not isinstance(sha256, str) or not isinstance(path, str) or not path:
+            raise ValueError("managed Skill export receipt is malformed")
+        with self._immediate_write_transaction() as db:
+            revision = db.execute(
+                "select sha256 from managed_skill_revisions where id=?", (revision_id,)
+            ).fetchone()
+            if revision is None:
+                raise ValueError("managed Skill revision does not exist")
+            if str(revision["sha256"]) != sha256:
+                raise ValueError("managed Skill export receipt SHA does not match revision")
+            cursor = db.execute(
+                """insert into managed_skill_export_receipts (revision_id, sha256, path)
+                   values (?, ?, ?)""",
+                (revision_id, sha256, path),
+            )
+            row = db.execute(
+                """select id, revision_id, sha256, path, created_at
+                   from managed_skill_export_receipts where id=?""",
+                (cursor.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return self._managed_skill_export_receipt_from_row(row)
+
+    def latest_managed_skill_export_receipt(
+        self, revision_id: int
+    ) -> ManagedSkillExportReceipt | None:
+        with self._connect() as db:
+            row = db.execute(
+                """select id, revision_id, sha256, path, created_at
+                   from managed_skill_export_receipts
+                   where revision_id=? order by id desc limit 1""",
+                (revision_id,),
+            ).fetchone()
+        return self._managed_skill_export_receipt_from_row(row) if row else None
 
     @staticmethod
     def _runtime_skill_config_from_row(row: sqlite3.Row) -> RuntimeSkillConfig:

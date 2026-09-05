@@ -91,6 +91,17 @@ class RuntimeSkillLoadReceipt:
 
 
 @dataclass(frozen=True)
+class ManagedSkillExportReceipt:
+    """Immutable evidence that one revision was explicitly exported."""
+
+    id: int
+    revision_id: int
+    sha256: str
+    path: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class RuntimeSkillSnapshot:
     """The exact managed Skill revisions loaded for one service process."""
 
@@ -148,6 +159,7 @@ class RepositoryManagedSkillExport:
     revision_id: int
     sha256: str
     path: Path
+    receipt: ManagedSkillExportReceipt
 
 
 def import_repository_managed_skills(
@@ -280,11 +292,15 @@ def export_managed_skill_revision(
         except FileNotFoundError:
             pass
         raise
+    receipt = store.record_managed_skill_export(
+        revision.id, sha256=revision.sha256, path=str(destination)
+    )
     return RepositoryManagedSkillExport(
         name=skill.name,
         revision_id=revision.id,
         sha256=revision.sha256,
         path=destination,
+        receipt=receipt,
     )
 
 

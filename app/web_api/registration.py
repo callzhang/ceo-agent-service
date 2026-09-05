@@ -1033,7 +1033,22 @@ def register_console_routes(
         import_repository_managed_skills(store)
         return store
 
-    def _managed_revision_payload(revision: Any) -> dict[str, Any]:
+    def _managed_revision_payload(store: Any, revision: Any) -> dict[str, Any]:
+        receipt = store.latest_managed_skill_export_receipt(revision.id)
+        export = {
+            "status": "exported" if receipt is not None else "not_exported",
+            "receipt": (
+                {
+                    "id": receipt.id,
+                    "revision_id": receipt.revision_id,
+                    "sha256": receipt.sha256,
+                    "path": receipt.path,
+                    "created_at": receipt.created_at,
+                }
+                if receipt is not None
+                else None
+            ),
+        }
         return {
             "id": revision.id,
             "skill_id": revision.skill_id,
@@ -1043,6 +1058,7 @@ def register_console_routes(
             "parent_revision_id": revision.parent_revision_id,
             "source": revision.source,
             "created_at": revision.created_at,
+            "export": export,
         }
 
     def _runtime_config_payload(store: Any, config: Any) -> dict[str, Any]:
@@ -1088,7 +1104,7 @@ def register_console_routes(
         store = managed_store()
         if store.get_managed_skill(skill_id) is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Managed Skill not found", "details": {}}, status_code=404)
-        return {"items": [_managed_revision_payload(revision) for revision in store.list_managed_skill_revisions(skill_id)]}
+        return {"items": [_managed_revision_payload(store, revision) for revision in store.list_managed_skill_revisions(skill_id)]}
 
     @app.post("/api/console/settings/managed-skills/{skill_id}/revisions", status_code=201)
     async def console_create_managed_skill_revision(skill_id: int, request: Request):
@@ -1108,14 +1124,14 @@ def register_console_routes(
             message = str(exc)
             status = 404 if "does not exist" in message else 409 if "already exists" in message else 422
             return JSONResponse({"ok": False, "code": "not_found" if status == 404 else "conflict" if status == 409 else "validation_error", "message": message, "details": {}}, status_code=status)
-        return _managed_revision_payload(revision)
+        return _managed_revision_payload(managed_store(), revision)
 
     @app.get("/api/console/settings/managed-skill-revisions/{revision_id}")
     def console_managed_skill_revision(revision_id: int):
         revision = managed_store().get_managed_skill_revision(revision_id)
         if revision is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Managed Skill revision not found", "details": {}}, status_code=404)
-        return _managed_revision_payload(revision)
+        return _managed_revision_payload(managed_store(), revision)
 
     @app.post("/api/console/settings/managed-skill-revisions/{revision_id}/export")
     def console_export_managed_skill_revision(revision_id: int):
@@ -1126,11 +1142,22 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=422)
         except ValueError as exc:
             return JSONResponse({"ok": False, "code": "not_found", "message": str(exc), "details": {}}, status_code=404)
+        receipt = exported.receipt
         return {
             "name": exported.name,
             "revision_id": exported.revision_id,
             "sha256": exported.sha256,
             "path": str(exported.path),
+            "export": {
+                "status": "exported",
+                "receipt": {
+                    "id": receipt.id,
+                    "revision_id": receipt.revision_id,
+                    "sha256": receipt.sha256,
+                    "path": receipt.path,
+                    "created_at": receipt.created_at,
+                },
+            },
         }
 
     @app.post("/api/console/settings/runtime-skill-configs", status_code=201)

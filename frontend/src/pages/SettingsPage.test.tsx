@@ -21,9 +21,10 @@ const listRuntimeSkillLoadReceipts = vi.hoisted(() => vi.fn());
 const createManagedSkill = vi.hoisted(() => vi.fn());
 const getFeedbackIterationCapability = vi.hoisted(() => vi.fn());
 const setFeedbackIterationCapability = vi.hoisted(() => vi.fn());
+const exportManagedSkillRevision = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, getSkillFeatures, toggleSkillFeature, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
-vi.mock("../api/skills", () => ({ listManagedSkills, createManagedSkill, listManagedSkillRevisions, createManagedSkillRevision, getCurrentRuntimeSkillConfig, createRuntimeSkillConfig, listRuntimeSkillLoadReceipts, getFeedbackIterationCapability, setFeedbackIterationCapability }));
+vi.mock("../api/skills", () => ({ listManagedSkills, createManagedSkill, listManagedSkillRevisions, createManagedSkillRevision, getCurrentRuntimeSkillConfig, createRuntimeSkillConfig, listRuntimeSkillLoadReceipts, getFeedbackIterationCapability, setFeedbackIterationCapability, exportManagedSkillRevision }));
 
 import { SettingsPage } from "./SettingsPage";
 
@@ -344,6 +345,28 @@ describe("SettingsPage", () => {
     expect(screen.getByText("新任务创建开关（不控制 Skill 加载）")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "系统能力" })).toBeInTheDocument();
     expect(screen.getByText("反馈迭代")).toBeInTheDocument();
+  });
+
+  it("shows active and next-start revisions separately and reads exported state from the export receipt", async () => {
+    const user = userEvent.setup();
+    getSkillFeatures.mockResolvedValueOnce({ features: [] });
+    listManagedSkills.mockResolvedValueOnce({ items: [{ id: 1, name: "ceo-message-triage", display_name: "Message Triage", created_at: "2026-09-05T00:00:00Z" }] });
+    listManagedSkillRevisions.mockResolvedValueOnce({ items: [
+      { id: 11, skill_id: 1, revision_number: 1, content: "# active", sha256: "a".repeat(64), parent_revision_id: null, source: "import", created_at: "2026-09-05T00:00:00Z", export: { status: "exported", receipt: { id: 7, revision_id: 11, sha256: "a".repeat(64), path: "/repo/skills/ceo-message-triage/SKILL.md", created_at: "2026-09-05T00:00:00Z" } } },
+      { id: 12, skill_id: 1, revision_number: 2, content: "# candidate", sha256: "b".repeat(64), parent_revision_id: 11, source: "settings", created_at: "2026-09-05T00:01:00Z", export: { status: "not_exported", receipt: null } },
+    ] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: { id: 4, parent_id: 3, status: "pending_restart", created_at: "2026-09-05T00:01:00Z", bindings: [{ skill_id: 1, revision_id: 12, enabled: true, load_order: 0, purpose: "business" }] }, active: { id: 3, parent_id: null, status: "active", created_at: "2026-09-05T00:00:00Z", bindings: [{ skill_id: 1, revision_id: 11, enabled: true, load_order: 0, purpose: "business" }] } });
+    listRuntimeSkillLoadReceipts.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ items: [{ id: 9, config_id: 3, pid: 123, loaded_json: JSON.stringify({ "1": "a".repeat(64) }), error: "", created_at: "2026-09-05T00:00:00Z" }] });
+    exportManagedSkillRevision.mockResolvedValueOnce({ name: "ceo-message-triage", revision_id: 12, sha256: "b".repeat(64), path: "/repo/skills/ceo-message-triage/SKILL.md", export: { status: "exported", receipt: { id: 8, revision_id: 12, sha256: "b".repeat(64), path: "/repo/skills/ceo-message-triage/SKILL.md", created_at: "2026-09-05T00:02:00Z" } } });
+    renderSettings("/settings?tab=skills");
+
+    expect(await screen.findByRole("heading", { name: "业务 Skills" })).toBeInTheDocument();
+    expect(screen.getByText("活动 revision 1 · 已由加载回执 #9 确认")).toBeInTheDocument();
+    expect(screen.getByText("下次启动 revision 2 · pending_restart")).toBeInTheDocument();
+    expect(screen.getByText("导出状态：未导出")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "导出 revision 2 到仓库" }));
+    expect(exportManagedSkillRevision).toHaveBeenCalledWith(12);
+    expect(await screen.findByText(/导出状态：已导出 · 导出回执 #8/)).toBeInTheDocument();
   });
 
   it("creates a local Skill before its first immutable revision", async () => {
