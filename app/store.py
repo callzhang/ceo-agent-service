@@ -66,6 +66,7 @@ from app.managed_skills import (
     RuntimeSkillConfig,
     RuntimeSkillLoadReceipt,
     validate_managed_skill_content,
+    validate_managed_skill_name,
 )
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
@@ -4103,14 +4104,10 @@ class AutoReplyStore:
         )
 
     def create_managed_skill(self, name: str, display_name: str) -> ManagedSkill:
-        if not isinstance(name, str):
-            raise ValueError("managed Skill name must be nonempty")
         if not isinstance(display_name, str):
             raise ValueError("managed Skill display name must be nonempty")
-        name = name.strip()
+        name = validate_managed_skill_name(name)
         display_name = display_name.strip()
-        if not name:
-            raise ValueError("managed Skill name must be nonempty")
         if not display_name:
             raise ValueError("managed Skill display name must be nonempty")
         with self._immediate_write_transaction() as db:

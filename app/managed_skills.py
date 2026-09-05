@@ -24,6 +24,24 @@ class ManagedSkillValidationError(ValueError):
     """Raised when managed Skill content does not meet the persisted contract."""
 
 
+def validate_managed_skill_name(name: str) -> str:
+    """Require a portable single-directory identifier for a managed Skill."""
+    if (
+        not isinstance(name, str)
+        or not name
+        or name != name.strip()
+        or not name[0].isascii()
+        or not name[0].isalnum()
+        or any(
+            not character.isascii()
+            or not (character.isalnum() or character in {"-", "_"})
+            for character in name
+        )
+    ):
+        raise ManagedSkillValidationError(f"invalid managed Skill name: {name!r}")
+    return name
+
+
 @dataclass(frozen=True)
 class ManagedSkill:
     id: int
@@ -215,9 +233,38 @@ def export_managed_skill_revision(
     skill = store.get_managed_skill(revision.skill_id)
     if skill is None:
         raise ValueError("managed Skill does not exist")
-    root = skills_root or (Path(__file__).resolve().parents[1] / "skills")
-    destination = root / skill.name / "SKILL.md"
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    name = validate_managed_skill_name(skill.name)
+    root = Path(skills_root or (Path(__file__).resolve().parents[1] / "skills")).expanduser()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        resolved_root = root.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ManagedSkillValidationError(
+            f"unable to prepare managed Skill export root: {root}"
+        ) from exc
+    if root.is_symlink() or resolved_root != root.absolute():
+        raise ManagedSkillValidationError(
+            f"refusing symlinked managed Skill export root: {root}"
+        )
+    destination = root / name / "SKILL.md"
+    if destination.parent.is_symlink():
+        raise ManagedSkillValidationError(
+            f"refusing symlinked managed Skill export directory: {destination.parent}"
+        )
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        resolved_destination = destination.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise ManagedSkillValidationError(
+            f"unable to validate managed Skill export destination: {destination}"
+        ) from exc
+    if (
+        destination.parent.is_symlink()
+        or resolved_destination.parent.parent != resolved_root
+    ):
+        raise ManagedSkillValidationError(
+            f"managed Skill export destination escaped root: {destination}"
+        )
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=".managed-skill-export-", dir=destination.parent
     )
@@ -284,8 +331,7 @@ def resolve_pending_runtime_skills(
 
 def validate_managed_skill_content(name: str, content: str) -> str:
     """Validate exact UTF-8 Skill text and return its exact-content SHA-256."""
-    if not isinstance(name, str) or not name.strip():
-        raise ManagedSkillValidationError("managed Skill name must be nonempty")
+    name = validate_managed_skill_name(name)
     if not isinstance(content, str):
         raise ManagedSkillValidationError("managed Skill content must be text")
     try:

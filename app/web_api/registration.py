@@ -39,6 +39,7 @@ from app.managed_skills import (
     ManagedSkillValidationError,
     import_repository_managed_skills,
     export_managed_skill_revision,
+    validate_managed_skill_name,
 )
 from app.feedback_processing import (
     FeedbackIterationDecision,
@@ -1070,8 +1071,9 @@ def register_console_routes(
     async def console_create_managed_skill(request: Request):
         payload = await json_object(request)
         try:
+            name = validate_managed_skill_name(payload.get("name"))
             skill = managed_store().create_managed_skill(
-                payload.get("name"), payload.get("display_name")
+                name, payload.get("display_name")
             )
         except ValueError as exc:
             status = 409 if "already exists" in str(exc) else 422
@@ -1120,6 +1122,8 @@ def register_console_routes(
         store = managed_store()
         try:
             exported = export_managed_skill_revision(store, revision_id)
+        except ManagedSkillValidationError as exc:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=422)
         except ValueError as exc:
             return JSONResponse({"ok": False, "code": "not_found", "message": str(exc), "details": {}}, status_code=404)
         return {

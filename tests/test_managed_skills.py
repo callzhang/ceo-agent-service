@@ -244,6 +244,39 @@ def test_explicit_repository_export_writes_only_the_selected_immutable_revision(
     assert (tmp_path / "skills" / "ceo-test" / "SKILL.md").read_text(encoding="utf-8") == SKILL_V1
 
 
+def test_export_rejects_a_symlinked_destination_directory_without_writing_outside(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "skills.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "Test Skill")
+    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+    skills_root = tmp_path / "skills"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    skills_root.mkdir()
+    (skills_root / skill.name).symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ManagedSkillValidationError, match="symlink"):
+        export_managed_skill_revision(store, revision.id, skills_root=skills_root)
+
+    assert not (outside / "SKILL.md").exists()
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("../ceo-test", "ceo/test", r"ceo\\test", "ceo.test", "ceo\x1ftest"),
+)
+def test_store_rejects_unsafe_managed_skill_names_before_persistence(
+    tmp_path: Path, name: str
+) -> None:
+    store = AutoReplyStore(tmp_path / "skills.sqlite3")
+
+    with pytest.raises(ManagedSkillValidationError, match="invalid managed Skill name"):
+        store.create_managed_skill(name, "Test Skill")
+
+    assert store.list_managed_skills() == ()
+
+
 def test_invalid_frontmatter_creates_no_revision(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "skills.sqlite3")
     skill = store.create_managed_skill("ceo-test", "Test Skill")
@@ -352,15 +385,13 @@ def test_revision_rows_reject_sql_update_and_delete_without_data_loss(
     assert persisted.sha256 == revision.sha256
 
 
-def test_padded_skill_names_are_normalized_before_persistence(tmp_path: Path) -> None:
+def test_padded_skill_names_are_rejected_before_persistence(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "skills.sqlite3")
 
-    skill = store.create_managed_skill("  ceo-test  ", "  Test Skill  ")
-    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+    with pytest.raises(ManagedSkillValidationError, match="invalid managed Skill name"):
+        store.create_managed_skill("  ceo-test  ", "Test Skill")
 
-    assert skill.name == "ceo-test"
-    assert skill.display_name == "Test Skill"
-    assert revision.skill_id == skill.id
+    assert store.list_managed_skills() == ()
 
 
 def test_reopening_an_existing_database_repairs_missing_immutability_triggers(

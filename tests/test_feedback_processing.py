@@ -1976,7 +1976,7 @@ def test_missing_summary_is_empty_and_start_message_has_no_feedback_body():
     item = FeedbackImportItem(feedback_key="feedback-1", summary="", references=[])
     message = build_feedback_start_message("batch-1", [item])
     assert "batch-1" in message
-    assert "skills/ceo-feedback-iteration/SKILL.md" in message
+    assert "Use managed system Skill: ceo-feedback-iteration" in message
     assert "feedback-1" in message
     assert "persisted summary:" in message
     assert "原始反馈" not in message

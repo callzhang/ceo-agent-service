@@ -102,3 +102,17 @@ def test_managed_skill_api_rejects_unknown_ids_paths_and_config_conflicts(tmp_pa
         assert client.post("/api/console/settings/managed-skill-revisions/999/export").status_code == 404
         conflict = client.post("/api/console/settings/runtime-skill-configs", json={"expected_parent_id": 999, "bindings": []})
     assert conflict.status_code == 409
+
+
+def test_managed_skill_api_rejects_unsafe_name_without_persisting_it(tmp_path: Path) -> None:
+    client, store = _client(tmp_path)
+
+    with client:
+        response = client.post(
+            "/api/console/settings/managed-skills",
+            json={"name": r"ceo\\test", "display_name": "Test Skill"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "validation_error"
+    assert store.get_managed_skill_by_name(r"ceo\\test") is None

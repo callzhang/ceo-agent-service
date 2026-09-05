@@ -25,7 +25,6 @@ FEEDBACK_PROCESSING_CURRENT_ROUND_ID_INVALID = (
 FEEDBACK_REOPEN_INVALID = "feedback_reopen_invalid"
 FEEDBACK_REOPEN_PROCESSING = "feedback_reopen_processing"
 FEEDBACK_REOPEN_HISTORY_INCOMPLETE = "feedback_reopen_history_incomplete"
-FEEDBACK_PROCESSING_SKILL_PATH = "skills/ceo-feedback-processing/SKILL.md"
 FEEDBACK_ITERATION_SKILL_NAME = "ceo-feedback-iteration"
 FEEDBACK_ITERATION_DISABLED_ERROR = "feedback_iteration_disabled"
 FEEDBACK_ITERATION_ASSOCIATION_MISMATCH_ERROR = "feedback_iteration_association_mismatch"
