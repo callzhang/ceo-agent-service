@@ -201,11 +201,11 @@ def _is_dws_constructor(node: ast.AST) -> bool:
 
 
 def _is_dws_raw_receiver(node: ast.AST, known_dws: set[str]) -> bool:
-    """Recognize proven DWS clients plus the project's conventional DWS fields."""
+    """Recognize proven clients plus conventional DWS/DingTalk adapter fields."""
     return (
-        isinstance(node, ast.Name) and node.id in known_dws | {"dws"}
+        isinstance(node, ast.Name) and node.id in known_dws | {"dws", "dingtalk"}
     ) or (
-        isinstance(node, ast.Attribute) and node.attr == "dws"
+        isinstance(node, ast.Attribute) and node.attr in {"dws", "dingtalk"}
     ) or _is_dws_constructor(node)
 
 
@@ -726,6 +726,44 @@ def test_architecture_guard_ignores_direct_callback_method_with_dingtalk_name(
     source.write_text(
         "def notify(callback):\n"
         "    return callback.send_message('not a provider call')\n",
+        encoding="utf-8",
+    )
+
+    assert _raw_send_violations(app_root) == []
+
+
+def test_architecture_guard_rejects_conventional_dingtalk_receivers(
+    tmp_path: Path,
+) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    source = app_root / "business_sender.py"
+    source.write_text(
+        "def direct(dingtalk):\n"
+        "    return dingtalk.send_message('chat', 'bypassed')\n"
+        "\n"
+        "class Sender:\n"
+        "    def dynamic(self):\n"
+        "        return getattr(self.dingtalk, 'ding_user')('user-1', 'bypassed')\n",
+        encoding="utf-8",
+    )
+
+    assert _raw_send_violations(app_root) == [
+        "app/business_sender.py:<module>.direct:2:send_message",
+        "app/business_sender.py:Sender.dynamic:6:ding_user",
+    ]
+
+
+def test_architecture_guard_ignores_arbitrary_named_direct_and_dynamic_methods(
+    tmp_path: Path,
+) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    source = app_root / "callbacks.py"
+    source.write_text(
+        "def notify(adapter):\n"
+        "    adapter.send_message('not a provider call')\n"
+        "    return getattr(adapter, 'ding_self')('not a provider call')\n",
         encoding="utf-8",
     )
 
