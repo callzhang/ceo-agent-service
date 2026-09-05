@@ -315,7 +315,7 @@ describe("SettingsPage", () => {
     listManagedSkills.mockResolvedValueOnce({ items: [{ id: 1, name: "ceo-message-triage", display_name: "Message Triage", created_at: "2026-09-05T00:00:00Z" }] });
     listManagedSkillRevisions.mockResolvedValueOnce({ items: [{ id: 11, skill_id: 1, revision_number: 1, content: "---\nname: ceo-message-triage\nmetadata:\n  managed_by: ceo-agent-service\n---\n# revision 1", sha256: "a".repeat(64), parent_revision_id: null, source: "import", created_at: "2026-09-05T00:00:00Z" }] });
     getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: { id: 3, parent_id: null, status: "active", created_at: "2026-09-05T00:00:00Z", bindings: [{ skill_id: 1, revision_id: 11, enabled: true, load_order: 0, purpose: "business" }] }, active: { id: 3, parent_id: null, status: "active", created_at: "2026-09-05T00:00:00Z", bindings: [{ skill_id: 1, revision_id: 11, enabled: true, load_order: 0, purpose: "business" }] } });
-    listRuntimeSkillLoadReceipts.mockResolvedValueOnce({ items: [{ id: 9, config_id: 3, pid: 123, loaded_json: { "1": "a".repeat(64) }, error: "", created_at: "2026-09-05T00:00:00Z" }] });
+    listRuntimeSkillLoadReceipts.mockResolvedValueOnce({ items: [{ id: 9, config_id: 3, pid: 123, loaded_json: JSON.stringify({ "1": "a".repeat(64) }), error: "", created_at: "2026-09-05T00:00:00Z" }] });
     createManagedSkillRevision.mockResolvedValueOnce({ id: 12, skill_id: 1, revision_number: 2, content: "---\nname: ceo-message-triage\nmetadata:\n  managed_by: ceo-agent-service\n---\n# revision 2", sha256: "b".repeat(64), parent_revision_id: 11, source: "settings", created_at: "2026-09-05T00:01:00Z" });
     createRuntimeSkillConfig.mockResolvedValueOnce({ id: 4, parent_id: 3, status: "pending_restart", created_at: "2026-09-05T00:01:00Z", bindings: [{ skill_id: 1, revision_id: 12, enabled: true, load_order: 0, purpose: "business" }] });
     renderSettings("/settings?tab=skills");
@@ -340,5 +340,69 @@ describe("SettingsPage", () => {
     expect(screen.getByText("新任务创建开关（不控制 Skill 加载）")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "系统能力" })).toBeInTheDocument();
     expect(screen.getByText("反馈迭代")).toBeInTheDocument();
+  });
+
+  it("submits one immutable revision when save is clicked rapidly", async () => {
+    const user = userEvent.setup();
+    let resolveRevision: ((value: unknown) => void) | undefined;
+    getSkillFeatures.mockResolvedValueOnce({ features: [] });
+    listManagedSkills.mockResolvedValueOnce({ items: [{ id: 1, name: "ceo-message-triage", display_name: "Message Triage", created_at: "2026-09-05T00:00:00Z" }] });
+    listManagedSkillRevisions.mockResolvedValueOnce({ items: [{ id: 11, skill_id: 1, revision_number: 1, content: "# first", sha256: "a".repeat(64), parent_revision_id: null, source: "import", created_at: "2026-09-05T00:00:00Z" }] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: null, active: null });
+    createManagedSkillRevision.mockImplementationOnce(() => new Promise((resolve) => { resolveRevision = resolve; }));
+    renderSettings("/settings?tab=skills");
+
+    await user.click(await screen.findByRole("button", { name: "新建修订" }));
+    const save = screen.getByRole("button", { name: "保存修订" });
+    await user.click(save); await user.click(save);
+    expect(createManagedSkillRevision).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "新建修订" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+    resolveRevision?.({ id: 12, skill_id: 1, revision_number: 2, content: "# second", sha256: "b".repeat(64), parent_revision_id: 11, source: "settings", created_at: "2026-09-05T00:01:00Z" });
+    expect(await screen.findByText("已保存 revision 2")).toBeInTheDocument();
+    expect(screen.getByText(/最新 revision 2/)).toBeInTheDocument();
+  });
+
+  it("disables activation without a next-start configuration and restores complete preview tab semantics", async () => {
+    const user = userEvent.setup();
+    getSkillFeatures.mockResolvedValueOnce({ features: [] });
+    listManagedSkills.mockResolvedValueOnce({ items: [{ id: 1, name: "ceo-message-triage", display_name: "Message Triage", created_at: "2026-09-05T00:00:00Z" }] });
+    listManagedSkillRevisions.mockResolvedValueOnce({ items: [{ id: 11, skill_id: 1, revision_number: 1, content: "# first", sha256: "a".repeat(64), parent_revision_id: null, source: "import", created_at: "2026-09-05T00:00:00Z" }] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: null, active: null });
+    renderSettings("/settings?tab=skills");
+
+    expect(await screen.findByRole("button", { name: "下次启动启用 revision 1" })).toBeDisabled();
+    expect(screen.getByText("尚未配置下次启动 Skill；无法启用修订。" )).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "新建修订" }));
+    await user.click(screen.getByRole("tab", { name: "预览" }));
+    const tabs = within(screen.getByRole("tablist", { name: "Skill detail view" }));
+    const preview = tabs.getByRole("tab", { name: "预览" });
+    const edit = tabs.getByRole("tab", { name: "编辑" });
+    expect(preview).toHaveAttribute("id", "managed-skill-preview-tab");
+    expect(preview).toHaveAttribute("aria-controls", "managed-skill-preview-panel");
+    expect(edit).toHaveAttribute("tabindex", "-1");
+    await user.keyboard("{ArrowRight}");
+    expect(edit).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "编辑" })).toHaveAttribute("aria-labelledby", "managed-skill-edit-tab");
+  });
+
+  it("serializes a business toggle and clears its prior error before the next response", async () => {
+    const user = userEvent.setup();
+    let resolveToggle: ((value: unknown) => void) | undefined;
+    getSkillFeatures.mockResolvedValueOnce({ features: [{ feature_id: "message_triage", name: "Message Triage", description: "处理消息", skills: [], enabled: true, status: "ready" }] });
+    listManagedSkills.mockResolvedValueOnce({ items: [] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: null, active: null });
+    toggleSkillFeature.mockRejectedValueOnce(new Error("第一次失败")).mockImplementationOnce(() => new Promise((resolve) => { resolveToggle = resolve; }));
+    renderSettings("/settings?tab=skills");
+
+    const toggle = await screen.findByRole("switch", { name: "Message Triage" });
+    await user.click(toggle);
+    expect(await screen.findByRole("alert")).toHaveTextContent("第一次失败");
+    await user.click(toggle);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(toggleSkillFeature).toHaveBeenCalledTimes(2);
+    expect(toggle).toBeDisabled();
+    resolveToggle?.({ feature_id: "message_triage", enabled: false, status: "ready" });
+    expect(await screen.findByText("新任务创建开关已保存")).toBeInTheDocument();
   });
 });
