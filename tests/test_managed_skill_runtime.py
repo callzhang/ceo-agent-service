@@ -75,6 +75,39 @@ def test_failed_load_keeps_previous_active_config(tmp_path: Path) -> None:
     ]
 
 
+def test_failed_latest_candidate_never_revives_an_older_pending_config(
+    tmp_path: Path,
+) -> None:
+    store, first = configured_store(tmp_path)
+    active = store.create_runtime_skill_config(
+        {first.skill_id: first.id}, expected_parent_id=None
+    )
+    resolve_pending_runtime_skills(store, pid=7654)
+    second = store.create_managed_skill_revision(first.skill_id, SKILL_V2, source="settings")
+    pending = store.create_runtime_skill_config(
+        {second.skill_id: second.id}, expected_parent_id=active.id
+    )
+    third = store.create_managed_skill_revision(
+        first.skill_id, SKILL_V2.replace("Version two", "Version three"), source="settings"
+    )
+    failed = store.create_runtime_skill_config(
+        {third.skill_id: third.id}, expected_parent_id=pending.id
+    )
+    store.record_runtime_skill_load_failure(failed.id, pid=7655, error="candidate rejected")
+
+    snapshot = resolve_pending_runtime_skills(store, pid=7656)
+
+    assert snapshot.config_id == active.id
+    assert store.get_active_runtime_skill_config().id == active.id
+    assert store.get_runtime_skill_config(pending.id).status == "pending_restart"
+    with store._connect() as db:
+        pending_receipts = db.execute(
+            "select count(*) from runtime_skill_load_receipts where config_id=?",
+            (pending.id,),
+        ).fetchone()[0]
+    assert pending_receipts == 0
+
+
 def test_parent_compare_and_swap_rejects_stale_configuration(tmp_path: Path) -> None:
     store, revision = configured_store(tmp_path)
     first = store.create_runtime_skill_config(

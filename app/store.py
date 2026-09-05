@@ -4231,9 +4231,9 @@ class AutoReplyStore:
         with self._connect() as db:
             row = db.execute(
                 """select id, parent_id, status, created_at from runtime_skill_configs
-                   where status='pending_restart' order by id desc limit 1"""
+                   order by id desc limit 1"""
             ).fetchone()
-            if row is None:
+            if row is not None and str(row["status"]) == "load_failed":
                 row = db.execute(
                     """select id, parent_id, status, created_at from runtime_skill_configs
                        where status='active' order by id desc limit 1"""
