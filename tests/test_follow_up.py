@@ -142,6 +142,11 @@ def test_due_follow_up_sends_group_message(tmp_path):
     assert send_result["at_users"] == ["owner-1"]
     assert send_result["at_open_dingtalk_ids"] == ["open-owner-1"]
     assert send_result["at_open_dingtalk_names"] == ["Alex"]
+    prepared = store.get_outbound_postfix(
+        "dingtalk", f"follow-up:{send_result['idempotency_uuid']}"
+    )
+    assert prepared is not None
+    assert prepared.final_body == dws.sent[0]["text"]
 
 
 def test_disabled_work_tracking_does_not_enqueue_follow_up_agent_review(
@@ -393,6 +398,9 @@ def test_expired_sending_attempt_retries_normally(tmp_path, monkeypatch):
     assert process_due_follow_ups(store, dws, now="2026-06-08 02:06:00", auto_send=True) == 1
     assert len(dws.sent) == 2
     assert dws.sent[1]["idempotency_uuid"] == first_uuid
+    assert dws.sent[1]["text"] == dws.sent[0]["text"]
+    prepared = store.get_outbound_postfix("dingtalk", f"follow-up:{first_uuid}")
+    assert prepared is not None and prepared.final_body == dws.sent[0]["text"]
     assert store.get_follow_up_draft(draft_id).status == "sent"
     attempt = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
     assert attempt is not None and attempt["state"] == "sent"

@@ -2788,6 +2788,7 @@ def _worker_with_protocol_executor(
                         "consumer_read_only_enforcement",
                         "audit_effect_visibility",
                         "reviewed_write_tools",
+                        "agent_cli.dws",
                         "native_cli:reviewed",
                         "native_cli:dws",
                         "mcp:memory_connector:read",

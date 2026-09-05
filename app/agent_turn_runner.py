@@ -75,6 +75,7 @@ from app.leak_check import (
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
+    describe_native_command,
     dingtalk_message_text,
     native_command_argv,
 )
@@ -795,6 +796,12 @@ class AgentTurnProcess(Generic[ResultT]):
             event = _persist_provider_event(payload)
             if event is not None:
                 self.store.append_agent_run_event(run.id, event, owner=self.owner)
+                self._record_direct_send_receipt(
+                    event,
+                    payload,
+                    run=run,
+                    expected_effect_actions=expected_effect_actions,
+                )
 
         def persist_payload(
             payload: dict[str, object],
@@ -1783,6 +1790,7 @@ class AgentTurnProcess(Generic[ResultT]):
         payload: dict[str, object],
         *,
         run: AgentRun,
+        expected_effect_actions: tuple[dict[str, object], ...] = (),
     ) -> None:
         """Persist the service delivery fact for a completed reviewed chat send."""
         if event.get("type") != "item.completed":
@@ -1796,19 +1804,56 @@ class AgentTurnProcess(Generic[ResultT]):
             if isinstance(arguments, dict)
             else {}
         )
-        if not isinstance(
-            metadata, dict
-        ) or not self._is_recordable_dingtalk_chat_delivery(metadata, argv):
+        target_identifiers: dict[str, object] | None = None
+        if isinstance(metadata, dict) and self._is_recordable_dingtalk_chat_delivery(
+            metadata, argv
+        ):
+            candidate_target = metadata.get("target_identifiers")
+            if isinstance(candidate_target, dict):
+                target_identifiers = candidate_target
+        elif isinstance(raw_item, dict) and raw_item.get("type") == "mcp_tool_call":
+            call = self.effects.classify(raw_item)
+            descriptor = describe_native_command(
+                {"type": "command_execution", "argv": list(argv or ())}
+            )
+            if (
+                call is None
+                or call.effect is not EffectKind.EFFECTFUL
+                or call.server != "agent_cli"
+                or call.tool != "execute_reviewed_write"
+                or descriptor is None
+                or descriptor.cli != "dws"
+                or not descriptor.command_path.startswith("chat ")
+                or not _dingtalk_message_text(argv)
+            ):
+                return
+            target_identifiers = descriptor.target_identifiers
+            metadata = {
+                "operation_digest": descriptor.command_digest,
+                "result_digest": _json_digest(raw_item.get("result")),
+            }
+        if target_identifiers is None:
             return
-        reply_text = _dingtalk_message_text(argv)
-        if not reply_text or self.store.has_sent_reply_for_trigger(
+        matching_actions = [
+            action
+            for action in expected_effect_actions
+            if action.get("argv") == list(argv)
+            and action.get("target_identifiers") == target_identifiers
+            and isinstance(action.get("delivery_key"), str)
+        ]
+        if len(matching_actions) != 1 or self.store.has_sent_reply_for_trigger(
             self.task.conversation_id, self.task.trigger_message_id
         ):
+            return
+        delivery_key = matching_actions[0]["delivery_key"]
+        assert isinstance(delivery_key, str)
+        prepared = self.store.get_outbound_postfix("dingtalk", delivery_key)
+        if prepared is None:
             return
         self.store.record_sent_reply(
             self.task.conversation_id,
             self.task.trigger_message_id,
-            reply_text,
+            prepared.final_body,
             send_result_json=json.dumps(
                 {
                     "agent_run_id": run.id,

@@ -68,6 +68,7 @@ from app.feedback_spike import (
 )
 from app.external_retry import is_external_dependency_error
 from app.message_split import split_dingtalk_text
+from app.service_message_sender import ServiceMessageSender
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.notification import send_macos_notification
 from app.meeting_alignment import (
@@ -1512,7 +1513,11 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
             if dws is None:
                 raise RuntimeError("DWS client is not configured for OKR review send")
             send_result = _send_reply_to_trigger_chunks(
-                dws, conversation, trigger, reply
+                ServiceMessageSender(store=store, dingtalk=dws),
+                conversation,
+                trigger,
+                reply,
+                request_id=request.id,
             )
         except Exception as exc:
             store.mark_okr_review_request_failed(request.id, str(exc))
@@ -1526,7 +1531,7 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
         store.record_sent_reply(
             request.conversation_id,
             request.trigger_message_id,
-            reply,
+            str(send_result["final_body"]),
             send_result_json=json.dumps(
                 native_reply_delivery_payload(conversation, trigger, send_result),
                 ensure_ascii=False,
@@ -1957,7 +1962,13 @@ def test_ding_command(settings: WorkerSettings) -> None:
         ding_receiver_user_id=settings.ding_receiver_user_id,
     )
     try:
-        dws.ding_self("CEO agent DING smoke test")
+        ServiceMessageSender(
+            store=AutoReplyStore(settings.db_path),
+            dingtalk=dws,
+        ).send_dingtalk_ding(
+            delivery_key="cli:test-ding",
+            body="CEO agent DING smoke test",
+        )
     except DwsError as exc:
         raise SystemExit(f"ding_self: BLOCKED {exc}") from exc
     print("ding_self: OK", flush=True)
@@ -2121,19 +2132,40 @@ def resolve_agent_run_command(
     return result
 
 
-def _send_reply_to_trigger_chunks(dws, conversation, trigger, text: str) -> dict:
+def _send_reply_to_trigger_chunks(
+    sender: ServiceMessageSender,
+    conversation,
+    trigger,
+    text: str,
+    *,
+    request_id: int,
+) -> dict:
     chunks = split_dingtalk_text(text)
     if not chunks:
         raise RuntimeError("empty DingTalk reply text")
-    return {
-        "chunks": [
+    delivered_chunks = []
+    for index, chunk in enumerate(chunks, start=1):
+        message = sender.prepare(
+            channel="dingtalk",
+            delivery_key=f"okr-review:{request_id}:chunk:{index}",
+            body=chunk,
+            original_text=trigger.content,
+        )
+        receipt = sender.send_dingtalk_reply_to_trigger_prepared(
+            message,
+            conversation=conversation,
+            trigger=trigger,
+        )
+        delivered_chunks.append(
             {
                 "index": index,
-                "text": chunk,
-                "send_result": dws.send_reply_to_trigger(conversation, trigger, chunk),
+                "text": message.final_body,
+                "send_result": receipt.provider_result,
             }
-            for index, chunk in enumerate(chunks, start=1)
-        ]
+        )
+    return {
+        "chunks": delivered_chunks,
+        "final_body": "\n\n".join(item["text"] for item in delivered_chunks),
     }
 
 
@@ -2259,6 +2291,7 @@ def feedback_spike_command(args: argparse.Namespace) -> dict[str, object]:
         user_id=args.user_id.strip() or None,
         open_dingtalk_id=args.open_dingtalk_id.strip() or None,
         dws_bin=args.dws_bin,
+        store=None if args.preview else AutoReplyStore(Path(args.db)),
         preview=args.preview,
     )
     print(json.dumps(result, ensure_ascii=False), flush=True)
@@ -3423,7 +3456,7 @@ def build_work_profile_command(
     return len(evidence)
 
 
-def probe_dws() -> int:
+def probe_dws(settings: WorkerSettings) -> int:
     dws = DwsClient()
     blocked = False
 
@@ -3435,7 +3468,13 @@ def probe_dws() -> int:
         print(f"unread_conversations: BLOCKED {exc}", flush=True)
 
     try:
-        dws.ding_self("CEO agent dws probe")
+        ServiceMessageSender(
+            store=AutoReplyStore(settings.db_path),
+            dingtalk=dws,
+        ).send_dingtalk_ding(
+            delivery_key="cli:probe-dws",
+            body="CEO agent dws probe",
+        )
         print("ding_self: OK", flush=True)
     except DwsError as exc:
         blocked = True
@@ -3699,7 +3738,7 @@ def main() -> None:
             dingtalk_kb_workspace=args.dingtalk_kb_workspace,
         )
     elif args.command == "probe-dws":
-        raise SystemExit(probe_dws())
+        raise SystemExit(probe_dws(settings))
     elif args.command == "probe-agent-runtimes":
         raise SystemExit(
             probe_agent_runtimes_command(settings, route_names=tuple(args.route))

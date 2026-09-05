@@ -35,8 +35,7 @@ from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
-from app.config import feedback_spike_vercel_base_url, principal_display_name
-from app.feedback_spike import prepare_outgoing_reply_text
+from app.config import principal_display_name
 from app.native_cli_metadata import (
     NativeCliMetadataClassifier,
     dingtalk_message_text,
@@ -47,6 +46,7 @@ from app.native_cli_metadata import (
     service_read_command_contract,
 )
 from app.prompt import work_profile_instruction
+from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_command
 
@@ -500,7 +500,10 @@ class ConsumerAgentRunner:
                 parse_result=parse_consumer_agent_wire_result,
                 prepare_result=lambda parsed: _prepare_outgoing_dingtalk_messages(
                     parsed,
+                    store=self.store,
+                    task=task,
                     context=context,
+                    proposal_revision=proposal_revision,
                 ),
                 persist_conversation_session=persist_conversation_session,
                 on_progress=renew_session_lock,
@@ -564,15 +567,29 @@ class ConsumerAgentRunner:
 def _prepare_outgoing_dingtalk_messages(
     result: ConsumerAgentResult,
     *,
+    store: AutoReplyStore,
+    task: ReplyTask,
     context: AgentTaskContext,
+    proposal_revision: int,
 ) -> ConsumerAgentResult:
     """Apply the service-owned reply postfix before Audit reviews the candidate."""
     proposal = result.proposal
     if proposal is None or context.channel != "dingtalk":
         return result
+    sender = ServiceMessageSender(store=store)
     actions = tuple(
-        _prepare_outgoing_dingtalk_action(action, context=context)
-        for action in proposal.actions
+        _prepare_outgoing_dingtalk_action(
+            action,
+            sender=sender,
+            delivery_key=agent_message_delivery_key(
+                task_id=task.id,
+                execution_generation=task.execution_generation,
+                proposal_revision=proposal_revision,
+                action_index=index,
+            ),
+            context=context,
+        )
+        for index, action in enumerate(proposal.actions)
     )
     if actions == proposal.actions:
         return result
@@ -584,6 +601,8 @@ def _prepare_outgoing_dingtalk_messages(
 def _prepare_outgoing_dingtalk_action(
     action: ProposedAction,
     *,
+    sender: ServiceMessageSender,
+    delivery_key: str,
     context: AgentTaskContext,
 ) -> ProposedAction:
     payload = action.payload
@@ -599,15 +618,16 @@ def _prepare_outgoing_dingtalk_action(
         reply_text = dingtalk_message_text(argv)
         if not reply_text.strip():
             return action
-        prepared = prepare_outgoing_reply_text(
-            reply_text=reply_text,
+        prepared = sender.prepare(
+            channel="dingtalk",
+            delivery_key=delivery_key,
+            body=reply_text,
             original_text=context.trigger_text,
-            feedback_base_url=feedback_spike_vercel_base_url(),
         )
         prepared_payload = dict(payload)
         prepared_payload.pop("command", None)
         prepared_payload["argv"] = list(
-            replace_dingtalk_message_text(argv, prepared.text)
+            replace_dingtalk_message_text(argv, prepared.final_body)
         )
         return action.model_copy(update={"payload": prepared_payload})
 
@@ -617,13 +637,14 @@ def _prepare_outgoing_dingtalk_action(
     reply_text = payload[text_key]
     if not isinstance(reply_text, str) or not reply_text.strip():
         return action
-    prepared = prepare_outgoing_reply_text(
-        reply_text=reply_text,
+    prepared = sender.prepare(
+        channel="dingtalk",
+        delivery_key=delivery_key,
+        body=reply_text,
         original_text=context.trigger_text,
-        feedback_base_url=feedback_spike_vercel_base_url(),
     )
     prepared_payload = dict(payload)
-    prepared_payload[text_key] = prepared.text
+    prepared_payload[text_key] = prepared.final_body
     return action.model_copy(update={"payload": prepared_payload})
 
 

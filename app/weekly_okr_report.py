@@ -16,9 +16,9 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, ValidationError
 
-from app.codex_decision import append_signature
 from app.dws_client import DwsClient, DwsError
 from app.okr_review import DwsLiveOkrSource, current_quarter_period
+from app.service_message_sender import ServiceMessageSender
 
 DEFAULT_GROUP_NAME = "CEO-2 管理群"
 DEFAULT_WIKI_NAME = "🎯  目标与执行"
@@ -519,8 +519,9 @@ def _weekly_okr_required_capabilities() -> frozenset[str]:
 
 
 class DwsWeeklyOkrGateway:
-    def __init__(self, dws: DwsClient):
+    def __init__(self, dws: DwsClient, *, store=None):
         self.dws = dws
+        self.store = store
 
     def resolve_group_roster(self, group_name: str) -> GroupRoster:
         groups: list[dict[str, Any]] = []
@@ -967,12 +968,15 @@ class DwsWeeklyOkrGateway:
         title: str,
         text: str,
     ) -> str:
-        text = append_signature(text)
-        send_result = self.dws.send_message(
-            conversation_id,
-            text,
+        if self.store is None:
+            raise RuntimeError("weekly OKR group summary requires an outbound store")
+        receipt = ServiceMessageSender(store=self.store, dingtalk=self.dws).send_dingtalk(
+            delivery_key=f"weekly-okr:{conversation_id}:{title}",
+            body=text,
+            conversation_id=conversation_id,
             title=title,
         )
+        send_result = receipt.provider_result
         verification = self.dws.verify_message_send_result(send_result)
         state = str(verification.get("state") or "")
         if state != "sent":
@@ -1277,7 +1281,7 @@ def weekly_okr_report_command(
     )
     result = run_weekly_okr_report(
         store=store,
-        gateway=DwsWeeklyOkrGateway(dws),
+        gateway=DwsWeeklyOkrGateway(dws, store=store),
         source=source,
         agent=CodexWeeklyOkrAgent(
             workspace=settings.workspace,

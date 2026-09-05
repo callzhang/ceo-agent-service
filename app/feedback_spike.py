@@ -498,38 +498,77 @@ def send_feedback_spike_links(
     open_dingtalk_id: str | None = None,
     dws_bin: str = "dws",
     dws_client: DwsClient | None = None,
+    store=None,
     preview: bool = False,
 ) -> dict[str, object]:
-    message = prepare_outgoing_reply_text(
+    from app.service_message_sender import ServiceMessageSender
+
+    identity = str(attempt_id or "").strip()
+    client = dws_client or DwsClient(dws_bin=dws_bin)
+    initial_message = prepare_outgoing_reply_text(
         reply_text=reply_text,
         original_text=original_text,
-        attempt_id=attempt_id,
+        attempt_id=identity,
         feedback_base_url=vercel_base_url,
     )
-    client = dws_client or DwsClient(dws_bin=dws_bin)
+    if preview:
+        command = client.build_send_message_command(
+            conversation_id,
+            initial_message.text,
+            user_id=user_id,
+            open_dingtalk_id=open_dingtalk_id,
+            title=append_signature(reply_text),
+        )
+        return {
+            "feedback_token": initial_message.feedback_token,
+            "callback_url_up": initial_message.callback_url_up,
+            "callback_url_down": initial_message.callback_url_down,
+            "text": initial_message.text,
+            "command": command,
+            "preview": True,
+        }
+    if not identity:
+        raise ValueError("feedback spike delivery identity is required")
+    if store is None:
+        raise ValueError("feedback spike delivery requires an outbound store")
+    sender = ServiceMessageSender(store=store, dingtalk=client)
+    message = sender.prepare(
+        channel="dingtalk",
+        delivery_key=f"feedback-spike:{identity}",
+        body=initial_message.text,
+        original_text=original_text,
+        feedback_base_url=vercel_base_url,
+    )
+    persisted_pair = None
+    if vercel_base_url:
+        persisted_pair = _configured_feedback_link_pair(
+            message.final_body,
+            vercel_base_url=vercel_base_url,
+            link_prefix="反馈：",
+        )
+        if persisted_pair is None:
+            raise ValueError("persisted feedback callback pair is required")
+    title = message.final_body if persisted_pair is None else persisted_pair.body
     command = client.build_send_message_command(
         conversation_id,
-        message.text,
+        message.final_body,
         user_id=user_id,
         open_dingtalk_id=open_dingtalk_id,
-        title=append_signature(reply_text),
+        title=title,
     )
     result: dict[str, object] = {
-        "feedback_token": message.feedback_token,
-        "callback_url_up": message.callback_url_up,
-        "callback_url_down": message.callback_url_down,
-        "text": message.text,
+        "feedback_token": "" if persisted_pair is None else persisted_pair.context.feedback_token,
+        "callback_url_up": "" if persisted_pair is None else persisted_pair.callback_url_up,
+        "callback_url_down": "" if persisted_pair is None else persisted_pair.callback_url_down,
+        "text": message.final_body,
         "command": command,
         "preview": preview,
     }
-    if preview:
-        return result
-
-    result["response"] = client.send_message(
-        conversation_id,
-        message.text,
+    result["response"] = sender.send_dingtalk_prepared(
+        message,
+        conversation_id=conversation_id,
         user_id=user_id,
         open_dingtalk_id=open_dingtalk_id,
-        title=append_signature(reply_text),
-    )
+        title=title,
+    ).provider_result
     return result

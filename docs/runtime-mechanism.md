@@ -181,6 +181,17 @@ policy 和当前 readback。多步骤页面每轮在已接受 prefix 后只追�
 continuation；`awaiting_audit` 是 effect/claim 的领域状态，
 不是顶层 task 状态。历史 run、session、step、receipt 和失败事实保持不可变。
 
+## DingTalk / WeChat 统一外发后缀
+
+所有服务所有的 DingTalk、WeChat 人员可见文本，在 provider 调用前都必须由
+`ServiceMessageSender` 生成并持久化 `PreparedOutboundMessage`。持久化键是
+`(channel, delivery_key)`；首次准备确定最终正文、feedback token 和后缀版本，之后的重试、恢复、
+发送回读与 WeChat 撤回只能复用该记录，不得根据当前配置重新生成。provider adapter 只接收已持久化
+的最终正文，业务模块直接调用原始发送方法会被架构测试拒绝。
+
+这是一条机械传输边界，不是新的业务审核或授权规则。Email 仍是独立的非发送通道：SMTP、自动回复
+和 `mailto` 均保持禁用，不受此 DingTalk / WeChat 后缀机制影响。
+
 ## 统一禁止事项
 
 - 所有任务都不得使用 `discard` 动作。

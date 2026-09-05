@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from app.dws_client import DwsError
 from app.external_retry import is_external_dependency_error
-from app.feedback_spike import prepare_outgoing_reply_text
+from app.service_message_sender import ServiceMessageSender
 from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
 from app.task_models import ProjectStatus, TodoStatus, WorkItem
@@ -1069,14 +1069,16 @@ def process_due_follow_ups(
             at_open_dingtalk_names = [at_name] if at_name else []
             original_text = _follow_up_message_text(store, draft)
             revision_uuid = _follow_up_revision_uuid(draft, original_text)
-            outgoing_text = prepare_outgoing_reply_text(
-                reply_text=original_text,
+            sender = ServiceMessageSender(store=store, dingtalk=dws)
+            prepared_message = sender.prepare(
+                channel="dingtalk",
+                delivery_key=f"follow-up:{revision_uuid}",
+                body=original_text,
                 original_text=original_text,
                 feedback_base_url=feedback_base_url,
-                feedback_token=f"spike_{revision_uuid.replace('-', '')}",
             )
-            question_text = outgoing_text.text
-            feedback_token = outgoing_text.feedback_token
+            question_text = prepared_message.final_body
+            feedback_token = prepared_message.feedback_token
             claim_token = str(uuid4())
             lease_owner = f"follow-up-dispatch:{uuid4()}"
             if not store.claim_follow_up_draft_revision(
@@ -1113,23 +1115,24 @@ def process_due_follow_ups(
                 continue
             attempt_id = int(attempt["id"])
             if send_to_group:
-                result = dws.send_message(
-                    group_conversation_id,
-                    question_text,
+                receipt = sender.send_dingtalk_prepared(
+                    prepared_message,
+                    conversation_id=group_conversation_id,
                     at_users=at_users,
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
                     at_open_dingtalk_names=at_open_dingtalk_names,
                     idempotency_uuid=revision_uuid,
                 )
             else:
-                result = dws.send_message(
-                    None,
-                    question_text,
+                receipt = sender.send_dingtalk_prepared(
+                    prepared_message,
+                    conversation_id=None,
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
                     user_id=None if open_dingtalk_id else owner_user_id or None,
                     open_dingtalk_id=open_dingtalk_id or None,
                     idempotency_uuid=revision_uuid,
                 )
+            result = receipt.provider_result
             send_outcome = (
                 "failed"
                 if isinstance(result, dict) and result.get("success") is False

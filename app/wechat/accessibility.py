@@ -244,6 +244,10 @@ class WechatSender:
         # audit evidence intentionally remains the original trigger, so retain the
         # refreshed value separately for this one navigation attempt.
         expected_recent_text = delivery.evidence.get("trigger_text") or None
+        delivery_key = f"wechat:{delivery.id}"
+        prepared = self.store.get_outbound_postfix("wechat", delivery_key)
+        if prepared is None or prepared.final_body != delivery.reply_text:
+            raise ValueError("prepared WeChat delivery is required")
         claimed = self.store.claim_wechat_delivery(
             delivery.id,
             expected_execution_generation=delivery.execution_generation,
@@ -252,12 +256,18 @@ class WechatSender:
             return SendOutcome("not_claimed", "delivery_not_claimed")
         delivery = claimed
         try:
-            result = self.runner.send(
-                scope.display_name,
-                delivery.reply_text,
+            from app.service_message_sender import ServiceMessageSender
+
+            receipt = ServiceMessageSender(
+                store=self.store,
+                wechat=self.runner,
+            ).send_wechat_prepared(
+                prepared,
+                target_label=scope.display_name,
                 search_query=scope.binding_evidence.get("navigation_query") or None,
                 expected_recent_text=expected_recent_text,
             )
+            result = receipt.provider_result
         except SenderExecutionError as exc:
             if not exc.action_may_have_started:
                 error = "sender_unavailable_before_dispatch"

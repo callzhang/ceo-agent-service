@@ -246,7 +246,7 @@ def test_recreating_pre_action_failed_delivery_makes_it_retryable(tmp_path):
     delivery = store.get_wechat_delivery_for_task(1)
     assert delivery.status == "ready_to_send"
     assert delivery.error == ""
-    assert delivery.reply_text == "second"
+    assert delivery.reply_text == "first（by明哥分身）"
 
 
 def test_generation_rotation_supersedes_ready_delivery_atomically(tmp_path):
@@ -309,7 +309,7 @@ def test_new_generation_replaces_superseded_delivery_with_corrected_reply(tmp_pa
     delivery = store.get_wechat_delivery_for_task(task.id)
     assert delivery.status == "ready_to_send"
     assert delivery.execution_generation == new_generation
-    assert delivery.reply_text == "corrected reply"
+    assert delivery.reply_text == "corrected reply（by明哥分身）"
     assert delivery.error == ""
 
 
@@ -357,13 +357,13 @@ def test_new_generation_replaces_confirmed_unperformed_delivery(tmp_path):
     assert delivery is not None
     assert delivery.status == "ready_to_send"
     assert delivery.execution_generation == new_generation
-    assert delivery.reply_text == "new reply"
+    assert delivery.reply_text == "new reply（by明哥分身）"
     with store._connect() as db:
         row = db.execute(
             "select action_started_at from wechat_deliveries where id=?",
             (delivery_id,),
         ).fetchone()
-    assert row["action_started_at"] == ""
+    assert row["action_started_at"] != ""
 
 
 def test_new_generation_does_not_replace_started_or_uncertain_delivery(tmp_path):
@@ -1091,11 +1091,13 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
             account_id text not null,
             target_type text not null,
             target_id text not null,
-            conversation_id text not null default '',
-            reply_text text not null,
-            status text not null default 'ready_to_send',
-            action_started_at text not null default '',
-            evidence_json text not null default '{}',
+                conversation_id text not null default '',
+                reply_text text not null,
+                execution_generation text not null default 'initial',
+                status text not null default 'ready_to_send',
+                action_started_at text not null default '',
+                pre_action_failure integer not null default 0,
+                evidence_json text not null default '{}',
             error text not null default '',
             created_at text not null default current_timestamp,
             updated_at text not null default current_timestamp,
@@ -1127,10 +1129,13 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
             7, 'same-conversation', 'Friend', 1,
             'same-message', '2026-07-20T10:00:00+08:00', 'Friend', 'hello'
         );
-        insert into wechat_deliveries (
-            reply_task_id, account_id, target_type, target_id, conversation_id,
-            reply_text
-        ) values (7, 'acct-1', 'direct', 'friend-1', 'same-conversation', 'hi');
+            insert into wechat_deliveries (
+                reply_task_id, account_id, target_type, target_id, conversation_id,
+                reply_text, status, action_started_at, pre_action_failure
+            ) values (
+                7, 'acct-1', 'direct', 'friend-1', 'same-conversation', 'hi',
+                'failed', '2026-07-20T10:10:00+08:00', 1
+            );
         insert into workbench_tasks (id, title, runtime_kind)
         values ('workbench-legacy', 'Legacy attachment', 'codex');
         insert into workbench_attachments (
@@ -1170,7 +1175,14 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
     assert store.get_reply_task_for_message(
         "same-conversation", "same-message", channel="dingtalk"
     ).id == 7
-    assert store.list_wechat_deliveries_by_status("ready_to_send")[0].task_id == 7
+    assert store.list_wechat_deliveries_by_status("ready_to_send") == []
+    assert store.requeue_unperformed_wechat_deliveries() == 1
+    migrated_delivery = store.list_wechat_deliveries_by_status("ready_to_send")[0]
+    assert migrated_delivery.task_id == 7
+    assert migrated_delivery.reply_text == "hi（by明哥分身）"
+    assert store.get_outbound_postfix(
+        "wechat", f"wechat:{migrated_delivery.id}"
+    ).final_body == migrated_delivery.reply_text
     assert store.enqueue_reply_task(
         channel="wechat", conversation_id="same-conversation",
         conversation_title="Same", single_chat=True,

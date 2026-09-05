@@ -212,6 +212,53 @@ def test_expected_effect_action_binds_supported_group_and_oa_comment(action, exp
     assert _expected_effect_action(action)["argv"] == expected_argv
 
 
+def test_expected_effect_action_preserves_prepared_legacy_dingtalk_command_body():
+    final_body = "已处理。（by明哥分身）\n\n[满意](https://feedback.example/ok)\n[不满意](https://feedback.example/bad)"
+    action = SimpleNamespace(
+        capability="agent_cli.dws",
+        operation="chat message send",
+        target={"group": "cid-group"},
+        payload={
+            "argv": [
+                "dws", "chat", "message", "send", "--group", "cid-group",
+                "--content", final_body, "--yes",
+            ]
+        },
+    )
+
+    expected = _expected_effect_action(action)
+
+    assert expected["argv"][expected["argv"].index("--content") + 1] == final_body
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [
+            "dws", "chat", "message", "reaction", "add",
+            "--message-id", "msg-1", "--emoji", "LIKE", "--yes",
+        ],
+        [
+            "dws", "oa", "approval", "approve",
+            "--instance-id", "process-1", "--yes",
+        ],
+        [
+            "dws", "mail", "message", "move",
+            "--message-id", "mail-1", "--folder", "Archive", "--yes",
+        ],
+    ],
+)
+def test_expected_effect_action_does_not_rebind_non_message_legacy_dws_writes(argv):
+    action = SimpleNamespace(
+        capability="agent_cli.dws",
+        operation="legacy write",
+        target={},
+        payload={"argv": argv},
+    )
+
+    assert _expected_effect_action(action) == {"action_index": 0}
+
+
 def test_audit_runner_adds_direct_message_execution_prompt_before_process(
     setup, monkeypatch
 ):

@@ -47,6 +47,7 @@ from app.notification import (
     send_macos_notification,
 )
 from app.store import AutoReplyStore
+from app.service_message_sender import ServiceMessageSender
 from app.skill_features import FeatureRegistry
 
 DISCOVERY_PAGE_LIMIT = 100
@@ -1101,7 +1102,13 @@ def _deliver_meeting_job(
         return
 
     try:
-        result = deliver_meeting_alignment(decision, source, dws)
+        result = deliver_meeting_alignment(
+            decision,
+            source,
+            dws,
+            message_sender=ServiceMessageSender(store=store, dingtalk=dws),
+            delivery_key=f"meeting-alignment:{job.id}:{job.meeting_id}",
+        )
     except MeetingDeliveryAmbiguous as exc:
         result = exc.result
         result_json = result.model_dump_json()

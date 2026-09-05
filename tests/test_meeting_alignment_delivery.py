@@ -1,4 +1,5 @@
 import subprocess
+from hashlib import sha256
 
 import pytest
 from pydantic import ValidationError
@@ -6,13 +7,59 @@ from pydantic import ValidationError
 import app.meeting_alignment_delivery as meeting_alignment_delivery
 from app.dingtalk_models import DingTalkMessage
 from app.dws_client import DwsError, DwsUserProfile
+from app.service_message_sender import ServiceMessageSender
+from app.store import AutoReplyStore
 from app.meeting_alignment_delivery import (
     MeetingDeliveryAmbiguous,
     MeetingDeliveryError,
     MeetingDeliveryRetry,
-    deliver_meeting_alignment,
+    deliver_meeting_alignment as _deliver_meeting_alignment,
 )
 from app.meeting_alignment_models import MeetingAlignmentDecision, MeetingSource
+from app.outbound_postfix import compose_outbound_postfix
+
+
+class _MemoryPostfixStore:
+    def __init__(self):
+        self.messages = {}
+
+    def prepare_outbound_postfix(self, channel, delivery_key, body, original_text, **_):
+        key = (channel, delivery_key)
+        if key not in self.messages:
+            self.messages[key] = compose_outbound_postfix(
+                channel=channel,
+                delivery_key=delivery_key,
+                body=body,
+                original_text=original_text,
+                feedback_base_url="",
+            )
+        return self.messages[key]
+
+    def get_outbound_postfix(self, channel, delivery_key):
+        return self.messages.get((channel, delivery_key))
+
+
+_TEST_POSTFIX_STORE = _MemoryPostfixStore()
+
+
+def deliver_meeting_alignment(decision, source, dws, **kwargs):
+    sender = kwargs.pop(
+        "message_sender", ServiceMessageSender(store=_TEST_POSTFIX_STORE, dingtalk=dws)
+    )
+    delivery_key = kwargs.pop(
+        "delivery_key",
+        "meeting-test:" + sha256(
+            f"{source.meeting_id}|{decision.final_message}|{decision.target}".encode()
+        ).hexdigest(),
+    )
+    return _deliver_meeting_alignment(
+        decision,
+        source,
+        dws,
+        message_sender=sender,
+        delivery_key=delivery_key,
+        **kwargs,
+    )
 
 
 def meeting_source(*, one_to_one: bool = False, unresolved_other: bool = False):
@@ -184,11 +231,18 @@ class FakeDws:
         }
 
 
-def test_group_delivery_uses_first_candidate_and_real_mentions():
+def test_group_delivery_uses_first_candidate_and_real_mentions(tmp_path):
     dws = FakeDws()
+    sender = ServiceMessageSender(
+        store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws
+    )
 
     result = deliver_meeting_alignment(
-        send_decision(), meeting_source(), dws
+        send_decision(),
+        meeting_source(),
+        dws,
+        message_sender=sender,
+        delivery_key="meeting-alignment:minutes-1:job-1",
     )
 
     assert result.status == "sent"
@@ -202,6 +256,17 @@ def test_group_delivery_uses_first_candidate_and_real_mentions():
     assert send_decision().final_message in dws.sent[0]["text"]
     assert dws.sent[0]["text"].endswith("（by明哥分身）")
     assert result.message_text == dws.sent[0]["text"]
+
+    changed = send_decision().model_copy(update={"final_message": "改写后的内容"})
+    replay = deliver_meeting_alignment(
+        changed,
+        meeting_source(),
+        dws,
+        message_sender=sender,
+        delivery_key="meeting-alignment:minutes-1:job-1",
+    )
+    assert replay.message_text == result.message_text
+    assert dws.sent[1]["text"] == dws.sent[0]["text"]
 
 
 def test_group_delivery_uses_provider_mentions_without_rewriting_message():

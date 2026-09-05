@@ -4,7 +4,6 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from app.codex_decision import append_signature
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsError, DwsUserProfile
 from app.meeting_alignment_models import (
@@ -13,6 +12,7 @@ from app.meeting_alignment_models import (
     MeetingParticipant,
     MeetingSource,
 )
+from app.service_message_sender import ServiceMessageSender
 
 
 class MeetingDeliveryError(RuntimeError):
@@ -97,6 +97,9 @@ def deliver_meeting_alignment(
     decision: MeetingAlignmentDecision,
     source: MeetingSource,
     dws: MeetingDeliveryDws,
+    *,
+    message_sender: ServiceMessageSender,
+    delivery_key: str,
 ) -> MeetingDeliveryResult:
     if decision.action != "send":
         raise MeetingDeliveryError("meeting delivery requires a send decision")
@@ -187,28 +190,36 @@ def deliver_meeting_alignment(
         source,
         final_message=final_message,
     )
-    message_text = append_signature(message_text)
+    if not delivery_key.strip():
+        raise ValueError("meeting delivery key is required")
+    prepared = message_sender.prepare(
+        channel="dingtalk",
+        delivery_key=delivery_key,
+        body=message_text,
+        original_text=source.summary,
+    )
+    message_text = prepared.final_body
     try:
         if target_kind == "group":
-            send_result = dws.send_message(
-                target_id,
-                message_text,
+            send_result = message_sender.send_dingtalk_prepared(
+                prepared,
+                conversation_id=target_id,
                 at_open_dingtalk_ids=mention_ids,
                 at_open_dingtalk_names=mention_display_names,
                 title=target_title,
-            )
+            ).provider_result
         else:
             direct_target = (
                 {"user_id": direct_user_id}
                 if direct_user_id
                 else {"open_dingtalk_id": direct_open_dingtalk_id}
             )
-            send_result = dws.send_message(
-                None,
-                message_text,
+            send_result = message_sender.send_dingtalk_prepared(
+                prepared,
+                conversation_id=None,
                 **direct_target,
                 title=target_title,
-            )
+            ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         result = MeetingDeliveryResult(
             status="ambiguous",

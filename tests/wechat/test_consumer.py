@@ -56,7 +56,7 @@ def test_send_reply_creates_ready_delivery(fake_codex, consumer, store):
     delivery = store.get_wechat_delivery_for_task(1)
     assert delivery is not None
     assert delivery.status == "ready_to_send"
-    assert delivery.reply_text == "收到，我下午给你结论。"
+    assert delivery.reply_text == "收到，我下午给你结论。（by明哥分身）"
     assert delivery.evidence["trigger_text"] == "下午能给结论吗"
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
@@ -391,7 +391,7 @@ def test_corrected_generation_replaces_unsent_wechat_delivery(
 
     delivery = store.get_wechat_delivery_for_task(1)
     assert delivery is not None
-    assert delivery.reply_text == "修正版回复"
+    assert delivery.reply_text == "修正版回复（by明哥分身）"
     assert delivery.execution_generation == "corrected"
 
 

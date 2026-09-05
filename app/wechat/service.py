@@ -315,7 +315,15 @@ def recall_wechat_delivery(store, runner, delivery_id: int, reply_text: str) -> 
     recall = getattr(runner, "recall_last_outbound", None)
     if recall is None:
         return False
-    ok = bool(recall(reply_text))
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    prepared = store.get_outbound_postfix("wechat", f"wechat:{delivery_id}")
+    if (
+        delivery is None
+        or prepared is None
+        or delivery.reply_text != prepared.final_body
+    ):
+        raise ValueError("prepared WeChat delivery is required")
+    ok = bool(recall(prepared.final_body))
     if ok:
         store.set_wechat_delivery_status(delivery_id, "failed", error="recalled")
     return ok
