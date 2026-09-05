@@ -330,7 +330,9 @@ def scan_readonly_batch(
             "model_text": model_text,
         }
         produces_agent_task = (
-            task_producer is not None and classification.action_plan is not None
+            task_producer is not None
+            and classification.action_plan is not None
+            and bool(classification.action_plan.agent_actions)
         )
         store.persist_scan_result(
             classification,
