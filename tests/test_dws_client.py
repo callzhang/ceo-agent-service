@@ -3284,6 +3284,28 @@ def test_respond_calendar_event_uses_mcp_calendar_respond():
     assert result == {"success": True}
 
 
+def test_update_calendar_event_description_uses_calendar_event_update():
+    client = RecordingDwsClient({"success": True})
+
+    result = client.update_calendar_event_description("event-1", "会议总结")
+
+    assert client.commands == [
+        [
+            "dws",
+            "calendar",
+            "event",
+            "update",
+            "--id",
+            "event-1",
+            "--desc",
+            "会议总结",
+            "--format",
+            "json",
+        ]
+    ]
+    assert result == {"success": True}
+
+
 def test_minutes_permission_request_from_message_parses_structured_payload():
     client = DwsClient(dws_bin="dws")
     message = DingTalkMessage(

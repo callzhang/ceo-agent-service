@@ -227,6 +227,8 @@ class MeetingAlignmentJob(StrictModel):
     mentions_json: str
     final_message: str
     send_result_json: str
+    calendar_summary_status: str = "not_started"
+    calendar_summary_result_json: str = "{}"
     created_at: str
     updated_at: str
 

@@ -784,6 +784,28 @@ class DwsClient:
             "json",
         ]
 
+    def build_update_calendar_event_description_command(
+        self,
+        event_id: str,
+        description: str,
+    ) -> list[str]:
+        if not event_id.strip():
+            raise ValueError("calendar event id is required")
+        if not description.strip():
+            raise ValueError("calendar event description is required")
+        return [
+            self.dws_bin,
+            "calendar",
+            "event",
+            "update",
+            "--id",
+            event_id,
+            "--desc",
+            description,
+            "--format",
+            "json",
+        ]
+
     def build_respond_calendar_event_command(
         self,
         event_id: str,
@@ -2184,6 +2206,15 @@ class DwsClient:
     ) -> dict:
         return self.run_json(
             self.build_respond_calendar_event_command(event_id, response_status)
+        )
+
+    def update_calendar_event_description(
+        self,
+        event_id: str,
+        description: str,
+    ) -> dict[str, Any]:
+        return self.run_json(
+            self.build_update_calendar_event_description_command(event_id, description)
         )
 
     @staticmethod

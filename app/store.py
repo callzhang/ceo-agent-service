@@ -2188,6 +2188,8 @@ class AutoReplyStore:
                     mentions_json text not null default '[]',
                     final_message text not null default '',
                     send_result_json text not null default '{}',
+                    calendar_summary_status text not null default 'not_started',
+                    calendar_summary_result_json text not null default '{}',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp
                 );
@@ -2920,6 +2922,21 @@ class AutoReplyStore:
                 row["name"]
                 for row in db.execute("pragma table_info(reply_tasks)").fetchall()
             }
+            meeting_alignment_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(meeting_alignment_jobs)"
+                ).fetchall()
+            }
+            for column, definition in (
+                ("calendar_summary_status", "text not null default 'not_started'"),
+                ("calendar_summary_result_json", "text not null default '{}'"),
+            ):
+                if column not in meeting_alignment_columns:
+                    db.execute(
+                        "alter table meeting_alignment_jobs add column "
+                        f"{column} {definition}"
+                    )
             for column, definition in (
                 ("trigger_message_json", "text not null default '{}'"),
                 ("available_at", "text not null default ''"),
@@ -12154,6 +12171,8 @@ class AutoReplyStore:
             "mentions_json",
             "final_message",
             "send_result_json",
+            "calendar_summary_status",
+            "calendar_summary_result_json",
         }
         filtered = self._filter_allowed_values(values, allowed_columns)
         release_ready_lock_on_transition = False
@@ -18083,6 +18102,10 @@ class AutoReplyStore:
                     jobs.title as input_text,
                     '对齐' as output_label,
                     case
+                        when jobs.final_message != '' and jobs.calendar_summary_status='updated'
+                            then jobs.final_message || '\n\n日历备注：已写入原日程。'
+                        when jobs.final_message != '' and jobs.calendar_summary_status='failed'
+                            then jobs.final_message || '\n\n日历备注：等待补写。'
                         when jobs.final_message != '' then jobs.final_message
                         else runs.audit_summary
                     end as output_text,
@@ -18112,6 +18135,7 @@ class AutoReplyStore:
                     jobs.participants_json || ' ' || jobs.error || ' ' || jobs.decision_json || ' ' ||
                     jobs.target_kind || ' ' || jobs.target_id || ' ' || jobs.target_title || ' ' ||
                     jobs.mentions_json || ' ' || jobs.final_message || ' ' || jobs.send_result_json || ' ' ||
+                    jobs.calendar_summary_status || ' ' || jobs.calendar_summary_result_json || ' ' ||
                     runs.decision_json || ' ' || runs.audit_summary || ' ' || runs.error || ' ' ||
                     runs.codex_session_id || ' ' || runs.status
                     , '') as search_text

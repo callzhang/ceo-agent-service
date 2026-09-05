@@ -57,6 +57,9 @@ MINIMUM_MEETING_DURATION = timedelta(minutes=5)
 TERMINAL_STATUSES = frozenset({"no_action", "sent", "failed"})
 DEFAULT_MEETING_RETRY_DELAY = timedelta(minutes=1)
 DEFAULT_MEETING_MAX_ATTEMPTS = 3
+CALENDAR_SUMMARY_START = "【CEO 会议总结】"
+CALENDAR_SUMMARY_END = "【/CEO 会议总结】"
+CALENDAR_DESCRIPTION_LIMIT = 5000
 MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY = (
     "meeting_alignment_discovery_activated_at"
 )
@@ -948,6 +951,22 @@ def _deliver_meeting_job(
     except (json.JSONDecodeError, KeyError, TypeError, ValidationError) as exc:
         _fail_job(store, job.id, "meeting_source", exc)
         return
+
+    # A confirmed chat delivery is immutable. Retrying a failed calendar note
+    # must only retry that note, never send the meeting summary again.
+    if previous is not None and previous.status == "sent":
+        _write_meeting_summary_to_calendar_or_retry(
+            store,
+            dws,
+            job,
+            evidence,
+            previous,
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
+        )
+        return
+
     try:
         source = read_meeting_source(
             dws,
@@ -1030,14 +1049,142 @@ def _deliver_meeting_job(
         _fail_job(store, job.id, "meeting_send", exc)
         return
 
+    final_message = result.message_text or job.final_message
+    store.update_meeting_alignment_job(
+        job.id,
+        final_message=final_message,
+        send_result_json=result.model_dump_json(),
+        calendar_summary_status="not_started",
+        calendar_summary_result_json="{}",
+        error="",
+    )
+    job_after_send = store.get_meeting_alignment_job(job.id)
+    _write_meeting_summary_to_calendar_or_retry(
+        store,
+        dws,
+        job_after_send,
+        evidence,
+        result,
+        now=now,
+        retry_delay=retry_delay,
+        max_attempts=max_attempts,
+    )
+
+
+def _write_meeting_summary_to_calendar_or_retry(
+    store: AutoReplyStore,
+    dws: Any,
+    job: Any,
+    evidence: CalendarMeetingEvidence,
+    delivery: MeetingDeliveryResult,
+    *,
+    now: datetime,
+    retry_delay: timedelta,
+    max_attempts: int,
+) -> None:
+    summary = (job.final_message or delivery.message_text).strip()
+    if not summary:
+        _fail_job(
+            store,
+            job.id,
+            "meeting_calendar_summary",
+            ValueError("confirmed meeting delivery is missing summary text"),
+        )
+        return
+    try:
+        event = dws.get_calendar_event(evidence.event_id)
+        if event is None:
+            raise MeetingDeliveryRetry("original calendar event is unavailable")
+        description = _calendar_description_with_summary(event.description, summary)
+        if event.description != description:
+            update_result = dws.update_calendar_event_description(
+                evidence.event_id,
+                description,
+            )
+            verified = dws.get_calendar_event(evidence.event_id)
+            if verified is None or verified.description != description:
+                raise MeetingDeliveryRetry(
+                    "calendar summary update did not persist on the original event"
+                )
+        else:
+            update_result = {"already_present": True}
+        receipt = json.dumps(
+            {
+                "event_id": evidence.event_id,
+                "state": "updated",
+                "update_result": update_result,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    except (
+        DwsError,
+        MeetingDeliveryRetry,
+        subprocess.TimeoutExpired,
+        TimeoutError,
+    ) as exc:
+        receipt = json.dumps(
+            {
+                "event_id": evidence.event_id,
+                "state": "failed",
+                "error": str(exc),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        store.update_meeting_alignment_job(
+            job.id,
+            send_result_json=delivery.model_dump_json(),
+            calendar_summary_status="failed",
+            calendar_summary_result_json=receipt,
+        )
+        # Keep the retry on the delivery lane. A normal queue retry would
+        # analyze and send this already-confirmed meeting message again.
+        store.schedule_ready_to_send_meeting_alignment_reconciliation(
+            job.id,
+            error=_error_json("meeting_calendar_summary", str(exc)),
+            available_at=(now + retry_delay).isoformat(),
+        )
+        return
+    except (TypeError, ValueError) as exc:
+        _fail_job(store, job.id, "meeting_calendar_summary", exc)
+        return
+
     store.update_meeting_alignment_job(
         job.id,
         status="sent",
-        final_message=result.message_text or job.final_message,
-        send_result_json=result.model_dump_json(),
+        final_message=summary,
+        send_result_json=delivery.model_dump_json(),
+        calendar_summary_status="updated",
+        calendar_summary_result_json=receipt,
         error="",
     )
-    _notify_meeting_sent(job, result)
+    _notify_meeting_sent(job, delivery)
+
+
+def _calendar_description_with_summary(existing: str, summary: str) -> str:
+    managed_block = (
+        f"{CALENDAR_SUMMARY_START}\n{summary.strip()}\n{CALENDAR_SUMMARY_END}"
+    )
+    start = existing.find(CALENDAR_SUMMARY_START)
+    if start >= 0:
+        end = existing.find(CALENDAR_SUMMARY_END, start)
+        if end >= 0:
+            end += len(CALENDAR_SUMMARY_END)
+            description = (
+                f"{existing[:start].rstrip()}\n\n{managed_block}{existing[end:]}"
+            )
+        else:
+            description = f"{existing[:start].rstrip()}\n\n{managed_block}"
+    elif existing.strip():
+        description = f"{existing.rstrip()}\n\n{managed_block}"
+    else:
+        description = managed_block
+    if len(description) > CALENDAR_DESCRIPTION_LIMIT:
+        raise ValueError(
+            "calendar description exceeds the 5000-character limit"
+        )
+    return description
 
 
 def _reconcile_ambiguous_delivery(

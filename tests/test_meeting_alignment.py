@@ -248,6 +248,7 @@ class ConsumerDws(FakeDws):
             "result": {"openMessageId": "msg-1"},
         }
         self.verification_states = ["sent"]
+        self.calendar_update_calls: list[dict] = []
 
     def get_minutes_summary(self, meeting_id: str) -> dict:
         return {"result": {"fullSummary": "存在上线范围分歧。"}}
@@ -296,6 +297,21 @@ class ConsumerDws(FakeDws):
             ),
             "status_result": {"state": state},
         }
+
+    def get_calendar_event(self, event_id: str) -> DwsCalendarEvent | None:
+        event = self.calendar_pages[""]["events"][0]
+        return event if event.event_id == event_id else None
+
+    def update_calendar_event_description(
+        self, event_id: str, description: str
+    ) -> dict:
+        event = self.get_calendar_event(event_id)
+        assert event is not None
+        event.description = description
+        self.calendar_update_calls.append(
+            {"event_id": event_id, "description": description}
+        )
+        return {"success": True, "result": {"eventId": event_id}}
 
 
 class FakeMeetingRunner:
@@ -1098,16 +1114,74 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     job = store.get_meeting_alignment_job(job_id)
     assert seen_statuses == ["ready_to_send"]
     assert job.status == "sent"
-    assert job.final_message == (
+    expected_message = (
         "【会议跟进】上线评审（2026-07-14 09:00-10:00）\n\n"
-        f"{consumer_send_decision().final_message}"
+        f"{consumer_send_decision().final_message}（by明哥分身）"
     )
+    assert job.final_message == expected_message
     assert job.target_kind == "group"
     assert job.target_id == "cid-first"
     assert json.loads(job.decision_json)["action"] == "send"
     assert json.loads(job.send_result_json)["status"] == "sent"
+    assert job.calendar_summary_status == "updated"
+    calendar_receipt = json.loads(job.calendar_summary_result_json)
+    assert calendar_receipt["event_id"] == "event-1"
+    assert calendar_receipt["state"] == "updated"
+    assert dws.calendar_update_calls == [
+        {
+            "event_id": "event-1",
+            "description": (
+                "【CEO 会议总结】\n"
+                "【会议跟进】上线评审（2026-07-14 09:00-10:00）\n\n"
+                f"{consumer_send_decision().final_message}（by明哥分身）\n"
+                "【/CEO 会议总结】"
+            ),
+        }
+    ]
+    [history] = store.list_history_items(object_types=("meeting",))
+    assert history.status == "sent"
+    assert history.output_text.endswith("日历备注：已写入原日程。")
     [run] = store.list_meeting_alignment_runs(job_id)
     assert run.status == "ready_to_send"
+
+
+def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    class CalendarFailsOnceDws(ConsumerDws):
+        def __init__(self):
+            super().__init__()
+            self.calendar_attempts = 0
+
+        def update_calendar_event_description(
+            self, event_id: str, description: str
+        ) -> dict:
+            self.calendar_attempts += 1
+            if self.calendar_attempts == 1:
+                raise DwsError("calendar temporarily unavailable")
+            return super().update_calendar_event_description(event_id, description)
+
+    dws = CalendarFailsOnceDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    first = store.get_meeting_alignment_job(job_id)
+    assert first.status == "ready_to_send"
+    assert first.calendar_summary_status == "failed"
+    assert len(dws.send_calls) == 1
+
+    consume_meeting_alignment_jobs(
+        store,
+        dws,
+        runner,
+        now=NOW + timedelta(minutes=1),
+        limit=1,
+    )
+    recovered = store.get_meeting_alignment_job(job_id)
+    assert recovered.status == "sent"
+    assert recovered.calendar_summary_status == "updated"
+    assert len(dws.send_calls) == 1
 
 
 def test_consumer_notifies_once_after_confirmed_meeting_send(tmp_path, monkeypatch):
@@ -1133,7 +1207,7 @@ def test_consumer_notifies_once_after_confirmed_meeting_send(tmp_path, monkeypat
     assert sent_job.status == "sent"
     expected_message = (
         "【会议跟进】上线评审（2026-07-14 09:00-10:00）\n\n"
-        f"{consumer_send_decision().final_message}"
+        f"{consumer_send_decision().final_message}（by明哥分身）"
     )
     assert sent_job.final_message == expected_message
     assert notifications == [

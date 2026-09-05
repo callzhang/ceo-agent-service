@@ -52,6 +52,49 @@ def test_meeting_alignment_schema_is_added_to_existing_database(tmp_path):
     } <= indexes
 
 
+def test_meeting_calendar_summary_columns_are_added_to_existing_job_table(tmp_path):
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """
+            create table meeting_alignment_jobs (
+                id integer primary key,
+                meeting_id text not null unique,
+                title text not null default '',
+                source_json text not null default '{}',
+                participants_json text not null default '[]',
+                ended_at text not null default '',
+                eligible_at text not null default '',
+                status text not null default 'waiting',
+                attempts integer not null default 0,
+                locked_at text,
+                available_at text not null default '',
+                error text not null default '',
+                decision_json text not null default '{}',
+                target_kind text not null default '',
+                target_id text not null default '',
+                target_title text not null default '',
+                mentions_json text not null default '[]',
+                final_message text not null default '',
+                send_result_json text not null default '{}',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp
+            )
+            """
+        )
+
+    store = AutoReplyStore(db_path)
+
+    with store._connect() as db:
+        columns = {
+            row["name"]
+            for row in db.execute(
+                "pragma table_info(meeting_alignment_jobs)"
+            ).fetchall()
+        }
+    assert {"calendar_summary_status", "calendar_summary_result_json"} <= columns
+
+
 def test_meeting_job_upsert_and_get_return_typed_model(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
