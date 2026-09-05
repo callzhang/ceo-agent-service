@@ -133,3 +133,22 @@ class ServiceMessageSender:
         )
         if persisted != message:
             raise ValueError("persisted prepared message is required for dispatch")
+
+
+def agent_message_delivery_key(
+    *,
+    task_id: int,
+    execution_generation: str,
+    proposal_revision: int,
+    action_index: int,
+) -> str:
+    """Return the immutable delivery identity for one Agent proposal action."""
+    if task_id <= 0 or proposal_revision < 0 or action_index < 0:
+        raise ValueError("agent message delivery identity is invalid")
+    generation = execution_generation.strip()
+    if not generation:
+        raise ValueError("execution generation is required")
+    return (
+        f"agent-message:{task_id}:{generation}:"
+        f"revision:{proposal_revision}:action:{action_index}"
+    )

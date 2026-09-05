@@ -23,7 +23,8 @@ from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
-from app.native_cli_metadata import describe_native_command
+from app.native_cli_metadata import describe_native_command, native_command_argv
+from app.service_message_sender import agent_message_delivery_key
 from app.store import (
     AgentRole,
     AgentRun,
@@ -131,7 +132,15 @@ class AuditAgentRunner:
     ) -> AgentTurnRunResult[AuditAgentResult]:
         prompt = context.render()
         expected_effect_actions = tuple(
-            _expected_effect_action(action, action_index=index)
+            {
+                **_expected_effect_action(action, action_index=index),
+                "delivery_key": agent_message_delivery_key(
+                    task_id=task.id,
+                    execution_generation=task.execution_generation,
+                    proposal_revision=context.proposal_revision,
+                    action_index=index,
+                ),
+            }
             for index, action in enumerate(context.proposal.actions)
         )
         write_authorizations = (
@@ -308,6 +317,7 @@ def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, objec
     payload = getattr(action, "payload", {})
     capability = getattr(action, "capability", "")
     operation = getattr(action, "operation", "")
+    legacy_argv = native_command_argv({"type": "command_execution", **payload})
     content = payload.get("content") or payload.get("text") or payload.get("reply_text")
     recipient = (
         target.get("open_dingtalk_id")
@@ -315,7 +325,14 @@ def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, objec
         or target.get("sender_open_dingtalk_id")
     )
     argv: list[str] | None = None
-    if capability == "dingtalk-chat" and isinstance(content, str) and content:
+    if capability == "agent_cli.dws" and legacy_argv is not None:
+        argv = list(legacy_argv)
+        descriptor = describe_native_command(
+            {"type": "command_execution", "argv": argv}
+        )
+        if descriptor is None or descriptor.cli != "dws":
+            argv = None
+    elif capability == "dingtalk-chat" and isinstance(content, str) and content:
         conversation_id = str(target.get("conversation_id") or "").strip()
         message_id = str(target.get("message_id") or target.get("source_message_id") or "").strip()
         if operation in {"send_to_group", "messages-send-to-group"} and conversation_id:

@@ -29,7 +29,8 @@ from app.consumer_agent import (
     consumer_wire_contract_hash,
 )
 from app.developer_prompt import DeveloperPromptTemplateError
-from app.feedback_spike import PreparedOutgoingReplyText
+from app.outbound_postfix import PreparedOutboundMessage
+from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
@@ -1871,6 +1872,17 @@ def test_consumer_prepares_dingtalk_message_postfix_before_persisting(
     )
     assert persisted_result.proposal is not None
     assert persisted_result.proposal.actions[0].payload["argv"] == argv
+    prepared = store.get_outbound_postfix(
+        "dingtalk",
+        agent_message_delivery_key(
+            task_id=task.id,
+            execution_generation=task.execution_generation,
+            proposal_revision=0,
+            action_index=0,
+        ),
+    )
+    assert prepared is not None
+    assert prepared.final_body == text
 
 
 def test_consumer_prepares_command_string_and_persists_one_argv_contract(
@@ -1958,6 +1970,17 @@ def test_consumer_prepares_structured_dingtalk_message_postfix_before_audit(
     assert isinstance(text, str)
     assert text.startswith("Verified notice.（by明哥分身）")
     assert text.count("/api/dingtalk-feedback-spike") == 2
+    prepared = store.get_outbound_postfix(
+        "dingtalk",
+        agent_message_delivery_key(
+            task_id=task.id,
+            execution_generation=task.execution_generation,
+            proposal_revision=0,
+            action_index=0,
+        ),
+    )
+    assert prepared is not None
+    assert prepared.final_body == text
 
 
 def test_consumer_preserves_dash_prefixed_explicit_content_as_message_body(
@@ -2008,11 +2031,14 @@ def test_consumer_rejects_sensitive_value_added_by_postfix_preparation(
     monkeypatch,
 ):
     monkeypatch.setattr(
-        consumer_agent,
-        "prepare_outgoing_reply_text",
-        lambda **_kwargs: PreparedOutgoingReplyText(
+        ServiceMessageSender,
+        "prepare",
+        lambda _self, **_kwargs: PreparedOutboundMessage(
+            channel="dingtalk",
+            delivery_key="test",
+            final_body="Bearer sk-sensitive-value-added-after-model-validation",
             feedback_token="",
-            text="Bearer sk-sensitive-value-added-after-model-validation",
+            postfix_version="1",
         ),
     )
     executor = CapturingExecutor(
