@@ -18,9 +18,12 @@ const createManagedSkillRevision = vi.hoisted(() => vi.fn());
 const getCurrentRuntimeSkillConfig = vi.hoisted(() => vi.fn());
 const createRuntimeSkillConfig = vi.hoisted(() => vi.fn());
 const listRuntimeSkillLoadReceipts = vi.hoisted(() => vi.fn());
+const createManagedSkill = vi.hoisted(() => vi.fn());
+const getFeedbackIterationCapability = vi.hoisted(() => vi.fn());
+const setFeedbackIterationCapability = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, getSkillFeatures, toggleSkillFeature, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
-vi.mock("../api/skills", () => ({ listManagedSkills, listManagedSkillRevisions, createManagedSkillRevision, getCurrentRuntimeSkillConfig, createRuntimeSkillConfig, listRuntimeSkillLoadReceipts }));
+vi.mock("../api/skills", () => ({ listManagedSkills, createManagedSkill, listManagedSkillRevisions, createManagedSkillRevision, getCurrentRuntimeSkillConfig, createRuntimeSkillConfig, listRuntimeSkillLoadReceipts, getFeedbackIterationCapability, setFeedbackIterationCapability }));
 
 import { SettingsPage } from "./SettingsPage";
 
@@ -34,6 +37,7 @@ describe("SettingsPage", () => {
     listAttention.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechat.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechatTargets.mockResolvedValue({ items: [], account_id: "", meta: { page: 1, page_size: 50, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    getFeedbackIterationCapability.mockResolvedValue({ enabled: true, config_id: 1, status: "pending_restart", active: { enabled: false, config_id: 0, status: "active" } });
     getSettings.mockResolvedValue({
       item: {
         section: "configuration",
@@ -340,6 +344,25 @@ describe("SettingsPage", () => {
     expect(screen.getByText("新任务创建开关（不控制 Skill 加载）")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "系统能力" })).toBeInTheDocument();
     expect(screen.getByText("反馈迭代")).toBeInTheDocument();
+  });
+
+  it("creates a local Skill before its first immutable revision", async () => {
+    const user = userEvent.setup();
+    getSkillFeatures.mockResolvedValueOnce({ features: [] });
+    listManagedSkills.mockResolvedValueOnce({ items: [] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: null, active: null });
+    createManagedSkill.mockResolvedValueOnce({ id: 9, name: "ceo-local", display_name: "Local Skill", created_at: "2026-09-05T00:00:00Z" });
+    createManagedSkillRevision.mockResolvedValueOnce({ id: 10, skill_id: 9, revision_number: 1, content: "---\nname: ceo-local\ndescription: Local Skill\nmetadata:\n  managed_by: ceo-agent-service\n---", sha256: "c".repeat(64), parent_revision_id: null, source: "settings", created_at: "2026-09-05T00:00:00Z" });
+    renderSettings("/settings?tab=skills");
+
+    await user.click(await screen.findByRole("button", { name: "新建本地 Skill" }));
+    await user.type(screen.getByLabelText("Skill 名称"), "ceo-local");
+    await user.type(screen.getByLabelText("显示名称"), "Local Skill");
+    await user.click(screen.getByRole("button", { name: "创建本地 Skill" }));
+    await user.click(await screen.findByRole("button", { name: "保存修订" }));
+
+    expect(createManagedSkill).toHaveBeenCalledWith("ceo-local", "Local Skill");
+    expect(createManagedSkillRevision).toHaveBeenCalledWith(9, expect.stringContaining("name: ceo-local"), null);
   });
 
   it("submits one immutable revision when save is clicked rapidly", async () => {
