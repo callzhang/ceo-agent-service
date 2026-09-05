@@ -34,6 +34,7 @@ from app.agent_turn_runner import (
     _metadata_matches_action,
 )
 from app.agent_wire_contracts import AuditAgentWireResult
+from app import audit_agent
 from app.audit_agent import (
     AuditAgentRunner,
     _audit_recovery_error_code,
@@ -194,6 +195,66 @@ def test_initial_write_authorization_binds_direct_message_content_and_recipient(
         "--text", "请安排一轮面试。", "--yes", "--format", "json",
     ]
     assert authorization["target_identifiers"] == {"open-dingtalk-id": "open-recipient"}
+
+
+def test_audit_runner_adds_direct_message_execution_prompt_before_process(
+    setup, monkeypatch
+):
+    store, task, audit_context, parent = setup
+    proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Coordinate interview",
+            "actions": [{
+                "description": "Ask HR to schedule the interview.",
+                "capability": "dingtalk-chat",
+                "operation": "send_direct_message",
+                "target": {"open_dingtalk_id": "open-recipient"},
+                "payload": {"content": "请安排一轮面试。"},
+                "expected_verification": "Message accepted.",
+            }],
+            "sourced_facts": [],
+            "authored_judgment": "Proceed with interview coordination.",
+        }
+    )
+    direct_context = replace(audit_context, proposal=proposal)
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=direct_context.operation_id,
+        owner="audit-test",
+    )
+    assert claim.claimed
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        @classmethod
+        def __class_getitem__(cls, _item):
+            return cls
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def execute(self, **kwargs):
+            captured.update(kwargs)
+            return "executed"
+
+    monkeypatch.setattr(audit_agent, "AgentTurnProcess", FakeProcess)
+    runner = AuditAgentRunner(store=store, workspace=Path("/workspace"), owner="audit-test")
+
+    result = runner._execute_claimed(
+        task,
+        direct_context,
+        run=claim.run,
+        rendered_rules="rules",
+    )
+
+    assert result == "executed"
+    assert "Approved execution" in str(captured["prompt"])
+    assert "open-recipient" in str(captured["prompt"])
 
 
 

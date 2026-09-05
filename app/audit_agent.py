@@ -129,6 +129,7 @@ class AuditAgentRunner:
         rendered_rules: str,
         frozen_delivery_retry: bool = False,
     ) -> AgentTurnRunResult[AuditAgentResult]:
+        prompt = context.render()
         expected_effect_actions = tuple(
             _expected_effect_action(action, action_index=index)
             for index, action in enumerate(context.proposal.actions)
@@ -160,7 +161,6 @@ class AuditAgentRunner:
             refresh_runtime_capabilities=self.refresh_runtime_capabilities,
         )
         email_unsubscribe_tools = self._email_unsubscribe_tools(task, run)
-        prompt = context.render()
         if email_unsubscribe_tools:
             prompt += (
                 "\n\n### Task-bound Email Unsubscribe Capability\n"
