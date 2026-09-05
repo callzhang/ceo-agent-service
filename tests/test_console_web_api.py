@@ -798,6 +798,315 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
     json.dumps(payload, ensure_ascii=False)
 
 
+def test_worker_status_projects_email_health_and_queues_without_double_counting(
+    monkeypatch, tmp_path: Path
+):
+    database = tmp_path / "worker.sqlite3"
+    EmailStore(database)
+    _seed_email_queue_classification(
+        database,
+        classification_id=1,
+        current_action_plan_id="email-plan:test",
+    )
+    store = AutoReplyStore(database)
+    store.set_service_state(
+        "email_worker_health:process:email-worker",
+        json.dumps(
+            {
+                "status": "ready",
+                "accounts": 2,
+                "components": 3,
+                "imap_secret": "must-not-leak",
+            }
+        ),
+    )
+    store.set_service_state(
+        "email_worker_health:component:email-provider-actions",
+        json.dumps(
+            {
+                "status": "degraded",
+                "error_code": "provider_action_failed",
+                "private_target": "INBOX/secret",
+            }
+        ),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            insert into email_actions (
+                action_id, action_plan_id, classification_id, account_id,
+                action_type, parameters_json, config_version, status,
+                attempt_count, error, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "email-action:test-label",
+                "email-plan:test",
+                1,
+                "account-a",
+                "label",
+                "{}",
+                "email-config:test",
+                "pending",
+                0,
+                "",
+                "2026-09-05T00:00:00+00:00",
+                "2026-09-05T00:00:00+00:00",
+            ),
+        )
+    store.ensure_reply_task(
+        channel="email",
+        conversation_id="email:account-a:thread-a",
+        conversation_title="Email unsubscribe",
+        single_chat=False,
+        trigger_message_id="email-action:test-unsubscribe",
+        trigger_create_time="2026-09-05T00:00:00+00:00",
+        trigger_sender="sender@example.test",
+        trigger_text="Immutable action plan",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "lifecycle_version": "email_unsubscribe_audited_v2",
+                "action_type": "unsubscribe",
+                "classification_id": 1,
+            }
+        ),
+        execution_generation="email-generation-1",
+    )
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {"label": label, "ok": True, "state": "running"},
+    )
+
+    payload = audit_web_module.build_worker_status_payload(
+        store,
+        include_system_health=False,
+    )
+
+    assert any(item["name"] == "email-worker" for item in payload["components"])
+    email = payload["email"]
+    assert email["status"] == "ready"
+    assert email["entries"] == [
+        {
+            "scope": "component:email-provider-actions",
+            "status": "degraded",
+            "error_code": "provider_action_failed",
+            "updated_at": email["entries"][0]["updated_at"],
+        },
+        {
+            "scope": "process:email-worker",
+            "status": "ready",
+            "accounts": 2,
+            "components": 3,
+            "updated_at": email["entries"][1]["updated_at"],
+        },
+    ]
+    serialized = json.dumps(email, sort_keys=True)
+    assert "must-not-leak" not in serialized
+    assert "INBOX/secret" not in serialized
+    queues = {item["name"]: item for item in payload["queues"]}
+    assert queues["Email provider actions"]["pending"] == 1
+    assert queues["Email unsubscribe tasks"]["pending"] == 1
+    assert payload["summary"]["pending"] == 2
+
+
+def _seed_email_queue_classification(
+    database: Path,
+    *,
+    classification_id: int,
+    current_action_plan_id: str,
+    status: str = "processed",
+) -> None:
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            insert into email_classifications (
+                id, account_id, folder, uidvalidity, uid,
+                stable_message_identity, category, confidence, margin,
+                probabilities_json, model_id, config_version, status,
+                classification_source, current_action_plan_id
+            ) values (?, 'account-a', 'INBOX', 1, ?, ?, 'work', 0.9, 0.8,
+                      '{}', 'model-a', 'config-a', ?, 'model', ?)
+            """,
+            (
+                classification_id,
+                classification_id,
+                f"message-{classification_id}",
+                status,
+                current_action_plan_id,
+            ),
+        )
+
+
+def test_worker_status_counts_retryable_email_action_separately_from_failed(
+    monkeypatch, tmp_path: Path
+):
+    database = tmp_path / "worker.sqlite3"
+    EmailStore(database)
+    _seed_email_queue_classification(
+        database,
+        classification_id=1,
+        current_action_plan_id="email-plan:current",
+    )
+    store = AutoReplyStore(database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            insert into email_actions (
+                action_id, action_plan_id, classification_id, account_id,
+                action_type, parameters_json, config_version, status,
+                attempt_count, next_attempt_at, error, created_at, updated_at
+            ) values (
+                'email-action:retryable', 'email-plan:current', 1, 'account-a',
+                'mark_read', '{}', 'config-a', 'failed', 1,
+                '2026-09-05T01:00:00+00:00', 'imap_timeout',
+                '2026-09-05T00:00:00+00:00', '2026-09-05T00:30:00+00:00'
+            )
+            """
+        )
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {"label": label, "ok": True, "state": "running"},
+    )
+
+    payload = audit_web_module.build_worker_status_payload(
+        store,
+        include_system_health=False,
+    )
+
+    queue = next(
+        item for item in payload["queues"] if item["name"] == "Email provider actions"
+    )
+    assert queue["counts"] == {"failed": 1}
+    assert queue["retryable"] == 1
+    assert queue["failed"] == 0
+    assert payload["summary"]["retryable"] == 1
+    assert payload["summary"]["failed"] == 0
+
+
+def test_worker_status_excludes_actions_from_superseded_email_action_plan(
+    monkeypatch, tmp_path: Path
+):
+    database = tmp_path / "worker.sqlite3"
+    EmailStore(database)
+    _seed_email_queue_classification(
+        database,
+        classification_id=1,
+        current_action_plan_id="email-plan:current",
+    )
+    store = AutoReplyStore(database)
+    with sqlite3.connect(database) as db:
+        db.executemany(
+            """
+            insert into email_actions (
+                action_id, action_plan_id, classification_id, account_id,
+                action_type, parameters_json, config_version, status,
+                attempt_count, next_attempt_at, error, created_at, updated_at
+            ) values (?, ?, 1, 'account-a', ?, '{}', 'config-a', ?, ?, ?, ?,
+                      '2026-09-05T00:00:00+00:00', ?)
+            """,
+            (
+                (
+                    "email-action:current",
+                    "email-plan:current",
+                    "mark_read",
+                    "pending",
+                    0,
+                    "",
+                    "",
+                    "2026-09-05T00:30:00+00:00",
+                ),
+                (
+                    "email-action:stale-pending",
+                    "email-plan:stale",
+                    "label",
+                    "pending",
+                    0,
+                    "",
+                    "",
+                    "2026-09-05T00:20:00+00:00",
+                ),
+                (
+                    "email-action:stale-failed",
+                    "email-plan:stale",
+                    "trash",
+                    "failed",
+                    1,
+                    "2026-09-05T01:00:00+00:00",
+                    "imap_timeout",
+                    "2026-09-05T00:25:00+00:00",
+                ),
+            ),
+        )
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {"label": label, "ok": True, "state": "running"},
+    )
+
+    payload = audit_web_module.build_worker_status_payload(
+        store,
+        include_system_health=False,
+    )
+
+    queue = next(
+        item for item in payload["queues"] if item["name"] == "Email provider actions"
+    )
+    assert queue["counts"] == {"pending": 1}
+    assert queue["pending"] == 1
+    assert queue["retryable"] == 0
+    assert queue["failed"] == 0
+    assert payload["summary"]["pending"] == 1
+
+
+def test_worker_status_excludes_current_plan_until_classification_is_processed(
+    monkeypatch, tmp_path: Path
+):
+    database = tmp_path / "worker.sqlite3"
+    EmailStore(database)
+    _seed_email_queue_classification(
+        database,
+        classification_id=1,
+        current_action_plan_id="email-plan:current",
+        status="pending_feedback",
+    )
+    store = AutoReplyStore(database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            insert into email_actions (
+                action_id, action_plan_id, classification_id, account_id,
+                action_type, parameters_json, config_version, status,
+                attempt_count, next_attempt_at, error, created_at, updated_at
+            ) values (
+                'email-action:not-ready', 'email-plan:current', 1, 'account-a',
+                'mark_read', '{}', 'config-a', 'pending', 0, '', '',
+                '2026-09-05T00:00:00+00:00', '2026-09-05T00:30:00+00:00'
+            )
+            """
+        )
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {"label": label, "ok": True, "state": "running"},
+    )
+
+    payload = audit_web_module.build_worker_status_payload(
+        store,
+        include_system_health=False,
+    )
+
+    queue = next(
+        item for item in payload["queues"] if item["name"] == "Email provider actions"
+    )
+    assert queue["counts"] == {}
+    assert queue["pending"] == 0
+    assert queue["retryable"] == 0
+    assert queue["failed"] == 0
+
+
 def test_console_status_worker_snapshot_is_not_blocked_by_wechat_probe(
     monkeypatch, tmp_path: Path,
 ):

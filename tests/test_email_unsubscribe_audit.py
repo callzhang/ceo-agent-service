@@ -153,6 +153,33 @@ def _accepted_action() -> dict[str, object]:
     ).model_dump(mode="json")
 
 
+def _consumer_proposal_result(
+    *actions: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "outcome": "proposal",
+        "summary": "Propose one audited unsubscribe operation.",
+        "proposal": {
+            "objective": "Unsubscribe the current subscription.",
+            "actions": list(actions or (_accepted_action(),)),
+            "sourced_facts": [],
+            "authored_judgment": "The ActionPlan authorizes unsubscribe.",
+        },
+        "decision_options": [],
+        "error": {
+            "code": "",
+            "retryable": False,
+            "authorization_required": False,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": False,
+        },
+        "risk": "low",
+        "confidence": 1.0,
+    }
+
+
 def _seed_email_state(path: Path) -> EmailStore:
     store = EmailStore(path)
     store.create_account(
@@ -237,7 +264,7 @@ def _make_fixture(tmp_path: Path) -> AuditFixture:
     ).run
     consumer = task_store.complete_agent_run(
         consumer.id,
-        {"outcome": "proposal"},
+        _consumer_proposal_result(_accepted_action()),
         owner="consumer-owner",
     )
     audit = task_store.claim_agent_run(
@@ -455,7 +482,7 @@ def _start_second_audit_round(fixture: AuditFixture):
     ).run
     second_consumer = fixture.task_store.complete_agent_run(
         second_consumer.id,
-        {"outcome": "proposal"},
+        _consumer_proposal_result(_two_step_action()),
         owner="consumer-second-owner",
     )
     second_audit = fixture.task_store.claim_agent_run(
@@ -1230,6 +1257,162 @@ def test_accepted_entry_can_be_one_of_multiple_projected_entries(
         fixture.task.execution_generation,
         audit_agent_run_id=fixture.audit_run.id,
         accepted_action=_accepted_action(),
+    )
+
+    assert result["status"] == "done", result
+    assert len(fixture.executed) == 1
+
+
+@pytest.mark.parametrize(
+    "invalid_parent_result",
+    (
+        "missing",
+        "malformed_json",
+        "non_object",
+        "non_proposal",
+        "multiple_actions",
+    ),
+)
+def test_audit_fails_closed_when_parent_consumer_has_no_unique_proposal_action(
+    tmp_path: Path,
+    invalid_parent_result: str,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    if invalid_parent_result == "missing":
+        final_result_json = ""
+    elif invalid_parent_result == "malformed_json":
+        final_result_json = "{"
+    elif invalid_parent_result == "non_object":
+        final_result_json = "[]"
+    elif invalid_parent_result == "non_proposal":
+        final_result_json = json.dumps(
+            {
+                **_consumer_proposal_result(_accepted_action()),
+                "outcome": "no_action",
+                "proposal": None,
+            },
+            sort_keys=True,
+        )
+    else:
+        final_result_json = json.dumps(
+            _consumer_proposal_result(_accepted_action(), _accepted_action()),
+            sort_keys=True,
+        )
+    with sqlite3.connect(fixture.email_store.path) as db:
+        db.execute(
+            "update agent_runs set final_result_json=? where id=?",
+            (final_result_json, fixture.consumer_run.id),
+        )
+
+    result = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action=_accepted_action(),
+    )
+
+    assert result["status"] == "failed", result
+    assert fixture.resolved == []
+    assert fixture.executed == []
+    assert fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "description",
+        "expected_verification",
+        "capability",
+        "operation",
+        "operation_reference",
+        "target_and_payload",
+        "identity",
+    ),
+)
+def test_audit_accepted_action_is_exactly_bound_to_parent_consumer_proposal(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    action = _accepted_action()
+    if mutation == "description":
+        action["description"] = "A different accepted description"
+    elif mutation == "expected_verification":
+        action["expected_verification"] = "A different verification requirement"
+    elif mutation == "capability":
+        action["capability"] = "email"
+    elif mutation == "operation":
+        action["operation"] = "reply"
+    elif mutation == "operation_reference":
+        operations = action["payload"]["operations"]
+        assert isinstance(operations, list)
+        operations[0]["operation_reference"] = "unsubscribe-operation:replacement"
+    elif mutation == "target_and_payload":
+        payload = _payload()
+        entries = payload["unsubscribe_entries"]
+        assert isinstance(entries, list)
+        entries.append(
+            {
+                "source": "body_https",
+                "reference": SECONDARY_ENTRY.reference,
+                "priority": 20,
+            }
+        )
+        with sqlite3.connect(fixture.email_store.path) as db:
+            db.execute(
+                "update reply_tasks set trigger_message_json=? where id=?",
+                (json.dumps(payload, sort_keys=True), fixture.task.id),
+            )
+        target = action["target"]
+        operations = action["payload"]["operations"]
+        assert isinstance(target, dict)
+        assert isinstance(operations, list)
+        target["entry_reference"] = SECONDARY_ENTRY.reference
+        operations[0]["target_reference"] = SECONDARY_ENTRY.reference
+        fixture.operation.resolve_entries = lambda *_args, **_kwargs: (
+            ENTRY,
+            SECONDARY_ENTRY,
+        )
+    else:
+        target = action["target"]
+        assert isinstance(target, dict)
+        target["account_id"] = "account-replacement"
+
+    result = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action=action,
+    )
+
+    assert result["status"] == "failed", result
+    assert fixture.resolved == []
+    assert fixture.executed == []
+    assert fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY) is None
+
+
+def test_canonical_action_binding_accepts_mapping_key_order_differences(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    action = _accepted_action()
+    target = action["target"]
+    payload = action["payload"]
+    assert isinstance(target, dict)
+    assert isinstance(payload, dict)
+    operations = payload["operations"]
+    assert isinstance(operations, list)
+    reordered = dict(reversed(tuple(action.items())))
+    reordered["target"] = dict(reversed(tuple(target.items())))
+    reordered["payload"] = {
+        "operations": [dict(reversed(tuple(operations[0].items())))]
+    }
+
+    result = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action=reordered,
     )
 
     assert result["status"] == "done", result

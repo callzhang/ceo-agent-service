@@ -18,47 +18,28 @@ from app.email_worker import _scan_config
 
 
 def _messages() -> tuple[list[dict[str, object]], list[str]]:
-    return (
-        [
-            {
-                "from": {"email": "billing@example.com"},
-                "toRecipients": [],
-                "subject": "发票 invoice",
-                "textBody": "付款记录",
-            },
-            {
-                "from": {"email": "team@stardust.ai"},
-                "toRecipients": [],
-                "subject": "项目 project",
-                "textBody": "请确认本周工作安排",
-            },
-            {
-                "from": {"email": "news@example.com"},
-                "toRecipients": [],
-                "subject": "newsletter",
-                "textBody": "promotion offer",
-            },
-            {
-                "from": {"email": "finance@example.com"},
-                "toRecipients": [],
-                "subject": "receipt receipt",
-                "textBody": "payment invoice",
-            },
-            {
-                "from": {"email": "engineering@stardust.ai"},
-                "toRecipients": [],
-                "subject": "work sprint",
-                "textBody": "project deadline",
-            },
-            {
-                "from": {"email": "ads@example.com"},
-                "toRecipients": [],
-                "subject": "marketing promotion",
-                "textBody": "special offer",
-            },
-        ],
-        ["billing", "work", "junk", "billing", "work", "junk"],
-    )
+    terms = {
+        "important": ("urgent contract", "紧急审批"),
+        "work": ("project meeting", "项目计划"),
+        "personal": ("family dinner", "朋友聚会"),
+        "notification": ("security alert", "状态通知"),
+        "subscription": ("weekly newsletter", "订阅简报"),
+        "billing": ("payment invoice", "账单发票"),
+        "shopping": ("order delivery", "订单物流"),
+        "junk": ("promotion offer", "促销广告"),
+    }
+    messages = [
+        {
+            "from": {"email": f"{label}@example.com"},
+            "toRecipients": [],
+            "subject": term,
+            "textBody": f"{label} {term}",
+        }
+        for label, label_terms in terms.items()
+        for term in label_terms
+    ]
+    labels = [label for label, label_terms in terms.items() for _ in label_terms]
+    return messages, labels
 
 
 def test_message_text_is_segmented_and_redacted():
@@ -104,11 +85,13 @@ def test_cpu_classifier_predicts_and_round_trips_model_version(tmp_path: Path):
     classifier.fit_messages(messages, labels)
 
     prediction = classifier.predict_message(messages[1])
-    assert prediction.label in {"billing", "work", "junk"}
+    assert prediction.label in {category.value for category in EmailCategory}
     assert 0 <= prediction.probability <= 1
     assert 0 <= prediction.margin <= 1
     assert prediction.model_version == "email-model-test-1"
-    assert set(prediction.probabilities) == {"billing", "junk", "work"}
+    assert set(prediction.probabilities) == {
+        category.value for category in EmailCategory
+    }
 
     model_path = tmp_path / "email-model.pkl"
     classifier.save(model_path)

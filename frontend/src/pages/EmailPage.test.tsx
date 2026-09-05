@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import workbenchStyles from "../styles.css?raw";
+
 const listEmailClassifications = vi.hoisted(() => vi.fn());
 const confirmEmailClassification = vi.hoisted(() => vi.fn());
 const listEmailConfigs = vi.hoisted(() => vi.fn());
@@ -257,6 +259,44 @@ describe("EmailPage", () => {
       enabled: true,
       config_version: "email-v4",
     });
+  });
+
+  it("offers unsubscribe only for the subscription category", async () => {
+    const user = userEvent.setup();
+    renderEmail("/email?tab=config");
+
+    const unsubscribe = await screen.findByRole("button", { name: "unsubscribe" });
+    expect(unsubscribe).toBeDisabled();
+    expect(screen.getByText("退订只适用于订阅邮件。" )).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "订阅" }));
+    expect(screen.getByRole("button", { name: "unsubscribe" })).toBeEnabled();
+  });
+
+  it("does not retain a legacy unsubscribe selection on a non-subscription category", async () => {
+    listEmailConfigs.mockResolvedValueOnce({
+      items: [{ category: "important", description: "Legacy config", threshold: 0.95, actions: ["unsubscribe"], action_parameters: {}, enabled: true, config_version: "email-v1", updated_at: "2026-09-05T00:00:00Z" }],
+      meta: { snapshot_at: "2026-09-05T00:00:00Z" },
+    });
+    renderEmail("/email?tab=config");
+
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "描述" })).toHaveValue("Legacy config"));
+    const unsubscribe = await screen.findByRole("button", { name: "unsubscribe" });
+    expect(unsubscribe).toBeDisabled();
+    expect(unsubscribe).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("lays out primary configuration fields as a responsive form grid", async () => {
+    renderEmail("/email?tab=config");
+
+    const description = await screen.findByRole("textbox", { name: "描述" });
+    const fieldGrid = description.closest(".email-config-field-grid");
+
+    expect(fieldGrid).not.toBeNull();
+    expect(within(fieldGrid as HTMLElement).getByRole("spinbutton", { name: "自动处理阈值" })).toBeInTheDocument();
+    expect(within(fieldGrid as HTMLElement).getByRole("textbox", { name: "配置版本" })).toBeInTheDocument();
+    expect(workbenchStyles).toMatch(/\.email-config-field-grid\s*\{[^}]*display:\s*grid/s);
+    expect(workbenchStyles).toMatch(/\.email-config-field\s*\{[^}]*display:\s*grid/s);
   });
 
   it("does not send an invalid label action without labels", async () => {

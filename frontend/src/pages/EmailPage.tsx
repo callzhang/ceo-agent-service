@@ -270,7 +270,7 @@ function ConfigPanel() {
   useEffect(() => {
     setDescription(current?.description || "");
     setThreshold(String(current?.threshold ?? 0.90));
-    setSelectedActions(current?.actions || []);
+    setSelectedActions((current?.actions || []).filter((action) => selected === "subscription" || action !== "unsubscribe"));
     const parameters = current?.action_parameters || {};
     const labels = parameters.label?.labels;
     setLabelNames(Array.isArray(labels) ? labels.filter((label): label is string => typeof label === "string").join(", ") : "");
@@ -282,6 +282,7 @@ function ConfigPanel() {
   useEffect(() => { setMessage(""); setError(""); }, [selected]);
 
   const toggleAction = (action: string) => {
+    if (action === "unsubscribe" && selected !== "subscription") return;
     const removing = selectedActions.includes(action);
     const nextActions = removing
       ? selectedActions.filter((item) => item !== action)
@@ -334,13 +335,17 @@ function ConfigPanel() {
     {loadState === "loading" && <div className="page-state" role="status">正在加载邮件配置…</div>}
     <div className="settings-control-group"><span className="settings-control-label">邮件类型</span><div className="settings-pill-row">{categories.map((category) => <button type="button" aria-pressed={selected === category} disabled={controlsDisabled} className={selected === category ? "active" : ""} key={category} onClick={() => setSelected(category)}>{categoryLabels[category]}</button>)}</div></div>
     <p className="email-category-definition"><strong>{categoryLabels[selected]}</strong>：{categoryDescriptions[selected]}</p>
-    <label className="settings-field">描述<input disabled={controlsDisabled} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个类别用于什么邮件" /></label>
-    <label className="settings-field">自动处理阈值<input disabled={controlsDisabled} type="number" min="0" max="1" step="0.01" value={threshold} onChange={(event) => setThreshold(event.target.value)} /></label>
-    <label className="settings-field">配置版本<input disabled={controlsDisabled} value={version} onChange={(event) => setVersion(event.target.value)} /></label>
-    <label className="settings-field"><span>启用 <input disabled={controlsDisabled} type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /></span></label>
-    <div className="settings-control-group"><span className="settings-control-label">固定动作</span><div className="settings-pill-row">{actions.map((action) => <button type="button" aria-pressed={selectedActions.includes(action)} disabled={controlsDisabled} className={selectedActions.includes(action) ? "active" : ""} key={action} onClick={() => toggleAction(action)}>{action}</button>)}</div></div>
-    {selectedActions.includes("label") && <label className="settings-field">标签<input disabled={controlsDisabled} aria-label="标签" value={labelNames} onChange={(event) => setLabelNames(event.target.value)} placeholder="多个标签用英文逗号分隔" /></label>}
-    {selectedActions.includes("move") && <label className="settings-field">目标文件夹<input disabled={controlsDisabled} aria-label="目标文件夹" value={moveTargetFolder} onChange={(event) => setMoveTargetFolder(event.target.value)} placeholder="例如 Archive/Billing" /></label>}
+    <div className="email-config-field-grid">
+      <label className="email-config-field email-config-field-description"><span>描述</span><input disabled={controlsDisabled} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个类别用于什么邮件" /></label>
+      <label className="email-config-field"><span>自动处理阈值</span><input disabled={controlsDisabled} type="number" min="0" max="1" step="0.01" value={threshold} onChange={(event) => setThreshold(event.target.value)} /></label>
+      <label className="email-config-field"><span>配置版本</span><input disabled={controlsDisabled} value={version} onChange={(event) => setVersion(event.target.value)} /></label>
+      <label className="email-config-toggle"><input disabled={controlsDisabled} type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>启用此类别</span></label>
+    </div>
+    <div className="settings-control-group"><span className="settings-control-label">固定动作</span><div className="settings-pill-row">{actions.map((action) => <button type="button" aria-pressed={selectedActions.includes(action)} disabled={controlsDisabled || (action === "unsubscribe" && selected !== "subscription")} className={selectedActions.includes(action) ? "active" : ""} key={action} onClick={() => toggleAction(action)}>{action}</button>)}</div>{selected !== "subscription" && <p className="field-help">退订只适用于订阅邮件。</p>}</div>
+    {(selectedActions.includes("label") || selectedActions.includes("move")) && <div className="email-config-action-fields">
+      {selectedActions.includes("label") && <label className="email-config-field"><span>标签</span><input disabled={controlsDisabled} aria-label="标签" value={labelNames} onChange={(event) => setLabelNames(event.target.value)} placeholder="多个标签用英文逗号分隔" /></label>}
+      {selectedActions.includes("move") && <label className="email-config-field"><span>目标文件夹</span><input disabled={controlsDisabled} aria-label="目标文件夹" value={moveTargetFolder} onChange={(event) => setMoveTargetFolder(event.target.value)} placeholder="例如 Archive/Billing" /></label>}
+    </div>}
     {error && <div className="page-state page-state-error" role="alert">{error}</div>}{message && <div className="page-state" role="status">{message}</div>}<button type="button" disabled={controlsDisabled} className="primary-button" onClick={() => void save()}>{saving ? "正在保存…" : "保存本地配置"}</button>
   </section>;
 }

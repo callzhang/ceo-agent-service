@@ -14,6 +14,7 @@ describe("StatusPage", () => {
       summary: { processing: 0, retryable: 0, failed: 0 },
       components: [{ name: "producer", role: "message scan", cadence: "60s" }],
       connectors: { dingtalk: { state: "ready", reason_code: "ready" } },
+      email: { status: "ready", entries: [{ scope: "component:email-provider-actions", status: "ready", updated_at: "now" }] },
       wechat: { reader: { status: "ready", enabled: true }, sender: { status: "ready", enabled: true }, preflight: { status: "ready" }, account: { ready: true } },
       queues: [{ name: "Reply tasks", table: "reply_tasks", counts: { done: 1 }, pending: 0, processing: 0, retryable: 0, failed: 0, latest_updated_at: "now", latest_error: "" }],
     }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
@@ -24,6 +25,8 @@ describe("StatusPage", () => {
 
     expect(await screen.findByRole("heading", { name: "Runtime Monitor" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Connector health" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Email worker" })).toBeInTheDocument();
+    expect(screen.getByText("component:email-provider-actions")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Queues" })).toBeInTheDocument();
     expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
   });

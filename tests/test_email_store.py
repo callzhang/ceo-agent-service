@@ -2447,8 +2447,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_17() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 17
+def test_email_schema_version_is_18() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 18
 
 
 def test_current_schema_initialization_preserves_delete_journal_mode(
@@ -3098,7 +3098,7 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == [16, 17]
+        ] == [16, 17, 18]
         assert {
             row[1]
             for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
@@ -3335,7 +3335,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 16, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [2, 16, 17, email_store_module.EMAIL_SCHEMA_VERSION]
 
     EmailStore(database)
 
@@ -3398,7 +3398,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [15, 16, 17]
+    ] == [15, 16, 17, 18]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
     assert projected["action_plan"]["action_plan_id"] == historical_plan_id
@@ -3801,7 +3801,7 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [16, 17]
+    ] == [16, 17, 18]
 
 
 @pytest.mark.parametrize("missing_table", ["email_messages", "email_actions"])
@@ -5086,7 +5086,7 @@ def _correct_to_move_plan(
 
 
 @pytest.mark.parametrize("resolution", ("complete", "recover"))
-def test_historical_processing_blocks_current_plan_until_closed(
+def test_processing_direct_action_blocks_plan_switch_until_closed(
     tmp_path: Path,
     resolution: str,
 ):
@@ -5099,15 +5099,12 @@ def test_historical_processing_blocks_current_plan_until_closed(
     _persist_scan(store, original)
     historical = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert historical is not None
-    application = _correct_to_move_plan(
-        store,
-        original,
-        request_id=f"feedback-historical-processing-{resolution}",
-    )
-
-    assert (
-        store.claim_next_direct_action(claimed_at="2026-08-30T12:02:00+00:00") is None
-    )
+    with pytest.raises(sqlite3.IntegrityError, match="email_direct_action_in_flight"):
+        _correct_to_move_plan(
+            store,
+            original,
+            request_id=f"feedback-historical-processing-{resolution}",
+        )
 
     if resolution == "complete":
         store.complete_direct_action_attempt(
@@ -5128,6 +5125,11 @@ def test_historical_processing_blocks_current_plan_until_closed(
             == 1
         )
 
+    application = _correct_to_move_plan(
+        store,
+        original,
+        request_id=f"feedback-historical-processing-{resolution}",
+    )
     current = store.claim_next_direct_action(claimed_at="2026-08-30T12:04:00+00:00")
     assert current is not None
     assert current.action_plan_id == application.resulting_action_plan_id
@@ -5173,8 +5175,10 @@ def test_historical_non_processing_action_does_not_block_current_plan(
     assert current.action_type is EmailAction.MOVE
 
 
-def test_historical_processing_blocks_only_its_own_classification(tmp_path: Path):
-    database = tmp_path / "historical-processing-fairness.sqlite3"
+def test_processing_direct_action_plan_fence_is_scoped_to_its_classification(
+    tmp_path: Path,
+):
+    database = tmp_path / "processing-plan-fence-scope.sqlite3"
     store = EmailStore(database)
     blocked = _classification(
         status=EmailClassificationStatus.PROCESSED,
@@ -5185,37 +5189,26 @@ def test_historical_processing_blocks_only_its_own_classification(tmp_path: Path
         message_id="available-current-plan",
     )
     _persist_scan(store, blocked)
-    historical = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
-    assert historical is not None
-    _correct_to_move_plan(
-        store,
-        blocked,
-        request_id="feedback-blocked-historical-processing",
-    )
     _persist_scan(store, available)
-    with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            update email_actions set updated_at='2026-08-30T11:00:00+00:00'
-            where classification_id=? and action_plan_id=(
-                select current_action_plan_id from email_classifications where id=?
-            )
-            """,
-            (blocked.classification_id, blocked.classification_id),
-        )
-        db.execute(
-            """
-            update email_actions set updated_at='2026-08-30T13:00:00+00:00'
-            where classification_id=?
-            """,
-            (available.classification_id,),
-        )
+    processing = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
+    assert processing is not None
+    correction_target = (
+        available
+        if processing.classification_id == blocked.classification_id
+        else blocked
+    )
+    application = _correct_to_move_plan(
+        store,
+        correction_target,
+        request_id="feedback-available-while-other-processing",
+    )
 
     claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:02:00+00:00")
 
     assert claimed is not None
-    assert claimed.classification_id == available.classification_id
-    assert claimed.action_type is EmailAction.LABEL
+    assert claimed.classification_id == correction_target.classification_id
+    assert claimed.action_plan_id == application.resulting_action_plan_id
+    assert claimed.action_type is EmailAction.MOVE
 
 
 def test_concurrent_direct_action_claim_has_one_winner(tmp_path: Path):
@@ -5512,6 +5505,105 @@ def test_complete_direct_action_appends_attempt_and_updates_current_atomically(
     assert (
         store.claim_next_direct_action(claimed_at="2026-08-30T12:02:00+00:00") is None
     )
+
+
+def test_direct_action_completion_rejects_superseded_plan(tmp_path: Path):
+    database = tmp_path / "complete-superseded-plan.sqlite3"
+    store = EmailStore(database)
+    original = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(store, original)
+    claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
+    assert claimed is not None
+    with sqlite3.connect(database) as db:
+        db.execute("drop trigger trg_email_direct_action_blocks_plan_switch")
+        db.execute(
+            "update email_classifications set current_action_plan_id=null where id=?",
+            (claimed.classification_id,),
+        )
+
+    with pytest.raises(EmailActionAttemptConflict, match="no longer current"):
+        store.complete_direct_action_attempt(
+            claimed,
+            status="done",
+            provider_operation="STORE LABELS",
+            provider_target=claimed.locator.stable_message_identity,
+            provider_result_id="revision-1",
+            error="",
+            finished_at="2026-08-30T12:00:01+00:00",
+        )
+
+    assert store.list_action_attempts(claimed.action_id) == []
+
+
+def test_non_retryable_direct_action_is_not_reclaimed(tmp_path: Path):
+    database = tmp_path / "non-retryable-action.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
+    assert claimed is not None
+    store.complete_direct_action_attempt(
+        claimed,
+        status="failed",
+        provider_operation="STORE LABELS",
+        provider_target=claimed.locator.stable_message_identity,
+        provider_result_id="",
+        error="provider_apply_failed:ImapPermanentFlagsUnsupported",
+        finished_at="2026-08-30T12:00:01+00:00",
+        retryable=False,
+    )
+
+    assert (
+        store.claim_next_direct_action(claimed_at="2026-08-30T12:10:00+00:00") is None
+    )
+
+
+def test_processing_direct_action_blocks_account_rebinding_and_delete(tmp_path: Path):
+    database = tmp_path / "processing-account-fence.sqlite3"
+    store = EmailStore(database)
+    store.create_account(
+        {
+            "account_id": "dingtalk-account",
+            "display_name": "DingTalk",
+            "email_address": "derek@example.com",
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_tls": True,
+            "imap_username": "derek@example.com",
+            "imap_secret_reference": "keychain://imap-test",
+            "smtp_host": "",
+            "smtp_port": 465,
+            "smtp_tls": True,
+            "smtp_username": "",
+            "smtp_secret_reference": "",
+            "enabled": True,
+            "scan_folders": ["INBOX"],
+            "scan_interval_seconds": 60,
+        }
+    )
+    original = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(store, original)
+    claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
+    assert claimed is not None
+    current = store.get_account(claimed.account_id)
+    assert current is not None
+
+    with pytest.raises(sqlite3.IntegrityError, match="email_direct_action_in_flight"):
+        store.update_account(
+            claimed.account_id,
+            {
+                **current,
+                "imap_host": "different.example.com",
+                "imap_username": "different@example.com",
+            },
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="email_direct_action_in_flight"):
+        store.delete_account_if_unchanged(
+            claimed.account_id,
+            expected_updated_at=str(current["updated_at"]),
+        )
 
 
 def test_locator_refresh_does_not_invalidate_stable_claim_identity(tmp_path: Path):

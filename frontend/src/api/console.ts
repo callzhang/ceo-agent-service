@@ -230,6 +230,48 @@ export interface EmailCategoryConfig {
   config_version: string;
   updated_at: string;
 }
+export interface EmailAccountItem {
+  account_id: string;
+  display_name: string;
+  email_address: string;
+  imap_host: string;
+  imap_port: number;
+  imap_tls: boolean;
+  imap_username: string;
+  imap_secret_configured: boolean;
+  enabled: boolean;
+  scan_folders: string[];
+  scan_interval_seconds: number;
+  created_at: string;
+  updated_at: string;
+}
+export interface EmailAccountPayload {
+  account_id: string;
+  display_name: string;
+  email_address: string;
+  imap_host: string;
+  imap_port: number;
+  imap_tls: boolean;
+  imap_username: string;
+  imap_secret?: string;
+  enabled: boolean;
+  scan_folders: string[];
+  scan_interval_seconds: number;
+}
+export interface EmailAccountSaveResult {
+  ok: boolean;
+  item: EmailAccountItem;
+  restart_required: boolean;
+  message: string;
+}
+export interface EmailAccountTestResult {
+  ok: boolean;
+  account_id: string;
+  diagnostics: {
+    imap: { ok: boolean; code: string };
+    smtp: { enabled: false; tested: false; code: "disabled" };
+  };
+}
 export interface EmailModelEvidence {
   model_id: string;
   model_version: string;
@@ -496,6 +538,34 @@ export function confirmEmailClassification(
 
 export function listEmailConfigs(signal?: AbortSignal) {
   return request<{ items: EmailCategoryConfig[]; meta: { snapshot_at: string } }>("/api/console/email/config", { signal });
+}
+
+export function listEmailAccounts(signal?: AbortSignal) {
+  return request<{ items: EmailAccountItem[]; meta: { snapshot_at: string } }>(
+    "/api/console/email/accounts",
+    { signal },
+  );
+}
+
+export function createEmailAccount(payload: EmailAccountPayload) {
+  return request<EmailAccountSaveResult>("/api/console/email/accounts", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateEmailAccount(accountId: string, payload: EmailAccountPayload) {
+  return request<EmailAccountSaveResult>(
+    `/api/console/email/accounts/${encodeURIComponent(accountId)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export function testEmailAccount(accountId: string) {
+  return request<EmailAccountTestResult>(
+    `/api/console/email/accounts/${encodeURIComponent(accountId)}/test`,
+    { method: "POST" },
+  );
 }
 
 export function saveEmailConfig(

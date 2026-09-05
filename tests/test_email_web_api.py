@@ -211,9 +211,19 @@ def _stage_learning_evidence_model(
     parent_model_id: str | None = None,
 ) -> str:
     source = tmp_path / f"learning-{suffix}.pkl"
+    texts = [
+        f"{category.value} {variant}"
+        for category in EmailCategory
+        for variant in ("primary", "secondary")
+    ]
+    labels = [
+        category.value
+        for category in EmailCategory
+        for _variant in ("primary", "secondary")
+    ]
     classifier = CpuTfidfLogisticClassifier(model_version="candidate").fit(
-        ["work project", "work meeting", "junk offer", "junk promotion"],
-        ["work", "work", "junk", "junk"],
+        texts,
+        labels,
     )
     classifier.save(source)
     digest = sha256(source.read_bytes()).hexdigest()
@@ -233,7 +243,7 @@ def _stage_learning_evidence_model(
             "auto_action_eligible": True,
             "eligibility_reason": "eligible",
         }
-        for category in ("work", "junk")
+        for category in (item.value for item in EmailCategory)
     }
     metadata = EmailModelMetadata(
         model_id=model_id,
@@ -245,10 +255,10 @@ def _stage_learning_evidence_model(
         trained_at=trained_at.isoformat(),
         training_started_at=(trained_at - timedelta(seconds=2)).isoformat(),
         training_finished_at=trained_at.isoformat(),
-        sample_count=40,
-        new_sample_count=4,
-        category_counts={"work": 20, "junk": 20},
-        account_counts={"account-a": 40},
+        sample_count=160,
+        new_sample_count=16,
+        category_counts={category.value: 20 for category in EmailCategory},
+        account_counts={"account-a": 160},
         validation_method="time-ordered-holdout",
         accuracy=0.96,
         macro_f1=0.955,
@@ -263,8 +273,8 @@ def _stage_learning_evidence_model(
     registry.stage_candidate(
         source,
         metadata,
-        parity_texts=("work project", "junk offer"),
-        expected_labels=("work", "junk"),
+        parity_texts=tuple(texts),
+        expected_labels=tuple(classifier.predict(text).label for text in texts),
     )
     return model_id
 
@@ -942,6 +952,49 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
     assert fixture.unrelated_run.id not in legacy_event["consumer_run_ids"]
 
 
+def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    with sqlite3.connect(fixture.database) as db:
+        db.execute("delete from email_unsubscribe_steps")
+        db.execute("delete from email_unsubscribe_receipts")
+        db.execute("delete from email_unsubscribe_continuations")
+        db.execute("delete from email_unsubscribe_effects")
+        db.execute("delete from email_unsubscribe_claims")
+        db.execute(
+            "update reply_tasks set status='processing' where id=?",
+            (fixture.task.id,),
+        )
+        db.execute(
+            "update agent_runs set status='running', completed_at='' where id=?",
+            (fixture.audit.id,),
+        )
+
+    response = fixture.client.get(
+        f"/api/console/email/classifications/{fixture.classification_id}"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["observability"] == [
+        {
+            "kind": "unsubscribe",
+            "operation": "unsubscribe",
+            "lifecycle_version": "email_unsubscribe_audited_v2",
+            "task_id": fixture.task.id,
+            "task_status": "processing",
+            "consumer_run_ids": [fixture.consumer.id],
+            "audit_run_ids": [fixture.audit.id],
+            "status": "processing",
+        }
+    ]
+    serialized = json.dumps(response.json()["observability"], sort_keys=True)
+    assert all(marker not in serialized for marker in fixture.private_markers)
+    assert all(
+        str(value) not in serialized for value in fixture.private_markers.values()
+    )
+
+
 @pytest.mark.parametrize(
     "mismatch",
     (
@@ -1417,6 +1470,67 @@ def test_email_config_api_rejects_auto_reply_even_with_valid_instruction(
     assert response.json()["detail"] == (
         "auto_reply is disabled; email worker cannot send replies"
     )
+
+
+def test_email_config_api_allows_unsubscribe_only_for_subscription(tmp_path: Path):
+    payload = {
+        "description": "Wrong unsubscribe category",
+        "threshold": 0.95,
+        "actions": ["unsubscribe"],
+        "enabled": True,
+        "config_version": "email-config-v1",
+    }
+    with _client(tmp_path) as client:
+        rejected = client.put("/api/console/email/config/important", json=payload)
+        accepted = client.put("/api/console/email/config/subscription", json=payload)
+
+    assert rejected.status_code == 400
+    assert rejected.json()["detail"] == (
+        "unsubscribe can only be configured for subscription"
+    )
+    assert accepted.status_code == 200
+
+
+def test_email_account_api_accepts_nontechnical_payload_without_secret_reference(
+    tmp_path: Path,
+):
+    database = tmp_path / "accounts.sqlite3"
+    env_file = tmp_path / ".env"
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(database),
+        email_env_path=env_file,
+    )
+    payload = {
+        "account_id": "work_mail",
+        "display_name": "Work Mail",
+        "email_address": "work@example.test",
+        "imap_host": "imap.example.test",
+        "imap_port": 993,
+        "imap_tls": True,
+        "imap_username": "work@example.test",
+        "imap_secret": "known-imap-secret",
+        "enabled": True,
+        "scan_folders": ["INBOX"],
+        "scan_interval_seconds": 60,
+    }
+    with TestClient(app) as client:
+        created = client.post("/api/console/email/accounts", json=payload)
+        listed = client.get("/api/console/email/accounts")
+        updated = client.put(
+            "/api/console/email/accounts/work_mail",
+            json={**payload, "imap_secret": "", "scan_interval_seconds": 120},
+        )
+
+    assert created.status_code == 201
+    assert created.json()["restart_required"] is True
+    assert listed.json()["items"][0]["imap_secret_configured"] is True
+    assert updated.status_code == 200
+    assert updated.json()["item"]["scan_interval_seconds"] == 120
+    for response in (created, listed, updated):
+        assert "known-imap-secret" not in response.text
+        assert "imap_secret_reference" not in response.text
 
 
 @pytest.mark.parametrize(

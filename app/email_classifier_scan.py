@@ -317,25 +317,48 @@ def scan_readonly_batch(
         recipients = _recipient_values(message)
         attachments = _attachment_values(message)
         model_text = email_message_to_text(message)
+        persistence = {
+            "sender": sender_value,
+            "recipients": recipients,
+            "subject": str(message.get("subject") or ""),
+            "normalized_text": _normalized_message_text(message),
+            "preview": _redacted_preview(message),
+            "attachment_metadata": attachments,
+            "in_reply_to": str(message.get("inReplyTo") or ""),
+            "references": _message_id_values(message.get("references")),
+            "received_at": str(message.get("date") or message.get("received_at") or ""),
+            "model_text": model_text,
+        }
+        produces_agent_task = (
+            task_producer is not None
+            and classification.action_plan is not None
+            and bool(classification.action_plan.agent_actions)
+        )
         store.persist_scan_result(
             classification,
-            sender=sender_value,
-            recipients=recipients,
-            subject=str(message.get("subject") or ""),
-            normalized_text=_normalized_message_text(message),
-            preview=_redacted_preview(message),
-            attachment_metadata=attachments,
-            in_reply_to=str(message.get("inReplyTo") or ""),
-            references=_message_id_values(message.get("references")),
-            received_at=str(message.get("date") or message.get("received_at") or ""),
-            model_text=model_text,
-            cursor_uidvalidity=batch.uidvalidity,
-            cursor_last_seen_uid=locator.uid,
-            cursor_last_success_at=created_at.isoformat(),
-            expected_cursor_uidvalidity=reset_expectation,
+            **persistence,
+            **(
+                {}
+                if produces_agent_task
+                else {
+                    "cursor_uidvalidity": batch.uidvalidity,
+                    "cursor_last_seen_uid": locator.uid,
+                    "cursor_last_success_at": created_at.isoformat(),
+                    "expected_cursor_uidvalidity": reset_expectation,
+                }
+            ),
         )
-        if task_producer is not None and classification.action_plan is not None:
+        if produces_agent_task:
+            assert task_producer is not None
             task_producer(classification, message)
+            store.persist_scan_result(
+                classification,
+                **persistence,
+                cursor_uidvalidity=batch.uidvalidity,
+                cursor_last_seen_uid=locator.uid,
+                cursor_last_success_at=created_at.isoformat(),
+                expected_cursor_uidvalidity=reset_expectation,
+            )
         reset_expectation = None
         persisted += 1
         if decision.status is EmailClassificationStatus.PROCESSED:

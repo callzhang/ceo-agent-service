@@ -459,31 +459,6 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
 
     task = task_store.claim_reply_task(route.task.id)
     assert task is not None
-    consumer = task_store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.CONSUMER,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="",
-        owner="consumer-owner",
-    ).run
-    consumer = task_store.complete_agent_run(
-        consumer.id,
-        {"outcome": "proposal"},
-        owner="consumer-owner",
-    )
-    audit = task_store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=consumer.id,
-        operation_id="audit-production-path",
-        owner="audit-owner",
-    ).run
     [projected_entry] = payload["unsubscribe_entries"]
     operation_kind = "post_one_click" if provider_shape == "one_click" else "open_entry"
     accepted_action = ProposedAction.model_validate(
@@ -512,6 +487,52 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
             "expected_verification": "Read terminal provider evidence",
         }
     ).model_dump(mode="json")
+    consumer = task_store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer-owner",
+    ).run
+    consumer = task_store.complete_agent_run(
+        consumer.id,
+        {
+            "outcome": "proposal",
+            "summary": "Propose one audited unsubscribe operation.",
+            "proposal": {
+                "objective": "Unsubscribe the current subscription.",
+                "actions": [accepted_action],
+                "sourced_facts": [],
+                "authored_judgment": "The ActionPlan authorizes unsubscribe.",
+            },
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+                "stage": "",
+                "source": "",
+                "source_code": "",
+                "session_continuable": False,
+            },
+            "risk": "low",
+            "confidence": 1.0,
+        },
+        owner="consumer-owner",
+    )
+    audit = task_store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-production-path",
+        owner="audit-owner",
+    ).run
     monkeypatch.setattr(
         module, "_build_email_source_factory", lambda _settings: source_factory
     )
@@ -1059,10 +1080,18 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     module = _module()
     sentinel = object()
 
+    def direct_factory(_account_id):
+        return None
+
     monkeypatch.setattr(
         module,
         "_build_agent_orchestrator",
         lambda *_args, **_kwargs: sentinel,
+    )
+    monkeypatch.setattr(
+        module,
+        "_build_imap_direct_action_executor_factory",
+        lambda _store: direct_factory,
     )
     from app.email_model_registry import EmailModelRegistry
 
@@ -1101,6 +1130,7 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     )
 
     assert dependencies.orchestrator is sentinel
+    assert dependencies.run_direct_actions_once.args[1] is direct_factory
     assert not hasattr(dependencies, "unsubscribe_consumer")
     assert not hasattr(module, "_build_email_unsubscribe_consumer")
     assert not hasattr(module, "build_email_unsubscribe_operation")
@@ -2530,9 +2560,111 @@ def test_direct_action_executor_result_completes_the_exact_claim():
     assert completed[0][1]["finished_at"]
 
 
-def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_path):
+def test_direct_action_completion_forwards_provider_locator_update():
     module = _module()
-    database = tmp_path / "direct-action-no-agent.sqlite3"
+    original = SimpleNamespace(
+        stable_message_identity="account-1:message-id:<message@example.com>"
+    )
+    updated = SimpleNamespace(folder="Archive", uidvalidity=84, uid=19)
+    action = SimpleNamespace(account_id="account-1", locator=original)
+    completed = []
+    result = SimpleNamespace(
+        status="done",
+        provider_operation="MOVE ARCHIVE",
+        provider_target=original.stable_message_identity,
+        provider_result_id="revision-archive",
+        error="",
+        updated_locator=updated,
+    )
+
+    class Store:
+        def claim_next_direct_action(self, *, claimed_at):
+            assert claimed_at
+            return action
+
+        def complete_direct_action_attempt(self, claimed, **values):
+            completed.append((claimed, values))
+
+    module._run_next_direct_action(Store(), lambda _account_id: SimpleNamespace(execute=lambda _action: result))
+
+    assert completed[0][1]["updated_locator"] is updated
+
+
+def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
+    monkeypatch,
+):
+    module = _module()
+    calls = []
+    accounts = {
+        "account-a": {
+            "account_id": "account-a",
+            "enabled": True,
+            "imap_tls": True,
+            "imap_host": "imap-a.example.com",
+            "imap_port": 993,
+            "imap_username": "a@example.com",
+            "imap_secret_reference": "CEO_EMAIL_A_IMAP_SECRET",
+            "smtp_secret_reference": "CEO_EMAIL_A_SMTP_SECRET",
+        },
+        "account-b": {
+            "account_id": "account-b",
+            "enabled": True,
+            "imap_tls": True,
+            "imap_host": "imap-b.example.com",
+            "imap_port": 1993,
+            "imap_username": "b@example.com",
+            "imap_secret_reference": "CEO_EMAIL_B_IMAP_SECRET",
+            "smtp_secret_reference": "CEO_EMAIL_B_SMTP_SECRET",
+        },
+    }
+
+    class Store:
+        def get_account(self, account_id):
+            return accounts.get(account_id)
+
+    monkeypatch.setenv("CEO_EMAIL_A_IMAP_SECRET", "imap-secret-a")
+    monkeypatch.setenv("CEO_EMAIL_B_IMAP_SECRET", "imap-secret-b")
+    monkeypatch.setenv("CEO_EMAIL_A_SMTP_SECRET", "must-not-be-read-a")
+    monkeypatch.setenv("CEO_EMAIL_B_SMTP_SECRET", "must-not-be-read-b")
+    monkeypatch.setattr(
+        "app.email_provider_actions.ImapDeterministicProvider.connect",
+        lambda host, username, password, **kwargs: calls.append(
+            (host, username, password, kwargs)
+        )
+        or SimpleNamespace(),
+    )
+
+    factory = module._build_imap_direct_action_executor_factory(Store())
+    executor_a = factory("account-a")
+    executor_b = factory("account-b")
+    readback_provider_a = executor_a._readback_provider_factory()
+
+    assert executor_a.provider is not executor_b.provider
+    assert readback_provider_a is not executor_a.provider
+    assert calls == [
+        (
+            "imap-a.example.com",
+            "a@example.com",
+            "imap-secret-a",
+            {"port": 993, "account_id": "account-a"},
+        ),
+        (
+            "imap-b.example.com",
+            "b@example.com",
+            "imap-secret-b",
+            {"port": 1993, "account_id": "account-b"},
+        ),
+        (
+            "imap-a.example.com",
+            "a@example.com",
+            "imap-secret-a",
+            {"port": 993, "account_id": "account-a"},
+        ),
+    ]
+    assert all("must-not-be-read" not in repr(call) for call in calls)
+
+
+def _seed_direct_move_action(database: Path):
     email_store = EmailStore(database)
     task_store = AutoReplyStore(database)
     plan = build_versioned_email_action_plan(
@@ -2544,8 +2676,8 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
         confidence=1.0,
         model_id="email-model:direct-action-test",
         config_version="email-config:direct-action-test",
-        actions=(EmailAction.MARK_READ,),
-        action_parameters={},
+        actions=(EmailAction.MOVE,),
+        action_parameters={EmailAction.MOVE: {"target_folder": "Archive"}},
         created_at=datetime(2026, 9, 3, 8, 0, tzinfo=timezone.utc),
     )
     email_store.create_account(
@@ -2599,18 +2731,40 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
     )
 
     assert EmailActionTaskProducer(task_store, email_store).produce(plan, {}) == ()
+    return email_store, task_store
 
-    result = SimpleNamespace(
+
+def _completed_move_result():
+    return SimpleNamespace(
         status="done",
-        provider_operation="STORE \\Seen",
+        provider_operation="MOVE",
         provider_target="account-direct:message-id:<direct-901@example.com>",
         provider_result_id="provider-revision:901",
         error="",
+        updated_locator=import_module("app.email_store").StoredEmailLocator(
+            account_id="account-direct",
+            folder="Archive",
+            uidvalidity=10,
+            uid=41,
+            rfc_message_id="<direct-901@example.com>",
+            thread_id="thread-direct-901",
+            stable_message_identity=(
+                "account-direct:message-id:<direct-901@example.com>"
+            ),
+        ),
     )
+
+
+def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_path):
+    module = _module()
+    database = tmp_path / "direct-action-no-agent.sqlite3"
+    email_store, task_store = _seed_direct_move_action(database)
+
+    result = _completed_move_result()
 
     class Executor:
         def execute(self, action):
-            assert action.action_type is EmailAction.MARK_READ
+            assert action.action_type is EmailAction.MOVE
             return result
 
     assert (
@@ -2626,6 +2780,83 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
     assert task_store.list_reply_tasks(channel="email") == []
     with sqlite3.connect(database) as db:
         assert db.execute("select count(*) from agent_runs").fetchone()[0] == 0
+        assert db.execute(
+            "select folder, uidvalidity, uid from email_classifications where id=901"
+        ).fetchone() == ("Archive", 10, 41)
+        assert db.execute(
+            """
+            select folder, uidvalidity, uid from email_messages
+            where stable_message_identity=?
+            """,
+            ("account-direct:message-id:<direct-901@example.com>",),
+        ).fetchone() == ("Archive", 10, 41)
+
+
+@pytest.mark.parametrize(
+    "scanner_raced_table",
+    ("email_classifications", "email_messages"),
+)
+def test_direct_action_locator_completion_rolls_back_on_scanner_race(
+    tmp_path,
+    scanner_raced_table: str,
+) -> None:
+    module = _module()
+    store_module = import_module("app.email_store")
+    database = tmp_path / f"direct-action-{scanner_raced_table}-race.sqlite3"
+    email_store, _task_store = _seed_direct_move_action(database)
+    result = _completed_move_result()
+
+    class Executor:
+        def execute(self, action):
+            with sqlite3.connect(database) as db:
+                if scanner_raced_table == "email_classifications":
+                    db.execute(
+                        """
+                        update email_classifications
+                        set folder='Scanner', uidvalidity=77, uid=707
+                        where id=901
+                        """
+                    )
+                else:
+                    db.execute(
+                        """
+                        update email_messages
+                        set folder='Scanner', uidvalidity=77, uid=707
+                        where stable_message_identity=?
+                        """,
+                        (action.locator.stable_message_identity,),
+                    )
+            return result
+
+    with pytest.raises(store_module.EmailActionAttemptConflict):
+        module._run_next_direct_action(
+            email_store,
+            lambda _account_id: Executor(),
+            available_account_ids=("account-direct",),
+        )
+
+    expected_classification = (
+        ("Scanner", 77, 707)
+        if scanner_raced_table == "email_classifications"
+        else ("INBOX", 9, 901)
+    )
+    expected_message = (
+        ("Scanner", 77, 707)
+        if scanner_raced_table == "email_messages"
+        else ("INBOX", 9, 901)
+    )
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select folder, uidvalidity, uid from email_classifications where id=901"
+        ).fetchone() == expected_classification
+        assert db.execute(
+            """
+            select folder, uidvalidity, uid from email_messages
+            where stable_message_identity=?
+            """,
+            ("account-direct:message-id:<direct-901@example.com>",),
+        ).fetchone() == expected_message
+        assert db.execute("select count(*) from email_action_attempts").fetchone()[0] == 0
 
 
 def test_direct_action_does_not_claim_an_unavailable_account():
@@ -2701,6 +2932,66 @@ def test_failed_direct_action_degrades_provider_component_health():
             "error_code": "provider_action_failed",
         },
     ) in health
+
+
+def test_direct_action_drain_processes_multiple_actions_but_stops_at_count_bound():
+    module = _module()
+    calls = []
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 0},
+        run_direct_actions_once=lambda: calls.append("action")
+        or SimpleNamespace(status="done"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+        direct_action_max_actions=3,
+        direct_action_time_budget_seconds=60.0,
+        monotonic=lambda: 0.0,
+    )
+
+    assert calls == ["action", "action", "action"]
+
+
+def test_direct_action_drain_stops_on_empty_queue_without_busy_loop():
+    module = _module()
+    calls = []
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 0},
+        run_direct_actions_once=lambda: calls.append("empty") or None,
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+        direct_action_max_actions=100,
+        direct_action_time_budget_seconds=60.0,
+        monotonic=lambda: 0.0,
+    )
+
+    assert calls == ["empty"]
+
+
+def test_direct_action_drain_stops_at_time_bound():
+    module = _module()
+    calls = []
+    clock = iter((0.0, 0.0, 0.6))
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 0},
+        run_direct_actions_once=lambda: calls.append("action")
+        or SimpleNamespace(status="done"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+        direct_action_max_actions=100,
+        direct_action_time_budget_seconds=0.5,
+        monotonic=lambda: next(clock),
+    )
+
+    assert calls == ["action"]
 
 
 def test_scan_config_uses_active_model_category_eligibility():

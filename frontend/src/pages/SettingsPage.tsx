@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { displayValue, getSettings, getSkillDetail, getSkillFeatures, listAttention, listWechat, listWechatTargets, saveSettings, saveSkill as saveSkillApi, saveWechatReplyScope, toggleSkillFeature, type ProjectSkill, type SkillDetail, type SkillFeature, type WechatScopeTarget } from "../api/console";
+import { createEmailAccount, displayValue, getSettings, getSkillDetail, getSkillFeatures, listAttention, listEmailAccounts, listWechat, listWechatTargets, saveSettings, saveSkill as saveSkillApi, saveWechatReplyScope, testEmailAccount, toggleSkillFeature, updateEmailAccount, type EmailAccountItem, type EmailAccountPayload, type ProjectSkill, type SkillDetail, type SkillFeature, type WechatScopeTarget } from "../api/console";
 import { TokenEditor } from "../components/editor/TokenEditor";
 import { SecretField } from "../components/forms/SecretField";
 import { SearchField } from "../components/filters/SearchField";
@@ -249,12 +249,248 @@ function WechatReplyScopePanel() {
   </div>;
 }
 
+interface EmailAccountDraft {
+  account_id: string;
+  display_name: string;
+  email_address: string;
+  imap_host: string;
+  imap_port: string;
+  imap_tls: boolean;
+  imap_username: string;
+  imap_secret: string;
+  imap_secret_configured: boolean;
+  enabled: boolean;
+  scan_folders: string;
+  scan_interval_seconds: string;
+}
+
+function newEmailAccountDraft(): EmailAccountDraft {
+  return {
+    account_id: "",
+    display_name: "",
+    email_address: "",
+    imap_host: "",
+    imap_port: "993",
+    imap_tls: true,
+    imap_username: "",
+    imap_secret: "",
+    imap_secret_configured: false,
+    enabled: true,
+    scan_folders: "INBOX",
+    scan_interval_seconds: "60",
+  };
+}
+
+function emailAccountDraft(account: EmailAccountItem): EmailAccountDraft {
+  return {
+    account_id: account.account_id,
+    display_name: account.display_name,
+    email_address: account.email_address,
+    imap_host: account.imap_host,
+    imap_port: String(account.imap_port),
+    imap_tls: account.imap_tls,
+    imap_username: account.imap_username,
+    imap_secret: "",
+    imap_secret_configured: account.imap_secret_configured,
+    enabled: account.enabled,
+    scan_folders: account.scan_folders.join(", "),
+    scan_interval_seconds: String(account.scan_interval_seconds),
+  };
+}
+
+function emailAccountId(address: string) {
+  let result = "";
+  let separated = false;
+  for (const character of address.trim().toLowerCase()) {
+    const code = character.charCodeAt(0);
+    const allowed = (code >= 48 && code <= 57) || (code >= 97 && code <= 122);
+    if (allowed) {
+      result += character;
+      separated = false;
+    } else if (result && !separated) {
+      result += "_";
+      separated = true;
+    }
+  }
+  while (result.endsWith("_")) result = result.slice(0, -1);
+  return (result.length >= 2 ? result : "mail_account").slice(0, 64);
+}
+
+function accountPayload(draft: EmailAccountDraft): EmailAccountPayload | null {
+  const imapPort = Number(draft.imap_port);
+  const scanInterval = Number(draft.scan_interval_seconds);
+  const scanFolders = draft.scan_folders.split(",").map((folder) => folder.trim()).filter(Boolean);
+  if (
+    !draft.display_name.trim()
+    || !draft.email_address.trim()
+    || !draft.imap_host.trim()
+    || !draft.imap_username.trim()
+    || !Number.isInteger(imapPort)
+    || imapPort < 1
+    || imapPort > 65535
+    || !Number.isInteger(scanInterval)
+    || scanInterval < 15
+    || scanInterval > 3600
+    || !scanFolders.length
+  ) return null;
+  return {
+    account_id: draft.account_id || emailAccountId(draft.email_address),
+    display_name: draft.display_name.trim(),
+    email_address: draft.email_address.trim(),
+    imap_host: draft.imap_host.trim(),
+    imap_port: imapPort,
+    imap_tls: draft.imap_tls,
+    imap_username: draft.imap_username.trim(),
+    ...(draft.imap_secret.trim() ? { imap_secret: draft.imap_secret } : {}),
+    enabled: draft.enabled,
+    scan_folders: scanFolders,
+    scan_interval_seconds: scanInterval,
+  };
+}
+
+function savedAccountPayload(account: EmailAccountItem): EmailAccountPayload {
+  return {
+    account_id: account.account_id,
+    display_name: account.display_name,
+    email_address: account.email_address,
+    imap_host: account.imap_host,
+    imap_port: account.imap_port,
+    imap_tls: account.imap_tls,
+    imap_username: account.imap_username,
+    enabled: account.enabled,
+    scan_folders: account.scan_folders,
+    scan_interval_seconds: account.scan_interval_seconds,
+  };
+}
+
+function EmailAccountsPanel() {
+  const [accounts, setAccounts] = useState<EmailAccountItem[]>([]);
+  const [draft, setDraft] = useState<EmailAccountDraft | null>(null);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [busyAccountId, setBusyAccountId] = useState("");
+  const [error, setError] = useState("");
+  const [restartRequired, setRestartRequired] = useState(false);
+  const [connectionStates, setConnectionStates] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const controller = new AbortController();
+    listEmailAccounts(controller.signal).then((response) => {
+      if (controller.signal.aborted) return;
+      setAccounts(response.items);
+      setState("ready");
+    }).catch((reason: unknown) => {
+      if (controller.signal.aborted) return;
+      setError(reason instanceof Error ? reason.message : "邮箱账户加载失败");
+      setState("error");
+    });
+    return () => controller.abort();
+  }, []);
+
+  const replaceAccount = (next: EmailAccountItem) => {
+    setAccounts((current) => [...current.filter((account) => account.account_id !== next.account_id), next].sort((left, right) => left.display_name.localeCompare(right.display_name, "zh-CN")));
+  };
+
+  async function saveAccount() {
+    if (!draft || busyAccountId) return;
+    const payload = accountPayload(draft);
+    if (!payload) {
+      setError("请完整填写 IMAP 账户信息；端口需为 1–65535，扫描间隔需为 15–3600 秒。");
+      return;
+    }
+    if (!draft.account_id && !payload.imap_secret) {
+      setError("新增邮箱时请填写 IMAP 密码。");
+      return;
+    }
+    setBusyAccountId(payload.account_id);
+    setError("");
+    try {
+      const response = draft.account_id
+        ? await updateEmailAccount(draft.account_id, payload)
+        : await createEmailAccount(payload);
+      replaceAccount(response.item);
+      setRestartRequired(response.restart_required);
+      setDraft(null);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "邮箱账户保存失败");
+    } finally {
+      setBusyAccountId("");
+    }
+  }
+
+  async function toggleAccount(account: EmailAccountItem) {
+    if (busyAccountId) return;
+    setBusyAccountId(account.account_id);
+    setError("");
+    try {
+      const response = await updateEmailAccount(account.account_id, { ...savedAccountPayload(account), enabled: !account.enabled });
+      replaceAccount(response.item);
+      setRestartRequired(response.restart_required);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "邮箱启用状态保存失败");
+    } finally {
+      setBusyAccountId("");
+    }
+  }
+
+  async function testConnection(account: EmailAccountItem) {
+    if (busyAccountId) return;
+    setBusyAccountId(account.account_id);
+    setError("");
+    setConnectionStates((current) => ({ ...current, [account.account_id]: "正在测试 IMAP 连接…" }));
+    try {
+      const response = await testEmailAccount(account.account_id);
+      const label = response.diagnostics.imap.ok ? "IMAP 连接成功" : response.diagnostics.imap.code === "secret_not_configured" ? "请先保存 IMAP 密码" : "IMAP 连接失败";
+      setConnectionStates((current) => ({ ...current, [account.account_id]: label }));
+    } catch (reason: unknown) {
+      setConnectionStates((current) => ({ ...current, [account.account_id]: "IMAP 连接失败" }));
+      setError(reason instanceof Error ? reason.message : "连接测试失败");
+    } finally {
+      setBusyAccountId("");
+    }
+  }
+
+  return <div className="email-accounts-panel">
+    <div className="email-accounts-heading"><div><h3>邮箱账户</h3><p className="muted">可以添加多个 IMAP 邮箱。这里只读取和管理邮件；SMTP 与邮件回复保持禁用。</p></div><button type="button" className="primary-button" disabled={Boolean(busyAccountId)} onClick={() => { setDraft(newEmailAccountDraft()); setError(""); }}>添加邮箱</button></div>
+    {restartRequired && <div className="page-state email-restart-notice" role="status">配置已保存，请重启服务使其生效。</div>}
+    {error && <div className="page-state page-state-error" role="alert">{error}</div>}
+    {state === "loading" && <div className="page-state" role="status">正在加载邮箱账户…</div>}
+    {state === "error" && <button type="button" className="secondary-button" onClick={() => window.location.reload()}>重新加载</button>}
+    {state === "ready" && <div className="email-account-list">
+      {accounts.length ? accounts.map((account) => <article className="email-account-card" key={account.account_id}>
+        <div className="email-account-summary"><div><h4>{account.display_name}</h4><p>{account.email_address}</p><p className="muted">{account.imap_host}:{account.imap_port} · {account.scan_folders.join("、")} · 每 {account.scan_interval_seconds} 秒扫描</p></div><label className="email-account-switch"><span>启用</span><input type="checkbox" role="switch" aria-label={`启用${account.display_name}`} checked={account.enabled} disabled={Boolean(busyAccountId)} onChange={() => void toggleAccount(account)} /></label></div>
+        <div className="email-account-status-row"><span>{account.imap_secret_configured ? "已保存密码" : "尚未设置密码"}</span><span>{connectionStates[account.account_id] || "尚未测试连接"}</span></div>
+        <div className="email-account-actions"><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`编辑${account.display_name}`} onClick={() => { setDraft(emailAccountDraft(account)); setError(""); }}>编辑</button><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`测试${account.display_name}连接`} onClick={() => void testConnection(account)}>测试连接</button></div>
+      </article>) : <p className="wechat-empty">还没有邮箱账户。点击“添加邮箱”开始配置。</p>}
+    </div>}
+    {draft && <form className="email-account-form" aria-label={draft.account_id ? `编辑${draft.display_name}` : "添加邮箱"} onSubmit={(event) => { event.preventDefault(); void saveAccount(); }}>
+      <div className="email-account-form-heading"><div><h4>{draft.account_id ? "编辑邮箱" : "添加邮箱"}</h4><p className="muted">只需填写收信信息。系统不会连接 SMTP，也不会回复邮件。</p></div><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} onClick={() => setDraft(null)}>取消</button></div>
+      <div className="email-account-form-grid">
+        <label><span>邮箱名称</span><input aria-label="邮箱名称" value={draft.display_name} onChange={(event) => setDraft({ ...draft, display_name: event.target.value })} /></label>
+        <label><span>邮箱地址</span><input aria-label="邮箱地址" type="email" value={draft.email_address} onChange={(event) => { const nextAddress = event.target.value; setDraft({ ...draft, email_address: nextAddress, imap_username: !draft.imap_username || draft.imap_username === draft.email_address ? nextAddress : draft.imap_username }); }} /></label>
+        <label><span>IMAP 服务器</span><input aria-label="IMAP 服务器" value={draft.imap_host} placeholder="例如 imap.example.com" onChange={(event) => setDraft({ ...draft, imap_host: event.target.value })} /></label>
+        <label><span>IMAP 端口</span><input aria-label="IMAP 端口" type="number" min="1" max="65535" value={draft.imap_port} onChange={(event) => setDraft({ ...draft, imap_port: event.target.value })} /></label>
+        <label><span>IMAP 用户名</span><input aria-label="IMAP 用户名" value={draft.imap_username} onChange={(event) => setDraft({ ...draft, imap_username: event.target.value })} /></label>
+        <div><SecretField id="email-imap-secret" label="IMAP 密码" value={draft.imap_secret} onChange={(value) => setDraft({ ...draft, imap_secret: value })} />{draft.imap_secret_configured && <p className="field-help">密码已保存；留空不会修改。</p>}</div>
+        <label><span>扫描文件夹</span><input aria-label="扫描文件夹" value={draft.scan_folders} placeholder="INBOX, Receipts" onChange={(event) => setDraft({ ...draft, scan_folders: event.target.value })} /><small>多个文件夹用英文逗号分隔。</small></label>
+        <label><span>扫描间隔（秒）</span><input aria-label="扫描间隔（秒）" type="number" min="15" max="3600" value={draft.scan_interval_seconds} onChange={(event) => setDraft({ ...draft, scan_interval_seconds: event.target.value })} /></label>
+      </div>
+      <div className="email-account-options"><label><input type="checkbox" checked={draft.imap_tls} onChange={(event) => setDraft({ ...draft, imap_tls: event.target.checked })} /> 使用 SSL/TLS</label><label><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /> 启用此邮箱</label></div>
+      <button type="submit" className="primary-button" disabled={Boolean(busyAccountId)}>{busyAccountId ? "正在保存…" : "保存邮箱"}</button>
+    </form>}
+  </div>;
+}
+
+function ConnectorTabs({ connector }: { connector: string }) {
+  return <div className="settings-pill-row" role="tablist" aria-label="Connector sections"><ConnectorTab value="dingtalk" label="DingTalk" active={connector === "dingtalk"} /><ConnectorTab value="lark" label="Lark" active={connector === "lark"} /><ConnectorTab value="wechat" label="WeChat" active={connector === "wechat"} /><ConnectorTab value="email" label="Email" active={connector === "email"} /></div>;
+}
+
 function ConnectorPanel({ payload, connector }: { payload: RecordValue; connector: string }) {
   const item = record(payload[connector]);
   const state = displayValue(item.state || item.status || "unknown");
   const commands = Array.isArray(item.commands) ? item.commands : [];
-  if (connector === "wechat") return <SettingsCard><div className="settings-card-heading"><div><h2>Connectors</h2><p className="muted">WeChat 自动回复范围在当前页面直接维护。</p></div></div><div className="settings-pill-row" role="tablist" aria-label="Connector sections"><ConnectorTab value="dingtalk" label="DingTalk" active={false} /><ConnectorTab value="lark" label="Lark" active={false} /><ConnectorTab value="wechat" label="WeChat" active /></div><div id="connector-panel" role="tabpanel" aria-label="WeChat connector"><div className="connector-heading"><h3>WeChat connector</h3></div><p className="muted">连接和能力检查请在 Tutorial 完成；下方回复范围编辑不会自动发送消息。</p><WechatReplyScopePanel /></div></SettingsCard>;
-  return <SettingsCard><div className="settings-card-heading"><div><h2>Connectors</h2><p className="muted">External connector status, live probes, and local CLI readiness.</p></div><StatusBadge value={state} /></div><div className="settings-pill-row" role="tablist" aria-label="Connector sections"><ConnectorTab value="dingtalk" label="DingTalk" active={connector === "dingtalk"} /><ConnectorTab value="lark" label="Lark" active={connector === "lark"} /><ConnectorTab value="wechat" label="WeChat" active={false} /></div><div id="connector-panel" role="tabpanel" aria-label={`${connector} connector`}><div className="connector-heading"><h3>{connector === "dingtalk" ? "DingTalk connector" : "Lark connector"}</h3><StatusBadge value={state} /></div><p className="muted">只显示当前连接器的 readiness、live probe 和登录状态。</p><div className="connector-state-grid"><StateItem label="Reason" value={displayValue(item.reason_code)} /><StateItem label="Login" value={displayValue(item.login || "not requested")} /><StateItem label="Last success" value={displayValue(item.last_success || (state === "ready" ? "本次检查" : "尚无成功记录"))} /><StateItem label="Detail" value={displayValue(item.detail || "没有额外说明。")} /></div><h4>Checks</h4><div className="connector-commands">{commands.length ? commands.map((command, index) => <code key={index}>{displayValue(command)}</code>) : <span className="muted">未执行</span>}</div></div></SettingsCard>;
+  if (connector === "email") return <SettingsCard><div className="settings-card-heading"><div><h2>Connectors</h2><p className="muted">在这里维护多个收信邮箱。保存的密码不会显示在页面或接口响应中。</p></div></div><ConnectorTabs connector={connector} /><div id="connector-panel" role="tabpanel" aria-label="Email connector"><EmailAccountsPanel /></div></SettingsCard>;
+  if (connector === "wechat") return <SettingsCard><div className="settings-card-heading"><div><h2>Connectors</h2><p className="muted">WeChat 自动回复范围在当前页面直接维护。</p></div></div><ConnectorTabs connector={connector} /><div id="connector-panel" role="tabpanel" aria-label="WeChat connector"><div className="connector-heading"><h3>WeChat connector</h3></div><p className="muted">连接和能力检查请在 Tutorial 完成；下方回复范围编辑不会自动发送消息。</p><WechatReplyScopePanel /></div></SettingsCard>;
+  return <SettingsCard><div className="settings-card-heading"><div><h2>Connectors</h2><p className="muted">External connector status, live probes, and local CLI readiness.</p></div><StatusBadge value={state} /></div><ConnectorTabs connector={connector} /><div id="connector-panel" role="tabpanel" aria-label={`${connector} connector`}><div className="connector-heading"><h3>{connector === "dingtalk" ? "DingTalk connector" : "Lark connector"}</h3><StatusBadge value={state} /></div><p className="muted">只显示当前连接器的 readiness、live probe 和登录状态。</p><div className="connector-state-grid"><StateItem label="Reason" value={displayValue(item.reason_code)} /><StateItem label="Login" value={displayValue(item.login || "not requested")} /><StateItem label="Last success" value={displayValue(item.last_success || (state === "ready" ? "本次检查" : "尚无成功记录"))} /><StateItem label="Detail" value={displayValue(item.detail || "没有额外说明。")} /></div><h4>Checks</h4><div className="connector-commands">{commands.length ? commands.map((command, index) => <code key={index}>{displayValue(command)}</code>) : <span className="muted">未执行</span>}</div></div></SettingsCard>;
 }
 
 function ConnectorTab({ value, label, active }: { value: string; label: string; active: boolean }) {
