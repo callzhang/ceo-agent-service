@@ -1,7 +1,7 @@
 """Email classifier console APIs.
 
-These endpoints expose local classifier state and user feedback only. They do
-not call IMAP/SMTP or any provider API.
+These endpoints expose local classifier state and user feedback. The explicit
+account connectivity test is IMAP-only; SMTP remains disabled.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import imaplib
 import json
 from pathlib import Path
 import sqlite3
-import smtplib
 from typing import Any
 
 from fastapi import HTTPException, Query, Request
@@ -103,6 +102,7 @@ def register_email_routes(
     imap_client_factory: Any | None = None,
     smtp_client_factory: Any | None = None,
 ) -> None:
+    del smtp_client_factory  # Legacy injection point; SMTP is intentionally inert.
     try:
         email_store = email_store_factory()
         availability = _EmailStoreAvailability(email_store, "")
@@ -126,17 +126,26 @@ def register_email_routes(
     def account_response(account: dict[str, Any]) -> dict[str, Any]:
         env = secret_environment()
         operational_fields = {
-            key: value
-            for key, value in account.items()
-            if key not in {"imap_secret_reference", "smtp_secret_reference"}
+            key: account[key]
+            for key in (
+                "account_id",
+                "display_name",
+                "email_address",
+                "imap_host",
+                "imap_port",
+                "imap_tls",
+                "imap_username",
+                "enabled",
+                "scan_folders",
+                "scan_interval_seconds",
+                "created_at",
+                "updated_at",
+            )
         }
         return {
             **operational_fields,
             "imap_secret_configured": bool(
                 resolve_secret(account["imap_secret_reference"], env)
-            ),
-            "smtp_secret_configured": bool(
-                resolve_secret(account["smtp_secret_reference"], env)
             ),
         }
 
@@ -192,15 +201,10 @@ def register_email_routes(
 
     def save_secret_values(payload: EmailAccountPayload) -> None:
         updates: dict[str, str] = {}
-        for reference, secret in (
-            (payload.imap_secret_reference, payload.imap_secret),
-            (payload.smtp_secret_reference, payload.smtp_secret),
-        ):
-            if secret is None:
-                continue
-            value = secret.get_secret_value()
+        if payload.imap_secret is not None:
+            value = payload.imap_secret.get_secret_value()
             if value.strip():
-                updates[reference] = value
+                updates[payload.imap_secret_reference] = value
         if updates:
             app_config.write_env_values(updates, path=email_env_path)
 
@@ -209,12 +213,6 @@ def register_email_routes(
             return imap_client_factory(account["imap_host"], account["imap_port"])
         factory = imaplib.IMAP4_SSL if account["imap_tls"] else imaplib.IMAP4
         return factory(account["imap_host"], account["imap_port"], timeout=10)
-
-    def make_smtp_client(account: dict[str, Any]):
-        if smtp_client_factory is not None:
-            return smtp_client_factory(account["smtp_host"], account["smtp_port"])
-        factory = smtplib.SMTP_SSL if account["smtp_tls"] else smtplib.SMTP
-        return factory(account["smtp_host"], account["smtp_port"], timeout=10)
 
     def test_imap(account: dict[str, Any], secret: str | None) -> dict[str, Any]:
         if not secret:
@@ -239,26 +237,6 @@ def register_email_routes(
                 except Exception:
                     try:
                         client.shutdown()
-                    except Exception:
-                        pass
-
-    def test_smtp(account: dict[str, Any], secret: str | None) -> dict[str, Any]:
-        if not secret:
-            return {"ok": False, "code": "secret_not_configured"}
-        client = None
-        try:
-            client = make_smtp_client(account)
-            client.login(account["smtp_username"], secret)
-            return {"ok": True, "code": "connected"}
-        except Exception:
-            return {"ok": False, "code": "connection_failed"}
-        finally:
-            if client is not None:
-                try:
-                    client.quit()
-                except Exception:
-                    try:
-                        client.close()
                     except Exception:
                         pass
 
@@ -381,13 +359,10 @@ def register_email_routes(
                 account,
                 resolve_secret(account["imap_secret_reference"], env),
             ),
-            "smtp": test_smtp(
-                account,
-                resolve_secret(account["smtp_secret_reference"], env),
-            ),
+            "smtp": {"enabled": False, "tested": False, "code": "disabled"},
         }
         return {
-            "ok": all(item["ok"] for item in diagnostics.values()),
+            "ok": diagnostics["imap"]["ok"],
             "account_id": account_id,
             "diagnostics": diagnostics,
         }

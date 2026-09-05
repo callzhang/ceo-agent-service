@@ -228,6 +228,14 @@ def _account_payload(account_id: str = "work_mail") -> dict[str, object]:
     }
 
 
+def _imap_only_account_payload(account_id: str = "work_mail") -> dict[str, object]:
+    return {
+        key: value
+        for key, value in _account_payload(account_id).items()
+        if not key.startswith("smtp_")
+    }
+
+
 def _client(
     tmp_path: Path,
     *,
@@ -248,6 +256,53 @@ def _client(
     return TestClient(app), store, env_file
 
 
+def test_imap_account_create_update_and_enable_do_not_require_smtp_fields(
+    tmp_path: Path,
+):
+    client, store, _ = _client(tmp_path)
+    create_payload = _imap_only_account_payload()
+    create_payload["enabled"] = False
+
+    created = client.post("/api/console/email/accounts", json=create_payload)
+
+    assert created.status_code == 201
+    assert created.json()["item"]["enabled"] is False
+    assert not any(key.startswith("smtp_") for key in created.json()["item"])
+
+    update_payload = _imap_only_account_payload()
+    update_payload.update({"display_name": "Updated", "enabled": True})
+    updated = client.put(
+        "/api/console/email/accounts/work_mail",
+        json=update_payload,
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["item"]["enabled"] is True
+    assert updated.json()["item"]["display_name"] == "Updated"
+    assert store.get_account("work_mail")["enabled"] is True
+
+
+def test_legacy_smtp_secret_is_accepted_but_not_saved_or_reported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.delenv("CEO_EMAIL_WORK_MAIL_IMAP_SECRET", raising=False)
+    monkeypatch.delenv("CEO_EMAIL_WORK_MAIL_SMTP_SECRET", raising=False)
+    client, _, env_file = _client(tmp_path)
+    payload = _account_payload()
+    payload.update({"imap_secret": IMAP_SECRET, "smtp_secret": SMTP_SECRET})
+
+    response = client.post("/api/console/email/accounts", json=payload)
+
+    assert response.status_code == 201
+    assert response.json()["item"]["imap_secret_configured"] is True
+    assert not any(key.startswith("smtp_") for key in response.json()["item"])
+    assert app_config.read_env_file(env_file) == {
+        "CEO_EMAIL_WORK_MAIL_IMAP_SECRET": IMAP_SECRET,
+    }
+    assert SMTP_SECRET not in response.text
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     (
@@ -257,17 +312,16 @@ def _client(
         ("email_address", "missing-domain@"),
         ("imap_port", "993"),
         ("imap_tls", 1),
-        ("smtp_port", 0),
         ("enabled", "true"),
         ("scan_interval_seconds", 14),
-        ("scan_folders", []),
-        ("scan_folders", ["INBOX", "INBOX"]),
+        ("scan_folders", ()),
+        ("scan_folders", ("INBOX", "INBOX")),
         ("imap_secret_reference", "CEO_EMAIL_WORK_SMTP_SECRET"),
-        ("smtp_secret_reference", "CEO_EMAIL_WORK_IMAP_SECRET"),
     ),
 )
 def test_email_account_payload_rejects_invalid_or_coerced_values(field, value):
     payload = _account_payload()
+    payload["scan_folders"] = tuple(payload["scan_folders"])
     payload[field] = value
 
     with pytest.raises(ValidationError):
@@ -309,15 +363,18 @@ def test_resolve_secret_accepts_only_secret_references_without_leaking_values():
     env = {"CEO_EMAIL_WORK_MAIL_IMAP_SECRET": IMAP_SECRET}
 
     assert resolve_secret("CEO_EMAIL_WORK_MAIL_IMAP_SECRET", env) == IMAP_SECRET
-    assert resolve_secret("CEO_EMAIL_WORK_MAIL_SMTP_SECRET", env) is None
-    with pytest.raises(ValueError) as captured:
-        resolve_secret("NOT_A_SECRET_REFERENCE", env)
+    for invalid_reference in (
+        "CEO_EMAIL_WORK_MAIL_SMTP_SECRET",
+        "NOT_A_SECRET_REFERENCE",
+    ):
+        with pytest.raises(ValueError) as captured:
+            resolve_secret(invalid_reference, env)
 
-    assert IMAP_SECRET not in repr(captured.value)
-    assert IMAP_SECRET not in str(captured.value)
+        assert IMAP_SECRET not in repr(captured.value)
+        assert IMAP_SECRET not in str(captured.value)
 
 
-def test_account_api_redacts_and_preserves_or_updates_env_secrets(
+def test_account_api_redacts_and_preserves_or_updates_imap_secret(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -333,7 +390,7 @@ def test_account_api_redacts_and_preserves_or_updates_env_secrets(
     assert created.status_code == 201
     assert created.json()["restart_required"] is True
     assert created.json()["item"]["imap_secret_configured"] is True
-    assert created.json()["item"]["smtp_secret_configured"] is True
+    assert not any(key.startswith("smtp_") for key in created.json()["item"])
     assert listed.status_code == 200
     assert listed.json()["items"] == [created.json()["item"]]
     for response in (created, listed):
@@ -345,8 +402,7 @@ def test_account_api_redacts_and_preserves_or_updates_env_secrets(
         assert "imap_secret_reference" not in serialized
         assert "smtp_secret_reference" not in serialized
     stored_secrets = app_config.read_env_file(env_file)
-    assert stored_secrets["CEO_EMAIL_WORK_MAIL_IMAP_SECRET"] == IMAP_SECRET
-    assert stored_secrets["CEO_EMAIL_WORK_MAIL_SMTP_SECRET"] == SMTP_SECRET
+    assert stored_secrets == {"CEO_EMAIL_WORK_MAIL_IMAP_SECRET": IMAP_SECRET}
     assert IMAP_SECRET not in json.dumps(store.list_accounts())
     assert SMTP_SECRET not in json.dumps(store.list_accounts())
     assert IMAP_SECRET.encode() not in store.path.read_bytes()
@@ -358,8 +414,7 @@ def test_account_api_redacts_and_preserves_or_updates_env_secrets(
 
     assert saved.status_code == 200
     stored_secrets = app_config.read_env_file(env_file)
-    assert stored_secrets["CEO_EMAIL_WORK_MAIL_IMAP_SECRET"] == IMAP_SECRET
-    assert stored_secrets["CEO_EMAIL_WORK_MAIL_SMTP_SECRET"] == UPDATED_SMTP_SECRET
+    assert stored_secrets == {"CEO_EMAIL_WORK_MAIL_IMAP_SECRET": IMAP_SECRET}
     assert IMAP_SECRET not in saved.text
     assert SMTP_SECRET not in saved.text
     assert UPDATED_SMTP_SECRET not in saved.text
@@ -367,10 +422,11 @@ def test_account_api_redacts_and_preserves_or_updates_env_secrets(
     assert "smtp_secret_reference" not in saved.text
 
     monkeypatch.delenv("CEO_EMAIL_WORK_MAIL_IMAP_SECRET")
-    monkeypatch.delenv("CEO_EMAIL_WORK_MAIL_SMTP_SECRET")
     from_file = client.get("/api/console/email/accounts")
     assert from_file.json()["items"][0]["imap_secret_configured"] is True
-    assert from_file.json()["items"][0]["smtp_secret_configured"] is True
+    assert not any(
+        key.startswith("smtp_") for key in from_file.json()["items"][0]
+    )
 
 
 def test_email_account_payload_repr_masks_optional_secret_values():
@@ -660,6 +716,81 @@ def test_account_put_rejects_account_id_change_without_echoing_payload(tmp_path:
     assert IMAP_SECRET not in response.text
 
 
+def test_account_test_only_tests_imap_and_reports_smtp_disabled_not_tested(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    events: list[tuple[object, ...]] = []
+    secret_reads: list[str] = []
+
+    class TrackingEnvironment(dict[str, str]):
+        def get(self, key: str, default=None):
+            secret_reads.append(key)
+            return super().get(key, default)
+
+    class FakeImap:
+        def __init__(self, host: str, port: int):
+            events.append(("imap.connect", host, port))
+
+        def login(self, username: str, secret: str):
+            events.append(("imap.login", username, secret == IMAP_SECRET))
+            return "OK", []
+
+        def select(self, folder: str, readonly: bool = False):
+            events.append(("imap.select", folder, readonly))
+            return "OK", [b"0"]
+
+        def logout(self):
+            events.append(("imap.logout",))
+            return "BYE", []
+
+    def forbidden_smtp_client(*args):
+        events.append(("smtp.connect", *args))
+        raise AssertionError("SMTP must stay disabled")
+
+    client, _, _ = _client(
+        tmp_path,
+        imap_client_factory=FakeImap,
+        smtp_client_factory=forbidden_smtp_client,
+    )
+    assert (
+        client.post("/api/console/email/accounts", json=_account_payload()).status_code
+        == 201
+    )
+    monkeypatch.setattr(
+        app_config,
+        "effective_env_values",
+        lambda _path: TrackingEnvironment(
+            {
+                "CEO_EMAIL_WORK_MAIL_IMAP_SECRET": IMAP_SECRET,
+                "CEO_EMAIL_WORK_MAIL_SMTP_SECRET": SMTP_SECRET,
+            }
+        ),
+    )
+
+    response = client.post("/api/console/email/accounts/work_mail/test")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "account_id": "work_mail",
+        "diagnostics": {
+            "imap": {"ok": True, "code": "connected"},
+            "smtp": {"enabled": False, "tested": False, "code": "disabled"},
+        },
+    }
+    assert secret_reads == ["CEO_EMAIL_WORK_MAIL_IMAP_SECRET"]
+    assert events == [
+        ("imap.connect", "imap.example.test", 993),
+        ("imap.login", "work_mail@example.test", True),
+        ("imap.select", "INBOX", True),
+        ("imap.select", "Archive/Follow Up", True),
+        ("imap.logout",),
+    ]
+    assert IMAP_SECRET not in response.text
+    assert SMTP_SECRET not in response.text
+
+
 def test_connectivity_test_logs_in_selects_readonly_and_never_writes_mailbox(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -682,24 +813,10 @@ def test_connectivity_test_logs_in_selects_readonly_and_never_writes_mailbox(
             events.append(("imap.logout",))
             return "BYE", []
 
-    class FakeSmtp:
-        def __init__(self, host: str, port: int):
-            events.append(("smtp.connect", host, port))
-
-        def login(self, username: str, secret: str):
-            events.append(("smtp.login", username, secret == SMTP_SECRET))
-            return 235, b"ok"
-
-        def quit(self):
-            events.append(("smtp.quit",))
-            return 221, b"bye"
-
     monkeypatch.setenv("CEO_EMAIL_WORK_MAIL_IMAP_SECRET", IMAP_SECRET)
-    monkeypatch.setenv("CEO_EMAIL_WORK_MAIL_SMTP_SECRET", SMTP_SECRET)
     client, _, _ = _client(
         tmp_path,
         imap_client_factory=FakeImap,
-        smtp_client_factory=FakeSmtp,
     )
     assert (
         client.post("/api/console/email/accounts", json=_account_payload()).status_code
@@ -712,7 +829,7 @@ def test_connectivity_test_logs_in_selects_readonly_and_never_writes_mailbox(
     assert response.json()["ok"] is True
     assert response.json()["diagnostics"] == {
         "imap": {"ok": True, "code": "connected"},
-        "smtp": {"ok": True, "code": "connected"},
+        "smtp": {"enabled": False, "tested": False, "code": "disabled"},
     }
     assert events == [
         ("imap.connect", "imap.example.test", 993),
@@ -720,9 +837,6 @@ def test_connectivity_test_logs_in_selects_readonly_and_never_writes_mailbox(
         ("imap.select", "INBOX", True),
         ("imap.select", "Archive/Follow Up", True),
         ("imap.logout",),
-        ("smtp.connect", "smtp.example.test", 465),
-        ("smtp.login", "work_mail@example.test", True),
-        ("smtp.quit",),
     ]
     assert IMAP_SECRET not in response.text
     assert SMTP_SECRET not in response.text
@@ -732,7 +846,7 @@ def test_connectivity_test_logs_in_selects_readonly_and_never_writes_mailbox(
     )
 
 
-def test_connectivity_failure_returns_sanitized_per_protocol_diagnostics(
+def test_connectivity_failure_returns_sanitized_imap_diagnostics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -746,16 +860,10 @@ def test_connectivity_failure_returns_sanitized_per_protocol_diagnostics(
         def logout(self):
             return None
 
-    class FailingSmtp:
-        def __init__(self, _host: str, _port: int):
-            raise OSError(f"cannot connect using {SMTP_SECRET}")
-
     monkeypatch.setenv("CEO_EMAIL_WORK_MAIL_IMAP_SECRET", IMAP_SECRET)
-    monkeypatch.setenv("CEO_EMAIL_WORK_MAIL_SMTP_SECRET", SMTP_SECRET)
     client, _, _ = _client(
         tmp_path,
         imap_client_factory=FailingImap,
-        smtp_client_factory=FailingSmtp,
     )
     assert (
         client.post("/api/console/email/accounts", json=_account_payload()).status_code
@@ -770,7 +878,7 @@ def test_connectivity_failure_returns_sanitized_per_protocol_diagnostics(
         "account_id": "work_mail",
         "diagnostics": {
             "imap": {"ok": False, "code": "connection_failed"},
-            "smtp": {"ok": False, "code": "connection_failed"},
+            "smtp": {"enabled": False, "tested": False, "code": "disabled"},
         },
     }
     assert IMAP_SECRET not in response.text
@@ -801,26 +909,10 @@ def test_connectivity_cleanup_falls_back_to_local_close_without_changing_result(
         def shutdown(self):
             events.append("imap.shutdown")
 
-    class CleanupSmtp:
-        def __init__(self, _host: str, _port: int):
-            pass
-
-        def login(self, _username: str, _secret: str):
-            return 235, b"ok"
-
-        def quit(self):
-            events.append("smtp.quit")
-            raise OSError("cleanup only")
-
-        def close(self):
-            events.append("smtp.close")
-
     monkeypatch.setenv("CEO_EMAIL_WORK_MAIL_IMAP_SECRET", IMAP_SECRET)
-    monkeypatch.setenv("CEO_EMAIL_WORK_MAIL_SMTP_SECRET", SMTP_SECRET)
     client, _, _ = _client(
         tmp_path,
         imap_client_factory=CleanupImap,
-        smtp_client_factory=CleanupSmtp,
     )
     assert client.post(
         "/api/console/email/accounts", json=_account_payload()
@@ -830,4 +922,4 @@ def test_connectivity_cleanup_falls_back_to_local_close_without_changing_result(
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert events == ["imap.logout", "imap.shutdown", "smtp.quit", "smtp.close"]
+    assert events == ["imap.logout", "imap.shutdown"]
