@@ -33,7 +33,7 @@ from app.email_classifier_contracts import (
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 17
+EMAIL_SCHEMA_VERSION = 18
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -665,6 +665,42 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
             where id=new.id;
         end
     """,
+    "trg_email_direct_action_blocks_plan_switch": """
+        create trigger trg_email_direct_action_blocks_plan_switch
+        before update of status, current_action_plan_id on email_classifications
+        when (
+            old.status is not new.status
+            or old.current_action_plan_id is not new.current_action_plan_id
+        ) and exists (
+            select 1 from email_actions
+            where classification_id=old.id and status='processing'
+        )
+        begin
+            select raise(abort, 'email_direct_action_in_flight');
+        end
+    """,
+    "trg_email_direct_action_blocks_account_update": """
+        create trigger trg_email_direct_action_blocks_account_update
+        before update on email_accounts
+        when exists (
+            select 1 from email_actions
+            where account_id=old.account_id and status='processing'
+        )
+        begin
+            select raise(abort, 'email_direct_action_in_flight');
+        end
+    """,
+    "trg_email_direct_action_blocks_account_delete": """
+        create trigger trg_email_direct_action_blocks_account_delete
+        before delete on email_accounts
+        when exists (
+            select 1 from email_actions
+            where account_id=old.account_id and status='processing'
+        )
+        begin
+            select raise(abort, 'email_direct_action_in_flight');
+        end
+    """,
     "trg_email_reply_dispatch_blocks_plan_switch": """
         create trigger trg_email_reply_dispatch_blocks_plan_switch
         before update of current_action_plan_id on email_classifications
@@ -799,6 +835,8 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
     """,
 }
 _REQUIRED_TRIGGER_TABLES: Mapping[str, str] = {
+    "trg_email_direct_action_blocks_account_update": "email_accounts",
+    "trg_email_direct_action_blocks_account_delete": "email_accounts",
     "trg_email_reply_dispatch_blocks_account_update": "email_accounts",
     "trg_email_reply_dispatch_blocks_account_delete": "email_accounts",
     "trg_email_reply_dispatch_blocks_thread_update": "email_messages",
@@ -1017,7 +1055,7 @@ def _next_attempt_at(
 
 def _retry_is_due(next_attempt_at: object, claimed_at: str) -> bool:
     if not next_attempt_at:
-        return True
+        return False
     try:
         return (
             _required_utc_timestamp(str(next_attempt_at), field="next_attempt_at")
@@ -2149,6 +2187,7 @@ class EmailStore:
             if legacy_unsubscribe_schema:
                 self._finish_unsubscribe_schema_migration(db)
             self._create_indexes_and_triggers(db)
+            is_prototype = False
             if latest_version < 16:
                 is_prototype = latest_version == 0
                 if latest_version < 2:
@@ -2171,7 +2210,14 @@ class EmailStore:
                     )
                 latest_version = 16
             if latest_version == 16:
-                self._migrate_v16_to_v17(db)
+                if is_prototype:
+                    self._migrate_v16_to_v17(db, record_version=False)
+                    latest_version = 17
+                else:
+                    self._migrate_v16_to_v17(db)
+                    latest_version = 17
+            if latest_version == 17:
+                self._migrate_v17_to_v18(db)
             self._validate_durable_state(db)
 
     @classmethod
@@ -2725,7 +2771,12 @@ class EmailStore:
             "where trim(completed_at) = ''"
         )
 
-    def _migrate_v16_to_v17(self, db: sqlite3.Connection) -> None:
+    def _migrate_v16_to_v17(
+        self,
+        db: sqlite3.Connection,
+        *,
+        record_version: bool = True,
+    ) -> None:
         """Add explicit bounded-result integrity metadata and its lookup index."""
 
         columns = self._table_columns(db, "email_unsubscribe_receipts")
@@ -2806,8 +2857,18 @@ class EmailStore:
             "idx_email_unsubscribe_receipts_classification_action "
             "on email_unsubscribe_receipts(classification_id, action_identity)"
         )
+        if record_version:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) "
+                "values (17, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v17_to_v18(self, db: sqlite3.Connection) -> None:
+        """Record direct-action authorization fences created for schema v18."""
+
         db.execute(
-            "insert into email_schema_migrations(version, applied_at) values (17, ?)",
+            "insert into email_schema_migrations(version, applied_at) values (18, ?)",
             (self._now(),),
         )
 
@@ -3326,6 +3387,42 @@ class EmailStore:
             when new.classification_source not in ('model', 'user')
             begin
                 select raise(abort, 'invalid email classification source');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_direct_action_blocks_plan_switch
+            before update of status, current_action_plan_id on email_classifications
+            when (
+                old.status is not new.status
+                or old.current_action_plan_id is not new.current_action_plan_id
+            ) and exists (
+                select 1 from email_actions
+                where classification_id=old.id and status='processing'
+            )
+            begin
+                select raise(abort, 'email_direct_action_in_flight');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_direct_action_blocks_account_update
+            before update on email_accounts
+            when exists (
+                select 1 from email_actions
+                where account_id=old.account_id and status='processing'
+            )
+            begin
+                select raise(abort, 'email_direct_action_in_flight');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_direct_action_blocks_account_delete
+            before delete on email_accounts
+            when exists (
+                select 1 from email_actions
+                where account_id=old.account_id and status='processing'
+            )
+            begin
+                select raise(abort, 'email_direct_action_in_flight');
             end
             """,
             """
@@ -9572,7 +9669,9 @@ class EmailStore:
             row = db.execute(
                 """
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
-                       c.thread_id, c.stable_message_identity
+                       c.thread_id, c.stable_message_identity,
+                       c.status as classification_status,
+                       c.current_action_plan_id
                 from email_actions as a
                 join email_classifications as c on c.id=a.classification_id
                 where a.action_id=?
@@ -9615,6 +9714,13 @@ class EmailStore:
             ):
                 raise EmailActionAttemptConflict(
                     f"direct action claim changed for {action.action_id}"
+                )
+            if (
+                row["classification_status"] != "processed"
+                or row["current_action_plan_id"] != action.action_plan_id
+            ):
+                raise EmailActionAttemptConflict(
+                    f"direct action is no longer current for {action.action_id}"
                 )
             if updated_locator is not None:
                 classification_updated = db.execute(

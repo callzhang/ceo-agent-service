@@ -7,6 +7,7 @@ import email.policy
 from hashlib import sha256
 import imaplib
 import re
+import ssl
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Mapping, Protocol
 
@@ -282,7 +283,7 @@ _LIST_RESPONSE = re.compile(
 _UID_RESPONSE = re.compile(rb"\bUID\s+(?P<uid>[1-9][0-9]*)\b")
 _COPYUID_RESPONSE = re.compile(
     rb"^(?P<uidvalidity>[1-9][0-9]*)\s+"
-    rb"(?P<source>[1-9][0-9]*)\s+(?P<destination>[1-9][0-9]*)$"
+    rb"(?P<source>\S+)\s+(?P<destination>\S+)$"
 )
 _PERMANENTFLAGS_RESPONSE = re.compile(rb"^\((?P<flags>[^)]*)\)$")
 
@@ -318,7 +319,12 @@ class ImapDeterministicProvider:
         timeout: float | None = 20.0,
         account_id: str,
     ) -> "ImapDeterministicProvider":
-        session = imaplib.IMAP4_SSL(host, port, timeout=timeout)
+        session = imaplib.IMAP4_SSL(
+            host,
+            port,
+            ssl_context=ssl.create_default_context(),
+            timeout=timeout,
+        )
         try:
             status, _ = session.login(username, password)
             _require_ok(status, "IMAP login failed")
@@ -732,9 +738,29 @@ def _copyuid(response: object, *, source_uid: int) -> tuple[int, int] | None:
     match = _COPYUID_RESPONSE.fullmatch(raw.strip())
     if match is None:
         raise ImapReadbackUnsupported("invalid IMAP COPYUID response")
-    if int(match.group("source")) != source_uid:
+    parsed_source = _single_uid_set(match.group("source"))
+    parsed_destination = _single_uid_set(match.group("destination"))
+    if parsed_source != source_uid:
         raise ImapReadbackUnsupported("IMAP COPYUID source mismatch")
-    return int(match.group("uidvalidity")), int(match.group("destination"))
+    return int(match.group("uidvalidity")), parsed_destination
+
+
+def _single_uid_set(raw: bytes) -> int:
+    """Accept only a UID set whose expansion contains exactly one positive UID."""
+
+    if b"," in raw or b"*" in raw:
+        raise ImapReadbackUnsupported("invalid IMAP COPYUID response")
+    parts = raw.split(b":")
+    if len(parts) not in {1, 2} or any(
+        not part or not part.isascii() or not part.isdigit() for part in parts
+    ):
+        raise ImapReadbackUnsupported("invalid IMAP COPYUID response")
+    values = tuple(int(part) for part in parts)
+    if any(value <= 0 for value in values) or (
+        len(values) == 2 and values[0] != values[1]
+    ):
+        raise ImapReadbackUnsupported("invalid IMAP COPYUID response")
+    return values[0]
 
 
 def _is_imap_keyword(value: str) -> bool:

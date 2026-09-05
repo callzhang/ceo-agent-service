@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+import ssl
 from typing import Mapping
 
 import pytest
@@ -473,6 +474,45 @@ def test_production_imap_refreshes_capabilities_after_login(monkeypatch) -> None
     ]
 
 
+def test_production_imap_connect_verifies_certificate_and_hostname(monkeypatch) -> None:
+    module = import_module("app.email_provider_actions")
+    captured: dict[str, object] = {}
+
+    class Session:
+        def login(self, _username: str, _password: str):
+            return "OK", [b"logged in"]
+
+        def capability(self):
+            return "OK", [b"IMAP4rev1 MOVE UIDPLUS"]
+
+        def logout(self):
+            return "BYE", [b"logout"]
+
+    def connect(host, port, *, ssl_context, timeout):
+        captured.update(
+            host=host,
+            port=port,
+            ssl_context=ssl_context,
+            timeout=timeout,
+        )
+        return Session()
+
+    monkeypatch.setattr(module.imaplib, "IMAP4_SSL", connect)
+
+    provider = module.ImapDeterministicProvider.connect(
+        "imap.example.com",
+        "person@example.com",
+        "imap-secret",
+        account_id="account-1",
+    )
+    provider.close()
+
+    context = captured["ssl_context"]
+    assert isinstance(context, ssl.SSLContext)
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+
+
 @pytest.mark.parametrize(
     ("action_type", "parameters", "expected_flags"),
     (
@@ -706,6 +746,43 @@ def test_production_imap_move_without_message_id_uses_uidplus_copyuid_response()
     assert session.logged_out is True
     assert len(readback_sessions) == 1
     assert readback_sessions[0].logged_out is True
+
+
+def test_production_imap_move_accepts_singleton_uid_ranges_in_copyuid() -> None:
+    module = import_module("app.email_provider_actions")
+
+    class SingletonRangeCopyuidSession(FakeWritableImapSession):
+        def response(self, code: str):
+            if code == "COPYUID":
+                return "COPYUID", [b"84 7:7 19:19"]
+            return super().response(code)
+
+    session = SingletonRangeCopyuidSession(messages={"INBOX": {7: (None, set())}})
+    action = _action(EmailAction.ARCHIVE, {})
+    action = type(action)(
+        **{
+            **action.__dict__,
+            "locator": type(action.locator)(
+                **{
+                    **action.locator.__dict__,
+                    "rfc_message_id": None,
+                    "stable_message_identity": "account-1:imap:INBOX:42:7",
+                }
+            ),
+        }
+    )
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1"),
+        readback_provider_factory=lambda: module.ImapDeterministicProvider(
+            FakeWritableImapSession(messages=session.messages),
+            account_id="account-1",
+        ),
+    ).execute(action)
+
+    assert result.status == "done"
+    assert result.updated_locator is not None
+    assert result.updated_locator.uidvalidity == 84
+    assert result.updated_locator.uid == 19
 
 
 @pytest.mark.parametrize(
