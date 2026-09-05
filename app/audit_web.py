@@ -2156,6 +2156,14 @@ def build_worker_status_payload(
     with store.read_snapshot():
         queues = _queue_status_snapshots(store)
         attention_rows = _queue_attention_rows(store)
+        email_health = _email_worker_health_snapshot(store)
+    summary_queues = [
+        queue for queue in queues if not queue.get("_summary_projection", False)
+    ]
+    queues = [
+        {key: value for key, value in queue.items() if key != "_summary_projection"}
+        for queue in queues
+    ]
     attention_count = sum(
         max(0, int(row.get("count") or 1))
         for row in attention_rows
@@ -2167,15 +2175,16 @@ def build_worker_status_payload(
         # Connector probes have their own cache so a slow CLI/live probe never
         # delays the queue/status snapshot used by /workers and /attention.
         "connectors": {},
+        "email": email_health,
         "queues": queues,
         "attention_rows": attention_rows,
         "database": {"path": str(store.path)},
         "summary": {
             "queue_count": len(queues),
-            "pending": sum(int(queue["pending"]) for queue in queues),
-            "processing": sum(int(queue["processing"]) for queue in queues),
-            "failed": sum(int(queue["failed"]) for queue in queues),
-            "retryable": sum(int(queue["retryable"]) for queue in queues),
+            "pending": sum(int(queue["pending"]) for queue in summary_queues),
+            "processing": sum(int(queue["processing"]) for queue in summary_queues),
+            "failed": sum(int(queue["failed"]) for queue in summary_queues),
+            "retryable": sum(int(queue["retryable"]) for queue in summary_queues),
             "attention": attention_count,
         },
     }
@@ -2321,6 +2330,7 @@ def _worker_metric_card(label: str, value: str, detail: str, *, ok: bool | None 
 def _service_component_snapshots() -> list[dict[str, str]]:
     return [
         {"name": "audit-web", "role": "UI/API", "cadence": "always on"},
+        {"name": "email-worker", "role": "IMAP scan and email actions", "cadence": "account configured"},
         {"name": "database-backup", "role": "sqlite backup", "cadence": "periodic"},
         {"name": "producer", "role": "DingTalk message scan", "cadence": f"{producer_interval_seconds()}s"},
         {"name": "consumer pool", "role": f"reply task execution x{consumer_worker_count()}", "cadence": f"{consumer_poll_interval_seconds()}s"},
@@ -2441,6 +2451,7 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
         ("Memory writes", "memory_write_events", "status", "updated_at", "last_error"),
         ("DingTalk Todos", "work_todo_dingtalk_links", "status", "updated_at", "last_error"),
         ("WeChat deliveries", "wechat_deliveries", "status", "updated_at", "error"),
+        ("Email provider actions", "email_actions", "status", "updated_at", "error"),
     ]
     snapshots: list[dict[str, object]] = []
     with store._connect() as db:
@@ -2469,7 +2480,138 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
                     "latest_error": _queue_latest_error(db, table, status_column, error_column),
                 }
             )
+        if _sqlite_table_exists(db, "reply_tasks"):
+            snapshots.append(_email_unsubscribe_task_queue_snapshot(db))
     return snapshots
+
+
+def _email_unsubscribe_task_queue_snapshot(
+    db: sqlite3.Connection,
+) -> dict[str, object]:
+    predicate = """
+        channel='email'
+        and json_valid(trigger_message_json)
+        and json_extract(trigger_message_json, '$.schema')='email_agent_action.v1'
+        and json_extract(trigger_message_json, '$.lifecycle_version')=
+            'email_unsubscribe_audited_v2'
+        and json_extract(trigger_message_json, '$.action_type')='unsubscribe'
+    """
+    rows = db.execute(
+        f"""
+        select lower(coalesce(status, '')) as status, count(*) as count
+        from reply_tasks
+        where {predicate}
+        group by lower(coalesce(status, ''))
+        order by status
+        """
+    ).fetchall()
+    counts = {
+        str(row["status"] or "-"): int(row["count"] or 0) for row in rows
+    }
+    latest = db.execute(
+        f"""
+        select updated_at
+        from reply_tasks
+        where {predicate}
+        order by updated_at desc, id desc
+        limit 1
+        """
+    ).fetchone()
+    latest_error = db.execute(
+        f"""
+        select error
+        from reply_tasks
+        where {predicate}
+          and lower(status)='failed'
+          and trim(coalesce(error, ''))<>''
+        order by updated_at desc, id desc
+        limit 1
+        """
+    ).fetchone()
+    return {
+        "name": "Email unsubscribe tasks",
+        "table": "reply_tasks (channel=email, unsubscribe)",
+        "counts": counts,
+        "pending": _queue_count_for(counts, {"pending"}),
+        "processing": _queue_count_for(counts, {"processing"}),
+        "failed": _queue_count_for(counts, {"failed", "needs_human"}),
+        "retryable": 0,
+        "latest_updated_at": "" if latest is None else str(latest["updated_at"] or ""),
+        "latest_error": "" if latest_error is None else str(latest_error["error"] or ""),
+        # reply_tasks already contributes to the aggregate summary; this row is
+        # a filtered observability view and must not count the same task twice.
+        "_summary_projection": True,
+    }
+
+
+def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
+    rows = []
+    with store._connect() as db:
+        if not _sqlite_table_exists(db, "service_state"):
+            return {"status": "unavailable", "entries": []}
+        rows = db.execute(
+            """
+            select key, value, updated_at
+            from service_state
+            where key like 'email_worker_health:%'
+            order by key
+            """
+        ).fetchall()
+    entries: list[dict[str, object]] = []
+    safe_integer_fields = {
+        "accounts",
+        "components",
+        "failures",
+        "persisted_count",
+        "task_count",
+        "isolated_count",
+        "superseded_count",
+        "unresolved_count",
+    }
+    for row in rows:
+        scope = str(row["key"])[len("email_worker_health:") :]
+        if not scope or re.fullmatch(r"[A-Za-z0-9:_-]{1,160}", scope) is None:
+            continue
+        try:
+            payload = json.loads(str(row["value"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        status = payload.get("status")
+        if status not in {
+            "ready",
+            "degraded",
+            "failed",
+            "starting",
+            "waiting_configuration",
+            "unavailable",
+        }:
+            status = "unavailable"
+        entry: dict[str, object] = {
+            "scope": scope,
+            "status": status,
+        }
+        error_code = payload.get("error_code")
+        if isinstance(error_code, str) and re.fullmatch(
+            r"[A-Za-z0-9:_-]{1,160}", error_code
+        ):
+            entry["error_code"] = error_code
+        for field in safe_integer_fields:
+            value = payload.get(field)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                entry[field] = value
+        entry["updated_at"] = str(row["updated_at"] or "")
+        entries.append(entry)
+    process = next(
+        (entry for entry in entries if entry["scope"] == "process:email-worker"),
+        None,
+    )
+    return {
+        "status": "unavailable" if process is None else process["status"],
+        "updated_at": "" if process is None else process["updated_at"],
+        "entries": entries,
+    }
 
 
 def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
@@ -9805,6 +9947,7 @@ def create_audit_app(
             },
             "components": _service_component_snapshots(),
             "connectors": {},
+            "email": {"status": "refreshing", "updated_at": "", "entries": []},
             "queues": [],
             "attention_rows": [],
             "database": {"path": str(db_path)},

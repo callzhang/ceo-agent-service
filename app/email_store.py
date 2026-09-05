@@ -1591,6 +1591,92 @@ def _audited_unsubscribe_lineage(
     }
 
 
+def _current_unsubscribe_task_lineage(
+    db: sqlite3.Connection,
+    *,
+    task: sqlite3.Row,
+    classification: sqlite3.Row,
+) -> dict[str, object] | None:
+    current_plan = db.execute(
+        """
+        select action_plan_id, action_plan_version, classification_id,
+               account_id, actions_json
+        from email_action_plans
+        where action_plan_id=?
+        """,
+        (classification["current_action_plan_id"],),
+    ).fetchone()
+    if current_plan is None:
+        return None
+    try:
+        payload = json.loads(str(task["trigger_message_json"]))
+        actions = _json_load(
+            current_plan["actions_json"],
+            field="actions_json",
+            expected_type=list,
+        )
+        thread_identity = str(classification["message_thread_identity"] or "")
+        from app.email_task_adapter import email_conversation_id
+
+        expected_action_identity = email_action_identity(
+            account_id=str(classification["account_id"]),
+            stable_message_identity=str(classification["stable_message_identity"]),
+            action_type=EmailAction.UNSUBSCRIBE,
+            action_plan_version=int(current_plan["action_plan_version"]),
+        )
+        expected_conversation_id = email_conversation_id(
+            str(classification["account_id"]),
+            thread_identity,
+        )
+    except (TypeError, ValueError, RecursionError, KeyError):
+        return None
+    if not isinstance(payload, dict) or EmailAction.UNSUBSCRIBE.value not in actions:
+        return None
+    expected_payload = {
+        "schema": "email_agent_action.v1",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "action_type": EmailAction.UNSUBSCRIBE.value,
+        "action_identity": expected_action_identity,
+        "action_plan_id": current_plan["action_plan_id"],
+        "action_plan_version": current_plan["action_plan_version"],
+        "classification_id": current_plan["classification_id"],
+        "account_id": current_plan["account_id"],
+        "stable_message_identity": classification["stable_message_identity"],
+        "thread_identity": thread_identity,
+    }
+    if (
+        any(payload.get(field) != value for field, value in expected_payload.items())
+        or task["trigger_message_id"] != expected_action_identity
+        or task["conversation_id"] != expected_conversation_id
+        or not str(task["execution_generation"] or "").strip()
+    ):
+        return None
+    runs = db.execute(
+        """
+        select id, role
+        from agent_runs
+        where reply_task_id=? and execution_generation=?
+        order by id
+        """,
+        (task["id"], task["execution_generation"]),
+    ).fetchall()
+    return {
+        "kind": "unsubscribe",
+        "operation": "unsubscribe",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "task_id": int(task["id"]),
+        "task_status": str(task["status"]),
+        "consumer_run_ids": [
+            int(row["id"]) for row in runs if row["role"] == "consumer"
+        ],
+        "audit_run_ids": [
+            int(row["id"]) for row in runs if row["role"] == "audit"
+        ],
+        "status": str(task["status"]),
+        "_sort_created_at": str(task["created_at"] or ""),
+    }
+
+
 def _validate_unsubscribe_operations(
     operations: Sequence[Mapping[str, object]],
 ) -> list[dict[str, str]]:
@@ -8502,6 +8588,26 @@ class EmailStore:
                     """
                 ).fetchall()
             }
+            task_rows: Sequence[sqlite3.Row] = ()
+            if generic_tables == {"reply_tasks", "agent_runs"}:
+                task_rows = db.execute(
+                    """
+                    select id, conversation_id, trigger_message_id,
+                           trigger_message_json, execution_generation,
+                           status, created_at
+                    from reply_tasks
+                    where channel='email'
+                      and json_valid(trigger_message_json)
+                      and json_extract(
+                            trigger_message_json, '$.classification_id'
+                          )=?
+                      and json_extract(
+                            trigger_message_json, '$.action_type'
+                          )='unsubscribe'
+                    order by created_at, id
+                    """,
+                    (classification_id,),
+                ).fetchall()
             lineage_by_action: dict[str, dict[str, object]] = {}
             if unsubscribe_rows and generic_tables == {"reply_tasks", "agent_runs"}:
                 for row in unsubscribe_rows:
@@ -8538,6 +8644,20 @@ class EmailStore:
                 """,
                 (classification_id,),
             ).fetchall()
+            terminal_unsubscribe_actions = {
+                str(row["action_identity"]) for row in unsubscribe_rows
+            }
+            inflight_unsubscribe_events = []
+            for task in task_rows:
+                if str(task["trigger_message_id"]) in terminal_unsubscribe_actions:
+                    continue
+                lineage = _current_unsubscribe_task_lineage(
+                    db,
+                    task=task,
+                    classification=classification,
+                )
+                if lineage is not None:
+                    inflight_unsubscribe_events.append(lineage)
 
         attempts_by_action: dict[str, list[dict[str, Any]]] = {}
         for row in attempts:
@@ -8553,6 +8673,7 @@ class EmailStore:
                 }
             )
         events: list[dict[str, Any]] = []
+        events.extend(inflight_unsubscribe_events)
         for row in action_rows:
             events.append(
                 {

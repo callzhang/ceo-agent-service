@@ -952,6 +952,49 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
     assert fixture.unrelated_run.id not in legacy_event["consumer_run_ids"]
 
 
+def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    with sqlite3.connect(fixture.database) as db:
+        db.execute("delete from email_unsubscribe_steps")
+        db.execute("delete from email_unsubscribe_receipts")
+        db.execute("delete from email_unsubscribe_continuations")
+        db.execute("delete from email_unsubscribe_effects")
+        db.execute("delete from email_unsubscribe_claims")
+        db.execute(
+            "update reply_tasks set status='processing' where id=?",
+            (fixture.task.id,),
+        )
+        db.execute(
+            "update agent_runs set status='running', completed_at='' where id=?",
+            (fixture.audit.id,),
+        )
+
+    response = fixture.client.get(
+        f"/api/console/email/classifications/{fixture.classification_id}"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["observability"] == [
+        {
+            "kind": "unsubscribe",
+            "operation": "unsubscribe",
+            "lifecycle_version": "email_unsubscribe_audited_v2",
+            "task_id": fixture.task.id,
+            "task_status": "processing",
+            "consumer_run_ids": [fixture.consumer.id],
+            "audit_run_ids": [fixture.audit.id],
+            "status": "processing",
+        }
+    ]
+    serialized = json.dumps(response.json()["observability"], sort_keys=True)
+    assert all(marker not in serialized for marker in fixture.private_markers)
+    assert all(
+        str(value) not in serialized for value in fixture.private_markers.values()
+    )
+
+
 @pytest.mark.parametrize(
     "mismatch",
     (

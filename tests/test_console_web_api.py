@@ -798,6 +798,114 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
     json.dumps(payload, ensure_ascii=False)
 
 
+def test_worker_status_projects_email_health_and_queues_without_double_counting(
+    monkeypatch, tmp_path: Path
+):
+    database = tmp_path / "worker.sqlite3"
+    EmailStore(database)
+    store = AutoReplyStore(database)
+    store.set_service_state(
+        "email_worker_health:process:email-worker",
+        json.dumps(
+            {
+                "status": "ready",
+                "accounts": 2,
+                "components": 3,
+                "imap_secret": "must-not-leak",
+            }
+        ),
+    )
+    store.set_service_state(
+        "email_worker_health:component:email-provider-actions",
+        json.dumps(
+            {
+                "status": "degraded",
+                "error_code": "provider_action_failed",
+                "private_target": "INBOX/secret",
+            }
+        ),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            insert into email_actions (
+                action_id, action_plan_id, classification_id, account_id,
+                action_type, parameters_json, config_version, status,
+                attempt_count, error, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "email-action:test-label",
+                "email-plan:test",
+                1,
+                "account-a",
+                "label",
+                "{}",
+                "email-config:test",
+                "pending",
+                0,
+                "",
+                "2026-09-05T00:00:00+00:00",
+                "2026-09-05T00:00:00+00:00",
+            ),
+        )
+    store.ensure_reply_task(
+        channel="email",
+        conversation_id="email:account-a:thread-a",
+        conversation_title="Email unsubscribe",
+        single_chat=False,
+        trigger_message_id="email-action:test-unsubscribe",
+        trigger_create_time="2026-09-05T00:00:00+00:00",
+        trigger_sender="sender@example.test",
+        trigger_text="Immutable action plan",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "lifecycle_version": "email_unsubscribe_audited_v2",
+                "action_type": "unsubscribe",
+                "classification_id": 1,
+            }
+        ),
+        execution_generation="email-generation-1",
+    )
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {"label": label, "ok": True, "state": "running"},
+    )
+
+    payload = audit_web_module.build_worker_status_payload(
+        store,
+        include_system_health=False,
+    )
+
+    assert any(item["name"] == "email-worker" for item in payload["components"])
+    email = payload["email"]
+    assert email["status"] == "ready"
+    assert email["entries"] == [
+        {
+            "scope": "component:email-provider-actions",
+            "status": "degraded",
+            "error_code": "provider_action_failed",
+            "updated_at": email["entries"][0]["updated_at"],
+        },
+        {
+            "scope": "process:email-worker",
+            "status": "ready",
+            "accounts": 2,
+            "components": 3,
+            "updated_at": email["entries"][1]["updated_at"],
+        },
+    ]
+    serialized = json.dumps(email, sort_keys=True)
+    assert "must-not-leak" not in serialized
+    assert "INBOX/secret" not in serialized
+    queues = {item["name"]: item for item in payload["queues"]}
+    assert queues["Email provider actions"]["pending"] == 1
+    assert queues["Email unsubscribe tasks"]["pending"] == 1
+    assert payload["summary"]["pending"] == 2
+
+
 def test_console_status_worker_snapshot_is_not_blocked_by_wechat_probe(
     monkeypatch, tmp_path: Path,
 ):
