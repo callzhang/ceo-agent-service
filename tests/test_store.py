@@ -22,6 +22,45 @@ from app.store import (
 )
 
 
+def test_prepare_outbound_postfix_reuses_final_body_when_candidate_or_config_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "outbound-postfix.sqlite3")
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", "https://first.example")
+
+    first = store.prepare_outbound_postfix(
+        "dingtalk",
+        "conversation-1:message-1",
+        "第一版回复",
+        "请给出进度",
+    )
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", "https://later.example")
+    replay = store.prepare_outbound_postfix(
+        "dingtalk",
+        "conversation-1:message-1",
+        "第二版回复",
+        "新的原文",
+    )
+
+    assert first == replay
+    assert "第一版回复" in replay.final_body
+    assert "第二版回复" not in replay.final_body
+    assert "https://first.example" in replay.final_body
+    assert "https://later.example" not in replay.final_body
+    assert replay.feedback_token
+
+
+def test_prepare_outbound_postfix_rejects_invalid_replay_candidate(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "outbound-postfix.sqlite3")
+    store.prepare_outbound_postfix("wechat", "message-1", "初始回复", "原文")
+
+    with pytest.raises(ValueError, match="outbound body is required"):
+        store.prepare_outbound_postfix("wechat", "message-1", " ", "原文")
+
+
 def _claim_audit_run(
     store: AutoReplyStore,
     reply_task_id: int,

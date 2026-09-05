@@ -74,6 +74,11 @@ from app.meeting_alignment_models import (
     MeetingAlignmentQueueStatus,
     MeetingAlignmentRun,
 )
+from app.outbound_postfix import (
+    PreparedOutboundMessage,
+    compose_outbound_postfix,
+    normalize_outbound_postfix_inputs,
+)
 from app.task_models import (
     DingTalkTodoLinkStatus,
     FollowUpDraft,
@@ -106,7 +111,7 @@ SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-05.2"
+STORE_SCHEMA_VERSION = "2026-09-05.3"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -138,6 +143,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "runtime_feedback_iteration_capabilities",
     "feedback_iteration_decisions",
     "feedback_iteration_decision_items",
+    "outbound_postfixes",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_items_status",
@@ -4154,6 +4160,68 @@ class AutoReplyStore:
                 where codex_session_id is not null and codex_session_id <> ''
                 """
             )
+            db.execute(
+                """
+                create table if not exists outbound_postfixes (
+                    channel text not null check(channel in ('dingtalk', 'wechat')),
+                    delivery_key text not null check(trim(delivery_key) <> ''),
+                    final_body text not null check(trim(final_body) <> ''),
+                    feedback_token text not null default '',
+                    postfix_version text not null,
+                    created_at text not null default current_timestamp,
+                    primary key(channel, delivery_key)
+                )
+                """
+            )
+
+    def prepare_outbound_postfix(
+        self,
+        channel: str,
+        delivery_key: str,
+        body: str,
+        original_text: str,
+    ) -> PreparedOutboundMessage:
+        """Persist and return the immutable final form for one provider delivery."""
+        normalized_channel, normalized_delivery_key = normalize_outbound_postfix_inputs(
+            channel=channel,
+            delivery_key=delivery_key,
+            body=body,
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                """select channel, delivery_key, final_body, feedback_token, postfix_version
+                   from outbound_postfixes
+                   where channel=? and delivery_key=?""",
+                (normalized_channel, normalized_delivery_key),
+            ).fetchone()
+            if row is not None:
+                return PreparedOutboundMessage(
+                    channel=str(row["channel"]),
+                    delivery_key=str(row["delivery_key"]),
+                    final_body=str(row["final_body"]),
+                    feedback_token=str(row["feedback_token"]),
+                    postfix_version=str(row["postfix_version"]),
+                )
+            prepared = compose_outbound_postfix(
+                channel=normalized_channel,
+                delivery_key=normalized_delivery_key,
+                body=body,
+                original_text=original_text,
+                feedback_base_url=feedback_spike_vercel_base_url(),
+            )
+            db.execute(
+                """insert into outbound_postfixes (
+                       channel, delivery_key, final_body, feedback_token, postfix_version
+                   ) values (?, ?, ?, ?, ?)""",
+                (
+                    prepared.channel,
+                    prepared.delivery_key,
+                    prepared.final_body,
+                    prepared.feedback_token,
+                    prepared.postfix_version,
+                ),
+            )
+            return prepared
 
     @staticmethod
     def _managed_skill_from_row(row: sqlite3.Row) -> ManagedSkill:
