@@ -148,7 +148,7 @@ from app.feedback_events import (
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
 from app.feedback_processing import project_feedback_status
-from app.email_store import EmailStore
+from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
 from app.follow_up import resolve_failed_follow_up
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
@@ -2451,7 +2451,6 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
         ("Memory writes", "memory_write_events", "status", "updated_at", "last_error"),
         ("DingTalk Todos", "work_todo_dingtalk_links", "status", "updated_at", "last_error"),
         ("WeChat deliveries", "wechat_deliveries", "status", "updated_at", "error"),
-        ("Email provider actions", "email_actions", "status", "updated_at", "error"),
     ]
     snapshots: list[dict[str, object]] = []
     with store._connect() as db:
@@ -2480,9 +2479,65 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
                     "latest_error": _queue_latest_error(db, table, status_column, error_column),
                 }
             )
+        if _sqlite_table_exists(db, "email_actions") and _sqlite_table_exists(
+            db, "email_classifications"
+        ):
+            snapshots.append(_email_action_queue_snapshot(db))
         if _sqlite_table_exists(db, "reply_tasks"):
             snapshots.append(_email_unsubscribe_task_queue_snapshot(db))
     return snapshots
+
+
+def _email_action_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
+    """Project only actions the worker can still execute for the current plan."""
+
+    current_plan = """
+        from email_actions as a
+        join email_classifications as c on c.id=a.classification_id
+        where a.action_plan_id=c.current_action_plan_id
+          and c.status='processed'
+    """
+    rows = db.execute(
+        f"""
+        select lower(coalesce(a.status, '')) as status, count(*) as count
+        {current_plan}
+        group by lower(coalesce(a.status, ''))
+        order by status
+        """
+    ).fetchall()
+    counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
+    retryable_row = db.execute(
+        f"""
+        select count(*) as count
+        {current_plan}
+          and lower(a.status)='failed'
+          and a.attempt_count < ?
+          and trim(a.next_attempt_at) != ''
+          and datetime(a.next_attempt_at) is not null
+        """,
+        (DIRECT_ACTION_MAX_ATTEMPTS,),
+    ).fetchone()
+    retryable = int(retryable_row["count"] or 0)
+    latest = db.execute(
+        f"""
+        select a.updated_at, a.error
+        {current_plan}
+        order by a.updated_at desc, a.action_id desc
+        limit 1
+        """
+    ).fetchone()
+    raw_failed = _queue_count_for(counts, {"failed", "error"})
+    return {
+        "name": "Email provider actions",
+        "table": "email_actions",
+        "counts": counts,
+        "pending": _queue_count_for(counts, {"pending"}),
+        "processing": _queue_count_for(counts, {"processing"}),
+        "failed": max(0, raw_failed - retryable),
+        "retryable": retryable,
+        "latest_updated_at": "" if latest is None else str(latest["updated_at"] or ""),
+        "latest_error": "" if latest is None else str(latest["error"] or ""),
+    }
 
 
 def _email_unsubscribe_task_queue_snapshot(
