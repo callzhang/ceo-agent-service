@@ -78,6 +78,36 @@ class ServiceMessageSender:
         )
         return SendReceipt(message=message, provider_result=provider_result)
 
+    def send_dingtalk_ding(
+        self,
+        *,
+        delivery_key: str,
+        body: str,
+        user_id: str | None = None,
+    ) -> SendReceipt:
+        message = self.prepare(
+            channel="dingtalk",
+            delivery_key=delivery_key,
+            body=body,
+        )
+        return self.send_dingtalk_ding_prepared(message, user_id=user_id)
+
+    def send_dingtalk_ding_prepared(
+        self,
+        message: PreparedOutboundMessage,
+        *,
+        user_id: str | None = None,
+    ) -> SendReceipt:
+        """Dispatch a persisted diagnostic DING through the raw adapter."""
+        self._require_persisted_message(message, channel="dingtalk")
+        if self.dingtalk is None:
+            raise RuntimeError("DingTalk adapter is required")
+        if user_id:
+            provider_result = self.dingtalk.ding_user(user_id, message.final_body)
+        else:
+            provider_result = self.dingtalk.ding_self(message.final_body)
+        return SendReceipt(message=message, provider_result=provider_result)
+
     def send_dingtalk_reply_to_trigger_prepared(
         self,
         message: PreparedOutboundMessage,

@@ -13,6 +13,7 @@ from app.store import AutoReplyStore
 class RecordingDingTalkAdapter:
     def __init__(self) -> None:
         self.calls: list[tuple[object, ...]] = []
+        self.ding_calls: list[tuple[str | None, str]] = []
 
     def send_message(
         self,
@@ -41,6 +42,12 @@ class RecordingDingTalkAdapter:
             )
         )
         return {"message_id": "dingtalk-message-1"}
+
+    def ding_user(self, user_id: str, text: str) -> None:
+        self.ding_calls.append((user_id, text))
+
+    def ding_self(self, text: str) -> None:
+        self.ding_calls.append((None, text))
 
 
 class RecordingWechatRunner:
@@ -138,6 +145,28 @@ def test_dingtalk_facade_dispatches_only_the_prepared_final_body(
     ]
     assert receipt.message.final_body.count("/api/dingtalk-feedback-spike") == 2
     assert receipt.provider_result == {"message_id": "dingtalk-message-1"}
+
+
+@pytest.mark.parametrize("user_id", [None, "user-1"])
+def test_dingtalk_ding_facade_dispatches_only_the_prepared_final_body(
+    tmp_path, monkeypatch, user_id,
+) -> None:
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", "https://feedback.example.test",
+    )
+    store = AutoReplyStore(tmp_path / "service-message-sender.sqlite3")
+    dingtalk = RecordingDingTalkAdapter()
+    sender = ServiceMessageSender(store=store, dingtalk=dingtalk)
+
+    message = sender.prepare(
+        channel="dingtalk",
+        delivery_key=f"diagnostic:{user_id or 'self'}",
+        body="诊断消息",
+    )
+    receipt = sender.send_dingtalk_ding_prepared(message, user_id=user_id)
+
+    assert dingtalk.ding_calls == [(user_id, receipt.message.final_body)]
+    assert receipt.message.final_body.count("/api/dingtalk-feedback-spike") == 2
 
 
 def test_wechat_facade_reuses_the_prepared_final_body_for_a_retry(tmp_path) -> None:

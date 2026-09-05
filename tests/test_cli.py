@@ -4792,6 +4792,9 @@ def test_run_once_command_prints_attempt_sent_and_error_deltas(
 
 def test_test_ding_command_uses_dws_client(monkeypatch, tmp_path, capsys):
     calls = {}
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", "https://feedback.example.test",
+    )
 
     class FakeDws:
         def __init__(self, **kwargs):
@@ -4817,7 +4820,8 @@ def test_test_ding_command_uses_dws_client(monkeypatch, tmp_path, capsys):
         "ding_robot_name": "极简云机器人",
         "ding_receiver_user_id": "user-1",
     }
-    assert calls["ding_text"] == "CEO agent DING smoke test"
+    assert calls["ding_text"].startswith("CEO agent DING smoke test")
+    assert calls["ding_text"].count("/api/dingtalk-feedback-spike") == 2
     assert "ding_self: OK" in capsys.readouterr().out
 
 
@@ -7008,7 +7012,7 @@ def test_collect_corpus_fetches_current_user_sender_messages(monkeypatch, tmp_pa
     assert "collect-corpus sender_user_id=principal-user-1 records=1" in capsys.readouterr().out
 
 
-def test_probe_dws_reports_unread_ok_and_ding_blocked(monkeypatch, capsys):
+def test_probe_dws_reports_unread_ok_and_ding_blocked(monkeypatch, tmp_path, capsys):
     class FakeDws:
         def list_unread_conversations(self, count):
             assert count == 1
@@ -7019,7 +7023,12 @@ def test_probe_dws_reports_unread_ok_and_ding_blocked(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
 
-    exit_code = probe_dws()
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+    exit_code = probe_dws(settings)
 
     output = capsys.readouterr().out
     assert exit_code == 1
@@ -7027,7 +7036,7 @@ def test_probe_dws_reports_unread_ok_and_ding_blocked(monkeypatch, capsys):
     assert "ding_self: BLOCKED DING to self is not configured" in output
 
 
-def test_probe_dws_reports_read_blocked_without_crashing(monkeypatch, capsys):
+def test_probe_dws_reports_read_blocked_without_crashing(monkeypatch, tmp_path, capsys):
     class FakeDws:
         def list_unread_conversations(self, count):
             raise DwsError("not_authenticated")
@@ -7037,7 +7046,12 @@ def test_probe_dws_reports_read_blocked_without_crashing(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
 
-    exit_code = probe_dws()
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+    exit_code = probe_dws(settings)
 
     output = capsys.readouterr().out
     assert exit_code == 1

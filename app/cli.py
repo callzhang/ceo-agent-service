@@ -1962,7 +1962,13 @@ def test_ding_command(settings: WorkerSettings) -> None:
         ding_receiver_user_id=settings.ding_receiver_user_id,
     )
     try:
-        dws.ding_self("CEO agent DING smoke test")
+        ServiceMessageSender(
+            store=AutoReplyStore(settings.db_path),
+            dingtalk=dws,
+        ).send_dingtalk_ding(
+            delivery_key="cli:test-ding",
+            body="CEO agent DING smoke test",
+        )
     except DwsError as exc:
         raise SystemExit(f"ding_self: BLOCKED {exc}") from exc
     print("ding_self: OK", flush=True)
@@ -3450,7 +3456,7 @@ def build_work_profile_command(
     return len(evidence)
 
 
-def probe_dws() -> int:
+def probe_dws(settings: WorkerSettings) -> int:
     dws = DwsClient()
     blocked = False
 
@@ -3462,7 +3468,13 @@ def probe_dws() -> int:
         print(f"unread_conversations: BLOCKED {exc}", flush=True)
 
     try:
-        dws.ding_self("CEO agent dws probe")
+        ServiceMessageSender(
+            store=AutoReplyStore(settings.db_path),
+            dingtalk=dws,
+        ).send_dingtalk_ding(
+            delivery_key="cli:probe-dws",
+            body="CEO agent dws probe",
+        )
         print("ding_self: OK", flush=True)
     except DwsError as exc:
         blocked = True
@@ -3726,7 +3738,7 @@ def main() -> None:
             dingtalk_kb_workspace=args.dingtalk_kb_workspace,
         )
     elif args.command == "probe-dws":
-        raise SystemExit(probe_dws())
+        raise SystemExit(probe_dws(settings))
     elif args.command == "probe-agent-runtimes":
         raise SystemExit(
             probe_agent_runtimes_command(settings, route_names=tuple(args.route))
