@@ -35,9 +35,13 @@ def test_open_settings_rejects_missing_reader_app(tmp_path):
     launch_agent = tmp_path / "reader.plist"
     launch_agent.write_text("plist")
 
+    def run_command(*args, **kwargs):
+        raise AssertionError("open must not run when reader app is missing")
+
     with pytest.raises(PermissionOnboardingError, match="reader app"):
         open_full_disk_access_settings(
-            reader_app=tmp_path / "missing.app", launch_agent=launch_agent
+            reader_app=tmp_path / "missing.app", launch_agent=launch_agent,
+            run_command=run_command,
         )
 
 
@@ -45,9 +49,13 @@ def test_open_settings_rejects_missing_launch_agent(tmp_path):
     app_path = tmp_path / "CEO WeChat Reader.app"
     app_path.mkdir()
 
+    def run_command(*args, **kwargs):
+        raise AssertionError("open must not run when launch agent is missing")
+
     with pytest.raises(PermissionOnboardingError, match="launch agent"):
         open_full_disk_access_settings(
-            reader_app=app_path, launch_agent=tmp_path / "missing.plist"
+            reader_app=app_path, launch_agent=tmp_path / "missing.plist",
+            run_command=run_command,
         )
 
 
@@ -161,8 +169,16 @@ def test_restart_reader_reports_launchctl_failure(tmp_path):
         def health(self):
             raise AssertionError("health must not be called")
 
+    def monotonic():
+        raise AssertionError("clock must not run when launchctl fails")
+
+    def pause(_seconds):
+        raise AssertionError("pause must not run when launchctl fails")
+
     with pytest.raises(PermissionOnboardingError, match="kickstart denied"):
-        restart_reader_and_wait(Reader(), uid=501, run_command=run)
+        restart_reader_and_wait(
+            Reader(), uid=501, run_command=run, monotonic=monotonic, pause=pause
+        )
 
 
 def test_restart_reader_has_bounded_timeout(tmp_path):
