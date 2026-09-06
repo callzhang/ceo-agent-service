@@ -37,43 +37,50 @@ const wechatStep = {
   ],
 };
 
+const refreshedTutorial = {
+  item: {
+    steps: [{
+      ...wechatStep,
+      status: "needs_action",
+      summary: (
+        "Enable CEO WeChat Reader in Full Disk Access, then click " +
+        "Connect WeChat again."
+      ),
+    }],
+  },
+  meta: { snapshot_at: "2026-09-05T00:00:01Z" },
+};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe("TutorialPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getTutorial
-      .mockResolvedValueOnce({
-        item: { steps: [wechatStep] },
-        meta: { snapshot_at: "2026-09-05T00:00:00Z" },
-      })
-      .mockResolvedValue({
-        item: {
-          steps: [{
-            ...wechatStep,
-            status: "needs_action",
-            summary: (
-              "Enable CEO WeChat Reader in Full Disk Access, then click " +
-              "Connect WeChat again."
-            ),
-          }],
-        },
-        meta: { snapshot_at: "2026-09-05T00:00:01Z" },
-      });
+    getTutorial.mockResolvedValueOnce({
+      item: { steps: [wechatStep] },
+      meta: { snapshot_at: "2026-09-05T00:00:00Z" },
+    });
     runTutorialAction.mockResolvedValue({
       ok: true,
       item: {
         next_step_status: "needs_action",
         evidence: { full_disk_access_prompted: true },
       },
-      message: (
-        "Enable CEO WeChat Reader in Full Disk Access, then click " +
-        "Connect WeChat again."
-      ),
+      message: "Full Disk Access settings opened.",
       meta: { updated_at: "2026-09-05T00:00:01Z" },
     });
   });
 
   it("runs the two-action WeChat permission flow and refreshes persisted guidance", async () => {
     const user = userEvent.setup();
+    const refresh = deferred<typeof refreshedTutorial>();
+    getTutorial.mockReturnValueOnce(refresh.promise);
     render(<MemoryRouter><TutorialPage /></MemoryRouter>);
 
     expect(await screen.findByRole("button", { name: "Check" })).toBeInTheDocument();
@@ -81,7 +88,11 @@ describe("TutorialPage", () => {
 
     expect(runTutorialAction).toHaveBeenCalledWith("connect_wechat");
     expect(screen.queryByRole("button", { name: "Verify" })).not.toBeInTheDocument();
-    expect(screen.getAllByText(/Enable CEO WeChat Reader in Full Disk Access/).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Full Disk Access settings opened.")).toBeInTheDocument();
+    expect(screen.queryByText(/Enable CEO WeChat Reader in Full Disk Access/)).not.toBeInTheDocument();
+    refresh.resolve(refreshedTutorial);
+    expect(await screen.findByText(/Enable CEO WeChat Reader in Full Disk Access/)).toBeInTheDocument();
+    expect(screen.getByText("需要处理")).toBeInTheDocument();
     await waitFor(() => expect(getTutorial).toHaveBeenCalledTimes(2));
   });
 });
