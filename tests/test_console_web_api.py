@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import os
+import inspect
 from pathlib import Path
 import threading
 import time
@@ -21,6 +22,7 @@ from app.email_store import EmailStore
 from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_model_registry import EmailModelRegistry
 from app.store import AutoReplyStore
+from app.setup_wizard_models import SetupWizardEvent
 from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
 from app.web_api.common import (
@@ -122,6 +124,50 @@ def test_console_api_reuses_the_initialized_audit_store(
 
     assert constructed_for_app == 1
     assert len(constructions) == constructed_for_app
+
+
+def test_console_tutorial_run_persists_resulting_step_and_uses_sync_endpoint(
+    tmp_path: Path, monkeypatch
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_setup_wizard_step(
+        step_id="preflight",
+        status="done",
+        summary="ready",
+    )
+
+    def fake_run(action_id, *, repo_root, env):
+        del repo_root, env
+        assert action_id == "connect_wechat"
+        return SetupWizardEvent(
+            step_id="wechat_connection",
+            action_id="connect_wechat",
+            status="done",
+            next_step_status="needs_action",
+            summary="Enable CEO WeChat Reader, then click Connect WeChat again.",
+            evidence={"full_disk_access_prompted": True},
+        )
+
+    monkeypatch.setattr(audit_web_module, "run_setup_action", fake_run)
+
+    with _client(tmp_path, spa_enabled=True) as client:
+        route = next(
+            route
+            for route in client.app.routes
+            if getattr(route, "path", "") == "/api/console/tutorial/run/{action_id}"
+        )
+        response = client.post("/api/console/tutorial/run/connect_wechat")
+
+    assert inspect.iscoroutinefunction(route.endpoint) is False
+    assert response.status_code == 200
+    assert response.json()["item"]["next_step_status"] == "needs_action"
+    persisted = AutoReplyStore(db_path)
+    assert persisted.get_setup_wizard_step("wechat_connection")["status"] == "needs_action"
+    event = persisted.list_setup_wizard_events(
+        "wechat_connection", action_id="connect_wechat", limit=1
+    )[0]
+    assert json.loads(event["evidence_json"])["full_disk_access_prompted"] is True
 
 
 def test_common_envelopes_and_normalization_are_explicitly_json_serializable():

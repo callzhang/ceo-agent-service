@@ -7535,6 +7535,32 @@ def test_setup_wizard_event_history_round_trips(tmp_path):
     assert events[0]["evidence_json"] == '{"codex_config": "/tmp/config.toml"}'
 
 
+def test_setup_wizard_event_history_filters_exact_action_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_setup_wizard_event(
+        step_id="wechat_connection",
+        action_id="connect_wechat",
+        status="done",
+        evidence_json='{"full_disk_access_prompted": true}',
+    )
+    store.record_setup_wizard_event(
+        step_id="wechat_connection",
+        action_id="check_wechat_connection",
+        status="done",
+        evidence_json='{"reader_ready": true}',
+    )
+
+    events = store.list_setup_wizard_events(
+        "wechat_connection",
+        action_id="connect_wechat",
+        limit=1,
+    )
+
+    assert len(events) == 1
+    assert events[0]["action_id"] == "connect_wechat"
+    assert json.loads(events[0]["evidence_json"])["full_disk_access_prompted"] is True
+
+
 def test_setup_wizard_running_event_is_not_finished(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

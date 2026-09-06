@@ -7,6 +7,7 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
+import app.setup_wizard as setup_wizard_module
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.service_codex_config import load_service_mcp_servers
@@ -31,6 +32,13 @@ from app.setup_wizard_models import (
     SetupWizardStatus,
 )
 from app.store import AutoReplyStore
+
+
+@pytest.fixture(autouse=True)
+def _clear_wechat_permission_prompt_cache():
+    setup_wizard_module._WECHAT_PERMISSION_PROMPTS.clear()
+    yield
+    setup_wizard_module._WECHAT_PERMISSION_PROMPTS.clear()
 
 
 def test_setup_wizard_steps_are_ordered_and_gated():
@@ -1478,6 +1486,13 @@ def test_second_wechat_connect_restarts_reader_before_database_verification(
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     _record_wechat_phase(store, full_disk_access_prompted=True)
+    store.record_setup_wizard_event(
+        step_id="wechat_connection",
+        action_id="check_wechat_connection",
+        status="done",
+        summary="newer read-only check",
+        evidence_json=json.dumps({"reader_ready": True}),
+    )
     calls = []
 
     class FakeSetup:
@@ -1599,12 +1614,16 @@ def test_second_wechat_connect_restart_timeout_is_blocked_without_connect(
     monkeypatch.setenv("CEO_WORKER_DB", str(db_path))
 
     event = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+    _record_wechat_phase(AutoReplyStore(db_path), **event.evidence)
+    repeated = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
 
-    assert calls == ["restart"]
+    assert calls == ["restart", "restart"]
     assert event.status == "done"
     assert event.next_step_status == "blocked"
     assert event.evidence["full_disk_access_prompted"] is True
     assert event.evidence["reader_health"] == "blocked"
+    assert repeated.next_step_status == "blocked"
+    assert repeated.evidence["full_disk_access_prompted"] is True
 
 
 def test_verified_wechat_connect_checks_current_connection_without_onboarding(
@@ -1626,6 +1645,7 @@ def test_verified_wechat_connect_checks_current_connection_without_onboarding(
     _record_wechat_phase(
         store,
         full_disk_access_prompted=True,
+        account_id="acct-1",
         database_status="ready",
         message_read_verified=True,
     )
@@ -1669,6 +1689,69 @@ def test_verified_wechat_connect_checks_current_connection_without_onboarding(
     assert calls == ["connect"]
     assert event.next_step_status == "done"
     assert event.evidence["message_read_verified"] is True
+
+
+@pytest.mark.parametrize("event_account_id", [None, "acct-other"])
+def test_wechat_connect_restarts_when_verified_event_has_no_matching_account(
+    monkeypatch, tmp_path: Path, event_account_id: str | None
+):
+    from app.wechat.setup import WechatSetupResult
+
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_wechat_read_state(
+        account_id="acct-1",
+        account_dir="/acct-1",
+        db_dir="/acct-1/db_storage",
+        app_version="4.1.10",
+        self_user_id="self-1",
+        capability_status="ready",
+        capability_reason="",
+    )
+    evidence = {
+        "full_disk_access_prompted": True,
+        "database_status": "ready",
+        "message_read_verified": True,
+    }
+    if event_account_id is not None:
+        evidence["account_id"] = event_account_id
+    _record_wechat_phase(store, **evidence)
+    calls = []
+
+    class FakeSetup:
+        reader = object()
+
+        def connect(self, selected_account_id: str = ""):
+            calls.append("connect")
+            return WechatSetupResult(
+                action_id="connect_wechat",
+                status="done",
+                next_step_status="ready",
+                summary="connected",
+                evidence={
+                    "account_id": "acct-1",
+                    "database_status": "ready",
+                    "message_read_verified": True,
+                },
+            )
+
+    monkeypatch.setattr(
+        "app.wechat.service.build_setup_service", lambda _store: FakeSetup()
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.restart_reader_and_wait",
+        lambda _reader: calls.append("restart") or {"status": "ready"},
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.open_full_disk_access_settings",
+        lambda: (_ for _ in ()).throw(AssertionError("must not reopen settings")),
+    )
+    monkeypatch.setenv("CEO_WORKER_DB", str(db_path))
+
+    event = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+
+    assert calls == ["restart", "connect"]
+    assert event.next_step_status == "done"
 
 
 def test_wechat_check_does_not_open_settings_or_restart_reader(

@@ -53,13 +53,22 @@ def open_full_disk_access_settings(
     if not launch_agent_path.is_file():
         raise PermissionOnboardingError(f"launch agent file is missing: {launch_agent_path}")
 
-    result = run_command(
-        ["/usr/bin/open", FULL_DISK_ACCESS_SETTINGS_URL],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
+    try:
+        result = run_command(
+            ["/usr/bin/open", FULL_DISK_ACCESS_SETTINGS_URL],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise PermissionOnboardingError(
+            "opening Full Disk Access settings timed out"
+        ) from exc
+    except OSError as exc:
+        raise PermissionOnboardingError(
+            "Full Disk Access settings command could not start"
+        ) from exc
     if result.returncode != 0:
         stderr = result.stderr or ""
         raise PermissionOnboardingError(
@@ -85,13 +94,25 @@ def restart_reader_and_wait(
 ) -> dict:
     """Kickstart the reader LaunchAgent and wait for its ready health response."""
     resolved_uid = os.getuid() if uid is None else uid
-    result = run_command(
-        ["/bin/launchctl", "kickstart", "-k", f"gui/{resolved_uid}/{READER_LABEL}"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
+    try:
+        result = run_command(
+            [
+                "/bin/launchctl",
+                "kickstart",
+                "-k",
+                f"gui/{resolved_uid}/{READER_LABEL}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise PermissionOnboardingError("restarting WeChat reader timed out") from exc
+    except OSError as exc:
+        raise PermissionOnboardingError(
+            "WeChat reader restart command could not start"
+        ) from exc
     if result.returncode != 0:
         stderr = result.stderr or ""
         raise PermissionOnboardingError(

@@ -53,6 +53,10 @@ SESSION_KEY_RE = re.compile(r"(?i)session[_-]?id=\S+")
 LOCAL_PATH_RE = re.compile(r"(?:/Users|/private/tmp|/private/var|/tmp)/[^\s'\"<>]+")
 SETUP_STATUS_VALUES = set(SetupStatus.__args__)
 _WECHAT_CONNECT_LOCK = threading.Lock()
+# The HTTP route persists the returned event immediately after this function
+# returns. Keep the successful first-phase event briefly in-process so a second
+# request arriving inside that handoff window cannot open another Settings pane.
+# Persisted connect_wechat evidence remains the durable source of truth.
 _WECHAT_PERMISSION_PROMPTS: dict[str, SetupWizardEvent] = {}
 
 
@@ -1118,7 +1122,11 @@ def _check_wechat_connection(store) -> SetupStepStatus:
 
 
 def _latest_wechat_setup_evidence(store: AutoReplyStore) -> dict[str, object]:
-    events = store.list_setup_wizard_events("wechat_connection", limit=1)
+    events = store.list_setup_wizard_events(
+        "wechat_connection",
+        action_id="connect_wechat",
+        limit=1,
+    )
     if not events:
         return {}
     try:
@@ -1162,13 +1170,18 @@ def _run_wechat_setup_action(action_id: str) -> SetupWizardEvent:
             store = AutoReplyStore(db_path)
             previous = _latest_wechat_setup_evidence(store)
             awaiting_permission = previous.get("full_disk_access_prompted") is True
+            ready_states = [
+                row
+                for row in store.list_wechat_read_states()
+                if row["capability_status"] == "ready"
+            ]
+            previous_account_id = str(previous.get("account_id") or "")
             verified = (
-                previous.get("database_status") == "ready"
+                bool(previous_account_id)
+                and previous.get("database_status") == "ready"
                 and previous.get("message_read_verified") is True
-                and any(
-                    row["capability_status"] == "ready"
-                    for row in store.list_wechat_read_states()
-                )
+                and len(ready_states) == 1
+                and ready_states[0]["account_id"] == previous_account_id
             )
 
             if verified or awaiting_permission:

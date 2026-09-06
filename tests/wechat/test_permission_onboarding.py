@@ -1,9 +1,10 @@
+import subprocess
+
 import pytest
 
 from app.wechat.permission_onboarding import (
     FULL_DISK_ACCESS_SETTINGS_URL,
     PermissionLaunchResult,
-    READER_LABEL,
     PermissionOnboardingError,
     open_full_disk_access_settings,
     restart_reader_and_wait,
@@ -90,6 +91,29 @@ def test_open_settings_reports_stderr_on_command_failure(tmp_path):
         open_full_disk_access_settings(
             reader_app=app_path, launch_agent=launch_agent, run_command=run
         )
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (subprocess.TimeoutExpired(["/usr/bin/open"], 10), "timed out"),
+        (OSError("cannot execute /Users/test/private-tool"), "could not start"),
+    ],
+)
+def test_open_settings_normalizes_command_runner_errors(tmp_path, error, message):
+    app_path, launch_agent = _reader_files(tmp_path)
+
+    def run(command, **kwargs):
+        raise error
+
+    with pytest.raises(PermissionOnboardingError, match=message) as caught:
+        open_full_disk_access_settings(
+            reader_app=app_path,
+            launch_agent=launch_agent,
+            run_command=run,
+        )
+
+    assert "/Users/test" not in str(caught.value)
 
 
 def test_restart_reader_runs_exact_launchctl_command_and_waits_for_ready(tmp_path):
@@ -179,6 +203,27 @@ def test_restart_reader_reports_launchctl_failure(tmp_path):
         restart_reader_and_wait(
             Reader(), uid=501, run_command=run, monotonic=monotonic, pause=pause
         )
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (subprocess.TimeoutExpired(["/bin/launchctl"], 10), "timed out"),
+        (OSError("cannot execute /Users/test/private-tool"), "could not start"),
+    ],
+)
+def test_restart_reader_normalizes_command_runner_errors(error, message):
+    def run(command, **kwargs):
+        raise error
+
+    class Reader:
+        def health(self, **kwargs):
+            raise AssertionError("health must not run after launchctl error")
+
+    with pytest.raises(PermissionOnboardingError, match=message) as caught:
+        restart_reader_and_wait(Reader(), uid=501, run_command=run)
+
+    assert "/Users/test" not in str(caught.value)
 
 
 def test_restart_reader_has_bounded_timeout(tmp_path):
