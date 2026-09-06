@@ -2783,6 +2783,33 @@ def test_authorization_wait_defers_without_consuming_feedback_cycle(store):
     assert len(audit.calls) == 1
 
 
+def test_authorization_recovery_retries_audit_with_next_turn_attempt(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
+    audit = ScriptedAudit(
+        store,
+        _audit_result(
+            "failed",
+            0,
+            code="authorization_wait",
+            retryable=True,
+            authorization_required=True,
+        ),
+        _audit_result("executed", 0),
+    )
+    orchestrator = AgentOrchestrator(store=store, consumer=consumer, audit=audit)
+
+    first = _process(orchestrator, task)
+    assert first.status == "failed_retryable"
+
+    # The worker persists the authorization failure before scheduling a retry.
+    task = task.model_copy(update={"error": "authorization_wait"})
+    recovered = _process(orchestrator, task)
+
+    assert recovered.status == "executed"
+    assert [call["turn_attempt"] for call in audit.calls] == [0, 1]
+
+
 def test_expired_audit_turn_without_session_is_reclaimed_in_place(store):
     task = _task(store)
     consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))

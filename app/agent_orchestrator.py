@@ -913,7 +913,10 @@ class AgentOrchestrator:
             if task.error == error.code:
                 return _NextAudit(
                     run.proposal_revision,
-                    run.turn_attempt,
+                    # Failed runs have a durable unique turn key. A recovery
+                    # must create a fresh Audit turn rather than attempting to
+                    # claim the already failed one.
+                    run.turn_attempt + 1,
                     run.parent_agent_run_id or 0,
                     None,
                     error.code or "authorization_required",
