@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.parser import Parser
+from email.utils import getaddresses
 from hashlib import sha256
 import json
 import re
@@ -8587,7 +8588,6 @@ class EmailStore:
             row = db.execute(
                 """
                 select classifications.*, messages.normalized_text as message_text,
-                       messages.recipients_json as message_recipients_json,
                        messages.attachment_metadata_json
                            as message_attachment_metadata_json
                 from email_classifications as classifications
@@ -8606,10 +8606,7 @@ class EmailStore:
             **self._classification_evidence_row(row),
             "message_text": message.get_payload(),
             "cc": message.get("Cc", ""),
-            "recipients": _json_load(
-                row["message_recipients_json"] or "[]",
-                field="recipients_json", expected_type=list,
-            ),
+            "recipients": [address for _, address in getaddresses(message.get_all("To", []))],
         }
 
     def list_email_classification_observability(
