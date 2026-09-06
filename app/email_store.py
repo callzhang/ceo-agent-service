@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.parser import Parser
 from hashlib import sha256
 import json
 import re
@@ -8598,9 +8599,13 @@ class EmailStore:
                 """,
                 (classification_id,),
             ).fetchone()
-        return None if row is None else {
+        if row is None:
+            return None
+        message = Parser().parsestr(row["message_text"] or "", headersonly=True)
+        return {
             **self._classification_evidence_row(row),
-            "message_text": row["message_text"] or "",
+            "message_text": message.get_payload(),
+            "cc": message.get("Cc", ""),
             "recipients": _json_load(
                 row["message_recipients_json"] or "[]",
                 field="recipients_json", expected_type=list,

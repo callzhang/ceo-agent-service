@@ -583,7 +583,7 @@ def test_email_classification_list_and_detail_expose_only_attachment_metadata(
         sender="sender@example.com",
         recipients=("recipient@example.com",),
         subject="Quarterly brief",
-        normalized_text="__subject__quarterly brief",
+        normalized_text="From: sender@example.com\nTo: recipient@example.com\nCc: copy@example.com\nSubject: Quarterly brief\n\n正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容",
         preview="Metadata only",
         attachment_metadata=tuple(
             EmailAttachmentMetadata.model_validate(item) for item in expected_metadata
@@ -602,7 +602,8 @@ def test_email_classification_list_and_detail_expose_only_attachment_metadata(
     assert detailed.status_code == 200
     assert listed.json()["items"][0]["attachment_metadata"] == expected_metadata
     assert detailed.json()["item"]["attachment_metadata"] == expected_metadata
-    assert detailed.json()["item"]["message_text"] == "__subject__quarterly brief"
+    assert detailed.json()["item"]["message_text"] == "正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容"
+    assert detailed.json()["item"]["cc"] == "copy@example.com"
     assert detailed.json()["item"]["recipients"] == ["recipient@example.com"]
     assert "message_text" not in listed.json()["items"][0]
     for response_item in (listed.json()["items"][0], detailed.json()["item"]):

@@ -6,6 +6,10 @@ response, sourced from the existing `email_messages.normalized_text` snapshot.
 The list remains lightweight. The reader preserves line breaks, renders plain
 text rather than executable email HTML, and displays the persisted recipient
 list separately in the message header.
+The detail projection parses the saved message envelope and returns only its
+body as `message_text`; Cc is displayed separately above the preview. Quoted
+and forwarded headers within the body remain intact. The stored snapshot and
+classifier inputs are not modified.
 Recipient loading, errors and absent values are explicit, and selecting another
 message never displays the previous message's recipients.
 Missing snapshots and failed requests have explicit

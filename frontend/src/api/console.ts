@@ -155,6 +155,7 @@ export interface EmailClassificationItem {
   preview: string;
   message_text?: string;
   recipients?: string[];
+  cc?: string;
   received_at: string;
   category: string;
   confidence: number;
@@ -363,6 +364,7 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
     subject: emailText(row.subject),
     preview: emailText(row.preview),
     message_text: emailText(row.message_text),
+    cc: emailText(row.cc),
     recipients: Array.isArray(row.recipients) ? row.recipients.map(emailText) : [],
     received_at: emailText(row.received_at),
     category: confirmedCategory || predictedCategory || emailText(row.category),

@@ -109,11 +109,13 @@ describe("EmailPage", () => {
     renderEmail("/email?tab=pending_feedback");
     expect(await screen.findByText("正在加载邮件正文…")).toBeInTheDocument();
     const text = "完整正文第一段\n\n" + "邮件内容".repeat(100) + "正文结尾";
-    pending.resolve({ item: { message_text: text, recipients: ["first@example.com", "second@example.com"] } });
+    pending.resolve({ item: { message_text: text, recipients: ["first@example.com", "second@example.com"], cc: "copy@example.com" } });
     const preview = await screen.findByRole("region", { name: "邮件文本预览" });
     await waitFor(() => expect(preview).toHaveTextContent("正文结尾"));
     expect(preview).not.toHaveTextContent("邮件摘要");
     expect(screen.getByLabelText("收件人")).toHaveTextContent("first@example.com、second@example.com");
+    expect(screen.getByLabelText("抄送")).toHaveTextContent("copy@example.com");
+    expect(preview).not.toHaveTextContent("copy@example.com");
     expect(getEmailClassification).toHaveBeenCalledWith("1", expect.any(AbortSignal));
   });
 

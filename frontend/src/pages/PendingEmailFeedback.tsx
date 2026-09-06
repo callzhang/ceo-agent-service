@@ -25,7 +25,7 @@ export function PendingEmailFeedback() {
   const [message, setMessage] = useState("");
   const [revision, setRevision] = useState(0);
   const [reading, setReading] = useState(false);
-  const [body, setBody] = useState<{ id: string; text: string; recipients: string[] } | null>(null);
+  const [body, setBody] = useState<{ id: string; text: string; recipients: string[]; cc: string } | null>(null);
   const [bodyError, setBodyError] = useState("");
   const row = rows.find(item => item.id === selectedId) || rows[0];
   useEffect(() => {
@@ -34,7 +34,7 @@ export function PendingEmailFeedback() {
     const controller = new AbortController();
     setBodyError("");
     getEmailClassification(id, controller.signal).then(result => {
-      if (!controller.signal.aborted) setBody({ id, text: result.item.message_text || "", recipients: result.item.recipients || [] });
+      if (!controller.signal.aborted) setBody({ id, text: result.item.message_text || "", recipients: result.item.recipients || [], cc: result.item.cc || "" });
     }).catch(reason => {
       if (!controller.signal.aborted) setBodyError(reason instanceof Error ? reason.message : "正文加载失败");
     });
@@ -81,6 +81,7 @@ export function PendingEmailFeedback() {
       </aside>
       {row && <article className="email-review-reader" aria-label="当前邮件">
         <div className="email-review-content"><button className="compact-button email-review-back" disabled={saving} onClick={() => setReading(false)}>← 返回队列</button><h2>{row.subject || "无主题"}</h2><div className="muted"><p>发件人：{row.sender || "未提供发件人"}</p><p aria-label="收件人">收件人：{bodyError ? "加载失败" : body?.id !== row.id ? "正在加载…" : body.recipients.length ? body.recipients.join("、") : "未提供"}</p><p>时间：{date(row.received_at || row.updated_at)}</p></div>
+          {body?.id === row.id && body.cc && <p className="muted" aria-label="抄送">抄送：{body.cc}</p>}
           <section aria-label="邮件文本预览"><h3>邮件文本预览</h3>{bodyError ? <p role="alert">正文加载失败：{bodyError} <button className="compact-button" onClick={() => setRevision(value => value + 1)}>重新加载</button></p> : body?.id !== row.id ? <p role="status">正在加载邮件正文…</p> : <div className="email-review-preview">{body.text || "这封邮件没有已保存的正文，请查看原邮件后分类。"}</div>}</section>
           {!!row.attachment_metadata?.length && <div className="email-review-attachments" aria-label="附件元数据">{row.attachment_metadata.map((file, index) => <span className="status-badge" key={index}>{file.filename || "未命名附件"} · {Math.round(file.size_bytes / 1024)} KB</span>)}</div>}
           <section className="email-review-evidence" aria-label={`${row.subject || "无主题"} 分类证据`}><h3>分类依据</h3><p>模型概率分布 · 仅供参考</p><div className="email-probability-bar" role="img" aria-label="分类概率分布">{Object.entries(row.probabilities).sort((a,b) => b[1]-a[1]).map(([key,value]) => <span key={key} data-category={key} style={{ flexGrow: value }} title={`${labels[key] || key} ${percent(value)}`} />)}</div><ol className="email-probability-legend" aria-label="模型候选">{Object.entries(row.probabilities).sort((a,b) => b[1]-a[1]).map(([key,value]) => <li key={key}><i data-category={key} />{labels[key] || key} {percent(value)}</li>)}</ol>{!Object.keys(row.probabilities).length && <p>暂无分类概率数据</p>}<p>前两名概率差：{percent(row.margin)}</p><p>模型：{row.model_version || "未提供"} · 配置：{row.config_version || "未提供"}</p></section>
