@@ -743,13 +743,7 @@ header{background:rgba(17,21,27,.94)}
 @media (max-width:760px){.settings-layout{grid-template-columns:1fr;gap:14px}.settings-nav{position:static;display:flex;gap:4px;overflow-x:auto;padding:5px}.settings-nav-item{flex:0 0 auto;min-height:34px;padding:0 10px;white-space:nowrap}}
 """
 
-FAVICON_HREF = (
-    "data:image/svg+xml,"
-    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E"
-    "%3Crect width='64' height='64' rx='14' fill='%230a0a0a'/%3E"
-    "%3Crect x='8' y='42' width='48' height='10' rx='5' fill='%2300d4a4'/%3E"
-    "%3C/svg%3E"
-)
+FAVICON_HREF = "/workbench-assets/favicon.svg"
 CONTEXT_ONLY_TOOLTIP = (
     "No tools were used; this answer was generated from conversation context only."
 )
