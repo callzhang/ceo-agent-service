@@ -107,6 +107,8 @@ def source(*, participant_count: int = 3) -> MeetingSource:
             "started_at": "2026-07-14T10:00:00+08:00",
             "ended_at": "2026-07-14T11:00:00+08:00",
             "participants": participants,
+            "attendee_evidence": "calendar",
+            "attendee_roster_complete": True,
             "creator": participants[1] if participant_count > 2 else None,
             "current_user_id": "derek",
             "summary": "Alex 主张全量，Mina 主张灰度。",

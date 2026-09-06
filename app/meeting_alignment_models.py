@@ -27,6 +27,8 @@ class MeetingSource(StrictModel):
     started_at: str
     ended_at: str
     participants: list[MeetingParticipant]
+    attendee_evidence: Literal["calendar", "transcript"]
+    attendee_roster_complete: bool
     creator: MeetingParticipant | None = None
     current_user_id: str
     summary: str

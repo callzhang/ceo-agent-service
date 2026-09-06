@@ -139,6 +139,8 @@ def read_meeting_source(
         summary=summary,
         meeting_id=meeting_id,
         creator=creator or calendar_evidence.creator,
+        attendee_evidence=calendar_evidence.source,
+        attendee_roster_complete=(calendar_evidence.source == "calendar"),
     )
 
 
@@ -150,6 +152,8 @@ def normalize_meeting_source(
     summary: dict[str, Any] | str | None = None,
     meeting_id: str = "",
     creator: MeetingParticipant | None = None,
+    attendee_evidence: Literal["calendar", "transcript"] = "calendar",
+    attendee_roster_complete: bool = True,
 ) -> MeetingSource:
     data = _payload_data(info)
     _validate_metadata_aliases(data)
@@ -231,6 +235,8 @@ def normalize_meeting_source(
         started_at=started_at,
         ended_at=ended_at,
         participants=participants,
+        attendee_evidence=attendee_evidence,
+        attendee_roster_complete=attendee_roster_complete,
         creator=creator,
         current_user_id=normalized_current_user_id,
         summary=_summary_text(summary),

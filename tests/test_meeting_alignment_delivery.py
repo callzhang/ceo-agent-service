@@ -83,6 +83,8 @@ def meeting_source(*, one_to_one: bool = False, unresolved_other: bool = False):
             "started_at": "2026-07-14T09:00:00+08:00",
             "ended_at": "2026-07-14T10:00:00+08:00",
             "participants": participants,
+            "attendee_evidence": "calendar",
+            "attendee_roster_complete": True,
             "creator": participants[1] if not one_to_one else None,
             "current_user_id": "u-derek",
             "summary": "",

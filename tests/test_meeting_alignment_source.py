@@ -311,6 +311,8 @@ def test_read_meeting_source_combines_metadata_summary_transcript_and_current_us
             },
             {"name": "A", "user_id": "u-a", "open_dingtalk_id": "open-a"},
         ],
+        "attendee_evidence": "calendar",
+        "attendee_roster_complete": True,
         "creator": {
             "name": "A",
             "user_id": "u-a",
@@ -340,6 +342,42 @@ def test_read_meeting_source_combines_metadata_summary_transcript_and_current_us
         ("transcript", "minutes-1"),
         ("current_user", ""),
     ]
+
+
+def test_read_meeting_source_marks_calendar_roster_complete():
+    source = read_meeting_source(
+        FakeDws(),
+        "minutes-1",
+        calendar_evidence=calendar_evidence(),
+    )
+
+    assert source.attendee_evidence == "calendar"
+    assert source.attendee_roster_complete is True
+
+
+def test_read_meeting_source_marks_transcript_roster_incomplete():
+    transcript_evidence = build_transcript_roster_evidence(
+        live_minutes_info(),
+        FakeDws().get_all_minutes_transcription("minutes-1"),
+        current_user=meeting_alignment_source.MeetingParticipant(
+            name="Derek", user_id="u-derek"
+        ),
+        speakers=[
+            meeting_alignment_source.MeetingParticipant(
+                name="A", user_id="union-a"
+            ),
+            meeting_alignment_source.MeetingParticipant(name="B", user_id="u-b"),
+        ],
+    )
+
+    source = read_meeting_source(
+        FakeDws(),
+        "minutes-1",
+        calendar_evidence=transcript_evidence,
+    )
+
+    assert source.attendee_evidence == "transcript"
+    assert source.attendee_roster_complete is False
 
 
 def test_read_meeting_source_merges_producer_discovery_metadata():
