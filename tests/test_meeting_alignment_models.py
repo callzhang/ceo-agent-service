@@ -384,6 +384,8 @@ def test_meeting_source_uses_the_fixed_source_shape():
                     "open_dingtalk_id": "open-derek",
                 }
             ],
+            "attendee_evidence": "calendar",
+            "attendee_roster_complete": True,
             "current_user_id": "u-derek",
             "summary": "讨论上线范围。",
             "transcript": [
