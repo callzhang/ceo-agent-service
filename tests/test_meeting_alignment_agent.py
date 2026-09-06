@@ -283,6 +283,8 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "audience_scope=personal" in prompt
     assert "完整日历 1:1" in prompt
     assert "target=null" in prompt
+    assert "仍必须返回 audience_scope、audit_summary 和 confidence" in prompt
+    assert "只保留 audit_summary 与 confidence" not in prompt
     assert "真实 @" in prompt
     assert "放在对应的任务、问题或信息所在句子中" in prompt
     assert "禁止在消息开头集中列一排 @ 人员" in prompt

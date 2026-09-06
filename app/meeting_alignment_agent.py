@@ -236,7 +236,7 @@ def build_meeting_alignment_prompt(
 
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守 schema，不添加字段。
-- no_action 时分析和发送字段必须为空，只保留 audit_summary 与 confidence。
+- no_action 时仍必须返回 audience_scope、audit_summary 和 confidence；分析和发送字段必须为空。
 - send 时 final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同。
 - 最终只生成一条可直接发送的合并消息。
 
