@@ -103,6 +103,12 @@ in-process `probe + read_messages(limit=10)` hot path is 65–71ms after one-tim
 warm-up. First open and any source-change decryption remain slower by design and
 must not be reported as hot-query latency.
 
+The production Reader must be signed with the stable local code-signing identity.
+The installer rejects ad-hoc builds unconditionally: an ad-hoc signature changes
+the identity macOS uses for App Data authorization, which can make every database
+read prompt again after a rebuild or relaunch. A stable build requires one initial
+**Allow** decision; subsequent reads and ordinary restarts reuse that authorization.
+
 ## Dedicated Sender permission boundary
 
 Accessibility is granted to `~/Applications/CEO WeChat Sender.app` (bundle ID

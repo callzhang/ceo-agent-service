@@ -10,14 +10,8 @@ source_plist="${repo_root}/launchd/${label}.plist"
 target_plist="${HOME}/Library/LaunchAgents/${label}.plist"
 log_dir="${HOME}/Library/Logs/ceo-agent-service"
 domain="gui/$(id -u)"
-allow_adhoc=0
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --allow-adhoc)
-      allow_adhoc=1
-      shift
-      ;;
     --app)
       source_app="$2"
       shift 2
@@ -31,9 +25,9 @@ done
 
 codesign --verify --deep --strict --verbose=2 "${source_app}"
 signature_info="$(codesign -dv --verbose=4 "${source_app}" 2>&1)"
-if [[ "${signature_info}" == *"Signature=adhoc"* && "${allow_adhoc}" -ne 1 ]]; then
+if [[ "${signature_info}" == *"Signature=adhoc"* ]]; then
   printf '%s\n' \
-    'Refusing to install a development-only ad-hoc build. Use a stable signing certificate, or pass --allow-adhoc explicitly.' >&2
+    'Refusing to install an ad-hoc build because macOS cannot persist App Data permission reliably for that identity. Use a stable signing certificate.' >&2
   exit 2
 fi
 

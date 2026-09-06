@@ -267,7 +267,8 @@ Connect 即可完成账号发现和数据库探测。
 
 ```sh
 ./scripts/build-wechat-reader-app.sh --adhoc
-./scripts/install-wechat-reader-app.sh --allow-adhoc
+# Development inspection only: the installer rejects ad-hoc Reader builds
+# because macOS App Data authorization cannot be relied on across rebuilds.
 ```
 
 ad-hoc 版本可以验证进程隔离，但重新构建后代码哈希会变化，macOS 可能再次要求授权，

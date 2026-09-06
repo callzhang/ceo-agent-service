@@ -31,7 +31,7 @@ def test_build_and_install_scripts_are_valid_and_fail_closed_on_adhoc_signing():
     assert "--adhoc" in build_text
     assert "SIGNING_IDENTITY" in build_text
     assert "--options runtime" not in build_text
-    assert "--allow-adhoc" in install_text
+    assert "--allow-adhoc" not in install_text
     assert "Signature=adhoc" in install_text
 
 
