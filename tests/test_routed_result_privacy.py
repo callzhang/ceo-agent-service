@@ -130,8 +130,9 @@ def test_task_result_parser_rejects_runtime_paths_before_persistence(monkeypatch
 def test_meeting_result_codec_persists_only_audit_references():
     encoded = _encode_meeting_alignment_result(
         _raw_with_sensitive_audit_event(
-            {
-                "action": "no_action",
+                {
+                    "action": "no_action",
+                    "audience_scope": "business",
                 "trigger_reasons": [],
                 "topics": [],
                 "derek_viewpoint": None,

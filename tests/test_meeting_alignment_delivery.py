@@ -127,6 +127,7 @@ def send_decision(*, target="group", mention_names=None):
     return MeetingAlignmentDecision.model_validate(
         {
             "action": "send",
+            "audience_scope": "personal" if target == "direct" else "business",
             "trigger_reasons": ["unresolved_disagreement"],
             "topics": [
                 {

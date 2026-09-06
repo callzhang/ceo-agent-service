@@ -333,8 +333,9 @@ class FakeMeetingRunner:
 
 def no_action_decision() -> MeetingAlignmentDecision:
     return MeetingAlignmentDecision.model_validate(
-        {
-            "action": "no_action",
+            {
+                "action": "no_action",
+                "audience_scope": "business",
             "trigger_reasons": [],
             "topics": [],
             "derek_viewpoint": None,
@@ -350,8 +351,9 @@ def no_action_decision() -> MeetingAlignmentDecision:
 
 def consumer_send_decision() -> MeetingAlignmentDecision:
     return MeetingAlignmentDecision.model_validate(
-        {
-            "action": "send",
+            {
+                "action": "send",
+                "audience_scope": "business",
             "trigger_reasons": ["unresolved_disagreement"],
             "topics": [
                 {

@@ -15,6 +15,7 @@ from app.meeting_alignment_models import (
 def valid_send_decision():
     return {
         "action": "send",
+        "audience_scope": "business",
         "trigger_reasons": ["unresolved_disagreement"],
         "topics": [
             {

@@ -128,6 +128,7 @@ class FakeMeetingRunner:
         return MeetingAlignmentDecision.model_validate(
             {
                 "action": "send",
+                "audience_scope": "business",
                 "trigger_reasons": ["unresolved_disagreement"],
                 "topics": [
                     {
