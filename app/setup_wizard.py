@@ -42,6 +42,7 @@ from app.wechat.permission_onboarding import (
     open_full_disk_access_settings,
     restart_reader_and_wait,
 )
+from app.wechat.reader_ipc import ReaderIpcError
 
 BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+")
 TOKEN_RE = re.compile(
@@ -1230,13 +1231,30 @@ def _run_wechat_setup_action(action_id: str) -> SetupWizardEvent:
                             "reader_health": "blocked",
                         },
                     )
-            result = setup.verify() if action_id == "verify_wechat" else setup.connect()
         except Exception as exc:  # pragma: no cover - defensive
             return SetupWizardEvent(
                 step_id="wechat_connection",
                 action_id=action_id,
                 status="failed",
                 summary=f"WeChat setup error: {redact_setup_output(str(exc))}",
+            )
+
+        try:
+            result = setup.verify() if action_id == "verify_wechat" else setup.connect()
+        except ReaderIpcError as exc:
+            return SetupWizardEvent(
+                step_id="wechat_connection",
+                action_id=action_id,
+                status="done",
+                next_step_status="blocked",
+                summary=redact_setup_output(
+                    str(exc) or "CEO WeChat Reader could not access message data."
+                ),
+                evidence={
+                    "full_disk_access_prompted": True,
+                    "database_status": exc.code,
+                    "message_read_verified": False,
+                },
             )
 
         evidence = dict(result.evidence or {})
@@ -1248,7 +1266,7 @@ def _run_wechat_setup_action(action_id: str) -> SetupWizardEvent:
             next_step_status=_capability_to_step.get(
                 result.next_step_status, result.next_step_status
             ),
-            summary=result.summary,
+            summary=redact_setup_output(result.summary),
             evidence=evidence,
         )
 

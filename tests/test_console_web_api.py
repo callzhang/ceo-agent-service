@@ -170,6 +170,68 @@ def test_console_tutorial_run_persists_resulting_step_and_uses_sync_endpoint(
     assert json.loads(event["evidence_json"])["full_disk_access_prompted"] is True
 
 
+def test_console_tutorial_run_persists_redacted_wechat_summaries(
+    tmp_path: Path, monkeypatch
+):
+    from app.wechat.setup import WechatSetupResult
+
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_setup_wizard_step(
+        step_id="preflight",
+        status="done",
+        summary="ready",
+    )
+    store.record_setup_wizard_event(
+        step_id="wechat_connection",
+        action_id="connect_wechat",
+        status="done",
+        summary="settings opened",
+        evidence_json=json.dumps({"full_disk_access_prompted": True}),
+    )
+
+    class FakeSetup:
+        reader = object()
+
+        def connect(self, selected_account_id: str = ""):
+            return WechatSetupResult(
+                action_id="connect_wechat",
+                status="done",
+                next_step_status="blocked",
+                summary="probe failed at /Users/test/private/wechat.db",
+                evidence={
+                    "database_status": "blocked",
+                    "message_read_verified": False,
+                },
+            )
+
+    monkeypatch.setenv("CEO_WORKER_DB", str(db_path))
+    monkeypatch.setattr(
+        "app.wechat.service.build_setup_service", lambda _store: FakeSetup()
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.restart_reader_and_wait",
+        lambda _reader: {"status": "ready"},
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.open_full_disk_access_settings",
+        lambda: (_ for _ in ()).throw(AssertionError("must not reopen settings")),
+    )
+
+    with _client(tmp_path, spa_enabled=True) as client:
+        response = client.post("/api/console/tutorial/run/connect_wechat")
+
+    assert response.status_code == 200
+    assert "/Users/test" not in response.text
+    persisted = AutoReplyStore(db_path)
+    event = persisted.list_setup_wizard_events(
+        "wechat_connection", action_id="connect_wechat", limit=1
+    )[0]
+    step = persisted.get_setup_wizard_step("wechat_connection")
+    assert event["summary"] == "probe failed at [REDACTED_PATH]"
+    assert step["summary"] == "probe failed at [REDACTED_PATH]"
+
+
 def test_common_envelopes_and_normalization_are_explicitly_json_serializable():
     item = ApiItemEnvelope(
         item={"label": normalize_display_value({"title": "Readable"})},

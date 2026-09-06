@@ -1583,6 +1583,116 @@ def test_second_wechat_connect_permission_failure_is_blocked_without_retry(
     assert event.evidence["database_status"] == "permission_required"
 
 
+def test_second_wechat_connect_reader_error_preserves_phase_across_requests(
+    monkeypatch, tmp_path: Path
+):
+    from app.wechat.reader_ipc import ReaderIpcError
+
+    db_path = tmp_path / "worker.sqlite3"
+    _record_wechat_phase(AutoReplyStore(db_path), full_disk_access_prompted=True)
+    calls = []
+
+    class FakeSetup:
+        reader = object()
+
+        def connect(self, selected_account_id: str = ""):
+            calls.append("connect")
+            raise ReaderIpcError(
+                "permission denied at /Users/test/private/wechat",
+                code="permission_required",
+            )
+
+    monkeypatch.setattr(
+        "app.wechat.service.build_setup_service", lambda _store: FakeSetup()
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.restart_reader_and_wait",
+        lambda _reader: calls.append("restart") or {"status": "ready"},
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.open_full_disk_access_settings",
+        lambda: (_ for _ in ()).throw(AssertionError("must not reopen settings")),
+    )
+    monkeypatch.setenv("CEO_WORKER_DB", str(db_path))
+
+    first = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+    _record_wechat_phase(AutoReplyStore(db_path), **first.evidence)
+    repeated = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+
+    assert calls == ["restart", "connect", "restart", "connect"]
+    for event in (first, repeated):
+        assert event.status == "done"
+        assert event.next_step_status == "blocked"
+        assert event.evidence == {
+            "full_disk_access_prompted": True,
+            "database_status": "permission_required",
+            "message_read_verified": False,
+        }
+        assert "/Users/test" not in event.summary
+
+
+def test_wechat_connect_redacts_setup_result_summary(monkeypatch, tmp_path: Path):
+    from app.wechat.setup import WechatSetupResult
+
+    db_path = tmp_path / "worker.sqlite3"
+    _record_wechat_phase(AutoReplyStore(db_path), full_disk_access_prompted=True)
+
+    class FakeSetup:
+        reader = object()
+
+        def connect(self, selected_account_id: str = ""):
+            return WechatSetupResult(
+                action_id="connect_wechat",
+                status="done",
+                next_step_status="blocked",
+                summary="probe failed at /Users/test/private/wechat.db",
+                evidence={
+                    "database_status": "blocked",
+                    "message_read_verified": False,
+                },
+            )
+
+    monkeypatch.setattr(
+        "app.wechat.service.build_setup_service", lambda _store: FakeSetup()
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.restart_reader_and_wait",
+        lambda _reader: {"status": "ready"},
+    )
+    monkeypatch.setenv("CEO_WORKER_DB", str(db_path))
+
+    event = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+
+    assert event.next_step_status == "blocked"
+    assert "/Users/test" not in event.summary
+    assert event.summary == "probe failed at [REDACTED_PATH]"
+
+
+def test_wechat_connect_does_not_convert_programming_error_to_permission_failure(
+    monkeypatch, tmp_path: Path
+):
+    db_path = tmp_path / "worker.sqlite3"
+    _record_wechat_phase(AutoReplyStore(db_path), full_disk_access_prompted=True)
+
+    class BrokenSetup:
+        reader = object()
+
+        def connect(self, selected_account_id: str = ""):
+            raise ValueError("invalid result shape")
+
+    monkeypatch.setattr(
+        "app.wechat.service.build_setup_service", lambda _store: BrokenSetup()
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.restart_reader_and_wait",
+        lambda _reader: {"status": "ready"},
+    )
+    monkeypatch.setenv("CEO_WORKER_DB", str(db_path))
+
+    with pytest.raises(ValueError, match="invalid result shape"):
+        run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+
+
 def test_second_wechat_connect_restart_timeout_is_blocked_without_connect(
     monkeypatch, tmp_path: Path
 ):
