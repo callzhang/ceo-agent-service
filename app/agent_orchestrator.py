@@ -30,7 +30,10 @@ from app.email_unsubscribe_continuation import (
 )
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
-MAX_CONTENT_FEEDBACK_CYCLES = 2
+# A late live read can legitimately reverse an earlier proposal (for example,
+# from approval to a bounded request for missing material).  Preserve room for
+# that final correction while still keeping the feedback loop finite.
+MAX_CONTENT_FEEDBACK_CYCLES = 3
 MAX_TURNS_PER_PROCESS = 32
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
 _DOMAIN_SNAPSHOT_INVALID = object()

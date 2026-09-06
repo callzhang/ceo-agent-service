@@ -1829,13 +1829,13 @@ def test_domain_continuations_do_not_consume_content_feedback_cycles(store):
     ]
 
 
-def test_real_feedback_exhausts_after_two_cycles_even_after_domain_continuation(store):
+def test_real_feedback_exhausts_after_three_cycles_even_after_domain_continuation(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
         *(
             _consumer_result("proposal", f"candidate-{revision}")
-            for revision in range(4)
+            for revision in range(5)
         ),
     )
     audit = ScriptedAudit(
@@ -1844,6 +1844,7 @@ def test_real_feedback_exhausts_after_two_cycles_even_after_domain_continuation(
         _audit_result("revision_required", 1),
         _audit_result("revision_required", 2),
         _audit_result("revision_required", 3),
+        _audit_result("revision_required", 4),
     )
     orchestrator = AgentOrchestrator(
         store=store,
@@ -1859,9 +1860,9 @@ def test_real_feedback_exhausts_after_two_cycles_even_after_domain_continuation(
     )
 
     assert result.status == "failed_terminal"
-    assert result.feedback_cycles == 2
+    assert result.feedback_cycles == 3
     assert result.error.code == "audit_revision_exhausted"
-    assert orchestrator._feedback_cycles(task) == 3
+    assert orchestrator._feedback_cycles(task) == 4
 
 
 def test_restart_rejects_consumer_materialized_after_feedback_quota_exhaustion(store):
@@ -1875,7 +1876,7 @@ def test_restart_rejects_consumer_materialized_after_feedback_quota_exhaustion(s
     )
     audit = ScriptedAudit(
         store,
-        *(_audit_result("revision_required", revision) for revision in range(3)),
+        *(_audit_result("revision_required", revision) for revision in range(4)),
     )
     orchestrator = AgentOrchestrator(store=store, consumer=consumer, audit=audit)
     exhausted = _process(orchestrator, task)
@@ -1890,13 +1891,13 @@ def test_restart_rejects_consumer_materialized_after_feedback_quota_exhaustion(s
         )
         if run.role is AgentRole.AUDIT
     )
-    assert latest_audit.proposal_revision == 2
+    assert latest_audit.proposal_revision == 3
     consumer.run(
         task,
         _context(task),
-        proposal_revision=3,
+        proposal_revision=4,
         parent_agent_run_id=latest_audit.id,
-        feedback=_audit_result("revision_required", 2).feedback,
+        feedback=_audit_result("revision_required", 3).feedback,
     )
 
     recovered = orchestrator._derive_state(task)
@@ -2734,19 +2735,21 @@ def test_newer_context_stale_candidate_is_revised_without_write(store):
     assert audit_run is not None and audit_run.status == "completed"
 
 
-def test_third_revision_request_becomes_terminal_failure_without_escalation(store):
+def test_fourth_revision_request_becomes_terminal_failure_without_escalation(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
         _consumer_result("proposal", "candidate-0"),
         _consumer_result("proposal", "candidate-1"),
         _consumer_result("proposal", "candidate-2"),
+        _consumer_result("proposal", "candidate-3"),
     )
     audit = ScriptedAudit(
         store,
         _audit_result("revision_required", 0),
         _audit_result("revision_required", 1),
         _audit_result("revision_required", 2),
+        _audit_result("revision_required", 3),
     )
 
     result = _process(
@@ -2754,7 +2757,7 @@ def test_third_revision_request_becomes_terminal_failure_without_escalation(stor
     )
 
     assert result.status == "failed_terminal"
-    assert result.feedback_cycles == 2
+    assert result.feedback_cycles == 3
     assert result.error.code == "audit_revision_exhausted"
     assert result.audit_result is not None
     assert result.audit_result.outcome is AuditOutcome.FAILED
