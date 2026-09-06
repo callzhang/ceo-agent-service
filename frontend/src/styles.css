@@ -206,6 +206,25 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .settings-control-label { color: var(--ink-soft); font-size: 0.76rem; font-weight: 750; }
 .settings-control-group .settings-pill-row { width: max-content; max-width: 100%; margin: 0; }
 .email-config-field-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(150px, .65fr) minmax(220px, 1fr) auto; gap: 14px; margin-top: 18px; align-items: end; }
+.email-config-layout { display:grid; grid-template-columns:160px minmax(0, 1fr); border:1px solid var(--line); border-radius:12px; overflow:hidden; margin-top:20px; }
+.email-config-navigation { display:flex; flex-direction:column; gap:4px; padding:14px 10px; border-right:1px solid var(--line); background:var(--surface-muted); }
+.email-config-navigation > span { padding:4px 12px 10px; }
+.email-config-navigation button { border:0; border-radius:8px; padding:12px; text-align:left; background:transparent; cursor:pointer; }
+.email-config-navigation button:hover { background:var(--surface); }
+.email-config-navigation button.active { background:var(--accent-soft); color:var(--accent); font-weight:700; box-shadow:inset 3px 0 var(--accent); }
+.email-config-navigation button:disabled { cursor:default; opacity:.55; }
+.email-config-editor { padding:24px; min-width:0; }
+.email-config-editor h3 { margin:0 0 8px; }
+.email-config-editor .email-config-field-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.email-config-editor .email-config-field-description { grid-column:1 / -1; }
+.email-config-editor > .primary-button { margin-top:20px; }
+@media (max-width:600px) {
+  .email-config-layout { grid-template-columns:80px minmax(0,1fr); }
+  .email-config-navigation { padding:10px 4px; }
+  .email-config-navigation button, .email-config-navigation > span { padding:10px 8px; }
+  .email-config-editor { padding:14px; }
+  .email-config-editor .email-config-field-grid { grid-template-columns:minmax(0,1fr); }
+}
 .email-config-action-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
 .email-config-field { display: grid; gap: 6px; min-width: 0; color: var(--ink-soft); font-size: .76rem; font-weight: 750; }
 .email-config-field input { width: 100%; min-height: 38px; padding: 7px 10px; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); font: inherit; font-weight: 450; }

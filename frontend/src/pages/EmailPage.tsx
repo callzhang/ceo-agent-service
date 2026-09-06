@@ -307,8 +307,10 @@ function ConfigPanel() {
 
   return <section className="console-card"><div className="card-head"><div><h2>邮件类型配置</h2><p className="muted">类别、描述、置信度阈值和固定动作。这里不直接执行邮箱动作。</p><p className="muted">label、mark_read、archive、move、trash 由 Email worker 直接执行并回读；unsubscribe 由 Consumer 提案、Audit 审核执行；邮件回复保持全局禁用。</p></div></div>
     {loadState === "loading" && <div className="page-state" role="status">正在加载邮件配置…</div>}
-    <div className="settings-control-group"><span className="settings-control-label">邮件类型</span><div className="settings-pill-row">{categories.map((category) => <button type="button" aria-pressed={selected === category} disabled={controlsDisabled} className={selected === category ? "active" : ""} key={category} onClick={() => setSelected(category)}>{categoryLabels[category]}</button>)}</div></div>
-    <p className="email-category-definition"><strong>{categoryLabels[selected]}</strong>：{categoryDescriptions[selected]}</p>
+    <div className="email-config-layout">
+    <nav className="email-config-navigation" aria-label="邮件类型"><span className="settings-control-label">邮件类型</span>{categories.map((category) => <button type="button" aria-pressed={selected === category} aria-controls="email-category-editor" disabled={controlsDisabled} className={selected === category ? "active" : ""} key={category} onClick={() => setSelected(category)}>{categoryLabels[category]}</button>)}</nav>
+    <section className="email-config-editor" id="email-category-editor" aria-label={`${categoryLabels[selected]}配置`}>
+    <h3>{categoryLabels[selected]}</h3><p className="email-category-definition muted">{categoryDescriptions[selected]}</p>
     <div className="email-config-field-grid">
       <label className="email-config-field email-config-field-description"><span>描述</span><input disabled={controlsDisabled} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个类别用于什么邮件" /></label>
       <label className="email-config-field"><span>自动处理阈值</span><input disabled={controlsDisabled} type="number" min="0" max="1" step="0.01" value={threshold} onChange={(event) => setThreshold(event.target.value)} /></label>
@@ -321,6 +323,7 @@ function ConfigPanel() {
       {selectedActions.includes("move") && <label className="email-config-field"><span>目标文件夹</span><input disabled={controlsDisabled} aria-label="目标文件夹" value={moveTargetFolder} onChange={(event) => setMoveTargetFolder(event.target.value)} placeholder="例如 Archive/Billing" /></label>}
     </div>}
     {error && <div className="page-state page-state-error" role="alert">{error}</div>}{message && <div className="page-state" role="status">{message}</div>}<button type="button" disabled={controlsDisabled} className="primary-button" onClick={() => void save()}>{saving ? "正在保存…" : "保存本地配置"}</button>
+    </section></div>
   </section>;
 }
 

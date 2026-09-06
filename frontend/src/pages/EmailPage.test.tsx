@@ -350,6 +350,21 @@ describe("EmailPage", () => {
     expect(workbenchStyles).toMatch(/\.email-config-field\s*\{[^}]*display:\s*grid/s);
   });
 
+  it("keeps category navigation beside the selected category configuration", async () => {
+    const user = userEvent.setup();
+    renderEmail("/email?tab=config");
+    const navigation = await screen.findByRole("navigation", { name: "邮件类型" });
+    await waitFor(() => expect(within(navigation).getByRole("button", { name: "订阅" })).toBeEnabled());
+    expect(within(navigation).getAllByRole("button")).toHaveLength(8);
+    expect(within(screen.getByRole("region", { name: "重要配置" })).getByRole("textbox", { name: "描述" })).toBeInTheDocument();
+    await user.click(within(navigation).getByRole("button", { name: "订阅" }));
+    const panel = screen.getByRole("region", { name: "订阅配置" });
+    expect(within(panel).getByRole("button", { name: "unsubscribe" })).toBeEnabled();
+    expect(within(navigation).getByRole("button", { name: "订阅" })).toHaveAttribute("aria-pressed", "true");
+    expect(saveEmailConfig).not.toHaveBeenCalled();
+    expect(workbenchStyles).toMatch(/\.email-config-layout\s*\{[^}]*grid-template-columns:/s);
+  });
+
   it("does not send an invalid label action without labels", async () => {
     const user = userEvent.setup();
     renderEmail("/email?tab=config");
