@@ -31,6 +31,8 @@ def _source(case: dict) -> MeetingSource:
                 {"name": "Alex", "user_id": "alex"},
                 {"name": "Mina", "user_id": "mina"},
             ],
+            "attendee_evidence": "calendar",
+            "attendee_roster_complete": True,
             "current_user_id": "derek",
             "summary": case["summary"],
             "transcript": [

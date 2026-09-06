@@ -107,6 +107,8 @@ def source(*, participant_count: int = 3) -> MeetingSource:
             "started_at": "2026-07-14T10:00:00+08:00",
             "ended_at": "2026-07-14T11:00:00+08:00",
             "participants": participants,
+            "attendee_evidence": "calendar",
+            "attendee_roster_complete": True,
             "creator": participants[1] if participant_count > 2 else None,
             "current_user_id": "derek",
             "summary": "Alex 主张全量，Mina 主张灰度。",
@@ -141,6 +143,7 @@ def source_with_unresolved_one_to_one_counterpart() -> MeetingSource:
 def no_action_payload() -> dict:
     return {
         "action": "no_action",
+        "audience_scope": "business",
         "trigger_reasons": [],
         "topics": [],
         "derek_viewpoint": None,
@@ -187,6 +190,7 @@ def test_meeting_runner_routes_persisted_run_fresh_with_exact_capabilities(tmp_p
 def derek_view_payload(*, historical_sources: list[str]) -> dict:
     return {
         "action": "send",
+        "audience_scope": "business",
         "trigger_reasons": ["derek_viewpoint"],
         "topics": [],
         "derek_viewpoint": {
@@ -271,20 +275,16 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "必须逐字填写 `/configured/work_profile.md`" in prompt
     assert "不得改写、加标题或写成说明性文字" in prompt
     assert "每场会议最多生成一条合并消息" in prompt
-    assert "无论议题已经对齐还是仍有未决问题" in prompt
     assert "群内所有人员都必须属于本次会议参会人" not in prompt
-    assert "明确承接该业务、决策或后续行动" in prompt
-    assert "涉及个人隐私、个人薪酬或绩效" in prompt
-    assert "对特定个人的严厉负面反馈" in prompt
-    assert "找不到可发送群时，默认私信会议创建人 Alex" in prompt
-    assert "只保留该收件人完成对齐所需的内容" in prompt
-    assert "conversation_id 为空、candidates 为空" in prompt
-    assert "群发现和排除依据只写入 audit_summary" in prompt
-    assert "DWS 读取失败" in prompt
-    assert "不能降级私信" in prompt
+    assert "业务承接证据" in prompt
+    assert "内容优先于参会人数" in prompt
+    assert "audience_scope=business" in prompt
+    assert "target.kind=group" in prompt
+    assert "audience_scope=personal" in prompt
+    assert "完整日历 1:1" in prompt
     assert "target=null" in prompt
-    assert "让队列重试原群发现" in prompt
-    assert "不能改成 no_action" in prompt
+    assert "仍必须返回 audience_scope、audit_summary 和 confidence" in prompt
+    assert "只保留 audit_summary 与 confidence" not in prompt
     assert "真实 @" in prompt
     assert "放在对应的任务、问题或信息所在句子中" in prompt
     assert "禁止在消息开头集中列一排 @ 人员" in prompt
@@ -299,14 +299,16 @@ def test_prompt_keeps_each_participant_mention_adjacent_to_concrete_content():
     assert "禁止在消息开头集中列一排 @ 人员" in prompt
 
 
-def test_one_to_one_prompt_requires_direct_other_participant():
+def test_prompt_makes_business_content_group_first_even_for_one_to_one():
     prompt = build_meeting_alignment_prompt(
         source(participant_count=2), work_profile="", work_profile_source="profile"
     )
-    assert "这是 1:1 会议" in prompt
-    assert "direct_user_id=alex" in prompt
-    assert "禁止搜索或选择群" in prompt
-    assert "1:1 会议必须返回 direct target" in prompt
+    assert "内容优先于参会人数" in prompt
+    assert "客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动" in prompt
+    assert "audience_scope=business" in prompt
+    assert "DWS 做群发现" in prompt
+    assert "target.kind=group" in prompt
+    assert "没有证据支持的群时返回 action=no_action" in prompt
 
 
 def test_candidate_interview_no_action_overrides_one_to_one_delivery_target():
@@ -317,63 +319,68 @@ def test_candidate_interview_no_action_overrides_one_to_one_delivery_target():
     assert "仅当 action=send 时" in prompt
     assert "实际候选人面试" in prompt
     assert "action=no_action 时 target=null" in prompt
+    assert "仍必须返回 audience_scope、audit_summary 和 confidence" in prompt
 
 
-def test_one_to_one_prompt_defers_empty_user_id_to_identity_resolver():
+def test_prompt_allows_personal_direct_only_for_complete_calendar_one_to_one():
     prompt = build_meeting_alignment_prompt(
-        source_with_unresolved_one_to_one_counterpart(),
+        source(participant_count=2),
         work_profile="",
         work_profile_source="profile",
     )
-    assert "direct_user_id 为空" in prompt
-    assert "title=Alex" in prompt
-    assert "发送层唯一解析身份" in prompt
-    assert "open_dingtalk_id=open-alex-evidence" in prompt
-    assert "不要把 open_dingtalk_id 填进 direct_user_id" in prompt
+    assert "audience_scope=personal" in prompt
+    assert "attendee_evidence=calendar" in prompt
+    assert "attendee_roster_complete=true" in prompt
+    assert "恰好两名参会人" in prompt
+    assert "target.kind=direct" in prompt
 
 
-@pytest.mark.parametrize(
-    ("target", "message"),
-    [
-        (None, "explicit delivery target"),
-        (
-            {
-                "kind": "group",
-                "conversation_id": "cid-1",
-                "direct_user_id": "",
-                "title": "项目群",
-                "candidates": [
-                    {
-                        "conversation_id": "cid-1",
-                        "title": "项目群",
-                        "evidence": ["同一议题"],
-                    }
-                ],
-            },
-            "1:1 send requires a direct target",
-        ),
-        (
-            {
-                "kind": "direct",
-                "conversation_id": "",
-                "direct_user_id": "mina",
-                "title": "Mina",
-                "candidates": [],
-            },
-            "must target the other participant",
-        ),
-    ],
-)
-def test_agent_rejects_invalid_one_to_one_send_targets(target, message):
+def test_agent_rejects_business_direct_target_for_calendar_one_to_one():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "alex",
+        "title": "Alex",
+        "candidates": [],
+    }
     agent = MeetingAlignmentAgent(
         FakeMeetingCodex(send_payload_with_target(target))
     )
-    error_type = ValidationError if target is None else MeetingAlignmentTargetError
-    with pytest.raises(error_type, match=message):
+    with pytest.raises(MeetingAlignmentTargetError, match="business.*group"):
         agent.decide(source(participant_count=2))
 
 
-def test_agent_accepts_direct_target_for_other_one_to_one_participant():
+def test_agent_accepts_business_group_target_for_incomplete_transcript_roster():
+    target = {
+        "kind": "group",
+        "conversation_id": "cid-1",
+        "direct_user_id": "",
+        "title": "上线项目群",
+        "candidates": [
+            {
+                "conversation_id": "cid-1",
+                "title": "上线项目群",
+                "evidence": ["承接上线范围的项目群"],
+            }
+        ],
+    }
+    transcript_source = source(participant_count=2).model_copy(
+        update={"attendee_evidence": "transcript", "attendee_roster_complete": False}
+    )
+    decision = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(target))
+    ).decide(transcript_source)
+    assert decision.target is not None
+    assert decision.target.kind == "group"
+
+
+@pytest.mark.parametrize(
+    ("attendee_evidence", "attendee_roster_complete"),
+    [("transcript", True), ("calendar", False)],
+)
+def test_agent_rejects_personal_direct_without_complete_calendar_roster(
+    attendee_evidence, attendee_roster_complete
+):
     target = {
         "kind": "direct",
         "conversation_id": "",
@@ -381,111 +388,34 @@ def test_agent_accepts_direct_target_for_other_one_to_one_participant():
         "title": "Alex",
         "candidates": [],
     }
+    payload = send_payload_with_target(target)
+    payload["audience_scope"] = "personal"
+    incomplete_source = source(participant_count=2).model_copy(
+        update={
+            "attendee_evidence": attendee_evidence,
+            "attendee_roster_complete": attendee_roster_complete,
+        }
+    )
+    agent = MeetingAlignmentAgent(FakeMeetingCodex(payload))
+    with pytest.raises(MeetingAlignmentTargetError, match="complete calendar"):
+        agent.decide(incomplete_source)
+
+
+def test_agent_accepts_personal_direct_for_complete_calendar_one_to_one():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "alex",
+        "title": "Alex",
+        "candidates": [],
+    }
+    payload = send_payload_with_target(target)
+    payload["audience_scope"] = "personal"
     decision = MeetingAlignmentAgent(
-        FakeMeetingCodex(send_payload_with_target(target))
+        FakeMeetingCodex(payload)
     ).decide(source(participant_count=2))
     assert decision.target is not None
     assert decision.target.direct_user_id == "alex"
-
-
-def test_agent_accepts_unresolved_direct_target_named_for_counterpart():
-    target = {
-        "kind": "direct",
-        "conversation_id": "",
-        "direct_user_id": "",
-        "title": "  ALEX  ",
-        "candidates": [],
-    }
-    decision = MeetingAlignmentAgent(
-        FakeMeetingCodex(send_payload_with_target(target))
-    ).decide(source_with_unresolved_one_to_one_counterpart())
-    assert decision.target is not None
-    assert decision.target.direct_user_id == ""
-
-
-def test_agent_rejects_guessed_id_for_unresolved_counterpart():
-    target = {
-        "kind": "direct",
-        "conversation_id": "",
-        "direct_user_id": "guessed-alex",
-        "title": "Alex",
-        "candidates": [],
-    }
-    agent = MeetingAlignmentAgent(
-        FakeMeetingCodex(send_payload_with_target(target))
-    )
-    with pytest.raises(
-        MeetingAlignmentTargetError,
-        match="must leave direct_user_id empty",
-    ):
-        agent.decide(source_with_unresolved_one_to_one_counterpart())
-
-
-def test_agent_rejects_wrong_name_for_unresolved_counterpart():
-    target = {
-        "kind": "direct",
-        "conversation_id": "",
-        "direct_user_id": "",
-        "title": "Mina",
-        "candidates": [],
-    }
-    agent = MeetingAlignmentAgent(
-        FakeMeetingCodex(send_payload_with_target(target))
-    )
-    with pytest.raises(
-        MeetingAlignmentTargetError,
-        match="title must identify the other participant",
-    ):
-        agent.decide(source_with_unresolved_one_to_one_counterpart())
-
-
-def test_agent_accepts_creator_direct_when_multi_party_group_is_unavailable():
-    target = {
-        "kind": "direct",
-        "conversation_id": "",
-        "direct_user_id": "alex",
-        "title": "Alex",
-        "candidates": [],
-    }
-    decision = MeetingAlignmentAgent(
-        FakeMeetingCodex(send_payload_with_target(target))
-    ).decide(source())
-
-    assert decision.target is not None
-    assert decision.target.kind == "direct"
-    assert decision.target.direct_user_id == "alex"
-
-
-def test_agent_rejects_non_creator_direct_target_for_multi_party_meeting():
-    target = {
-        "kind": "direct",
-        "conversation_id": "",
-        "direct_user_id": "mina",
-        "title": "Mina",
-        "candidates": [],
-    }
-    agent = MeetingAlignmentAgent(FakeMeetingCodex(send_payload_with_target(target)))
-    with pytest.raises(
-        MeetingAlignmentTargetError,
-        match="multi-party direct target must identify the meeting creator",
-    ):
-        agent.decide(source())
-
-
-def test_agent_rejects_nonparticipant_direct_target_for_multi_party_meeting():
-    target = {
-        "kind": "direct",
-        "conversation_id": "",
-        "direct_user_id": "outsider",
-        "title": "Outsider",
-        "candidates": [],
-    }
-    agent = MeetingAlignmentAgent(FakeMeetingCodex(send_payload_with_target(target)))
-    with pytest.raises(
-        MeetingAlignmentTargetError,
-        match="multi-party direct target must identify the meeting creator",
-    ):
-        agent.decide(source())
 
 
 def test_agent_rejects_null_target_for_multi_party_meeting():
@@ -498,6 +428,14 @@ def test_agent_rejects_null_target_for_multi_party_meeting():
 def test_parser_rejects_extra_fields():
     payload = no_action_payload()
     payload["unexpected"] = True
+    with pytest.raises(ValueError, match="No MeetingAlignmentDecision"):
+        parse_meeting_alignment_decision(json.dumps(payload))
+
+
+def test_parser_rejects_no_action_without_required_audience_scope():
+    payload = no_action_payload()
+    del payload["audience_scope"]
+
     with pytest.raises(ValueError, match="No MeetingAlignmentDecision"):
         parse_meeting_alignment_decision(json.dumps(payload))
 
@@ -704,6 +642,7 @@ def _deterministic_payload(case: dict) -> dict:
         ]
     return {
         "action": "send",
+        "audience_scope": "business",
         "trigger_reasons": triggers,
         "topics": [topic],
         "derek_viewpoint": viewpoint,
