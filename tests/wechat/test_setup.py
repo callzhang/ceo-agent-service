@@ -1,6 +1,7 @@
 import pytest
 
 from app.store import AutoReplyStore
+from app.wechat import service
 from app.wechat.models import WechatAccount, WechatCapability, WechatReplyScope
 from app.wechat.reader_ipc import ReaderIpcError
 from app.wechat.setup import WechatSetupService
@@ -41,7 +42,9 @@ class FakeReader:
         })
         if self.read_error is not None:
             raise self.read_error
-        return self.messages
+        if isinstance(self.messages, dict):
+            return self.messages.get(conversation_id, [])[:limit]
+        return self.messages[:limit]
 
     def health(self):
         return {"status": "ready"}
@@ -89,7 +92,7 @@ def test_connect_requires_bounded_real_message_read(store):
         "account": _account(),
         "kind": "direct",
         "query": "",
-        "limit": 1,
+        "limit": 10,
         "offset": 0,
     }]
     assert reader.read_calls == [{
@@ -100,7 +103,7 @@ def test_connect_requires_bounded_real_message_read(store):
     }]
 
 
-def test_connect_blocks_when_no_message_can_be_read(store):
+def test_connect_blocks_when_no_message_target_exists(store):
     reader = FakeReader(targets=[])
     svc = WechatSetupService(store, reader, lambda: "ready",
                              accounts_provider=lambda: [_account()])
@@ -109,10 +112,51 @@ def test_connect_blocks_when_no_message_can_be_read(store):
 
     assert result.status == "done"
     assert result.next_step_status == "blocked"
-    assert result.evidence["database_status"] == "ready"
+    assert result.evidence["database_status"] == "message_read_unverified"
     assert result.evidence["message_read_verified"] is False
     assert [call["kind"] for call in reader.target_calls] == ["direct", "group"]
     assert reader.read_calls == []
+    assert (
+        store.get_wechat_read_state("acct-1")["capability_status"]
+        == "message_read_unverified"
+    )
+    assert service.ready_account_state(store) is None
+
+
+def test_connect_blocks_when_candidate_has_no_messages(store):
+    reader = FakeReader(messages=[])
+    svc = WechatSetupService(store, reader, lambda: "ready",
+                             accounts_provider=lambda: [_account()])
+
+    result = svc.connect()
+
+    assert result.next_step_status == "blocked"
+    state = store.get_wechat_read_state("acct-1")
+    assert state["capability_status"] == "message_read_unverified"
+    assert "No readable WeChat message" in state["capability_reason"]
+    assert service.ready_account_state(store) is None
+
+
+def test_connect_checks_bounded_candidates_until_a_message_is_found(store):
+    reader = FakeReader(
+        targets=[
+            {"target_type": "direct", "target_id": "u1", "conversation_id": "c1"},
+            {"target_type": "direct", "target_id": "u2", "conversation_id": "c2"},
+        ],
+        messages={"c1": [], "c2": [{"message_id": "m2"}]},
+    )
+    svc = WechatSetupService(store, reader, lambda: "ready",
+                             accounts_provider=lambda: [_account()])
+
+    result = svc.connect()
+
+    assert result.next_step_status == "ready"
+    assert result.evidence["message_read_verified"] is True
+    assert [(call["kind"], call["limit"]) for call in reader.target_calls] == [
+        ("direct", 10),
+    ]
+    assert [call["conversation_id"] for call in reader.read_calls] == ["c1", "c2"]
+    assert all(call["limit"] == 1 for call in reader.read_calls)
 
 
 def test_connect_reports_reader_permission_error_without_retry(store):
@@ -129,6 +173,10 @@ def test_connect_reports_reader_permission_error_without_retry(store):
     assert result.evidence["database_status"] == "permission_required"
     assert result.evidence["message_read_verified"] is False
     assert len(reader.read_calls) == 1
+    state = store.get_wechat_read_state("acct-1")
+    assert state["capability_status"] == "permission_required"
+    assert svc.check().status == "needs_action"
+    assert svc.verify().next_step_status == "blocked"
 
 
 def test_blocked_reader_action_done_but_step_blocked(store):

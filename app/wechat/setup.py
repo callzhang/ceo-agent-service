@@ -16,6 +16,10 @@ from app.wechat.models import WechatAccount
 from app.wechat.reader_ipc import ReaderIpcError
 
 
+MESSAGE_READ_VERIFICATION_TARGET_LIMIT = 10
+MESSAGE_READ_UNVERIFIED = "message_read_unverified"
+
+
 @dataclass
 class WechatSetupResult:
     action_id: str
@@ -43,22 +47,26 @@ class WechatSetupService:
     def _verify_message_read(self, account: WechatAccount) -> bool:
         for kind in ("direct", "group"):
             targets = self.reader.list_targets(
-                account, kind=kind, query="", limit=1, offset=0,
-            )
-            if not targets:
-                continue
-            target = targets[0]
-            conversation_id = target.get("conversation_id") or target.get("target_id", "")
-            if not conversation_id:
-                continue
-            messages = self.reader.read_messages(
                 account,
-                conversation_id=conversation_id,
-                conversation_type=kind,
-                limit=1,
+                kind=kind,
+                query="",
+                limit=MESSAGE_READ_VERIFICATION_TARGET_LIMIT,
+                offset=0,
             )
-            if messages:
-                return True
+            for target in targets:
+                conversation_id = str(
+                    target.get("conversation_id") or target.get("target_id") or ""
+                )
+                if not conversation_id:
+                    continue
+                messages = self.reader.read_messages(
+                    account,
+                    conversation_id=conversation_id,
+                    conversation_type=kind,
+                    limit=1,
+                )
+                if messages:
+                    return True
         return False
 
     def connect(self, selected_account_id: str = "") -> WechatSetupResult:
@@ -81,19 +89,29 @@ class WechatSetupService:
             detect = getattr(self.reader, "detect_self_username", None)
             if detect is not None:
                 self_user_id = detect(account)
-        self.store.upsert_wechat_read_state(
-            account_id=account.account_id, account_dir=account.account_dir,
-            db_dir=account.db_dir, app_version=account.app_version,
-            self_user_id=self_user_id,
-            capability_status=capability.status, capability_reason=capability.reason,
-        )
         database_status = capability.status
+        database_reason = capability.reason
         message_read_verified = False
         if capability.status == "ready":
             try:
                 message_read_verified = self._verify_message_read(account)
             except ReaderIpcError as exc:
                 database_status = exc.code
+                database_reason = str(exc) or "CEO WeChat Reader could not read messages."
+            if not message_read_verified and database_status == "ready":
+                database_status = MESSAGE_READ_UNVERIFIED
+                database_reason = (
+                    "No readable WeChat message was found during connection verification."
+                )
+        self.store.upsert_wechat_read_state(
+            account_id=account.account_id,
+            account_dir=account.account_dir,
+            db_dir=account.db_dir,
+            app_version=account.app_version,
+            self_user_id=self_user_id,
+            capability_status=database_status,
+            capability_reason=database_reason,
+        )
         accessibility_status = self.accessibility_preflight()
         if accessibility_status != "ready" and self.accessibility_request is not None:
             accessibility_status = self.accessibility_request()
@@ -105,7 +123,7 @@ class WechatSetupService:
         return WechatSetupResult(
             action_id="connect_wechat", status="done",
             next_step_status=next_step_status,
-            summary=capability.reason or "WeChat database is connected.",
+            summary=database_reason or "WeChat database is connected.",
             evidence={
                 "account_id": account.account_id,
                 "database_status": database_status,
