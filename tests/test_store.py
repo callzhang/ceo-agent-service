@@ -7253,6 +7253,23 @@ def test_resolve_errors_keeps_history_with_a_resolution(tmp_path: Path):
     assert resolved.resolution == "recovered by queue retry"
 
 
+def test_resolve_errors_recovered_by_wechat_reader_keeps_unrelated_errors_open(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("wechat", "", "wechat_reader_unavailable", "reader timed out")
+    store.record_error("cid-1", "msg-1", "reply_task", "temporary failure")
+
+    assert store.resolve_errors_recovered_by_wechat_reader() == 1
+
+    errors = store.list_errors()
+    recovered = next(error for error in errors if error.kind == "wechat_reader_unavailable")
+    unrelated = next(error for error in errors if error.kind == "reply_task")
+    assert recovered.resolved_at
+    assert recovered.resolution == "recovered by successful WeChat reader cycle"
+    assert unrelated.resolved_at == ""
+
+
 def test_service_health_components_hold_current_component_state(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_service_health_component(

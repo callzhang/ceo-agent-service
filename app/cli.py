@@ -2960,6 +2960,9 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
             consecutive_sqlite_lock_failures = 0
             consecutive_reader_failures = 0
             reader_failure_reported = False
+            if role in {"producer", "consumer"}:
+                store.resolve_errors_recovered_by_wechat_reader()
+                store.set_service_health_component("wechat.reader", state="healthy")
         except Exception as exc:  # keep the loop alive; surface via error log
             if isinstance(exc, OSError) and exc.errno in {errno.EACCES, errno.EPERM}:
                 store.record_error(
@@ -2983,6 +2986,11 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     consecutive_reader_failures += 1
                     if consecutive_reader_failures >= 3 and not reader_failure_reported:
                         _restart_wechat_reader_service()
+                        store.set_service_health_component(
+                            "wechat.reader",
+                            state="degraded",
+                            detail="reader unavailable; automatic restart requested",
+                        )
                         store.record_error(
                             "wechat",
                             "",

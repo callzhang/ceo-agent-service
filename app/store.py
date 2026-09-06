@@ -23523,6 +23523,27 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def resolve_errors_recovered_by_wechat_reader(self) -> int:
+        """Close reader incidents after a later successful reader cycle.
+
+        These are service incidents, not business-task outcomes.  A successful
+        local reader cycle is sufficient evidence that the unavailable-reader
+        condition recovered; the incident remains in history with its
+        resolution instead of continuing to occupy Attention.
+        """
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update errors
+                set resolved_at=current_timestamp,
+                    resolution='recovered by successful WeChat reader cycle'
+                where coalesce(resolved_at, '')=''
+                  and conversation_id='wechat'
+                  and kind='wechat_reader_unavailable'
+                """
+            )
+            return cursor.rowcount
+
     def set_service_health_component(
         self,
         component: str,

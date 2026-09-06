@@ -7278,6 +7278,9 @@ def test_wechat_reader_failure_debounce_resets_after_a_success(
         "wechat_reader_unavailable",
         "wechat_reader_unavailable",
     ]
+    assert errors[0].resolved_at == ""
+    assert errors[1].resolved_at
+    assert errors[1].resolution == "recovered by successful WeChat reader cycle"
 
 
 def test_wechat_reader_restarts_helper_after_repeated_ipc_failures(
