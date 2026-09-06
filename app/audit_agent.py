@@ -327,6 +327,7 @@ def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, objec
         target.get("open_dingtalk_id")
         or target.get("recipient_open_dingtalk_id")
         or target.get("sender_open_dingtalk_id")
+        or target.get("verified_participant_open_dingtalk_id")
     )
     argv: list[str] | None = None
     if (

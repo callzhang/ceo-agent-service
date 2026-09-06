@@ -203,6 +203,17 @@ def test_initial_write_authorization_binds_direct_message_content_and_recipient(
         (SimpleNamespace(capability="dingtalk-chat", operation="send_to_group",
             payload={"reply_text": "群内回复"}, target={"conversation_id": "cid-group"}),
          ["dws", "chat", "+send-to-group", "--group", "cid-group", "--content", "群内回复", "--yes", "--format", "json"]),
+        (SimpleNamespace(
+            capability="dingtalk-chat",
+            operation="send_message_to_source_conversation",
+            payload={"content": "请提供原始记录。"},
+            target={
+                "conversation_id": "cid-source",
+                "conversation_type": "single_chat",
+                "verified_participant_open_dingtalk_id": "open-source-member",
+            },
+        ),
+         ["dws", "chat", "+messages-send", "--open-dingtalk-id", "open-source-member", "--text", "请提供原始记录。", "--yes", "--format", "json"]),
         (SimpleNamespace(capability="dingtalk_oa", operation="approval.comment",
             payload={"comment_text": "请补材料"}, target={"process_instance_id": "process-1"}),
          ["dws", "oa", "approval", "oa-comments", "--instance-id", "process-1", "--content", "请补材料", "--format", "json", "--yes"]),

@@ -88,6 +88,8 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 
 反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和 provider 结果标识之间的关系。同一任务最多允许两个内容反馈周期；基础设施失败不消耗内容反馈周期。
 
+对于源单聊的澄清动作，Consumer 必须在 action target 中提供已经通过实时读取确认的参与者 `open_dingtalk_id`。若该参与者字段以 `verified_participant_open_dingtalk_id` 表示，Audit 将其作为同一稳定接收人身份执行单聊发送；不会把 `conversation_id` 当作群聊目标。
+
 每个队列任务的 `Original trigger` 是该任务唯一的权威输入，由
 `trigger_message_id` 标识。近期会话消息、材料和实时读取结果只能补充事实，不能把
 Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `feedback_provided` 后，服务
