@@ -818,12 +818,13 @@ def _analyze_meeting_job(
         )
         return
     except RuntimeError as exc:
+        routed_exc = _find_routed_execution_error(exc)
         # A runtime lease conflict is a scheduler condition, not a terminal
         # meeting decision. Close this short-lived run as retryable before
         # applying the normal meeting backoff so the active lease cannot
         # strand the job in Attention indefinitely.
-        if isinstance(exc, RoutedCodexExecutionError) and exc.code == "runtime_attempt_active":
-            error = _runtime_error_json("runtime_session_conflict", exc)
+        if routed_exc is not None and routed_exc.code == "runtime_attempt_active":
+            error = _runtime_error_json("runtime_session_conflict", routed_exc)
             _record_agent_run(
                 store,
                 runner,
@@ -843,15 +844,15 @@ def _analyze_meeting_job(
                 max_attempts=max_attempts,
             )
             return
-        if isinstance(exc, RoutedCodexExecutionError) and (
-            exc.failure_class
+        if routed_exc is not None and (
+            routed_exc.failure_class
             in {
                 RuntimeFailureClass.AUTHENTICATION,
                 RuntimeFailureClass.CAPABILITY,
                 RuntimeFailureClass.RESULT,
                 RuntimeFailureClass.SESSION,
             }
-            or exc.code
+            or routed_exc.code
             in {
                 "runtime_execution_failed",
                 "runtime_result_validation_failed",
@@ -859,7 +860,7 @@ def _analyze_meeting_job(
                 "runtime_session_conflict",
             }
         ):
-            error = _runtime_error_json("meeting_agent", exc)
+            error = _runtime_error_json("meeting_agent", routed_exc)
             _record_agent_run(
                 store,
                 runner,
@@ -908,7 +909,11 @@ def _analyze_meeting_job(
                     "", "", "codex_capacity_pause", CODEX_CAPACITY_EXHAUSTED_MESSAGE
                 )
             return
-        error = _error_json("meeting_agent", str(exc))
+        error = (
+            _runtime_error_json("meeting_agent", routed_exc)
+            if routed_exc is not None
+            else _error_json("meeting_agent", str(exc))
+        )
         _record_agent_run(
             store,
             runner,
@@ -1571,6 +1576,24 @@ def _runtime_error_json(kind: str, exc: RoutedCodexExecutionError) -> str:
         ensure_ascii=False,
         sort_keys=True,
     )
+
+
+def _find_routed_execution_error(
+    exc: BaseException,
+) -> RoutedCodexExecutionError | None:
+    current: BaseException | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        if isinstance(current, RoutedCodexExecutionError):
+            return current
+        visited.add(id(current))
+        original = getattr(current, "original_error", None)
+        current = (
+            original
+            if isinstance(original, BaseException)
+            else current.__cause__ or current.__context__
+        )
+    return None
 
 
 def _build_meeting_roster_evidence(

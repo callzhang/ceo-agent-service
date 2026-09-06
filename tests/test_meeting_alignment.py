@@ -1218,6 +1218,44 @@ def test_meeting_routed_failure_persists_runtime_reason_and_cause(tmp_path):
     }
 
 
+def test_meeting_wrapped_external_routed_failure_persists_runtime_detail(tmp_path):
+    store = AutoReplyStore(tmp_path / "meeting-wrapped-runtime-detail.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class WrappedRuntimeFailureRunner:
+        last_session_id = ""
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+
+        def decide(self, *, prompt: str, run_id=None):
+            routed = RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "Codex runtime exceeded total timeout",
+                failure_class=RuntimeFailureClass.PROCESS,
+                failure_code="runtime_total_timeout",
+            )
+            raise ExternalDependencyError(
+                "codex meeting alignment", routed, dependency="codex"
+            ) from routed
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, WrappedRuntimeFailureRunner(), now=NOW, limit=1
+    ) == 1
+
+    [run] = store.list_meeting_alignment_runs(job_id)
+    error = json.loads(run.error)
+    assert error["kind"] == "meeting_agent"
+    assert error["message"] == "runtime_execution_failed"
+    assert error["runtime"] == {
+        "code": "runtime_execution_failed",
+        "reason": "Codex runtime exceeded total timeout",
+        "failure_class": "process",
+        "failure_code": "runtime_total_timeout",
+    }
+
+
 def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
