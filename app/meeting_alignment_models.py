@@ -91,6 +91,7 @@ class DeliveryTarget(StrictModel):
 
 class MeetingAlignmentDecision(StrictModel):
     action: Literal["no_action", "send"]
+    audience_scope: Literal["business", "personal"]
     trigger_reasons: list[
         Literal[
             "aligned_disagreement",

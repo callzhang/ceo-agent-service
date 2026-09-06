@@ -14,7 +14,6 @@ from app.agent_runtime_router import (
 from app.config import principal_display_name, work_profile_path
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
-    DeliveryTarget,
     MeetingAlignmentDecision,
     MeetingSource,
 )
@@ -195,63 +194,12 @@ def build_meeting_alignment_prompt(
     source_json = json.dumps(
         source.model_dump(mode="json"), ensure_ascii=False, indent=2
     )
-    participants = source.participants
-    if len(participants) == 2:
-        other = next(
-            participant
-            for participant in participants
-            if participant.user_id != source.current_user_id
-        )
-        if other.user_id:
-            direct_identity_contract = (
-                f"direct_user_id={other.user_id}、title={other.name}。"
-            )
-        else:
-            open_id_evidence = (
-                f"open_dingtalk_id={other.open_dingtalk_id}"
-                if other.open_dingtalk_id
-                else "没有 open_dingtalk_id"
-            )
-            direct_identity_contract = (
-                f"当前对方 user_id 未解析：direct_user_id 为空、title={other.name}，"
-                f"交给发送层唯一解析身份。{open_id_evidence} 只能作为来源证据；"
-                "不要把 open_dingtalk_id 填进 direct_user_id。"
-            )
-        target_contract = f"""这是 1:1 会议：
-- 仅当 action=send 时，目标只能是另一位参会人，kind=direct、{direct_identity_contract}
-- 仅当 action=send 时，1:1 会议必须返回 direct target；不能返回 target=null。
-- action=no_action 时 target=null；候选人面试的范围门禁优先于 1:1 发送目标规则。
-- 禁止搜索或选择群；conversation_id 和 candidates 必须为空。"""
-    else:
-        creator = source.creator
-        if creator is None or creator.user_id == source.current_user_id:
-            creator_contract = (
-                f"当前会议创建人缺失、不唯一或是 {principal_display_name()}，不能选择私信；"
-                "没有可发送群时返回 action=no_action，不能猜测收件人。"
-            )
-            creator_name = "（当前不可用）"
-        elif creator.user_id:
-            creator_contract = (
-                f"会议创建人为 {creator.name}：direct_user_id={creator.user_id}、"
-                f"title={creator.name}。"
-            )
-            creator_name = creator.name
-        else:
-            creator_contract = (
-                f"会议创建人为 {creator.name}：direct_user_id 为空、"
-                f"title={creator.name}，发送层将通过 DWS 唯一解析身份。"
-            )
-            creator_name = creator.name
-        target_contract = f"""这是多人会议：
-- 默认发到明确承接业务、决策或后续行动的团队群。必须使用 DWS 做群发现，优先找会议内明确提及或分享的讨论群，再搜会议标题和核心议题消息。
-- 无论议题已经对齐还是仍有未决问题，都可以发到明确承接该业务、决策或后续行动的团队群；不能因为群可访问、议题相似、参会人部分重合或近期共同活跃就发送，必须有明确的业务承接证据。
-- 每个 candidate 都必须写清群来源和业务承接关系。只在符合当前投递范围的候选中按证据强弱排序，并选择第 1 个。
-- 如果待发送内容涉及个人隐私、个人薪酬或绩效，或者包含对特定个人的严厉负面反馈，公开到群里会造成不必要暴露，改为私信会议创建人，并只保留该收件人完成对齐所需的内容。
-- 只有 DWS 群发现完整成功、确认没有可发送群时，才默认私信会议创建人。{creator_contract}
-- 私信创建人时，target 必须是纯 direct target：conversation_id 为空、candidates 为空；群发现和排除依据只写入 audit_summary，不能放进 target。
-- DWS 读取失败、网络失败或群元数据不完整时，不能降级私信；停止本轮并返回依赖错误，让队列重试原群发现。
-- 找不到可发送群时，默认私信会议创建人 {creator_name}；不能改成 no_action。
-- 必须返回明确 target。创建人证据缺失、不唯一或无法验证且没有可发送群时，返回 action=no_action；不能由服务猜测收件人。"""
+    target_contract = """内容优先于参会人数：客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动一律是业务内容。
+- 业务内容必须返回 audience_scope=business。仅当 action=send 时，必须使用 DWS 做群发现、按业务承接证据给候选群排序，并以最强候选作为 target.kind=group。
+- 不能因为是 1:1、群可访问、议题相似或参会人部分重合而私信；没有证据支持的群时返回 action=no_action，绝不使用 direct target。
+- personal 只适用于真正个人事项，必须返回 audience_scope=personal。仅当 attendee_evidence=calendar、attendee_roster_complete=true 且恰好两名参会人时，action=send 才能使用 target.kind=direct，并且目标只能是另一位参会人。
+- personal 不满足完整日历 1:1 来源时返回 action=no_action；不得以转写、不完整 roster 或多人会议发送 direct。
+- action=no_action 时 target=null。"""
 
     similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
 
@@ -289,7 +237,7 @@ def build_meeting_alignment_prompt(
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守 schema，不添加字段。
 - no_action 时分析和发送字段必须为空，只保留 audit_summary 与 confidence。
-- send 时 final_message、trigger_reasons 和明确 target 必须完整。仅当 action=send 时，1:1 会议必须返回另一位参会人的 direct target。
+- send 时 final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同。
 - 最终只生成一条可直接发送的合并消息。
 
 服务端注入的工作人格（仅作解释辅助，不能创造会议立场）：
@@ -399,85 +347,58 @@ def _validate_source_aware_target(
     if decision.action == "no_action":
         return
 
-    participant_count = len(source.participants)
     target = decision.target
-    if participant_count == 2:
-        other_participants = [
-            participant
-            for participant in source.participants
-            if participant.user_id != source.current_user_id
-        ]
-        if len(other_participants) != 1:
+    if target is None:
+        raise MeetingAlignmentTargetError("send requires an explicit delivery target")
+    if decision.audience_scope == "business":
+        if target.kind != "group":
             raise MeetingAlignmentTargetError(
-                "1:1 meeting source must identify exactly one other participant"
+                "business send requires a group target"
             )
-        if target is None or target.kind != "direct":
-            raise MeetingAlignmentTargetError(
-                "1:1 send requires a direct target for the other participant"
-            )
-        counterpart = other_participants[0]
-        expected_user_id = counterpart.user_id
-        if expected_user_id and target.direct_user_id != expected_user_id:
-            raise MeetingAlignmentTargetError(
-                "1:1 direct target must target the other participant: "
-                f"expected {expected_user_id!r}, got {target.direct_user_id!r}"
-            )
-        if not expected_user_id:
-            if target.direct_user_id:
-                raise MeetingAlignmentTargetError(
-                    "unresolved 1:1 identity must leave direct_user_id empty; "
-                    "delivery resolves it from source evidence"
-                )
-            if _canonical_person_name(target.title) != _canonical_person_name(
-                counterpart.name
-            ):
-                raise MeetingAlignmentTargetError(
-                    "unresolved 1:1 target title must identify the other "
-                    f"participant: expected {counterpart.name!r}, "
-                    f"got {target.title!r}"
-                )
         return
-
-    if participant_count > 2:
-        if target is None:
+    if (
+        source.attendee_evidence != "calendar"
+        or not source.attendee_roster_complete
+        or len(source.participants) != 2
+    ):
+        raise MeetingAlignmentTargetError(
+            "personal direct send requires a complete calendar-backed two-person roster"
+        )
+    other_participants = [
+        participant
+        for participant in source.participants
+        if participant.user_id != source.current_user_id
+    ]
+    if len(other_participants) != 1:
+        raise MeetingAlignmentTargetError(
+            "personal 1:1 meeting source must identify exactly one other participant"
+        )
+    if target.kind != "direct":
+        raise MeetingAlignmentTargetError(
+            "personal send requires a direct target for the other participant"
+        )
+    counterpart = other_participants[0]
+    expected_user_id = counterpart.user_id
+    if expected_user_id and target.direct_user_id != expected_user_id:
+        raise MeetingAlignmentTargetError(
+            "personal direct target must target the other participant: "
+            f"expected {expected_user_id!r}, got {target.direct_user_id!r}"
+        )
+    if not expected_user_id:
+        if target.direct_user_id:
             raise MeetingAlignmentTargetError(
-                "multi-party send requires an explicit group or creator target"
+                "unresolved personal 1:1 identity must leave direct_user_id empty; "
+                "delivery resolves it from source evidence"
             )
-        if target.kind == "direct":
-            _validate_multi_party_direct_target_creator(source, target)
-        return
-
-    raise MeetingAlignmentTargetError(
-        "send decision requires at least two meeting participants"
-    )
+        if _canonical_person_name(target.title) != _canonical_person_name(
+            counterpart.name
+        ):
+            raise MeetingAlignmentTargetError(
+                "unresolved personal 1:1 target title must identify the other "
+                f"participant: expected {counterpart.name!r}, "
+                f"got {target.title!r}"
+            )
 
 
 def _canonical_person_name(value: str) -> str:
     return " ".join(value.split()).casefold()
-
-
-def _validate_multi_party_direct_target_creator(
-    source: MeetingSource,
-    target: DeliveryTarget,
-) -> None:
-    creator = source.creator
-    if creator is None or creator.user_id == source.current_user_id:
-        raise MeetingAlignmentTargetError(
-            "multi-party direct target requires a uniquely identified meeting creator"
-        )
-    if target.direct_user_id:
-        matches_creator = creator.user_id == target.direct_user_id
-    else:
-        matches_creator = (
-            not creator.user_id
-            and _canonical_person_name(creator.name)
-            == _canonical_person_name(target.title)
-        )
-    if not matches_creator:
-        raise MeetingAlignmentTargetError(
-            "multi-party direct target must identify the meeting creator"
-        )
-    if _canonical_person_name(creator.name) != _canonical_person_name(target.title):
-        raise MeetingAlignmentTargetError(
-            "multi-party direct target title must name the meeting creator"
-        )

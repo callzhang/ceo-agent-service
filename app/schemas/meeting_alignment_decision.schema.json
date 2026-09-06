@@ -217,6 +217,14 @@
       "title": "Action",
       "type": "string"
     },
+    "audience_scope": {
+      "enum": [
+        "business",
+        "personal"
+      ],
+      "title": "Audience Scope",
+      "type": "string"
+    },
     "trigger_reasons": {
       "items": {
         "enum": [
@@ -288,6 +296,7 @@
   },
   "required": [
     "action",
+    "audience_scope",
     "trigger_reasons",
     "topics",
     "derek_viewpoint",
