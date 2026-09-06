@@ -711,6 +711,11 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if command == "send-attempt":
             subparser.add_argument("--attempt-id", type=int, required=True)
+            subparser.add_argument(
+                "--instruction",
+                default="",
+                help="persist an explicit reviewed instruction for the new execution generation",
+            )
         if command == "weekly-okr-report":
             subparser.add_argument(
                 "--force",
@@ -2030,7 +2035,12 @@ def rerun_message_command(
     )
 
 
-def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str, object]:
+def send_attempt_command(
+    settings: WorkerSettings,
+    attempt_id: int,
+    *,
+    instruction: str = "",
+) -> dict[str, object]:
     store = AutoReplyStore(settings.db_path)
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
@@ -2078,22 +2088,43 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         and task.error.strip()
         and task.error.strip() != manual_rerun_marker
     )
-    queued_task = store.enqueue_manual_rerun_reply_task(
-        conversation_id=attempt.conversation_id,
-        conversation_title=conversation_title,
-        single_chat=single_chat,
-        trigger_message_id=attempt.trigger_message_id,
-        trigger_create_time=trigger_create_time,
-        trigger_sender=attempt.trigger_sender,
-        trigger_text=attempt.trigger_text,
-        trigger_message_json=trigger_message_json,
-        oa_url=attempt.oa_url,
-        attempt_id=attempt.id,
-        channel=attempt.channel,
-        force_rotation=force_rotation,
-    )
+    reviewed_instruction = instruction.strip()
+    if reviewed_instruction:
+        # A user-authorized correction must be part of the next Consumer
+        # context. Keep the old attempt as evidence and create a revision.
+        queued_attempt_id, queued_task = store.record_reviewed_reply_rerun(
+            conversation_id=attempt.conversation_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            trigger_message_id=attempt.trigger_message_id,
+            trigger_create_time=trigger_create_time,
+            trigger_sender=attempt.trigger_sender,
+            trigger_text=attempt.trigger_text,
+            trigger_message_json=trigger_message_json,
+            suggested_reply_text="",
+            reviewer_feedback=reviewed_instruction,
+            channel=attempt.channel,
+            oa_url=attempt.oa_url,
+        )
+    else:
+        queued_attempt_id = attempt.id
+        queued_task = store.enqueue_manual_rerun_reply_task(
+            conversation_id=attempt.conversation_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            trigger_message_id=attempt.trigger_message_id,
+            trigger_create_time=trigger_create_time,
+            trigger_sender=attempt.trigger_sender,
+            trigger_text=attempt.trigger_text,
+            trigger_message_json=trigger_message_json,
+            oa_url=attempt.oa_url,
+            attempt_id=attempt.id,
+            channel=attempt.channel,
+            force_rotation=force_rotation,
+        )
     result = {
-        "attempt_id": attempt.id,
+        "attempt_id": queued_attempt_id,
+        "source_attempt_id": attempt.id,
         "conversation_title": attempt.conversation_title,
         "trigger_sender": attempt.trigger_sender,
         "trigger_text_excerpt": _excerpt(attempt.trigger_text),
@@ -3791,7 +3822,11 @@ def main() -> None:
         )
     elif args.command == "send-attempt":
         ensure_live_send_allowed(settings)
-        send_attempt_command(settings, attempt_id=args.attempt_id)
+        send_attempt_command(
+            settings,
+            attempt_id=args.attempt_id,
+            instruction=args.instruction,
+        )
     elif args.command == "resolve-agent-run":
         resolve_agent_run_command(
             settings,

@@ -3784,10 +3784,19 @@ def test_main_initializes_runtime_routes_before_rerun_message(
 def test_parser_supports_send_attempt_command():
     parser = build_parser()
 
-    args = parser.parse_args(["send-attempt", "--attempt-id", "42"])
+    args = parser.parse_args(
+        [
+            "send-attempt",
+            "--attempt-id",
+            "42",
+            "--instruction",
+            "Notify the OA originator after the decision.",
+        ]
+    )
 
     assert args.command == "send-attempt"
     assert args.attempt_id == 42
+    assert args.instruction == "Notify the OA originator after the decision."
 
 
 def test_build_work_profile_command_is_registered():
@@ -4083,6 +4092,49 @@ def test_send_attempt_command_dedupes_same_pending_rerun_without_direct_send(
     assert first_task is not None and second_task is not None
     assert first_task.execution_generation == second_task.execution_generation
     assert store.get_sent_reply("cid-1", "msg-1") is None
+
+
+def test_send_attempt_command_persists_instruction_as_new_reviewed_attempt(
+    monkeypatch, tmp_path
+):
+    class FakeDws:
+        def __init__(self, **kwargs):
+            raise AssertionError("send-attempt must not construct DwsClient")
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, None)
+    enqueue_trigger_task(store)
+    source_attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Alex Chen 看一下",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+
+    result = send_attempt_command(
+        settings,
+        source_attempt_id,
+        instruction="Notify the actual OA originator after the decision.",
+    )
+
+    reviewed_attempt = store.get_reply_attempt(int(result["attempt_id"]))
+    source_attempt = store.get_reply_attempt(source_attempt_id)
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert result["attempt_id"] != source_attempt_id
+    assert result["source_attempt_id"] == source_attempt_id
+    assert source_attempt is not None and source_attempt.send_status == "failed"
+    assert reviewed_attempt is not None
+    assert reviewed_attempt.send_status == "pending"
+    assert reviewed_attempt.reviewer_feedback == (
+        "Notify the actual OA originator after the decision."
+    )
+    assert task is not None and task.manual_rerun_attempt_id == reviewed_attempt.id
 
 
 def test_send_attempt_command_rotates_pending_task_with_previous_error(
