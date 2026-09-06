@@ -4094,6 +4094,62 @@ def test_process_work_item_repairs_update_project_without_project(
     assert "不得改成 create_project" in codex.prompts[1]
 
 
+def test_process_work_item_does_not_require_memory_recall_receipt(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item("客户交付")
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    update = {
+        "action": "update_project",
+        "project": {
+            "id": project_id,
+            "title": "客户交付",
+            "category": "projects",
+            "memory_context": _memory_context(),
+        },
+        "update_summary": "保留已有项目，等待完成证据。",
+        "memory_recall_used": False,
+        "confidence": 0.8,
+    }
+
+    class CodexWithoutMemoryRecallReceipt(FakeCodexWithAuditEvents):
+        def __init__(self):
+            super().__init__(update, [])
+
+    codex = CodexWithoutMemoryRecallReceipt()
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        runs = db.execute(
+            "select status, error from task_agent_runs "
+            "where summary_input_id=? order by id",
+            (input_id,),
+        ).fetchall()
+
+    assert input_row == ("done", "")
+    assert runs == [("completed", "")]
+    assert len(codex.prompts) == 1
+
+
 def test_process_work_item_rejects_missing_id_repair_that_creates_duplicate(
     tmp_path,
     monkeypatch,

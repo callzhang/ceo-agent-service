@@ -601,10 +601,7 @@ def process_work_item(
         except ValueError as exc:
             repairable_validation_error = isinstance(
                 exc, RepairableTaskDecisionValidationError
-            ) or str(exc) in {
-                "non-discard task decision requires memory_recall tool event",
-                "non-skip task decision requires memory_recall tool event",
-            }
+            )
             if not repairable_validation_error:
                 raise
             rejected_decision = decision
@@ -1011,13 +1008,6 @@ def _validate_task_agent_decision(
             )
     if decision.action == "skip":
         return
-    if (
-        not memory_issue.strip()
-        and not memory_recall_attempted
-        and not memory_runtime_unavailable
-        and not decision.memory_recall_used
-    ):
-        raise ValueError("non-skip task decision requires memory_recall_used")
     if decision.project is None:
         if decision.action == "update_project":
             raise RepairableTaskDecisionValidationError(
