@@ -1,3 +1,4 @@
+from app.codex_decision import append_signature
 from app.store import AutoReplyStore
 from app.wechat import service
 from app.wechat.accessibility import AccessibilityResult, SendOutcome, WechatSender
@@ -583,7 +584,8 @@ def test_wechat_retry_and_recall_use_same_prepared_body(tmp_path, monkeypatch):
         "caller supplied text must not be used",
     )
 
-    assert requeued.reply_text.count("/api/dingtalk-feedback-spike") == 2
+    assert requeued.reply_text == append_signature("收到")
+    assert "/api/dingtalk-feedback-spike" not in requeued.reply_text
     assert sent_texts == [requeued.reply_text, requeued.reply_text]
     assert recalled_texts == [requeued.reply_text]
 

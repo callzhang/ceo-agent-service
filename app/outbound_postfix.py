@@ -38,10 +38,16 @@ def compose_outbound_postfix(
         delivery_key=delivery_key,
         body=body,
     )
+    channel_feedback_base_url = (
+        "" if normalized_channel == "wechat" else feedback_base_url
+    )
     prepared = prepare_outgoing_reply_text(
-        reply_text=_normalize_disabled_feedback_body(body, feedback_base_url),
+        reply_text=_normalize_disabled_feedback_body(
+            body,
+            channel_feedback_base_url,
+        ),
         original_text=original_text,
-        feedback_base_url=feedback_base_url,
+        feedback_base_url=channel_feedback_base_url,
     )
     return PreparedOutboundMessage(
         channel=normalized_channel,

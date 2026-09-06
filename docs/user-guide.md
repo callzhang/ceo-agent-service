@@ -126,11 +126,13 @@ SQLite 做只读检查。`/history` 只记录钉钉、OA 和后台流程，不�
 | `CEO_HANDOFF_ACK` | 需要本人接管时的确认文案 | 简短说明已转交本人 |
 | `CEO_WORKSPACE` | 该管理者的本地知识目录 | `~/Documents/memory` |
 | `CEO_WORKER_DB` | 该实例自己的运行数据库 | 放在用户 Library 下 |
-| `CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL` | 该实例自己的反馈服务 | 留空则不展示反馈链接 |
+| `CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL` | 该实例自己的反馈服务 | 用于钉钉；留空则不展示反馈链接 |
 | `CEO_FEISHU_LIVE_SEND_ENABLED` | 是否允许飞书真实发送 | 默认 `0` |
 
 反馈服务不能使用仓库里写死的公共地址。需要反馈功能时，安装者应把本仓库的反馈 API 部署到自己的 Vercel
 项目，配置自己的 secret，再把部署根地址写入 `.env`。
+微信个人聊天只发送普通文本，不能把 Markdown 链接显示成短文字，因此微信回复仅保留助手签名；评价请在
+本机 CEO Agent 的 History 页面完成，不向微信联系人发送内部评价链接。
 
 ### 1.3 先通过 dry-run 验收
 

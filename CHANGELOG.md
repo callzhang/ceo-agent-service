@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-06: stop appending web feedback callbacks to WeChat replies. Personal
+  WeChat text messages do not render Markdown links, so new WeChat deliveries
+  now keep the configured assistant signature without exposing long internal
+  feedback URLs; DingTalk feedback links and local History feedback remain
+  available.
+
 - 2026-09-06: restore WeChat preflight activation before retrying an empty AX
   window tree. The Sender now uses the same cross-Space activation path during
   health checks as it does before delivery, preventing Tutorial and Status from

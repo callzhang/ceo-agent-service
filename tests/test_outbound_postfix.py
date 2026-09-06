@@ -27,6 +27,24 @@ def test_compose_appends_canonical_signature_without_feedback_when_disabled() ->
     )
 
 
+def test_compose_omits_feedback_links_for_wechat_when_feedback_is_enabled() -> None:
+    prepared = compose_outbound_postfix(
+        channel="wechat",
+        delivery_key="wechat:message-2",
+        body="已收到，会跟进。",
+        original_text="请同步进度",
+        feedback_base_url="https://feedback.example",
+    )
+
+    assert prepared == PreparedOutboundMessage(
+        channel="wechat",
+        delivery_key="wechat:message-2",
+        final_body=append_signature("已收到，会跟进。"),
+        feedback_token="",
+        postfix_version=POSTFIX_VERSION,
+    )
+
+
 def test_compose_rejects_blank_fields_and_unsupported_channel() -> None:
     for kwargs in (
         {"channel": "email", "delivery_key": "key", "body": "body"},
