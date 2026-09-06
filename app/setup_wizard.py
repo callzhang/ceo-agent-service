@@ -1256,6 +1256,15 @@ def _run_wechat_setup_action(action_id: str) -> SetupWizardEvent:
                     "message_read_verified": False,
                 },
             )
+        except Exception as exc:  # preserve the existing structured action contract
+            return SetupWizardEvent(
+                step_id="wechat_connection",
+                action_id=action_id,
+                status="failed",
+                next_step_status="failed",
+                summary=f"WeChat setup error: {redact_setup_output(str(exc))}",
+                evidence={"full_disk_access_prompted": True},
+            )
 
         evidence = dict(result.evidence or {})
         evidence["full_disk_access_prompted"] = True

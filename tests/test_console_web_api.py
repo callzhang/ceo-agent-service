@@ -232,6 +232,71 @@ def test_console_tutorial_run_persists_redacted_wechat_summaries(
     assert step["summary"] == "probe failed at [REDACTED_PATH]"
 
 
+def test_console_tutorial_run_persists_structured_wechat_programming_failure(
+    tmp_path: Path, monkeypatch
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_setup_wizard_step(
+        step_id="preflight",
+        status="done",
+        summary="ready",
+    )
+    store.record_setup_wizard_event(
+        step_id="wechat_connection",
+        action_id="connect_wechat",
+        status="done",
+        summary="settings opened",
+        evidence_json=json.dumps({"full_disk_access_prompted": True}),
+    )
+    calls = []
+
+    class BrokenSetup:
+        reader = object()
+
+        def connect(self, selected_account_id: str = ""):
+            calls.append("connect")
+            raise ValueError("invalid result at /Users/test/private/module.py")
+
+    monkeypatch.setenv("CEO_WORKER_DB", str(db_path))
+    monkeypatch.setattr(
+        "app.wechat.service.build_setup_service", lambda _store: BrokenSetup()
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.restart_reader_and_wait",
+        lambda _reader: calls.append("restart") or {"status": "ready"},
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.open_full_disk_access_settings",
+        lambda: (_ for _ in ()).throw(AssertionError("must not reopen settings")),
+    )
+
+    with _client(tmp_path, spa_enabled=True) as client:
+        first = client.post("/api/console/tutorial/run/connect_wechat")
+        repeated = client.post("/api/console/tutorial/run/connect_wechat")
+
+    assert calls == ["restart", "connect", "restart", "connect"]
+    for response in (first, repeated):
+        assert response.status_code == 200
+        assert response.json()["ok"] is False
+        assert response.json()["item"]["status"] == "failed"
+        assert response.json()["item"]["next_step_status"] == "failed"
+        assert response.json()["item"]["evidence"] == {
+            "full_disk_access_prompted": True
+        }
+        assert "/Users/test" not in response.text
+
+    persisted = AutoReplyStore(db_path)
+    event = persisted.list_setup_wizard_events(
+        "wechat_connection", action_id="connect_wechat", limit=1
+    )[0]
+    step = persisted.get_setup_wizard_step("wechat_connection")
+    assert event["status"] == "failed"
+    assert "/Users/test" not in event["summary"]
+    assert step["status"] == "failed"
+    assert "/Users/test" not in step["summary"]
+
+
 def test_common_envelopes_and_normalization_are_explicitly_json_serializable():
     item = ApiItemEnvelope(
         item={"label": normalize_display_value({"title": "Readable"})},

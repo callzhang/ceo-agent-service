@@ -1668,29 +1668,45 @@ def test_wechat_connect_redacts_setup_result_summary(monkeypatch, tmp_path: Path
     assert event.summary == "probe failed at [REDACTED_PATH]"
 
 
-def test_wechat_connect_does_not_convert_programming_error_to_permission_failure(
+def test_wechat_connect_returns_structured_failure_for_programming_error(
     monkeypatch, tmp_path: Path
 ):
     db_path = tmp_path / "worker.sqlite3"
     _record_wechat_phase(AutoReplyStore(db_path), full_disk_access_prompted=True)
+    calls = []
 
     class BrokenSetup:
         reader = object()
 
         def connect(self, selected_account_id: str = ""):
-            raise ValueError("invalid result shape")
+            calls.append("connect")
+            raise ValueError("invalid result at /Users/test/private/module.py")
 
     monkeypatch.setattr(
         "app.wechat.service.build_setup_service", lambda _store: BrokenSetup()
     )
     monkeypatch.setattr(
         "app.setup_wizard.restart_reader_and_wait",
-        lambda _reader: {"status": "ready"},
+        lambda _reader: calls.append("restart") or {"status": "ready"},
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.open_full_disk_access_settings",
+        lambda: (_ for _ in ()).throw(AssertionError("must not reopen settings")),
     )
     monkeypatch.setenv("CEO_WORKER_DB", str(db_path))
 
-    with pytest.raises(ValueError, match="invalid result shape"):
-        run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+    first = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+    _record_wechat_phase(AutoReplyStore(db_path), **first.evidence)
+    repeated = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+
+    assert calls == ["restart", "connect", "restart", "connect"]
+    for event in (first, repeated):
+        assert event.status == "failed"
+        assert event.next_step_status == "failed"
+        assert event.evidence == {"full_disk_access_prompted": True}
+        assert "database_status" not in event.evidence
+        assert "message_read_verified" not in event.evidence
+        assert "/Users/test" not in event.summary
 
 
 def test_second_wechat_connect_restart_timeout_is_blocked_without_connect(
