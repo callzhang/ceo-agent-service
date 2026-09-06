@@ -10015,6 +10015,18 @@ def create_audit_app(
             render_worker_status_payload,
             worker_status_refreshing_payload,
         )
+        # Queue totals may use the short-lived status snapshot, but Attention
+        # is an error surface and must agree with its dedicated endpoint on
+        # every refresh.  In particular, a successfully recovered service
+        # incident must disappear immediately instead of lingering until the
+        # next background status-cache render.
+        attention_rows = read_cached_attention_rows()
+        summary = dict(payload.get("summary") or {})
+        summary["attention"] = sum(
+            max(0, int(row.get("count") or 1))
+            for row in attention_rows
+            if isinstance(row, Mapping)
+        )
         connector_statuses = connector_status_cache.get_or_refresh(
             _connector_status_snapshots,
             lambda: {},
@@ -10039,6 +10051,8 @@ def create_audit_app(
         )
         return {
             **payload,
+            "attention_rows": attention_rows,
+            "summary": summary,
             "connectors": connector_statuses,
             "wechat": wechat_status,
             "system_health": system_health,

@@ -1517,6 +1517,26 @@ def test_spa_attention_does_not_expose_empty_cold_cache(monkeypatch, tmp_path: P
     assert payload["items"][0]["records"][0]["id"] == "12831"
 
 
+def test_status_attention_refreshes_after_a_service_error_is_resolved(tmp_path: Path):
+    with _client(tmp_path, spa_enabled=True, asset=b"<!doctype html>") as client:
+        store = AutoReplyStore(tmp_path / "worker.sqlite3")
+        store.record_error("wechat", "", "wechat_reader_unavailable", "reader unavailable")
+
+        initial = client.get("/api/console/status")
+        assert initial.status_code == 200
+        assert initial.json()["item"]["summary"]["attention"] == 1
+
+        [error] = store.list_errors(limit=1)
+        assert store.resolve_errors([error.id], resolution="reader recovered") == 1
+
+        refreshed = client.get("/api/console/status")
+
+    assert refreshed.status_code == 200
+    payload = refreshed.json()["item"]
+    assert payload["attention_rows"] == []
+    assert payload["summary"]["attention"] == 0
+
+
 def test_queue_attention_rows_routes_service_errors_to_history_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("", "", "producer_loop_error", "database is locked")
