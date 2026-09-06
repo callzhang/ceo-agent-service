@@ -150,6 +150,7 @@ def matching_calendar_event(
     event_id: str = "event-1",
     title: str = "上线评审",
     self_user: str | None = "u-derek",
+    organizer: str = "Derek",
 ) -> DwsCalendarEvent:
     attendees = [
         DwsCalendarAttendee(
@@ -170,7 +171,7 @@ def matching_calendar_event(
         start_time="2026-07-14T09:00:00+08:00",
         end_time="2026-07-14T10:00:00+08:00",
         status="confirmed",
-        organizer="A",
+        organizer=organizer,
         attendee_details=attendees,
     )
 
@@ -801,7 +802,7 @@ def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_p
     assert replayed.decision_json == "{}"
     assert json.loads(replayed.source_json)["calendar_evidence"]["creator"][
         "name"
-    ] == "A"
+    ] == "Derek"
     assert results[1]["job_id"] == old_id
 
 
@@ -1374,6 +1375,28 @@ def test_calendar_summary_non_organizer_permission_marks_sent_without_retry(tmp_
     receipt = json.loads(job.calendar_summary_result_json)
     assert receipt["reason"] == "current account is not the calendar organizer"
     assert store.claim_ready_to_send_meeting_alignment_jobs(limit=1, now=NOW) == []
+
+
+def test_calendar_summary_does_not_update_description_for_other_organizer(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    class OtherOrganizerDws(ConsumerDws):
+        def __init__(self):
+            super().__init__()
+            self.calendar_pages[""]["events"][0].organizer = "A"
+
+        def update_calendar_event_description(self, event_id: str, description: str) -> dict:
+            raise AssertionError("non-organizer event must not update description")
+
+    dws = OtherOrganizerDws()
+    job_id = seed_consumer_job(store, dws)
+    assert consume_meeting_alignment_jobs(
+        store, dws, FakeMeetingRunner(consumer_send_decision()), now=NOW, limit=1
+    ) == 1
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "sent"
+    assert job.calendar_summary_status == "skipped"
+    assert len(dws.send_calls) == 1
 
 
 def test_transcript_meeting_without_calendar_event_marks_calendar_note_skipped(

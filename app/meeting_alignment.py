@@ -1241,6 +1241,32 @@ def _write_meeting_summary_to_calendar_or_retry(
         )
         _notify_meeting_sent(job, delivery)
         return
+    creator = evidence.creator
+    if (
+        creator is not None
+        and creator.user_id.strip()
+        and creator.user_id != dws.get_current_user_id().strip()
+    ):
+        receipt = json.dumps(
+            {
+                "event_id": evidence.event_id,
+                "state": "skipped",
+                "reason": "current account does not host the calendar event",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        store.update_meeting_alignment_job(
+            job.id,
+            status="sent",
+            final_message=summary,
+            send_result_json=delivery.model_dump_json(),
+            calendar_summary_status="skipped",
+            calendar_summary_result_json=receipt,
+            error="",
+        )
+        _notify_meeting_sent(job, delivery)
+        return
     try:
         event = dws.get_calendar_event(evidence.event_id)
         if event is None:
