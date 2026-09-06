@@ -1159,6 +1159,29 @@ def _wechat_permission_prompt_event(*, app_name: str, app_path: str) -> SetupWiz
     )
 
 
+def _demote_bound_ready_wechat_state(
+    store: AutoReplyStore,
+    previous: Mapping[str, object],
+    *,
+    reason: str,
+) -> None:
+    account_id = str(previous.get("account_id") or "")
+    if not account_id:
+        return
+    state = store.get_wechat_read_state(account_id)
+    if state is None or state["capability_status"] != "ready":
+        return
+    store.upsert_wechat_read_state(
+        account_id=account_id,
+        account_dir=state["account_dir"],
+        db_dir=state["db_dir"],
+        app_version=state["app_version"],
+        self_user_id=state["self_user_id"],
+        capability_status="blocked",
+        capability_reason=reason,
+    )
+
+
 def _run_wechat_setup_action(action_id: str) -> SetupWizardEvent:
     from app import config
     from app.wechat import service
@@ -1217,6 +1240,11 @@ def _run_wechat_setup_action(action_id: str) -> SetupWizardEvent:
                 try:
                     restart_reader_and_wait(setup.reader)
                 except PermissionOnboardingError as exc:
+                    _demote_bound_ready_wechat_state(
+                        store,
+                        previous,
+                        reason="Tutorial Reader restart verification failed.",
+                    )
                     return SetupWizardEvent(
                         step_id="wechat_connection",
                         action_id=action_id,
@@ -1242,6 +1270,14 @@ def _run_wechat_setup_action(action_id: str) -> SetupWizardEvent:
         try:
             result = setup.verify() if action_id == "verify_wechat" else setup.connect()
         except ReaderIpcError as exc:
+            _demote_bound_ready_wechat_state(
+                store,
+                previous,
+                reason=(
+                    "Tutorial Reader verification blocked: "
+                    f"{redact_setup_output(str(exc.code))}."
+                ),
+            )
             return SetupWizardEvent(
                 step_id="wechat_connection",
                 action_id=action_id,

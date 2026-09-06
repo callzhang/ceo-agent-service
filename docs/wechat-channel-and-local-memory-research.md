@@ -284,7 +284,9 @@ MDM/PPPC 管理策略。
 
 ### Tutorial 两阶段连接（2026-09-06 已实现）
 
-连接状态以现有 `setup_wizard_events` 持久化，不增加一次性内存状态或第三个按钮：
+连接阶段的权威状态以现有 `setup_wizard_events` 持久化，不增加第三个按钮。服务进程另有一份
+仅用于“API 动作已返回、事件尚未落库”短窗口的防重复缓存，避免连续点击打开多个系统设置
+窗口；事件一旦写入 SQLite，这份短期缓存即被清除，不能替代或恢复持久连接阶段：
 
 1. **第一次 Connect**：校验 Reader app 与 LaunchAgent 已安装，打开 Full Disk Access
    设置，写入 `full_disk_access_prompted=true`，页面状态为 `needs_action`。这一阶段对

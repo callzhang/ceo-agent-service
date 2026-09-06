@@ -1631,6 +1631,162 @@ def test_second_wechat_connect_reader_error_preserves_phase_across_requests(
         assert "/Users/test" not in event.summary
 
 
+def test_verified_wechat_reader_error_demotes_bound_ready_account(
+    monkeypatch, tmp_path: Path
+):
+    from app.wechat import service as wechat_service
+    from app.wechat.reader_ipc import ReaderIpcError
+
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_wechat_read_state(
+        account_id="acct-1",
+        account_dir="/acct-1",
+        db_dir="/acct-1/db_storage",
+        app_version="4.1.10",
+        self_user_id="self-1",
+        capability_status="ready",
+        capability_reason="",
+    )
+    _record_wechat_phase(
+        store,
+        full_disk_access_prompted=True,
+        account_id="acct-1",
+        database_status="ready",
+        message_read_verified=True,
+    )
+
+    class FakeSetup:
+        reader = object()
+
+        def connect(self, selected_account_id: str = ""):
+            raise ReaderIpcError(
+                "permission denied at /Users/test/private/wechat",
+                code="permission_required",
+            )
+
+    monkeypatch.setattr(
+        "app.wechat.service.build_setup_service", lambda _store: FakeSetup()
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.restart_reader_and_wait",
+        lambda _reader: (_ for _ in ()).throw(
+            AssertionError("verified account must use direct verification")
+        ),
+    )
+    monkeypatch.setenv("CEO_WORKER_DB", str(db_path))
+
+    event = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+
+    state = store.get_wechat_read_state("acct-1")
+    assert event.next_step_status == "blocked"
+    assert state["capability_status"] == "blocked"
+    assert state["account_dir"] == "/acct-1"
+    assert state["db_dir"] == "/acct-1/db_storage"
+    assert state["app_version"] == "4.1.10"
+    assert state["self_user_id"] == "self-1"
+    assert "/Users/test" not in state["capability_reason"]
+    assert wechat_service.ready_account_state(store) is None
+
+
+def test_wechat_restart_failure_demotes_bound_ready_account(
+    monkeypatch, tmp_path: Path
+):
+    from app.wechat.permission_onboarding import PermissionOnboardingError
+
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_wechat_read_state(
+        account_id="acct-1",
+        account_dir="/acct-1",
+        db_dir="/acct-1/db_storage",
+        app_version="4.1.10",
+        self_user_id="self-1",
+        capability_status="ready",
+        capability_reason="",
+    )
+    _record_wechat_phase(
+        store,
+        full_disk_access_prompted=True,
+        account_id="acct-1",
+        database_status="blocked",
+        message_read_verified=False,
+    )
+
+    class FakeSetup:
+        reader = object()
+
+        def connect(self, selected_account_id: str = ""):
+            raise AssertionError("connect must not run after restart failure")
+
+    monkeypatch.setattr(
+        "app.wechat.service.build_setup_service", lambda _store: FakeSetup()
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.restart_reader_and_wait",
+        lambda _reader: (_ for _ in ()).throw(
+            PermissionOnboardingError("restart failed at /Users/test/private")
+        ),
+    )
+    monkeypatch.setenv("CEO_WORKER_DB", str(db_path))
+
+    event = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+
+    state = store.get_wechat_read_state("acct-1")
+    assert event.next_step_status == "blocked"
+    assert state["capability_status"] == "blocked"
+    assert state["account_dir"] == "/acct-1"
+    assert state["db_dir"] == "/acct-1/db_storage"
+    assert state["app_version"] == "4.1.10"
+    assert state["self_user_id"] == "self-1"
+    assert "/Users/test" not in state["capability_reason"]
+
+
+def test_wechat_reader_error_does_not_demote_different_ready_account(
+    monkeypatch, tmp_path: Path
+):
+    from app.wechat.reader_ipc import ReaderIpcError
+
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_wechat_read_state(
+        account_id="acct-1",
+        account_dir="/acct-1",
+        db_dir="/acct-1/db_storage",
+        app_version="4.1.10",
+        self_user_id="self-1",
+        capability_status="ready",
+        capability_reason="",
+    )
+    _record_wechat_phase(
+        store,
+        full_disk_access_prompted=True,
+        account_id="acct-other",
+        database_status="blocked",
+        message_read_verified=False,
+    )
+
+    class FakeSetup:
+        reader = object()
+
+        def connect(self, selected_account_id: str = ""):
+            raise ReaderIpcError("permission denied", code="permission_required")
+
+    monkeypatch.setattr(
+        "app.wechat.service.build_setup_service", lambda _store: FakeSetup()
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.restart_reader_and_wait",
+        lambda _reader: {"status": "ready"},
+    )
+    monkeypatch.setenv("CEO_WORKER_DB", str(db_path))
+
+    event = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+
+    assert event.next_step_status == "blocked"
+    assert store.get_wechat_read_state("acct-1")["capability_status"] == "ready"
+
+
 def test_wechat_connect_redacts_setup_result_summary(monkeypatch, tmp_path: Path):
     from app.wechat.setup import WechatSetupResult
 
