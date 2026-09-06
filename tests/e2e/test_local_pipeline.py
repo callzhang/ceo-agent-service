@@ -78,6 +78,15 @@ class FakeMeetingDws:
             "next_cursor": "",
         }
 
+    def get_calendar_event(self, event_id):
+        return self.calendar_event if event_id == self.calendar_event.event_id else None
+
+    def update_calendar_event_description(self, event_id, description):
+        event = self.get_calendar_event(event_id)
+        assert event is not None
+        event.description = description
+        return {"success": True, "result": {"eventId": event_id}}
+
     def get_minutes_summary(self, meeting_id):
         return {"result": {"fullSummary": "A 主张全量，B 主张灰度，尚未一致。"}}
 
@@ -191,6 +200,7 @@ def test_meeting_alignment_pipeline_sends_once_and_appears_in_history(tmp_path):
     assert len(dws.sent) == 1
     assert dws.sent[0]["conversation_id"] == "cid-first"
     assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-a", "open-b"]
+    assert "会后对齐" in dws.calendar_event.description
     assert "会后对齐" in render_attempt_list(store)
 
     assert produce_meeting_alignment_jobs(store, dws, now=now) == 0

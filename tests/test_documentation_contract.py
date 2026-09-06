@@ -122,14 +122,21 @@ def test_readme_describes_user_owned_codex_environment() -> None:
     assert "CEO_REPOSITORY_UPGRADE_DISABLED" in readme
 
 
-def test_current_docs_describe_meeting_fallback_boundary() -> None:
+def test_current_docs_describe_content_first_meeting_audience_boundary() -> None:
     architecture = _read("docs/architecture.md")
     reliability = _read("docs/reply-worker-reliability.md")
+    readme = _read("README.md")
 
-    assert "仅在明确证明该会话不可发送" in architecture
-    assert "会话元数据缺失、" in architecture
-    assert "只在所选群已被权威会话信息证明不可发送时" in reliability
-    assert "元数据缺失或不一致时不猜测收件人" in reliability
+    for document in (architecture, reliability, readme):
+        assert "日历只用于" in document or "日历仅用于" in document
+        assert "业务内容" in document
+        assert "绝不私信会议创建人" in document
+        assert "完整日历" in document
+        assert "个人、非业务" in document
+
+    assert "多个合理群不是人工选择条件" in architecture
+    assert "多个合理群由 Agent 决定" in reliability
+    assert "多个合理群时由 Agent 选择" in readme
 
 
 def test_current_docs_describe_upgrade_backup_and_mcp_boundary() -> None:
