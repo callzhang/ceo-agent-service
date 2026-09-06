@@ -3239,6 +3239,52 @@ def test_tutorial_run_route_records_action_event(monkeypatch, tmp_path: Path):
     assert events[0]["action_id"] == "setup_service_config"
 
 
+def test_tutorial_run_route_persists_wechat_permission_prompt(
+    monkeypatch,
+    tmp_path: Path,
+):
+    def fake_run(action_id, *, repo_root, env):
+        del repo_root, env
+        assert action_id == "connect_wechat"
+        return SetupWizardEvent(
+            step_id="wechat_connection",
+            action_id="connect_wechat",
+            status="done",
+            next_step_status="needs_action",
+            summary=(
+                "Enable CEO WeChat Reader in Full Disk Access, then click "
+                "Connect WeChat again."
+            ),
+            evidence={"full_disk_access_prompted": True},
+        )
+
+    monkeypatch.setattr(audit_web_module, "run_setup_action", fake_run)
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_setup_wizard_step(
+        step_id="preflight",
+        status="done",
+        summary="ready",
+    )
+    client = loopback_test_client(create_audit_app(db_path))
+
+    response = client.post("/tutorial/run/connect_wechat")
+
+    assert response.status_code == 200
+    assert response.json()["next_step_status"] == "needs_action"
+    assert response.json()["evidence"]["full_disk_access_prompted"] is True
+    persisted = AutoReplyStore(db_path)
+    event = persisted.list_setup_wizard_events(
+        "wechat_connection",
+        action_id="connect_wechat",
+        limit=1,
+    )[0]
+    assert json.loads(event["evidence_json"])["full_disk_access_prompted"] is True
+    step = persisted.get_setup_wizard_step("wechat_connection")
+    assert step is not None
+    assert step["status"] == "needs_action"
+
+
 def test_tutorial_run_route_rejects_blocked_action(tmp_path: Path):
     client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
