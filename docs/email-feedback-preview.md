@@ -3,8 +3,12 @@
 The list response contains a redacted, 280-character summary, not the message
 body. The selected email now loads `message_text` from the classification detail
 response, sourced from the existing `email_messages.normalized_text` snapshot.
-The list remains lightweight. The reader preserves line breaks and renders text,
-not executable email HTML. Missing snapshots and failed requests have explicit
+The list remains lightweight. The reader preserves line breaks, renders plain
+text rather than executable email HTML, and displays the persisted recipient
+list separately in the message header.
+Recipient loading, errors and absent values are explicit, and selecting another
+message never displays the previous message's recipients.
+Missing snapshots and failed requests have explicit
 states; changing selection aborts the previous request. Attachment contents are
 not read. No messages are marked read or classified by opening the reader.
 

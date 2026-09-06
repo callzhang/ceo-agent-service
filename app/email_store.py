@@ -8586,6 +8586,7 @@ class EmailStore:
             row = db.execute(
                 """
                 select classifications.*, messages.normalized_text as message_text,
+                       messages.recipients_json as message_recipients_json,
                        messages.attachment_metadata_json
                            as message_attachment_metadata_json
                 from email_classifications as classifications
@@ -8600,6 +8601,10 @@ class EmailStore:
         return None if row is None else {
             **self._classification_evidence_row(row),
             "message_text": row["message_text"] or "",
+            "recipients": _json_load(
+                row["message_recipients_json"] or "[]",
+                field="recipients_json", expected_type=list,
+            ),
         }
 
     def list_email_classification_observability(

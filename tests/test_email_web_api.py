@@ -603,6 +603,7 @@ def test_email_classification_list_and_detail_expose_only_attachment_metadata(
     assert listed.json()["items"][0]["attachment_metadata"] == expected_metadata
     assert detailed.json()["item"]["attachment_metadata"] == expected_metadata
     assert detailed.json()["item"]["message_text"] == "__subject__quarterly brief"
+    assert detailed.json()["item"]["recipients"] == ["recipient@example.com"]
     assert "message_text" not in listed.json()["items"][0]
     for response_item in (listed.json()["items"][0], detailed.json()["item"]):
         assert all(
