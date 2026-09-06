@@ -74,6 +74,48 @@ after the Reader process restarts. For unattended operation, add
 `~/Applications/CEO WeChat Reader.app` once under **System Settings → Privacy &
 Security → Full Disk Access**. Do not add Miniforge Python or the main service.
 
+### Tutorial permission onboarding
+
+Tutorial keeps exactly two WeChat actions: **Check** and **Connect WeChat**.
+Connect is a durable two-phase workflow:
+
+1. The first Connect validates that the dedicated Reader app and LaunchAgent are
+   installed, opens the macOS Full Disk Access pane, and persists
+   `full_disk_access_prompted=true` with step status `needs_action`. This phase
+   does not construct the Reader client and makes zero WeChat database requests.
+2. The user must manually add or enable **CEO WeChat Reader.app** in Full Disk
+   Access. Do not grant this permission to `python3.12`, Miniforge, the main CEO
+   service, or WeChat Sender. macOS authentication and the permission toggle
+   cannot be completed silently by the service.
+3. The next Connect restarts the dedicated Reader, waits for its IPC health with
+   a fixed timeout, discovers the single account, and performs a bounded real
+   read. It examines at most ten direct-chat candidates and then ten group-chat
+   candidates, reading at most one message per candidate until one succeeds.
+   Only `database_status=ready` together with
+   `message_read_verified=true` can complete the Tutorial step as `done`.
+
+If Full Disk Access is still missing, the second phase records
+`database_status=permission_required`, `message_read_verified=false`, and leaves
+the step `blocked`. It does not reopen System Settings and has no background
+retry loop; another restart/read attempt occurs only after the user deliberately
+clicks Connect again. A Reader restart timeout is likewise `blocked` and skips
+database verification. Once the stored account and successful-read evidence
+match, Connect checks the current connection without reopening settings or
+restarting the Reader.
+
+The status surfaces intentionally preserve two layers. The Tutorial event keeps
+the precise diagnostic evidence (`permission_required`,
+`message_read_unverified`, or a blocked Reader health check), while the account's
+durable `capability_status` is not `ready` unless a real message was read. This
+prevents a detailed error code from being mistaken for a usable account. Both
+the React Console API and the legacy Tutorial endpoint persist the action event,
+resulting step status, and redacted summary, so a page refresh retains the same
+phase and guidance.
+
+**Check is read-only:** it reads the dedicated Reader's health, the stored
+account capability, and Sender Accessibility status. It never opens System
+Settings, restarts the Reader, or requests WeChat database access.
+
 ### Reader runtime resilience
 
 The Reader owns one mutable decrypted mirror, so database operations are
@@ -254,13 +296,15 @@ least 15 minutes.
 
 ## Shared-file integration status
 
-1. ✅ **`app/setup_wizard.py`** (updated 2026-07-21) — `wechat_connection` step registered
+1. ✅ **`app/setup_wizard.py`** (updated 2026-09-06) — `wechat_connection` step registered
    (Phase 3, gates only on local `preflight`, independent of optional Memory MCP,
    `service_config`, and `data_corpus`; actions `check`/`connect` only).
    `run_setup_action`/`check_setup_step` dispatch to
-   `WechatSetupService` via `service.build_setup_service`. `SetupWizardEvent` gained
-   `next_step_status` so a successful action leaves the step `blocked` when the
-   reader is blocked.
+   `WechatSetupService` via `service.build_setup_service`. The first Connect opens
+   Full Disk Access without constructing that service; later Connect requests
+   restart and bounded read verification. `SetupWizardEvent.next_step_status`
+   keeps a successful action's resulting step `needs_action` or `blocked` when
+   setup is not complete.
 2. ✅ **`app/audit_web.py`** (updated 2026-07-21) — Tutorial shows only Check and
    Connect WeChat as soon as preflight is complete. Config → WeChat exposes one
    combined search for friends and groups (the results carry a visible type

@@ -258,11 +258,15 @@ CEO_WECHAT_READER_SIGNING_IDENTITY='CEO WeChat Reader Local Signing' \
 
 构建产物默认放在 `~/Library/Caches/CEO Agent/WeChatReaderBuild/dist/`，安装到
 `~/Applications/CEO WeChat Reader.app`，由
-`com.stardust.ceo-agent.wechat-reader` LaunchAgent 常驻。第一次在 Tutorial 点击
-“Connect WeChat”时，macOS 会把 App Data 权限请求归属到专用 Bundle ID；允许后再点击一次
-Connect 即可完成账号发现和数据库探测。但该弹窗的 Allow 只覆盖当前 Reader 进程，进程
-重启后会再次询问。无人值守运行必须在“系统设置 → 隐私与安全性 → 完全磁盘访问权限”中
-一次性加入 `~/Applications/CEO WeChat Reader.app`，不要加入公共 Python 或主服务。
+`com.stardust.ceo-agent.wechat-reader` LaunchAgent 常驻。Tutorial 的第一次
+“Connect WeChat”现在直接打开“系统设置 → 隐私与安全性 → 完全磁盘访问权限”，并明确要求
+用户手动加入或开启 `~/Applications/CEO WeChat Reader.app`；第一次点击不构造 Reader
+客户端，也不访问微信数据库。授权后第二次点击 Connect 才会重启 Reader、发现账号并进行
+有界的真实消息读取。不要给公共 Python、Miniforge、主服务或 Sender 授予该数据库权限。
+
+普通 **access data from other apps** 弹窗中的 Allow 只覆盖当前 Reader 进程，进程重启后会
+再次询问。无人值守运行依赖上面的 Full Disk Access 条目；程序不能代替用户完成 macOS
+认证或静默修改该权限。
 
 没有签名证书时只能显式使用开发模式：
 
@@ -277,6 +281,33 @@ Bundle ID 和稳定签名用于保持 Full Disk Access 的应用身份；它们�
 弹窗转换成跨进程授权。
 本机首次 App Data 授权必须由用户确认，程序不能静默绕过；企业完全免点击部署只能依赖
 MDM/PPPC 管理策略。
+
+### Tutorial 两阶段连接（2026-09-06 已实现）
+
+连接状态以现有 `setup_wizard_events` 持久化，不增加一次性内存状态或第三个按钮：
+
+1. **第一次 Connect**：校验 Reader app 与 LaunchAgent 已安装，打开 Full Disk Access
+   设置，写入 `full_disk_access_prompted=true`，页面状态为 `needs_action`。这一阶段对
+   Reader 和微信数据库的调用数为零。
+2. **人工授权**：用户只为 **CEO WeChat Reader.app** 开启 Full Disk Access。此步骤是
+   macOS 的本地人工确认，服务不能自动点击或绕过。
+3. **第二次 Connect**：先重启 Reader 并在固定超时内等待健康，再最多检查十个单聊目标和
+   十个群聊目标；每个候选最多读取一条消息，找到真实消息才写入
+   `message_read_verified=true` 并将步骤置为 `done`。
+
+权限仍缺失时，动作保留精确证据 `database_status=permission_required` 和
+`message_read_verified=false`，而持久账号能力不会成为 `ready`；没有可读候选消息时，精确
+证据为 `message_read_unverified`，持久账号能力为 `blocked`。Reader 启动超时单独记录
+`reader_health=blocked`，且不会继续探测数据库。该分层既保留诊断原因，也避免生产 worker
+把一次失败的探测当成可用账号。
+
+失败后的系统不会自动循环重试或重新打开设置；只有用户再次点击 Connect 才重新启动并验证。
+Check 只读取 Reader 健康、已持久化的账号能力和 Sender Accessibility 状态，不打开系统
+设置、不重启 Reader、也不触发数据库探测。React Console 与旧版 Tutorial 路由都会持久化
+同一条动作事件、最终步骤状态和已脱敏摘要，因此刷新页面或切换界面后不会丢失授权阶段。
+
+以上行为已有自动化测试覆盖并已生成前端构建；合并、服务重启、首次零读取和第二次真实读取的
+本机运行验收仍须按实施计划单独执行，本文不把尚未执行的 live acceptance 记为完成。
 
 ### 实机验证结果
 
