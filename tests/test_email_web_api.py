@@ -43,6 +43,34 @@ def _client(tmp_path: Path) -> TestClient:
     return TestClient(app)
 
 
+def test_email_large_classification_id_round_trips_as_text(tmp_path: Path):
+    store = EmailStore(tmp_path / "large-id.sqlite3")
+    identity = 8423079112545370123
+    classification = EmailClassification.model_validate({
+        "classification_id": identity,
+        "stable_message_identity": "account-1:message-id:<large@example.com>",
+        "provider_locator": {"account_id": "account-1", "folder": "INBOX", "uidvalidity": 1, "uid": 1, "rfc_message_id": "<large@example.com>", "thread_id": "large"},
+        "category": EmailCategory.NOTIFICATION, "confidence": 0.167, "margin": 0.032,
+        "probabilities": {"notification": 0.167}, "model_id": "test-model",
+        "config_version": "test-v1", "status": EmailClassificationStatus.PENDING_FEEDBACK,
+        "classification_source": "model", "action_plan": None,
+    })
+    store.persist_scan_result(classification, sender="sender@example.com", subject="Large ID", preview="Test", model_text="Test")
+    app = FastAPI()
+    register_email_routes(app, lambda: store)
+    client = TestClient(app)
+    listed = client.get("/api/console/email/classifications?status=pending_feedback").json()["items"][0]
+    assert listed["id"] == str(identity)
+    detail = client.get(f"/api/console/email/classifications/{listed['id']}")
+    assert detail.json()["item"]["id"] == str(identity)
+    response = client.post(f"/api/console/email/classifications/{listed['id']}/feedback", json={
+        "category": "notification", "feedback_request_id": f"email-feedback:{listed['id']}", "expected_current_action_plan_id": None,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["item"]["id"] == str(identity)
+    assert store.get_classification(identity)["classification_source"] == "user"
+
+
 class _ZeroTimeoutEmailStore(EmailStore):
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=0)
@@ -614,7 +642,7 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["item"] == classification
+    assert payload["item"] == {**classification, "id": str(classification["id"])}
     assert payload["observability"] == [
         {
             "kind": "unsubscribe",

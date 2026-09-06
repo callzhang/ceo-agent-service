@@ -190,12 +190,12 @@ function LearningPanel() {
 }
 
 function ClassificationTable({ rows }: { rows: EmailClassificationItem[] }) {
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<EmailClassificationItem & { observability?: EmailObservabilityEvent[] } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   if (!rows.length) return <div className="page-state">当前没有已处理邮件</div>;
-  const toggleDetail = async (id: number) => {
+  const toggleDetail = async (id: string) => {
     if (expandedId === id) { setExpandedId(null); return; }
     setExpandedId(id); setDetail(null); setDetailError(""); setDetailLoading(true);
     try {

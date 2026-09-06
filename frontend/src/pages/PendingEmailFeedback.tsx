@@ -15,7 +15,7 @@ export function PendingEmailFeedback() {
   const page = Math.max(1, Number(params.get("page")) || 1);
   const [rows, setRows] = useState<EmailClassificationItem[]>([]);
   const [total, setTotal] = useState<number | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [category, setCategory] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

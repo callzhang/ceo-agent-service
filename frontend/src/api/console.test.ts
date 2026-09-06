@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vitest";
 
-import { ConsoleApiError, displayValue, parseConsoleList, request } from "./console";
+import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification } from "./console";
 
 describe("console API helpers", () => {
+  it("preserves 64-bit email IDs from JSON through the feedback URL", async () => {
+    const originalFetch = globalThis.fetch;
+    const id = "8423079112545370123";
+    const calls: string[] = [];
+    globalThis.fetch = async (input) => {
+      calls.push(String(input));
+      return new Response(JSON.stringify(calls.length === 1 ? {
+        items: [{ id }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-09-06T00:00:00Z" },
+      } : { ok: true, item: { id }, message: "已保存" }), {status:200});
+    };
+    try {
+      const result = await listEmailClassifications("pending_feedback");
+      expect(result.items[0].id).toBe(id);
+      const saved = await confirmEmailClassification(result.items[0].id, "notification", `email-feedback:${id}`, null);
+      expect(calls[1]).toBe(`/api/console/email/classifications/${id}/feedback`);
+      expect(saved.item.id).toBe(id);
+    } finally { globalThis.fetch = originalFetch; }
+  });
   it("normalizes arbitrary values before display", () => {
     expect(displayValue("plain")).toBe("plain");
     expect(displayValue({ title: "优先标题", text: "正文" })).toBe("优先标题");

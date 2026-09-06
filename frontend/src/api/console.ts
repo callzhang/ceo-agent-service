@@ -145,7 +145,7 @@ export interface EmailAttachmentMetadata {
   inline: boolean;
 }
 export interface EmailClassificationItem {
-  id: number;
+  id: string;
   provider: string;
   mailbox: string;
   message_id: string;
@@ -352,7 +352,7 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
     }))
     : [];
   return {
-    id: Number(row.id || 0),
+    id: emailText(row.id),
     provider: emailText(row.provider),
     mailbox: emailText(row.mailbox || row.folder),
     message_id: emailText(row.message_id || row.rfc_message_id || row.stable_message_identity),
@@ -504,7 +504,7 @@ export function listEmailClassifications(
   });
 }
 
-export function getEmailClassification(id: number, signal?: AbortSignal) {
+export function getEmailClassification(id: string, signal?: AbortSignal) {
   return request<unknown>(`/api/console/email/classifications/${id}`, { signal }).then((value) => {
     const payload = asRecord(value);
     return {
@@ -517,7 +517,7 @@ export function getEmailClassification(id: number, signal?: AbortSignal) {
 }
 
 export function confirmEmailClassification(
-  id: number,
+  id: string,
   category: string,
   feedbackRequestId: string,
   expectedCurrentActionPlanId: string | null,

@@ -43,7 +43,7 @@ describe("EmailPage", () => {
     vi.clearAllMocks();
     listEmailClassifications.mockResolvedValue({
       items: [{
-        id: 1, provider: "dingtalk_mail", mailbox: "INBOX", message_id: "msg-1", thread_id: "",
+        id: "1", provider: "dingtalk_mail", mailbox: "INBOX", message_id: "msg-1", thread_id: "",
         sender: "sender@example.com", subject: "需要确认", preview: "邮件摘要", received_at: "2026-08-29T00:00:00Z",
         category: "work", confidence: 0.61, margin: 0.04, probabilities: { work: 0.61, important: 0.57 },
         model_version: "email-tfidf-lr-20260829T000000Z-deadbeef", config_version: "email-v1", status: "pending_feedback", classification_source: "model",
@@ -69,7 +69,7 @@ describe("EmailPage", () => {
     ], registry_issues: [] } });
     getEmailClassification.mockResolvedValue({
       ok: true,
-      item: { id: 2, subject: "订阅邮件", sender: "news@example.com", preview: "每周资讯", category: "subscription", confidence: 0.99, margin: 0.2, probabilities: { subscription: 0.99 }, model_version: "email-tfidf-lr-20260829T000000Z-feedface", config_version: "email-v7", classification_source: "model", current_action_plan_id: "email-action-plan:full-id-002", action_plan: { action_plan_id: "email-action-plan:full-id-002", action_plan_version: 7, actions: ["label", "archive", "unsubscribe"] }, received_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:00Z" },
+      item: { id: "2", subject: "订阅邮件", sender: "news@example.com", preview: "每周资讯", category: "subscription", confidence: 0.99, margin: 0.2, probabilities: { subscription: 0.99 }, model_version: "email-tfidf-lr-20260829T000000Z-feedface", config_version: "email-v7", classification_source: "model", current_action_plan_id: "email-action-plan:full-id-002", action_plan: { action_plan_id: "email-action-plan:full-id-002", action_plan_version: 7, actions: ["label", "archive", "unsubscribe"] }, received_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:00Z" },
       observability: [{ kind: "unsubscribe", operation: "unsubscribe", lifecycle_version: "email_unsubscribe_audited_v2", task_id: 42, task_status: "done", consumer_run_ids: [101], audit_run_ids: [102], status: "done", receipt_id: "receipt-2", result_text: "退订成功\n[REDACTED_URL]", evidence: "最终结果页：已成功退订", observation_digest: "digest-2", steps: [{ sequence: 1, operation: "open_entry", state: "done", reference: "receipt-2" }] }],
       meta: { snapshot_at: "2026-08-29T00:00:00Z" },
     });
@@ -85,7 +85,7 @@ describe("EmailPage", () => {
     listEmailClassifications.mockResolvedValue({ items: [], meta: { total: 0, snapshot_at: "" } });
     await user.click(screen.getByRole("button", { name: "保存为「重要」并继续 →" }));
 
-    expect(confirmEmailClassification).toHaveBeenCalledWith(1, "important", "email-feedback:1", null);
+    expect(confirmEmailClassification).toHaveBeenCalledWith("1", "important", "email-feedback:1", null);
     expect(await screen.findByText("邮件分类反馈已保存")).toBeInTheDocument();
     expect(screen.queryByText("需要确认")).not.toBeInTheDocument();
   });
@@ -134,7 +134,7 @@ describe("EmailPage", () => {
     const user = userEvent.setup();
     const seeded = await listEmailClassifications();
     const first = seeded.items[0];
-    const second = { ...first, id: 2, subject: "下一封邮件" };
+    const second = { ...first, id: "2", subject: "下一封邮件" };
     listEmailClassifications.mockResolvedValue({ items: [first, second], meta: { ...seeded.meta, total: 23 } });
     renderEmail("/email?tab=pending_feedback");
     expect(await screen.findByText("第 1 / 2 页 · 共 23 封")).toBeInTheDocument();
@@ -219,7 +219,7 @@ describe("EmailPage", () => {
   it("shows unsubscribe observability only after opening a processed email detail", async () => {
     const user = userEvent.setup();
     listEmailClassifications.mockResolvedValueOnce({
-      items: [{ id: 2, subject: "订阅邮件", sender: "news@example.com", preview: "每周资讯", category: "subscription", confidence: 0.99, margin: 0.2, classification_source: "model", received_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:00Z" }],
+      items: [{ id: "2", subject: "订阅邮件", sender: "news@example.com", preview: "每周资讯", category: "subscription", confidence: 0.99, margin: 0.2, classification_source: "model", received_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:00Z" }],
       meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" },
     });
     renderEmail("/email");
@@ -228,7 +228,7 @@ describe("EmailPage", () => {
     expect(screen.queryByText("退订成功")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "查看处理详情" }));
 
-    expect(getEmailClassification).toHaveBeenCalledWith(2);
+    expect(getEmailClassification).toHaveBeenCalledWith("2");
     const processingEvidence = await screen.findByRole("region", { name: "分类与 ActionPlan 证据" });
     expect(processingEvidence).toHaveTextContent("email-tfidf-lr-20260829T000000Z-feedface");
     expect(processingEvidence).toHaveTextContent("email-v7");

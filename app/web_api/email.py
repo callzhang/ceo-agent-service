@@ -433,7 +433,7 @@ def register_email_routes(
             offset=(page - 1) * page_size,
         )
         return {
-            "items": rows,
+            "items": [{**row, "id": str(row["id"])} for row in rows],
             "meta": meta(page=page, page_size=page_size, total=total),
         }
 
@@ -445,7 +445,7 @@ def register_email_routes(
             return error_response("not_found", "Email classification not found", 404)
         return {
             "ok": True,
-            "item": item,
+            "item": {**item, "id": str(item["id"])},
             "observability": email_store.list_email_classification_observability(
                 classification_id
             ),
@@ -509,7 +509,7 @@ def register_email_routes(
             )
         response: dict[str, Any] = {
             "ok": True,
-            "item": row,
+            "item": {**row, "id": str(row["id"])},
             "message": "邮件分类反馈已保存",
         }
         if learning_result is not None:
