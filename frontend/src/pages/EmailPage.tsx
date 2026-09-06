@@ -2,7 +2,6 @@ import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } fr
 import { useSearchParams } from "react-router-dom";
 
 import {
-  confirmEmailClassification,
   displayValue,
   getEmailClassification,
   listEmailClassifications,
@@ -17,6 +16,7 @@ import {
 } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
+import { PendingEmailFeedback } from "./PendingEmailFeedback";
 
 const categories = ["important", "work", "personal", "notification", "billing", "shopping", "subscription", "junk"];
 const actions = ["label", "mark_read", "archive", "move", "trash", "unsubscribe"];
@@ -45,12 +45,6 @@ function localTime(value: string) {
 
 function percent(value: number) { return `${(value * 100).toFixed(1)}%`; }
 
-function byteSize(value: number) {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${Number((value / 1024).toFixed(1))} KB`;
-  return `${Number((value / (1024 * 1024)).toFixed(1))} MB`;
-}
-
 function namedCounts(values: Record<string, number>) {
   const entries = Object.entries(values);
   if (!entries.length) return "无记录";
@@ -65,24 +59,6 @@ function actionPlanEvidence(row: EmailClassificationItem) {
     ? plan.actions.filter((action): action is string => typeof action === "string")
     : [];
   return { planId, planVersion, planActions };
-}
-
-function PendingClassificationEvidence({ row }: { row: EmailClassificationItem }) {
-  const alternatives = Object.entries(row.probabilities)
-    .filter((entry): entry is [string, number] => typeof entry[1] === "number")
-    .sort((left, right) => right[1] - left[1]);
-  return <section aria-label={`${row.subject || "无主题"} 分类证据`}>
-    <h3>分类证据</h3>
-    <dl className="detail-definition-list">
-      <div><dt>文本预览</dt><dd>{row.preview || "未提供"}</dd></div>
-      <div><dt>置信度</dt><dd>{percent(row.confidence)}</dd></div>
-      <div><dt>Margin</dt><dd>{percent(row.margin)}</dd></div>
-      <div><dt>完整模型 ID</dt><dd>{row.model_version || "未提供"}</dd></div>
-      <div><dt>配置版本</dt><dd>{row.config_version || "未提供"}</dd></div>
-      <div><dt>模型候选</dt><dd>{alternatives.length ? <ol aria-label="模型候选">{alternatives.map(([category, probability]) => <li key={category}>{categoryLabels[category] || category} {percent(probability)}</li>)}</ol> : "无记录"}</dd></div>
-      <div><dt>附件元数据</dt><dd>{row.attachment_metadata.length ? <ul aria-label="附件元数据">{row.attachment_metadata.map((attachment, index) => <li key={`${attachment.filename}-${index}`}>{attachment.filename || "未命名附件"} · {attachment.mime_type || "未知 MIME"} · {byteSize(attachment.size_bytes)} · {attachment.inline ? "内嵌附件" : "非内嵌附件"}</li>)}</ul> : "无附件"}</dd></div>
-    </dl>
-  </section>;
 }
 
 function ProcessedClassificationEvidence({ row }: { row: EmailClassificationItem }) {
@@ -213,12 +189,12 @@ function LearningPanel() {
   </section>;
 }
 
-function ClassificationTable({ rows, pending, onConfirm }: { rows: EmailClassificationItem[]; pending: boolean; onConfirm: (row: EmailClassificationItem, category: string) => void }) {
+function ClassificationTable({ rows }: { rows: EmailClassificationItem[] }) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<EmailClassificationItem & { observability?: EmailObservabilityEvent[] } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
-  if (!rows.length) return <div className="page-state">{pending ? "当前没有待反馈邮件" : "当前没有已处理邮件"}</div>;
+  if (!rows.length) return <div className="page-state">当前没有已处理邮件</div>;
   const toggleDetail = async (id: number) => {
     if (expandedId === id) { setExpandedId(null); return; }
     setExpandedId(id); setDetail(null); setDetailError(""); setDetailLoading(true);
@@ -230,19 +206,17 @@ function ClassificationTable({ rows, pending, onConfirm }: { rows: EmailClassifi
     } finally { setDetailLoading(false); }
   };
   return <div className="responsive-table-wrap">
-    <table className="settings-table" aria-label={pending ? "待反馈邮件" : "已处理邮件"}>
-      <thead><tr><th>邮件</th><th>模型分类</th><th>置信度 / Margin</th><th>来源</th><th>时间</th>{pending && <th>确认分类</th>}</tr></thead>
+    <table className="settings-table" aria-label="已处理邮件">
+      <thead><tr><th>邮件</th><th>模型分类</th><th>置信度 / Margin</th><th>来源</th><th>时间</th></tr></thead>
       <tbody>{rows.map((row) => <Fragment key={row.id}>
         <tr key={row.id}>
-        <td><strong>{row.subject || "无主题"}</strong><br /><span className="muted">{row.sender || "未提供发件人"}</span><br /><span className="muted">{row.preview || "未提供摘要"}</span>{!pending && <><br /><button type="button" className="compact-button" aria-expanded={expandedId === row.id} onClick={() => void toggleDetail(row.id)}>{expandedId === row.id ? "收起处理详情" : "查看处理详情"}</button></>}</td>
+        <td><strong>{row.subject || "无主题"}</strong><br /><span className="muted">{row.sender || "未提供发件人"}</span><br /><span className="muted">{row.preview || "未提供摘要"}</span>{<><br /><button type="button" className="compact-button" aria-expanded={expandedId === row.id} onClick={() => void toggleDetail(row.id)}>{expandedId === row.id ? "收起处理详情" : "查看处理详情"}</button></>}</td>
         <td>{categoryLabels[row.category] || row.category}</td>
         <td>{percent(row.confidence)}<br /><span className="muted">{percent(row.margin)}</span></td>
         <td>{row.classification_source === "user" ? "人工确认" : "模型"}</td>
         <td>{localTime(row.received_at || row.updated_at)}</td>
-        {pending && <td><div className="console-page-actions email-feedback-category-options">{categories.map((category) => <button type="button" className="compact-button email-feedback-category-option" key={category} onClick={() => onConfirm(row, category)}><strong>{categoryLabels[category]}</strong><small>{categoryDescriptions[category]}</small></button>)}</div></td>}
       </tr>
-        {pending && <tr key={`${row.id}-evidence`}><td colSpan={6}><PendingClassificationEvidence row={row} /></td></tr>}
-        {!pending && expandedId === row.id && <tr key={`${row.id}-detail`}><td colSpan={5}><section aria-label="邮件处理详情"><h2>邮件处理详情</h2>{detailLoading && <div className="page-state" role="status">正在加载处理详情…</div>}{detailError && <div className="page-state page-state-error" role="alert">{detailError}</div>}{detail && <><ProcessedClassificationEvidence row={detail} /><ObservabilityDetails events={detail.observability || []} /></>}</section></td></tr>}
+        {expandedId === row.id && <tr key={`${row.id}-detail`}><td colSpan={5}><section aria-label="邮件处理详情"><h2>邮件处理详情</h2>{detailLoading && <div className="page-state" role="status">正在加载处理详情…</div>}{detailError && <div className="page-state page-state-error" role="alert">{detailError}</div>}{detail && <><ProcessedClassificationEvidence row={detail} /><ObservabilityDetails events={detail.observability || []} /></>}</section></td></tr>}
       </Fragment>)}</tbody>
     </table>
   </div>;
@@ -359,30 +333,17 @@ export function EmailPage() {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [snapshot, setSnapshot] = useState("");
-  const [feedbackMessage, setFeedbackMessage] = useState("");
 
   useEffect(() => {
-    if (tab === "config" || tab === "learning") return;
+    if (tab === "config" || tab === "learning" || tab === "pending_feedback") return;
     const controller = new AbortController(); setState("loading"); setError("");
     listEmailClassifications(status, {}, controller.signal).then((result) => { setRows(result.items); setSnapshot(result.meta.snapshot_at); setState("ready"); }).catch((reason: unknown) => { if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "邮件加载失败"); setState("error"); });
     return () => controller.abort();
   }, [status, tab]);
 
-  const confirm = async (row: EmailClassificationItem, category: string) => {
-    try {
-      const result = await confirmEmailClassification(
-        row.id,
-        category,
-        `email-feedback:${row.id}`,
-        row.current_action_plan_id,
-      );
-      setFeedbackMessage(result.message);
-      setRows((previous) => previous.filter((item) => item.id !== row.id));
-    } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : "反馈保存失败"); }
-  };
   const setTab = (next: string) => setSearchParams(next === "processed" ? {} : { tab: next });
-  return <ConsolePageLayout title="Email" actions={<SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />}>
-    <section className="console-card"><EmailTabs tab={tab} setTab={setTab} /><p className="muted">高置信度分类进入已处理；中低置信度保留模型建议，等待人工反馈。Attention 只承接真正异常。</p></section>
-    <div role="tabpanel" id={`email-panel-${tab}`} aria-labelledby={`email-tab-${tab}`}>{tab === "config" ? <ConfigPanel /> : tab === "learning" ? <LearningPanel /> : <section className="console-card">{feedbackMessage && <div className="page-state" role="status">{feedbackMessage}</div>}{error && <div className="page-state page-state-error" role="alert">{error}</div>}{state === "loading" && !rows.length ? <div className="page-state" role="status">正在加载邮件…</div> : <ClassificationTable rows={rows} pending={tab === "pending_feedback"} onConfirm={(row, category) => void confirm(row, category)} />}</section>}</div>
+  return <ConsolePageLayout title="Email" showHeader={tab !== "pending_feedback"} actions={tab === "processed" ? <SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} /> : undefined}>
+    <section className={tab === "pending_feedback" ? "email-review-tabs" : "console-card"}><EmailTabs tab={tab} setTab={setTab} />{tab !== "pending_feedback" && <p className="muted">高置信度分类进入已处理；中低置信度保留模型建议，等待人工反馈。Attention 只承接真正异常。</p>}</section>
+    <div role="tabpanel" id={`email-panel-${tab}`} aria-labelledby={`email-tab-${tab}`}>{tab === "config" ? <ConfigPanel /> : tab === "learning" ? <LearningPanel /> : tab === "pending_feedback" ? <PendingEmailFeedback /> : <section className="console-card">{error && <div className="page-state page-state-error" role="alert">{error}</div>}{state === "loading" && !rows.length ? <div className="page-state" role="status">正在加载邮件…</div> : <ClassificationTable rows={rows} />}</section>}</div>
   </ConsolePageLayout>;
 }

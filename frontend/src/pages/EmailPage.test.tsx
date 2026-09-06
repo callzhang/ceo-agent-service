@@ -79,9 +79,11 @@ describe("EmailPage", () => {
     const user = userEvent.setup();
     renderEmail("/email?tab=pending_feedback");
 
-    expect(await screen.findByText("需要确认")).toBeInTheDocument();
-    expect(screen.getAllByText("61.0%")).toHaveLength(2);
+    expect(await screen.findByRole("heading", { name: "需要确认" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^重要/ }));
+    expect(confirmEmailClassification).not.toHaveBeenCalled();
+    listEmailClassifications.mockResolvedValue({ items: [], meta: { total: 0, snapshot_at: "" } });
+    await user.click(screen.getByRole("button", { name: "保存为「重要」并继续 →" }));
 
     expect(confirmEmailClassification).toHaveBeenCalledWith(1, "important", "email-feedback:1", null);
     expect(await screen.findByText("邮件分类反馈已保存")).toBeInTheDocument();
@@ -89,26 +91,60 @@ describe("EmailPage", () => {
   });
 
   it("shows ranked pending evidence and attachment metadata without attachment contents or paths", async () => {
+    const user = userEvent.setup();
     renderEmail("/email?tab=pending_feedback");
-
+    await user.click(await screen.findByText("查看分类依据"));
     const evidence = await screen.findByRole("region", { name: "需要确认 分类证据" });
-    expect(within(evidence).getByText("邮件摘要")).toBeInTheDocument();
-    expect(within(evidence).getByText("置信度").nextElementSibling).toHaveTextContent("61.0%");
-    expect(within(evidence).getByText("Margin").nextElementSibling).toHaveTextContent("4.0%");
+    expect(screen.getByText("邮件摘要")).toBeInTheDocument();
+    expect(evidence).toHaveTextContent("前两名概率差：4.0%");
     const alternatives = within(evidence).getByRole("list", { name: "模型候选" });
     expect(within(alternatives).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["工作 61.0%", "重要 57.0%"]);
-    const attachments = within(evidence).getByRole("list", { name: "附件元数据" });
-    expect(within(attachments).getByRole("listitem")).toHaveTextContent("quarterly-report.pdf · application/pdf · 248 KB · 非内嵌附件");
+    expect(screen.getByText("quarterly-report.pdf · 248 KB")).toBeInTheDocument();
     expect(evidence).not.toHaveTextContent("ATTACHMENT-BODY-MUST-NOT-RENDER");
     expect(evidence).not.toHaveTextContent("/private/mail/quarterly-report.pdf");
   });
 
   it("shows category definitions while asking for feedback", async () => {
+    const user = userEvent.setup();
     renderEmail("/email?tab=pending_feedback");
 
-    expect(await screen.findByText("需要确认")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "账单" }));
     expect(screen.getByText("发票、账单、付款、续费")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "订阅" }));
     expect(screen.getByText("用户不希望继续接收的批量订阅")).toBeInTheDocument();
+  });
+
+  it("prevents duplicate saves and preserves selection after a failed request", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<unknown>();
+    confirmEmailClassification.mockReturnValueOnce(pending.promise);
+    renderEmail("/email?tab=pending_feedback");
+    await user.click(await screen.findByRole("button", { name: "工作" }));
+    await user.click(screen.getByRole("button", { name: "保存为「工作」并继续 →" }));
+    expect(screen.getByRole("button", { name: "正在保存…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "重要" })).toBeDisabled();
+    pending.reject(new Error("保存失败，请重试"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("保存失败，请重试");
+    expect(screen.getByRole("button", { name: "工作" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "保存为「工作」并继续 →" })).toBeEnabled();
+    expect(confirmEmailClassification).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses server totals for pagination and advances to the next email after save", async () => {
+    const user = userEvent.setup();
+    const seeded = await listEmailClassifications();
+    const first = seeded.items[0];
+    const second = { ...first, id: 2, subject: "下一封邮件" };
+    listEmailClassifications.mockResolvedValue({ items: [first, second], meta: { ...seeded.meta, total: 23 } });
+    renderEmail("/email?tab=pending_feedback");
+    expect(await screen.findByText("第 1 / 2 页 · 共 23 封")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "工作" }));
+    listEmailClassifications.mockResolvedValue({ items: [second], meta: { ...seeded.meta, total: 22 } });
+    await user.click(screen.getByRole("button", { name: "保存为「工作」并继续 →" }));
+    expect(await screen.findByRole("heading", { name: "下一封邮件" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "下一页" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await waitFor(() => expect(listEmailClassifications).toHaveBeenLastCalledWith("pending_feedback", {page:2,page_size:20}, expect.any(AbortSignal)));
   });
 
   it("states that category configuration does not execute provider writes", async () => {
