@@ -91,6 +91,7 @@ class WechatSetupService:
                 self_user_id = detect(account)
         database_status = capability.status
         database_reason = capability.reason
+        persisted_capability_status = capability.status
         message_read_verified = False
         if capability.status == "ready":
             try:
@@ -103,13 +104,15 @@ class WechatSetupService:
                 database_reason = (
                     "No readable WeChat message was found during connection verification."
                 )
+            if not message_read_verified:
+                persisted_capability_status = "blocked"
         self.store.upsert_wechat_read_state(
             account_id=account.account_id,
             account_dir=account.account_dir,
             db_dir=account.db_dir,
             app_version=account.app_version,
             self_user_id=self_user_id,
-            capability_status=database_status,
+            capability_status=persisted_capability_status,
             capability_reason=database_reason,
         )
         accessibility_status = self.accessibility_preflight()

@@ -116,10 +116,7 @@ def test_connect_blocks_when_no_message_target_exists(store):
     assert result.evidence["message_read_verified"] is False
     assert [call["kind"] for call in reader.target_calls] == ["direct", "group"]
     assert reader.read_calls == []
-    assert (
-        store.get_wechat_read_state("acct-1")["capability_status"]
-        == "message_read_unverified"
-    )
+    assert store.get_wechat_read_state("acct-1")["capability_status"] == "blocked"
     assert service.ready_account_state(store) is None
 
 
@@ -131,8 +128,9 @@ def test_connect_blocks_when_candidate_has_no_messages(store):
     result = svc.connect()
 
     assert result.next_step_status == "blocked"
+    assert result.evidence["database_status"] == "message_read_unverified"
     state = store.get_wechat_read_state("acct-1")
-    assert state["capability_status"] == "message_read_unverified"
+    assert state["capability_status"] == "blocked"
     assert "No readable WeChat message" in state["capability_reason"]
     assert service.ready_account_state(store) is None
 
@@ -174,7 +172,7 @@ def test_connect_reports_reader_permission_error_without_retry(store):
     assert result.evidence["message_read_verified"] is False
     assert len(reader.read_calls) == 1
     state = store.get_wechat_read_state("acct-1")
-    assert state["capability_status"] == "permission_required"
+    assert state["capability_status"] == "blocked"
     assert svc.check().status == "needs_action"
     assert svc.verify().next_step_status == "blocked"
 
