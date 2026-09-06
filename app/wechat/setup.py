@@ -13,6 +13,7 @@ from typing import Callable
 
 from app.wechat import service
 from app.wechat.models import WechatAccount
+from app.wechat.reader_ipc import ReaderIpcError
 
 
 @dataclass
@@ -38,6 +39,27 @@ class WechatSetupService:
 
     def discover_accounts(self) -> list[WechatAccount]:
         return self.accounts_provider()
+
+    def _verify_message_read(self, account: WechatAccount) -> bool:
+        for kind in ("direct", "group"):
+            targets = self.reader.list_targets(
+                account, kind=kind, query="", limit=1, offset=0,
+            )
+            if not targets:
+                continue
+            target = targets[0]
+            conversation_id = target.get("conversation_id") or target.get("target_id", "")
+            if not conversation_id:
+                continue
+            messages = self.reader.read_messages(
+                account,
+                conversation_id=conversation_id,
+                conversation_type=kind,
+                limit=1,
+            )
+            if messages:
+                return True
+        return False
 
     def connect(self, selected_account_id: str = "") -> WechatSetupResult:
         accounts = self.discover_accounts()
@@ -65,11 +87,20 @@ class WechatSetupService:
             self_user_id=self_user_id,
             capability_status=capability.status, capability_reason=capability.reason,
         )
+        database_status = capability.status
+        message_read_verified = False
+        if capability.status == "ready":
+            try:
+                message_read_verified = self._verify_message_read(account)
+            except ReaderIpcError as exc:
+                database_status = exc.code
         accessibility_status = self.accessibility_preflight()
         if accessibility_status != "ready" and self.accessibility_request is not None:
             accessibility_status = self.accessibility_request()
         next_step_status = capability.status
-        if capability.status == "ready" and accessibility_status != "ready":
+        if capability.status == "ready" and (
+            not message_read_verified or accessibility_status != "ready"
+        ):
             next_step_status = "blocked"
         return WechatSetupResult(
             action_id="connect_wechat", status="done",
@@ -77,7 +108,8 @@ class WechatSetupService:
             summary=capability.reason or "WeChat database is connected.",
             evidence={
                 "account_id": account.account_id,
-                "database_status": capability.status,
+                "database_status": database_status,
+                "message_read_verified": message_read_verified,
                 "accessibility_status": accessibility_status,
             },
         )
