@@ -24651,14 +24651,19 @@ class AutoReplyStore:
         self,
         step_id: str | None = None,
         *,
+        action_id: str | None = None,
         limit: int = 20,
     ) -> list[dict[str, str | int]]:
         with self._connect() as db:
             args: list[str | int] = []
-            where = ""
+            conditions: list[str] = []
             if step_id is not None:
-                where = "where step_id=?"
+                conditions.append("step_id=?")
                 args.append(step_id)
+            if action_id is not None:
+                conditions.append("action_id=?")
+                args.append(action_id)
+            where = "where " + " and ".join(conditions) if conditions else ""
             args.append(limit)
             rows = db.execute(
                 f"""

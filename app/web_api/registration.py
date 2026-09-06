@@ -1480,12 +1480,19 @@ def register_console_routes(
         return command_result(item=json_safe(result), message=result.summary)
 
     @app.post("/api/console/tutorial/run/{action_id}")
-    async def console_tutorial_run(action_id: str, request: Request):
+    def console_tutorial_run(action_id: str, request: Request):
         from app.audit_web import _require_available_setup_action, _repo_root, run_setup_action
         store = store_factory()
         _require_available_setup_action(store, action_id, kind="run")
         event = run_setup_action(action_id, repo_root=_repo_root(), env=dict(__import__("os").environ))
         store.record_setup_wizard_event(step_id=event.step_id, action_id=event.action_id, status=event.status, summary=event.summary, evidence_json=json.dumps(event.evidence, ensure_ascii=False), stdout_excerpt=event.stdout_excerpt, stderr_excerpt=event.stderr_excerpt)
+        if event.step_id != "unknown":
+            store.upsert_setup_wizard_step(
+                step_id=event.step_id,
+                status=event.next_step_status
+                or ("done" if event.status == "done" else "failed"),
+                summary=event.summary,
+            )
         return command_result(item=json_safe(event), message=event.summary, ok=event.status == "done")
 
     @app.post("/api/console/tutorial/confirm/{step_id}")

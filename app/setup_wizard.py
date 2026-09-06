@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime, timezone
 from pathlib import Path
@@ -36,6 +37,12 @@ from app.setup_wizard_models import (
     SetupWizardStatus,
 )
 from app.store import AutoReplyStore
+from app.wechat.permission_onboarding import (
+    PermissionOnboardingError,
+    open_full_disk_access_settings,
+    restart_reader_and_wait,
+)
+from app.wechat.reader_ipc import ReaderIpcError
 
 BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+")
 TOKEN_RE = re.compile(
@@ -46,6 +53,12 @@ SESSION_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4,}(?:-[0-9a-f]{4,})+\b")
 SESSION_KEY_RE = re.compile(r"(?i)session[_-]?id=\S+")
 LOCAL_PATH_RE = re.compile(r"(?:/Users|/private/tmp|/private/var|/tmp)/[^\s'\"<>]+")
 SETUP_STATUS_VALUES = set(SetupStatus.__args__)
+_WECHAT_CONNECT_LOCK = threading.Lock()
+# The HTTP route persists the returned event immediately after this function
+# returns. Keep the successful first-phase event briefly in-process so a second
+# request arriving inside that handoff window cannot open another Settings pane.
+# Persisted connect_wechat evidence remains the durable source of truth.
+_WECHAT_PERMISSION_PROMPTS: dict[str, SetupWizardEvent] = {}
 
 
 def runtime_route_setup_statuses(
@@ -1109,33 +1122,198 @@ def _check_wechat_connection(store) -> SetupStepStatus:
     )
 
 
+def _latest_wechat_setup_evidence(store: AutoReplyStore) -> dict[str, object]:
+    events = store.list_setup_wizard_events(
+        "wechat_connection",
+        action_id="connect_wechat",
+        limit=1,
+    )
+    if not events:
+        return {}
+    try:
+        value = json.loads(str(events[0].get("evidence_json") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _wechat_permission_prompt_event(*, app_name: str, app_path: str) -> SetupWizardEvent:
+    return SetupWizardEvent(
+        step_id="wechat_connection",
+        action_id="connect_wechat",
+        status="done",
+        next_step_status="needs_action",
+        summary=(
+            "Full Disk Access settings opened. Enable CEO WeChat Reader, "
+            "then click Connect WeChat again."
+        ),
+        evidence={
+            "full_disk_access_prompted": True,
+            "reader_app_name": app_name,
+            "reader_app_path": (
+                "[REDACTED_PATH]"
+                if Path(app_path).is_absolute()
+                else redact_setup_output(app_path)
+            ),
+        },
+    )
+
+
+def _demote_bound_ready_wechat_state(
+    store: AutoReplyStore,
+    previous: Mapping[str, object],
+    *,
+    reason: str,
+) -> None:
+    account_id = str(previous.get("account_id") or "")
+    if not account_id:
+        return
+    state = store.get_wechat_read_state(account_id)
+    if state is None or state["capability_status"] != "ready":
+        return
+    store.upsert_wechat_read_state(
+        account_id=account_id,
+        account_dir=state["account_dir"],
+        db_dir=state["db_dir"],
+        app_version=state["app_version"],
+        self_user_id=state["self_user_id"],
+        capability_status="blocked",
+        capability_reason=reason,
+    )
+
+
 def _run_wechat_setup_action(action_id: str) -> SetupWizardEvent:
     from app import config
-    from app.store import AutoReplyStore
     from app.wechat import service
 
     _capability_to_step = {"ready": "done", "blocked": "blocked", "failed": "failed"}
-    try:
-        store = AutoReplyStore(config.worker_db_path())
-        setup = service.build_setup_service(store)
-        result = setup.verify() if action_id == "verify_wechat" else setup.connect()
-    except Exception as exc:  # pragma: no cover - defensive
+    db_path = config.worker_db_path()
+    prompt_key = str(db_path)
+    with _WECHAT_CONNECT_LOCK:
+        try:
+            store = AutoReplyStore(db_path)
+            previous = _latest_wechat_setup_evidence(store)
+            awaiting_permission = previous.get("full_disk_access_prompted") is True
+            ready_states = [
+                row
+                for row in store.list_wechat_read_states()
+                if row["capability_status"] == "ready"
+            ]
+            previous_account_id = str(previous.get("account_id") or "")
+            verified = (
+                bool(previous_account_id)
+                and previous.get("database_status") == "ready"
+                and previous.get("message_read_verified") is True
+                and len(ready_states) == 1
+                and ready_states[0]["account_id"] == previous_account_id
+            )
+
+            if verified or awaiting_permission:
+                _WECHAT_PERMISSION_PROMPTS.pop(prompt_key, None)
+
+            if not verified and not awaiting_permission:
+                pending = _WECHAT_PERMISSION_PROMPTS.get(prompt_key)
+                if pending is not None:
+                    return pending.model_copy(deep=True)
+                try:
+                    launched = open_full_disk_access_settings()
+                except PermissionOnboardingError as exc:
+                    return SetupWizardEvent(
+                        step_id="wechat_connection",
+                        action_id=action_id,
+                        status="failed",
+                        next_step_status="failed",
+                        summary=(
+                            "Could not open Full Disk Access settings for "
+                            f"CEO WeChat Reader: {redact_setup_output(str(exc))}"
+                        ),
+                    )
+                event = _wechat_permission_prompt_event(
+                    app_name=launched.app_name,
+                    app_path=launched.app_path,
+                )
+                _WECHAT_PERMISSION_PROMPTS[prompt_key] = event
+                return event
+
+            setup = service.build_setup_service(store)
+            if not verified:
+                try:
+                    restart_reader_and_wait(setup.reader)
+                except PermissionOnboardingError as exc:
+                    _demote_bound_ready_wechat_state(
+                        store,
+                        previous,
+                        reason="Tutorial Reader restart verification failed.",
+                    )
+                    return SetupWizardEvent(
+                        step_id="wechat_connection",
+                        action_id=action_id,
+                        status="done",
+                        next_step_status="blocked",
+                        summary=(
+                            "CEO WeChat Reader could not be restarted and verified: "
+                            f"{redact_setup_output(str(exc))}"
+                        ),
+                        evidence={
+                            "full_disk_access_prompted": True,
+                            "reader_health": "blocked",
+                        },
+                    )
+        except Exception as exc:  # pragma: no cover - defensive
+            return SetupWizardEvent(
+                step_id="wechat_connection",
+                action_id=action_id,
+                status="failed",
+                summary=f"WeChat setup error: {redact_setup_output(str(exc))}",
+            )
+
+        try:
+            result = setup.verify() if action_id == "verify_wechat" else setup.connect()
+        except ReaderIpcError as exc:
+            _demote_bound_ready_wechat_state(
+                store,
+                previous,
+                reason=(
+                    "Tutorial Reader verification blocked: "
+                    f"{redact_setup_output(str(exc.code))}."
+                ),
+            )
+            return SetupWizardEvent(
+                step_id="wechat_connection",
+                action_id=action_id,
+                status="done",
+                next_step_status="blocked",
+                summary=redact_setup_output(
+                    str(exc) or "CEO WeChat Reader could not access message data."
+                ),
+                evidence={
+                    "full_disk_access_prompted": True,
+                    "database_status": exc.code,
+                    "message_read_verified": False,
+                },
+            )
+        except Exception as exc:  # preserve the existing structured action contract
+            return SetupWizardEvent(
+                step_id="wechat_connection",
+                action_id=action_id,
+                status="failed",
+                next_step_status="failed",
+                summary=f"WeChat setup error: {redact_setup_output(str(exc))}",
+                evidence={"full_disk_access_prompted": True},
+            )
+
+        evidence = dict(result.evidence or {})
+        evidence["full_disk_access_prompted"] = True
         return SetupWizardEvent(
             step_id="wechat_connection",
             action_id=action_id,
-            status="failed",
-            summary=f"WeChat setup error: {exc}",
+            status="done" if result.status in ("done", "needs_action") else "failed",
+            next_step_status=_capability_to_step.get(
+                result.next_step_status, result.next_step_status
+            ),
+            summary=redact_setup_output(result.summary),
+            evidence=evidence,
         )
-    return SetupWizardEvent(
-        step_id="wechat_connection",
-        action_id=action_id,
-        status="done" if result.status in ("done", "needs_action") else "failed",
-        next_step_status=_capability_to_step.get(
-            result.next_step_status, result.next_step_status
-        ),
-        summary=result.summary,
-        evidence={key: str(value) for key, value in (result.evidence or {}).items()},
-    )
 
 
 def _setup_cli_components(
