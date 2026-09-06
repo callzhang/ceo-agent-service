@@ -2045,7 +2045,13 @@ def send_attempt_command(
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         raise SystemExit(f"reply attempt not found: {attempt_id}")
-    if attempt.send_status not in {"dry_run", "failed", "pending"}:
+    reviewed_instruction = instruction.strip()
+    allowed_source_statuses = {"dry_run", "failed", "pending"}
+    if reviewed_instruction:
+        # A prior no-action conclusion may be corrected by an explicit user
+        # instruction, but delivered attempts must never be reopened here.
+        allowed_source_statuses.add("skipped")
+    if attempt.send_status not in allowed_source_statuses:
         raise SystemExit(
             f"reply attempt {attempt_id} is not an unsent attempt: "
             f"{attempt.send_status}"
@@ -2088,7 +2094,6 @@ def send_attempt_command(
         and task.error.strip()
         and task.error.strip() != manual_rerun_marker
     )
-    reviewed_instruction = instruction.strip()
     if reviewed_instruction:
         # A user-authorized correction must be part of the next Consumer
         # context. Keep the old attempt as evidence and create a revision.

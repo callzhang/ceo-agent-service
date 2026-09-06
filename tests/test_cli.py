@@ -4114,7 +4114,7 @@ def test_send_attempt_command_persists_instruction_as_new_reviewed_attempt(
         trigger_text="@Alex Chen 看一下",
         action="send_reply",
         sensitivity_kind="general",
-        send_status="failed",
+        send_status="skipped",
     )
 
     result = send_attempt_command(
@@ -4128,7 +4128,7 @@ def test_send_attempt_command_persists_instruction_as_new_reviewed_attempt(
     task = store.get_reply_task_for_message("cid-1", "msg-1")
     assert result["attempt_id"] != source_attempt_id
     assert result["source_attempt_id"] == source_attempt_id
-    assert source_attempt is not None and source_attempt.send_status == "failed"
+    assert source_attempt is not None and source_attempt.send_status == "skipped"
     assert reviewed_attempt is not None
     assert reviewed_attempt.send_status == "pending"
     assert reviewed_attempt.reviewer_feedback == (
