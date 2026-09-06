@@ -310,86 +310,67 @@ def test_multi_person_delivery_requires_explicit_target():
         send_decision(target=None)
 
 
-def test_multi_person_followup_can_be_sent_to_creator_directly():
-    dws = FakeDws()
-
+def test_two_person_business_group_delivery_is_allowed():
     result = deliver_meeting_alignment(
-        send_decision(target="direct", mention_names=[]), meeting_source(), dws
+        send_decision(mention_names=[]), meeting_source(one_to_one=True), FakeDws()
     )
 
     assert result.status == "sent"
-    assert result.target_kind == "direct"
-    assert dws.sent[0]["conversation_id"] is None
-    assert dws.sent[0]["user_id"] == "u-a"
+    assert result.target_kind == "group"
 
 
-def test_multi_person_creator_name_is_uniquely_resolved_before_direct_send():
-    dws = FakeDws()
-    payload = meeting_source().model_dump(mode="json")
-    payload["creator"].update(user_id="", open_dingtalk_id="")
-    dws.profiles["A"] = [DwsUserProfile(user_id="u-a", name="A")]
-    decision = send_decision(target="direct", mention_names=[])
-    decision.target.direct_user_id = ""
-
-    result = deliver_meeting_alignment(
-        decision,
-        MeetingSource.model_validate(payload),
-        dws,
-    )
-
-    assert result.status == "sent"
-    assert dws.sent[0]["user_id"] == "u-a"
-
-
-def test_multi_person_creator_identity_ambiguity_retries_without_send():
-    dws = FakeDws()
-    payload = meeting_source().model_dump(mode="json")
-    payload["creator"].update(user_id="", open_dingtalk_id="")
-    dws.profiles["A"] = [
-        DwsUserProfile(user_id="u-a-1", name="A"),
-        DwsUserProfile(user_id="u-a-2", name="A"),
-    ]
-    decision = send_decision(target="direct", mention_names=[])
-    decision.target.direct_user_id = ""
-
-    with pytest.raises(MeetingDeliveryRetry, match="identity is unresolved"):
+def test_multi_person_direct_delivery_is_rejected_without_sending():
+    with pytest.raises(
+        MeetingDeliveryError,
+        match="complete calendar-backed two-person roster",
+    ):
         deliver_meeting_alignment(
-            decision,
-            MeetingSource.model_validate(payload),
+            send_decision(target="direct", mention_names=[]), meeting_source(), FakeDws()
+        )
+
+
+def test_business_direct_delivery_is_rejected_without_sending():
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    dws = FakeDws()
+
+    with pytest.raises(MeetingDeliveryError, match="business delivery requires a group"):
+        deliver_meeting_alignment(
+            MeetingAlignmentDecision.model_validate(payload),
+            meeting_source(one_to_one=True),
             dws,
         )
 
     assert dws.sent == []
 
 
-def test_multi_person_direct_target_must_be_another_participant():
-    payload = send_decision(target="direct").model_dump()
-    payload["target"].update(direct_user_id="u-outsider", title="Outsider")
+def test_personal_direct_delivery_rejects_incomplete_transcript_roster():
+    source_payload = meeting_source(one_to_one=True).model_dump()
+    source_payload["attendee_evidence"] = "transcript"
+    source_payload["attendee_roster_complete"] = False
+    dws = FakeDws()
 
     with pytest.raises(
         MeetingDeliveryError,
-        match="direct target must identify the eligible meeting recipient",
+        match="complete calendar-backed two-person roster",
     ):
         deliver_meeting_alignment(
-            MeetingAlignmentDecision.model_validate(payload),
-            meeting_source(),
-            FakeDws(),
+            send_decision(target="direct", mention_names=[]),
+            MeetingSource.model_validate(source_payload),
+            dws,
         )
 
+    assert dws.sent == []
 
-def test_group_must_be_sendable_through_conversation_info():
+
+def test_unsendable_group_retries_without_direct_message():
     dws = FakeDws()
     dws.conversation_info["singleChat"] = True
 
-    result = deliver_meeting_alignment(
-        send_decision(mention_names=[]), meeting_source(), dws
-    )
+    with pytest.raises(MeetingDeliveryRetry, match="selected target is not a sendable group"):
+        deliver_meeting_alignment(send_decision(mention_names=[]), meeting_source(), dws)
 
-    assert result.status == "sent"
-    assert result.target_kind == "direct"
-    assert result.target_id == "u-a"
-    assert dws.sent[0]["conversation_id"] is None
-    assert dws.sent[0]["user_id"] == "u-a"
+    assert dws.sent == []
 
 
 def test_unresolved_decision_can_reach_agent_selected_business_group():

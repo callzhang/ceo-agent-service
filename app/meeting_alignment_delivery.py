@@ -114,11 +114,23 @@ def deliver_meeting_alignment(
     target_title = source.title
     if target is None:
         raise MeetingDeliveryError("meeting delivery requires an explicit target")
-    elif target.kind == "group":
-        if participant_count == 2:
+    if decision.audience_scope == "business":
+        if target.kind != "group":
+            raise MeetingDeliveryError("business delivery requires a group target")
+    else:
+        if target.kind != "direct":
+            raise MeetingDeliveryError("personal delivery requires a direct target")
+        if (
+            source.attendee_evidence != "calendar"
+            or not source.attendee_roster_complete
+            or participant_count != 2
+        ):
             raise MeetingDeliveryError(
-                "1:1 meeting requires a direct target for the other participant"
+                "personal direct delivery requires a complete calendar-backed "
+                "two-person roster"
             )
+
+    if target.kind == "group":
         if (
             not target.candidates
             or target.candidates[0].conversation_id != target.conversation_id
@@ -128,25 +140,18 @@ def deliver_meeting_alignment(
             )
         info = dws.get_conversation_info(target.conversation_id)
         group_state = _group_delivery_state(info, target.conversation_id)
-        if group_state == "unsendable":
-            direct_user_id, direct_open_dingtalk_id, target_title = (
-                _creator_direct_identity(source, dws)
-            )
-            target_kind = "direct"
-            target_id = direct_user_id or direct_open_dingtalk_id
-        elif group_state == "incomplete":
+        if group_state != "sendable":
             raise MeetingDeliveryRetry("selected target is not a sendable group")
-        else:
-            conversation = DingTalkConversation(
-                open_conversation_id=target.conversation_id,
-                title=str(info.get("title") or target.title),
-                single_chat=False,
-                unread_point=0,
-            )
-            recent_messages = dws.read_recent_messages(conversation, limit=50)
-            target_kind = "group"
-            target_id = target.conversation_id
-            target_title = target.title
+        conversation = DingTalkConversation(
+            open_conversation_id=target.conversation_id,
+            title=str(info.get("title") or target.title),
+            single_chat=False,
+            unread_point=0,
+        )
+        recent_messages = dws.read_recent_messages(conversation, limit=50)
+        target_kind = "group"
+        target_id = target.conversation_id
+        target_title = target.title
     else:
         counterpart = _direct_target_participant(source, target)
         if counterpart.user_id:
@@ -292,55 +297,15 @@ def _group_delivery_state(
     return "incomplete"
 
 
-def _creator_direct_identity(
-    source: MeetingSource,
-    dws: MeetingDeliveryDws,
-) -> tuple[str, str, str]:
-    creator = source.creator
-    if creator is None or not creator.name.strip():
-        raise MeetingDeliveryRetry("meeting creator identity is unresolved")
-    if creator.user_id.strip():
-        return creator.user_id.strip(), "", creator.name.strip()
-    if creator.open_dingtalk_id.strip():
-        return "", creator.open_dingtalk_id.strip(), creator.name.strip()
-    profile = _resolve_profile(creator.name, creator, dws, [])
-    if profile is None:
-        raise MeetingDeliveryRetry("meeting creator identity is unresolved")
-    if profile.user_id.strip():
-        return profile.user_id.strip(), "", creator.name.strip()
-    if profile.open_dingtalk_id and profile.open_dingtalk_id.strip():
-        return "", profile.open_dingtalk_id.strip(), creator.name.strip()
-    raise MeetingDeliveryRetry("meeting creator identity is unresolved")
-
-
-def _sendable_group_info(info: dict[str, Any], conversation_id: str) -> bool:
-    member_count = info.get("memberCount")
-    return (
-        info.get("openConversationId") == conversation_id
-        and info.get("singleChat") is False
-        and isinstance(member_count, int)
-        and not isinstance(member_count, bool)
-        and member_count > 0
-    )
-
-
 def _direct_target_participant(
     source: MeetingSource,
     target: DeliveryTarget,
 ) -> MeetingParticipant:
-    if len(source.participants) > 2:
-        participants = (
-            [source.creator]
-            if source.creator is not None
-            and source.creator.user_id != source.current_user_id
-            else []
-        )
-    else:
-        participants = [
-            participant
-            for participant in source.participants
-            if participant.user_id != source.current_user_id
-        ]
+    participants = [
+        participant
+        for participant in source.participants
+        if participant.user_id != source.current_user_id
+    ]
     if target.direct_user_id:
         matches = [
             participant
