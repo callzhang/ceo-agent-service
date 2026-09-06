@@ -102,12 +102,13 @@ def restart_reader_and_wait(
 
     deadline = monotonic() + timeout_seconds
     while True:
+        remaining = max(0.0, deadline - monotonic())
         try:
-            health = reader.health()
+            health = reader.health(timeout_seconds=remaining)
         except ReaderIpcError:
             health = None
-        if isinstance(health, dict) and health.get("status") == "ready":
-            return health
         if monotonic() >= deadline:
             raise PermissionOnboardingError("Reader did not become ready before timeout")
+        if isinstance(health, dict) and health.get("status") == "ready":
+            return health
         pause(0.2)

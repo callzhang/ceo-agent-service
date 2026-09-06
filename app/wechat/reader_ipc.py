@@ -207,7 +207,9 @@ class WechatReaderClient:
         self.timeout_seconds = timeout_seconds
         self.max_response_bytes = max_response_bytes
 
-    def _request(self, method: str, params: dict | None = None) -> Any:
+    def _request(
+        self, method: str, params: dict | None = None, *, timeout_seconds: float | None = None
+    ) -> Any:
         request = json.dumps({
             "protocol_version": PROTOCOL_VERSION,
             "method": method,
@@ -215,7 +217,9 @@ class WechatReaderClient:
         }, separators=(",", ":")).encode("utf-8") + b"\n"
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-                conn.settimeout(self.timeout_seconds)
+                conn.settimeout(
+                    self.timeout_seconds if timeout_seconds is None else timeout_seconds
+                )
                 conn.connect(str(self.socket_path))
                 conn.sendall(request)
                 stream = conn.makefile("rb")
@@ -238,8 +242,8 @@ class WechatReaderClient:
             )
         return response.get("result")
 
-    def health(self) -> dict:
-        result = self._request("health")
+    def health(self, *, timeout_seconds: float | None = None) -> dict:
+        result = self._request("health", timeout_seconds=timeout_seconds)
         return result if isinstance(result, dict) else {}
 
     def discover_accounts(self) -> list[WechatAccount]:

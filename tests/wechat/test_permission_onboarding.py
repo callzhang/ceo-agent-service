@@ -96,14 +96,14 @@ def test_restart_reader_runs_exact_launchctl_command_and_waits_for_ready(tmp_pat
     del tmp_path
     calls = []
     health_results = [{"status": "ready"}]
-    now = iter([100.0, 100.0])
+    now = iter([100.0, 100.0, 100.0])
 
     def run(command, **kwargs):
         calls.append((command, kwargs))
         return CommandResult()
 
     class Reader:
-        def health(self):
+        def health(self, **kwargs):
             return health_results.pop(0)
 
     result = restart_reader_and_wait(
@@ -121,13 +121,13 @@ def test_restart_reader_retries_transient_reader_ipc_error(tmp_path):
     del tmp_path
     health_calls = 0
     pauses = []
-    clock = iter([0.0, 0.0, 0.1, 0.1])
+    clock = iter([0.0, 0.0, 0.1, 0.1, 0.1])
 
     def run(command, **kwargs):
         return CommandResult()
 
     class Reader:
-        def health(self):
+        def health(self, **kwargs):
             nonlocal health_calls
             health_calls += 1
             if health_calls == 1:
@@ -149,7 +149,7 @@ def test_restart_reader_rejects_non_ready_health_result(tmp_path):
         return CommandResult()
 
     class Reader:
-        def health(self):
+        def health(self, **kwargs):
             return {"status": "blocked"}
 
     clock = iter([0.0, 0.0, 20.0])
@@ -166,7 +166,7 @@ def test_restart_reader_reports_launchctl_failure(tmp_path):
         return CommandResult(returncode=1, stderr="kickstart denied")
 
     class Reader:
-        def health(self):
+        def health(self, **kwargs):
             raise AssertionError("health must not be called")
 
     def monotonic():
@@ -190,7 +190,7 @@ def test_restart_reader_has_bounded_timeout(tmp_path):
         return CommandResult()
 
     class Reader:
-        def health(self):
+        def health(self, **kwargs):
             return {"status": "starting"}
 
     def monotonic():
@@ -204,4 +204,28 @@ def test_restart_reader_has_bounded_timeout(tmp_path):
             pause=pauses.append, timeout_seconds=0.5,
         )
 
-    assert pauses == [0.2, 0.2]
+    assert pauses == [0.2]
+
+
+def test_restart_reader_health_cannot_return_ready_after_total_deadline(tmp_path):
+    del tmp_path
+    health_timeouts = []
+    current = [0.0]
+
+    def run(command, **kwargs):
+        return CommandResult()
+
+    class Reader:
+        def health(self, *, timeout_seconds):
+            health_timeouts.append(timeout_seconds)
+            current[0] = 30.0
+            return {"status": "ready"}
+
+    with pytest.raises(PermissionOnboardingError, match="did not become ready"):
+        restart_reader_and_wait(
+            Reader(), uid=501, run_command=run,
+            monotonic=lambda: current[0], pause=lambda _: None,
+            timeout_seconds=15.0,
+        )
+
+    assert health_timeouts == [15.0]
