@@ -152,8 +152,8 @@ def normalize_meeting_source(
     summary: dict[str, Any] | str | None = None,
     meeting_id: str = "",
     creator: MeetingParticipant | None = None,
-    attendee_evidence: Literal["calendar", "transcript"] = "calendar",
-    attendee_roster_complete: bool = True,
+    attendee_evidence: Literal["calendar", "transcript"],
+    attendee_roster_complete: bool,
 ) -> MeetingSource:
     data = _payload_data(info)
     _validate_metadata_aliases(data)

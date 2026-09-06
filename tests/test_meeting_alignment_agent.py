@@ -317,6 +317,7 @@ def test_candidate_interview_no_action_overrides_one_to_one_delivery_target():
     assert "仅当 action=send 时" in prompt
     assert "实际候选人面试" in prompt
     assert "action=no_action 时 target=null" in prompt
+    assert "仍必须返回 audience_scope、audit_summary 和 confidence" in prompt
 
 
 def test_prompt_allows_personal_direct_only_for_complete_calendar_one_to_one():
@@ -425,6 +426,14 @@ def test_agent_rejects_null_target_for_multi_party_meeting():
 def test_parser_rejects_extra_fields():
     payload = no_action_payload()
     payload["unexpected"] = True
+    with pytest.raises(ValueError, match="No MeetingAlignmentDecision"):
+        parse_meeting_alignment_decision(json.dumps(payload))
+
+
+def test_parser_rejects_no_action_without_required_audience_scope():
+    payload = no_action_payload()
+    del payload["audience_scope"]
+
     with pytest.raises(ValueError, match="No MeetingAlignmentDecision"):
         parse_meeting_alignment_decision(json.dumps(payload))
 

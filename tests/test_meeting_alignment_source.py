@@ -622,7 +622,13 @@ def test_live_info_rejects_conflicting_participant_aliases():
     ]
 
     with pytest.raises(MeetingSourceIncomplete, match="conflicting participants"):
-        normalize_meeting_source(info, [], current_user_id="u-derek")
+        normalize_meeting_source(
+            info,
+            [],
+            current_user_id="u-derek",
+            attendee_evidence="transcript",
+            attendee_roster_complete=False,
+        )
 
 
 @pytest.mark.parametrize(
@@ -642,7 +648,13 @@ def test_live_info_rejects_conflicting_critical_aliases(
     info["result"][alias] = conflicting_value
 
     with pytest.raises(MeetingSourceIncomplete, match=message):
-        normalize_meeting_source(info, [], current_user_id="u-derek")
+        normalize_meeting_source(
+            info,
+            [],
+            current_user_id="u-derek",
+            attendee_evidence="transcript",
+            attendee_roster_complete=False,
+        )
 
 
 def test_same_normalized_alias_values_are_allowed():
@@ -664,7 +676,13 @@ def test_same_normalized_alias_values_are_allowed():
         ended_at=1784035644000,
     )
 
-    source = normalize_meeting_source(info, [], current_user_id="u-derek")
+    source = normalize_meeting_source(
+        info,
+        [],
+        current_user_id="u-derek",
+        attendee_evidence="transcript",
+        attendee_roster_complete=False,
+    )
 
     assert source.status == "ended"
     assert [participant.user_id for participant in source.participants] == [
@@ -673,12 +691,27 @@ def test_same_normalized_alias_values_are_allowed():
     ]
 
 
+def test_normalization_requires_explicit_attendee_provenance():
+    with pytest.raises(TypeError, match="attendee_evidence"):
+        normalize_meeting_source(
+            normalized_info(),
+            [],
+            current_user_id="u-derek",
+        )
+
+
 def test_normalization_requires_explicit_end_time():
     info = normalized_info()
     del info["result"]["endTime"]
 
     with pytest.raises(MeetingSourceIncomplete, match="end time"):
-        normalize_meeting_source(info, [], current_user_id="u-derek")
+        normalize_meeting_source(
+            info,
+            [],
+            current_user_id="u-derek",
+            attendee_evidence="transcript",
+            attendee_roster_complete=False,
+        )
 
 
 def test_normalization_requires_explicit_start_time():
@@ -686,7 +719,13 @@ def test_normalization_requires_explicit_start_time():
     del info["result"]["startTime"]
 
     with pytest.raises(MeetingSourceIncomplete, match="start time"):
-        normalize_meeting_source(info, [], current_user_id="u-derek")
+        normalize_meeting_source(
+            info,
+            [],
+            current_user_id="u-derek",
+            attendee_evidence="transcript",
+            attendee_roster_complete=False,
+        )
 
 
 @pytest.mark.parametrize(
@@ -703,7 +742,13 @@ def test_normalization_rejects_invalid_or_naive_times(field, value):
     info["result"][field] = value
 
     with pytest.raises(MeetingSourceIncomplete, match="time"):
-        normalize_meeting_source(info, [], current_user_id="u-derek")
+        normalize_meeting_source(
+            info,
+            [],
+            current_user_id="u-derek",
+            attendee_evidence="transcript",
+            attendee_roster_complete=False,
+        )
 
 
 def test_normalization_accepts_missing_status_with_complete_transcript():
@@ -711,6 +756,8 @@ def test_normalization_accepts_missing_status_with_complete_transcript():
         normalized_info(),
         [{"speakerName": "A", "text": "完成"}],
         current_user_id="u-derek",
+        attendee_evidence="transcript",
+        attendee_roster_complete=False,
     )
 
     assert source.status == "ended"
@@ -728,6 +775,8 @@ def test_normalization_rejects_transcript_page_with_more_results():
                 }
             },
             current_user_id="u-derek",
+            attendee_evidence="transcript",
+            attendee_roster_complete=False,
         )
 
 
@@ -736,6 +785,8 @@ def test_normalization_accepts_explicit_ended_status():
         normalized_info(status="ENDED"),
         [],
         current_user_id="u-derek",
+        attendee_evidence="transcript",
+        attendee_roster_complete=False,
     )
 
     assert source.status == "ended"
@@ -744,7 +795,13 @@ def test_normalization_accepts_explicit_ended_status():
 def test_normalization_rejects_explicit_running_status():
     info = normalized_info(status="running")
     with pytest.raises(MeetingSourceIncomplete, match="explicitly ended"):
-        normalize_meeting_source(info, [], current_user_id="u-derek")
+        normalize_meeting_source(
+            info,
+            [],
+            current_user_id="u-derek",
+            attendee_evidence="transcript",
+            attendee_roster_complete=False,
+        )
 
 
 def test_normalization_requires_participant_data():
@@ -752,21 +809,39 @@ def test_normalization_requires_participant_data():
     info["result"]["participantList"] = []
 
     with pytest.raises(MeetingSourceIncomplete, match="participant data"):
-        normalize_meeting_source(info, [], current_user_id="u-derek")
+        normalize_meeting_source(
+            info,
+            [],
+            current_user_id="u-derek",
+            attendee_evidence="transcript",
+            attendee_roster_complete=False,
+        )
 
 
 def test_normalization_requires_current_user_to_be_a_participant():
     info = normalized_info()
 
     with pytest.raises(MeetingSourceIncomplete, match="current user.*participant"):
-        normalize_meeting_source(info, [], current_user_id="u-someone-else")
+        normalize_meeting_source(
+            info,
+            [],
+            current_user_id="u-someone-else",
+            attendee_evidence="transcript",
+            attendee_roster_complete=False,
+        )
 
 
 def test_normalization_allows_non_current_participant_without_stable_user_id():
     info = normalized_info()
     del info["result"]["participantList"][1]["userId"]
 
-    source = normalize_meeting_source(info, [], current_user_id="u-derek")
+    source = normalize_meeting_source(
+        info,
+        [],
+        current_user_id="u-derek",
+        attendee_evidence="transcript",
+        attendee_roster_complete=False,
+    )
 
     assert source.participants[1].user_id == ""
 

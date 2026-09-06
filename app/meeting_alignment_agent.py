@@ -199,7 +199,7 @@ def build_meeting_alignment_prompt(
 - 不能因为是 1:1、群可访问、议题相似或参会人部分重合而私信；没有证据支持的群时返回 action=no_action，绝不使用 direct target。
 - personal 只适用于真正个人事项，必须返回 audience_scope=personal。仅当 attendee_evidence=calendar、attendee_roster_complete=true 且恰好两名参会人时，action=send 才能使用 target.kind=direct，并且目标只能是另一位参会人。
 - personal 不满足完整日历 1:1 来源时返回 action=no_action；不得以转写、不完整 roster 或多人会议发送 direct。
-- action=no_action 时 target=null。"""
+- action=no_action 时仍必须返回 audience_scope、audit_summary 和 confidence；target=null，且 trigger_reasons、topics、derek_viewpoint、key_questions、mention_names 与 final_message 保持为空。"""
 
     similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
 
