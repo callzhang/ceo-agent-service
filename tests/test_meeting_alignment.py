@@ -1349,6 +1349,33 @@ def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):
     assert len(dws.send_calls) == 1
 
 
+def test_calendar_summary_non_organizer_permission_marks_sent_without_retry(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    class CalendarWriteForbiddenDws(ConsumerDws):
+        def update_calendar_event_description(
+            self, event_id: str, description: str
+        ) -> dict:
+            raise DwsError(
+                "code: 300000, developerMessage: Only organizer is allowed to patch event.",
+                code="300000",
+            )
+
+    dws = CalendarWriteForbiddenDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "sent"
+    assert job.calendar_summary_status == "skipped"
+    assert len(dws.send_calls) == 1
+    receipt = json.loads(job.calendar_summary_result_json)
+    assert receipt["reason"] == "current account is not the calendar organizer"
+    assert store.claim_ready_to_send_meeting_alignment_jobs(limit=1, now=NOW) == []
+
+
 def test_transcript_meeting_without_calendar_event_marks_calendar_note_skipped(
     tmp_path,
 ):

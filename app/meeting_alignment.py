@@ -68,6 +68,13 @@ MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY = (
 )
 
 
+def _calendar_summary_write_forbidden(exc: DwsError) -> bool:
+    """Return whether DingTalk has conclusively denied this calendar write."""
+    return exc.code == "300000" and "only organizer is allowed to patch event" in str(
+        exc
+    ).casefold()
+
+
 def _is_deleted_minutes_error(exc: BaseException) -> bool:
     """A deleted transcript is a terminal source outcome, not a retryable outage."""
     text = str(exc).lower()
@@ -1266,6 +1273,28 @@ def _write_meeting_summary_to_calendar_or_retry(
         subprocess.TimeoutExpired,
         TimeoutError,
     ) as exc:
+        if isinstance(exc, DwsError) and _calendar_summary_write_forbidden(exc):
+            receipt = json.dumps(
+                {
+                    "event_id": evidence.event_id,
+                    "state": "skipped",
+                    "reason": "current account is not the calendar organizer",
+                    "error": str(exc),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            store.update_meeting_alignment_job(
+                job.id,
+                status="sent",
+                final_message=summary,
+                send_result_json=delivery.model_dump_json(),
+                calendar_summary_status="skipped",
+                calendar_summary_result_json=receipt,
+                error="",
+            )
+            _notify_meeting_sent(job, delivery)
+            return
         receipt = json.dumps(
             {
                 "event_id": evidence.event_id,
