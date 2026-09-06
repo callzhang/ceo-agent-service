@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { confirmEmailClassification, listEmailClassifications, type EmailClassificationItem } from "../api/console";
+import { confirmEmailClassification, getEmailClassification, listEmailClassifications, type EmailClassificationItem } from "../api/console";
 
 const labels: Record<string, string> = { important: "重要", work: "工作", personal: "个人", notification: "通知", billing: "账单", shopping: "购物", subscription: "订阅", junk: "垃圾" };
 const descriptions: Record<string, string> = { important: "明确需要尽快关注或处理", work: "与日常工作有关，但不要求立即处理", personal: "真实个人关系或个人生活邮件", notification: "验证码、安全提醒、系统状态等时效通知", billing: "发票、账单、付款、续费", shopping: "订单确认、物流、退款和购物状态", subscription: "用户不希望继续接收的批量订阅", junk: "广告、营销、钓鱼或无价值邮件" };
@@ -25,7 +25,21 @@ export function PendingEmailFeedback() {
   const [message, setMessage] = useState("");
   const [revision, setRevision] = useState(0);
   const [reading, setReading] = useState(false);
+  const [body, setBody] = useState<{ id: string; text: string } | null>(null);
+  const [bodyError, setBodyError] = useState("");
   const row = rows.find(item => item.id === selectedId) || rows[0];
+  useEffect(() => {
+    if (!row) return;
+    const id = row.id;
+    const controller = new AbortController();
+    setBodyError("");
+    getEmailClassification(id, controller.signal).then(result => {
+      if (!controller.signal.aborted) setBody({ id, text: result.item.message_text || "" });
+    }).catch(reason => {
+      if (!controller.signal.aborted) setBodyError(reason instanceof Error ? reason.message : "正文加载失败");
+    });
+    return () => controller.abort();
+  }, [row?.id, revision]);
   const changePage = (next: number) => { setParams({ tab: "pending_feedback", page: String(next) }); setReading(false); setCategory(""); };
   useEffect(() => {
     const controller = new AbortController();
@@ -67,9 +81,9 @@ export function PendingEmailFeedback() {
       </aside>
       {row && <article className="email-review-reader" aria-label="当前邮件">
         <div className="email-review-content"><button className="compact-button email-review-back" disabled={saving} onClick={() => setReading(false)}>← 返回队列</button><h2>{row.subject || "无主题"}</h2><p className="muted">{row.sender || "未提供发件人"}<br />{date(row.received_at || row.updated_at)}</p>
-          <p className="email-review-preview">{row.preview || "这封邮件没有可用的文本预览，请查看原邮件后分类。"}</p><p className="muted">邮件文本预览</p>
+          <section aria-label="邮件文本预览"><h3>邮件文本预览</h3>{bodyError ? <p role="alert">正文加载失败：{bodyError} <button className="compact-button" onClick={() => setRevision(value => value + 1)}>重新加载</button></p> : body?.id !== row.id ? <p role="status">正在加载邮件正文…</p> : <div className="email-review-preview">{body.text || "这封邮件没有已保存的正文，请查看原邮件后分类。"}</div>}</section>
           {!!row.attachment_metadata?.length && <div className="email-review-attachments" aria-label="附件元数据">{row.attachment_metadata.map((file, index) => <span className="status-badge" key={index}>{file.filename || "未命名附件"} · {Math.round(file.size_bytes / 1024)} KB</span>)}</div>}
-          <details key={row.id} className="email-review-evidence"><summary>查看分类依据</summary><section aria-label={`${row.subject || "无主题"} 分类证据`}><p>前两名概率差：{percent(row.margin)}</p><ol aria-label="模型候选">{Object.entries(row.probabilities).sort((a,b) => b[1]-a[1]).map(([key,value]) => <li key={key}>{labels[key] || key} {percent(value)}</li>)}</ol><p>完整模型 ID：{row.model_version || "未提供"}</p><p>配置版本：{row.config_version || "未提供"}</p></section></details>
+          <section className="email-review-evidence" aria-label={`${row.subject || "无主题"} 分类证据`}><h3>分类依据</h3><p>模型概率分布 · 仅供参考</p><div className="email-probability-bar" role="img" aria-label="分类概率分布">{Object.entries(row.probabilities).sort((a,b) => b[1]-a[1]).map(([key,value]) => <span key={key} data-category={key} style={{ flexGrow: value }} title={`${labels[key] || key} ${percent(value)}`} />)}</div><ol className="email-probability-legend" aria-label="模型候选">{Object.entries(row.probabilities).sort((a,b) => b[1]-a[1]).map(([key,value]) => <li key={key}><i data-category={key} />{labels[key] || key} {percent(value)}</li>)}</ol>{!Object.keys(row.probabilities).length && <p>暂无分类概率数据</p>}<p>前两名概率差：{percent(row.margin)}</p><p>模型：{row.model_version || "未提供"} · 配置：{row.config_version || "未提供"}</p></section>
         </div>
         <form className="email-review-decision" onSubmit={event => { event.preventDefault(); void save(); }}><strong>这封邮件属于哪一类？</strong><p className="muted">模型建议：{labels[row.category] || row.category} · {percent(row.confidence)}，仅供参考</p><div className="email-review-categories" role="group" aria-label="选择分类">{Object.entries(labels).map(([key,label]) => <button type="button" className="filter-chip" key={key} aria-pressed={category === key} disabled={saving || loading} onClick={() => { setCategory(key); setSaveError(""); }}>{label}</button>)}</div><p className="email-review-help muted">{category ? descriptions[category] : "请选择类别；选择后点击保存。"}</p>{saveError && <p role="alert" className="page-state-error">{saveError}</p>}<button type="submit" className="primary-button" disabled={!category || saving || loading}>{saving ? "正在保存…" : category ? `保存为「${labels[category]}」并继续 →` : "保存分类并继续 →"}</button></form>
       </article>}

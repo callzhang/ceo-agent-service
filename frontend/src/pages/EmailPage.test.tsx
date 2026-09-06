@@ -91,17 +91,29 @@ describe("EmailPage", () => {
   });
 
   it("shows ranked pending evidence and attachment metadata without attachment contents or paths", async () => {
-    const user = userEvent.setup();
     renderEmail("/email?tab=pending_feedback");
-    await user.click(await screen.findByText("查看分类依据"));
     const evidence = await screen.findByRole("region", { name: "需要确认 分类证据" });
-    expect(screen.getByText("邮件摘要")).toBeInTheDocument();
+    expect(within(evidence).getByRole("img", { name: "分类概率分布" })).toBeInTheDocument();
+    expect(evidence.closest("details")).toBeNull();
     expect(evidence).toHaveTextContent("前两名概率差：4.0%");
     const alternatives = within(evidence).getByRole("list", { name: "模型候选" });
     expect(within(alternatives).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["工作 61.0%", "重要 57.0%"]);
     expect(screen.getByText("quarterly-report.pdf · 248 KB")).toBeInTheDocument();
     expect(evidence).not.toHaveTextContent("ATTACHMENT-BODY-MUST-NOT-RENDER");
     expect(evidence).not.toHaveTextContent("/private/mail/quarterly-report.pdf");
+  });
+
+  it("loads full persisted email text instead of the truncated list preview", async () => {
+    const pending = deferred<any>();
+    getEmailClassification.mockReturnValueOnce(pending.promise);
+    renderEmail("/email?tab=pending_feedback");
+    expect(await screen.findByText("正在加载邮件正文…")).toBeInTheDocument();
+    const text = "完整正文第一段\n\n" + "邮件内容".repeat(100) + "正文结尾";
+    pending.resolve({ item: { message_text: text } });
+    const preview = await screen.findByRole("region", { name: "邮件文本预览" });
+    await waitFor(() => expect(preview).toHaveTextContent("正文结尾"));
+    expect(preview).not.toHaveTextContent("邮件摘要");
+    expect(getEmailClassification).toHaveBeenCalledWith("1", expect.any(AbortSignal));
   });
 
   it("shows category definitions while asking for feedback", async () => {

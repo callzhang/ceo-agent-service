@@ -1271,7 +1271,20 @@ h1, h2, h3, p { margin-top: 0; }
 .email-review-reader { display:flex; flex-direction:column; min-width:0; min-height:0; }
 .email-review-content { padding:24px; overflow:auto; flex:1; min-height:0; overflow-wrap:anywhere; }
 .email-review-content h2 { margin:0; font-size:1.18rem; }
-.email-review-preview { white-space:pre-wrap; line-height:1.8; margin:24px 0 12px; }
+.email-review-preview { white-space:pre-wrap; line-height:1.8; margin:12px 0; max-height:36vh; overflow:auto; padding:16px; border:1px solid var(--line); border-radius:10px; background:var(--surface); }
+.email-probability-bar { display:flex; height:20px; overflow:hidden; border-radius:6px; gap:2px; background:var(--surface-muted); }
+.email-probability-bar span { flex-basis:0; min-width:0; }
+.email-probability-legend { display:flex; flex-wrap:wrap; gap:8px 18px; padding:0; list-style:none; }
+.email-probability-legend li { display:flex; align-items:center; gap:6px; }
+.email-probability-legend i { width:9px; height:9px; border-radius:2px; }
+.email-review-evidence [data-category] { background:var(--ink-soft); }
+.email-review-evidence [data-category="important"] { background:#b84f57; }
+.email-review-evidence [data-category="work"] { background:#3b82bc; }
+.email-review-evidence [data-category="personal"] { background:#8563b1; }
+.email-review-evidence [data-category="notification"] { background:#24958e; }
+.email-review-evidence [data-category="billing"] { background:#c38b32; }
+.email-review-evidence [data-category="shopping"] { background:#cd7753; }
+.email-review-evidence [data-category="subscription"] { background:#748f46; }
 .email-review-decision { border-top:1px solid var(--line); padding:18px 24px; background:var(--surface); }
 .email-review-decision p { margin:8px 0; }
 .email-review-categories, .email-review-attachments { display:flex; gap:8px; flex-wrap:wrap; }

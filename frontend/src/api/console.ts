@@ -153,6 +153,7 @@ export interface EmailClassificationItem {
   sender: string;
   subject: string;
   preview: string;
+  message_text?: string;
   received_at: string;
   category: string;
   confidence: number;
@@ -360,6 +361,7 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
     sender: emailText(row.sender),
     subject: emailText(row.subject),
     preview: emailText(row.preview),
+    message_text: emailText(row.message_text),
     received_at: emailText(row.received_at),
     category: confirmedCategory || predictedCategory || emailText(row.category),
     confidence: Number(row.confidence || 0),
