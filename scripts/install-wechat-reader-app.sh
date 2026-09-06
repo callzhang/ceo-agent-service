@@ -30,7 +30,6 @@ if [[ "${signature_info}" == *"Signature=adhoc"* ]]; then
     'Refusing to install an ad-hoc build because macOS cannot persist App Data permission reliably for that identity. Use a stable signing certificate.' >&2
   exit 2
 fi
-
 mkdir -p "${target_root}" "$(dirname "${target_plist}")" "${log_dir}"
 launchctl bootout "${domain}/${label}" 2>/dev/null || true
 
@@ -55,3 +54,5 @@ launchctl kickstart -k "${domain}/${label}"
 
 printf 'installed %s\n' "${target_app}"
 printf 'started %s\n' "${domain}/${label}"
+printf '%s\n' \
+  'For unattended reads across Reader restarts, add CEO WeChat Reader.app once in System Settings > Privacy & Security > Full Disk Access.'

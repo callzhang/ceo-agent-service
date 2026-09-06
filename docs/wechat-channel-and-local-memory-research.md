@@ -250,18 +250,19 @@ CEO_WECHAT_READER_SIGNING_IDENTITY='CEO WeChat Reader Local Signing' \
 ```
 
 个人电脑没有 Apple Developer 证书时，可使用上面的本机 identity。创建脚本生成一张
-10 年期、`CA:FALSE`、仅有
-`digitalSignature` 和 `codeSigning` 用途的本机证书；私钥以不可导出方式存入登录
-Keychain，并只预授权 `/usr/bin/codesign`。该证书不是 TLS 根证书，也不能用于网站、
-邮件或客户端认证。由于本机自签名证书没有 Apple Team ID，构建不会启用 Hardened
-Runtime，否则 macOS 的 library validation 会拒绝应用内同证书签名的 Python 动态库；
-这里的安全边界由固定签名身份、App Data 权限和仅限当前用户的本地 Socket 共同提供。
+10 年期、`CA:FALSE`、仅有 `digitalSignature` 和 `codeSigning` 用途的本机证书；私钥
+以不可导出方式存入登录 Keychain，并只预授权 `/usr/bin/codesign`。该证书不是 TLS 根
+证书，也不能用于网站、邮件或客户端认证。它让应用的代码要求在重新构建后保持稳定，
+适合绑定一次性的 Full Disk Access 设置。普通 App Data 弹窗仍然只覆盖当前 Reader
+进程，这一行为与是否有 Apple Team ID 或 Hardened Runtime 无关。
 
 构建产物默认放在 `~/Library/Caches/CEO Agent/WeChatReaderBuild/dist/`，安装到
 `~/Applications/CEO WeChat Reader.app`，由
 `com.stardust.ceo-agent.wechat-reader` LaunchAgent 常驻。第一次在 Tutorial 点击
 “Connect WeChat”时，macOS 会把 App Data 权限请求归属到专用 Bundle ID；允许后再点击一次
-Connect 即可完成账号发现和数据库探测。
+Connect 即可完成账号发现和数据库探测。但该弹窗的 Allow 只覆盖当前 Reader 进程，进程
+重启后会再次询问。无人值守运行必须在“系统设置 → 隐私与安全性 → 完全磁盘访问权限”中
+一次性加入 `~/Applications/CEO WeChat Reader.app`，不要加入公共 Python 或主服务。
 
 没有签名证书时只能显式使用开发模式：
 
@@ -271,19 +272,24 @@ Connect 即可完成账号发现和数据库探测。
 # because macOS App Data authorization cannot be relied on across rebuilds.
 ```
 
-ad-hoc 版本可以验证进程隔离，但重新构建后代码哈希会变化，macOS 可能再次要求授权，
-不能作为永久部署。固定 Bundle ID 本身不足以稳定继承 TCC 权限；最终仍需稳定签名身份。
+ad-hoc 版本可以验证进程隔离，但重新构建后代码哈希会变化，不适合作为永久部署。固定
+Bundle ID 和稳定签名用于保持 Full Disk Access 的应用身份；它们本身不会把普通 App Data
+弹窗转换成跨进程授权。
 本机首次 App Data 授权必须由用户确认，程序不能静默绕过；企业完全免点击部署只能依赖
 MDM/PPPC 管理策略。
 
 ### 实机验证结果
 
-2026-07-21 先以 ad-hoc 构建验证进程隔离，随后改用本机稳定代码签名身份完成生产安装：独立 Mach-O 进程成功启动；主服务经 Socket
+2026-07-21 先以 ad-hoc 构建验证进程隔离，随后以独立 Mach-O 进程成功启动；主服务经 Socket
 获取 `health=ready`，发现 `derek840121_0fe0`，数据库探测为 `ready`，识别本人账号，
 并通过该链路读取“文件传输助手”最近 100 条消息。进程列表显示访问者为
 `CEO WeChat Reader.app/Contents/MacOS/CEO WeChat Reader`，不是
 `/Users/derek/miniforge3/bin/python3.12`。常驻安装后，macOS TCC 日志也将 App Data 请求
-明确归属到 `com.stardust.ceo-agent.wechat-reader`。
+明确归属到 `com.stardust.ceo-agent.wechat-reader`。2026-09-05 进一步确认：无 Team ID、
+本机自签名版本会获得 session-scoped 授权；进一步实测 Apple Team ID + Hardened
+Runtime 后，普通 App Data 弹窗仍然按 Reader 进程生效。这是 macOS 容器保护的设计
+边界，不是签名缺陷。生产使用稳定签名身份，并通过一次性的 Full Disk Access 设置实现
+跨重启无人值守读取。
 
 ## 4. 独立本地 Sender 应用（2026-07-21 已实现）
 

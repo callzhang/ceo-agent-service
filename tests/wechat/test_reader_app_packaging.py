@@ -33,6 +33,7 @@ def test_build_and_install_scripts_are_valid_and_fail_closed_on_adhoc_signing():
     assert "--options runtime" not in build_text
     assert "--allow-adhoc" not in install_text
     assert "Signature=adhoc" in install_text
+    assert "Full Disk Access" in install_text
 
 
 def test_local_signing_identity_is_code_signing_only_and_non_exportable():

@@ -61,12 +61,18 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 
 The production reader is the dedicated **CEO WeChat Reader** executable with a
 fixed bundle identifier and stable signing identity. Only that helper receives
-App Data permission; it returns normalized, bounded results to the main service
+storage permission; it returns normalized, bounded results to the main service
 over a local authenticated IPC interface, so the main Python service never opens
 the WeChat database. Granting App Data / Full Disk Access to a shared Python
 interpreter is neither required nor recommended. First authorization remains an
 explicit local user action; zero-click deployment requires managed macOS/MDM
 privacy policy.
+
+On macOS 15 and later, the inline **access data from other apps** approval is
+intentionally valid only for the current application instance. It prompts again
+after the Reader process restarts. For unattended operation, add
+`~/Applications/CEO WeChat Reader.app` once under **System Settings → Privacy &
+Security → Full Disk Access**. Do not add Miniforge Python or the main service.
 
 ### Reader runtime resilience
 
@@ -103,11 +109,13 @@ in-process `probe + read_messages(limit=10)` hot path is 65–71ms after one-tim
 warm-up. First open and any source-change decryption remain slower by design and
 must not be reported as hot-query latency.
 
-The production Reader must be signed with the stable local code-signing identity.
-The installer rejects ad-hoc builds unconditionally: an ad-hoc signature changes
-the identity macOS uses for App Data authorization, which can make every database
-read prompt again after a rebuild or relaunch. A stable build requires one initial
-**Allow** decision; subsequent reads and ordinary restarts reuse that authorization.
+The production Reader must have a fixed bundle ID and stable code-signing
+identity; the installer rejects ad-hoc builds. This keeps the application's code
+requirement stable for a persistent Full Disk Access record. Signing alone does
+not turn the inline App Data prompt into a permanent grant: macOS 26 was observed
+creating a new `SystemPolicyAppData` decision after every Reader PID change even
+for an Apple Team-signed, hardened build. Persistent unattended reads therefore
+require the one-time Full Disk Access setting above.
 
 ## Dedicated Sender permission boundary
 
