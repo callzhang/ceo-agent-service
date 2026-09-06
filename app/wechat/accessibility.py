@@ -541,6 +541,7 @@ class MacWechatAccessibility:
                 break
             if attempt < 2:
                 import time
+                self._reactivate(self._wechat_app_ref(pid))
                 time.sleep(1.0)
         return "wechat_window_unavailable"
 

@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-06: restore WeChat preflight activation before retrying an empty AX
+  window tree. The Sender now uses the same cross-Space activation path during
+  health checks as it does before delivery, preventing Tutorial and Status from
+  blocking while WeChat is open on another Mission Control Space.
+
 - 2026-08-31: restore the configured assistant postfix for DingTalk messages
   sent by meeting-alignment delivery and weekly OKR group summaries. These
   two system-generated send paths now use the same idempotent signature
