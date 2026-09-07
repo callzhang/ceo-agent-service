@@ -19,6 +19,24 @@ Friday 或 Codex provider 返回的原始错误码会原样保留，并归入对
 `consumer_retry_exhausted` 和 `audit_retry_exhausted` 是重试上限结果，不是新的业务原因；
 必须同时查看同一 run 的原始错误码。
 
+## 当前错误与历史错误的展示边界
+
+错误事件是 append-only 执行事实；Attention、Workers 和质量门展示的是业务对象的 current
+projection。对具有 `business_object_key` 的任务，当前状态由 `business_object_tasks.reply_task_id`
+指向的 task 决定。已经被后续成功 task 取代的旧 `failed` 行仍可在 History 展开，但不得继续计入
+当前失败数、触发自动重试或显示人工处理按钮。
+
+排查页面数字不一致时依次核对：
+
+1. Attention 是否只列出当前失败；
+2. Workers 的 Reply tasks 是否标记为 `current business-object projection`；
+3. 质量门是否为零；
+4. History 中的旧错误是否只是历史展开项；
+5. 是否存在没有稳定业务键的独立任务，这类任务仍按自身状态统计。
+
+因此“原始失败仍保留”和“当前失败为零”可以同时成立。不得为了清零页面而直接修改或删除
+生产 SQLite 中的旧错误、session、run、tool event 或 provider 结果。
+
 ## Agent 与结果契约
 
 | 错误码 | 解释 | 默认处理 |
@@ -103,6 +121,11 @@ python scripts/migrate_error_projections.py --db <database> --apply
 schema 升级会删除这些旧投影字段，把旧 `unknown` run 的当前状态迁移为 `failed`，并追加
 `legacy_unknown_migrated` state event。原始错误事件、session、runtime attempt、tool event 和
 provider 结果保持不变；当前业务投影归入 `failed`、`done` 或 `needs_human` 的现行语义。
+
+`runtime_effect_policy_violation`、`agoal_live_read_unreviewed`、`audit_recovery_ambiguous`、
+`audit_reconciliation_result_invalid` 和 `audit_reconciliation_evidence_mismatch` 只允许作为历史
+错误文本保留。当前代码不得生成这些错误，也不得将它们纳入 Attention、Workers 当前失败或
+自动恢复条件。
 
 ## 相关文档
 

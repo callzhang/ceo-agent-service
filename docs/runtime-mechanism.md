@@ -27,7 +27,7 @@ pending -> running -> done
 - `needs_feedback`：审核 Agent 已完成审阅，反馈已持久化，执行 Agent 需要修改原结果。
 - `revision_pending`：修正版已排队；修正版必须有新的 revision 标识，并保留原结果和反馈的关联。
 - `done`：逻辑完成且结果已持久化。
-- `sent`：历史兼容名称；新任务以 `done` 表示完成，发送与回读保存在 trace。
+- `sent`：历史兼容名称；新任务以 `done` 表示完成，provider 发送结果保存在 trace。
 - `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；技术读取或 provider 失败使用 `failed`。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
@@ -77,7 +77,7 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 ```text
 执行 Agent 生成 run R0
   -> 审核 Agent 审核 R0
-      -> 通过：审核 Agent 执行/发布 R0，回读后进入 done/sent
+      -> 通过：审核 Agent 执行/发布 R0，provider 返回成功结果后进入 done/sent
       -> 需要修改：写入反馈 F0，R0 保留为历史 run
           -> 执行 Agent 收到 F0，生成修正版 R1
               -> 审核 Agent 审核 R1
@@ -129,6 +129,22 @@ run 结束后提高 generation 并重新排队同一 task。
 通过 run 的 task、generation 和关联事件查询。Attempt 页面可以切换多个 Consumer
 或 Audit run，但不能编辑或覆盖旧 run。原始失败、session、runtime attempt、tool
 event 和 provider 结果仍然作为 append-only 事实保留。
+
+### 重复外发故障的统一排查顺序
+
+当人员收到多条相似或互相矛盾的消息时，不得先把问题归因于某一条 prompt 或某个发送命令。
+按以下顺序检查同一稳定业务对象的完整链路：
+
+1. 是否有多个 `reply_tasks.business_object_key` 指向同一个 OA 节点、会议或投递对象；
+2. `business_object_tasks.reply_task_id` 是否指向当前唯一 task；
+3. 每条入口是否只追加到 `reply_task_inputs`，还是错误创建了并行 task；
+4. 已成功动作的 `external_action_key` 和 provider 结果是否被后续 run 复用；
+5. 外发消息是否只形成一条 `sent_replies` 投影，其他 run 是否只追加 observer；
+6. Workers、Attention 和质量门是否只统计 current projection，而不是历史物理行。
+
+典型错误链是“多个入口生成多个 task → 各自反馈和执行 → 一个 task 成功后其他 task 仍运行”。
+修复目标是稳定业务身份、唯一当前投影和动作幂等；不得通过删除历史 run、修改旧 tool event、
+按人员姓名硬编码跳过发送，或重新引入应用层命令/证据审核来掩盖重复执行。
 
 只有成功的 provider 结果和真实发送记录可以作为 prior execution receipt。失败的 attempt、解析
 错误或调度错误不是执行回执，不能被放入“已完成事实”污染下一轮判断。普通聊天中的规则改进请求

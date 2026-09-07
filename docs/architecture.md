@@ -19,7 +19,7 @@ pending -> running -> done
 - `needs_feedback`：审核 Agent 已发现结果需要修改，反馈已持久化并等待执行 Agent 修正。
 - `revision_pending`：修正版已排队；必须有新的 revision，并保留原 run、反馈、session 和外部回执的关系。
 - `done`：任务逻辑完成且结果已持久化。
-- `sent`：历史兼容名称；新任务以 `done` 表示完成，发送与回读保存在 trace。
+- `sent`：历史兼容名称；新任务以 `done` 表示完成，provider 发送结果保存在 trace。
 - `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；不是技术读取失败的兜底状态。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败，并保留失败阶段和原因。
 
@@ -28,13 +28,13 @@ pending -> running -> done
 ```text
 执行 Agent 生成 R0
   -> 审核 Agent 审核 R0
-      -> 通过：审核 Agent 执行/发布 R0，回读后完成
+      -> 通过：审核 Agent 执行/发布 R0，provider 返回成功结果后完成
       -> 需要修改：审核 Agent 写入 F0，R0 保留
           -> 执行 Agent 收到 F0，生成 R1
               -> 审核 Agent 审核 R1
 ```
 
-审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许两个内容反馈周期，基础设施失败不消耗反馈周期。
+审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许三个内容反馈周期，基础设施失败不消耗反馈周期。
 
 所有任务都禁止使用 `discard` 动作或写入 `discarded` 状态。无需动作的结果在 trace 记录 `no_action` 后进入 `done`；需要修正时由审核 Agent 写入 `audit_feedback`，执行 Agent 生成新 revision；处理失败使用 `failed`；无法自动解决使用 `needs_human`。
 
@@ -108,6 +108,26 @@ business_object（稳定业务对象，例如一条 OA 审批节点）
 Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许在同一 attempt
 下切换查看多个底层 `agent_runs`。因此“当前结果可以被修正”与“执行历史不可抹除”
 可以同时成立：列表显示最新结论，详情保留每一次 run 的真实轨迹。
+
+#### 为什么这是系统级边界
+
+扫描、事件、工作通知和人工反馈可能分别携带同一业务对象的新输入。如果服务仅按
+`trigger_message_id` 创建任务，同一个 OA 节点、会议或消息投递会形成多个可并行执行的 task；
+每个 task 又可能独立产生反馈 revision 和外发动作。即使其中一个 run 已经完成，其他历史 task
+仍可能继续运行，最终表现为重复请求材料、互相矛盾的状态说明或重复的成功通知。
+
+因此所有业务类型共同遵守以下约束：
+
+1. 先解析稳定的 `business_object_key`，再排队；入口消息只作为 append-only input。
+2. 每个业务对象只有一个 current `reply_task` 和一个 current `reply_attempt`。
+3. 重试、反馈和服务恢复只追加 `agent_run`，不得创建第二个业务 attempt。
+4. 只有稳定动作身份对应的 provider 成功结果可以阻止重放；应用层不根据命令、工具、Skill、
+   read-only 分类、receipt 格式或所谓“未知效果”推断业务是否完成。
+5. Attention、Workers 和质量门只统计 current projection；History 才展示旧 task、旧 run 和原始失败。
+
+如果同一业务对象的 History 出现多个旧 task，模式迁移可以重建 `business_object_tasks` 的当前映射，
+但不得删除旧输入、run、session、tool event、provider 结果或错误事件。当前投影修正不能被解释为
+“历史从未失败过”。
 
 ### 外部动作身份、顺序与发送投影
 
@@ -287,10 +307,10 @@ History 不承诺旧查询参数或旧 URL 的兼容别名；接口和页面使�
 CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 Derek 处理的消息、
 审批和任务，把业务判断与外部执行拆给两个职责明确的 Agent：
 
-- **Consumer Agent A** 是 Derek 的 read-oriented representative：理解业务、读取证据并提出精确
-  候选；按角色和结果协议不得主动执行消息发送、审批等外部写操作。
-- **Audit Agent B** 独立审阅候选，是 service 生命周期中唯一被授权发布 accepted action 的
-  Agent；它执行消息、评论、审批等动作并读回结果。
+- **Consumer Agent A** 理解业务、读取当前事实并提出精确候选；它与用户 Agent 继承相同的
+  runtime 能力，但按角色和结果协议不发布候选中的消息、审批等外部动作。
+- **Audit Agent B** 独立审阅候选，并负责在 service 生命周期中正式发布 accepted action；
+  provider 命令、工具和结果判断属于 Agent/runtime，不由应用层再次审核。
 - Service 负责触发发现、队列、会话指针、角色编排、严格结果校验、租约恢复和精确重复
   投递保护，不替 Agent 做业务判断。
 
@@ -464,9 +484,9 @@ B 不是 Derek 的第二个写作分身，而是独立审计与执行者。B 会
 
 - 每个 `conversation_id` 对应一个长期 A session；同一业务对话的新消息通过
   `codex exec resume` 进入该 session。
-- 每个候选 revision 对应一个新的 B session。
+- 同一任务的候选 revision 优先继续兼容的 B session；revision 前进不等于创建新 session。
 - B 的 `feedback_provided` 会通过持久化反馈消息送回 A；`revision_required` 只作为历史输入术语映射。
-- 一个任务最多允许两个内容反馈周期。基础设施重试不消耗内容反馈周期。
+- 一个任务最多允许三个内容反馈周期。基础设施重试不消耗内容反馈周期。
 - A session 缺失或损坏时才创建新的会话；服务不会为每条消息无条件创建新 A session。
 
 当 A 在外部写入之前因进程、解析或会话错误失败时，重试会在同一 revision 创建新的
@@ -495,7 +515,7 @@ Audit Rules 是 A 和 B 共享的可见业务规则：
 - B 使用同一规则独立审计并决定是否执行。
 
 可配置内容包括表达、信息最小化、审批材料要求、特定业务风险和需要升级给 Derek 的判断。
-以下边界不可配置：A 只负责读取/判断并提出候选、B 独占 accepted action 的正式执行职责、精确 revision 去重、最多两个内容反馈周期、
+以下边界不可配置：A 负责读取/判断并提出候选、B 负责 accepted action 的正式执行、精确 revision 去重、最多三个内容反馈周期、
 外部动作标识去重以及敏感凭证不进入提示词和审计页面。
 
 ## 能力与配置
