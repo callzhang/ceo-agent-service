@@ -18,6 +18,7 @@ SUPPORTED_CODEX_RUNTIME_MODELS = frozenset(
 SUPPORTED_OPENAI_COMPATIBLE_MODELS = frozenset(
     {
         *SUPPORTED_CODEX_RUNTIME_MODELS,
+        "MiniMax-M3",
         "MiniMax-M2.5",
         "MiniMax-M2.1",
         "MiniMax-M2",

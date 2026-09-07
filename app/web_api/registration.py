@@ -6,7 +6,9 @@ old form routes during the migration, but React never consumes their HTML.
 """
 
 from collections.abc import Callable
+from html import unescape
 import json
+import re
 import subprocess
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -54,6 +56,14 @@ from app.feedback_processing import (
     persisted_feedback_summary,
     project_feedback_status,
 )
+
+
+def _legacy_settings_error_message(body_text: str) -> str:
+    """Extract the legacy form validation text before returning a JSON error."""
+    match = re.search(r'<p class="attempt-warning">(.*?)</p>', body_text, flags=re.DOTALL)
+    if not match:
+        return "保存失败，请检查字段"
+    return unescape(re.sub(r"<[^>]+>", "", match.group(1))).strip() or "保存失败，请检查字段"
 
 
 def register_console_routes(
@@ -1777,5 +1787,5 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "unsupported", "message": "此 Settings 区域不支持写入", "details": {}}, status_code=400)
         status, _headers, body_text = handler(body)
         if status >= 400:
-            return JSONResponse({"ok": False, "code": "validation_error", "message": "保存失败，请检查字段", "details": {"technical": normalize_display_value(body_text)}}, status_code=status)
+            return JSONResponse({"ok": False, "code": "validation_error", "message": _legacy_settings_error_message(body_text), "details": {}}, status_code=status)
         return command_result(message="已保存")

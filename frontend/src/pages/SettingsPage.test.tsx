@@ -108,6 +108,7 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText("Session token")).toHaveValue("session-token");
     expect(screen.getAllByText(/已保存的凭据已回填/)).toHaveLength(4);
     expect(screen.getAllByRole("option", { name: "MiniMax M2.5" })).toHaveLength(2);
+    expect(screen.getAllByRole("option", { name: "MiniMax M3" })).toHaveLength(2);
     expect(screen.getAllByRole("option", { name: "Qwen3 Max" })).toHaveLength(2);
     expect(screen.getAllByRole("option", { name: "GLM-5" })).toHaveLength(2);
 
@@ -118,6 +119,26 @@ describe("SettingsPage", () => {
     saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
     fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
     expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({ CEO_CODEX_API_KEY: "replacement-token" }), {});
+  });
+
+  it("shows the Agent Runtime validation reason without discarding the draft", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_CODEX_MODEL: "gpt-5.6-sol",
+      CEO_CODEX_MODEL_REASONING_EFFORT: "medium",
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,codex_api",
+      CEO_CODEX_API_BASE_URL: "https://api.openai.com/v1",
+      CEO_CODEX_API_MODEL: "MiniMax-M3",
+    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    saveSettings.mockRejectedValueOnce(new Error("Fallback model must be selected from this page."));
+    renderSettings("/settings?tab=agent-runtime");
+
+    const model = await screen.findByLabelText("Fallback model");
+    await user.selectOptions(model, "MiniMax-M2.5");
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Fallback model must be selected from this page.");
+    expect(model).toHaveValue("MiniMax-M2.5");
   });
 
   it("keeps prompt and audit editor values visible while highlighting template tokens", async () => {
