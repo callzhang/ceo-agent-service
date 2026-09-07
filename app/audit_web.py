@@ -2891,16 +2891,23 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
         if _sqlite_table_exists(db, "reply_tasks"):
             reply_task_rows = db.execute(
                 """
-                select id, channel, conversation_id, trigger_message_id,
-                       status,
-                       coalesce(nullif(conversation_title, ''), conversation_id) as context,
-                       coalesce(nullif(trigger_text, ''), nullif(conversation_title, ''), trigger_message_id) as summary,
-                       updated_at, error
+                select reply_tasks.id, reply_tasks.channel,
+                       reply_tasks.conversation_id, reply_tasks.trigger_message_id,
+                       reply_tasks.status,
+                       coalesce(nullif(reply_tasks.conversation_title, ''), reply_tasks.conversation_id) as context,
+                       coalesce(nullif(reply_tasks.trigger_text, ''), nullif(reply_tasks.conversation_title, ''), reply_tasks.trigger_message_id) as summary,
+                       reply_tasks.updated_at, reply_tasks.error
                 from reply_tasks
-                where lower(status) = 'failed'
+                left join business_object_tasks current_business_object
+                  on current_business_object.business_object_key=reply_tasks.business_object_key
+                where lower(reply_tasks.status) = 'failed'
+                  and (
+                    current_business_object.reply_task_id is null
+                    or current_business_object.reply_task_id=reply_tasks.id
+                  )
                 order by
-                    updated_at desc,
-                    id desc
+                    reply_tasks.updated_at desc,
+                    reply_tasks.id desc
                 limit ?
                 """,
                 (limit,),

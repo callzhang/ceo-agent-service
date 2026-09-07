@@ -7188,6 +7188,49 @@ def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
+def test_attention_hides_historical_failed_task_when_business_object_is_done(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    historical = store.ensure_reply_task(
+        conversation_id="work-notice",
+        conversation_title="OA comment",
+        single_chat=True,
+        trigger_message_id="comment-1",
+        trigger_create_time="2026-09-07 10:00:00",
+        trigger_sender="OA审批",
+        trigger_text="old comment",
+        business_object_key="legacy:comment-1",
+    )
+    current = store.ensure_reply_task(
+        conversation_id="oa-pending",
+        conversation_title="OA pending",
+        single_chat=False,
+        trigger_message_id="pending-1",
+        trigger_create_time="2026-09-07 10:05:00",
+        trigger_sender="OA审批",
+        trigger_text="current approval",
+        business_object_key="oa:proc-1:task-1",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='failed', error='old failure', "
+            "business_object_key='oa:proc-1:task-1' where id=?",
+            (historical.id,),
+        )
+        db.execute(
+            "update reply_tasks set status='done' where id=?",
+            (current.id,),
+        )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert not any(
+        row["category"] == "Reply task" and row["id"] == str(historical.id)
+        for row in rows
+    )
+
+
 def test_attention_includes_recent_unresolved_service_errors(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error(
