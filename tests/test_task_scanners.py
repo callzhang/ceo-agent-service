@@ -744,6 +744,7 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     assert task.conversation_title == "审批待办"
     assert task.trigger_message_id.startswith("oa-pending:proc-1:")
     assert "张三提交的录用申请" in task.trigger_text
+    assert "申请人的最新明确陈述是其申请事实的权威来源" in task.trigger_text
     assert "procInstId=proc-1&taskId=102648910080" in task.oa_url
     assert '"source":"oa_pending_scan"' in task.trigger_message_json
 

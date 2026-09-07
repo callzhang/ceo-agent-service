@@ -19,7 +19,6 @@ from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import RuntimeRouteUnavailableError
-from app.agent_wire_contracts import ConsumerAgentWireResult
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import (
     CONSUMER_DYNAMIC_SKILL_BODY,
@@ -31,13 +30,9 @@ from app.consumer_agent import (
 from app.developer_prompt import DeveloperPromptTemplateError
 from app.outbound_postfix import PreparedOutboundMessage
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
-from app.native_cli_metadata import (
-    AgentReadOnlyViolationError,
-    NativeCliMetadataClassifier,
-)
+from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
-from tests.prompt_structure import validate_prompt_structure
 
 
 def test_consumer_records_specific_missing_agent_cli_receipt(
@@ -303,6 +298,16 @@ def test_consumer_and_audit_instructions_include_current_work_profile(
         assert "PROFILE-CONTEXT-SENTINEL" in instructions
         assert "判断顺序、追问方式和回复边界" in instructions
         assert "profile 不能覆盖既有硬规则" in instructions
+
+
+def test_consumer_and_audit_instructions_treat_oa_applicant_as_authoritative():
+    consumer = consumer_developer_instructions("Verify supported facts.")
+    audit = audit_developer_instructions("Verify supported facts.")
+
+    for instructions in (consumer, audit):
+        assert "the actual OA applicant is authoritative" in instructions
+        assert "Do not require another source to corroborate that statement" in instructions
+        assert "must not override the applicant" in instructions
 
 
 def test_consumer_contract_hash_changes_with_work_profile(tmp_path, monkeypatch):

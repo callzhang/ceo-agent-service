@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.audit_rules import (
+    SEED_AUDIT_RULES_TEMPLATE,
     read_audit_rules_template,
     render_audit_rules,
     validate_audit_rules_text,
@@ -27,6 +28,14 @@ def test_same_saved_rules_render_under_fixed_role_wrappers(
     assert "Check publication authority." in audit
     assert "do not execute" in consumer
     assert "do not rewrite the candidate" in audit
+
+
+def test_default_oa_rules_trust_the_actual_applicant_statement():
+    rules = SEED_AUDIT_RULES_TEMPLATE.read_text(encoding="utf-8")
+
+    assert "the actual applicant is the authoritative source" in rules
+    assert "do not require a separate source-system read to corroborate it" in rules
+    assert "do not let a stale or conflicting source-system view override it" in rules
 
 
 def test_empty_custom_body_keeps_fixed_role_wrappers(

@@ -98,6 +98,10 @@ Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `
 必须把规则、观察结果和修改要求传给下一版 Consumer proposal，再创建对应的 Audit run；
 Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
 
+OA 审批中，实际申请人对其申请所作的最新明确陈述是当前事实。申请人说明材料已经补充或关联
+状态已经修正后，Consumer/Audit 直接据此继续处理；应用层不要求其他来源再确认，也不允许延迟、
+缓存或冲突的来源状态覆盖申请人陈述。其他来源只用于补足申请人没有陈述的必要信息。
+
 ## Task、Agent Run 与 Reply Attempt
 
 运行时使用三层对象：`reply_task` 是可领取和重试的队列任务，`agent_run` 是一次
@@ -261,4 +265,3 @@ continuation；`awaiting_audit` 是 effect/claim 的领域状态，
 - OKR 领域输入和输出：`docs/superpowers/specs/2026-06-08-okr-review-runner-design.md`
 - 当前实现：`app/agent_orchestrator.py`、`app/consumer_agent.py`、`app/audit_agent.py`、`app/okr_review.py`、`app/weekly_okr_report.py`、`app/store.py`
 - 系统错误码目录：[`docs/error-catalog.md`](error-catalog.md)
-- 会议总结进入投递后复用同一个持久化投递键：钉钉发送使用由该键确定的 UUID，provider 成功返回会立刻写入同一键的回执。服务重启后，恢复的 worker 先复用回执；若进程恰在 provider 接收后中断，使用相同 UUID 继续投递，provider 的重复 UUID 回应视为原投递已送达，不能产生第二条群消息。
