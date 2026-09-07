@@ -15738,66 +15738,40 @@ class AutoReplyStore:
             )
             return SentReply.model_validate(dict(row))
 
-    def list_confirmed_audit_runs_missing_sent_reply(
+    def record_completed_agent_message_delivery(
         self,
         *,
-        limit: int = 50,
-    ) -> list[AgentRun]:
-        """Return completed DingTalk audits whose verified direct send lacks a ledger row."""
-        if limit <= 0:
-            return []
-        with self._connect() as db:
-            rows = db.execute(
-                """
-                select agent_runs.*
-                from agent_runs
-                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
-                join agent_runs as consumer_runs
-                  on consumer_runs.id=agent_runs.parent_agent_run_id
-                where agent_runs.role='audit'
-                  and agent_runs.status='completed'
-                  and agent_runs.side_effect_state='confirmed'
-                  and reply_tasks.channel='dingtalk'
-                  and consumer_runs.role='consumer'
-                  and (
-                      instr(consumer_runs.final_result_json,
-                            '"operation":"chat +messages-send"') > 0
-                      or instr(consumer_runs.final_result_json,
-                               '"operation":"chat message send"') > 0
-                  )
-                  and (
-                      instr(consumer_runs.final_result_json,
-                            '"open_dingtalk_id"') > 0
-                      or instr(consumer_runs.final_result_json,
-                               '"user"') > 0
-                  )
-                  and not exists (
-                      select 1
-                      from sent_replies
-                      where sent_replies.conversation_id=reply_tasks.conversation_id
-                        and sent_replies.trigger_message_id=reply_tasks.trigger_message_id
-                  )
-                order by agent_runs.id asc
-                limit ?
-                """,
-                (limit,),
-            ).fetchall()
-            return [self._agent_run_from_row(row, db=db) for row in rows]
-
-    def record_confirmed_sent_reply_if_absent(
-        self,
-        *,
-        audit_run_id: int,
+        agent_run_id: int,
+        external_action_key: str,
+        business_object_key: str,
+        action_identity: str,
+        operation: str,
+        target_identifiers: dict[str, object],
+        conversation_id: str,
+        trigger_message_id: str,
         reply_text: str,
-        send_result_json: str,
-    ) -> bool:
-        """Atomically backfill a delivery ledger row after a verified audit readback.
-
-        The caller must derive the reply from the persisted Consumer and Audit
-        contracts.  This method never performs an external delivery.
-        """
-        if not reply_text.strip():
-            raise ValueError("reply_text must be non-empty")
+        provider_result: dict[str, object],
+    ) -> SentReply:
+        """Persist one completed provider action and its History projection."""
+        values = tuple(
+            value.strip()
+            for value in (
+                external_action_key,
+                business_object_key,
+                action_identity,
+                operation,
+                conversation_id,
+                trigger_message_id,
+                reply_text,
+            )
+        )
+        if any(not value for value in values):
+            raise ValueError("completed message delivery identity is incomplete")
+        target_json = _json_object_text(
+            target_identifiers, field="target_identifiers"
+        )
+        provider_json = _json_object_text(provider_result, field="provider_result")
+        result_digest = _canonical_json_sha256(provider_result)
         feedback_context = extract_configured_feedback_link_context(
             reply_text,
             vercel_base_url=feedback_spike_vercel_base_url(),
@@ -15806,44 +15780,125 @@ class AutoReplyStore:
             feedback_context.feedback_token if feedback_context is not None else ""
         )
         with self._immediate_write_transaction() as db:
-            row = db.execute(
-                """
-                select reply_tasks.conversation_id, reply_tasks.trigger_message_id
-                from agent_runs
-                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
-                where agent_runs.id=?
-                  and agent_runs.role='audit'
-                  and agent_runs.status='completed'
-                  and agent_runs.side_effect_state='confirmed'
-                  and reply_tasks.channel='dingtalk'
-                """,
-                (audit_run_id,),
+            run = db.execute(
+                "select agent_runs.reply_task_id, reply_tasks.business_object_key "
+                "from agent_runs join reply_tasks "
+                "on reply_tasks.id=agent_runs.reply_task_id "
+                "where agent_runs.id=? and agent_runs.role='audit' "
+                "and agent_runs.status='completed'",
+                (agent_run_id,),
             ).fetchone()
-            if row is None:
-                return False
-            cursor = db.execute(
+            if run is None or run["business_object_key"] != business_object_key:
+                raise ValueError("completed message delivery run identity mismatch")
+            db.execute(
                 """
-                insert into sent_replies (
-                    conversation_id, trigger_message_id, reply_text, send_result_json,
-                    feedback_token
-                )
-                select ?, ?, ?, ?, ?
-                where not exists (
-                    select 1 from sent_replies
-                    where conversation_id=? and trigger_message_id=?
-                )
+                insert or ignore into external_action_results (
+                    external_action_key, business_object_key, action_identity,
+                    operation, target_identifiers_json, provider_result_json,
+                    result_digest, first_agent_run_id
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    row["conversation_id"],
-                    row["trigger_message_id"],
-                    reply_text,
-                    send_result_json,
-                    feedback_token,
-                    row["conversation_id"],
-                    row["trigger_message_id"],
+                    external_action_key, business_object_key, action_identity,
+                    operation, target_json, provider_json, result_digest,
+                    agent_run_id,
                 ),
             )
-            return cursor.rowcount == 1
+            completed = db.execute(
+                "select * from external_action_results where external_action_key=?",
+                (external_action_key,),
+            ).fetchone()
+            if (
+                completed is None
+                or completed["business_object_key"] != business_object_key
+                or completed["action_identity"] != action_identity
+                or completed["operation"] != operation
+                or completed["target_identifiers_json"] != target_json
+            ):
+                raise ValueError("conflicting external action result")
+            db.execute(
+                """
+                insert or ignore into sent_replies (
+                    conversation_id, trigger_message_id, reply_text,
+                    send_result_json, feedback_token, agent_run_id,
+                    external_action_key
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    conversation_id, trigger_message_id, reply_text,
+                    provider_json, feedback_token, agent_run_id,
+                    external_action_key,
+                ),
+            )
+            sent = db.execute(
+                "select * from sent_replies where external_action_key=?",
+                (external_action_key,),
+            ).fetchone()
+            if sent is None or sent["reply_text"] != reply_text:
+                raise ValueError("conflicting message delivery projection")
+            db.execute(
+                "insert or ignore into sent_reply_observers "
+                "(sent_reply_id, agent_run_id, reply_task_id) values (?, ?, ?)",
+                (sent["id"], agent_run_id, run["reply_task_id"]),
+            )
+            return SentReply.model_validate(dict(sent))
+
+    def list_completed_audit_runs_missing_delivery_projection(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[AgentRun]:
+        """Return completed Audit runs not yet linked to a sent message."""
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select audit.*
+                from agent_runs as audit
+                join reply_tasks as task on task.id=audit.reply_task_id
+                join agent_runs as consumer on consumer.id=audit.parent_agent_run_id
+                where audit.role='audit'
+                  and audit.status='completed'
+                  and task.channel='dingtalk'
+                  and consumer.role='consumer'
+                  and trim(audit.final_result_json)<>''
+                  and trim(consumer.final_result_json)<>''
+                  and json_valid(audit.final_result_json)
+                  and json_valid(consumer.final_result_json)
+                  and json_extract(audit.final_result_json, '$.outcome')='executed'
+                  and trim(coalesce(json_extract(
+                      audit.final_result_json,
+                      '$.external_result.live_result_reference.action_identity'
+                  ), ''))<>''
+                  and (
+                      trim(coalesce(json_extract(
+                          audit.final_result_json,
+                          '$.external_result.live_result_reference.message_id'
+                      ), ''))<>''
+                      or trim(coalesce(json_extract(
+                          audit.final_result_json,
+                          '$.external_result.live_result_reference.openMessageId'
+                      ), ''))<>''
+                      or lower(trim(coalesce(json_extract(
+                          audit.final_result_json,
+                          '$.external_result.live_result_reference.sendStatus'
+                      ), ''))) in ('success', 'sent')
+                      or lower(trim(coalesce(json_extract(
+                          audit.final_result_json,
+                          '$.external_result.live_result_reference.send_status'
+                      ), ''))) in ('success', 'sent')
+                  )
+                  and not exists (
+                      select 1 from sent_reply_observers observer
+                      where observer.agent_run_id=audit.id
+                  )
+                order by audit.id asc
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [self._agent_run_from_row(row, db=db) for row in rows]
 
     def has_sent_reply_for_trigger(
         self,

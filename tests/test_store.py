@@ -2215,11 +2215,6 @@ def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
     assert sent is not None
     assert sent.reply_text == sent_reply_text
     assert sent.feedback_token == "spike_1_abcd1234"
-    assert store.record_confirmed_sent_reply_if_absent(
-        audit_run_id=audit.id,
-        reply_text=sent_reply_text,
-        send_result_json='{"source":"test"}',
-    ) is False
 
 
 def test_earliest_delivery_receipt_records_exact_configured_feedback_token(
@@ -4543,6 +4538,47 @@ def test_message_delivery_history_is_single_projection_with_run_observers(
             "select count(*) from sent_reply_observers where sent_reply_id=?",
             (first.id,),
         ).fetchone()[0] == 2
+
+
+def test_completed_message_delivery_persists_action_result_and_history_atomically(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    audit = _claim_audit_run(
+        store, task_id, task.execution_generation, owner="worker-1"
+    ).run
+    store.complete_agent_run(
+        audit.id,
+        {"outcome": "executed"},
+        owner="worker-1",
+    )
+
+    sent = store.record_completed_agent_message_delivery(
+        agent_run_id=audit.id,
+        external_action_key="external-send-result",
+        business_object_key=task.business_object_key,
+        action_identity="send-result",
+        operation="chat +send-to-group",
+        target_identifiers={"group": "cid-1"},
+        conversation_id=task.conversation_id,
+        trigger_message_id=task.trigger_message_id,
+        reply_text="已发送。",
+        provider_result={"message_id": "message-1"},
+    )
+
+    assert sent.external_action_key == "external-send-result"
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from external_action_results where external_action_key=?",
+            ("external-send-result",),
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "select count(*) from sent_reply_observers where agent_run_id=?",
+            (audit.id,),
+        ).fetchone()[0] == 1
 
 
 

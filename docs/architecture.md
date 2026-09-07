@@ -116,6 +116,11 @@ Consumer 为每个 ProposedAction 返回 `action_identity`。同一业务对象�
 用途改变时必须使用新身份。服务根据 `business_object_key + action_identity + operation + target`
 生成 `external_action_key`，而不是用 run id 或 revision 做去重。
 
+钉钉消息 target 在 wire 边界只使用一套服务字段：群发使用 `conversation_id`，引用回复
+同时使用 `conversation_id` 与 `message_id`，单聊使用 `open_dingtalk_id` 等稳定接收人
+身份。Provider 返回的 `openConversationId` 等字段只属于执行结果，不能进入 proposal target。
+这项约束在 typed result 解析时校验，正文准备、Audit 执行和动作键生成不再各自解释别名。
+
 Provider 成功结果按 `external_action_key` 只保存一次。后续 run 再次遇到同一动作时复用既有
 结果，不再次调用 provider；新 run 仍追加自己的观察关联，因此执行历史完整。一个 proposal
 中的动作严格按数组顺序执行：序号更小的动作尚未成功时，后续动作不得开始。这样审批失败时
@@ -130,6 +135,12 @@ webhook、待办扫描和工作通知各自产生一个任务。同一实例存�
 agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显示真实已发送消息，也不会
 把一次复用展示成第二次发送。这些是执行幂等与展示事实，不是应用层命令审核、业务证据审核
 或 read-back 状态机。
+
+消息 provider 返回稳定消息 ID，即构成已完成的发送事实；应用层不再要求额外 read-back
+证据才能写入投影。投影按 `action_identity` 精确关联 proposal action，不能从动作数组中猜正文，
+也不能要求发送目标会话等于源任务会话，因为会议群不可用时允许发送给会议组织者。服务启动后
+会从 append-only Consumer/Audit typed results 修复缺失的 `external_action_results`、`sent_replies`
+与 observer；该修复不重放 provider 动作，也不改写历史 run/event。
 
 `sent_replies` 和 provider 成功结果的优先级高于后来失败的 attempt current projection。即使
 结构化结果解析、服务重启或后续 Agent turn 失败，下一轮也会收到真实的已发送记录，并把该

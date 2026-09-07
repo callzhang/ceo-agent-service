@@ -958,3 +958,34 @@ def test_audit_wire_result_preserves_revision_feedback_fields():
     assert result.outcome is AuditOutcome.FEEDBACK_PROVIDED
     assert result.feedback is not None
     assert result.feedback.requested_revision == "Add --yes without changing the action."
+
+
+def test_dingtalk_message_actions_require_canonical_target_fields():
+    with pytest.raises(ValidationError, match="conversation_id and message_id"):
+        ProposedAction.model_validate(
+            {
+                "description": "Reply",
+                "action_identity": "reply-result",
+                "capability": "dingtalk-chat",
+                "operation": "messages-reply",
+                "target": {
+                    "open_conversation_id": "cid-1",
+                    "reply_to_message_id": "message-1",
+                },
+                "payload": {"content": "done"},
+                "expected_verification": "provider accepts the message",
+            }
+        )
+
+    canonical = ProposedAction.model_validate(
+        {
+            "description": "Reply",
+            "action_identity": "reply-result",
+            "capability": "dingtalk-chat",
+            "operation": "messages-reply",
+            "target": {"conversation_id": "cid-1", "message_id": "message-1"},
+            "payload": {"content": "done"},
+            "expected_verification": "provider accepts the message",
+        }
+    )
+    assert canonical.target["conversation_id"] == "cid-1"

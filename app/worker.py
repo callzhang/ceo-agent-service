@@ -24,7 +24,11 @@ from app.agent_context import (
 )
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, DecisionOption
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
-from app.audit_agent import AuditAgentRunner
+from app.audit_agent import (
+    AuditAgentRunner,
+    _bind_stable_external_action,
+    _expected_effect_action,
+)
 from app.channel_gate import (
     ChannelGate,
     ChannelGateResult,
@@ -100,6 +104,7 @@ from app.skill_features import FeatureRegistry
 from app.task_scanners import oa_originator_user_id
 from app.work_profile import safe_excerpt
 from PIL import Image, UnidentifiedImageError
+from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from app.agent_runtime_production import ProductionAgentRuntime
@@ -461,6 +466,16 @@ class DwsAuthorizationRequiredError(ReplyTaskProcessingError):
 
 class CriticalInformationUnavailableError(ReplyTaskProcessingError):
     """Raised when required material/tool output is unavailable and retrying is unsafe."""
+
+
+@dataclass(frozen=True)
+class AgentMessageDeliveryProjection:
+    external_action_key: str
+    action_identity: str
+    operation: str
+    target_identifiers: dict[str, object]
+    reply_text: str
+    provider_result: dict[str, object]
 
 
 class DingTalkAutoReplyWorker:
@@ -1628,6 +1643,7 @@ class DingTalkAutoReplyWorker:
     def consume_once(self, max_tasks: int | None = None) -> int:
         if max_tasks == 0:
             return 0
+        self._repair_completed_message_delivery_projections()
         self._pass_channel_results = {}
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
@@ -1872,6 +1888,65 @@ class DingTalkAutoReplyWorker:
                 self.store.clear_codex_capacity_pause()
                 processed_tasks += 1
         return processed_tasks
+
+    def _repair_completed_message_delivery_projections(self) -> int:
+        """Rebuild current delivery projections from immutable typed results."""
+        repaired = 0
+        for audit_run in self.store.list_completed_audit_runs_missing_delivery_projection():
+            if audit_run.parent_agent_run_id is None:
+                continue
+            task = self.store.get_reply_task(audit_run.reply_task_id)
+            consumer_run = self.store.get_agent_run(audit_run.parent_agent_run_id)
+            if task is None or consumer_run is None:
+                continue
+            try:
+                audit_result = AuditAgentResult.model_validate_json(
+                    audit_run.final_result_json
+                )
+                consumer_payload = json.loads(consumer_run.final_result_json)
+                proposal = consumer_payload.get("proposal")
+                actions = proposal.get("actions") if isinstance(proposal, dict) else None
+                if isinstance(actions, list):
+                    for action in actions:
+                        target = action.get("target") if isinstance(action, dict) else None
+                        if not isinstance(target, dict):
+                            continue
+                        target = dict(target)
+                        if "open_conversation_id" in target:
+                            target["conversation_id"] = target.pop("open_conversation_id")
+                        if "reply_to_message_id" in target:
+                            target["message_id"] = target.pop("reply_to_message_id")
+                        action["target"] = target
+                consumer_result = ConsumerAgentResult.model_validate(consumer_payload)
+            except (ValidationError, json.JSONDecodeError):
+                continue
+            result = OrchestrationResult(
+                status="executed",
+                final_run_id=audit_run.id,
+                final_role=audit_run.role,
+                summary=audit_result.summary,
+                error=audit_result.error,
+                feedback_cycles=audit_run.proposal_revision,
+                consumer_result=consumer_result,
+                audit_result=audit_result,
+            )
+            projection = self._sent_reply_projection_from_result(task, result)
+            if projection is None:
+                continue
+            self.store.record_completed_agent_message_delivery(
+                agent_run_id=audit_run.id,
+                external_action_key=projection.external_action_key,
+                business_object_key=task.business_object_key,
+                action_identity=projection.action_identity,
+                operation=projection.operation,
+                target_identifiers=projection.target_identifiers,
+                conversation_id=task.conversation_id,
+                trigger_message_id=task.trigger_message_id,
+                reply_text=projection.reply_text,
+                provider_result=projection.provider_result,
+            )
+            repaired += 1
+        return repaired
 
     def _recover_stale_agent_reply_tasks(self) -> None:
         stale_tasks = self.store.list_stale_processing_reply_tasks(
@@ -2333,6 +2408,19 @@ class DingTalkAutoReplyWorker:
         # message visible in History when the provider already returned a
         # successful, target-matched read-back.
         sent_reply = self._sent_reply_projection_from_result(task, result)
+        if sent_reply is not None:
+            self.store.record_completed_agent_message_delivery(
+                agent_run_id=run.id,
+                external_action_key=sent_reply.external_action_key,
+                business_object_key=task.business_object_key,
+                action_identity=sent_reply.action_identity,
+                operation=sent_reply.operation,
+                target_identifiers=sent_reply.target_identifiers,
+                conversation_id=task.conversation_id,
+                trigger_message_id=task.trigger_message_id,
+                reply_text=sent_reply.reply_text,
+                provider_result=sent_reply.provider_result,
+            )
         decision_options: tuple[DecisionOption, ...] = (
             result.consumer_result.decision_options
             if result.consumer_result is not None
@@ -2409,8 +2497,6 @@ class DingTalkAutoReplyWorker:
                 provider_recovery or authorization_wait or active_recovery_wait
             )
             and task_status == "pending",
-            sent_reply_text=sent_reply[0] if sent_reply is not None else "",
-            sent_reply_result_json=sent_reply[1] if sent_reply is not None else "",
             **self._orchestration_oa_metadata(task, result),
         )
         if send_status == "needs_human" or task_status == "failed":
@@ -2428,47 +2514,77 @@ class DingTalkAutoReplyWorker:
     def _sent_reply_projection_from_result(
         task: ReplyTask,
         result: OrchestrationResult,
-    ) -> tuple[str, str] | None:
+    ) -> AgentMessageDeliveryProjection | None:
         if task.channel != "dingtalk" or result.status != "executed":
             return None
         audit_result = result.audit_result
         if audit_result is None or audit_result.external_result is None:
             return None
         reference = audit_result.external_result.live_result_reference
-        send_status = str(reference.get("sendStatus") or reference.get("send_status") or "").strip().lower()
-        if send_status not in {"success", "sent"}:
-            return None
-        readback = reference.get("readback")
-        if not isinstance(readback, dict):
-            readback = reference
-        conversation_id = str(
-            readback.get("conversationId")
-            or readback.get("conversation_id")
-            or readback.get("openConversationId")
-            or readback.get("open_conversation_id")
+        send_status = str(
+            reference.get("sendStatus") or reference.get("send_status") or ""
+        ).strip().lower()
+        stable_message_id = str(
+            reference.get("message_id")
+            or reference.get("messageId")
+            or reference.get("openMessageId")
+            or reference.get("open_message_id")
             or ""
         ).strip()
-        if conversation_id != task.conversation_id:
+        if send_status not in {"success", "sent"} and not stable_message_id:
             return None
-        reply_text = str(readback.get("text") or readback.get("content") or "").strip()
-        if not reply_text and result.consumer_result is not None:
-            proposal = result.consumer_result.proposal
-            if proposal is not None:
-                for action in proposal.actions:
-                    payload = action.payload
-                    candidate = (
-                        payload.get("content")
-                        or payload.get("text")
-                        or payload.get("reply_text")
-                    )
-                    if isinstance(candidate, str) and candidate.strip():
-                        reply_text = candidate.strip()
-                        break
+        action_identity = str(reference.get("action_identity") or "").strip()
+        if not action_identity or result.consumer_result is None:
+            return None
+        proposal = result.consumer_result.proposal
+        if proposal is None:
+            return None
+        matching_actions = [
+            action for action in proposal.actions
+            if action.action_identity == action_identity
+        ]
+        if len(matching_actions) != 1:
+            return None
+        action = matching_actions[0]
+        expected = _bind_stable_external_action(
+            _expected_effect_action(action),
+            business_object_key=task.business_object_key,
+        )
+        external_key = expected.get("external_action_key")
+        operation = expected.get("operation")
+        target_identifiers = expected.get("target_identifiers")
+        if (
+            not isinstance(external_key, str)
+            or not external_key
+            or not isinstance(operation, str)
+            or not operation
+            or not isinstance(target_identifiers, dict)
+        ):
+            return None
+        readback = reference.get("readback")
+        reply_text = ""
+        if isinstance(readback, dict):
+            reply_text = str(
+                readback.get("text") or readback.get("content") or ""
+            ).strip()
+        if not reply_text:
+            payload = action.payload
+            candidate = (
+                payload.get("content")
+                or payload.get("text")
+                or payload.get("reply_text")
+            )
+            if isinstance(candidate, str):
+                reply_text = candidate.strip()
         if not reply_text:
             return None
-        return (
-            reply_text,
-            json.dumps(reference, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        return AgentMessageDeliveryProjection(
+            external_action_key=external_key,
+            action_identity=action_identity,
+            operation=operation,
+            target_identifiers=target_identifiers,
+            reply_text=reply_text,
+            provider_result=dict(reference),
         )
 
 

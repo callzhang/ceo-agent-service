@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_contracts import AuditAgentResult, AuditExternalResult, AuditOutcome
+from app.agent_contracts import (
+    AuditAgentResult,
+    AuditExternalResult,
+    AuditOutcome,
+    ConsumerAgentResult,
+)
 from app.agent_effects import McpToolEffectRegistry
 from app.agent_result import AgentError, EffectKind
 from app.agent_runtime_config import load_runtime_config
@@ -1344,6 +1349,47 @@ def test_runtime_domain_result_codec_preserves_message_readback_for_ledger_proje
         "messageId": "message-1",
         "text": "已发送正文",
     }
+
+
+def test_runtime_domain_result_codec_preserves_consumer_action_identity():
+    result = ConsumerAgentResult.model_validate(
+        {
+            "outcome": "proposal",
+            "summary": "Send the result.",
+            "proposal": {
+                "objective": "Send one result.",
+                "actions": [{
+                    "description": "Send",
+                    "action_identity": "send-result",
+                    "capability": "dingtalk-chat",
+                    "operation": "send_to_group",
+                    "target": {"conversation_id": "cid-1"},
+                    "payload": {"content": "done"},
+                    "expected_verification": "provider accepts the message",
+                }],
+                "sourced_facts": [],
+                "authored_judgment": "",
+            },
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+        }
+    )
+
+    encoded = _encode_runtime_domain_result(
+        schema_id="schema-v1",
+        role=AgentRole.CONSUMER,
+        recovery_phase="",
+        result=result,
+    )
+    decoded = _decode_runtime_domain_result(
+        encoded,
+        schema_id="schema-v1",
+        role=AgentRole.CONSUMER,
+        recovery_phase="",
+    )
+
+    assert isinstance(decoded.result, ConsumerAgentResult)
+    assert decoded.result.proposal is not None
+    assert decoded.result.proposal.actions[0].action_identity == "send-result"
 
 
 def test_runtime_domain_result_codec_rejects_consumer_document_payload():

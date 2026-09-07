@@ -149,6 +149,16 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
 - 审批动作失败时，后续“审批成功”通知因此不会发送；
 - 消息成功统一写入一条 `sent_replies`，其他 run 只追加 observer 关联。
 
+钉钉消息 proposal 的 target 只接受服务 wire 字段：群聊 `conversation_id`，引用回复
+`conversation_id + message_id`，单聊使用稳定接收人 ID。Provider 的字段名只保留在 provider
+结果中。成功结果必须带 `action_identity` 和稳定 provider 消息 ID；运行时以该身份关联唯一 action，
+原子写入 provider 结果、消息投影和 observer。稳定 provider ID 已足以表示发送完成，不以
+read-back、命令登记或未知工具检查作为投影条件。
+
+启动修复只读取完成的 Audit result 及其 parent Consumer proposal。若历史 proposal 使用过旧的
+provider 字段名，修复过程先一次性迁移为当前 wire target，再使用与在线路径相同的动作键算法；
+重复运行不会新增第二条 provider 结果或消息记录。
+
 这里只管理稳定身份、动作顺序和 provider 成功事实。应用层不检查 Agent 使用的未知
 工具，不建立 read-only、unknown、reconciliation 或发送证据审核状态机。
 

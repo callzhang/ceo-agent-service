@@ -116,6 +116,43 @@ class ProposedAction(BaseModel):
     payload: dict[str, JsonValue]
     expected_verification: str = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def validate_dingtalk_message_target(self) -> "ProposedAction":
+        if self.capability != "dingtalk-chat":
+            return self
+        if {"open_conversation_id", "reply_to_message_id"}.intersection(self.target):
+            raise ValueError(
+                "DingTalk proposal targets use conversation_id and message_id"
+            )
+        conversation_id = str(self.target.get("conversation_id") or "").strip()
+        message_id = str(
+            self.target.get("message_id")
+            or self.target.get("source_message_id")
+            or ""
+        ).strip()
+        recipient = str(
+            self.target.get("open_dingtalk_id")
+            or self.target.get("user_id")
+            or self.target.get("recipient_open_dingtalk_id")
+            or self.target.get("sender_open_dingtalk_id")
+            or self.target.get("verified_participant_open_dingtalk_id")
+            or ""
+        ).strip()
+        if self.operation in {"send_to_group", "messages-send-to-group"} and not conversation_id:
+            raise ValueError("DingTalk group target requires conversation_id")
+        if self.operation in {"messages-reply", "message.reply"} and not (
+            conversation_id and message_id
+        ):
+            raise ValueError(
+                "DingTalk reply target requires conversation_id and message_id"
+            )
+        if self.operation in {
+            "send_direct_message",
+            "send_message_to_source_conversation",
+        } and not recipient:
+            raise ValueError("DingTalk direct target requires a stable recipient id")
+        return self
+
 
 
 class ProposalFact(BaseModel):

@@ -182,6 +182,13 @@ object including top-level `risk` and `confidence` fields for every outcome. The
 application does not impose a command or read-only policy; use the selected
 Skill capabilities to gather facts and prepare the candidate.
 
+For every `dingtalk-chat` ProposedAction, use the service wire target names,
+not provider response names: group sends use `conversation_id`; replies use
+both `conversation_id` and `message_id`; direct sends use a stable recipient
+identifier such as `open_dingtalk_id`. Never put `open_conversation_id` or
+`reply_to_message_id` in a proposal target. Keep the same `action_identity`
+when feedback or retry still requests the same external result.
+
 A bounded fact-finding inquiry is autonomous when it only gathers facts, states
 the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
 it does not authorize a quote, order, agreement, or spend. Do not escalate only because the recipient is external;

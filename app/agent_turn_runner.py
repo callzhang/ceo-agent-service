@@ -109,18 +109,26 @@ _RUNTIME_RESULT_SUMMARY_MAX_CHARS = 2048
 _RUNTIME_RESULT_REFERENCE_KEYS = frozenset(
     {
         "action",
+        "action_identity",
         "conversation_id",
         "evidence",
         "id",
         "message_id",
+        "open_message_id",
+        "open_task_id",
         "operation_id",
         "process_instance_id",
         "receipt_id",
         "recovery_action_indexes",
         "remark",
         "readback",
+        "readback_complete",
+        "readback_failures",
+        "readback_has_more",
         "send_status",
         "status",
+        "create_time",
+        "sender_id",
         "task_id",
     }
 )
@@ -338,6 +346,15 @@ def _project_runtime_external_reference(
                 raise ValueError("runtime_result_envelope_external_reference_invalid")
             projected[key] = list(value)
             continue
+        if key == "readback_failures":
+            if (
+                not isinstance(value, list)
+                or len(value) > 32
+                or any(not isinstance(item, str) or len(item) > 512 for item in value)
+            ):
+                raise ValueError("runtime_result_envelope_external_reference_invalid")
+            projected[key] = list(value)
+            continue
         if not isinstance(value, (str, int, bool)) or isinstance(value, float):
             raise ValueError("runtime_result_envelope_external_reference_invalid")
         if isinstance(value, str) and (
@@ -370,6 +387,7 @@ def _project_runtime_domain_result(
                 "actions": [
                     {
                         "description": action.description,
+                        "action_identity": action.action_identity,
                         "capability": action.capability,
                         "operation": action.operation,
                         "target": action.target,

@@ -349,7 +349,11 @@ def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, objec
             argv = None
     elif capability == "dingtalk-chat" and isinstance(content, str) and content:
         conversation_id = str(target.get("conversation_id") or "").strip()
-        message_id = str(target.get("message_id") or target.get("source_message_id") or "").strip()
+        message_id = str(
+            target.get("message_id")
+            or target.get("source_message_id")
+            or ""
+        ).strip()
         if operation in {"send_to_group", "messages-send-to-group"} and conversation_id:
             argv = ["dws", "chat", "+send-to-group", "--group", conversation_id,
                     "--content", content, "--yes", "--format", "json"]
