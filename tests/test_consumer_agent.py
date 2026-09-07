@@ -612,6 +612,14 @@ def test_consumer_instructions_require_dynamic_business_and_operation_skill_read
     assert "Provider command names, MCP tools, receipts, and readback procedures" in instructions
 
 
+def test_consumer_does_not_require_feedback_queue_identity_for_chat_rule_requests():
+    instructions = consumer_developer_instructions("Verify supported facts.")
+
+    assert "ordinary conversation request to improve a policy, Skill, or service behavior" in instructions
+    assert "Require a feedback_key or batch_id only when the supplied context explicitly identifies" in instructions
+    assert "absence of a feedback-processing record is not a task failure" in instructions
+
+
 def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 

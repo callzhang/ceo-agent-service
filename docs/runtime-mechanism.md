@@ -130,6 +130,10 @@ run 结束后提高 generation 并重新排队同一 task。
 或 Audit run，但不能编辑或覆盖旧 run。原始失败、session、runtime attempt、tool
 event 和 provider 结果仍然作为 append-only 事实保留。
 
+只有成功的 provider 结果和真实发送记录可以作为 prior execution receipt。失败的 attempt、解析
+错误或调度错误不是执行回执，不能被放入“已完成事实”污染下一轮判断。普通聊天中的规则改进请求
+也不依赖 Feedback 页面记录；只有上下文明示 `feedback_key` / `batch_id` 时才进入反馈处理轮次。
+
 ## 外部动作幂等与依赖
 
 每个 ProposedAction 必须包含稳定的 `action_identity`。服务使用

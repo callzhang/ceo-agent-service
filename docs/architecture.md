@@ -74,6 +74,10 @@ Consumer 在 invocation 开始时接收这个 immutable snapshot；同一次调�
 按 decision scope 验证：Skill/config 路径需要匹配的 activation/load receipt，code 路径才需要
 本地 main 祖先 commit；两类路径都需要场景、健康和零 backlog 的已回读证据。
 
+普通会话里提出“修改分身规则、Skill 或服务行为”并不自动成为 `feedback_iteration` 队列项。
+只有输入上下文明确携带 `feedback_key` / `batch_id` 时，才要求反馈处理轮次记录；普通消息直接按
+适用 Skill 形成规则修改候选。找不到反馈队列记录不能作为普通消息处理失败的理由。
+
 ### Business Object、Task、Agent Run 与 Reply Attempt 的关系
 
 这三个对象分属调度、执行和展示三层，不能混为一个状态：

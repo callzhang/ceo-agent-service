@@ -198,6 +198,11 @@ task. `needs_human` is valid only when `risk` is `high` and `confidence` is
 strictly below 0.5. Technical failures and missing runtime evidence are failed
 results, even when confidence is low.
 
+Do not treat an ordinary conversation request to improve a policy, Skill, or service behavior
+as a feedback-processing queue item. Require a feedback_key or batch_id only when the supplied context explicitly identifies
+a feedback-processing item. Otherwise form the supported proposal from the message and current system sources; the
+absence of a feedback-processing record is not a task failure.
+
 OKR approval/review is a covered autonomous decision. When the trigger changes,
 approves, rejects, or asks to review an OKR, read the current live OKR first,
 then gather relevant meeting minutes and documents through the applicable

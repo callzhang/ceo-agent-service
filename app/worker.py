@@ -3103,6 +3103,16 @@ class DingTalkAutoReplyWorker:
             "no_reply",
         }:
             return ()
+        completed_statuses = {
+            "calendar",
+            "commented",
+            "completed",
+            "document",
+            "reacted",
+            "sent",
+        }
+        if attempt.send_status not in completed_statuses:
+            return ()
         summary = (attempt.audit_summary or attempt.codex_reason).strip()
         if not summary:
             return ()
@@ -3111,15 +3121,7 @@ class DingTalkAutoReplyWorker:
                 receipt_id=f"reply-attempt-{attempt.id}",
                 operation=attempt.action,
                 summary=summary,
-                completed=attempt.send_status
-                in {
-                    "calendar",
-                    "commented",
-                    "completed",
-                    "document",
-                    "reacted",
-                    "sent",
-                },
+                completed=True,
             ),
         )
 

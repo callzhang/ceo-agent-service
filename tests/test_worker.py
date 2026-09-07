@@ -9251,6 +9251,41 @@ def test_failed_attempt_still_exposes_the_real_sent_reply_as_prior_receipt(
     assert receipts[0].completed is True
 
 
+def test_failed_attempt_without_a_real_delivery_is_not_a_prior_receipt(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("请修正规则", single_chat=True)
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        dry_run=False,
+    )
+    task = worker.store.ensure_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-09-07 10:00:00",
+        trigger_sender="李思",
+        trigger_text=trigger.content,
+    )
+    worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="李思",
+        trigger_text=trigger.content,
+        action="agent_run",
+        sensitivity_kind="none",
+        codex_reason="feedback_iteration_record_unavailable",
+        send_status="failed",
+    )
+
+    assert worker._agent_prior_receipts(task) == ()
+
+
 def test_recovered_oa_attempt_inherits_identity_and_hides_old_failure(
     tmp_path: Path, monkeypatch
 ):
