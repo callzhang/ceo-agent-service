@@ -708,7 +708,47 @@ def test_preflight_requires_a_usable_accessibility_window(monkeypatch):
     assert runner.preflight() == "wechat_window_unavailable"
 
 
-def test_preflight_activates_wechat_when_ax_window_is_temporarily_empty(
+def test_passive_preflight_does_not_activate_wechat_when_ax_window_is_empty(
+    monkeypatch,
+):
+    app = object()
+    ax_reads = iter([[], [], []])
+    activated = []
+    monkeypatch.setitem(
+        sys.modules,
+        "ApplicationServices",
+        SimpleNamespace(
+            AXIsProcessTrusted=lambda: True,
+            AXUIElementCreateApplication=lambda _pid: app,
+            AXUIElementCopyAttributeValue=lambda _app, _attribute, _unused: (
+                0,
+                next(ax_reads),
+            ),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "Quartz",
+        SimpleNamespace(
+            CGSessionCopyCurrentDictionary=lambda: {},
+            CGWindowListCopyWindowInfo=lambda _options, _window_id: [
+                {"kCGWindowOwnerPID": 500}
+            ],
+            kCGWindowListOptionAll=1,
+            kCGNullWindowID=0,
+        ),
+    )
+    runner = MacWechatAccessibility()
+    monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
+    monkeypatch.setattr(runner, "_wechat_app_ref", lambda _pid: "wechat-app")
+    monkeypatch.setattr(runner, "_reactivate", lambda app_ref: activated.append(app_ref))
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    assert runner.preflight() == "wechat_window_unavailable"
+    assert activated == []
+
+
+def test_active_preflight_activates_wechat_when_ax_window_is_temporarily_empty(
     monkeypatch,
 ):
     app = object()
@@ -744,7 +784,7 @@ def test_preflight_activates_wechat_when_ax_window_is_temporarily_empty(
     monkeypatch.setattr(runner, "_reactivate", lambda app_ref: activated.append(app_ref))
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
-    assert runner.preflight() == "ready"
+    assert runner.preflight(activate=True) == "ready"
     assert activated == ["wechat-app"]
 
 

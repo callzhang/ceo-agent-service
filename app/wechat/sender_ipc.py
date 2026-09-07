@@ -33,6 +33,13 @@ def _bounded_text(
     return value
 
 
+def _optional_bool(params: dict, name: str) -> bool:
+    value = params.get(name, False)
+    if not isinstance(value, bool):
+        raise SenderIpcError(f"invalid {name}")
+    return value
+
+
 class WechatSenderRpcService:
     """Strict allowlist around the real Accessibility runner."""
 
@@ -45,7 +52,9 @@ class WechatSenderRpcService:
         if method == "health":
             return {"status": "ready", "protocol_version": PROTOCOL_VERSION}
         if method == "preflight":
-            return self.runner.preflight()
+            return self.runner.preflight(
+                activate=_optional_bool(params, "activate"),
+            )
         if method == "request_accessibility":
             return self.runner.request_accessibility()
         if method == "open_and_identify":
@@ -206,8 +215,8 @@ class WechatSenderClient:
         result = self._request("health")
         return result if isinstance(result, dict) else {}
 
-    def preflight(self) -> str:
-        result = self._request("preflight")
+    def preflight(self, *, activate: bool = False) -> str:
+        result = self._request("preflight", {"activate": activate})
         return result if isinstance(result, str) else "unknown"
 
     def request_accessibility(self) -> str:

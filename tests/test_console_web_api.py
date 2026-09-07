@@ -1338,6 +1338,39 @@ def test_console_status_worker_snapshot_is_not_blocked_by_wechat_probe(
         release_probe.set()
 
 
+def test_wechat_status_snapshot_defers_sender_preflight_until_delivery(
+    monkeypatch, tmp_path: Path,
+):
+    from app.wechat import service as wechat_service
+
+    class Reader:
+        @staticmethod
+        def health():
+            return {"status": "ready"}
+
+    class Sender:
+        @staticmethod
+        def health():
+            return {"status": "ready"}
+
+        @staticmethod
+        def preflight(**_kwargs):
+            raise AssertionError("status polling must not preflight WeChat")
+
+    monkeypatch.setattr(wechat_service, "build_reader", lambda: Reader())
+    monkeypatch.setattr(wechat_service, "build_sender", lambda: Sender())
+    snapshot = audit_web_module._wechat_status_snapshot(
+        AutoReplyStore(tmp_path / "worker.sqlite3"),
+    )
+
+    assert snapshot["reader"]["status"] == "ready"
+    assert snapshot["sender"]["status"] == "ready"
+    assert snapshot["preflight"] == {
+        "status": "on_send",
+        "error": "checked only before a delivery",
+    }
+
+
 def test_console_status_worker_snapshot_is_not_blocked_by_system_health_scan(
     monkeypatch, tmp_path: Path,
 ):

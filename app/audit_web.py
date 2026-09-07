@@ -2336,7 +2336,7 @@ def _service_component_snapshots() -> list[dict[str, str]]:
 
 
 def _wechat_status_snapshot(store: AutoReplyStore) -> dict[str, object]:
-    """Read dedicated Reader/Sender health; never perform a WeChat action."""
+    """Read helper health without checking or foregrounding the WeChat window."""
     from app import config
     from app.wechat import service
 
@@ -2351,19 +2351,21 @@ def _wechat_status_snapshot(store: AutoReplyStore) -> dict[str, object]:
     reader_status, reader_error = check(service.build_reader(), "health")
     sender = service.build_sender()
     sender_status, sender_error = check(sender, "health")
-    preflight, preflight_error = check(sender, "preflight")
     state = service.ready_account_state(store)
     return {
         "reader": {"enabled": config.wechat_reader_enabled(), "status": reader_status, "error": reader_error},
         "sender": {"enabled": config.wechat_sender_enabled(), "status": sender_status, "error": sender_error},
-        "preflight": {"status": preflight, "error": preflight_error},
+        "preflight": {
+            "status": "on_send",
+            "error": "checked only before a delivery",
+        },
         "account": {"ready": state is not None, "account_id": state.get("account_id", "") if state else ""},
     }
 
 
 def _wechat_status_table(status: dict[str, object]) -> str:
     rows = []
-    for label, key in (("Reader IPC", "reader"), ("Sender IPC", "sender"), ("Sender preflight", "preflight")):
+    for label, key in (("Reader IPC", "reader"), ("Sender IPC", "sender"), ("Sender delivery check", "preflight")):
         item = status.get(key) or {}
         value = str(item.get("status") or "unknown") if isinstance(item, dict) else "unknown"
         detail = str(item.get("error") or ("enabled" if item.get("enabled") else "")) if isinstance(item, dict) else ""

@@ -511,7 +511,8 @@ class MacWechatAccessibility:
             AXUIElementCopyAttributeValue, AXUIElementSetAttributeValue, \
             AXUIElementPerformAction, Quartz
 
-    def preflight(self) -> str:
+    def preflight(self, *, activate: bool = False) -> str:
+        """Check sender readiness without foregrounding WeChat unless requested."""
         try:
             from ApplicationServices import (
                 AXIsProcessTrusted,
@@ -539,7 +540,7 @@ class MacWechatAccessibility:
                 if error == 0 and windows:
                     return "ready"
                 break
-            if attempt < 2:
+            if activate and attempt < 2:
                 import time
                 self._reactivate(self._wechat_app_ref(pid))
                 time.sleep(1.0)
@@ -554,7 +555,7 @@ class MacWechatAccessibility:
         except Exception:
             return "pyobjc_unavailable"
         trusted = AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True})
-        return self.preflight() if trusted else "accessibility_not_trusted"
+        return self.preflight(activate=True) if trusted else "accessibility_not_trusted"
 
     def send(
         self, target_label: str, reply_text: str, *, search_query: str | None = None,

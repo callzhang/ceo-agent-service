@@ -176,6 +176,9 @@ CEO_WECHAT_READER_SIGNING_IDENTITY='CEO WeChat Reader Local Signing' \
 The stable signing identity prevents ordinary rebuilds from producing a new TCC
 identity. After first install, add the dedicated app once in System Settings →
 Privacy & Security → Accessibility and restart its LaunchAgent. The AX runner
+does not inspect or foreground WeChat during background health/status polling.
+It checks and, when needed, activates the WeChat window only for an actual
+queued delivery or a user-initiated Tutorial connection check. The AX runner
 resolves the actual WeChat application by bundle ID, waits for asynchronous UI
 state, and navigates duplicate direct-chat names with the stable target ID before
 requiring the composer title to match the expected display name. Group navigation

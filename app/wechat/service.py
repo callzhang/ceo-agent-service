@@ -75,7 +75,7 @@ def build_setup_service(store):
 
     def _preflight() -> str:
         try:
-            return sender.preflight()
+            return sender.preflight(activate=True)
         except Exception:
             return "unknown"
 
@@ -137,7 +137,7 @@ def _sender_is_ready(sender) -> bool:
     if preflight is None:
         return True
     try:
-        return preflight() == "ready"
+        return preflight(activate=True) == "ready"
     except Exception:
         return False
 

@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-06: make WeChat Sender window checks delivery-scoped. Status polling
+  now verifies only the dedicated Reader and Sender helpers; it never probes or
+  foregrounds the WeChat window. Accessibility/window preflight may activate
+  WeChat only for an actual queued delivery or a user-initiated Tutorial check.
+
 - 2026-09-06: stop appending web feedback callbacks to WeChat replies. Personal
   WeChat text messages do not render Markdown links, so new WeChat deliveries
   now keep the configured assistant signature without exposing long internal

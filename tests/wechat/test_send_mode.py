@@ -272,7 +272,8 @@ def test_auto_mode_holds_delivery_while_sender_session_is_locked(tmp_path):
 
     class Runner:
         @staticmethod
-        def preflight():
+        def preflight(*, activate=False):
+            assert activate is True
             return "screen_locked"
 
     sender = FakeSender()
