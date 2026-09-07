@@ -555,7 +555,7 @@ class MacWechatAccessibility:
         except Exception:
             return "pyobjc_unavailable"
         trusted = AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True})
-        return self.preflight(activate=True) if trusted else "accessibility_not_trusted"
+        return "ready" if trusted else "accessibility_not_trusted"
 
     def send(
         self, target_label: str, reply_text: str, *, search_query: str | None = None,

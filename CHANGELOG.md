@@ -2,7 +2,9 @@
 
 - 2026-09-06: make Tutorial's WeChat connection check passive. Connecting now
   verifies the dedicated Reader and Sender without activating the WeChat app;
-  only an actual queued message delivery is allowed to bring WeChat forward.
+  its Accessibility permission prompt also reports permission only, rather than
+  running a second window check. Only an actual queued message delivery is
+  allowed to bring WeChat forward.
 
 - 2026-09-06: make WeChat Sender window checks delivery-scoped. Status polling
   now verifies only the dedicated Reader and Sender helpers; it never probes or

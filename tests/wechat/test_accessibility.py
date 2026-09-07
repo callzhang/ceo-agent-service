@@ -872,3 +872,24 @@ def test_request_accessibility_asks_macos_to_show_prompt(monkeypatch):
 
     assert status == "accessibility_not_trusted"
     assert seen == [{"prompt": True}]
+
+
+def test_request_accessibility_only_reports_existing_permission(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "ApplicationServices",
+        SimpleNamespace(
+            AXIsProcessTrustedWithOptions=lambda _options: True,
+            kAXTrustedCheckOptionPrompt="prompt",
+        ),
+    )
+    runner = MacWechatAccessibility()
+    monkeypatch.setattr(
+        runner,
+        "preflight",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("permission request must not inspect or activate WeChat")
+        ),
+    )
+
+    assert runner.request_accessibility() == "ready"
