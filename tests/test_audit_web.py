@@ -323,6 +323,7 @@ def _seed_confirmed_approval_attempt(
                 "actions": [
                     {
                         "description": "Approve the budget.",
+                        "action_identity": "approve-budget",
                         "capability": "misleading_capability",
                         "operation": "misleading operation",
                         "target": {"process_instance_id": "misleading-target"},
@@ -3001,10 +3002,14 @@ def test_create_default_audit_app_expands_tilde_worker_db(
     monkeypatch.setenv("CEO_WORKER_DB", "~/dbs/default.sqlite3")
     monkeypatch.chdir(tmp_path)
 
-    client = TestClient(create_default_audit_app())
+    client = TestClient(create_default_audit_app(), follow_redirects=False)
     response = client.get("/tutorial")
 
-    assert response.status_code == 200
+    # The default app is SPA-first; a source checkout without built assets
+    # returns the explicit placeholder after still initializing the DB path.
+    assert response.status_code in {200, 303, 503}
+    if response.status_code == 503:
+        assert "React console assets are missing" in response.text
     assert (home / "dbs" / "default.sqlite3").exists()
     assert not (tmp_path / "~").exists()
 
@@ -7388,6 +7393,11 @@ def test_worker_attention_uses_work_input_summary_instead_of_internal_reference(
         "opaque-internal-reference",
         '{"summary":"Review the current meeting follow-up."}',
     )
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set status='failed', error='processing failed' where id=?",
+            (work_input_id,),
+        )
 
     payload = build_worker_status_payload(store)
     row = next(
@@ -7407,6 +7417,11 @@ def test_worker_attention_uses_work_input_title_before_raw_reference(tmp_path: P
         '{"opaque":"internal-reference"}',
         '{"title":"Hiring debrief"}',
     )
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set status='failed', error='processing failed' where id=?",
+            (work_input_id,),
+        )
 
     payload = build_worker_status_payload(store)
     row = next(
@@ -7496,6 +7511,11 @@ def test_worker_attention_uses_local_file_title_as_work_item_context(
             ensure_ascii=False,
         ),
     )
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set status='failed', error='processing failed' where id=?",
+            (work_input_id,),
+        )
 
     payload = build_worker_status_payload(store)
     row = next(
@@ -7527,6 +7547,11 @@ def test_worker_attention_cleans_local_file_summary_metadata(tmp_path: Path):
             ensure_ascii=False,
         ),
     )
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set status='failed', error='processing failed' where id=?",
+            (work_input_id,),
+        )
 
     payload = build_worker_status_payload(store)
     row = next(
@@ -7553,6 +7578,11 @@ def test_worker_attention_meeting_summary_falls_back_to_meeting_title(
         eligible_at="2026-08-28T10:00:00+00:00",
         status="pending",
     )
+    with store._connect() as db:
+        db.execute(
+            "update meeting_alignment_jobs set status='failed', error='processing failed' where id=?",
+            (job_id,),
+        )
 
     payload = build_worker_status_payload(store)
     row = next(

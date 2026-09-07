@@ -125,6 +125,7 @@ def _payload() -> dict[str, object]:
 def _accepted_action() -> dict[str, object]:
     return ProposedAction.model_validate(
         {
+            "action_identity": ACTION_IDENTITY,
             "description": "Unsubscribe the current subscription",
             "capability": "email_browser",
             "operation": "unsubscribe",

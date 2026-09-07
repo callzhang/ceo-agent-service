@@ -940,6 +940,9 @@ def execute_reviewed_write_tool(
     from app.store import AutoReplyStore
 
     store = AutoReplyStore(db_path)
+    reused = store.reuse_completed_external_action(run_id, authorization)
+    if reused is not None:
+        return reused
     receipt = execute_reviewed_write(
         canonical_argv,
         authorization_id=str(authorization["authorization_id"]),
@@ -956,6 +959,7 @@ def execute_reviewed_write_tool(
             authorization,
             result_digest=result_digest,
             exit_code=0,
+            provider_result=receipt,
         )
     return receipt
 

@@ -103,8 +103,8 @@ def test_finalize_wechat_reply_task_persists_postfixed_body_before_ready(
     assert delivery.status == "ready_to_send"
     assert prepared is not None
     assert delivery.reply_text == prepared.final_body
-    assert delivery.reply_text.count("/api/dingtalk-feedback-spike") == 2
-    assert prepared.feedback_token
+    assert "/api/dingtalk-feedback-spike" not in delivery.reply_text
+    assert prepared.feedback_token == ""
 
 
 def test_revised_wechat_generation_gets_distinct_immutable_postfix_delivery(
@@ -4391,17 +4391,158 @@ def test_execution_receipt_requires_current_unexpired_owner(tmp_path: Path):
 
 
 
-def _effect_intent_authorization(authorization_id: str) -> dict[str, object]:
+def _effect_intent_authorization(
+    authorization_id: str,
+    *,
+    action_index: int = 0,
+    external_action_key: str | None = None,
+) -> dict[str, object]:
     return {
         "authorization_id": authorization_id,
-        "action_index": 0,
-        "receipt_operation_id": "operation-action-0",
+        "external_action_key": external_action_key or f"external-{authorization_id}",
+        "business_object_key": "message:dingtalk:cid-1:msg-1",
+        "action_identity": "send-result",
+        "action_index": action_index,
+        "receipt_operation_id": f"operation-action-{action_index}",
         "capability": "agent_cli.dws",
         "operation": "chat +dm",
         "operation_digest": "operation-digest",
         "arguments_digest": "arguments-digest",
         "target_identifiers": {"to": "recipient"},
     }
+
+
+def test_effect_actions_execute_in_declared_order(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store, task_id, "initial", owner="worker-1"
+    ).run
+    first = _effect_intent_authorization("authorization-first")
+    second = _effect_intent_authorization(
+        "authorization-second", action_index=1
+    )
+    store.prepare_agent_effect_intents(
+        run.id, (first, second), owner="worker-1"
+    )
+
+    with pytest.raises(ValueError, match="agent_action_dependency_incomplete"):
+        store.dispatch_agent_effect_intent(run.id, second)
+
+    store.dispatch_agent_effect_intent(run.id, first)
+    store.acknowledge_agent_effect_intent(
+        run.id,
+        first,
+        result_digest="first-result",
+        exit_code=0,
+        provider_result={"messageId": "sent-first"},
+    )
+    store.dispatch_agent_effect_intent(run.id, second)
+
+
+def test_completed_external_action_is_reused_without_dispatch(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first_task_id = _enqueue_universal_reply_task(store)
+    first_run = _claim_audit_run(
+        store, first_task_id, "initial", owner="worker-1"
+    ).run
+    stable_key = "stable-external-action"
+    first = _effect_intent_authorization(
+        "authorization-first", external_action_key=stable_key
+    )
+    store.prepare_agent_effect_intents(
+        first_run.id, (first,), owner="worker-1"
+    )
+    store.dispatch_agent_effect_intent(first_run.id, first)
+    store.acknowledge_agent_effect_intent(
+        first_run.id,
+        first,
+        result_digest="provider-result",
+        exit_code=0,
+        provider_result={"messageId": "sent-once"},
+    )
+
+    store.enqueue_reply_task(
+        conversation_id="cid-2",
+        conversation_title="Other input for the same action",
+        single_chat=False,
+        trigger_message_id="msg-2",
+        trigger_create_time="2026-08-21 00:01:00",
+        trigger_sender="Derek",
+        trigger_text="retry",
+    )
+    second_task = store.claim_reply_tasks(limit=1)[0]
+    second_run = _claim_audit_run(
+        store, second_task.id, second_task.execution_generation,
+        owner="worker-2",
+    ).run
+    second = _effect_intent_authorization(
+        "authorization-second", external_action_key=stable_key
+    )
+    store.prepare_agent_effect_intents(
+        second_run.id, (second,), owner="worker-2"
+    )
+
+    reused = store.reuse_completed_external_action(second_run.id, second)
+
+    assert reused is not None
+    assert reused["messageId"] == "sent-once"
+    assert reused["reused"] is True
+    assert len(store.list_agent_execution_receipts(second_run.id)) == 1
+    with store._connect() as db:
+        row = db.execute(
+            "select state from agent_effect_intents where agent_run_id=?",
+            (second_run.id,),
+        ).fetchone()
+    assert row["state"] == "acknowledged"
+
+
+def test_message_delivery_history_is_single_projection_with_run_observers(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first_task_id = _enqueue_universal_reply_task(store)
+    first_run = _claim_audit_run(
+        store, first_task_id, "initial", owner="worker-1"
+    ).run
+    first = store.record_agent_message_delivery(
+        agent_run_id=first_run.id,
+        external_action_key="stable-message-action",
+        conversation_id="cid-1",
+        trigger_message_id="msg-1",
+        reply_text="已审批并通知。",
+        provider_result={"messageId": "sent-once"},
+    )
+    store.enqueue_reply_task(
+        conversation_id="cid-2",
+        conversation_title="Second trigger",
+        single_chat=False,
+        trigger_message_id="msg-2",
+        trigger_create_time="2026-08-21 00:01:00",
+        trigger_sender="Derek",
+        trigger_text="retry",
+    )
+    second_task = store.claim_reply_tasks(limit=1)[0]
+    second_run = _claim_audit_run(
+        store, second_task.id, second_task.execution_generation,
+        owner="worker-2",
+    ).run
+    repeated = store.record_agent_message_delivery(
+        agent_run_id=second_run.id,
+        external_action_key="stable-message-action",
+        conversation_id="cid-2",
+        trigger_message_id="msg-2",
+        reply_text="已审批并通知。",
+        provider_result={"messageId": "sent-once", "reused": True},
+    )
+
+    assert repeated.id == first.id
+    with store._connect() as db:
+        assert db.execute("select count(*) from sent_replies").fetchone()[0] == 1
+        assert db.execute(
+            "select count(*) from sent_reply_observers where sent_reply_id=?",
+            (first.id,),
+        ).fetchone()[0] == 2
 
 
 
@@ -8375,7 +8516,7 @@ def test_stale_processing_task_ignores_future_lease_without_recent_heartbeat(
     ).status == "failed"
 
 
-def test_stale_processing_task_keeps_recent_completed_agent_turn(
+def test_stale_processing_task_with_completed_turn_is_recoverable(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -8403,7 +8544,8 @@ def test_stale_processing_task_keeps_recent_completed_agent_turn(
             (task.id,),
         )
 
-    assert store.list_stale_processing_reply_tasks(600) == []
+    stale = store.list_stale_processing_reply_tasks(600)
+    assert [item.id for item in stale] == [task.id]
 
 
 
@@ -8560,7 +8702,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-08-30.1"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-07.2"
     assert {
         "lease_owner",
         "lease_expires_at",

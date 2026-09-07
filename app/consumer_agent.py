@@ -582,10 +582,8 @@ def _prepare_outgoing_dingtalk_messages(
             action,
             sender=sender,
             delivery_key=agent_message_delivery_key(
-                task_id=task.id,
-                execution_generation=task.execution_generation,
-                proposal_revision=proposal_revision,
-                action_index=index,
+                business_object_key=task.business_object_key,
+                action_identity=action.action_identity,
             ),
             context=context,
         )

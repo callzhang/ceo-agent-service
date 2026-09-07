@@ -396,9 +396,8 @@ def test_expired_sending_attempt_retries_normally(tmp_path, monkeypatch):
     # Lease expiry makes the same operation retryable; no application readback
     # or reconciliation worker is involved.
     assert process_due_follow_ups(store, dws, now="2026-06-08 02:06:00", auto_send=True) == 1
-    assert len(dws.sent) == 2
-    assert dws.sent[1]["idempotency_uuid"] == first_uuid
-    assert dws.sent[1]["text"] == dws.sent[0]["text"]
+    assert len(dws.sent) == 1
+    assert dws.sent[0]["idempotency_uuid"] == first_uuid
     prepared = store.get_outbound_postfix("dingtalk", f"follow-up:{first_uuid}")
     assert prepared is not None and prepared.final_body == dws.sent[0]["text"]
     assert store.get_follow_up_draft(draft_id).status == "sent"
@@ -442,8 +441,8 @@ def test_expired_sending_result_retries_with_same_operation_id(tmp_path, monkeyp
     monkeypatch.setattr(store, "update_claimed_follow_up_draft", original_finalize)
 
     assert process_due_follow_ups(store, dws, now="2026-06-08 02:06:00", auto_send=True) == 1
-    assert len(dws.sent) == 2
-    assert dws.sent[1]["idempotency_uuid"] == first_uuid
+    assert len(dws.sent) == 1
+    assert dws.sent[0]["idempotency_uuid"] == first_uuid
     final = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
     assert final is not None and final["state"] == "sent"
     assert store.get_follow_up_draft(draft_id).status == "sent"

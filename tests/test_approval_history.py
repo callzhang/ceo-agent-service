@@ -86,6 +86,7 @@ def _consumer(
             actions=(
                 ProposedAction(
                     description="prose can disagree with operation",
+                    action_identity="approval-action",
                     capability="dingtalk_oa",
                     operation=operation,
                     target=(
@@ -121,6 +122,7 @@ def _consumer_command(
             actions=(
                 ProposedAction(
                     description="the executable payload is authoritative",
+                    action_identity="approval-command",
                     capability="misleading.generated.capability",
                     operation=operation_label,
                     target={"process_instance_id": "misleading-target"},

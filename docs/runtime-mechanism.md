@@ -103,22 +103,44 @@ OA 审批中，实际申请人对其申请所作的最新明确陈述是当前�
 缓存或冲突的来源状态覆盖申请人陈述。该回审轮次不能新增此前未提出的格式、评分细节或潜在歧义
 要求；只有 OA 表单明确必填且申请人没有陈述的信息可以继续请求补充。
 
-## Task、Agent Run 与 Reply Attempt
+## Business Object、Task、Agent Run 与 Reply Attempt
 
-运行时使用三层对象：`reply_task` 是可领取和重试的队列任务，`agent_run` 是一次
-真实的 Consumer/Audit 执行，`reply_attempt` 是同一 trigger/channel 的稳定业务
-当前投影。一个 task 可以有多个 agent run；重跑不新建业务 attempt，而是在原
+运行时先用 `business_object_key` 识别同一外部业务事项，再使用三层运行对象：
+`reply_task` 是可领取和重试的唯一当前队列投影，`agent_run` 是一次真实的
+Consumer/Audit 执行，`reply_attempt` 是稳定的业务结果当前投影。一个 task 可以有
+多个 agent run；重跑不新建业务 attempt，而是在原
 `reply_attempt` 上更新 current projection，并把新的 agent run 追加到历史。
 
 ```text
+business_object 1 ── 1 current reply_task
+reply_task 1 ──< reply_task_inputs
 reply_task 1 ──< agent_runs
-trigger/channel 1 ── 1 current reply_attempt
+business_object 1 ── 1 current reply_attempt
 ```
+
+OA 的稳定身份是 `process_instance_id + task_id`。同一 OA 从 webhook、pending scan、
+人工重试或服务恢复进入时追加 input 并复用同一 task；运行中收到新 input 时，在当前
+run 结束后提高 generation 并重新排队同一 task。
 
 `reply_attempt` 的 `agent_run_id` 指向当前投影对应的最新或终态 run；完整执行历史
 通过 run 的 task、generation 和关联事件查询。Attempt 页面可以切换多个 Consumer
 或 Audit run，但不能编辑或覆盖旧 run。原始失败、session、runtime attempt、tool
 event 和 provider 结果仍然作为 append-only 事实保留。
+
+## 外部动作幂等与依赖
+
+每个 ProposedAction 必须包含稳定的 `action_identity`。服务使用
+`business_object_key + action_identity + operation + target` 生成
+`external_action_key`：
+
+- provider 成功结果按该键原子保存一次；
+- feedback revision 或新 agent run 再遇到该键时直接复用，不调用 provider；
+- 一个 proposal 内只有所有较小 action index 都成功后，下一个动作才可 dispatch；
+- 审批动作失败时，后续“审批成功”通知因此不会发送；
+- 消息成功统一写入一条 `sent_replies`，其他 run 只追加 observer 关联。
+
+这里只管理稳定身份、动作顺序和 provider 成功事实。应用层不检查 Agent 使用的未知
+工具，不建立 read-only、unknown、reconciliation 或发送证据审核状态机。
 
 ## 用户反馈处理轮次
 
@@ -206,10 +228,11 @@ continuation；`awaiting_audit` 是 effect/claim 的领域状态，
 - 所有任务都不得使用 `discard` 动作。
 - 所有任务都不得写入 `discarded` 状态。
 - 不得用“丢弃”代替审核反馈、修正原 run、重新排队、人工升级或失败记录。
-- 业务 `reply_attempt` 的 current projection 可以由重跑更新；同一 trigger/channel 复用原 attempt ID，
+- 业务 `reply_attempt` 的 current projection 可以由重跑更新；同一 business object 复用原 attempt ID，
   不创建新的业务 attempt。原始失败作为 append-only state event 保留。其下的 `agent_runs`、proposal
   版本、revision lineage、session、runtime attempt 和 tool event 不得覆盖；attempt 页面可切换查看
-  这些底层 run。provider 返回的 `operation`、`target`、稳定 result identifier 作为最小去重事实保存。
+  这些底层 run。`business_object_key`、`action_identity`、`operation`、`target` 和 provider
+  成功结果是避免重放所需的最小持久化事实。
 - Audit 返回 `executed` 后任务即可进入 `done`；外部结果的读取与判断由 Agent 按业务 Skill 完成。
 
 如果任务确定无需执行，应进入 `done`，并在 trace 写入 `agent_output/no_action`；如果结果需要修改，写入 `audit_feedback` 并保持 `running`；如果处理失败，应进入 `failed`。

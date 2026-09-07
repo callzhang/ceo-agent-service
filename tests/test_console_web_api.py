@@ -1354,7 +1354,10 @@ def test_console_status_worker_snapshot_is_not_blocked_by_wechat_probe(
         },
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"待处理事项"}')
+    work_input_id = store.enqueue_work_summary_input(
+        "reply_attempt", "1", '{"summary":"待处理事项"}'
+    )
+    store.mark_work_summary_input_failed(work_input_id, "processing failed")
 
     try:
         with _client(tmp_path) as client:
@@ -1449,7 +1452,10 @@ def test_console_status_worker_snapshot_is_not_blocked_by_system_health_scan(
         },
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"待处理事项"}')
+    work_input_id = store.enqueue_work_summary_input(
+        "reply_attempt", "1", '{"summary":"待处理事项"}'
+    )
+    store.mark_work_summary_input_failed(work_input_id, "processing failed")
 
     try:
         with _client(tmp_path) as client:
@@ -1866,7 +1872,9 @@ def test_status_attention_refreshes_after_a_service_error_is_resolved(tmp_path: 
 
 def test_queue_attention_rows_routes_service_errors_to_history_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.record_error("", "", "producer_loop_error", "database is locked")
+    store.record_error(
+        "cid-producer-loop", "msg-producer-loop", "producer_loop_error", "database is locked"
+    )
     error_id = store.list_errors(limit=1)[0].id
 
     rows = audit_web_module._queue_attention_rows(store)

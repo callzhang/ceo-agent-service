@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
@@ -178,6 +179,7 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
 
 def test_initial_write_authorization_binds_direct_message_content_and_recipient():
     action = SimpleNamespace(
+        action_identity="request-interview",
         capability="dingtalk-chat",
         operation="send_direct_message",
         payload={"content": "请安排一轮面试。"},
@@ -186,24 +188,57 @@ def test_initial_write_authorization_binds_direct_message_content_and_recipient(
     run = SimpleNamespace(id=7, operation_id="operation-7", proposal_revision=0)
 
     expected = _expected_effect_action(action, action_index=0)
-    authorizations = _initial_write_authorizations(run, (expected,))
+    authorizations = _initial_write_authorizations(
+        run, (expected,), business_object_key="oa:process-1:task-1"
+    )
 
     assert len(authorizations) == 1
     authorization = authorizations[0]
-    assert authorization["argv"] == [
+    assert authorization["argv"][:10] == [
         "dws", "chat", "+messages-send", "--open-dingtalk-id", "open-recipient",
         "--text", "请安排一轮面试。", "--yes", "--format", "json",
     ]
-    assert authorization["target_identifiers"] == {"open-dingtalk-id": "open-recipient"}
+    assert authorization["argv"][10] == "--uuid"
+    assert UUID(authorization["argv"][11]).version is not None
+    assert authorization["target_identifiers"]["open-dingtalk-id"] == "open-recipient"
+    assert authorization["target_identifiers"]["uuid"] == authorization["argv"][11]
+
+
+def test_external_action_and_provider_uuid_are_stable_across_runs():
+    action = SimpleNamespace(
+        action_identity="notify-approval-result",
+        capability="dingtalk-chat",
+        operation="send_direct_message",
+        payload={"content": "审批已完成。"},
+        target={"open_dingtalk_id": "open-recipient"},
+    )
+    expected = _expected_effect_action(action, action_index=0)
+    first = _initial_write_authorizations(
+        SimpleNamespace(id=7, operation_id="operation-7", proposal_revision=0),
+        (expected,),
+        business_object_key="oa:process-1:task-1",
+    )[0]
+    second = _initial_write_authorizations(
+        SimpleNamespace(id=8, operation_id="operation-8", proposal_revision=1),
+        (expected,),
+        business_object_key="oa:process-1:task-1",
+    )[0]
+
+    assert first["authorization_id"] != second["authorization_id"]
+    assert first["external_action_key"] == second["external_action_key"]
+    assert first["argv"][first["argv"].index("--uuid") + 1] == second["argv"][
+        second["argv"].index("--uuid") + 1
+    ]
 
 
 @pytest.mark.parametrize(
     ("action", "expected_argv"),
     [
-        (SimpleNamespace(capability="dingtalk-chat", operation="send_to_group",
+        (SimpleNamespace(action_identity="send-group", capability="dingtalk-chat", operation="send_to_group",
             payload={"reply_text": "群内回复"}, target={"conversation_id": "cid-group"}),
          ["dws", "chat", "+send-to-group", "--group", "cid-group", "--content", "群内回复", "--yes", "--format", "json"]),
         (SimpleNamespace(
+            action_identity="request-source-record",
             capability="dingtalk-chat",
             operation="send_message_to_source_conversation",
             payload={"content": "请提供原始记录。"},
@@ -214,10 +249,10 @@ def test_initial_write_authorization_binds_direct_message_content_and_recipient(
             },
         ),
          ["dws", "chat", "+messages-send", "--open-dingtalk-id", "open-source-member", "--text", "请提供原始记录。", "--yes", "--format", "json"]),
-        (SimpleNamespace(capability="dingtalk_oa", operation="approval.comment",
+        (SimpleNamespace(action_identity="request-materials", capability="dingtalk_oa", operation="approval.comment",
             payload={"comment_text": "请补材料"}, target={"process_instance_id": "process-1"}),
          ["dws", "oa", "approval", "oa-comments", "--instance-id", "process-1", "--content", "请补材料", "--format", "json", "--yes"]),
-        (SimpleNamespace(capability="dingtalk-misc", operation="dws oa approval approve",
+        (SimpleNamespace(action_identity="approve-application", capability="dingtalk-misc", operation="dws oa approval approve",
             payload={"remark": "同意"},
             target={"process_instance_id": "process-1", "task_id": "task-1"}),
          ["dws", "oa", "approval", "approve", "--instance-id", "process-1",
@@ -231,6 +266,7 @@ def test_expected_effect_action_binds_supported_dingtalk_actions(action, expecte
 def test_expected_effect_action_preserves_prepared_legacy_dingtalk_command_body():
     final_body = "已处理。（by明哥分身）\n\n[满意](https://feedback.example/ok)\n[不满意](https://feedback.example/bad)"
     action = SimpleNamespace(
+        action_identity="send-group-result",
         capability="agent_cli.dws",
         operation="chat message send",
         target={"group": "cid-group"},
@@ -282,9 +318,10 @@ def test_audit_runner_adds_direct_message_execution_prompt_before_process(
     proposal = ConsumerProposal.model_validate(
         {
             "objective": "Coordinate interview",
-            "actions": [{
-                "description": "Ask HR to schedule the interview.",
-                "capability": "dingtalk-chat",
+                "actions": [{
+                    "description": "Ask HR to schedule the interview.",
+                    "action_identity": "request-interview-scheduling",
+                    "capability": "dingtalk-chat",
                 "operation": "send_direct_message",
                 "target": {"open_dingtalk_id": "open-recipient"},
                 "payload": {"content": "请安排一轮面试。"},
@@ -669,6 +706,7 @@ def setup(tmp_path, monkeypatch):
             "actions": [
                 {
                     "description": "Send",
+                    "action_identity": "send-result",
                     "capability": "agent_cli.dws",
                     "operation": "chat message send",
                     "target": {"group": "cid-agent"},

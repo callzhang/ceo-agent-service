@@ -38,6 +38,7 @@ def _proposal() -> dict[str, object]:
         "actions": [
             {
                 "description": "Send one private message",
+                "action_identity": "notify-effective-result",
                 "capability": "agent_cli.dws",
                 "operation": "chat message send",
                 "target": {"conversation_reference": "cid-1"},
@@ -74,6 +75,14 @@ def _decision_options() -> list[dict[str, str]]:
 
 def test_proposed_action_does_not_require_deferred_structured_boundary_field():
     assert "external_boundary" not in ProposedAction.model_fields
+
+
+def test_proposed_action_requires_stable_action_identity():
+    action = dict(_proposal()["actions"][0])
+    action.pop("action_identity")
+
+    with pytest.raises(ValidationError, match="action_identity"):
+        ProposedAction.model_validate(action)
 
 
 def test_needs_human_requires_high_risk_and_low_confidence_for_all_task_types():

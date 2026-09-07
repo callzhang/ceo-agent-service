@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -240,18 +241,13 @@ class ServiceMessageSender:
 
 def agent_message_delivery_key(
     *,
-    task_id: int,
-    execution_generation: str,
-    proposal_revision: int,
-    action_index: int,
+    business_object_key: str,
+    action_identity: str,
 ) -> str:
-    """Return the immutable delivery identity for one Agent proposal action."""
-    if task_id <= 0 or proposal_revision < 0 or action_index < 0:
-        raise ValueError("agent message delivery identity is invalid")
-    generation = execution_generation.strip()
-    if not generation:
-        raise ValueError("execution generation is required")
-    return (
-        f"agent-message:{task_id}:{generation}:"
-        f"revision:{proposal_revision}:action:{action_index}"
-    )
+    """Return one delivery identity across revisions and Agent runs."""
+    object_key = business_object_key.strip()
+    identity = action_identity.strip()
+    if not object_key or not identity:
+        raise ValueError("business object and action identity are required")
+    digest = hashlib.sha256(f"{object_key}\0{identity}".encode("utf-8")).hexdigest()
+    return f"agent-message:{digest}"

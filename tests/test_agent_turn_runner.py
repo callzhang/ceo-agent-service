@@ -27,10 +27,8 @@ def test_direct_send_receipt_records_prepared_final_body_not_provider_argv(tmp_p
         owner="audit",
     ).run
     delivery_key = agent_message_delivery_key(
-        task_id=task.id,
-        execution_generation=task.execution_generation,
-        proposal_revision=0,
-        action_index=0,
+        business_object_key=task.business_object_key,
+        action_identity="send-result",
     )
     prepared = ServiceMessageSender(store=store).prepare(
         channel="dingtalk",
@@ -66,6 +64,7 @@ def test_direct_send_receipt_records_prepared_final_body_not_provider_argv(tmp_p
             {
                 "argv": expected_argv,
                 "delivery_key": delivery_key,
+                "external_action_key": "external-send-result",
                 "target_identifiers": {"group": "cid-agent"},
             },
         ),

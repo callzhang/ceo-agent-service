@@ -396,6 +396,7 @@ def test_context_gives_each_agent_turn_an_explicit_execution_time():
                 "actions": [
                     {
                         "description": "Ask whether to leave now.",
+                        "action_identity": "clarify-departure-time",
                         "capability": "agent_cli.dws",
                         "operation": "chat message send",
                         "target": {"open_dingtalk_id": "recipient-1"},
@@ -448,6 +449,7 @@ def test_audit_context_renders_verified_consumer_skill_receipts_as_json():
                 "actions": [
                     {
                         "description": "Send reviewed result.",
+                        "action_identity": "send-reviewed-result",
                         "capability": "agent_cli.dws",
                         "operation": "chat message send",
                         "target": {"group": "cid"},
@@ -709,6 +711,7 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
             "actions": [
                 {
                     "description": "Comment on the approval",
+                    "action_identity": "comment-on-approval",
                     "capability": "agent_cli.dws",
                     "operation": "oa approval comment",
                     "target": {"process_instance_id": "pid-1"},

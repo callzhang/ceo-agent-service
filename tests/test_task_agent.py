@@ -3403,7 +3403,7 @@ def test_follow_up_draft_requires_owner_user_id_at_generation(tmp_path):
     assert store.list_follow_up_drafts(statuses=("draft",)) == []
 
 
-def test_non_discard_decision_requires_memory_recall_used(tmp_path):
+def test_non_skip_decision_uses_structured_memory_context_without_boolean_gate(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     decision = TaskAgentDecision.model_validate(
         {
@@ -3424,13 +3424,14 @@ def test_non_discard_decision_requires_memory_recall_used(tmp_path):
         }
     )
 
-    with pytest.raises(ValueError, match="memory_recall_used"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=0,
-            work_item=_work_item(),
-            decision=decision,
-        )
+    project_id = apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_work_item(),
+        decision=decision,
+    )
+
+    assert project_id is not None
 
 
 def test_non_discard_decision_requires_memory_context(tmp_path):

@@ -54,6 +54,7 @@ def _consumer_result(outcome: str, label: str = "candidate") -> ConsumerAgentRes
             "actions": [
                 {
                     "description": label,
+                    "action_identity": f"notify-{label}",
                     "capability": "agent_cli.dws",
                     "operation": "chat message send",
                     "target": {"group": "cid-agent"},

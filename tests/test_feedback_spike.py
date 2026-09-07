@@ -365,6 +365,7 @@ def test_send_feedback_spike_links_uses_current_user_message_path(tmp_path):
             user_id=None,
             open_dingtalk_id=None,
             title=None,
+            idempotency_uuid=None,
         ):
             self.sent.append(
                 {
@@ -375,6 +376,7 @@ def test_send_feedback_spike_links_uses_current_user_message_path(tmp_path):
                     "user_id": user_id,
                     "open_dingtalk_id": open_dingtalk_id,
                     "title": title,
+                    "idempotency_uuid": idempotency_uuid,
                 }
             )
             return {"result": {"processQueryKey": "key-1"}}
@@ -420,11 +422,11 @@ def test_send_feedback_spike_links_uses_current_user_message_path(tmp_path):
         store=store,
     )
     assert replay["text"] == result["text"]
-    assert client.sent[1]["text"] == client.sent[0]["text"]
+    assert len(client.sent) == 1
     assert replay["feedback_token"] == result["feedback_token"]
     assert replay["callback_url_up"] == result["callback_url_up"]
     assert replay["callback_url_down"] == result["callback_url_down"]
-    assert client.sent[1]["title"] == client.sent[0]["title"]
+    assert client.sent[0]["title"] == "收到（by明哥分身）"
     assert replay["command"] == result["command"]
 
 
@@ -466,7 +468,8 @@ def test_send_feedback_spike_links_without_feedback_endpoint_reuses_signature_on
     assert "/api/dingtalk-feedback-spike" not in first["text"]
     assert replay["text"] == first["text"]
     assert replay["feedback_token"] == ""
-    assert client.sent[1][1] == client.sent[0][1] == first["text"]
+    assert len(client.sent) == 1
+    assert client.sent[0][1] == first["text"]
     prepared = store.get_outbound_postfix(
         "dingtalk", "feedback-spike:signature-only-1"
     )

@@ -644,6 +644,7 @@ class ScriptedTaskOrchestrator:
                 "actions": [
                     {
                         "description": direct_result.summary,
+                        "action_identity": "scripted-test-action",
                         "capability": "agent_cli.dws",
                         "operation": "scripted test action",
                         "target": {"task_id": str(task.id)},
@@ -1219,6 +1220,7 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
                 "actions": [
                     {
                         "description": "Ask the verified inviter one factual question.",
+                        "action_identity": "clarify-calendar-input",
                         "capability": "agent_cli.dws",
                         "operation": "chat message send",
                         "target": {"group": "cid-1"},
@@ -1480,6 +1482,7 @@ class ProvidedSkillReceiptProtocolExecutor(SkillReceiptProtocolExecutor):
                             "actions": [
                                 {
                                     "description": "Send the protocol fixture message.",
+                                    "action_identity": "send-protocol-fixture",
                                     "capability": "agent_cli.dws",
                                     "operation": "chat message send",
                                     "target": {"group": "cid-1"},
@@ -1611,6 +1614,7 @@ class MessageClarificationSkillExecutor(SkillReceiptProtocolExecutor):
                             "actions": [
                                 {
                                     "description": "Ask the sender one factual question.",
+                                    "action_identity": "ask-sender-question",
                                     "capability": "agent_cli.dws",
                                     "operation": "chat message send",
                                     "target": {"group": "cid-1"},
@@ -1756,6 +1760,7 @@ class DocumentReadSkillExecutor(SkillReceiptProtocolExecutor):
                             "actions": [
                                 {
                                     "description": "Reply with the current conclusion.",
+                                    "action_identity": "reply-with-conclusion",
                                     "capability": "agent_cli.dws",
                                     "operation": "chat message send",
                                     "target": {"group": "cid-1"},
@@ -2076,6 +2081,7 @@ class Task4BehaviorProtocolExecutor(ConsumerAuditLifecycleExecutor):
             "actions": [
                 {
                     "description": description,
+                    "action_identity": "reviewed-action",
                     "capability": "agent_cli.dws",
                     "operation": operation,
                     "target": {"conversation_id": "cid-1", "message_id": "msg-1"},
@@ -2222,6 +2228,7 @@ class OaProtocolExecutor(ProtocolCodexExecutor):
                             "actions": [
                                 {
                                     "description": "Approve the live OA task.",
+                                    "action_identity": "approve-live-oa-task",
                                     "capability": "agent_cli.dws",
                                     "operation": "oa approval approve",
                                     "target": {
@@ -2343,6 +2350,7 @@ class FailedWriteProtocolExecutor(ProtocolCodexExecutor):
                             "actions": [
                                 {
                                     "description": "Send the message.",
+                                    "action_identity": "send-message",
                                     "capability": "agent_cli.dws",
                                     "operation": "chat message send",
                                     "target": {"group": "cid-1"},
@@ -2401,6 +2409,7 @@ class ContextRefreshingProtocolExecutor(ProtocolCodexExecutor):
                             "actions": [
                                 {
                                     "description": "Send the update.",
+                                    "action_identity": "send-update",
                                     "capability": "agent_cli.dws",
                                     "operation": "chat message send",
                                     "target": {"group": "cid-1"},
@@ -2476,6 +2485,7 @@ class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
                             "actions": [
                                 {
                                     "description": "Send the message.",
+                                    "action_identity": "send-message",
                                     "capability": "agent_cli.dws",
                                     "operation": "chat message send",
                                     "target": {"group": "cid-1"},
@@ -3009,8 +3019,8 @@ def test_worker_retries_authorization_failed_turn_after_gate_recovery(tmp_path: 
     assert executor.audit_attempts == 2
     runs = worker.store.list_agent_runs_for_task_generation(task_id, "g1")
     audit_runs = [run for run in runs if run.role is AgentRole.AUDIT]
-    assert len(audit_runs) == 1
-    assert audit_runs[0].status == "completed"
+    assert len(audit_runs) == 2
+    assert [run.status for run in audit_runs] == ["failed", "completed"]
 
 
 def test_worker_defers_authorization_failure_at_attempt_limit(tmp_path: Path):
@@ -5047,6 +5057,7 @@ class MeetingReceiptLifecycleExecutor(ConsumerAuditLifecycleExecutor):
                         "actions": [
                             {
                                 "description": "Post the representative meeting action.",
+                                "action_identity": "post-meeting-action",
                                 "capability": "agent_cli.dws",
                                 "operation": "chat message send",
                                 "target": {"group": "cid-1"},
@@ -5241,6 +5252,7 @@ class AuthorizedMailReplyProtocolExecutor(ConsumerAuditLifecycleExecutor):
             "actions": [
                 {
                     "description": "Reply to the verified original mail.",
+                    "action_identity": "reply-to-original-mail",
                     "capability": "agent_cli.dws",
                     "operation": "mail message reply",
                     "target": {

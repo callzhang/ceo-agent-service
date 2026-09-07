@@ -268,6 +268,7 @@ class LocalPipelineOrchestrator:
                     "actions": [
                         {
                             "description": "Send the reply.",
+                            "action_identity": "send-pipeline-reply",
                             "capability": "agent_cli.dws",
                             "operation": "chat message send",
                             "target": {"conversation_id": task.conversation_id},

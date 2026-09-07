@@ -158,6 +158,11 @@
           "title": "Description",
           "type": "string"
         },
+        "action_identity": {
+          "minLength": 1,
+          "title": "Action Identity",
+          "type": "string"
+        },
         "capability": {
           "minLength": 1,
           "title": "Capability",
@@ -191,6 +196,7 @@
       },
       "required": [
         "description",
+        "action_identity",
         "capability",
         "operation",
         "target",

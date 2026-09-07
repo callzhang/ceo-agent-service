@@ -293,6 +293,7 @@ class CalendarRunnerContractExecutor:
             "actions": [
                 {
                     "description": "Ask the verified inviter in the source group.",
+                    "action_identity": "clarify-meeting-input",
                     "capability": "agent_cli.dws",
                     "operation": "chat message send",
                     "target": {"group": "cid-1"},
@@ -416,6 +417,7 @@ class SilentMaterialCalendarExecutor(CalendarRunnerContractExecutor):
             "actions": [
                 {
                     "description": "Accept after reviewing the linked brief.",
+                    "action_identity": "accept-calendar-invitation",
                     "capability": "agent_cli.dws",
                     "operation": "calendar event respond",
                     "target": {"event_id": "event-1"},

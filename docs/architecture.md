@@ -74,18 +74,24 @@ Consumer 在 invocation 开始时接收这个 immutable snapshot；同一次调�
 按 decision scope 验证：Skill/config 路径需要匹配的 activation/load receipt，code 路径才需要
 本地 main 祖先 commit；两类路径都需要场景、健康和零 backlog 的已回读证据。
 
-### Task、Agent Run 与 Reply Attempt 的关系
+### Business Object、Task、Agent Run 与 Reply Attempt 的关系
 
 这三个对象分属调度、执行和展示三层，不能混为一个状态：
 
 ```text
-reply_task（业务队列任务）
-  └── agent_runs（多次真实 Agent 执行）
-          └── reply_attempt（稳定的业务当前投影）
+business_object（稳定业务对象，例如一条 OA task）
+  ├── reply_task_inputs（不同入口收到的不可变输入）
+  └── reply_task（唯一当前队列投影）
+        ├── agent_runs（多次真实 Agent 执行）
+        └── reply_attempt（稳定的业务结果当前投影）
 ```
 
-- `reply_task` 表示某个触发消息是否需要处理，负责排队、领取、重试、
-  `execution_generation` 和 worker 所有权。一个任务可以经历多次执行。
+- `business_object` 表示外部系统中的同一件业务事项。OA 使用
+  `process_instance_id + task_id`；普通消息在没有更稳定身份时才回退到
+  `channel + conversation_id + message_id`。同一事项从轮询、事件或人工重试进入时，
+  只更新一个 `reply_task` 当前投影，每次输入追加到 `reply_task_inputs`。
+- `reply_task` 负责排队、领取、重试、`execution_generation` 和 worker 所有权。
+  新输入到达正在执行的 task 时，本轮结束后重新排队同一个 task，不创建并行任务。
 - `agent_run` 表示一次实际 Consumer 或 Audit Agent 执行。重试、服务重启接管或
   新的 generation 都会产生新的 run；run 的状态、session、revision、transcript
   范围、tool event 和原始错误是不可覆盖的执行事实。
@@ -95,6 +101,23 @@ reply_task（业务队列任务）
 Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许在同一 attempt
 下切换查看多个底层 `agent_runs`。因此“当前结果可以被修正”与“执行历史不可抹除”
 可以同时成立：列表显示最新结论，详情保留每一次 run 的真实轨迹。
+
+### 外部动作身份、顺序与发送投影
+
+Consumer 为每个 ProposedAction 返回 `action_identity`。同一业务对象中，同一预期外部
+结果在 feedback revision、服务重试和新 agent run 之间必须复用该身份；预期结果、目标或
+用途改变时必须使用新身份。服务根据 `business_object_key + action_identity + operation + target`
+生成 `external_action_key`，而不是用 run id 或 revision 做去重。
+
+Provider 成功结果按 `external_action_key` 只保存一次。后续 run 再次遇到同一动作时复用既有
+结果，不再次调用 provider；新 run 仍追加自己的观察关联，因此执行历史完整。一个 proposal
+中的动作严格按数组顺序执行：序号更小的动作尚未成功时，后续动作不得开始。这样审批失败时
+不会继续发送“已审批”的通知。
+
+所有成功消息统一投影到 `sent_replies`。同一 `external_action_key` 只有一条消息记录，相关的
+agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显示真实已发送消息，也不会
+把一次复用展示成第二次发送。这些是执行幂等与展示事实，不是应用层命令审核、业务证据审核
+或 read-back 状态机。
 
 ### 用户反馈处理投影与重新打开
 
@@ -510,10 +533,11 @@ Friday 路由使用以下明确错误码：
 
 ## 重复执行与恢复
 
-### 精确 revision 去重
+### 稳定业务动作去重
 
-重复保护绑定源 trigger、任务 generation 和候选 revision。完全相同的 revision 已有外部
-成功结果时不会再次执行；A 根据反馈产生的新 revision 不会被旧 revision 的结果阻止。
+重复保护绑定业务对象、动作身份、operation 和目标，不绑定 run、generation 或 revision。
+反馈 revision 若仍表达同一预期外部结果，必须复用 `action_identity` 并直接复用已经成功的
+provider 结果；只有预期结果、目标或用途真的变化时才产生新的动作身份。
 
 OA pending 扫描会先读取当前审批记录。只有最新有效记录来自其他参与者时才生成 review
 任务；如果 Derek 已在该外部更新之后完成评论、审批或其他处理，扫描不再把同一审批重新入队。
@@ -526,8 +550,8 @@ run、session、runtime attempt、tool event 和原始失败事件仍是 append-
 
 Consumer 或 Audit 的运行、依赖、解析和外部系统错误统一进入 `failed`，由 Agent 在下一次 turn 中按当前
 业务 Skill 读取必要事实并决定是否重试。服务不区分“有副作用失败”和“无副作用失败”，也不维护专门的
-独立核对队列。重试仍绑定原任务、generation 和 revision；若 provider 已返回稳定结果标识，Agent
-必须先使用该标识或读取目标状态避免重复动作。
+独立核对队列。重试仍绑定原任务；已持久化的 `external_action_key` 成功结果由服务机械复用，
+无需 Agent 再次执行同一动作。没有成功结果的动作由下一轮按当前业务状态继续处理。
 
 服务重启后，仍有有效租约的 run 不会被 stale recovery 抢占；租约过期且没有活动进程的
 run 才能被持久队列恢复。

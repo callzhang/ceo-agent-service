@@ -150,7 +150,10 @@ def test_connector_page_centers_tabs_and_shows_one_connector_without_table(
 
 def test_status_and_attention_are_separate_pages(tmp_path: Path):
     store = _store(tmp_path)
-    store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"待处理"}')
+    input_id = store.enqueue_work_summary_input(
+        "reply_attempt", "1", '{"summary":"待处理"}'
+    )
+    store.mark_work_summary_input_failed(input_id, "processing failed")
 
     status = render_settings_page(store, active_tab="status")
     attention = render_settings_page(store, active_tab="attention")

@@ -300,6 +300,7 @@ class _AuditedTurnExecutor:
             ]
         action = {
             "description": "Execute exactly one audited unsubscribe operation",
+            "action_identity": task_payload["action_identity"],
             "capability": "email_browser",
             "operation": "unsubscribe",
             "target": {

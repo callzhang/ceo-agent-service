@@ -1295,6 +1295,7 @@ def test_task_adapter_preserves_exact_accepted_proposal_fields(tmp_path: Path) -
     task = _legacy_auto_reply_task(database, plan, task_input)
     action = ProposedAction.model_validate(
         {
+            "action_identity": task.trigger_message_id,
             "description": "Send the reviewed automatic reply",
             "capability": "email",
             "operation": "reply",
@@ -1337,6 +1338,7 @@ def test_task_adapter_rejects_reply_target_that_does_not_match_task(
     task = _legacy_auto_reply_task(database, plan, task_input)
     action = ProposedAction.model_validate(
         {
+            "action_identity": task.trigger_message_id,
             "description": "Send reply",
             "capability": "email",
             "operation": "reply",

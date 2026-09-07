@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import hashlib
 import json
+from uuid import NAMESPACE_URL, uuid5
 from pathlib import Path
 import sys
 from uuid import uuid4
@@ -29,6 +30,7 @@ from app.native_cli_metadata import (
     native_command_argv,
 )
 from app.service_message_sender import agent_message_delivery_key
+from app.business_identity import external_action_key
 from app.store import (
     AgentRole,
     AgentRun,
@@ -135,20 +137,24 @@ class AuditAgentRunner:
         frozen_delivery_retry: bool = False,
     ) -> AgentTurnRunResult[AuditAgentResult]:
         prompt = context.render()
-        expected_effect_actions = tuple(
-            {
-                **_expected_effect_action(action, action_index=index),
-                "delivery_key": agent_message_delivery_key(
-                    task_id=task.id,
-                    execution_generation=task.execution_generation,
-                    proposal_revision=context.proposal_revision,
-                    action_index=index,
-                ),
-            }
-            for index, action in enumerate(context.proposal.actions)
-        )
+        expected_effect_actions_list: list[dict[str, object]] = []
+        for index, action in enumerate(context.proposal.actions):
+            expected = _bind_stable_external_action(
+                _expected_effect_action(action, action_index=index),
+                business_object_key=task.business_object_key,
+            )
+            expected["delivery_key"] = agent_message_delivery_key(
+                business_object_key=task.business_object_key,
+                action_identity=action.action_identity,
+            )
+            expected_effect_actions_list.append(expected)
+        expected_effect_actions = tuple(expected_effect_actions_list)
         write_authorizations = (
-            _initial_write_authorizations(run, expected_effect_actions)
+            _initial_write_authorizations(
+                run,
+                expected_effect_actions,
+                business_object_key=task.business_object_key,
+            )
             if not self.dry_run
             else ()
         )
@@ -384,6 +390,7 @@ def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, objec
         return {"action_index": action_index}
     return {
         "action_index": action_index,
+        "action_identity": action.action_identity,
         "argv": argv,
         "capability": f"agent_cli.{descriptor.cli}",
         "operation": descriptor.command_path,
@@ -398,12 +405,25 @@ def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, objec
 def _initial_write_authorizations(
     run: AgentRun,
     actions: tuple[dict[str, object], ...],
+    *,
+    business_object_key: str,
 ) -> tuple[dict[str, object], ...]:
     entries: list[dict[str, object]] = []
-    for action in actions:
+    for original_action in actions:
+        action = _bind_stable_external_action(
+            original_action, business_object_key=business_object_key
+        )
         required = (
-            "action_index", "argv", "capability", "operation", "operation_digest",
-            "arguments_digest", "target_identifiers", "reviewed_server", "reviewed_tool",
+            "action_index",
+            "action_identity",
+            "argv",
+            "capability",
+            "operation",
+            "operation_digest",
+            "arguments_digest",
+            "target_identifiers",
+            "reviewed_server",
+            "reviewed_tool",
         )
         if any(key not in action for key in required):
             continue
@@ -423,10 +443,65 @@ def _initial_write_authorizations(
             {
                 "authorization_id": authorization_id,
                 "receipt_operation_id": receipt_operation_id,
+                "external_action_key": action["external_action_key"],
+                "business_object_key": business_object_key,
                 **action,
             }
         )
     return tuple(entries)
+
+
+def _bind_stable_external_action(
+    action: dict[str, object],
+    *,
+    business_object_key: str,
+) -> dict[str, object]:
+    operation = action.get("operation")
+    action_identity = action.get("action_identity")
+    target = action.get("target_identifiers")
+    if (
+        not isinstance(operation, str)
+        or not isinstance(action_identity, str)
+        or not isinstance(target, dict)
+    ):
+        return dict(action)
+    identity_target = {
+        str(key): value
+        for key, value in target.items()
+        if str(key).replace("_", "-").casefold()
+        not in {"uuid", "idempotency-key"}
+    }
+    action_key = external_action_key(
+        business_object_key=business_object_key,
+        action_identity=action_identity,
+        operation=operation,
+        target_identifiers=identity_target,
+    )
+    bound = dict(action)
+    argv = bound.get("argv")
+    if (
+        operation.startswith("chat ")
+        and isinstance(argv, list)
+        and "--uuid" not in argv
+        and "--idempotency-key" not in argv
+    ):
+        stable_uuid = str(uuid5(NAMESPACE_URL, f"ceo-agent:{action_key}"))
+        bound["argv"] = [*argv, "--uuid", stable_uuid]
+        descriptor = describe_native_command(
+            {"type": "command_execution", "argv": bound["argv"]}
+        )
+        if descriptor is None:
+            raise ValueError("stable external action command is invalid")
+        bound.update(
+            {
+                "operation": descriptor.command_path,
+                "operation_digest": descriptor.command_digest,
+                "arguments_digest": _json_digest({"argv": bound["argv"]}),
+                "target_identifiers": descriptor.target_identifiers,
+            }
+        )
+    bound["external_action_key"] = action_key
+    return bound
 
 
 def _recovery_authorizations(*args, **kwargs) -> tuple[dict[str, object], ...]:

@@ -463,6 +463,7 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
     operation_kind = "post_one_click" if provider_shape == "one_click" else "open_entry"
     accepted_action = ProposedAction.model_validate(
         {
+            "action_identity": payload["action_identity"],
             "description": "Unsubscribe the current subscription",
             "capability": "email_browser",
             "operation": "unsubscribe",

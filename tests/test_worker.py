@@ -109,8 +109,9 @@ def test_oa_group_trigger_uses_cached_applicant_open_id(tmp_path):
 def test_audit_proposal_receives_cached_oa_open_id():
     proposal = ConsumerProposal(
         objective="notify applicant",
-        actions=(ProposedAction(
-            description="notify",
+            actions=(ProposedAction(
+                description="notify",
+                action_identity="notify-applicant",
             capability="dingtalk-chat",
             operation="send_direct_message",
             target={"user_id": "applicant-user-1", "name": "张三"},
@@ -496,8 +497,9 @@ def test_sent_reply_projection_accepts_flat_send_receipt_and_proposal_text():
             "proposal": {
                 "objective": "send",
                 "actions": [
-                    {
-                        "description": "send",
+                        {
+                            "description": "send",
+                            "action_identity": "send-result",
                         "capability": "dingtalk-chat",
                         "operation": "send_direct_message",
                         "target": {"conversation_id": "cid-1"},
@@ -546,8 +548,9 @@ def test_sent_reply_projection_accepts_reply_action_text():
     consumer_result = ConsumerAgentResult.model_validate(
         {
             "outcome": "proposal", "summary": "reply",
-            "proposal": {"objective": "reply", "actions": [{
-                "description": "reply", "capability": "dingtalk-chat",
+                "proposal": {"objective": "reply", "actions": [{
+                    "description": "reply", "capability": "dingtalk-chat",
+                    "action_identity": "reply-to-message",
                 "operation": "messages-reply", "target": {"conversation_id": "cid-1"},
                 "payload": {"reply_text": "引用回复正文"},
                 "expected_verification": "provider success",

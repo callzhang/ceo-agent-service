@@ -1840,31 +1840,39 @@ class AgentTurnProcess(Generic[ResultT]):
             if action.get("argv") == list(argv)
             and action.get("target_identifiers") == target_identifiers
             and isinstance(action.get("delivery_key"), str)
+            and isinstance(action.get("external_action_key"), str)
         ]
-        if len(matching_actions) != 1 or self.store.has_sent_reply_for_trigger(
-            self.task.conversation_id, self.task.trigger_message_id
-        ):
+        if len(matching_actions) != 1:
             return
         delivery_key = matching_actions[0]["delivery_key"]
+        external_key = matching_actions[0]["external_action_key"]
         assert isinstance(delivery_key, str)
+        assert isinstance(external_key, str)
         prepared = self.store.get_outbound_postfix("dingtalk", delivery_key)
         if prepared is None:
             return
-        self.store.record_sent_reply(
-            self.task.conversation_id,
-            self.task.trigger_message_id,
-            prepared.final_body,
-            send_result_json=json.dumps(
-                {
-                    "agent_run_id": run.id,
-                    "operation_id": run.operation_id,
-                    "operation_digest": metadata.get("operation_digest", ""),
-                    "result_digest": metadata.get("result_digest", ""),
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
+        raw_result = raw_item.get("result") if isinstance(raw_item, dict) else None
+        provider_result = (
+            dict(raw_result)
+            if isinstance(raw_result, dict)
+            else {"raw_result": raw_result}
+        )
+        provider_result.update(
+            {
+                "agent_run_id": run.id,
+                "operation_id": run.operation_id,
+                "operation_digest": metadata.get("operation_digest", ""),
+                "result_digest": metadata.get("result_digest", ""),
+                "external_action_key": external_key,
+            }
+        )
+        self.store.record_agent_message_delivery(
+            agent_run_id=run.id,
+            external_action_key=external_key,
+            conversation_id=self.task.conversation_id,
+            trigger_message_id=self.task.trigger_message_id,
+            reply_text=prepared.final_body,
+            provider_result=provider_result,
         )
 
     def _is_recordable_dingtalk_chat_delivery(

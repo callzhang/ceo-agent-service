@@ -234,6 +234,7 @@ def _task() -> ReplyTask:
 def _accepted_action() -> ProposedAction:
     return ProposedAction.model_validate(
         {
+            "action_identity": ACTION_IDENTITY,
             "description": "Unsubscribe the current sender",
             "capability": "email_browser",
             "operation": "unsubscribe",

@@ -109,6 +109,7 @@ class ProposedAction(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     description: str = Field(min_length=1)
+    action_identity: str = Field(min_length=1)
     capability: str = Field(min_length=1)
     operation: str = Field(min_length=1)
     target: dict[str, JsonValue] = Field(min_length=1)
@@ -141,6 +142,13 @@ class ConsumerProposal(BaseModel):
     @classmethod
     def accept_json_arrays(cls, value: object) -> object:
         return tuple(value) if isinstance(value, list) else value
+
+    @model_validator(mode="after")
+    def validate_action_identities(self) -> "ConsumerProposal":
+        identities = [action.action_identity for action in self.actions]
+        if len(identities) != len(set(identities)):
+            raise ValueError("action_identity must be unique within a proposal")
+        return self
 
 
 class DecisionOption(BaseModel):

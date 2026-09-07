@@ -417,6 +417,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
                 "actions": [
                     {
                         "description": "Send update",
+                        "action_identity": "send-update",
                         "capability": "agent_cli.dws",
                         "operation": "chat message send",
                         "target": {"conversation_id": "cid-1"},
@@ -498,6 +499,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
                 "actions": [
                     {
                         "description": "Prepare update",
+                        "action_identity": "prepare-update",
                         "capability": "agent_cli.dws",
                         "operation": "chat message send",
                         "target": {"conversation_id": "cid-privacy"},
@@ -1360,6 +1362,7 @@ def test_runtime_domain_result_codec_rejects_consumer_document_payload():
                                 "actions": [
                                     {
                                         "description": "Send update",
+                                        "action_identity": "send-update",
                                         "capability": "agent_cli.dws",
                                         "operation": "chat message send",
                                         "target": {"conversation_id": "cid-1"},

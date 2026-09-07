@@ -130,16 +130,28 @@ def test_task_result_parser_rejects_runtime_paths_before_persistence(monkeypatch
 def test_meeting_result_codec_persists_only_audit_references():
     encoded = _encode_meeting_alignment_result(
         _raw_with_sensitive_audit_event(
-                {
-                    "action": "no_action",
-                    "audience_scope": "business",
-                "trigger_reasons": [],
+            {
+                "action": "send",
+                "audience_scope": "business",
+                "trigger_reasons": ["meeting_summary"],
                 "topics": [],
                 "derek_viewpoint": None,
                 "key_questions": [],
                 "mention_names": [],
-                "target": None,
-                "final_message": "",
+                "target": {
+                    "kind": "group",
+                    "conversation_id": "generalized-group",
+                    "direct_user_id": "",
+                    "title": "Generalized group",
+                    "candidates": [
+                        {
+                            "conversation_id": "generalized-group",
+                            "title": "Generalized group",
+                            "evidence": ["fixture"],
+                        }
+                    ],
+                },
+                "final_message": "Generalized meeting summary.",
                 "audit_summary": "no material disagreement",
                 "confidence": 0.9,
             }

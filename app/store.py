@@ -24,7 +24,7 @@ from app.agent_runtime_contracts import (
     RuntimeFailureClass,
     RuntimeKind,
 )
-from app.business_identity import oa_identifiers_from_url, reply_business_object_key
+from app.business_identity import reply_business_object_key
 from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
     classify_codex_process_failure,
@@ -112,7 +112,7 @@ SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-07.1"
+STORE_SCHEMA_VERSION = "2026-09-07.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -126,6 +126,8 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_events",
     "agent_run_state_events",
     "agent_effect_intents",
+    "external_action_results",
+    "sent_reply_observers",
     "business_object_tasks",
     "reply_task_inputs",
     "follow_up_send_attempts",
@@ -164,6 +166,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_agent_run_state_events_run",
     "idx_agent_effect_intents_run",
     "idx_agent_effect_intents_operation",
+    "idx_sent_replies_external_action",
     "idx_meeting_alignment_runs_active_job",
     "idx_weekly_okr_analysis_jobs_identity",
     "idx_wechat_memory_import_jobs_status",
@@ -210,6 +213,8 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "input_version",
         "claimed_input_version",
     ),
+    "agent_effect_intents": ("external_action_key",),
+    "sent_replies": ("agent_run_id", "external_action_key"),
     "agent_runtime_attempts": (
         "session_mode",
         "source_session_id",
@@ -733,6 +738,8 @@ class SentReply(BaseModel):
     recall_error: str = ""
     recalled_at: str | None = None
     feedback_token: str = ""
+    agent_run_id: int = 0
+    external_action_key: str = ""
     sent_at: str
 
 
@@ -2111,7 +2118,19 @@ class AutoReplyStore:
                     recall_error text not null default '',
                     recalled_at text,
                     feedback_token text not null default '',
+                    agent_run_id integer not null default 0,
+                    external_action_key text not null default '',
                     sent_at text not null default current_timestamp
+                );
+                create table if not exists sent_reply_observers (
+                    sent_reply_id integer not null,
+                    agent_run_id integer not null,
+                    reply_task_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(sent_reply_id, agent_run_id),
+                    foreign key(sent_reply_id) references sent_replies(id),
+                    foreign key(agent_run_id) references agent_runs(id),
+                    foreign key(reply_task_id) references reply_tasks(id)
                 );
                 create table if not exists feedback_events (
                     key text primary key,
@@ -2591,6 +2610,7 @@ class AutoReplyStore:
                     operation_digest text not null,
                     arguments_digest text not null,
                     target_identifiers_json text not null,
+                    external_action_key text not null default '',
                     state text not null default 'prepared'
                         check(state in ('prepared', 'dispatched', 'acknowledged')),
                     result_digest text not null default '',
@@ -2606,6 +2626,21 @@ class AutoReplyStore:
                     on agent_effect_intents(agent_run_id, action_index, id);
                 create unique index if not exists idx_agent_effect_intents_operation
                     on agent_effect_intents(agent_run_id, receipt_operation_id);
+                create table if not exists external_action_results (
+                    external_action_key text primary key
+                        check(trim(external_action_key) != ''),
+                    business_object_key text not null
+                        check(trim(business_object_key) != ''),
+                    action_identity text not null
+                        check(trim(action_identity) != ''),
+                    operation text not null check(trim(operation) != ''),
+                    target_identifiers_json text not null,
+                    provider_result_json text not null,
+                    result_digest text not null check(trim(result_digest) != ''),
+                    first_agent_run_id integer not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(first_agent_run_id) references agent_runs(id)
+                );
                 create table if not exists wechat_read_state (
                     account_id text primary key,
                     account_dir text not null,
@@ -3630,6 +3665,17 @@ class AutoReplyStore:
                     "alter table agent_execution_receipts add column "
                     "effect_counted integer not null default 0"
                 )
+            effect_intent_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(agent_effect_intents)"
+                ).fetchall()
+            }
+            if "external_action_key" not in effect_intent_columns:
+                db.execute(
+                    "alter table agent_effect_intents add column "
+                    "external_action_key text not null default ''"
+                )
             self._migrate_reply_task_channel_identity(db)
             self._migrate_reply_task_business_objects(db)
             db.execute(
@@ -3649,6 +3695,8 @@ class AutoReplyStore:
                 ("recall_error", "text not null default ''"),
                 ("recalled_at", "text"),
                 ("feedback_token", "text not null default ''"),
+                ("agent_run_id", "integer not null default 0"),
+                ("external_action_key", "text not null default ''"),
             ):
                 if column not in sent_reply_columns:
                     try:
@@ -3658,6 +3706,12 @@ class AutoReplyStore:
                     except sqlite3.OperationalError as exc:
                         if "duplicate column name" not in str(exc):
                             raise
+            db.execute(
+                "create unique index if not exists "
+                "idx_sent_replies_external_action "
+                "on sent_replies(external_action_key) "
+                "where external_action_key<>''"
+            )
             feedback_event_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(feedback_events)").fetchall()
@@ -6857,7 +6911,7 @@ class AutoReplyStore:
     @staticmethod
     def _agent_effect_intent_identity(
         authorization: dict[str, object],
-    ) -> tuple[str, int, str, str, str, str, str, str]:
+    ) -> tuple[str, int, str, str, str, str, str, str, str]:
         values = (
             authorization.get("authorization_id"),
             authorization.get("action_index"),
@@ -6866,6 +6920,7 @@ class AutoReplyStore:
             authorization.get("operation"),
             authorization.get("operation_digest"),
             authorization.get("arguments_digest"),
+            authorization.get("external_action_key"),
         )
         target_identifiers = authorization.get("target_identifiers")
         if (
@@ -6890,12 +6945,13 @@ class AutoReplyStore:
             values[5],
             values[6],
             _json_object_text(target_identifiers, field="target_identifiers"),
+            values[7],
         )
 
     @staticmethod
     def _persisted_agent_effect_intent_identity(
         row: sqlite3.Row,
-    ) -> tuple[str, int, str, str, str, str, str, str]:
+    ) -> tuple[str, int, str, str, str, str, str, str, str]:
         return tuple(
             row[key]
             for key in (
@@ -6907,6 +6963,7 @@ class AutoReplyStore:
                 "operation_digest",
                 "arguments_digest",
                 "target_identifiers_json",
+                "external_action_key",
             )
         )
 
@@ -6929,7 +6986,7 @@ class AutoReplyStore:
             run_row = db.execute(
                 "select * from agent_runs where id=?", (run_id,)
             ).fetchone()
-            if run_row is None or run_row["status"] not in {"running", "unknown"}:
+            if run_row is None or run_row["status"] != "running":
                 raise ValueError("effect intents require an active Audit run")
             run_row = self._require_current_agent_run_write_access(
                 db,
@@ -6958,8 +7015,9 @@ class AutoReplyStore:
                         agent_run_id, authorization_id, action_index,
                         receipt_operation_id, capability, operation,
                         operation_digest, arguments_digest,
-                        target_identifiers_json, state, prepared_at, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
+                        target_identifiers_json, external_action_key,
+                        state, prepared_at, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
                     """,
                     (run_id, *identity, now_text, now_text),
                 )
@@ -6987,7 +7045,7 @@ class AutoReplyStore:
             ).fetchone()
             if (
                 run_row is None
-                or run_row["status"] not in {"running", "unknown"}
+                or run_row["status"] != "running"
                 or not run_row["lease_owner"]
                 or run_row["lease_expires_at"] <= now_text
             ):
@@ -7003,6 +7061,14 @@ class AutoReplyStore:
                 raise ValueError("effect intent identity mismatch")
             if row["state"] != "prepared":
                 raise ValueError("effect intent already dispatched")
+            incomplete_predecessor = db.execute(
+                "select action_index from agent_effect_intents "
+                "where agent_run_id=? and action_index<? and state<>'acknowledged' "
+                "order by action_index limit 1",
+                (run_id, row["action_index"]),
+            ).fetchone()
+            if incomplete_predecessor is not None:
+                raise ValueError("agent_action_dependency_incomplete")
             cursor = db.execute(
                 "update agent_effect_intents set state='dispatched', "
                 "dispatched_at=?, updated_at=? where id=? and state='prepared'",
@@ -7023,12 +7089,21 @@ class AutoReplyStore:
         *,
         result_digest: str,
         exit_code: int,
+        provider_result: dict[str, object] | None = None,
         now: str | datetime | None = None,
     ) -> None:
         """Persist a successful tool ack even if the service lease was lost."""
         identity = self._agent_effect_intent_identity(authorization)
         if not result_digest.strip() or exit_code != 0:
             raise ValueError("only a successful durable ack can confirm an intent")
+        if provider_result is None:
+            provider_result = {
+                "result_digest": result_digest,
+                "legacy_receipt": True,
+            }
+        provider_result_json = _json_object_text(
+            provider_result, field="provider_result"
+        )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = db.execute(
                 "select * from agent_effect_intents "
@@ -7077,6 +7152,120 @@ class AutoReplyStore:
                 "where id=? and state='dispatched'",
                 (result_digest, exit_code, now_text, now_text, row["id"]),
             )
+            business_object_key = str(
+                authorization.get("business_object_key") or ""
+            ).strip()
+            action_identity = str(
+                authorization.get("action_identity") or ""
+            ).strip()
+            if business_object_key and action_identity:
+                db.execute(
+                    """
+                    insert or ignore into external_action_results (
+                        external_action_key, business_object_key, action_identity,
+                        operation, target_identifiers_json, provider_result_json,
+                        result_digest, first_agent_run_id, created_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        identity[8], business_object_key, action_identity,
+                        identity[4], identity[7], provider_result_json,
+                        result_digest, run_id, now_text,
+                    ),
+                )
+                persisted = db.execute(
+                    "select * from external_action_results "
+                    "where external_action_key=?",
+                    (identity[8],),
+                ).fetchone()
+                if (
+                    persisted is None
+                    or persisted["business_object_key"] != business_object_key
+                    or persisted["action_identity"] != action_identity
+                    or persisted["operation"] != identity[4]
+                    or persisted["target_identifiers_json"] != identity[7]
+                    or persisted["provider_result_json"] != provider_result_json
+                    or persisted["result_digest"] != result_digest
+                ):
+                    raise ValueError("conflicting external action result")
+
+    def reuse_completed_external_action(
+        self,
+        run_id: int,
+        authorization: dict[str, object],
+        *,
+        now: str | datetime | None = None,
+    ) -> dict[str, object] | None:
+        """Acknowledge this run from a durable prior provider result."""
+        identity = self._agent_effect_intent_identity(authorization)
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            run_row = db.execute(
+                "select status, lease_owner, lease_expires_at from agent_runs "
+                "where id=?",
+                (run_id,),
+            ).fetchone()
+            if (
+                run_row is None
+                or run_row["status"] != "running"
+                or not run_row["lease_owner"]
+                or run_row["lease_expires_at"] <= now_text
+            ):
+                raise ValueError("effect intent run is not active")
+            row = db.execute(
+                "select * from agent_effect_intents "
+                "where agent_run_id=? and authorization_id=?",
+                (run_id, identity[0]),
+            ).fetchone()
+            if row is None or row["state"] != "prepared":
+                return None
+            if self._persisted_agent_effect_intent_identity(row) != identity:
+                raise ValueError("effect intent identity mismatch")
+            prior = db.execute(
+                "select * from external_action_results "
+                "where external_action_key=?",
+                (identity[8],),
+            ).fetchone()
+            if prior is None:
+                return None
+            if (
+                prior["operation"] != identity[4]
+                or prior["target_identifiers_json"] != identity[7]
+            ):
+                raise ValueError("conflicting external action result")
+            incomplete_predecessor = db.execute(
+                "select action_index from agent_effect_intents "
+                "where agent_run_id=? and action_index<? and state<>'acknowledged' "
+                "order by action_index limit 1",
+                (run_id, row["action_index"]),
+            ).fetchone()
+            if incomplete_predecessor is not None:
+                raise ValueError("agent_action_dependency_incomplete")
+            db.execute(
+                """
+                insert or ignore into agent_execution_receipts (
+                    agent_run_id, receipt_id, operation_id, cli,
+                    command_path, command_digest, exit_code,
+                    completed, persisted, safe_to_confirm, created_at
+                ) values (?, ?, ?, ?, ?, ?, 0, 1, 1, 1, ?)
+                """,
+                (
+                    run_id, identity[0], identity[2],
+                    identity[3].rsplit(".", 1)[-1], identity[4],
+                    identity[5], now_text,
+                ),
+            )
+            db.execute(
+                "update agent_effect_intents set state='acknowledged', "
+                "result_digest=?, exit_code=0, acknowledged_at=?, updated_at=? "
+                "where id=? and state='prepared'",
+                (prior["result_digest"], now_text, now_text, row["id"]),
+            )
+            result = json.loads(prior["provider_result_json"])
+            result["authorization_id"] = identity[0]
+            result["action_index"] = identity[1]
+            result["external_action_key"] = identity[8]
+            result["reused"] = True
+            return result
 
     def confirm_agent_execution_receipt(
         self,
@@ -9093,6 +9282,21 @@ class AutoReplyStore:
             _agent_event_columns(normalized_event)
         )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            status_row = db.execute(
+                "select agent_runs.status, agent_runs.execution_generation, "
+                "reply_tasks.execution_generation as task_execution_generation "
+                "from agent_runs join reply_tasks "
+                "on reply_tasks.id=agent_runs.reply_task_id "
+                "where agent_runs.id=?",
+                (run_id,),
+            ).fetchone()
+            if (
+                status_row is not None
+                and status_row["status"] != "running"
+                and status_row["execution_generation"]
+                == status_row["task_execution_generation"]
+            ):
+                raise ValueError("cannot append event to terminal agent run")
             self._require_current_agent_run_write_access(
                 db,
                 run_id,
@@ -10346,6 +10550,7 @@ class AutoReplyStore:
                               from agent_runs as runs
                               where runs.reply_task_id=tasks.id
                                 and runs.execution_generation=tasks.execution_generation
+                                and runs.status='running'
                                 and datetime(runs.updated_at) > datetime('now', ?)
                           )
                       )
@@ -14984,7 +15189,8 @@ class AutoReplyStore:
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             target = db.execute(
                 """
-                select id, execution_generation, trigger_message_id,
+                select id, execution_generation, conversation_title, single_chat,
+                       business_object_key, trigger_message_id,
                        trigger_create_time, trigger_sender, trigger_text,
                        trigger_message_json, available_at, error
                 from reply_tasks
@@ -15069,6 +15275,70 @@ class AutoReplyStore:
                     error,
                 ),
             )
+            duplicate_rows = db.execute(
+                """
+                select id from reply_tasks
+                where channel=?
+                  and conversation_id=?
+                  and single_chat=1
+                  and status='pending'
+                  and attempts=0
+                  and id != ?
+                """,
+                (channel, conversation_id, task_id),
+            ).fetchall()
+            duplicate_ids = [int(row["id"]) for row in duplicate_rows]
+            if duplicate_ids:
+                placeholders = ",".join("?" for _ in duplicate_ids)
+                db.execute(
+                    f"update reply_task_inputs set reply_task_id=? "
+                    f"where reply_task_id in ({placeholders})",
+                    (task_id, *duplicate_ids),
+                )
+                db.execute(
+                    f"update business_object_tasks set reply_task_id=? "
+                    f"where reply_task_id in ({placeholders})",
+                    (task_id, *duplicate_ids),
+                )
+            target_key = str(target["business_object_key"] or "").strip()
+            if not target_key:
+                target_key = reply_business_object_key(
+                    channel=channel,
+                    conversation_id=conversation_id,
+                    trigger_message_id=str(target["trigger_message_id"]),
+                )
+                db.execute(
+                    "update reply_tasks set business_object_key=? where id=?",
+                    (target_key, task_id),
+                )
+            db.execute(
+                """
+                insert or ignore into reply_task_inputs (
+                    reply_task_id, channel, conversation_id, conversation_title,
+                    single_chat, trigger_message_id, trigger_create_time,
+                    trigger_sender, trigger_text, trigger_message_json, oa_url,
+                    business_object_key
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)
+                """,
+                (
+                    task_id, channel, conversation_id,
+                    str(target["conversation_title"]), int(target["single_chat"]),
+                    trigger_message_id, trigger_create_time, trigger_sender,
+                    trigger_text, trigger_message_json, target_key,
+                ),
+            )
+            db.execute(
+                "insert or ignore into business_object_tasks "
+                "(business_object_key, reply_task_id) values (?, ?)",
+                (
+                    reply_business_object_key(
+                        channel=channel,
+                        conversation_id=conversation_id,
+                        trigger_message_id=trigger_message_id,
+                    ),
+                    task_id,
+                ),
+            )
             db.execute(
                 """
                 delete from reply_tasks
@@ -15080,6 +15350,11 @@ class AutoReplyStore:
                   and id != ?
                 """,
                 (channel, conversation_id, task_id),
+            )
+            db.execute(
+                "update reply_tasks set input_version=(select count(*) "
+                "from reply_task_inputs where reply_task_id=?) where id=?",
+                (task_id, task_id),
             )
             return cursor.rowcount
 
@@ -15331,6 +15606,73 @@ class AutoReplyStore:
                     feedback_token,
                 ),
             )
+
+    def record_agent_message_delivery(
+        self,
+        *,
+        agent_run_id: int,
+        external_action_key: str,
+        conversation_id: str,
+        trigger_message_id: str,
+        reply_text: str,
+        provider_result: dict[str, object],
+    ) -> SentReply:
+        """Project one durable external send into History exactly once."""
+        action_key = external_action_key.strip()
+        if not action_key or not reply_text.strip():
+            raise ValueError("external action key and reply text are required")
+        provider_result_json = _json_object_text(
+            provider_result, field="provider_result"
+        )
+        feedback_context = extract_configured_feedback_link_context(
+            reply_text,
+            vercel_base_url=feedback_spike_vercel_base_url(),
+        )
+        feedback_token = (
+            feedback_context.feedback_token if feedback_context is not None else ""
+        )
+        with self._immediate_write_transaction() as db:
+            run = db.execute(
+                "select reply_task_id from agent_runs where id=?",
+                (agent_run_id,),
+            ).fetchone()
+            if run is None:
+                raise ValueError("agent run does not exist")
+            db.execute(
+                """
+                insert or ignore into sent_replies (
+                    conversation_id, trigger_message_id, reply_text,
+                    send_result_json, feedback_token, agent_run_id,
+                    external_action_key
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    conversation_id,
+                    trigger_message_id,
+                    reply_text,
+                    provider_result_json,
+                    feedback_token,
+                    agent_run_id,
+                    action_key,
+                ),
+            )
+            row = db.execute(
+                "select * from sent_replies where external_action_key=?",
+                (action_key,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("sent reply projection was not persisted")
+            if row["reply_text"] != reply_text:
+                raise ValueError("conflicting message delivery projection")
+            db.execute(
+                """
+                insert or ignore into sent_reply_observers (
+                    sent_reply_id, agent_run_id, reply_task_id
+                ) values (?, ?, ?)
+                """,
+                (row["id"], agent_run_id, run["reply_task_id"]),
+            )
+            return SentReply.model_validate(dict(row))
 
     def list_confirmed_audit_runs_missing_sent_reply(
         self,

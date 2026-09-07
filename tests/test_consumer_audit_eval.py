@@ -10,7 +10,7 @@ import pytest
 
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
-from app.agent_orchestrator import AgentOrchestrator
+from app.agent_orchestrator import AgentOrchestrator, MAX_CONTENT_FEEDBACK_CYCLES
 from app.agent_turn_runner import AgentTurnRunResult
 from app.store import AgentRole, AutoReplyStore
 from tests.support.audit_sink_mcp import AuditSink
@@ -47,6 +47,7 @@ def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
             "objective": case.trigger,
             "actions": [
                 {
+                    "action_identity": f"eval:{case.id}",
                     "description": case.candidate,
                     "capability": "audit_sink",
                     "operation": _operation_name(case),
@@ -287,7 +288,7 @@ def test_eval_cases_traverse_orchestration_with_exactly_the_expected_write(case:
     expected_oa_reads = (
         [
             f"agent-task:{task.id}:{task.execution_generation}:proposal:{revision}"
-            for revision in range(3)
+            for revision in range(MAX_CONTENT_FEEDBACK_CYCLES + 1)
         ]
         if case.requires_oa_live_detail
         else []

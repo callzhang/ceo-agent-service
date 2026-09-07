@@ -614,6 +614,7 @@ def test_unsubscribe_task_projects_only_redacted_real_entry_references(
 
     accepted = ProposedAction.model_validate(
         {
+            "action_identity": payload["action_identity"],
             "description": "Unsubscribe the current sender",
             "capability": "email_browser",
             "operation": "unsubscribe",
@@ -665,6 +666,7 @@ def test_accepted_unsubscribe_rejects_opening_mailto_entry(tmp_path: Path) -> No
     )
     accepted = ProposedAction.model_validate(
         {
+            "action_identity": payload["action_identity"],
             "description": "Open the projected unsubscribe entry",
             "capability": "email_browser",
             "operation": "unsubscribe",

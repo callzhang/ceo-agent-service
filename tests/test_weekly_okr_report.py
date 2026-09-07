@@ -373,7 +373,7 @@ def test_weekly_okr_group_summary_includes_assistant_postfix(tmp_path):
         title="2026-W35 管理周报",
         text="重试时不应重写正文",
     ) == "sent"
-    assert dws.sent[1]["text"] == dws.sent[0]["text"]
+    assert len(dws.sent) == 1
 
 
 class FakeSource:

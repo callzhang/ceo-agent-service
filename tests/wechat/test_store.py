@@ -1258,3 +1258,9 @@ def test_dingtalk_pending_replacement_leaves_wechat_pending_tasks_untouched(tmp_
     assert {
         task.trigger_message_id for task in store.list_reply_tasks(channel="wechat")
     } == {"old", "quoted", "replace-old"}
+    [dingtalk_task] = store.list_reply_tasks(channel="dingtalk")
+    assert dingtalk_task.trigger_message_id == "replacement"
+    assert {
+        item["trigger_message_id"]
+        for item in store.list_reply_task_inputs(dingtalk_task.id)
+    } == {"old", "quoted", "replace-old", "replacement"}

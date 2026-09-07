@@ -371,9 +371,10 @@ def test_audit_contract_requires_profile_guided_response_to_substantive_input(
         {
             "objective": "Acknowledge the materials.",
             "actions": [
-                {
-                    "description": "Confirm receipt.",
-                    "capability": "agent_cli.dws",
+                    {
+                        "description": "Confirm receipt.",
+                        "action_identity": "acknowledge-materials",
+                        "capability": "agent_cli.dws",
                     "operation": "chat message send",
                     "target": {"open_dingtalk_id": "recipient-1"},
                     "payload": {
@@ -533,6 +534,7 @@ def _proposal_jsonl(
             "actions": [
                 {
                     "description": "Send",
+                    "action_identity": "send-result",
                     "capability": capability,
                     "operation": operation,
                     "target": target or {"group": "cid-agent"},
@@ -1882,10 +1884,8 @@ def test_consumer_prepares_dingtalk_message_postfix_before_persisting(
     prepared = store.get_outbound_postfix(
         "dingtalk",
         agent_message_delivery_key(
-            task_id=task.id,
-            execution_generation=task.execution_generation,
-            proposal_revision=0,
-            action_index=0,
+            business_object_key=task.business_object_key,
+            action_identity=result.result.proposal.actions[0].action_identity,
         ),
     )
     assert prepared is not None
@@ -1980,10 +1980,8 @@ def test_consumer_prepares_structured_dingtalk_message_postfix_before_audit(
     prepared = store.get_outbound_postfix(
         "dingtalk",
         agent_message_delivery_key(
-            task_id=task.id,
-            execution_generation=task.execution_generation,
-            proposal_revision=0,
-            action_index=0,
+            business_object_key=task.business_object_key,
+            action_identity=result.result.proposal.actions[0].action_identity,
         ),
     )
     assert prepared is not None

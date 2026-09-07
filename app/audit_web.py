@@ -5645,12 +5645,15 @@ def _render_attempt_list(
         else 0
     )
     queue_tasks = []
-    if not search_object_type:
+    if not search_object_type or search_object_type == "task":
         queue_tasks = [
             task
             for task in store.list_reply_tasks(statuses=("pending", "processing"))
             if (not type_filters or task.status in type_filters)
             and _reply_task_matches_query(task, query)
+            and store.get_latest_reply_attempt_for_trigger(
+                task.conversation_id, task.trigger_message_id
+            ) is None
         ]
     total_count = history_total_count + len(queue_tasks)
     page = _bounded_page(page, limit, total_count)
