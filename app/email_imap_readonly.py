@@ -22,13 +22,18 @@ from typing import Any
 
 from app.email_classifier_contracts import EmailProviderLocator
 from app.email_imap_folders import ImapFolderListError, parse_imap_list_response
-from app.email_imap_mailbox import ImapMailboxCodecError, encode_imap_mailbox_argument
+from app.email_imap_mailbox import (
+    ImapMailboxCodecError,
+    encode_imap_mailbox_argument,
+    parse_imap_fetch_flags,
+)
+from app.email_important import ImportantSignals, normalize_important_signals
 from app.email_provider_folders import ProviderFolder
 from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 
 
 _HEADER_FETCH = (
-    "(BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID REFERENCES "
+    "(FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID REFERENCES "
     "IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST AUTO-SUBMITTED)])"
 )
 _MAX_TEXT_FETCH_BYTES = 64 * 1024
@@ -187,6 +192,7 @@ class ImapReadonlyAdapter:
             headers = email.message_from_bytes(
                 _fetch_payload(header_data), policy=email.policy.default
             )
+            important_signals = _imap_important_signals(header_data)
             remaining = _MAX_TEXT_FETCH_BYTES
             body_parts: list[str] = []
             html_parts: list[str] = []
@@ -237,6 +243,7 @@ class ImapReadonlyAdapter:
                     folder=mailbox,
                     uidvalidity=uidvalidity,
                     uid=int(uid),
+                    important_signals=important_signals,
                 )
             )
         return ImapUidBatch(
@@ -324,6 +331,7 @@ def parse_rfc822_message(
         folder=folder,
         uidvalidity=uidvalidity,
         uid=uid,
+        important_signals=ImportantSignals((), False),
     )
 
 
@@ -337,6 +345,7 @@ def _normalized_message_record(
     folder: str,
     uidvalidity: int,
     uid: int,
+    important_signals: ImportantSignals,
 ) -> dict[str, object]:
     message_id = _decode_header(parsed.get("Message-ID", ""))
     in_reply_to = _message_ids(parsed.get("In-Reply-To", ""))
@@ -395,10 +404,23 @@ def _normalized_message_record(
         "autoSubmitted": parsed.get("Auto-Submitted", ""),
         "hasAttachment": bool(attachments),
         "attachments": attachments,
+        "importantSignals": important_signals,
     }
     if body_html:
         result["_ephemeralBodyHtml"] = _EphemeralBodyHtml(body_html)
     return result
+
+
+def _imap_important_signals(data: object) -> ImportantSignals:
+    signal_names = tuple(
+        flag
+        for flag in parse_imap_fetch_flags(data)
+        if flag.casefold() in {"\\flagged", "$important"}
+    )
+    return normalize_important_signals(
+        provider="imap",
+        raw_signal_names=signal_names,
+    )
 
 
 def _parse_bodystructure(data: object) -> _BodyPart:

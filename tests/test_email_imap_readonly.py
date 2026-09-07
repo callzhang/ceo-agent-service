@@ -30,7 +30,7 @@ from app.email_store import EmailStore
 
 
 _HEADER_FETCH = (
-    "(BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID REFERENCES "
+    "(FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID REFERENCES "
     "IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST AUTO-SUBMITTED)])"
 )
 
@@ -44,12 +44,16 @@ class FakeImapSession:
         section_payloads: Mapping[str, bytes],
         search_result: bytes = b"1",
         uidvalidity: int = 42,
+        flags: tuple[str, ...] = (),
+        flags_attribute: str = "FLAGS",
     ):
         self.headers = headers
         self.bodystructure = bodystructure
         self.section_payloads = dict(section_payloads)
         self.search_result = search_result
         self.uidvalidity = uidvalidity
+        self.flags = flags
+        self.flags_attribute = flags_attribute
         self.calls: list[tuple[object, ...]] = []
 
     def select(self, mailbox: str, readonly: bool = False):
@@ -72,6 +76,11 @@ class FakeImapSession:
                 (
                     b"1 (UID "
                     + bytes(uid)
+                    + b" "
+                    + self.flags_attribute.encode("ascii")
+                    + b" ("
+                    + " ".join(self.flags).encode("ascii")
+                    + b")"
                     + b" BODY[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID "
                     b"REFERENCES IN-REPLY-TO LIST-UNSUBSCRIBE "
                     b"LIST-UNSUBSCRIBE-POST AUTO-SUBMITTED)] {"
@@ -276,6 +285,117 @@ def test_imap_adapter_fetches_only_headers_bodystructure_and_bounded_text_sectio
         "SEARCH",
         "FETCH",
     }
+
+
+def test_imap_adapter_normalizes_trusted_flags_without_using_priority_headers():
+    from app.email_important import ImportantSignals
+
+    session = _plain_session()
+    session.flags = ("\\Seen", "$Important")
+    session.headers = session.headers.replace(
+        b"Subject:",
+        b"X-Priority: 1\r\nSubject:",
+    )
+
+    message = (
+        ImapReadonlyAdapter(session, account_id="account-a")
+        .fetch_uid_batch(
+            "INBOX",
+            cursor_uidvalidity=42,
+            last_seen_uid=0,
+            limit=1,
+        )
+        .messages[0]
+    )
+
+    assert message["importantSignals"] == ImportantSignals(("$Important",), True)
+
+
+@pytest.mark.parametrize("flags_attribute", ("flags", "FlAgS"))
+def test_imap_adapter_parses_flags_attribute_and_atoms_case_insensitively(
+    flags_attribute: str,
+):
+    from app.email_important import ImportantSignals
+
+    session = _plain_session()
+    session.flags_attribute = flags_attribute
+    session.flags = ("\\fLaGgEd", "$iMpOrTaNt")
+
+    message = (
+        ImapReadonlyAdapter(session, account_id="account-a")
+        .fetch_uid_batch("INBOX", cursor_uidvalidity=42, last_seen_uid=0, limit=1)
+        .messages[0]
+    )
+
+    assert message["importantSignals"] == ImportantSignals(
+        ("\\fLaGgEd", "$iMpOrTaNt"),
+        True,
+    )
+
+
+def test_imap_adapter_does_not_parse_flags_text_inside_header_literal():
+    from app.email_important import ImportantSignals
+
+    session = _plain_session()
+    session.headers = session.headers.replace(
+        b"Subject: =?utf-8?b?5rWL6K+V?=",
+        b"Subject: FLAGS (\\Flagged $Important)",
+    )
+    assert b"FLAGS (\\Flagged $Important)" in session.headers
+
+    message = (
+        ImapReadonlyAdapter(session, account_id="account-a")
+        .fetch_uid_batch("INBOX", cursor_uidvalidity=42, last_seen_uid=0, limit=1)
+        .messages[0]
+    )
+
+    assert message["importantSignals"] == ImportantSignals((), False)
+
+
+@pytest.mark.parametrize(
+    "flags_attribute",
+    ("X-FLAGS", "FLAGS-EXT", "XFLAGS", "FLAGS2", "FLAGS_2"),
+)
+def test_imap_adapter_does_not_treat_extension_atoms_as_standard_flags(
+    flags_attribute: str,
+):
+    from app.email_important import ImportantSignals
+
+    session = _plain_session()
+    session.flags_attribute = flags_attribute
+    session.flags = ("\\Flagged", "$Important")
+
+    message = (
+        ImapReadonlyAdapter(session, account_id="account-a")
+        .fetch_uid_batch("INBOX", cursor_uidvalidity=42, last_seen_uid=0, limit=1)
+        .messages[0]
+    )
+
+    assert message["importantSignals"] == ImportantSignals((), False)
+
+
+def test_fetch_parser_ignores_x_flags_when_standard_flags_coexist():
+    from app.email_imap_mailbox import parse_imap_fetch_flags
+
+    parsed = parse_imap_fetch_flags(
+        [b"1 (UID 7 X-FLAGS ($Important) FLAGS (\\Flagged))"]
+    )
+
+    assert parsed == ("\\Flagged",)
+
+
+def test_rfc822_priority_header_alone_is_not_provider_important():
+    from app.email_important import ImportantSignals
+
+    parsed = parse_rfc822_message(
+        b"X-Priority: 1\r\nSubject: URGENT\r\n\r\nPlease review urgently.",
+        account_id="account-a",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=1,
+    )
+
+    assert parsed["importantSignals"] == ImportantSignals((), False)
 
 
 def test_imap_adapter_searches_after_last_seen_uid_and_resets_on_uidvalidity_change():

@@ -59,7 +59,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 21
+EMAIL_SCHEMA_VERSION = 22
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -413,7 +413,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "legacy_serialization_pre_v16 in (0, 1)",
     ),
     "email_actions": (
-        "action_type in ('label', 'mark_read', 'archive', 'move', 'trash')",
+        "action_type in ('label', 'mark_read', 'archive', 'move', 'trash', 'flag_important')",
         "json_valid(parameters_json)",
         "status in ('pending', 'processing', 'done', 'failed')",
         "attempt_count >= 0",
@@ -2296,6 +2296,9 @@ class EmailStore:
                 latest_version = 20
             if latest_version == 20:
                 self._migrate_v20_to_v21(db, replace_version=is_prototype)
+                latest_version = 21
+            if latest_version == 21:
+                self._migrate_v21_to_v22(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -3206,6 +3209,95 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v21_to_v22(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Allow the provider-neutral deterministic important-flag action."""
+
+        for trigger in (
+            "trg_email_direct_action_blocks_plan_switch",
+            "trg_email_direct_action_blocks_account_update",
+            "trg_email_direct_action_blocks_account_delete",
+        ):
+            db.execute(f"drop trigger if exists {trigger}")
+        db.execute("drop index if exists idx_email_actions_status")
+        db.execute(
+            "alter table email_action_attempts rename to email_action_attempts_v21"
+        )
+        db.execute("alter table email_actions rename to email_actions_v21")
+        statements = (
+            """
+            create table email_actions (
+                action_id text primary key,
+                action_plan_id text not null,
+                classification_id integer not null,
+                account_id text not null,
+                action_type text not null
+                    check(action_type in (
+                        'label', 'mark_read', 'archive', 'move', 'trash',
+                        'flag_important'
+                    )),
+                parameters_json text not null check(json_valid(parameters_json)),
+                config_version text not null,
+                status text not null
+                    check(status in ('pending', 'processing', 'done', 'failed')),
+                attempt_count integer not null default 0 check(attempt_count >= 0),
+                started_at text not null default '',
+                finished_at text not null default '',
+                next_attempt_at text not null default '',
+                provider_operation text not null default '',
+                provider_target text not null default '',
+                provider_result_id text not null default '',
+                error text not null default '',
+                created_at text not null,
+                updated_at text not null,
+                unique(action_plan_id, action_type),
+                foreign key(action_plan_id) references email_action_plans(action_plan_id)
+                    on delete restrict,
+                foreign key(classification_id) references email_classifications(id)
+                    on delete restrict
+            )
+            """,
+            "insert into email_actions select * from email_actions_v21",
+            """
+            create table email_action_attempts (
+                id integer primary key autoincrement,
+                action_id text not null,
+                attempt_number integer not null check(attempt_number > 0),
+                status text not null check(status in ('done', 'failed')),
+                provider_operation text not null,
+                provider_target text not null,
+                provider_result_id text not null,
+                error text not null,
+                started_at text not null,
+                finished_at text not null,
+                unique(action_id, attempt_number),
+                foreign key(action_id) references email_actions(action_id)
+                    on delete restrict
+            )
+            """,
+            "insert into email_action_attempts select * from email_action_attempts_v21",
+            "drop table email_action_attempts_v21",
+            "drop table email_actions_v21",
+        )
+        for statement in statements:
+            db.execute(statement)
+        self._create_indexes_and_triggers(db)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=22, applied_at=? "
+                "where version=21",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (22, ?)",
+                (self._now(),),
+            )
+
     @classmethod
     def _ensure_unsubscribe_claim_columns(cls, db: sqlite3.Connection) -> None:
         had_phase = "phase" in cls._table_columns(db, "email_unsubscribe_claims")
@@ -3400,7 +3492,10 @@ class EmailStore:
                 classification_id integer not null,
                 account_id text not null,
                 action_type text not null
-                    check(action_type in ('label', 'mark_read', 'archive', 'move', 'trash')),
+                    check(action_type in (
+                        'label', 'mark_read', 'archive', 'move', 'trash',
+                        'flag_important'
+                    )),
                 parameters_json text not null check(json_valid(parameters_json)),
                 config_version text not null,
                 status text not null
@@ -10128,14 +10223,26 @@ class EmailStore:
                     for sibling in siblings
                     if sibling["action_plan_id"] == sibling["current_action_plan_id"]
                 ]
+                move_prerequisite_done = not any(
+                    sibling["action_type"] == EmailAction.MOVE.value
+                    and sibling["status"] != "done"
+                    for sibling in current_siblings
+                )
                 unfinished = [
                     sibling
                     for sibling in current_siblings
-                    if sibling["status"] == "pending"
-                    or (
-                        sibling["status"] == "failed"
-                        and int(sibling["attempt_count"]) < DIRECT_ACTION_MAX_ATTEMPTS
-                        and _retry_is_due(sibling["next_attempt_at"], claimed_at)
+                    if not (
+                        sibling["action_type"] == EmailAction.FLAG_IMPORTANT.value
+                        and not move_prerequisite_done
+                    )
+                    and (
+                        sibling["status"] == "pending"
+                        or (
+                            sibling["status"] == "failed"
+                            and int(sibling["attempt_count"])
+                            < DIRECT_ACTION_MAX_ATTEMPTS
+                            and _retry_is_due(sibling["next_attempt_at"], claimed_at)
+                        )
                     )
                 ]
                 if not unfinished:

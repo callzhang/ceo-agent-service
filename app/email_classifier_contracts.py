@@ -111,6 +111,7 @@ class EmailAction(StrEnum):
     ARCHIVE = "archive"
     MOVE = "move"
     TRASH = "trash"
+    FLAG_IMPORTANT = "flag_important"
     AUTO_REPLY = "auto_reply"
     UNSUBSCRIBE = "unsubscribe"
 
@@ -121,6 +122,7 @@ DIRECT_ACTIONS = (
     EmailAction.ARCHIVE,
     EmailAction.MOVE,
     EmailAction.TRASH,
+    EmailAction.FLAG_IMPORTANT,
 )
 AGENT_ACTIONS = (EmailAction.AUTO_REPLY, EmailAction.UNSUBSCRIBE)
 

@@ -206,6 +206,7 @@ def test_action_plan_splits_direct_and_agent_actions_in_configured_order():
         EmailAction.ARCHIVE,
         EmailAction.MOVE,
         EmailAction.TRASH,
+        EmailAction.FLAG_IMPORTANT,
     )
     assert AGENT_ACTIONS == (EmailAction.AUTO_REPLY, EmailAction.UNSUBSCRIBE)
     assert plan.direct_actions == (EmailAction.MARK_READ, EmailAction.LABEL)

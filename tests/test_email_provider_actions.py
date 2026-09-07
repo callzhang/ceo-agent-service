@@ -19,6 +19,7 @@ class StatefulFakeImapProvider:
         archived: bool = False,
         folder: str = "INBOX",
         trashed: bool = False,
+        important: bool = False,
         ignore_write: bool = False,
         timeout_after_write: bool = False,
         fail_reads: set[int] | None = None,
@@ -28,6 +29,7 @@ class StatefulFakeImapProvider:
         self.archived = archived
         self.folder = folder
         self.trashed = trashed
+        self.important = important
         self.ignore_write = ignore_write
         self.timeout_after_write = timeout_after_write
         self.fail_reads = set(fail_reads or ())
@@ -35,7 +37,12 @@ class StatefulFakeImapProvider:
         self.revision = 0
         self.command_log: list[str] = []
 
-    def read_state(self, locator: object) -> object:
+    def read_state(
+        self,
+        locator: object,
+        *,
+        action_type: EmailAction,
+    ) -> object:
         module = import_module("app.email_provider_actions")
         self.command_log.append("READ")
         self.read_count += 1
@@ -48,6 +55,10 @@ class StatefulFakeImapProvider:
             archived=self.archived,
             folder=self.folder,
             trashed=self.trashed,
+            important_signal_names=(
+                frozenset({"important"}) if self.important else frozenset()
+            ),
+            required_important_signal_names=frozenset({"important"}),
         )
 
     def apply(
@@ -55,6 +66,8 @@ class StatefulFakeImapProvider:
         locator: object,
         action_type: EmailAction,
         parameters: object,
+        *,
+        observed_state: object,
     ) -> None:
         operations = {
             EmailAction.LABEL: "STORE LABELS",
@@ -62,6 +75,7 @@ class StatefulFakeImapProvider:
             EmailAction.ARCHIVE: "MOVE ARCHIVE",
             EmailAction.MOVE: "MOVE",
             EmailAction.TRASH: "MOVE TRASH",
+            EmailAction.FLAG_IMPORTANT: "STORE IMPORTANT",
         }
         self.command_log.append(operations[action_type])
         if not self.ignore_write:
@@ -77,6 +91,8 @@ class StatefulFakeImapProvider:
             elif action_type is EmailAction.TRASH:
                 self.trashed = True
                 self.folder = "Trash"
+            elif action_type is EmailAction.FLAG_IMPORTANT:
+                self.important = True
             self.revision += 1
         if self.timeout_after_write:
             self.timeout_after_write = False
@@ -207,6 +223,23 @@ def test_timeout_after_write_is_reconciled_by_retry_without_duplicate_write() ->
     assert provider.command_log == ["READ", "STORE LABELS", "READ"]
 
 
+def test_important_flag_is_idempotent_and_retry_readback_avoids_duplicate_write() -> None:
+    module = import_module("app.email_provider_actions")
+    provider = StatefulFakeImapProvider(timeout_after_write=True)
+    executor = module.DeterministicEmailActionExecutor(provider)
+
+    failed = executor.execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+    retried = executor.execute(
+        _action(EmailAction.FLAG_IMPORTANT, {}, attempt_number=2)
+    )
+
+    assert failed.status == "failed"
+    assert failed.provider_operation == "STORE IMPORTANT"
+    assert retried.status == "done"
+    assert retried.provider_operation == "readback_noop"
+    assert provider.command_log == ["READ", "STORE IMPORTANT", "READ"]
+
+
 def test_successful_command_with_readback_mismatch_is_failed() -> None:
     module = import_module("app.email_provider_actions")
     provider = StatefulFakeImapProvider(ignore_write=True)
@@ -288,17 +321,25 @@ class FakeWritableImapSession:
         capabilities: tuple[bytes, ...] = (b"IMAP4rev1", b"MOVE", b"UIDPLUS"),
         include_copyuid: bool = True,
         timeout_after_move: bool = False,
+        timeout_after_store: bool = False,
         permanent_flags: set[str] | None = None,
+        permanent_flags_mode: str = "valid",
+        permanent_flags_raw: bytes | None = None,
+        flags_attribute: str = "FLAGS",
         mailboxes: Mapping[str, tuple[set[str], int]] | None = None,
         messages: Mapping[str, Mapping[int, tuple[str | None, set[str]]]] | None = None,
     ) -> None:
         self.capabilities = capabilities
         self.include_copyuid = include_copyuid
         self.timeout_after_move = timeout_after_move
+        self.timeout_after_store = timeout_after_store
         self.copyuid_response: bytes | None = None
         self.permanent_flags = set(
             {"\\Seen", "\\*"} if permanent_flags is None else permanent_flags
         )
+        self.permanent_flags_mode = permanent_flags_mode
+        self.permanent_flags_raw = permanent_flags_raw
+        self.flags_attribute = flags_attribute
         self.mailboxes = {
             name: (set(flags), uidvalidity)
             for name, (flags, uidvalidity) in (
@@ -353,6 +394,20 @@ class FakeWritableImapSession:
         if code == "COPYUID":
             return code, [self.copyuid_response]
         if code == "PERMANENTFLAGS":
+            if self.permanent_flags_raw is not None:
+                return code, [self.permanent_flags_raw]
+            if self.permanent_flags_mode == "absent":
+                return None
+            if self.permanent_flags_mode == "absent_tuple":
+                return None, [None]
+            if self.permanent_flags_mode == "absent_imaplib":
+                return code, [None]
+            if self.permanent_flags_mode == "malformed":
+                return code, [b"\\Flagged $Important"]
+            if self.permanent_flags_mode == "malformed_parenthesis":
+                return code, [b"(\\Flagged ()"]
+            if self.permanent_flags_mode == "multiple":
+                return code, [b"(\\Flagged)", b"($Important)"]
             flags = " ".join(sorted(self.permanent_flags))
             return code, [f"({flags})".encode("ascii")]
         return code, [None]
@@ -372,7 +427,7 @@ class FakeWritableImapSession:
                 else f"Message-ID: {message_id}\r\n\r\n".encode("ascii")
             )
             prefix = (
-                f"1 (UID {uid} FLAGS ({flag_text}) "
+                f"1 (UID {uid} {self.flags_attribute} ({flag_text}) "
                 f"BODY[HEADER.FIELDS (MESSAGE-ID)] {{{len(header)}}}"
             ).encode("ascii")
             return "OK", [(prefix, header), b")"]
@@ -392,6 +447,9 @@ class FakeWritableImapSession:
             encoded_flags = str(args[2]).removeprefix("(").removesuffix(")")
             flags.update(encoded_flags.split())
             self.messages[self.selected][uid] = (message_id, flags)
+            if self.timeout_after_store:
+                self.timeout_after_store = False
+                raise TimeoutError("provider timed out after accepting UID STORE")
             return "OK", [b"stored"]
         if command == "MOVE":
             uid = int(args[0])
@@ -546,6 +604,89 @@ def test_production_imap_store_actions_use_uid_store_and_logout(
 
 
 @pytest.mark.parametrize(
+    ("action_type", "parameters", "message_flags"),
+    (
+        (EmailAction.LABEL, {"labels": ("work",)}, {"work"}),
+        (EmailAction.MARK_READ, {}, {"\\Seen"}),
+    ),
+)
+def test_production_imap_satisfied_store_action_ignores_malformed_permanentflags(
+    action_type: EmailAction,
+    parameters: dict[str, object],
+    message_flags: set[str],
+) -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(
+        permanent_flags_mode="malformed",
+        messages={"INBOX": {7: ("<message@example.com>", message_flags)}},
+    )
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(action_type, parameters))
+
+    assert result.status == "done"
+    assert result.provider_operation == "readback_noop"
+    assert ("response", "PERMANENTFLAGS") not in session.calls
+    assert not any(call[:2] == ("uid", "STORE") for call in session.calls)
+
+
+@pytest.mark.parametrize(
+    ("action_type", "parameters"),
+    (
+        (EmailAction.LABEL, {"labels": ("work",)}),
+        (EmailAction.MARK_READ, {}),
+    ),
+)
+def test_production_imap_store_timeout_reconciles_without_revalidating_permanentflags(
+    action_type: EmailAction,
+    parameters: dict[str, object],
+) -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(timeout_after_store=True)
+
+    first = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(action_type, parameters))
+    session.permanent_flags_mode = "malformed"
+    retry = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(action_type, parameters, attempt_number=2))
+
+    assert first.status == "failed"
+    assert first.error == "provider_apply_failed:TimeoutError"
+    assert retry.status == "done"
+    assert retry.provider_operation == "readback_noop"
+    assert [call[1] for call in session.calls if call[0] == "uid"].count("STORE") == 1
+    assert session.calls.count(("response", "PERMANENTFLAGS")) == 1
+
+
+@pytest.mark.parametrize(
+    ("action_type", "parameters"),
+    (
+        (EmailAction.LABEL, {"labels": ("work",)}),
+        (EmailAction.MARK_READ, {}),
+    ),
+)
+def test_production_imap_unsatisfied_store_action_rejects_malformed_permanentflags(
+    action_type: EmailAction,
+    parameters: dict[str, object],
+) -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(permanent_flags_mode="malformed")
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(action_type, parameters))
+
+    assert result.status == "failed"
+    assert result.error == "provider_apply_failed:ImapPermanentFlagsUnsupported"
+    assert result.retryable is False
+    assert ("response", "PERMANENTFLAGS") in session.calls
+    assert not any(call[:2] == ("uid", "STORE") for call in session.calls)
+
+
+@pytest.mark.parametrize(
     ("action_type", "parameters", "permanent_flags"),
     (
         (EmailAction.MARK_READ, {}, {"\\Answered", "\\*"}),
@@ -581,6 +722,291 @@ def test_production_imap_label_accepts_explicit_permanent_keyword() -> None:
 
     assert result.status == "done"
     assert "work" in session.messages["INBOX"][7][1]
+
+
+@pytest.mark.parametrize(
+    ("permanent_flags", "expected_flags"),
+    (
+        ({"\\Seen", "\\Flagged"}, {"\\Flagged"}),
+        ({"\\Seen", "\\Flagged", "$Important"}, {"\\Flagged", "$Important"}),
+        ({"\\Seen", "\\Flagged", "\\*"}, {"\\Flagged"}),
+    ),
+)
+def test_production_imap_important_applies_flagged_and_only_advertised_keyword(
+    permanent_flags: set[str],
+    expected_flags: set[str],
+) -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(permanent_flags=permanent_flags)
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+
+    assert result.status == "done"
+    assert session.messages["INBOX"][7][1] == expected_flags
+    assert [call[1] for call in session.calls if call[0] == "uid"].count("STORE") == 1
+
+
+def test_production_imap_important_keyword_alone_adds_required_flagged() -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(
+        permanent_flags={"\\Flagged", "$Important"},
+        messages={"INBOX": {7: ("<message@example.com>", {"$Important"})}},
+    )
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+
+    assert result.status == "done"
+    assert result.provider_operation == "STORE IMPORTANT"
+    assert session.messages["INBOX"][7][1] == {"\\Flagged", "$Important"}
+    stores = [call for call in session.calls if call[:2] == ("uid", "STORE")]
+    assert stores == [("uid", "STORE", "7", "+FLAGS.SILENT", "(\\Flagged)")]
+
+
+def test_production_imap_flagged_adds_explicitly_permitted_important_keyword() -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(
+        permanent_flags={"\\Flagged", "$Important"},
+        messages={"INBOX": {7: ("<message@example.com>", {"\\Flagged"})}},
+    )
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+
+    assert result.status == "done"
+    assert result.provider_operation == "STORE IMPORTANT"
+    stores = [call for call in session.calls if call[:2] == ("uid", "STORE")]
+    assert stores == [("uid", "STORE", "7", "+FLAGS.SILENT", "($Important)")]
+
+
+def test_production_imap_flagged_is_noop_without_explicit_important_permission() -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(
+        permanent_flags={"\\Flagged", "\\*"},
+        messages={"INBOX": {7: ("<message@example.com>", {"\\Flagged"})}},
+    )
+
+    provider = module.ImapDeterministicProvider(session, account_id="account-1")
+    state = provider.read_state(
+        _action(EmailAction.FLAG_IMPORTANT, {}).locator,
+        action_type=EmailAction.FLAG_IMPORTANT,
+    )
+    assert getattr(state, "important_signal_names", frozenset()) == frozenset(
+        {"\\Flagged"}
+    )
+    assert getattr(state, "required_important_signal_names", frozenset()) == frozenset(
+        {"\\Flagged"}
+    )
+
+    result = module.DeterministicEmailActionExecutor(provider).execute(
+        _action(EmailAction.FLAG_IMPORTANT, {})
+    )
+
+    assert result.status == "done"
+    assert result.provider_operation == "readback_noop"
+    assert not any(call[:2] == ("uid", "STORE") for call in session.calls)
+
+
+@pytest.mark.parametrize("flags_attribute", ("flags", "FlAgS"))
+def test_production_imap_readback_parses_flags_case_insensitively(
+    flags_attribute: str,
+) -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(
+        permanent_flags={"\\Flagged", "$Important"},
+        flags_attribute=flags_attribute,
+        messages={
+            "INBOX": {7: ("<message@example.com>", {"\\fLaGgEd", "$iMpOrTaNt"})}
+        },
+    )
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+
+    assert result.status == "done"
+    assert result.provider_operation == "readback_noop"
+    assert not any(call[:2] == ("uid", "STORE") for call in session.calls)
+
+
+@pytest.mark.parametrize(
+    "permanent_flags_mode",
+    ("absent", "absent_tuple", "absent_imaplib"),
+)
+def test_production_imap_absent_permanentflags_allows_only_standard_flagged(
+    permanent_flags_mode: str,
+) -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(permanent_flags_mode=permanent_flags_mode)
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+
+    assert result.status == "done"
+    assert session.messages["INBOX"][7][1] == {"\\Flagged"}
+
+
+def test_production_imap_explicit_permanentflags_without_flagged_is_permanent_failure():
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(permanent_flags={"\\Seen", "$Important"})
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+
+    assert result.status == "failed"
+    assert result.error == "provider_apply_failed:ImapPermanentFlagsUnsupported"
+    assert result.retryable is False
+    assert not any(call[:2] == ("uid", "STORE") for call in session.calls)
+
+
+@pytest.mark.parametrize(
+    "permanent_flags_mode",
+    ("malformed", "malformed_parenthesis", "multiple"),
+)
+def test_production_imap_invalid_permanentflags_is_readback_contract_failure(
+    permanent_flags_mode: str,
+) -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(permanent_flags_mode=permanent_flags_mode)
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+
+    assert result.status == "failed"
+    assert result.error == "provider_read_failed:ImapPermanentFlagsUnsupported"
+    assert result.retryable is False
+    assert not any(call[:2] == ("uid", "STORE") for call in session.calls)
+
+
+@pytest.mark.parametrize(
+    ("action_type", "parameters", "destination", "uidvalidity", "operation"),
+    (
+        (EmailAction.MOVE, {"target_folder": "Projects"}, "Projects", 126, "MOVE"),
+        (EmailAction.ARCHIVE, {}, "Archive", 84, "MOVE ARCHIVE"),
+        (EmailAction.TRASH, {}, "Trash", 168, "move_to_trash"),
+    ),
+)
+def test_production_imap_move_actions_ignore_malformed_permanentflags(
+    action_type: EmailAction,
+    parameters: dict[str, object],
+    destination: str,
+    uidvalidity: int,
+    operation: str,
+) -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(permanent_flags_mode="malformed")
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(action_type, parameters))
+
+    assert result.status == "done"
+    assert result.provider_operation == operation
+    assert result.updated_locator is not None
+    assert result.updated_locator.folder == destination
+    assert result.updated_locator.uidvalidity == uidvalidity
+    assert result.updated_locator.uid == 19
+    assert [call[1] for call in session.calls if call[0] == "uid"].count("MOVE") == 1
+    assert ("response", "PERMANENTFLAGS") not in session.calls
+
+
+def test_production_imap_flag_action_still_fails_closed_on_malformed_permanentflags():
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(permanent_flags_mode="malformed")
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+
+    assert result.status == "failed"
+    assert result.error == "provider_read_failed:ImapPermanentFlagsUnsupported"
+    assert result.retryable is False
+    assert not any(call[:2] == ("uid", "MOVE") for call in session.calls)
+
+
+@pytest.mark.parametrize(
+    ("raw_permanent_flags", "expected_message_flags"),
+    (
+        (b"(\\Flagged)", {"\\Flagged"}),
+        (b"(\\Flagged $Important)", {"\\Flagged", "$Important"}),
+        (b"(\\Flagged \\* project-label)", {"\\Flagged"}),
+        (b"(\\Flagged keyword.with+symbols)", {"\\Flagged"}),
+    ),
+)
+def test_production_imap_accepts_legal_permanent_flag_atoms(
+    raw_permanent_flags: bytes,
+    expected_message_flags: set[str],
+) -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(permanent_flags_raw=raw_permanent_flags)
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+
+    assert result.status == "done"
+    assert session.messages["INBOX"][7][1] == expected_message_flags
+
+
+@pytest.mark.parametrize(
+    "raw_permanent_flags",
+    (
+        b'(\\Flagged "quoted")',
+        b"(\\Flagged\t$Important)",
+        b"(\\Flagged  $Important)",
+        b"( \\Flagged)",
+        b"(\\Flagged )",
+        b"(\\Flagged bad%flag)",
+        b"(\\Flagged bad{flag)",
+        b"(\\Flagged bad]flag)",
+        b"(\\Flagged \\)",
+        b"(\\Flagged \\Bad\\Name)",
+        b"(\\Flagged *)",
+        b"(\\Flagged \xff)",
+    ),
+)
+def test_production_imap_rejects_illegal_permanent_flag_atoms(
+    raw_permanent_flags: bytes,
+) -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(permanent_flags_raw=raw_permanent_flags)
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+
+    assert result.status == "failed"
+    assert result.error == "provider_read_failed:ImapPermanentFlagsUnsupported"
+    assert result.retryable is False
+    assert not any(call[:2] == ("uid", "STORE") for call in session.calls)
+
+
+def test_production_imap_absent_permanentflags_timeout_retries_by_readback() -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(
+        permanent_flags_mode="absent",
+        timeout_after_store=True,
+    )
+
+    first = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}))
+    retry = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.FLAG_IMPORTANT, {}, attempt_number=2))
+
+    assert first.status == "failed"
+    assert first.error == "provider_apply_failed:TimeoutError"
+    assert retry.status == "done"
+    assert retry.provider_operation == "readback_noop"
+    assert [call[1] for call in session.calls if call[0] == "uid"].count("STORE") == 1
 
 
 def test_production_imap_store_uses_new_connection_for_durable_readback() -> None:
@@ -1032,7 +1458,7 @@ def test_production_imap_read_uses_locator_message_id_canonicalization(
     state = module.ImapDeterministicProvider(
         session,
         account_id="account-1",
-    ).read_state(locator)
+    ).read_state(locator, action_type=EmailAction.MOVE)
 
     assert state.locator is not None
     assert state.locator.rfc_message_id == "<LocalPart@example.com>"

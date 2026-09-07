@@ -1,13 +1,86 @@
-"""Strict IMAP modified UTF-7 mailbox name codec."""
+"""Strict IMAP mailbox and bounded FETCH metadata parsing helpers."""
 
 from __future__ import annotations
 
 import base64
 import binascii
+import re
 
 
 class ImapMailboxCodecError(ValueError):
     """A mailbox name cannot be represented safely on the IMAP wire."""
+
+
+class ImapFetchFlagsError(ValueError):
+    """A FETCH response contains malformed or ambiguous FLAGS metadata."""
+
+
+_IMAP_ATOM_SPECIALS = frozenset(b"(){ %*\"\\]")
+_FETCH_FLAGS_TOKEN = re.compile(rb"FLAGS", flags=re.IGNORECASE)
+_FETCH_FLAGS_LIST = re.compile(rb" +\((?P<flags>[^()]*)\)")
+
+
+def _is_imap_atom_octet(value: int) -> bool:
+    return 0x21 <= value <= 0x7E and value not in _IMAP_ATOM_SPECIALS
+
+
+def is_valid_imap_flag(value: str) -> bool:
+    """Return whether one ASCII value is a legal IMAP flag token."""
+
+    if not isinstance(value, str) or not value:
+        return False
+    if value == "\\*":
+        return True
+    atom = value[1:] if value.startswith("\\") else value
+    return bool(atom) and all(_is_imap_atom_octet(ord(character)) for character in atom)
+
+
+def parse_imap_flag_list(value: bytes) -> tuple[str, ...]:
+    """Parse an inner flag-list using exact single-space separators."""
+
+    if not isinstance(value, bytes):
+        raise ImapFetchFlagsError("invalid IMAP flag list")
+    if value == b"":
+        return ()
+    if value.startswith(b" ") or value.endswith(b" ") or b"  " in value:
+        raise ImapFetchFlagsError("invalid IMAP flag list")
+    try:
+        flags = tuple(item.decode("ascii") for item in value.split(b" "))
+    except UnicodeDecodeError as exc:
+        raise ImapFetchFlagsError("invalid IMAP flag list") from exc
+    if any(not is_valid_imap_flag(flag) for flag in flags):
+        raise ImapFetchFlagsError("invalid IMAP flag list")
+    return flags
+
+
+def parse_imap_fetch_flags(data: object) -> tuple[str, ...]:
+    """Parse one FLAGS attribute without examining FETCH literal payloads."""
+
+    if not isinstance(data, (list, tuple)):
+        raise ImapFetchFlagsError("invalid IMAP FETCH response")
+    metadata_parts: list[bytes] = []
+    for item in data:
+        if isinstance(item, bytes):
+            metadata_parts.append(item)
+        elif isinstance(item, tuple) and item and isinstance(item[0], bytes):
+            metadata_parts.append(item[0])
+
+    bounded_tokens = [
+        (part, match)
+        for part in metadata_parts
+        for match in _FETCH_FLAGS_TOKEN.finditer(part)
+        if (match.start() == 0 or not _is_imap_atom_octet(part[match.start() - 1]))
+        and (match.end() == len(part) or not _is_imap_atom_octet(part[match.end()]))
+    ]
+    if not bounded_tokens:
+        return ()
+    if len(bounded_tokens) != 1:
+        raise ImapFetchFlagsError("invalid IMAP FETCH FLAGS metadata")
+    part, token = bounded_tokens[0]
+    flag_list = _FETCH_FLAGS_LIST.match(part, token.end())
+    if flag_list is None:
+        raise ImapFetchFlagsError("invalid IMAP FETCH FLAGS metadata")
+    return parse_imap_flag_list(flag_list.group("flags"))
 
 
 def encode_imap_mailbox(value: str) -> str:

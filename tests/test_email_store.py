@@ -2727,8 +2727,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_21() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 21
+def test_email_schema_version_is_22() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 22
 
 
 def test_current_schema_initialization_preserves_delete_journal_mode(
@@ -3075,13 +3075,15 @@ def test_current_schema_rejects_weakened_direct_action_checks(
         (
             "action_type",
             "text collate nocase not null check(action_type in "
-            "('label', 'mark_read', 'archive', 'move', 'trash'))",
+            "('label', 'mark_read', 'archive', 'move', 'trash', "
+            "'flag_important'))",
             "text not null check(status in ('pending', 'processing', 'done', 'failed'))",
         ),
         (
             "status",
             "text not null check(action_type in "
-            "('label', 'mark_read', 'archive', 'move', 'trash'))",
+            "('label', 'mark_read', 'archive', 'move', 'trash', "
+            "'flag_important'))",
             "text collate nocase not null "
             "check(status in ('pending', 'processing', 'done', 'failed'))",
         ),
@@ -3394,7 +3396,7 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == [16, 17, 18, 19, 20, email_store_module.EMAIL_SCHEMA_VERSION]
+        ] == [16, 17, 18, 19, 20, 21, email_store_module.EMAIL_SCHEMA_VERSION]
         assert {
             row[1]
             for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
@@ -3633,7 +3635,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 16, 17, 18, 19, 20, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [2, 16, 17, 18, 19, 20, 21, email_store_module.EMAIL_SCHEMA_VERSION]
 
     EmailStore(database)
 
@@ -3696,7 +3698,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [15, 16, 17, 18, 19, 20, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [15, 16, 17, 18, 19, 20, 21, email_store_module.EMAIL_SCHEMA_VERSION]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
     assert projected["action_plan"]["action_plan_id"] == historical_plan_id
@@ -4099,7 +4101,7 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [16, 17, 18, 19, 20, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [16, 17, 18, 19, 20, 21, email_store_module.EMAIL_SCHEMA_VERSION]
 
 
 @pytest.mark.parametrize("missing_table", ["email_messages", "email_actions"])
@@ -5790,6 +5792,199 @@ def test_destination_action_is_claimed_after_locator_preserving_actions(
         EmailAction.MARK_READ,
         EmailAction.ARCHIVE,
     ]
+
+
+def test_move_then_important_persists_locator_and_retries_only_flag(tmp_path: Path):
+    database = tmp_path / "move-then-important.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.FLAG_IMPORTANT, EmailAction.MOVE),
+            action_parameters={
+                EmailAction.MOVE: {"target_folder": "Legal"},
+            },
+            stable_message_identity="dingtalk-account:imap:INBOX:42:7",
+            uid=7,
+        ),
+    )
+
+    move = store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+    assert move is not None
+    assert move.action_type is EmailAction.MOVE
+    moved_locator = type(move.locator)(
+        account_id=move.account_id,
+        folder="Legal",
+        uidvalidity=84,
+        uid=19,
+        rfc_message_id=move.locator.rfc_message_id,
+        thread_id=move.locator.thread_id,
+        stable_message_identity=move.locator.stable_message_identity,
+    )
+    store.complete_direct_action_attempt(
+        move,
+        status="done",
+        provider_operation="MOVE",
+        provider_target=move.locator.stable_message_identity,
+        provider_result_id="move-revision",
+        error="",
+        finished_at="2026-09-07T12:00:01+00:00",
+        updated_locator=moved_locator,
+    )
+
+    flag = store.claim_next_direct_action(claimed_at="2026-09-07T12:01:00+00:00")
+    assert flag is not None
+    assert flag.action_type is EmailAction.FLAG_IMPORTANT
+    assert flag.locator == moved_locator
+    store.complete_direct_action_attempt(
+        flag,
+        status="failed",
+        provider_operation="STORE IMPORTANT",
+        provider_target=flag.locator.stable_message_identity,
+        provider_result_id="",
+        error="provider_apply_failed:TimeoutError",
+        finished_at="2026-09-07T12:01:01+00:00",
+    )
+
+    retry = store.claim_next_direct_action(claimed_at="2026-09-07T12:02:00+00:00")
+    assert retry is not None
+    assert retry.action_id == flag.action_id
+    assert retry.action_type is EmailAction.FLAG_IMPORTANT
+    assert retry.locator == moved_locator
+    assert retry.attempt_number == 2
+    assert len(store.list_action_attempts(move.action_id)) == 1
+
+
+def test_retry_delayed_move_blocks_important_flag_claim(tmp_path: Path):
+    store = EmailStore(tmp_path / "delayed-move-blocks-important.sqlite3")
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
+            action_parameters={EmailAction.MOVE: {"target_folder": "Legal"}},
+        ),
+    )
+    move = store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+    assert move is not None
+    assert move.action_type is EmailAction.MOVE
+    store.complete_direct_action_attempt(
+        move,
+        status="failed",
+        provider_operation="MOVE",
+        provider_target=move.locator.stable_message_identity,
+        provider_result_id="",
+        error="provider_apply_failed:TimeoutError",
+        finished_at="2026-09-07T12:00:01+00:00",
+    )
+
+    assert (
+        store.claim_next_direct_action(claimed_at="2026-09-07T12:00:02+00:00")
+        is None
+    )
+
+
+def test_non_retryable_failed_move_blocks_important_flag_claim(tmp_path: Path):
+    store = EmailStore(tmp_path / "permanent-move-blocks-important.sqlite3")
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
+            action_parameters={EmailAction.MOVE: {"target_folder": "Legal"}},
+        ),
+    )
+    move = store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+    assert move is not None
+    store.complete_direct_action_attempt(
+        move,
+        status="failed",
+        provider_operation="MOVE",
+        provider_target=move.locator.stable_message_identity,
+        provider_result_id="",
+        error="provider_apply_failed:ImapDestinationUnavailable",
+        finished_at="2026-09-07T12:00:01+00:00",
+        retryable=False,
+    )
+
+    assert (
+        store.claim_next_direct_action(claimed_at="2026-09-08T12:00:00+00:00")
+        is None
+    )
+
+
+def test_retry_exhausted_move_blocks_important_flag_claim(tmp_path: Path):
+    store = EmailStore(tmp_path / "exhausted-move-blocks-important.sqlite3")
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
+            action_parameters={EmailAction.MOVE: {"target_folder": "Legal"}},
+        ),
+    )
+    claim_times = (
+        "2026-09-07T12:00:00+00:00",
+        "2026-09-07T12:01:00+00:00",
+        "2026-09-07T12:03:00+00:00",
+    )
+    for attempt_number, claimed_at in enumerate(claim_times, start=1):
+        move = store.claim_next_direct_action(claimed_at=claimed_at)
+        assert move is not None
+        assert move.action_type is EmailAction.MOVE
+        assert move.attempt_number == attempt_number
+        store.complete_direct_action_attempt(
+            move,
+            status="failed",
+            provider_operation="MOVE",
+            provider_target=move.locator.stable_message_identity,
+            provider_result_id="",
+            error="provider_apply_failed:TimeoutError",
+            finished_at=claimed_at,
+        )
+
+    assert (
+        store.claim_next_direct_action(claimed_at="2026-09-08T12:00:00+00:00")
+        is None
+    )
+
+
+def test_v21_schema_migrates_to_allow_flag_important_actions(tmp_path: Path):
+    database = tmp_path / "v21-important-action.sqlite3"
+    store = EmailStore(database)
+    del store
+    _replace_email_actions(
+        database,
+        action_type_declaration=(
+            "text not null check(action_type in "
+            "('label', 'mark_read', 'archive', 'move', 'trash'))"
+        ),
+        status_declaration=(
+            "text not null check(status in ('pending', 'processing', 'done', 'failed'))"
+        ),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("update email_schema_migrations set version=21")
+
+    migrated = EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        schema = db.execute(
+            "select sql from sqlite_master where type='table' and name='email_actions'"
+        ).fetchone()[0]
+        assert "flag_important" in schema
+        assert (
+            db.execute("select count(*) from email_action_attempts").fetchone()[0] == 0
+        )
+        assert (
+            db.execute("select max(version) from email_schema_migrations").fetchone()[0]
+            == 22
+        )
+    assert (
+        migrated.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+        is None
+    )
 
 
 def test_complete_direct_action_appends_attempt_and_updates_current_atomically(
@@ -7931,7 +8126,7 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
 
     migrated = EmailStore(database)
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 21
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 22
     assert migrated.list_account_folder_bindings("junk")[0][
         "provider_folder_id"
     ] == "Deleted"
