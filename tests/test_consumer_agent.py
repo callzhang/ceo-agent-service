@@ -625,6 +625,8 @@ def test_consumer_oa_contract_never_requires_fields_absent_from_current_stage():
 
     assert "A field absent from the current OA form cannot be treated as mandatory" in instructions
     assert "Do not import fields from a later business stage" in instructions
+    assert "Rules stated in this contract are active service behavior" in instructions
+    assert "do not describe its implementation as pending" in instructions
 
 
 def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
@@ -687,6 +689,7 @@ def test_audit_rejects_requirements_that_are_absent_from_the_current_oa_stage():
 
     assert "Reject a candidate that requires a field absent from the current OA form" in instructions
     assert "later business stage" in instructions
+    assert "Treat rules stated in this contract as active service behavior" in instructions
 
 
 def test_audit_instructions_allow_bounded_fact_finding_without_purchase_commitment():
