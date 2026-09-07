@@ -67,7 +67,7 @@ def build_sender(*, socket_path=None):
 
 
 def build_setup_service(store):
-    """Construct a WechatSetupService from config (reader + accessibility preflight)."""
+    """Construct WeChat setup checks without foregrounding the desktop client."""
     from app.wechat.setup import WechatSetupService
 
     reader = build_reader()
@@ -75,7 +75,7 @@ def build_setup_service(store):
 
     def _preflight() -> str:
         try:
-            return sender.preflight(activate=True)
+            return sender.preflight()
         except Exception:
             return "unknown"
 

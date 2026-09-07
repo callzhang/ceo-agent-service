@@ -1,9 +1,13 @@
 # Changelog
 
+- 2026-09-06: make Tutorial's WeChat connection check passive. Connecting now
+  verifies the dedicated Reader and Sender without activating the WeChat app;
+  only an actual queued message delivery is allowed to bring WeChat forward.
+
 - 2026-09-06: make WeChat Sender window checks delivery-scoped. Status polling
   now verifies only the dedicated Reader and Sender helpers; it never probes or
   foregrounds the WeChat window. Accessibility/window preflight may activate
-  WeChat only for an actual queued delivery or a user-initiated Tutorial check.
+  WeChat only for an actual queued delivery.
 
 - 2026-09-06: stop appending web feedback callbacks to WeChat replies. Personal
   WeChat text messages do not render Markdown links, so new WeChat deliveries

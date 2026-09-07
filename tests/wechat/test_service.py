@@ -63,6 +63,33 @@ def test_build_sender_is_a_dedicated_ipc_client(tmp_path):
     assert sender.__class__.__name__ == "WechatSenderClient"
 
 
+def test_tutorial_setup_preflight_does_not_activate_wechat(monkeypatch, tmp_path):
+    class Reader:
+        @staticmethod
+        def discover_accounts():
+            return []
+
+    class Sender:
+        calls = []
+
+        @classmethod
+        def preflight(cls, *, activate=False):
+            cls.calls.append(activate)
+            return "ready"
+
+        @staticmethod
+        def request_accessibility():
+            return "ready"
+
+    monkeypatch.setattr(wechat_service, "build_reader", lambda: Reader())
+    monkeypatch.setattr(wechat_service, "build_sender", lambda: Sender())
+
+    setup = wechat_service.build_setup_service(AutoReplyStore(tmp_path / "w.sqlite3"))
+
+    assert setup.accessibility_preflight() == "ready"
+    assert Sender.calls == [False]
+
+
 def test_reader_timeout_allows_serialized_mirror_refresh(monkeypatch):
     monkeypatch.delenv("CEO_WECHAT_READER_TIMEOUT_SECONDS", raising=False)
 
