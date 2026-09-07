@@ -24,6 +24,7 @@ from app.agent_runtime_contracts import (
     RuntimeFailureClass,
     RuntimeKind,
 )
+from app.business_identity import oa_identifiers_from_url, reply_business_object_key
 from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
     classify_codex_process_failure,
@@ -111,7 +112,7 @@ SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-05.3"
+STORE_SCHEMA_VERSION = "2026-09-07.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -125,6 +126,8 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_events",
     "agent_run_state_events",
     "agent_effect_intents",
+    "business_object_tasks",
+    "reply_task_inputs",
     "follow_up_send_attempts",
     "todo_evidence_candidates",
     "runtime_route_pauses",
@@ -201,6 +204,11 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "feedback_scope",
         "skill_update_requested",
         "skill_update_receipts_json",
+    ),
+    "reply_tasks": (
+        "business_object_key",
+        "input_version",
+        "claimed_input_version",
     ),
     "agent_runtime_attempts": (
         "session_mode",
@@ -837,6 +845,9 @@ class ReplyTask(BaseModel):
     manual_rerun_revision_key: str = ""
     execution_generation: str = "initial"
     recovery_code: str = ""
+    business_object_key: str = ""
+    input_version: int = 1
+    claimed_input_version: int = 0
     status: str
     attempts: int
     locked_at: str | None = None
@@ -865,6 +876,7 @@ class ReplyTaskSpec(BaseModel):
     manual_rerun_attempt_id: int = 0
     execution_generation: str = "initial"
     error: str = ""
+    business_object_key: str = ""
 
 
 class ReplyTaskIdentityConflict(RuntimeError):
@@ -2365,6 +2377,9 @@ class AutoReplyStore:
                     manual_rerun_revision_key text not null default '',
                     execution_generation text not null default 'initial',
                     recovery_code text not null default '',
+                    business_object_key text not null default '',
+                    input_version integer not null default 1,
+                    claimed_input_version integer not null default 0,
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     locked_at text,
@@ -2375,6 +2390,33 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_reply_tasks_status
                     on reply_tasks(status, id);
+                create table if not exists business_object_tasks (
+                    business_object_key text primary key,
+                    reply_task_id integer not null,
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(reply_task_id) references reply_tasks(id)
+                );
+                create table if not exists reply_task_inputs (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null,
+                    channel text not null,
+                    conversation_id text not null,
+                    conversation_title text not null,
+                    single_chat integer not null,
+                    trigger_message_id text not null,
+                    trigger_create_time text not null,
+                    trigger_sender text not null,
+                    trigger_text text not null,
+                    trigger_message_json text not null default '{}',
+                    oa_url text not null default '',
+                    business_object_key text not null,
+                    created_at text not null default current_timestamp,
+                    unique(channel, conversation_id, trigger_message_id),
+                    foreign key(reply_task_id) references reply_tasks(id)
+                );
+                create index if not exists idx_reply_task_inputs_task
+                    on reply_task_inputs(reply_task_id, id);
                 create table if not exists agent_runs (
                     id integer primary key autoincrement,
                     reply_task_id integer not null,
@@ -3589,6 +3631,7 @@ class AutoReplyStore:
                     "effect_counted integer not null default 0"
                 )
             self._migrate_reply_task_channel_identity(db)
+            self._migrate_reply_task_business_objects(db)
             db.execute(
                 """
                 create index if not exists idx_reply_tasks_channel_status_id
@@ -5869,6 +5912,90 @@ class AutoReplyStore:
             )
 
     @staticmethod
+    def _migrate_reply_task_business_objects(db: sqlite3.Connection) -> None:
+        columns = {
+            row["name"] for row in db.execute("pragma table_info(reply_tasks)").fetchall()
+        }
+        for column, definition in (
+            ("business_object_key", "text not null default ''"),
+            ("input_version", "integer not null default 1"),
+            ("claimed_input_version", "integer not null default 0"),
+        ):
+            if column not in columns:
+                db.execute(f"alter table reply_tasks add column {column} {definition}")
+        db.executescript(
+            """
+            create table if not exists business_object_tasks (
+                business_object_key text primary key,
+                reply_task_id integer not null,
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                foreign key(reply_task_id) references reply_tasks(id)
+            );
+            create table if not exists reply_task_inputs (
+                id integer primary key autoincrement,
+                reply_task_id integer not null,
+                channel text not null,
+                conversation_id text not null,
+                conversation_title text not null,
+                single_chat integer not null,
+                trigger_message_id text not null,
+                trigger_create_time text not null,
+                trigger_sender text not null,
+                trigger_text text not null,
+                trigger_message_json text not null default '{}',
+                oa_url text not null default '',
+                business_object_key text not null,
+                created_at text not null default current_timestamp,
+                unique(channel, conversation_id, trigger_message_id),
+                foreign key(reply_task_id) references reply_tasks(id)
+            );
+            create index if not exists idx_reply_task_inputs_task
+                on reply_task_inputs(reply_task_id, id);
+            """
+        )
+        tasks = db.execute("select * from reply_tasks order by id").fetchall()
+        task_keys: dict[int, str] = {}
+        for task in tasks:
+            key = str(task["business_object_key"] or "").strip()
+            if not key:
+                key = reply_business_object_key(
+                    channel=str(task["channel"]),
+                    conversation_id=str(task["conversation_id"]),
+                    trigger_message_id=str(task["trigger_message_id"]),
+                    oa_url=str(task["oa_url"] or ""),
+                )
+                db.execute(
+                    "update reply_tasks set business_object_key=? where id=?",
+                    (key, int(task["id"])),
+                )
+            task_keys[int(task["id"])] = key
+            db.execute(
+                """
+                insert or ignore into reply_task_inputs (
+                    reply_task_id, channel, conversation_id, conversation_title,
+                    single_chat, trigger_message_id, trigger_create_time,
+                    trigger_sender, trigger_text, trigger_message_json, oa_url,
+                    business_object_key
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(task["id"]), str(task["channel"]),
+                    str(task["conversation_id"]), str(task["conversation_title"]),
+                    int(task["single_chat"]), str(task["trigger_message_id"]),
+                    str(task["trigger_create_time"]), str(task["trigger_sender"]),
+                    str(task["trigger_text"]), str(task["trigger_message_json"]),
+                    str(task["oa_url"] or ""), key,
+                ),
+            )
+        for task in reversed(tasks):
+            db.execute(
+                "insert or ignore into business_object_tasks "
+                "(business_object_key, reply_task_id) values (?, ?)",
+                (task_keys[int(task["id"])], int(task["id"])),
+            )
+
+    @staticmethod
     def _reply_task_from_row(row: sqlite3.Row) -> ReplyTask:
         return ReplyTask(
             id=row["id"],
@@ -5889,6 +6016,21 @@ class AutoReplyStore:
             execution_generation=row["execution_generation"],
             recovery_code=(
                 row["recovery_code"] if "recovery_code" in row.keys() else ""
+            ),
+            business_object_key=(
+                row["business_object_key"]
+                if "business_object_key" in row.keys()
+                else ""
+            ),
+            input_version=(
+                int(row["input_version"])
+                if "input_version" in row.keys()
+                else 1
+            ),
+            claimed_input_version=(
+                int(row["claimed_input_version"])
+                if "claimed_input_version" in row.keys()
+                else 0
             ),
             status=row["status"],
             attempts=row["attempts"],
@@ -5972,53 +6114,34 @@ class AutoReplyStore:
         error: str = "",
         channel: str = "dingtalk",
         execution_generation: str = "initial",
+        business_object_key: str = "",
     ) -> bool:
         if (
             not isinstance(execution_generation, str)
             or not execution_generation.strip()
         ):
             raise ValueError("execution_generation must be non-empty")
-        with self._connect() as db:
-            cursor = db.execute(
-                """
-                insert or ignore into reply_tasks (
-                    channel,
-                    conversation_id,
-                    conversation_title,
-                    single_chat,
-                    trigger_message_id,
-                    trigger_create_time,
-                    trigger_sender,
-                    trigger_text,
-                    trigger_message_json,
-                    available_at,
-                    force_new_decision,
-                    oa_url,
-                    manual_rerun_attempt_id,
-                    execution_generation,
-                    error
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    channel,
-                    conversation_id,
-                    conversation_title,
-                    int(single_chat),
-                    trigger_message_id,
-                    trigger_create_time,
-                    trigger_sender,
-                    trigger_text,
-                    trigger_message_json,
-                    available_at,
-                    int(force_new_decision),
-                    oa_url,
-                    manual_rerun_attempt_id,
-                    execution_generation,
-                    error,
-                ),
-            )
-            return cursor.rowcount == 1
+        spec = ReplyTaskSpec(
+            channel=channel,
+            conversation_id=conversation_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            trigger_message_id=trigger_message_id,
+            trigger_create_time=trigger_create_time,
+            trigger_sender=trigger_sender,
+            trigger_text=trigger_text,
+            trigger_message_json=trigger_message_json,
+            available_at=available_at,
+            force_new_decision=force_new_decision,
+            oa_url=oa_url,
+            manual_rerun_attempt_id=manual_rerun_attempt_id,
+            execution_generation=execution_generation,
+            error=error,
+            business_object_key=business_object_key,
+        )
+        with self._immediate_write_transaction() as db:
+            _, inserted_input = self._ensure_business_reply_task(db, spec)
+            return inserted_input
 
     def ensure_reply_task(
         self,
@@ -6038,6 +6161,7 @@ class AutoReplyStore:
         error: str = "",
         channel: str = "dingtalk",
         execution_generation: str = "initial",
+        business_object_key: str = "",
     ) -> ReplyTask:
         """Create one queue identity or return its original immutable task."""
 
@@ -6046,56 +6170,155 @@ class AutoReplyStore:
             or not execution_generation.strip()
         ):
             raise ValueError("execution_generation must be non-empty")
+        spec = ReplyTaskSpec(
+            channel=channel,
+            conversation_id=conversation_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            trigger_message_id=trigger_message_id,
+            trigger_create_time=trigger_create_time,
+            trigger_sender=trigger_sender,
+            trigger_text=trigger_text,
+            trigger_message_json=trigger_message_json,
+            available_at=available_at,
+            force_new_decision=force_new_decision,
+            oa_url=oa_url,
+            manual_rerun_attempt_id=manual_rerun_attempt_id,
+            execution_generation=execution_generation,
+            error=error,
+            business_object_key=business_object_key,
+        )
         with self._immediate_write_transaction() as db:
-            db.execute(
-                """
-                insert or ignore into reply_tasks (
-                    channel,
-                    conversation_id,
-                    conversation_title,
-                    single_chat,
-                    trigger_message_id,
-                    trigger_create_time,
-                    trigger_sender,
-                    trigger_text,
-                    trigger_message_json,
-                    available_at,
-                    force_new_decision,
-                    oa_url,
-                    manual_rerun_attempt_id,
-                    execution_generation,
-                    error
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    channel,
-                    conversation_id,
-                    conversation_title,
-                    int(single_chat),
-                    trigger_message_id,
-                    trigger_create_time,
-                    trigger_sender,
-                    trigger_text,
-                    trigger_message_json,
-                    available_at,
-                    int(force_new_decision),
-                    oa_url,
-                    manual_rerun_attempt_id,
-                    execution_generation,
-                    error,
-                ),
-            )
+            task, _ = self._ensure_business_reply_task(db, spec)
+            return task
+
+    @classmethod
+    def _ensure_business_reply_task(
+        cls,
+        db: sqlite3.Connection,
+        spec: ReplyTaskSpec,
+    ) -> tuple[ReplyTask, bool]:
+        key = reply_business_object_key(
+            channel=spec.channel,
+            conversation_id=spec.conversation_id,
+            trigger_message_id=spec.trigger_message_id,
+            oa_url=spec.oa_url,
+            explicit_key=spec.business_object_key,
+        )
+        existing_input = db.execute(
+            """
+            select reply_task_id from reply_task_inputs
+            where channel=? and conversation_id=? and trigger_message_id=?
+            """,
+            (spec.channel, spec.conversation_id, spec.trigger_message_id),
+        ).fetchone()
+        if existing_input is not None:
             row = db.execute(
-                """
-                select * from reply_tasks
-                where channel=? and conversation_id=? and trigger_message_id=?
-                """,
-                (channel, conversation_id, trigger_message_id),
+                "select * from reply_tasks where id=?",
+                (int(existing_input["reply_task_id"]),),
             ).fetchone()
             if row is None:
-                raise RuntimeError("reply task was not persisted")
-            return self._reply_task_from_row(row)
+                raise RuntimeError("reply task input references a missing task")
+            return cls._reply_task_from_row(row), False
+
+        mapping = db.execute(
+            "select reply_task_id from business_object_tasks where business_object_key=?",
+            (key,),
+        ).fetchone()
+        if mapping is None:
+            cursor = db.execute(
+                """
+                insert into reply_tasks (
+                    channel, conversation_id, conversation_title, single_chat,
+                    trigger_message_id, trigger_create_time, trigger_sender,
+                    trigger_text, trigger_message_json, available_at,
+                    force_new_decision, oa_url, manual_rerun_attempt_id,
+                    execution_generation, error, business_object_key,
+                    input_version, claimed_input_version
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+                """,
+                (
+                    spec.channel, spec.conversation_id, spec.conversation_title,
+                    int(spec.single_chat), spec.trigger_message_id,
+                    spec.trigger_create_time, spec.trigger_sender,
+                    spec.trigger_text, spec.trigger_message_json,
+                    spec.available_at, int(spec.force_new_decision), spec.oa_url,
+                    spec.manual_rerun_attempt_id, spec.execution_generation,
+                    spec.error, key,
+                ),
+            )
+            task_id = int(cursor.lastrowid)
+            db.execute(
+                "insert into business_object_tasks (business_object_key, reply_task_id) "
+                "values (?, ?)",
+                (key, task_id),
+            )
+        else:
+            task_id = int(mapping["reply_task_id"])
+
+        inserted = db.execute(
+            """
+            insert or ignore into reply_task_inputs (
+                reply_task_id, channel, conversation_id, conversation_title,
+                single_chat, trigger_message_id, trigger_create_time,
+                trigger_sender, trigger_text, trigger_message_json, oa_url,
+                business_object_key
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_id, spec.channel, spec.conversation_id,
+                spec.conversation_title, int(spec.single_chat),
+                spec.trigger_message_id, spec.trigger_create_time,
+                spec.trigger_sender, spec.trigger_text,
+                spec.trigger_message_json, spec.oa_url, key,
+            ),
+        ).rowcount == 1
+        if inserted:
+            current = db.execute(
+                "select * from reply_tasks where id=?", (task_id,)
+            ).fetchone()
+            if current is None:
+                raise RuntimeError("business reply task was not persisted")
+            if str(current["trigger_message_id"]) != spec.trigger_message_id:
+                terminal = str(current["status"]) in {"done", "failed"}
+                generation = uuid4().hex if terminal else str(current["execution_generation"])
+                db.execute(
+                    """
+                    update reply_tasks set
+                        channel=?, conversation_id=?, conversation_title=?,
+                        single_chat=?, trigger_message_id=?, trigger_create_time=?,
+                        trigger_sender=?, trigger_text=?, trigger_message_json=?,
+                        oa_url=?, business_object_key=?, input_version=input_version+1,
+                        status=case when status in ('done','failed') then 'pending' else status end,
+                        attempts=case when status in ('done','failed') then 0 else attempts end,
+                        execution_generation=?, locked_at=case when status in ('done','failed') then null else locked_at end,
+                        error=case when status in ('done','failed') then '' else error end,
+                        available_at=case when status in ('done','failed') then '' else available_at end,
+                        updated_at=current_timestamp
+                    where id=?
+                    """,
+                    (
+                        spec.channel, spec.conversation_id, spec.conversation_title,
+                        int(spec.single_chat), spec.trigger_message_id,
+                        spec.trigger_create_time, spec.trigger_sender,
+                        spec.trigger_text, spec.trigger_message_json, spec.oa_url,
+                        key, generation, task_id,
+                    ),
+                )
+        row = db.execute("select * from reply_tasks where id=?", (task_id,)).fetchone()
+        if row is None:
+            raise RuntimeError("reply task was not persisted")
+        return cls._reply_task_from_row(row), inserted
+
+    def list_reply_task_inputs(self, task_id: int) -> list[dict[str, object]]:
+        with self._connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    "select * from reply_task_inputs where reply_task_id=? order by id",
+                    (task_id,),
+                ).fetchall()
+            ]
 
     def ensure_reply_tasks(
         self,
@@ -6188,62 +6411,29 @@ class AutoReplyStore:
     ) -> tuple[ReplyTask, ...]:
         tasks: list[ReplyTask] = []
         for spec in specs:
-            db.execute(
+            task, _ = self._ensure_business_reply_task(db, spec)
+            input_row = db.execute(
                 """
-                insert or ignore into reply_tasks (
-                    channel,
-                    conversation_id,
-                    conversation_title,
-                    single_chat,
-                    trigger_message_id,
-                    trigger_create_time,
-                    trigger_sender,
-                    trigger_text,
-                    trigger_message_json,
-                    available_at,
-                    force_new_decision,
-                    oa_url,
-                    manual_rerun_attempt_id,
-                    execution_generation,
-                    error
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    spec.channel,
-                    spec.conversation_id,
-                    spec.conversation_title,
-                    int(spec.single_chat),
-                    spec.trigger_message_id,
-                    spec.trigger_create_time,
-                    spec.trigger_sender,
-                    spec.trigger_text,
-                    spec.trigger_message_json,
-                    spec.available_at,
-                    int(spec.force_new_decision),
-                    spec.oa_url,
-                    spec.manual_rerun_attempt_id,
-                    spec.execution_generation,
-                    spec.error,
-                ),
-            )
-            row = db.execute(
-                """
-                select * from reply_tasks
+                select * from reply_task_inputs
                 where channel=? and conversation_id=? and trigger_message_id=?
                 """,
-                (
-                    spec.channel,
-                    spec.conversation_id,
-                    spec.trigger_message_id,
-                ),
+                (spec.channel, spec.conversation_id, spec.trigger_message_id),
             ).fetchone()
-            if row is None:
-                raise RuntimeError("reply task was not persisted")
-            task = self._reply_task_from_row(row)
-            if any(
-                getattr(task, field_name) != expected
-                for field_name, expected in spec.model_dump().items()
+            expected_input = {
+                "channel": spec.channel,
+                "conversation_id": spec.conversation_id,
+                "conversation_title": spec.conversation_title,
+                "single_chat": int(spec.single_chat),
+                "trigger_message_id": spec.trigger_message_id,
+                "trigger_create_time": spec.trigger_create_time,
+                "trigger_sender": spec.trigger_sender,
+                "trigger_text": spec.trigger_text,
+                "trigger_message_json": spec.trigger_message_json,
+                "oa_url": spec.oa_url,
+            }
+            if input_row is None or any(
+                input_row[field_name] != expected
+                for field_name, expected in expected_input.items()
             ):
                 raise ReplyTaskIdentityConflict(
                     "reply task identity is bound to different immutable input"
@@ -10033,6 +10223,7 @@ class AutoReplyStore:
                 update reply_tasks
                 set status='processing',
                     attempts=attempts + 1,
+                    claimed_input_version=input_version,
                     locked_at=current_timestamp,
                     available_at='',
                     updated_at=current_timestamp
@@ -10101,6 +10292,7 @@ class AutoReplyStore:
                 update reply_tasks
                 set status='processing',
                     attempts=attempts + 1,
+                    claimed_input_version=input_version,
                     locked_at=current_timestamp,
                     available_at='',
                     updated_at=current_timestamp
@@ -10733,18 +10925,30 @@ class AutoReplyStore:
     ) -> None:
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select * from reply_tasks where id=? and status='processing' "
+                "and execution_generation=?",
+                (task_id, expected_execution_generation),
+            ).fetchone()
+            if row is None:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            has_new_input = int(row["input_version"]) > int(row["claimed_input_version"])
+            next_status = "pending" if has_new_input else "done"
+            next_generation = uuid4().hex if has_new_input else expected_execution_generation
             cursor = db.execute(
                 """
                 update reply_tasks
-                set status='done',
-                    locked_at=null,
-                    error='',
-                    available_at='',
+                set status=?, execution_generation=?,
+                    locked_at=null, error='', available_at='',
+                    attempts=case when ?='pending' then 0 else attempts end,
                     updated_at=current_timestamp
                 where id=? and status='processing' and execution_generation=?
                 """,
-                (task_id, expected_execution_generation),
+                (
+                    next_status, next_generation, next_status,
+                    task_id, expected_execution_generation,
+                ),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
@@ -10937,18 +11141,32 @@ class AutoReplyStore:
     ) -> None:
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select * from reply_tasks where id=? and status='processing' "
+                "and execution_generation=?",
+                (task_id, expected_execution_generation),
+            ).fetchone()
+            if row is None:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            has_new_input = int(row["input_version"]) > int(row["claimed_input_version"])
             cursor = db.execute(
                 """
                 update reply_tasks
-                set status='failed',
-                    locked_at=null,
-                    error=?,
-                    available_at='',
+                set status=?, execution_generation=?,
+                    locked_at=null, error=?, available_at='',
+                    attempts=case when ?='pending' then 0 else attempts end,
                     updated_at=current_timestamp
                 where id=? and status='processing' and execution_generation=?
                 """,
-                (error, task_id, expected_execution_generation),
+                (
+                    "pending" if has_new_input else "failed",
+                    uuid4().hex if has_new_input else expected_execution_generation,
+                    "" if has_new_input else error,
+                    "pending" if has_new_input else "failed",
+                    task_id,
+                    expected_execution_generation,
+                ),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")

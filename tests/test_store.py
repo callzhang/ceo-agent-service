@@ -4700,6 +4700,109 @@ def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
         )
 
 
+def test_oa_triggers_share_one_current_reply_task_and_preserve_inputs(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first = store.ensure_reply_task(
+        channel="dingtalk",
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=False,
+        trigger_message_id="oa-pending:proc-1:first",
+        trigger_create_time="2026-09-07 10:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="首次扫描",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+    second = store.ensure_reply_task(
+        channel="dingtalk",
+        conversation_id="work-notice",
+        conversation_title="工作通知",
+        single_chat=True,
+        trigger_message_id="message-2",
+        trigger_create_time="2026-09-07 10:05:00",
+        trigger_sender="OA审批",
+        trigger_text="申请人补充了说明",
+        oa_url="https://aflow.dingtalk.com/detail?taskId=task-1&processInstanceId=proc-1",
+    )
+
+    assert second.id == first.id
+    assert second.business_object_key == "oa:proc-1:task-1"
+    assert second.trigger_message_id == "message-2"
+    assert [item["trigger_message_id"] for item in store.list_reply_task_inputs(first.id)] == [
+        "oa-pending:proc-1:first",
+        "message-2",
+    ]
+
+
+def test_different_oa_nodes_keep_separate_current_reply_tasks(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first = store.ensure_reply_task(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=False,
+        trigger_message_id="oa-1",
+        trigger_create_time="2026-09-07 10:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="审批一",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+    second = store.ensure_reply_task(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=False,
+        trigger_message_id="oa-2",
+        trigger_create_time="2026-09-07 10:01:00",
+        trigger_sender="Derek OA",
+        trigger_text="审批二",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-2",
+    )
+
+    assert second.id != first.id
+    assert second.business_object_key != first.business_object_key
+
+
+def test_new_business_input_during_processing_requeues_same_task(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=False,
+        trigger_message_id="oa-1",
+        trigger_create_time="2026-09-07 10:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="首次扫描",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+
+    refreshed = store.ensure_reply_task(
+        conversation_id="work-notice",
+        conversation_title="工作通知",
+        single_chat=True,
+        trigger_message_id="message-2",
+        trigger_create_time="2026-09-07 10:05:00",
+        trigger_sender="OA审批",
+        trigger_text="申请人补充了说明",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+    assert refreshed.id == task.id
+
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=claimed.execution_generation,
+    )
+    current = store.get_reply_task(task.id)
+    assert current is not None
+    assert current.status == "pending"
+    assert current.execution_generation != claimed.execution_generation
+    assert current.trigger_message_id == "message-2"
+
+
 
 
 
