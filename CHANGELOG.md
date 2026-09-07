@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-06: split WeChat Sender readiness into two distinct operations:
+  passive `check_readiness` for Tutorial and service checks, and
+  foreground-capable `prepare_delivery` reserved for an actual delivery.
+  Tutorial verification now reuses its initial passive result instead of
+  checking the same Accessibility state twice.
+
 - 2026-09-06: stop the idle WeChat Sender loop from actively preflighting the
   desktop client. It now reads the local `ready_to_send` queue first and only
   performs the foreground-capable accessibility check for an actual delivery.

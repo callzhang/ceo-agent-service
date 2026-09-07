@@ -73,9 +73,9 @@ def build_setup_service(store):
     reader = build_reader()
     sender = build_sender()
 
-    def _preflight() -> str:
+    def _check_readiness() -> str:
         try:
-            return sender.preflight()
+            return sender.check_readiness()
         except Exception:
             return "unknown"
 
@@ -88,7 +88,7 @@ def build_setup_service(store):
     return WechatSetupService(
         store,
         reader,
-        _preflight,
+        _check_readiness,
         accessibility_request=_request_accessibility,
         accounts_provider=reader.discover_accounts,
     )
@@ -131,13 +131,13 @@ def _scope_for_delivery(store, delivery):
     )
 
 
-def _sender_is_ready(sender) -> bool:
+def _sender_is_prepared_for_delivery(sender) -> bool:
     runner = getattr(sender, "runner", None)
-    preflight = getattr(runner, "preflight", None)
-    if preflight is None:
+    prepare_delivery = getattr(runner, "prepare_delivery", None)
+    if prepare_delivery is None:
         return True
     try:
-        return preflight(activate=True) == "ready"
+        return prepare_delivery() == "ready"
     except Exception:
         return False
 
@@ -190,12 +190,12 @@ def process_ready_wechat_deliveries(
     if not sender_enabled or mode != "auto":
         return 0
     deliveries = pending_wechat_deliveries(store)
-    # An active preflight is intentionally delivery-scoped: it may need to
+    # Delivery preparation is intentionally delivery-scoped: it may need to
     # bring WeChat to the foreground when its AX window is unavailable. Do not
     # perform that UI operation merely because the periodic sender loop ran.
     if not deliveries:
         return 0
-    if not _sender_is_ready(sender):
+    if not _sender_is_prepared_for_delivery(sender):
         return 0
     sent = 0
     for delivery in deliveries:
@@ -238,7 +238,7 @@ def approve_wechat_delivery(store, sender, delivery_id: int) -> str:
     )
     if delivery is None:
         raise ValueError(f"no pending delivery {delivery_id}")
-    if not _sender_is_ready(sender):
+    if not _sender_is_prepared_for_delivery(sender):
         raise RuntimeError("WeChat sender is temporarily unavailable")
     scope = _scope_for_delivery(store, delivery)
     if scope is None:

@@ -15,7 +15,7 @@ from typing import Any
 from app.wechat.accessibility import AccessibilityResult, SenderExecutionError
 
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 DEFAULT_MAX_REQUEST_BYTES = 32 * 1024
 DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024
 LOGGER = logging.getLogger(__name__)
@@ -65,10 +65,10 @@ class WechatSenderRpcService:
             raise SenderIpcError("params must be an object")
         if method == "health":
             return {"status": "ready", "protocol_version": PROTOCOL_VERSION}
-        if method == "preflight":
-            return self.runner.preflight(
-                activate=_optional_bool(params, "activate"),
-            )
+        if method == "check_readiness":
+            return self.runner.check_readiness()
+        if method == "prepare_delivery":
+            return self.runner.prepare_delivery()
         if method == "request_accessibility":
             return self.runner.request_accessibility()
         if method == "open_and_identify":
@@ -237,8 +237,12 @@ class WechatSenderClient:
         result = self._request("health")
         return result if isinstance(result, dict) else {}
 
-    def preflight(self, *, activate: bool = False) -> str:
-        result = self._request("preflight", {"activate": activate})
+    def check_readiness(self) -> str:
+        result = self._request("check_readiness")
+        return result if isinstance(result, str) else "unknown"
+
+    def prepare_delivery(self) -> str:
+        result = self._request("prepare_delivery")
         return result if isinstance(result, str) else "unknown"
 
     def request_accessibility(self) -> str:

@@ -525,8 +525,16 @@ class MacWechatAccessibility:
             AXUIElementCopyAttributeValue, AXUIElementSetAttributeValue, \
             AXUIElementPerformAction, Quartz
 
-    def preflight(self, *, activate: bool = False) -> str:
-        """Check sender readiness without foregrounding WeChat unless requested."""
+    def check_readiness(self) -> str:
+        """Passively check whether the Sender can use the existing WeChat window."""
+        return self._readiness(activate=False)
+
+    def prepare_delivery(self) -> str:
+        """Prepare an actual delivery, activating WeChat only when its window is absent."""
+        return self._readiness(activate=True)
+
+    def _readiness(self, *, activate: bool) -> str:
+        """Shared window readiness probe; activation is private to delivery preparation."""
         try:
             from ApplicationServices import (
                 AXIsProcessTrusted,

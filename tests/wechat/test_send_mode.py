@@ -79,7 +79,7 @@ def test_auto_mode_with_no_delivery_does_not_preflight_sender(tmp_path):
 
     class Runner:
         @staticmethod
-        def preflight(*, activate=False):
+        def prepare_delivery():
             raise AssertionError("an empty delivery queue must not touch WeChat")
 
     sender = FakeSender()
@@ -289,8 +289,7 @@ def test_auto_mode_holds_delivery_while_sender_session_is_locked(tmp_path):
 
     class Runner:
         @staticmethod
-        def preflight(*, activate=False):
-            assert activate is True
+        def prepare_delivery():
             return "screen_locked"
 
     sender = FakeSender()

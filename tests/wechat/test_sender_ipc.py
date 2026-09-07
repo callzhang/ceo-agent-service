@@ -48,8 +48,12 @@ class FakeAccessibility:
     def __init__(self):
         self.calls = []
 
-    def preflight(self, *, activate=False):
-        self.calls.append(("preflight", activate))
+    def check_readiness(self):
+        self.calls.append(("check_readiness",))
+        return "ready"
+
+    def prepare_delivery(self):
+        self.calls.append(("prepare_delivery",))
         return "ready"
 
     def request_accessibility(self):
@@ -87,10 +91,10 @@ def test_sender_rpc_exposes_only_bounded_accessibility_operations():
 
     assert service.dispatch("health", {}) == {
         "status": "ready",
-        "protocol_version": 1,
+        "protocol_version": 2,
     }
-    assert service.dispatch("preflight", {}) == "ready"
-    assert service.dispatch("preflight", {"activate": True}) == "ready"
+    assert service.dispatch("check_readiness", {}) == "ready"
+    assert service.dispatch("prepare_delivery", {}) == "ready"
     assert service.dispatch("request_accessibility", {}) == "ready"
     assert service.dispatch("open_and_identify", {
         "target_label": "Melody",
@@ -113,8 +117,8 @@ def test_sender_rpc_exposes_only_bounded_accessibility_operations():
         service.dispatch("send", {
             "target_label": "Melody", "reply_text": "x" * 10_001,
         })
-    with pytest.raises(module.SenderIpcError, match="activate"):
-        service.dispatch("preflight", {"activate": "yes"})
+    with pytest.raises(module.SenderIpcError, match="unsupported method"):
+        service.dispatch("preflight", {"activate": True})
 
 
 def test_sender_client_round_trip_over_owner_only_socket():
@@ -129,8 +133,8 @@ def test_sender_client_round_trip_over_owner_only_socket():
     try:
         client = module.WechatSenderClient(socket_path, timeout_seconds=1)
         assert client.health()["status"] == "ready"
-        assert client.preflight() == "ready"
-        assert client.preflight(activate=True) == "ready"
+        assert client.check_readiness() == "ready"
+        assert client.prepare_delivery() == "ready"
         assert client.request_accessibility() == "ready"
         assert client.open_and_identify(
             "Melody", expected_recent_text="那他为啥问我要材料呢",

@@ -679,7 +679,7 @@ def test_wechat_pid_comes_from_main_bundle_application():
     assert seen == ["com.tencent.xinWeChat"]
 
 
-def test_preflight_requires_a_usable_accessibility_window(monkeypatch):
+def test_passive_readiness_requires_a_usable_accessibility_window(monkeypatch):
     app = object()
     monkeypatch.setitem(
         sys.modules,
@@ -705,10 +705,10 @@ def test_preflight_requires_a_usable_accessibility_window(monkeypatch):
     runner = MacWechatAccessibility()
     monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
 
-    assert runner.preflight() == "wechat_window_unavailable"
+    assert runner.check_readiness() == "wechat_window_unavailable"
 
 
-def test_passive_preflight_does_not_activate_wechat_when_ax_window_is_empty(
+def test_passive_readiness_does_not_activate_wechat_when_ax_window_is_empty(
     monkeypatch,
 ):
     app = object()
@@ -744,11 +744,11 @@ def test_passive_preflight_does_not_activate_wechat_when_ax_window_is_empty(
     monkeypatch.setattr(runner, "_reactivate", lambda app_ref: activated.append(app_ref))
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
-    assert runner.preflight() == "wechat_window_unavailable"
+    assert runner.check_readiness() == "wechat_window_unavailable"
     assert activated == []
 
 
-def test_active_preflight_activates_wechat_when_ax_window_is_temporarily_empty(
+def test_delivery_preparation_activates_wechat_when_ax_window_is_temporarily_empty(
     monkeypatch,
 ):
     app = object()
@@ -784,7 +784,7 @@ def test_active_preflight_activates_wechat_when_ax_window_is_temporarily_empty(
     monkeypatch.setattr(runner, "_reactivate", lambda app_ref: activated.append(app_ref))
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
-    assert runner.preflight(activate=True) == "ready"
+    assert runner.prepare_delivery() == "ready"
     assert activated == ["wechat-app"]
 
 
@@ -826,7 +826,7 @@ def test_reactivate_switches_wechat_to_current_space(monkeypatch):
     ]
 
 
-def test_preflight_reports_ready_when_wechat_has_accessibility_window(monkeypatch):
+def test_passive_readiness_reports_ready_when_wechat_has_accessibility_window(monkeypatch):
     app = object()
     monkeypatch.setitem(
         sys.modules,
@@ -852,7 +852,7 @@ def test_preflight_reports_ready_when_wechat_has_accessibility_window(monkeypatc
     runner = MacWechatAccessibility()
     monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
 
-    assert runner.preflight() == "ready"
+    assert runner.check_readiness() == "ready"
 
 
 def test_request_accessibility_asks_macos_to_show_prompt(monkeypatch):
@@ -886,7 +886,7 @@ def test_request_accessibility_only_reports_existing_permission(monkeypatch):
     runner = MacWechatAccessibility()
     monkeypatch.setattr(
         runner,
-        "preflight",
+        "check_readiness",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("permission request must not inspect or activate WeChat")
         ),

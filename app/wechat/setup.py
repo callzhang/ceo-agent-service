@@ -30,12 +30,12 @@ class WechatSetupResult:
 
 
 class WechatSetupService:
-    def __init__(self, store, reader, accessibility_preflight: Callable[[], str],
+    def __init__(self, store, reader, accessibility_readiness: Callable[[], str],
                  accessibility_request: Callable[[], str] | None = None,
                  accounts_provider: Callable[[], list[WechatAccount]] | None = None):
         self.store = store
         self.reader = reader
-        self.accessibility_preflight = accessibility_preflight
+        self.accessibility_readiness = accessibility_readiness
         self.accessibility_request = accessibility_request
         if accounts_provider is None:
             raise ValueError("accounts_provider must come from the dedicated reader")
@@ -115,7 +115,7 @@ class WechatSetupService:
             capability_status=persisted_capability_status,
             capability_reason=database_reason,
         )
-        accessibility_status = self.accessibility_preflight()
+        accessibility_status = self.accessibility_readiness()
         if accessibility_status != "ready" and self.accessibility_request is not None:
             accessibility_status = self.accessibility_request()
         next_step_status = capability.status
@@ -149,7 +149,7 @@ class WechatSetupService:
             )
         states = self.store.list_wechat_read_states()
         ready = [row for row in states if row["capability_status"] == "ready"]
-        accessibility_status = self.accessibility_preflight()
+        accessibility_status = self.accessibility_readiness()
         done = len(ready) == 1 and accessibility_status == "ready"
         if len(ready) == 1 and accessibility_status != "ready":
             summary = "CEO WeChat Sender app needs Accessibility permission."
@@ -165,7 +165,7 @@ class WechatSetupService:
     def verify(self) -> WechatSetupResult:
         check = self.check()
         scopes = self.store.list_wechat_reply_scopes_for_ready_account(enabled_only=True)
-        accessibility_status = self.accessibility_preflight()
+        accessibility_status = str(check.evidence.get("accessibility_status", "unknown"))
         complete = check.status == "done" and bool(scopes) and accessibility_status == "ready"
         return WechatSetupResult(
             action_id="verify_wechat", status="done",

@@ -197,6 +197,27 @@ def test_verify_requires_scope_and_accessibility(store):
     assert svc.verify().next_step_status == "done"
 
 
+def test_verify_reuses_the_passive_readiness_check(store):
+    checks = []
+    store.upsert_wechat_read_state(
+        account_id="acct-1", account_dir="/acct-1", db_dir="/acct-1/db_storage",
+        app_version="4.1.10", self_user_id="self-1", capability_status="ready",
+    )
+    store.replace_wechat_reply_scopes("acct-1", [
+        WechatReplyScope(account_id="acct-1", target_type="direct", target_id="u1",
+                         display_name="A", trigger_mode="every_inbound_text"),
+    ])
+    svc = WechatSetupService(
+        store,
+        FakeReader(),
+        lambda: checks.append("passive") or "ready",
+        accounts_provider=lambda: [_account()],
+    )
+
+    assert svc.verify().next_step_status == "done"
+    assert checks == ["passive"]
+
+
 def test_check_requires_running_dedicated_reader(store):
     class OfflineReader(FakeReader):
         def health(self):
