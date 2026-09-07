@@ -211,6 +211,8 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
   `okr_review_requests` 的会话和触发消息关联识别；同一执行记录只能归入一个类型。
 - `reply_tasks` 的 `pending` 和 `processing` 是当前队列任务，必须在 History 中按真实
   状态展示、筛选和计数；它们不属于 Attention。
+- History 在页面可见时每十秒读取当前快照；已经进入终态的队列任务不得因页面保持打开而继续
+  显示为 `processing`。
 - `okr_review_requests` 的队列状态不能覆盖对应执行记录的 History 状态。若同一对象已有
   当前队列记录，列表以这条队列记录承载 `pending` 或 `processing`，不再制造重复的当前状态行。
 

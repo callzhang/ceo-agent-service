@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const listHistory = vi.hoisted(() => vi.fn());
 const getHistoryChart = vi.hoisted(() => vi.fn());
@@ -14,6 +14,8 @@ import { HistoryPage } from "./HistoryPage";
 
 describe("HistoryPage", () => {
   beforeEach(() => {
+    listHistory.mockReset();
+    getHistoryChart.mockReset();
     listHistory.mockResolvedValue({
       items: [{
         id: "836",
@@ -33,6 +35,10 @@ describe("HistoryPage", () => {
       chart: { labels: ["00:00", "01:00"], series: [{ name: "reply", data: [1, 0] }], total: 1, range: "24h" },
     });
     getHistoryChart.mockResolvedValue({ labels: ["00:00", "01:00"], series: [{ name: "reply", data: [1, 0] }], total: 1, range: "24h" });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("preserves the legacy history workspace hierarchy", async () => {
@@ -72,6 +78,29 @@ describe("HistoryPage", () => {
     await user.click(await screen.findByRole("button", { name: "执行中" }));
 
     expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ status: "processing" }), expect.anything());
+  });
+
+  it("refreshes visible queue history so completed work does not remain processing", async () => {
+    vi.useFakeTimers();
+    listHistory
+      .mockResolvedValueOnce({
+        items: [{ id: "processing-1", occurred_at: "2026-09-07T07:00:00Z", title: "正在执行的任务", type: "queue", status: "processing", summary: "执行中", actor: "Reply task", detail_url: "/workers", kind: "queue" }],
+        meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-09-07T07:00:00Z" },
+      })
+      .mockResolvedValueOnce({
+        items: [{ id: "done-1", occurred_at: "2026-09-07T07:00:10Z", title: "已完成的任务", type: "queue", status: "done", summary: "已完成", actor: "Reply task", detail_url: "/workers", kind: "queue" }],
+        meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-09-07T07:00:10Z" },
+    });
+
+    render(<MemoryRouter><HistoryPage /></MemoryRouter>);
+    await act(async () => {});
+    expect(screen.getByRole("article", { name: "正在执行的任务" })).toBeInTheDocument();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+
+    expect(screen.getByRole("article", { name: "已完成的任务" })).toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: "正在执行的任务" })).not.toBeInTheDocument();
+    expect(listHistory).toHaveBeenCalledTimes(2);
   });
 
   it("gives immediate visual feedback while a status filter is loading", async () => {

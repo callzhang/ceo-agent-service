@@ -20,6 +20,7 @@ function HistoryChart({ chart, loading }: { chart?: HistoryChartData; loading?: 
 const statusFilters = ["pending", "processing", "sent", "reacted", "skipped", "needs_human", "blocked", "failed", "done"];
 const objectFilters = ["queue", "replay", "wechat", "approval", "task", "meeting"];
 const pageSizes = [20, 50, 100];
+const HISTORY_REFRESH_INTERVAL_MS = 10_000;
 
 function localTime(value: string) {
   if (!value) return "未提供";
@@ -43,6 +44,7 @@ export function HistoryPage() {
   const [error, setError] = useState("");
   const [snapshot, setSnapshot] = useState("");
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
+  const [refreshEpoch, setRefreshEpoch] = useState(0);
   const requestGeneration = useRef(0);
   const query = searchParams.get("q") || "";
   const status = searchParams.get("status") || searchParams.get("type") || "";
@@ -59,7 +61,16 @@ export function HistoryPage() {
     setError("");
     listHistory({ q: query, status, object_type: objectType, page, page_size: pageSize, include_chart: 0 }, controller.signal).then((result) => { if (generation !== requestGeneration.current) return; setRows(result.items); setTotalCount(result.meta.total || 0); setSnapshot(result.meta.snapshot_at); setPendingStatus(null); setState("ready"); }).catch((reason: unknown) => { if (controller.signal.aborted || generation !== requestGeneration.current) return; setError(reason instanceof Error ? reason.message : "加载失败"); setPendingStatus(null); setState("error"); });
     return () => controller.abort();
-  }, [query, status, objectType, page, pageSize]);
+  }, [query, status, objectType, page, pageSize, refreshEpoch]);
+
+  useEffect(() => {
+    const refreshTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        setRefreshEpoch((value) => value + 1);
+      }
+    }, HISTORY_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(refreshTimer);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
