@@ -171,9 +171,10 @@ XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER = (
 DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
 SPLIT_PERSON_SIGNATURE = assistant_signature()
 # A task without an active agent lease must be released shortly after the
-# bounded agent turn timeout; keeping this at 30 minutes leaves route failures
-# stranded long after their owner is gone.
+# bounded agent turn timeout. A continuously renewed lease cannot keep a
+# feedback or provider loop in processing indefinitely either.
 STALE_PROCESSING_TASK_SECONDS = 10 * 60
+MAX_PROCESSING_TASK_SECONDS = 60 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
 REPLY_TASK_RETRY_BASE_DELAY_SECONDS = 60
 ACTIVE_RECOVERY_RETRY_DELAY_SECONDS = 5
@@ -1874,7 +1875,8 @@ class DingTalkAutoReplyWorker:
 
     def _recover_stale_agent_reply_tasks(self) -> None:
         stale_tasks = self.store.list_stale_processing_reply_tasks(
-            STALE_PROCESSING_TASK_SECONDS
+            STALE_PROCESSING_TASK_SECONDS,
+            max_processing_seconds=MAX_PROCESSING_TASK_SECONDS,
         )
         if not stale_tasks:
             return

@@ -10120,28 +10120,48 @@ class AutoReplyStore:
             return [self._reply_task_from_row(row) for row in claimed_rows]
 
     def list_stale_processing_reply_tasks(
-        self, max_age_seconds: int
+        self,
+        max_age_seconds: int,
+        *,
+        max_processing_seconds: int | None = None,
     ) -> list[ReplyTask]:
-        if max_age_seconds <= 0:
+        if max_age_seconds <= 0 or (
+            max_processing_seconds is not None and max_processing_seconds <= 0
+        ):
             return []
+        max_processing_clause = ""
+        parameters: list[object] = [
+            f"-{int(max_age_seconds)} seconds",
+            f"-{int(max_age_seconds)} seconds",
+        ]
+        if max_processing_seconds is not None:
+            max_processing_clause = (
+                " or datetime(tasks.locked_at) <= datetime('now', ?)"
+            )
+            parameters.append(f"-{int(max_processing_seconds)} seconds")
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
                 from reply_tasks as tasks
                 where tasks.status='processing'
                   and tasks.locked_at is not null
-                  and datetime(tasks.locked_at) <= datetime('now', ?)
-                  and not exists (
-                      select 1
-                      from agent_runs as runs
-                      where runs.reply_task_id=tasks.id
-                        and runs.execution_generation=tasks.execution_generation
-                        and datetime(runs.updated_at) > datetime('now', ?)
+                  and (
+                      (
+                          datetime(tasks.locked_at) <= datetime('now', ?)
+                          and not exists (
+                              select 1
+                              from agent_runs as runs
+                              where runs.reply_task_id=tasks.id
+                                and runs.execution_generation=tasks.execution_generation
+                                and datetime(runs.updated_at) > datetime('now', ?)
+                          )
+                      )
+                      {max_processing_clause}
                   )
                 order by tasks.locked_at, tasks.id
                 """,
-                (f"-{int(max_age_seconds)} seconds", f"-{int(max_age_seconds)} seconds"),
+                parameters,
             ).fetchall()
             return [self._reply_task_from_row(row) for row in rows]
 

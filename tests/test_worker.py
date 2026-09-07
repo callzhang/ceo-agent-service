@@ -6283,6 +6283,54 @@ def test_consume_once_does_not_requeue_stale_task_with_live_agent_lease(
     assert not any(error.kind == "reply_task_stale" for error in store.list_errors())
 
 
+def test_stale_processing_recovery_requeues_live_run_after_total_processing_limit(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-total-limit",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-total-limit",
+        trigger_create_time="2026-05-29 11:26:41",
+        trigger_sender="ET",
+        trigger_text="处理这个任务",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    claim = _claim_audit_run(
+        store,
+        task.id,
+        task.execution_generation,
+        owner="active-worker",
+        lease_seconds=3600,
+    )
+    store.set_agent_run_session(
+        claim.run.id,
+        "session-total-limit",
+        owner="active-worker",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-61 minutes') where id=?",
+            (task.id,),
+        )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=FakeDws([], {}),
+        codex=FakeCodex([]),
+        now_provider=lambda: datetime.now().astimezone(),
+        channel_gates=fixed_channel_gates(),
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_kwargs: None)
+
+    worker._recover_stale_agent_reply_tasks()
+
+    recovered = store.get_reply_task(task.id)
+    assert recovered is not None
+    assert recovered.status == "pending"
+    assert recovered.error == "stale_agent_turn_recovery"
+
+
 def test_agent_run_lease_outlives_stale_task_recovery_window():
     assert LEASE_SECONDS > worker_module.STALE_PROCESSING_TASK_SECONDS
 
