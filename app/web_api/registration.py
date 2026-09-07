@@ -1528,6 +1528,7 @@ def register_console_routes(
                     "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL",
                     "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL",
                     "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY",
+                    "CEO_FRIDAY_RUNTIME_AUTH_DISABLED",
                     "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN",
                 )}
             if payload is None:
@@ -1759,6 +1760,13 @@ def register_console_routes(
         elif section in {"prompts", "audit-rules"}:
             encoded = {"prompt": str(payload.get("prompt") or "developer"), "template": str(payload.get("template") or fields.get("template") or "")}
         elif section == "agent-runtime":
+            from app import config as app_config
+
+            friday_auth_disabled = fields.get("friday_runtime_auth_disabled")
+            if friday_auth_disabled is None:
+                friday_auth_disabled = fields.get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED")
+            if friday_auth_disabled is None:
+                friday_auth_disabled = app_config.read_env_file().get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED", "0")
             encoded = {
                 "codex_model": str(fields.get("codex_model") or fields.get("CEO_CODEX_MODEL") or ""),
                 "codex_reasoning_effort": str(fields.get("codex_reasoning_effort") or fields.get("CEO_CODEX_MODEL_REASONING_EFFORT") or ""),
@@ -1775,7 +1783,7 @@ def register_console_routes(
                 "friday_runtime_provider_api_key": str(fields.get("friday_runtime_provider_api_key") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY") or ""),
                 "friday_runtime_ticket": str(fields.get("friday_runtime_ticket") or fields.get("CEO_FRIDAY_RUNTIME_TICKET") or ""),
                 "friday_session_token": str(fields.get("friday_session_token") or fields.get("CEO_FRIDAY_SESSION_TOKEN") or ""),
-                "friday_runtime_auth_disabled": str(fields.get("friday_runtime_auth_disabled") or fields.get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED") or "0"),
+                "friday_runtime_auth_disabled": str(friday_auth_disabled),
             }
         else:
             encoded = {str(k): str(v) for k, v in fields.items()}
