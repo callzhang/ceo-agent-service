@@ -1,64 +1,38 @@
 import hashlib
 import json
-import sqlite3
-import tomllib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
-from uuid import UUID
 
 import pytest
 
 from app.agent_context import (
-    _AUDIT_AGENT_RULES,
     AgentTaskContext,
     AuditTurnContext,
     MaterialReference,
 )
 from app.agent_contracts import (
-    AuditAgentResult,
     AuditOutcome,
     ConsumerProposal,
     ProposedAction,
 )
-from app.agent_effects import EffectKind, McpToolEffectRegistry
-from app.agent_result import ResultParseError
+from app.agent_effects import McpToolEffectRegistry
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_skill_usage import LoadedSkillReceipt
-from app.agent_turn_runner import (
-    AgentTurnProcess,
-    _is_dingtalk_chat_send_argv,
-    _json_digest,
-    _metadata_matches_action,
-)
-from app.agent_wire_contracts import AuditAgentWireResult
 from app import audit_agent
-from app.audit_agent import (
-    AuditAgentRunner,
-    _audit_recovery_error_code,
-    _expected_effect_action,
-    _initial_write_authorizations,
-    _recovery_authorizations,
-    _recovery_prompt,
-)
+from app.audit_agent import AuditAgentRunner
+from app.external_action_identity import expected_external_action
 from app.codex_runtime_adapter import CodexRuntimeAdapter
-from app.consumer_agent import AUDIT_DYNAMIC_SKILL_BODY, audit_developer_instructions
-from app.native_cli_metadata import (
-    AgentReadOnlyViolationError,
-    describe_native_command,
-)
+from app.native_cli_metadata import describe_native_command
 from app.process_runner import ProcessRunResult
-from app.runtime_environment import central_python
-from app.store import AgentExecutionReceipt, AgentRole, AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 from app.wechat.codex_safety import (
     ControlledCliConfig,
     make_audit_agent_command,
     make_consumer_agent_command,
 )
-from tests.prompt_structure import validate_prompt_structure
 
 
 class CapturingExecutor:
@@ -177,141 +151,64 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
     }
 
 
-def test_initial_write_authorization_binds_direct_message_content_and_recipient():
-    action = SimpleNamespace(
-        action_identity="request-interview",
-        capability="dingtalk-chat",
-        operation="send_direct_message",
-        payload={"content": "请安排一轮面试。"},
-        target={"open_dingtalk_id": "open-recipient"},
+def test_expected_external_action_preserves_typed_identity_without_a_command():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Ask HR to schedule the interview.",
+            "action_identity": "request-interview",
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message",
+            "payload": {"content": "请安排一轮面试。"},
+            "target": {"open_dingtalk_id": "open-recipient"},
+            "expected_verification": "Provider returns a stable message id.",
+        }
     )
-    run = SimpleNamespace(id=7, operation_id="operation-7", proposal_revision=0)
-
-    expected = _expected_effect_action(action, action_index=0)
-    authorizations = _initial_write_authorizations(
-        run, (expected,), business_object_key="oa:process-1:task-1"
-    )
-
-    assert len(authorizations) == 1
-    authorization = authorizations[0]
-    assert authorization["argv"][:10] == [
-        "dws", "chat", "+messages-send", "--open-dingtalk-id", "open-recipient",
-        "--text", "请安排一轮面试。", "--yes", "--format", "json",
-    ]
-    assert authorization["argv"][10] == "--uuid"
-    assert UUID(authorization["argv"][11]).version is not None
-    assert authorization["target_identifiers"]["open-dingtalk-id"] == "open-recipient"
-    assert authorization["target_identifiers"]["uuid"] == authorization["argv"][11]
-
-
-def test_external_action_and_provider_uuid_are_stable_across_runs():
-    action = SimpleNamespace(
-        action_identity="notify-approval-result",
-        capability="dingtalk-chat",
-        operation="send_direct_message",
-        payload={"content": "审批已完成。"},
-        target={"open_dingtalk_id": "open-recipient"},
-    )
-    expected = _expected_effect_action(action, action_index=0)
-    first = _initial_write_authorizations(
-        SimpleNamespace(id=7, operation_id="operation-7", proposal_revision=0),
-        (expected,),
+    expected = expected_external_action(
+        action,
+        action_index=0,
         business_object_key="oa:process-1:task-1",
-    )[0]
-    second = _initial_write_authorizations(
-        SimpleNamespace(id=8, operation_id="operation-8", proposal_revision=1),
-        (expected,),
-        business_object_key="oa:process-1:task-1",
-    )[0]
+    )
 
-    assert first["authorization_id"] != second["authorization_id"]
+    assert expected["action_index"] == 0
+    assert expected["action_identity"] == "request-interview"
+    assert expected["operation"] == "send_direct_message"
+    assert expected["target_identifiers"] == {
+        "open_dingtalk_id": "open-recipient"
+    }
+    assert expected["external_action_key"]
+    assert "argv" not in expected
+    assert "authorization_id" not in expected
+
+
+def test_external_action_identity_is_stable_without_run_or_revision_state():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Notify applicant.",
+            "action_identity": "notify-approval-result",
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message",
+            "payload": {"content": "审批已完成。"},
+            "target": {"open_dingtalk_id": "open-recipient"},
+            "expected_verification": "Provider returns a stable message id.",
+        }
+    )
+    first = expected_external_action(
+        action,
+        action_index=0,
+        business_object_key="oa:process-1:task-1",
+    )
+    second = expected_external_action(
+        action,
+        action_index=0,
+        business_object_key="oa:process-1:task-1",
+    )
+
     assert first["external_action_key"] == second["external_action_key"]
-    assert first["argv"][first["argv"].index("--uuid") + 1] == second["argv"][
-        second["argv"].index("--uuid") + 1
-    ]
+    assert "authorization_id" not in first
+    assert "argv" not in first
 
 
-@pytest.mark.parametrize(
-    ("action", "expected_argv"),
-    [
-        (SimpleNamespace(action_identity="send-group", capability="dingtalk-chat", operation="send_to_group",
-            payload={"reply_text": "群内回复"}, target={"conversation_id": "cid-group"}),
-         ["dws", "chat", "+send-to-group", "--group", "cid-group", "--content", "群内回复", "--yes", "--format", "json"]),
-        (SimpleNamespace(
-            action_identity="request-source-record",
-            capability="dingtalk-chat",
-            operation="send_message_to_source_conversation",
-            payload={"content": "请提供原始记录。"},
-            target={
-                "conversation_id": "cid-source",
-                "conversation_type": "single_chat",
-                "verified_participant_open_dingtalk_id": "open-source-member",
-            },
-        ),
-         ["dws", "chat", "+messages-send", "--open-dingtalk-id", "open-source-member", "--text", "请提供原始记录。", "--yes", "--format", "json"]),
-        (SimpleNamespace(action_identity="request-materials", capability="dingtalk_oa", operation="approval.comment",
-            payload={"comment_text": "请补材料"}, target={"process_instance_id": "process-1"}),
-         ["dws", "oa", "approval", "oa-comments", "--instance-id", "process-1", "--content", "请补材料", "--format", "json", "--yes"]),
-        (SimpleNamespace(action_identity="approve-application", capability="dingtalk-misc", operation="dws oa approval approve",
-            payload={"remark": "同意"},
-            target={"process_instance_id": "process-1", "task_id": "task-1"}),
-         ["dws", "oa", "approval", "approve", "--instance-id", "process-1",
-          "--task-id", "task-1", "--remark", "同意", "--format", "json", "--yes"]),
-    ],
-)
-def test_expected_effect_action_binds_supported_dingtalk_actions(action, expected_argv):
-    assert _expected_effect_action(action)["argv"] == expected_argv
-
-
-def test_expected_effect_action_preserves_prepared_legacy_dingtalk_command_body():
-    final_body = "已处理。（by明哥分身）\n\n[满意](https://feedback.example/ok)\n[不满意](https://feedback.example/bad)"
-    action = SimpleNamespace(
-        action_identity="send-group-result",
-        capability="agent_cli.dws",
-        operation="chat message send",
-        target={"group": "cid-group"},
-        payload={
-            "argv": [
-                "dws", "chat", "message", "send", "--group", "cid-group",
-                "--content", final_body, "--yes",
-            ]
-        },
-    )
-
-    expected = _expected_effect_action(action)
-
-    assert expected["argv"][expected["argv"].index("--content") + 1] == final_body
-
-
-@pytest.mark.parametrize(
-    "argv",
-    [
-        [
-            "dws", "chat", "message", "reaction", "add",
-            "--message-id", "msg-1", "--emoji", "LIKE", "--yes",
-        ],
-        [
-            "dws", "oa", "approval", "approve",
-            "--instance-id", "process-1", "--yes",
-        ],
-        [
-            "dws", "mail", "message", "move",
-            "--message-id", "mail-1", "--folder", "Archive", "--yes",
-        ],
-    ],
-)
-def test_expected_effect_action_does_not_rebind_non_message_legacy_dws_writes(argv):
-    action = SimpleNamespace(
-        capability="agent_cli.dws",
-        operation="legacy write",
-        target={},
-        payload={"argv": argv},
-    )
-
-    assert _expected_effect_action(action) == {"action_index": 0}
-
-
-def test_audit_runner_adds_direct_message_execution_prompt_before_process(
+def test_audit_runner_adds_stable_action_identity_without_command_authorization(
     setup, monkeypatch
 ):
     store, task, audit_context, parent = setup
@@ -368,8 +265,12 @@ def test_audit_runner_adds_direct_message_execution_prompt_before_process(
     )
 
     assert result == "executed"
-    assert "Approved execution" in str(captured["prompt"])
-    assert "open-recipient" in str(captured["prompt"])
+    prompt = str(captured["prompt"])
+    assert "External action identities" in prompt
+    assert "external_action_key" in prompt
+    assert "command authorizations" in prompt
+    assert "execute_reviewed_write" not in prompt
+    assert "--open-dingtalk-id" not in prompt
 
 
 
@@ -1029,16 +930,15 @@ def test_audited_email_turn_receives_bound_write_tool_and_prompt_identity(setup)
 def test_consumer_command_does_not_expose_audited_unsubscribe_write() -> None:
     command = ["codex", "exec", "--json"]
 
-    make_consumer_agent_command(
-        command,
-        controlled_cli=ControlledCliConfig(
-            command="python",
-            args=("-m", "app.agent_cli"),
-            cwd="/workspace",
-        ),
-    )
+    make_consumer_agent_command(command)
 
-    assert "execute_audited_email_unsubscribe" not in json.dumps(command)
+    rendered = json.dumps(command)
+    assert "execute_audited_email_unsubscribe" not in rendered
+    assert "execute_reviewed_read" not in rendered
+    assert "execute_reviewed_write" not in rendered
+    assert 'approval_policy="on-failure"' in command
+    assert 'approvals_reviewer="auto_review"' in command
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
 
 
 def test_audit_command_can_expose_only_the_task_bound_unsubscribe_write() -> None:
@@ -1057,6 +957,8 @@ def test_audit_command_can_expose_only_the_task_bound_unsubscribe_write() -> Non
     rendered = json.dumps(command)
     assert "execute_audited_email_unsubscribe" in rendered
     assert "execute_email_unsubscribe" not in rendered
+    assert "execute_reviewed_read" not in rendered
+    assert "execute_reviewed_write" not in rendered
 
 
 def test_audit_process_failure_is_a_regular_failed_run(setup):

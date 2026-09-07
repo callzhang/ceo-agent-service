@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import hashlib
 import json
-from uuid import NAMESPACE_URL, uuid5
 from pathlib import Path
 import sys
 from uuid import uuid4
@@ -24,13 +22,8 @@ from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
-from app.native_cli_metadata import (
-    describe_native_command,
-    dingtalk_message_text,
-    native_command_argv,
-)
 from app.service_message_sender import agent_message_delivery_key
-from app.business_identity import external_action_key
+from app.external_action_identity import expected_external_action
 from app.store import (
     AgentRole,
     AgentRun,
@@ -39,8 +32,6 @@ from app.store import (
 )
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
-RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
-EFFECT_INTENT_CONTEXT_ENV = "CEO_AGENT_EFFECT_INTENT_CONTEXT"
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -138,8 +129,9 @@ class AuditAgentRunner:
         prompt = context.render()
         expected_effect_actions_list: list[dict[str, object]] = []
         for index, action in enumerate(context.proposal.actions):
-            expected = _bind_stable_external_action(
-                _expected_effect_action(action, action_index=index),
+            expected = expected_external_action(
+                action,
+                action_index=index,
                 business_object_key=task.business_object_key,
             )
             expected["delivery_key"] = agent_message_delivery_key(
@@ -148,20 +140,8 @@ class AuditAgentRunner:
             )
             expected_effect_actions_list.append(expected)
         expected_effect_actions = tuple(expected_effect_actions_list)
-        write_authorizations = (
-            _initial_write_authorizations(
-                run,
-                expected_effect_actions,
-                business_object_key=task.business_object_key,
-            )
-            if not self.dry_run
-            else ()
-        )
-        if write_authorizations:
-            self.store.prepare_agent_effect_intents(
-                run.id, write_authorizations, owner=self.owner
-            )
-            prompt += _write_authorization_prompt(write_authorizations)
+        if expected_effect_actions:
+            prompt += _external_action_identity_prompt(expected_effect_actions)
 
         process = AgentTurnProcess[AuditAgentResult](
             store=self.store,
@@ -222,28 +202,7 @@ class AuditAgentRunner:
                     command=sys.executable,
                     args=("-m", "app.agent_cli"),
                     cwd=str(SERVICE_ROOT),
-                    env=(
-                        (
-                            RECOVERY_WRITE_ALLOWLIST_ENV,
-                            json.dumps(
-                                write_authorizations,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ),
-                        ),
-                        (
-                            EFFECT_INTENT_CONTEXT_ENV,
-                            json.dumps(
-                                {"db_path": str(self.store.path), "run_id": run.id},
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ),
-                        ),
-                    )
-                    if write_authorizations
-                    else (),
                 ),
-                allow_write=not self.dry_run,
                 additional_agent_cli_tools=email_unsubscribe_tools,
             ),
             parse_result=parse_audit_agent_wire_result,
@@ -316,283 +275,25 @@ def _audit_recovery_error_code(exc: Exception) -> str:
     return str(code) if code else "codex_process_failed"
 
 
-def _json_digest(value: object) -> str:
-    import hashlib
-    import json
-
-    return hashlib.sha256(
-        json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode()
-    ).hexdigest()
-
-
-def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, object]:
-    """Bind supported typed chat and OA-comment proposals to exact commands."""
-    target = getattr(action, "target", {})
-    payload = getattr(action, "payload", {})
-    capability = getattr(action, "capability", "")
-    operation = getattr(action, "operation", "")
-    legacy_argv = native_command_argv({"type": "command_execution", **payload})
-    content = payload.get("content") or payload.get("text") or payload.get("reply_text")
-    recipient = (
-        target.get("open_dingtalk_id")
-        or target.get("recipient_open_dingtalk_id")
-        or target.get("sender_open_dingtalk_id")
-        or target.get("verified_participant_open_dingtalk_id")
-    )
-    argv: list[str] | None = None
-    if (
-        capability == "agent_cli.dws"
-        and legacy_argv is not None
-        and dingtalk_message_text(legacy_argv).strip()
-    ):
-        argv = list(legacy_argv)
-        descriptor = describe_native_command(
-            {"type": "command_execution", "argv": argv}
-        )
-        if descriptor is None or descriptor.cli != "dws":
-            argv = None
-    elif capability == "dingtalk-chat" and isinstance(content, str) and content:
-        conversation_id = str(target.get("conversation_id") or "").strip()
-        message_id = str(
-            target.get("message_id") or target.get("source_message_id") or ""
-        ).strip()
-        if operation in {"send_to_group", "messages-send-to-group"} and conversation_id:
-            argv = [
-                "dws",
-                "chat",
-                "+send-to-group",
-                "--group",
-                conversation_id,
-                "--content",
-                content,
-                "--yes",
-                "--format",
-                "json",
-            ]
-        elif (
-            operation in {"messages-reply", "message.reply"}
-            and conversation_id
-            and message_id
-        ):
-            argv = [
-                "dws",
-                "chat",
-                "+messages-reply",
-                "--conversation-id",
-                conversation_id,
-                "--message-id",
-                message_id,
-                "--content",
-                content,
-                "--yes",
-                "--format",
-                "json",
-            ]
-        elif isinstance(recipient, str) and recipient:
-            argv = [
-                "dws",
-                "chat",
-                "+messages-send",
-                "--open-dingtalk-id",
-                recipient,
-                "--text",
-                content,
-                "--yes",
-                "--format",
-                "json",
-            ]
-    elif capability in {"dingtalk_oa", "dingtalk-oa"} and operation in {
-        "oa-comments",
-        "approval.comment",
-    }:
-        process_id = str(target.get("process_instance_id") or "").strip()
-        comment = payload.get("comment_text") or payload.get("content")
-        if process_id and isinstance(comment, str) and comment:
-            argv = [
-                "dws",
-                "oa",
-                "approval",
-                "oa-comments",
-                "--instance-id",
-                process_id,
-                "--content",
-                comment,
-                "--format",
-                "json",
-                "--yes",
-            ]
-    elif capability in {
-        "dingtalk-misc",
-        "dingtalk_oa",
-        "dingtalk-oa",
-    } and operation in {
-        "dws oa approval approve",
-        "oa approval approve",
-        "approval.approve",
-    }:
-        process_id = str(target.get("process_instance_id") or "").strip()
-        task_id = str(target.get("task_id") or "").strip()
-        remark = payload.get("remark")
-        if process_id and task_id and isinstance(remark, str):
-            argv = [
-                "dws",
-                "oa",
-                "approval",
-                "approve",
-                "--instance-id",
-                process_id,
-                "--task-id",
-                task_id,
-                "--remark",
-                remark,
-                "--format",
-                "json",
-                "--yes",
-            ]
-    if argv is None:
-        return {"action_index": action_index}
-    descriptor = describe_native_command({"type": "command_execution", "argv": argv})
-    if descriptor is None:
-        return {"action_index": action_index}
-    return {
-        "action_index": action_index,
-        "action_identity": action.action_identity,
-        "argv": argv,
-        "capability": f"agent_cli.{descriptor.cli}",
-        "operation": descriptor.command_path,
-        "operation_digest": descriptor.command_digest,
-        "arguments_digest": _json_digest({"argv": argv}),
-        "target_identifiers": descriptor.target_identifiers,
-        "reviewed_server": "agent_cli",
-        "reviewed_tool": "execute_reviewed_write",
-    }
-
-
-def _initial_write_authorizations(
-    run: AgentRun,
+def _external_action_identity_prompt(
     actions: tuple[dict[str, object], ...],
-    *,
-    business_object_key: str,
-) -> tuple[dict[str, object], ...]:
-    entries: list[dict[str, object]] = []
-    for original_action in actions:
-        action = _bind_stable_external_action(
-            original_action, business_object_key=business_object_key
-        )
-        required = (
-            "action_index",
-            "action_identity",
-            "argv",
-            "capability",
-            "operation",
-            "operation_digest",
-            "arguments_digest",
-            "target_identifiers",
-            "reviewed_server",
-            "reviewed_tool",
-        )
-        if any(key not in action for key in required):
-            continue
-        identity = {
-            "run_id": run.id,
-            "operation_id": run.operation_id,
-            "proposal_revision": run.proposal_revision,
-            "action": action,
-        }
-        authorization_id = hashlib.sha256(
-            json.dumps(
-                identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            ).encode()
-        ).hexdigest()
-        receipt_operation_id = hashlib.sha256(
-            f"{run.operation_id}:{action['action_index']}:{action['operation_digest']}".encode()
-        ).hexdigest()
-        entries.append(
-            {
-                "authorization_id": authorization_id,
-                "receipt_operation_id": receipt_operation_id,
-                "external_action_key": action["external_action_key"],
-                "business_object_key": business_object_key,
-                **action,
-            }
-        )
-    return tuple(entries)
-
-
-def _bind_stable_external_action(
-    action: dict[str, object],
-    *,
-    business_object_key: str,
-) -> dict[str, object]:
-    operation = action.get("operation")
-    action_identity = action.get("action_identity")
-    target = action.get("target_identifiers")
-    if (
-        not isinstance(operation, str)
-        or not isinstance(action_identity, str)
-        or not isinstance(target, dict)
-    ):
-        return dict(action)
-    identity_target = {
-        str(key): value
-        for key, value in target.items()
-        if str(key).replace("_", "-").casefold() not in {"uuid", "idempotency-key"}
-    }
-    action_key = external_action_key(
-        business_object_key=business_object_key,
-        action_identity=action_identity,
-        operation=operation,
-        target_identifiers=identity_target,
-    )
-    bound = dict(action)
-    argv = bound.get("argv")
-    if (
-        operation.startswith("chat ")
-        and isinstance(argv, list)
-        and "--uuid" not in argv
-        and "--idempotency-key" not in argv
-    ):
-        stable_uuid = str(uuid5(NAMESPACE_URL, f"ceo-agent:{action_key}"))
-        bound["argv"] = [*argv, "--uuid", stable_uuid]
-        descriptor = describe_native_command(
-            {"type": "command_execution", "argv": bound["argv"]}
-        )
-        if descriptor is None:
-            raise ValueError("stable external action command is invalid")
-        bound.update(
-            {
-                "operation": descriptor.command_path,
-                "operation_digest": descriptor.command_digest,
-                "arguments_digest": _json_digest({"argv": bound["argv"]}),
-                "target_identifiers": descriptor.target_identifiers,
-            }
-        )
-    bound["external_action_key"] = action_key
-    return bound
-
-
-def _recovery_authorizations(*args, **kwargs) -> tuple[dict[str, object], ...]:
-    return ()
-
-
-def _write_authorization_prompt(
-    authorizations: tuple[dict[str, object], ...],
 ) -> str:
-    allowed = [
+    identities = [
         {
             "action_index": entry["action_index"],
-            "authorization_id": entry["authorization_id"],
-            "argv": entry["argv"],
+            "action_identity": entry["action_identity"],
+            "external_action_key": entry["external_action_key"],
+            "delivery_key": entry["delivery_key"],
         }
-        for entry in authorizations
+        for entry in actions
     ]
     return (
-        "\n\n### Approved execution\n"
-        "For each approved action, call agent_cli.execute_reviewed_write exactly "
-        "once using the matching authorization_id and argv below.\n"
-        + json.dumps(allowed, ensure_ascii=False, separators=(",", ":"))
+        "\n\n### External action identities\n"
+        "These stable identities prevent duplicate provider actions across retries. "
+        "They are not command authorizations and do not restrict the runtime tool. "
+        "Reuse the matching external_action_key as the provider idempotency identity "
+        "when the provider supports one.\n"
+        + json.dumps(identities, ensure_ascii=False, separators=(",", ":"))
     )
 
 

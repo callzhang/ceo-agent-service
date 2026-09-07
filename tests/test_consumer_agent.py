@@ -12,7 +12,7 @@ from app.agent_context import (
     AuditTurnContext,
     MaterialReference,
 )
-from app.agent_contracts import ConsumerAgentResult, ConsumerProposal
+from app.agent_contracts import ConsumerProposal
 from app.agent_result import EffectKind, ResultParseError
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
@@ -673,7 +673,8 @@ def test_consumer_instructions_use_reply_fallback_when_okr_write_is_unsupported(
         consumer_developer_instructions("Verify every supported fact.").split()
     )
 
-    assert "no reviewed write operation" in instructions
+    assert "no write operation" in instructions
+    assert "reviewed write operation" not in instructions
     assert "OKR record was not changed" in instructions
     assert "executable fallback, not needs_human" in instructions
 
@@ -1028,21 +1029,21 @@ def test_consumer_accepts_read_only_session_handoff(store, task, context):
     assert store.get_codex_session_id(task.conversation_id) == "session-final"
 
 
-def test_consumer_rotates_session_when_service_read_contract_changes(
+def test_consumer_rotates_session_when_agent_capability_contract_changes(
     store, task, context, monkeypatch
 ):
     monkeypatch.setattr(
         consumer_agent,
-        "service_read_command_contract",
-        lambda: ("previous-read-command",),
+        "AGENT_CAPABILITY_INSTRUCTIONS",
+        "previous capability contract",
     )
     old_contract = consumer_agent.consumer_wire_contract_hash()
     store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
     store.set_codex_session_contract_hash(task.conversation_id, old_contract)
     monkeypatch.setattr(
         consumer_agent,
-        "service_read_command_contract",
-        lambda: ("current-read-command",),
+        "AGENT_CAPABILITY_INSTRUCTIONS",
+        "current capability contract",
     )
     executor = CapturingExecutor(_result_jsonl(session="session-fresh"))
 
@@ -1800,160 +1801,6 @@ def test_consumer_accepts_valid_nested_output_locally(store, task, context):
 
 
 @pytest.mark.parametrize(
-    ("command_argv", "body_index"),
-    (
-        (
-            [
-                "dws",
-                "chat",
-                "message",
-                "send",
-                "--group",
-                "cid-agent",
-                "--text",
-                "Verified notice.",
-                "--yes",
-            ],
-            7,
-        ),
-        (
-            [
-                "dws",
-                "chat",
-                "message",
-                "send",
-                "--conversation-id",
-                "cid-agent",
-                "--ai-tag",
-                "Verified notice.",
-                "--yes",
-            ],
-            7,
-        ),
-        (
-            [
-                "dws",
-                "chat",
-                "+messages-send",
-                "--conversation-id",
-                "cid-agent",
-                "--markdown",
-                "Verified notice.",
-                "--yes",
-            ],
-            6,
-        ),
-        (
-            [
-                "dws",
-                "chat",
-                "message",
-                "send",
-                "Verified notice.",
-                "--group",
-                "cid-agent",
-                "--yes",
-            ],
-            4,
-        ),
-        (
-            [
-                "dws",
-                "chat",
-                "message",
-                "send",
-                "--group",
-                "cid-agent",
-                "--yes",
-                "Verified notice.",
-            ],
-            7,
-        ),
-    ),
-)
-def test_consumer_prepares_dingtalk_message_postfix_before_persisting(
-    store,
-    task,
-    context,
-    monkeypatch,
-    command_argv,
-    body_index,
-):
-    monkeypatch.setenv(
-        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
-        "https://feedback.example.com",
-    )
-    executor = CapturingExecutor(
-        _proposal_jsonl({"argv": command_argv})
-    )
-
-    result = ConsumerAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
-    assert result.result.proposal is not None
-    argv = result.result.proposal.actions[0].payload["argv"]
-    text = argv[body_index]
-    assert text.startswith("Verified notice.（by明哥分身）")
-    assert text.count("（by明哥分身）") == 1
-    assert text.count("/api/dingtalk-feedback-spike") == 2
-    persisted = store.get_agent_run(result.run_id)
-    assert persisted is not None
-    persisted_result = ConsumerAgentResult.model_validate_json(
-        persisted.final_result_json
-    )
-    assert persisted_result.proposal is not None
-    assert persisted_result.proposal.actions[0].payload["argv"] == argv
-    prepared = store.get_outbound_postfix(
-        "dingtalk",
-        agent_message_delivery_key(
-            business_object_key=task.business_object_key,
-            action_identity=result.result.proposal.actions[0].action_identity,
-        ),
-    )
-    assert prepared is not None
-    assert prepared.final_body == text
-
-
-def test_consumer_prepares_command_string_and_persists_one_argv_contract(
-    store,
-    task,
-    context,
-    monkeypatch,
-):
-    monkeypatch.setenv(
-        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
-        "https://feedback.example.com",
-    )
-    executor = CapturingExecutor(
-        _proposal_jsonl(
-            {
-                "command": (
-                    "dws chat message send --conversation-id cid-agent "
-                    "--content 'Verified notice.' --yes"
-                )
-            }
-        )
-    )
-
-    result = ConsumerAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
-    assert result.result.proposal is not None
-    payload = result.result.proposal.actions[0].payload
-    assert "command" not in payload
-    assert isinstance(payload["argv"], list)
-    text = payload["argv"][payload["argv"].index("--content") + 1]
-    assert text.startswith("Verified notice.（by明哥分身）")
-    assert text.count("/api/dingtalk-feedback-spike") == 2
-
-
-@pytest.mark.parametrize(
     ("operation", "target", "payload", "text_key"),
     (
         (
@@ -2025,19 +1872,10 @@ def test_consumer_preserves_dash_prefixed_explicit_content_as_message_body(
     )
     executor = CapturingExecutor(
         _proposal_jsonl(
-            {
-                "argv": [
-                    "dws",
-                    "chat",
-                    "message",
-                    "send",
-                    "--conversation-id",
-                    "cid-agent",
-                    "--content",
-                    "--hello",
-                    "--yes",
-                ]
-            }
+            {"content": "--hello"},
+            capability="dingtalk-chat",
+            operation="send_direct_message",
+            target={"open_dingtalk_id": "recipient-1"},
         )
     )
 
@@ -2048,8 +1886,7 @@ def test_consumer_preserves_dash_prefixed_explicit_content_as_message_body(
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     assert result.result.proposal is not None
-    argv = result.result.proposal.actions[0].payload["argv"]
-    text = argv[argv.index("--content") + 1]
+    text = result.result.proposal.actions[0].payload["content"]
     assert text.startswith("--hello（by明哥分身）")
     assert text.count("/api/dingtalk-feedback-spike") == 2
 
@@ -2073,19 +1910,10 @@ def test_consumer_rejects_sensitive_value_added_by_postfix_preparation(
     )
     executor = CapturingExecutor(
         _proposal_jsonl(
-            {
-                "argv": [
-                    "dws",
-                    "chat",
-                    "message",
-                    "send",
-                    "--group",
-                    "cid-agent",
-                    "--text",
-                    "Verified notice.",
-                    "--yes",
-                ]
-            }
+            {"content": "Verified notice."},
+            capability="dingtalk-chat",
+            operation="send_direct_message",
+            target={"open_dingtalk_id": "recipient-1"},
         )
     )
 

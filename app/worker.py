@@ -24,11 +24,7 @@ from app.agent_context import (
 )
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, DecisionOption
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
-from app.audit_agent import (
-    AuditAgentRunner,
-    _bind_stable_external_action,
-    _expected_effect_action,
-)
+from app.audit_agent import AuditAgentRunner
 from app.channel_gate import (
     ChannelGate,
     ChannelGateResult,
@@ -38,6 +34,7 @@ from app.channel_gate import (
     start_lark_auth_login,
 )
 from app.consumer_agent import ConsumerAgentRunner
+from app.external_action_identity import expected_external_action
 from app.config import (
     agent_mention_aliases,
     assistant_signature,
@@ -2546,8 +2543,9 @@ class DingTalkAutoReplyWorker:
         if len(matching_actions) != 1:
             return None
         action = matching_actions[0]
-        expected = _bind_stable_external_action(
-            _expected_effect_action(action),
+        expected = expected_external_action(
+            action,
+            action_index=0,
             business_object_key=task.business_object_key,
         )
         external_key = expected.get("external_action_key")

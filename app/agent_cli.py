@@ -49,8 +49,6 @@ MAX_SPREADSHEET_ROWS = 200
 MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
 CLI_TIMEOUT_SECONDS = 15 * 60
-RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
-EFFECT_INTENT_CONTEXT_ENV = "CEO_AGENT_EFFECT_INTENT_CONTEXT"
 CliOutputLimitError = ProcessOutputLimitError
 SPREADSHEET_MATERIAL_ROOTS = (
     Path("/tmp").resolve(),
@@ -294,69 +292,6 @@ def review_write_authorization(
             {"argv": list(canonical_argv)}, domain="agent-cli-arguments-v1"
         ),
     )
-
-
-def _recovery_write_authorization(
-    command,
-    argv: Sequence[str],
-    *,
-    authorization_id: str | None,
-    allow_unique_argv_match: bool = False,
-) -> dict[str, object] | None:
-    raw_allowlist = os.environ.get(RECOVERY_WRITE_ALLOWLIST_ENV, "")
-    if not raw_allowlist:
-        return None
-    try:
-        allowlist = json.loads(raw_allowlist)
-    except json.JSONDecodeError as exc:
-        raise AgentReadOnlyViolationError("recovery_write_allowlist_invalid") from exc
-    if not isinstance(allowlist, list):
-        raise AgentReadOnlyViolationError("recovery_write_not_authorized")
-    actual = {
-        "capability": f"agent_cli.{command.cli}",
-        "operation": command.command_path,
-        "operation_digest": command.command_digest,
-        "target_identifiers": command.target_identifiers,
-        "arguments_digest": _json_digest({"argv": list(argv)}),
-    }
-    matches = [
-        entry
-        for entry in allowlist
-        if isinstance(entry, dict)
-        and all(entry.get(key) == value for key, value in actual.items())
-        and isinstance(entry.get("action_index"), int)
-        and isinstance(entry.get("authorization_id"), str)
-        and (
-            entry.get("authorization_id") == authorization_id
-            if isinstance(authorization_id, str)
-            else allow_unique_argv_match
-        )
-    ]
-    if len(matches) != 1:
-        raise AgentReadOnlyViolationError("recovery_write_not_authorized")
-    return matches[0]
-
-
-def _effect_intent_context() -> tuple[Path, int]:
-    raw_context = os.environ.get(EFFECT_INTENT_CONTEXT_ENV, "")
-    try:
-        context = json.loads(raw_context)
-    except json.JSONDecodeError as exc:
-        raise AgentReadOnlyViolationError("effect_intent_context_invalid") from exc
-    if not isinstance(context, dict) or set(context) != {"db_path", "run_id"}:
-        raise AgentReadOnlyViolationError("effect_intent_context_invalid")
-    db_path = context.get("db_path")
-    run_id = context.get("run_id")
-    if (
-        not isinstance(db_path, str)
-        or not db_path.strip()
-        or not Path(db_path).is_absolute()
-        or isinstance(run_id, bool)
-        or not isinstance(run_id, int)
-        or run_id <= 0
-    ):
-        raise AgentReadOnlyViolationError("effect_intent_context_invalid")
-    return Path(db_path), run_id
 
 
 def read_skill(path: str) -> dict[str, str]:
@@ -694,12 +629,6 @@ def _execute_reviewed(
                     "reviewed_write_authorization_consumer_required"
                 )
             authorization = actual
-        else:
-            authorization = _recovery_write_authorization(
-                command,
-                argv,
-                authorization_id=authorization_id,
-            )
     executable_name = argv[0] if command.cli == "local-shell" else command.cli
     executable = shutil.which(executable_name)
     if executable is None:
@@ -794,8 +723,8 @@ def _execute_reviewed(
 server = FastMCP(
     "agent_cli",
     instructions=(
-        "Read installed Agent skills and local materials with dedicated readers, "
-        "and run DWS or Lark commands only after reviewing effect metadata."
+        "Provide task-bound service operations and bounded local-material readers. "
+        "Normal Consumer and Audit commands run through the Codex runtime directly."
     ),
 )
 
@@ -888,80 +817,6 @@ def read_spreadsheet_tool(
 ) -> dict[str, object]:
     """Read a bounded preview of a downloaded xlsx workbook without shell access."""
     return read_spreadsheet(path, max_rows=max_rows, max_columns=max_columns)
-
-
-@server.tool(
-    name="execute_reviewed_read",
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
-    ),
-)
-def execute_reviewed_read_tool(argv: list[str]) -> dict[str, object]:
-    """Run one reviewed DWS, Lark, or fixed service read and return a receipt.
-
-    Use the provided argv for live enterprise evidence such as a message,
-    calendar event, document, file, approval, person, mail, or meeting. DWS
-    and Lark use published effect metadata. Arbitrary local executables are
-    forbidden; use the dedicated text and spreadsheet readers for local files.
-    """
-    return execute_reviewed_read(argv)
-
-
-@server.tool(
-    name="execute_reviewed_write",
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=False,
-        openWorldHint=True,
-    ),
-)
-def execute_reviewed_write_tool(
-    argv: list[str], authorization_id: str | None = None
-) -> dict[str, object]:
-    """Execute an Audit-approved external write and return its receipt.
-
-    This tool accepts only reviewed commands with a matching authorization.
-    Consumer Agents must describe writes as proposal data and never call it.
-    """
-    canonical_argv, command = _classify_reviewed_write(argv, classifier=None)
-    authorization = _recovery_write_authorization(
-        command,
-        canonical_argv,
-        authorization_id=authorization_id,
-        allow_unique_argv_match=True,
-    )
-    if authorization is None:
-        raise AgentReadOnlyViolationError("reviewed_write_not_authorized")
-    db_path, run_id = _effect_intent_context()
-    from app.store import AutoReplyStore
-
-    store = AutoReplyStore(db_path)
-    reused = store.reuse_completed_external_action(run_id, authorization)
-    if reused is not None:
-        return reused
-    receipt = execute_reviewed_write(
-        canonical_argv,
-        authorization_id=str(authorization["authorization_id"]),
-        authorization_consumer=lambda consumed: store.dispatch_agent_effect_intent(
-            run_id, consumed
-        ),
-    )
-    if "error" not in receipt:
-        result_digest = receipt.get("result_digest")
-        if not isinstance(result_digest, str) or not result_digest:
-            raise AgentReadOnlyViolationError("agent_cli_receipt_digest_missing")
-        store.acknowledge_agent_effect_intent(
-            run_id,
-            authorization,
-            result_digest=result_digest,
-            exit_code=0,
-            provider_result=receipt,
-        )
-    return receipt
 
 
 if __name__ == "__main__":

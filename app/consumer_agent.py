@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
@@ -38,17 +37,11 @@ from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
 from app.native_cli_metadata import (
     NativeCliMetadataClassifier,
-    dingtalk_message_text,
-    dingtalk_outgoing_message_command_path,
-    describe_native_command,
-    native_command_argv,
-    replace_dingtalk_message_text,
-    service_read_command_contract,
 )
 from app.prompt import work_profile_instruction
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore, ReplyTask
-from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_command
+from app.wechat.codex_safety import make_consumer_agent_command
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = SERVICE_ROOT / "app" / "schemas" / "consumer_agent_result.schema.json"
@@ -72,7 +65,7 @@ principal's engagement. Return feedback_provided when the candidate must be
 regenerated; do not rewrite it yourself.
 """.strip()
 SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
-REVIEWED_DWS_READ_INSTRUCTIONS = """
+AGENT_CAPABILITY_INSTRUCTIONS = """
 Use the capabilities available to the calling agent to gather the evidence
 needed for the task. Return a single structured result. The application does
 not prescribe provider command names, MCP tools, shell syntax, or readback
@@ -96,13 +89,12 @@ internal participant action is autonomous; state what the Agent may do now.
 If the trigger contains a `dingokr.dingteam.com` OKR link or asks to review an
 OKR, read `dingtang-okr-review/SKILL.md` and applicable references first; use
 the Dingteam live source path. Do not route this data through native Agoal
-commands such as `agoal user rules`. Resolve the actual OKR owner id with a
-reviewed contact/read capability, then call the fixed service read command
-`/Users/derek/miniforge3/bin/python -m app.cli read-dingteam-okr --user-id <owner-id> --period-label
-<period>` through `execute_reviewed_read`; it returns the live processed
+commands such as `agoal user rules`. Resolve the actual OKR owner id and use the
+operation Skill's live Dingteam source capability; it returns the processed
 `objectives` and `okrRows` payload. Do not treat a screenshot or a repository
-URL as a substitute for this read. If the command fails, preserve its exact
-source error and retry the read path before returning a business conclusion.
+URL as a substitute for the live source. If the provider fails, preserve its
+exact source error and retry through the runtime before returning a business
+conclusion.
 Follow the selected operation Skill when a provider command or local file is
 needed, including any schema or identifier lookup it documents.
 Preserve an
@@ -155,14 +147,13 @@ def consumer_wire_contract_hash(
     contract = {
         "consumer_rules": _CONSUMER_AGENT_RULES,
         "role_boundary": CONSUMER_ROLE_BOUNDARY,
-        "reviewed_dws_read_instructions": REVIEWED_DWS_READ_INSTRUCTIONS,
+        "agent_capability_instructions": AGENT_CAPABILITY_INSTRUCTIONS,
         "business_skill_protocol": (
             runtime_skill_snapshot.protocol()
             if runtime_skill_snapshot is not None
             else render_business_skill_protocol(installed_business_skill_catalog())
         ),
         "work_profile_instruction": work_profile_instruction(),
-        "service_read_commands": service_read_command_contract(),
         "wire_schema": ConsumerAgentWireResult.model_json_schema(),
         "runtime_skill_snapshot": (
             runtime_skill_snapshot.protocol() if runtime_skill_snapshot is not None else ""
@@ -226,7 +217,7 @@ reject that completion claim with the concrete gap stated; it is not a reason
 to return needs_human. Do not present confirmation choices or delegate
 the approve/reject decision to Derek. Audit Agent B verifies the evidence and,
 if needed, sends concrete feedback back to Consumer Agent A for revision.
-If the OKR Skill/runtime has no reviewed write operation for changing the
+If the OKR Skill/runtime has no write operation for changing the
 approval state, keep the approve/reject decision but use a supported
 dingtalk-chat reply to communicate it. State that the OKR record was not
 changed, explain the concrete risk boundary, and tell the requester not to act
@@ -507,14 +498,7 @@ class ConsumerAgentRunner:
                         ) if part
                     ),
                 ),
-                configure_command=lambda command: make_consumer_agent_command(
-                    command,
-                    controlled_cli=ControlledCliConfig(
-                        command=sys.executable,
-                        args=("-m", "app.agent_cli"),
-                        cwd=str(SERVICE_ROOT),
-                    ),
-                ),
+                configure_command=make_consumer_agent_command,
                 parse_result=parse_consumer_agent_wire_result,
                 prepare_result=lambda parsed: _prepare_outgoing_dingtalk_messages(
                     parsed,
@@ -622,31 +606,6 @@ def _prepare_outgoing_dingtalk_action(
     context: AgentTaskContext,
 ) -> ProposedAction:
     payload = action.payload
-    argv = native_command_argv({"type": "command_execution", **payload})
-    descriptor = describe_native_command({"type": "command_execution", **payload})
-    command_path = dingtalk_outgoing_message_command_path(argv)
-    if (
-        argv is not None
-        and descriptor is not None
-        and descriptor.cli == "dws"
-        and command_path is not None
-    ):
-        reply_text = dingtalk_message_text(argv)
-        if not reply_text.strip():
-            return action
-        prepared = sender.prepare(
-            channel="dingtalk",
-            delivery_key=delivery_key,
-            body=reply_text,
-            original_text=context.trigger_text,
-        )
-        prepared_payload = dict(payload)
-        prepared_payload.pop("command", None)
-        prepared_payload["argv"] = list(
-            replace_dingtalk_message_text(argv, prepared.final_body)
-        )
-        return action.model_copy(update={"payload": prepared_payload})
-
     text_key = _structured_dingtalk_outgoing_text_key(action)
     if text_key is None:
         return action
@@ -709,7 +668,7 @@ def consumer_developer_instructions(
     )
     instructions = _role_developer_instructions(
         core,
-        capability_instructions=REVIEWED_DWS_READ_INSTRUCTIONS,
+        capability_instructions=AGENT_CAPABILITY_INSTRUCTIONS,
         role_boundary=CONSUMER_ROLE_BOUNDARY.replace("Derek", principal_display_name()),
     )
     return "\n\n".join(

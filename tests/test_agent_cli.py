@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 import subprocess
 import threading
@@ -14,7 +13,6 @@ from app.agent_result import EffectKind
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.native_cli_metadata import AgentReadOnlyViolationError
-from app.store import AgentRole, AutoReplyStore
 
 
 def test_agent_cli_mcp_tools_publish_searchable_descriptions():
@@ -25,13 +23,11 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
         "read_skill",
         "read_text_file",
         "read_spreadsheet",
-        "execute_reviewed_read",
-        "execute_reviewed_write",
         "execute_audited_email_unsubscribe",
     }
     assert all(description.strip() for description in descriptions.values())
-    assert "calendar event" in descriptions["execute_reviewed_read"]
     assert "email unsubscribe" in descriptions["execute_audited_email_unsubscribe"]
+    assert "Consumer and Audit commands" in agent_cli.server.instructions
     assert "execute_email_unsubscribe" not in descriptions
 
 
@@ -692,177 +688,3 @@ def test_explicit_reviewed_write_authorization_rejects_any_change_before_runner(
             process_runner=runner,
         )
     assert calls == 0
-
-
-def test_mcp_write_tool_consumes_durable_intent_and_persists_ack(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    assert store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Group",
-        single_chat=False,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-08-21 00:00:00",
-        trigger_sender="Derek",
-        trigger_text="Send the reply",
-    )
-    task = store.claim_reply_tasks(limit=1)[0]
-    run = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="operation-1",
-        owner="audit-owner",
-    ).run
-    argv = [
-        "dws", "chat", "message", "send", "--group", "cid-1",
-        "--text", "done", "--yes",
-    ]
-    descriptor = agent_cli.describe_native_command(
-        {"type": "command_execution", "argv": argv}
-    )
-    assert descriptor is not None
-    authorization = {
-        "authorization_id": "authorization-1",
-        "external_action_key": "external-action-1",
-        "business_object_key": task.business_object_key,
-        "action_identity": "send-result",
-        "action_index": 0,
-        "receipt_operation_id": "operation-action-0",
-        "capability": "agent_cli.dws",
-        "operation": descriptor.command_path,
-        "operation_digest": descriptor.command_digest,
-        "arguments_digest": agent_cli._json_digest({"argv": argv}),
-        "target_identifiers": descriptor.target_identifiers,
-    }
-    store.prepare_agent_effect_intents(
-        run.id, (authorization,), owner="audit-owner",
-    )
-    monkeypatch.setenv(
-        agent_cli.RECOVERY_WRITE_ALLOWLIST_ENV,
-        json.dumps([authorization], sort_keys=True, separators=(",", ":")),
-    )
-    monkeypatch.setenv(
-        agent_cli.EFFECT_INTENT_CONTEXT_ENV,
-        json.dumps({"db_path": str(store.path), "run_id": run.id}),
-    )
-    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/bin/dws")
-    monkeypatch.setattr(
-        agent_cli,
-        "run_bounded_process",
-        lambda command, **_kwargs: subprocess.CompletedProcess(
-            command, 0, '{"messageId":"sent-1"}', ""
-        ),
-    )
-    # The runtime already binds the exact argv to one persisted action. Agents
-    # need not echo the opaque authorization ID back into the MCP call.
-    receipt = agent_cli.execute_reviewed_write_tool(argv)
-    assert receipt["authorization_id"] == "authorization-1"
-    [persisted] = store.list_agent_execution_receipts(run.id)
-    assert persisted.receipt_id == "authorization-1"
-    assert persisted.safe_to_confirm is True
-    with pytest.raises(ValueError, match="effect intent already dispatched"):
-        agent_cli.execute_reviewed_write_tool(
-            argv, authorization_id="authorization-1",
-        )
-
-
-def test_mcp_write_tool_reuses_completed_external_action(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    assert store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Group",
-        single_chat=False,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-08-21 00:00:00",
-        trigger_sender="Derek",
-        trigger_text="Send once",
-    )
-    task = store.claim_reply_tasks(limit=1)[0]
-    argv = [
-        "dws", "chat", "message", "send", "--group", "cid-1",
-        "--text", "done", "--yes",
-    ]
-    descriptor = agent_cli.describe_native_command(
-        {"type": "command_execution", "argv": argv}
-    )
-    assert descriptor is not None
-
-    def authorization(identifier: str, operation_id: str) -> dict[str, object]:
-        return {
-            "authorization_id": identifier,
-            "external_action_key": "external-action-1",
-            "business_object_key": task.business_object_key,
-            "action_identity": "send-result",
-            "action_index": 0,
-            "receipt_operation_id": operation_id,
-            "capability": "agent_cli.dws",
-            "operation": descriptor.command_path,
-            "operation_digest": descriptor.command_digest,
-            "arguments_digest": agent_cli._json_digest({"argv": argv}),
-            "target_identifiers": descriptor.target_identifiers,
-        }
-
-    def claim(revision: int, operation_id: str):
-        return store.claim_agent_run(
-            task.id,
-            task.execution_generation,
-            role=AgentRole.AUDIT,
-            proposal_revision=revision,
-            turn_attempt=0,
-            parent_agent_run_id=None,
-            operation_id=operation_id,
-            owner="audit-owner",
-        ).run
-
-    first_run = claim(0, "operation-1")
-    first = authorization("authorization-1", "operation-action-0")
-    store.prepare_agent_effect_intents(first_run.id, (first,), owner="audit-owner")
-    monkeypatch.setenv(
-        agent_cli.RECOVERY_WRITE_ALLOWLIST_ENV,
-        json.dumps([first], sort_keys=True, separators=(",", ":")),
-    )
-    monkeypatch.setenv(
-        agent_cli.EFFECT_INTENT_CONTEXT_ENV,
-        json.dumps({"db_path": str(store.path), "run_id": first_run.id}),
-    )
-    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/bin/dws")
-    calls: list[list[str]] = []
-
-    def send_once(command, **_kwargs):
-        calls.append(command)
-        return subprocess.CompletedProcess(command, 0, '{"messageId":"sent-1"}', "")
-
-    monkeypatch.setattr(agent_cli, "run_bounded_process", send_once)
-    first_receipt = agent_cli.execute_reviewed_write_tool(argv)
-    store.complete_agent_run(
-        first_run.id,
-        {"outcome": "executed"},
-        owner="audit-owner",
-    )
-
-    second_run = claim(1, "operation-2")
-    second = authorization("authorization-2", "operation-action-1")
-    store.prepare_agent_effect_intents(second_run.id, (second,), owner="audit-owner")
-    monkeypatch.setenv(
-        agent_cli.RECOVERY_WRITE_ALLOWLIST_ENV,
-        json.dumps([second], sort_keys=True, separators=(",", ":")),
-    )
-    monkeypatch.setenv(
-        agent_cli.EFFECT_INTENT_CONTEXT_ENV,
-        json.dumps({"db_path": str(store.path), "run_id": second_run.id}),
-    )
-
-    reused = agent_cli.execute_reviewed_write_tool(argv)
-
-    assert reused["reused"] is True
-    assert reused["stdout"] == first_receipt["stdout"]
-    assert len(calls) == 1

@@ -180,99 +180,75 @@ def make_read_only_without_tools(command: list[str]) -> None:
 def make_role_agent_command(
     command: list[str],
     *,
-    controlled_cli: ControlledCliConfig,
-    allow_write: bool,
-    allow_local_credential_store: bool = False,
+    controlled_cli: ControlledCliConfig | None = None,
     additional_agent_cli_tools: tuple[str, ...] = (),
 ) -> None:
+    """Use the native Codex capability surface and its automatic reviewer.
+
+    Consumer and Audit differ in their typed business contracts, not in their
+    shell or MCP permissions.  The service therefore does not construct a
+    command allowlist or a role-specific read-only sandbox here.
+    """
     _insert_command_options(command, service_mcp_config_options())
-    _isolate_background_agent_context(command)
-    if allow_local_credential_store:
-        # DWS stores the principal's local login state outside the workspace.
-        # Let the controlled MCP reach it, but remove native command tools so
-        # Consumer A cannot use that wider filesystem access itself.
-        _remove_command_options(command, names=("--sandbox",))
-    elif not allow_write:
-        while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
-            command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
+    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
+        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
     _remove_config_options(
         command,
         prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
     )
-    # agent_cli executes the Agent's reviewed native reads outside the Codex
-    # read-only filesystem sandbox, where the user's CLI credential store is
-    # available. Audit B additionally gets its controlled write tool.
-    agent_cli_tools = [
-        "execute_reviewed_read",
-        "read_skill",
-        "read_text_file",
-        "read_spreadsheet",
+    options = [
+        "-c",
+        'approval_policy="on-failure"',
+        "-c",
+        'approvals_reviewer="auto_review"',
     ]
-    agent_cli_tools.extend(additional_agent_cli_tools)
-    approval_options = ["-c", 'approval_policy="never"']
-    if allow_write:
-        agent_cli_tools.insert(1, "execute_reviewed_write")
-        approval_options = [
-            "-c",
-            'approval_policy="on-failure"',
-            "-c",
-            'approvals_reviewer="auto_review"',
-        ]
+    if additional_agent_cli_tools:
+        if controlled_cli is None:
+            raise ValueError("task-bound agent_cli tools require a server config")
+        options.extend(
+            [
+                "-c",
+                f"mcp_servers.agent_cli.command={json.dumps(controlled_cli.command)}",
+                "-c",
+                "mcp_servers.agent_cli.args=" + json.dumps(list(controlled_cli.args)),
+                "-c",
+                f"mcp_servers.agent_cli.cwd={json.dumps(controlled_cli.cwd)}",
+                *(
+                    [
+                        "-c",
+                        _config_string(
+                            "mcp_servers.agent_cli.env", dict(controlled_cli.env)
+                        ),
+                    ]
+                    if controlled_cli.env
+                    else []
+                ),
+                "-c",
+                "mcp_servers.agent_cli.enabled_tools="
+                + json.dumps(list(additional_agent_cli_tools)),
+            ]
+        )
     _insert_command_options(
         command,
-        [
-            *(
-                [CODEX_BYPASS_APPROVALS_AND_SANDBOX]
-                if allow_local_credential_store
-                else _read_only_sandbox_options(command)
-            ),
-            "-c",
-            "tools.enabled_tools=[]",
-            *approval_options,
-            "-c", f"mcp_servers.agent_cli.command={json.dumps(controlled_cli.command)}",
-            "-c", "mcp_servers.agent_cli.args=" + json.dumps(list(controlled_cli.args)),
-            "-c", f"mcp_servers.agent_cli.cwd={json.dumps(controlled_cli.cwd)}",
-            *(
-                [
-                    "-c",
-                    _config_string(
-                        "mcp_servers.agent_cli.env", dict(controlled_cli.env)
-                    ),
-                ]
-                if controlled_cli.env
-                else []
-            ),
-            "-c", "mcp_servers.agent_cli.enabled_tools=" + json.dumps(agent_cli_tools),
-        ],
+        options,
     )
 
 
 def make_consumer_agent_command(
     command: list[str],
-    *,
-    controlled_cli: ControlledCliConfig,
-    additional_agent_cli_tools: tuple[str, ...] = (),
 ) -> None:
-    make_role_agent_command(
-        command,
-        controlled_cli=controlled_cli,
-        allow_write=False,
-        allow_local_credential_store=True,
-        additional_agent_cli_tools=additional_agent_cli_tools,
-    )
+    make_role_agent_command(command)
 
 
 def make_audit_agent_command(
     command: list[str],
     *,
-    controlled_cli: ControlledCliConfig,
-    allow_write: bool = True,
+    controlled_cli: ControlledCliConfig | None = None,
     additional_agent_cli_tools: tuple[str, ...] = (),
 ) -> None:
     make_role_agent_command(
         command,
         controlled_cli=controlled_cli,
-        allow_write=allow_write,
         additional_agent_cli_tools=additional_agent_cli_tools,
     )
 
