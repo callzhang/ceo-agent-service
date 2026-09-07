@@ -2,6 +2,7 @@ import importlib
 import importlib.util
 import os
 import socketserver
+import struct
 import threading
 from pathlib import Path
 from uuid import uuid4
@@ -18,6 +19,29 @@ def _module():
 
 def _short_socket_path() -> Path:
     return Path("/tmp") / f"ceo-wx-send-{os.getpid()}-{uuid4().hex[:8]}.sock"
+
+
+def test_peer_pid_reads_macos_unix_socket_credential():
+    module = _module()
+
+    class Connection:
+        @staticmethod
+        def getsockopt(level, option, size):
+            assert (level, option, size) == (0, 2, struct.calcsize("i"))
+            return struct.pack("i", 4242)
+
+    assert module._peer_pid(Connection()) == 4242
+
+
+def test_peer_pid_fails_closed_when_socket_has_no_macos_credential():
+    module = _module()
+
+    class Connection:
+        @staticmethod
+        def getsockopt(*_args):
+            raise OSError("unsupported")
+
+    assert module._peer_pid(Connection()) == 0
 
 
 class FakeAccessibility:

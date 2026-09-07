@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+import logging
 import os
 from pathlib import Path
 import socket
 import socketserver
 import stat
+import struct
 from typing import Any
 
 from app.wechat.accessibility import AccessibilityResult, SenderExecutionError
@@ -16,6 +18,9 @@ from app.wechat.accessibility import AccessibilityResult, SenderExecutionError
 PROTOCOL_VERSION = 1
 DEFAULT_MAX_REQUEST_BYTES = 32 * 1024
 DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024
+LOGGER = logging.getLogger(__name__)
+_SOL_LOCAL = 0
+_LOCAL_PEERPID = 0x002
 
 
 class SenderIpcError(RuntimeError):
@@ -38,6 +43,15 @@ def _optional_bool(params: dict, name: str) -> bool:
     if not isinstance(value, bool):
         raise SenderIpcError(f"invalid {name}")
     return value
+
+
+def _peer_pid(connection) -> int:
+    """Read the macOS Unix-domain socket peer PID without inspecting payload data."""
+    try:
+        raw = connection.getsockopt(_SOL_LOCAL, _LOCAL_PEERPID, struct.calcsize("i"))
+        return int(struct.unpack("i", raw)[0])
+    except (AttributeError, OSError, struct.error):
+        return 0
 
 
 class WechatSenderRpcService:
@@ -107,8 +121,16 @@ class _SenderRequestHandler(socketserver.StreamRequestHandler):
                 raise SenderIpcError("request must be an object")
             if request.get("protocol_version") != PROTOCOL_VERSION:
                 raise SenderIpcError("unsupported protocol version")
+            method = request.get("method", "")
+            params = request.get("params", {})
+            LOGGER.info(
+                "wechat_sender_rpc peer_pid=%s method=%s activate=%s",
+                _peer_pid(self.request),
+                method,
+                params.get("activate", False) if isinstance(params, dict) else False,
+            )
             result = server.rpc_service.dispatch(
-                request.get("method", ""), request.get("params", {}),
+                method, params,
             )
             self._reply({"ok": True, "result": result})
         except SenderIpcError as exc:
