@@ -171,9 +171,7 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     with sqlite3.connect(database) as db:
         db.execute("drop table email_training_snapshot_observations")
         db.execute("drop table email_training_snapshots")
-        db.execute(
-            "update email_schema_migrations set version=22 where version=24"
-        )
+        db.execute("update email_schema_migrations set version=22 where version=26")
 
     EmailStore(database)
 
@@ -195,11 +193,11 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     assert "email_training_snapshots" in tables
     assert "email_training_snapshot_observations" in tables
     assert preserved_model_text == "__subject__preserved migration row"
-    assert versions[-1] == email_store_module.EMAIL_SCHEMA_VERSION == 24
+    assert versions[-1] == email_store_module.EMAIL_SCHEMA_VERSION == 26
     with sqlite3.connect(database) as db:
-        assert db.execute(
-            "select frozen from email_training_snapshots"
-        ).fetchall() == []
+        assert (
+            db.execute("select frozen from email_training_snapshots").fetchall() == []
+        )
 
 
 def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
@@ -218,17 +216,15 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
         ):
             db.execute(f"drop trigger {trigger}")
         db.execute("alter table email_training_snapshots drop column frozen")
-        db.execute(
-            "update email_schema_migrations set version=23 where version=24"
-        )
+        db.execute("update email_schema_migrations set version=23 where version=26")
 
     reopened = EmailStore(database)
 
     assert reopened.get_training_snapshot(snapshot.snapshot_id) == snapshot.to_dict()
     with sqlite3.connect(database) as db:
-        assert db.execute(
-            "select frozen from email_training_snapshots"
-        ).fetchone()[0] == 1
+        assert (
+            db.execute("select frozen from email_training_snapshots").fetchone()[0] == 1
+        )
 
 
 def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path):
@@ -248,8 +244,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
         ):
             db.execute(f"drop trigger {trigger}")
         db.execute(
-            "update email_training_snapshots "
-            "set manifest_json=?, snapshot_digest=?",
+            "update email_training_snapshots set manifest_json=?, snapshot_digest=?",
             (
                 json.dumps(
                     legacy_manifest,
@@ -272,9 +267,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             ],
         )
         db.execute("alter table email_training_snapshots drop column frozen")
-        db.execute(
-            "update email_schema_migrations set version=23 where version=24"
-        )
+        db.execute("update email_schema_migrations set version=23 where version=26")
 
     reopened = EmailStore(database)
     restored = reopened.get_training_snapshot(snapshot.snapshot_id)
@@ -337,9 +330,7 @@ def test_store_round_trips_frozen_training_snapshot(tmp_path: Path):
     assert stored["snapshot_digest"] == snapshot.snapshot_digest
     assert loaded is not None
     assert loaded["manifest"] == snapshot.manifest
-    assert loaded["observations"] == [
-        row.to_dict() for row in snapshot.observations
-    ]
+    assert loaded["observations"] == [row.to_dict() for row in snapshot.observations]
 
 
 def test_identical_training_snapshot_persistence_is_idempotent(tmp_path: Path):
@@ -351,12 +342,16 @@ def test_identical_training_snapshot_persistence_is_idempotent(tmp_path: Path):
 
     assert second == first
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from email_training_snapshots").fetchone()[
-            0
-        ] == 1
-        assert db.execute(
-            "select count(*) from email_training_snapshot_observations"
-        ).fetchone()[0] == 1
+        assert (
+            db.execute("select count(*) from email_training_snapshots").fetchone()[0]
+            == 1
+        )
+        assert (
+            db.execute(
+                "select count(*) from email_training_snapshot_observations"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_same_snapshot_id_rejects_changed_frozen_content(tmp_path: Path):
@@ -413,12 +408,18 @@ def test_later_snapshot_does_not_mutate_earlier_observation(tmp_path: Path):
     store.persist_training_snapshot(first)
     store.persist_training_snapshot(moved)
 
-    assert store.get_training_snapshot("snapshot-before-move")["observations"][0][
-        "category_key"
-    ] == "work"
-    assert store.get_training_snapshot("snapshot-after-move")["observations"][0][
-        "category_key"
-    ] == "legal"
+    assert (
+        store.get_training_snapshot("snapshot-before-move")["observations"][0][
+            "category_key"
+        ]
+        == "work"
+    )
+    assert (
+        store.get_training_snapshot("snapshot-after-move")["observations"][0][
+            "category_key"
+        ]
+        == "legal"
+    )
 
 
 @pytest.mark.parametrize(
@@ -433,8 +434,9 @@ def test_database_rejects_frozen_snapshot_mutation(tmp_path: Path, statement: st
     store = EmailStore(tmp_path / "training-snapshot-immutable.sqlite3")
     store.persist_training_snapshot(_frozen_training_snapshot())
 
-    with sqlite3.connect(store.path) as db, pytest.raises(
-        sqlite3.IntegrityError, match="immutable"
+    with (
+        sqlite3.connect(store.path) as db,
+        pytest.raises(sqlite3.IntegrityError, match="immutable"),
     ):
         db.execute(statement)
 
@@ -503,9 +505,7 @@ def _pending_category_classification(
     return EmailClassification.model_validate(
         {
             "classification_id": classification_id,
-            "stable_message_identity": (
-                f"dingtalk-account:message-id:{message_id}"
-            ),
+            "stable_message_identity": (f"dingtalk-account:message-id:{message_id}"),
             "provider_locator": {
                 "account_id": "dingtalk-account",
                 "folder": "INBOX",
@@ -655,9 +655,10 @@ def test_v18_feedback_table_migrates_and_accepts_custom_human_confirmation(
     assert restored is not None
     assert restored["category"] == "board_governance"
     with sqlite3.connect(database) as db:
-        assert db.execute(
-            "select max(version) from email_schema_migrations"
-        ).fetchone()[0] == email_store_module.EMAIL_SCHEMA_VERSION
+        assert (
+            db.execute("select max(version) from email_schema_migrations").fetchone()[0]
+            == email_store_module.EMAIL_SCHEMA_VERSION
+        )
         table_sql = db.execute(
             "select sql from sqlite_master where name='email_feedback_requests'"
         ).fetchone()[0]
@@ -2451,11 +2452,12 @@ def test_email_store_persists_category_configuration(tmp_path: Path):
 
     assert config["actions"] == ["label", "unsubscribe"]
     assert config["action_parameters"] == {"label": {"labels": ["subscription"]}}
-    assert next(
-        row
-        for row in store.list_configs()
-        if row["category"] == "external_billing"
-    ) == config
+    assert (
+        next(
+            row for row in store.list_configs() if row["category"] == "external_billing"
+        )
+        == config
+    )
 
 
 def test_email_store_rejects_auto_reply_category_configuration(tmp_path: Path):
@@ -3052,9 +3054,7 @@ def test_migration_preserves_prototype_feedback_config_and_unrelated_state(
             "label": "important",
         }
     ]
-    assert {
-        row["category_key"] for row in store.list_category_configs()
-    } == {
+    assert {row["category_key"] for row in store.list_category_configs()} == {
         "work",
         "human_resources",
         "legal",
@@ -3179,8 +3179,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_24() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 24
+def test_email_schema_version_is_25() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 26
 
 
 def test_current_schema_initialization_preserves_delete_journal_mode(
@@ -3857,6 +3857,8 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             21,
             22,
             23,
+            24,
+            25,
             email_store_module.EMAIL_SCHEMA_VERSION,
         ]
         assert {
@@ -4077,9 +4079,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             "label": "important",
         }
     ]
-    assert "important" not in {
-        row["category"] for row in store.list_configs()
-    }
+    assert "important" not in {row["category"] for row in store.list_configs()}
     assert (
         _fetchall(
             database,
@@ -4098,17 +4098,19 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             "select version from email_schema_migrations order by version",
         )
     ] == [
-            2,
-            16,
-            17,
-            18,
-            19,
-            20,
-            21,
-            22,
-            23,
-            email_store_module.EMAIL_SCHEMA_VERSION,
-        ]
+        2,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        email_store_module.EMAIL_SCHEMA_VERSION,
+    ]
 
     EmailStore(database)
 
@@ -4172,17 +4174,19 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
             "select version from email_schema_migrations order by version",
         )
     ] == [
-            15,
-            16,
-            17,
-            18,
-            19,
-            20,
-            21,
-            22,
-            23,
-            email_store_module.EMAIL_SCHEMA_VERSION,
-        ]
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        email_store_module.EMAIL_SCHEMA_VERSION,
+    ]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
     assert projected["action_plan"]["action_plan_id"] == historical_plan_id
@@ -4585,17 +4589,19 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
             database,
             "select version from email_schema_migrations order by version",
         )
-        ] == [
-            16,
-            17,
-            18,
-            19,
-            20,
-            21,
-            22,
-            23,
-            email_store_module.EMAIL_SCHEMA_VERSION,
-        ]
+    ] == [
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        email_store_module.EMAIL_SCHEMA_VERSION,
+    ]
 
 
 @pytest.mark.parametrize("missing_table", ["email_messages", "email_actions"])
@@ -6374,8 +6380,7 @@ def test_retry_delayed_move_blocks_important_flag_claim(tmp_path: Path):
     )
 
     assert (
-        store.claim_next_direct_action(claimed_at="2026-09-07T12:00:02+00:00")
-        is None
+        store.claim_next_direct_action(claimed_at="2026-09-07T12:00:02+00:00") is None
     )
 
 
@@ -6403,8 +6408,7 @@ def test_non_retryable_failed_move_blocks_important_flag_claim(tmp_path: Path):
     )
 
     assert (
-        store.claim_next_direct_action(claimed_at="2026-09-08T12:00:00+00:00")
-        is None
+        store.claim_next_direct_action(claimed_at="2026-09-08T12:00:00+00:00") is None
     )
 
 
@@ -6439,8 +6443,7 @@ def test_retry_exhausted_move_blocks_important_flag_claim(tmp_path: Path):
         )
 
     assert (
-        store.claim_next_direct_action(claimed_at="2026-09-08T12:00:00+00:00")
-        is None
+        store.claim_next_direct_action(claimed_at="2026-09-08T12:00:00+00:00") is None
     )
 
 
@@ -6473,7 +6476,7 @@ def test_v21_schema_migrates_to_allow_flag_important_actions(tmp_path: Path):
         )
         assert (
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 24
+            == 26
         )
     assert (
         migrated.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
@@ -8048,9 +8051,7 @@ def test_v19_category_config_migration_maps_active_rows_and_preserves_history(
 
     migrated = EmailStore(database)
 
-    configs = {
-        row["category_key"]: row for row in migrated.list_category_configs()
-    }
+    configs = {row["category_key"]: row for row in migrated.list_category_configs()}
     assert set(configs) == {
         "work",
         "human_resources",
@@ -8212,9 +8213,10 @@ def test_unresolved_binding_is_persisted_but_forces_category_disabled(tmp_path: 
     )
 
     assert created["enabled"] is False
-    assert store.list_account_folder_bindings("vendor_updates")[0][
-        "binding_status"
-    ] == "ambiguous"
+    assert (
+        store.list_account_folder_bindings("vendor_updates")[0]["binding_status"]
+        == "ambiguous"
+    )
 
 
 def test_active_provider_folder_conflict_rolls_back_dynamic_category(tmp_path: Path):
@@ -8388,9 +8390,7 @@ def test_enabling_account_keeps_only_categories_with_complete_active_bindings(
         _task2_account_values("secondary", enabled=True),
     )
 
-    configs = {
-        row["category_key"]: row for row in store.list_category_configs()
-    }
+    configs = {row["category_key"]: row for row in store.list_category_configs()}
     assert configs["covered_category"]["enabled"] is True
     assert configs["uncovered_category"]["enabled"] is False
     assert configs["work"]["enabled"] is False
@@ -8426,8 +8426,7 @@ def test_reopen_rejects_enabled_category_missing_enabled_account_binding(
     store.create_account(_task2_account_values("primary"))
     with sqlite3.connect(database) as db:
         db.execute(
-            "update email_category_configs set enabled=1 "
-            "where category_key='work'"
+            "update email_category_configs set enabled=1 where category_key='work'"
         )
 
     with pytest.raises(
@@ -8524,11 +8523,7 @@ def test_junk_coordinator_persists_whitespace_provider_trash_exactly(
 ) -> None:
     class WhitespaceTrashProvider:
         def list_folders(self):
-            return (
-                ProviderFolder(
-                    " Deleted ", " Deleted ", FolderRole.TRASH
-                ),
-            )
+            return (ProviderFolder(" Deleted ", " Deleted ", FolderRole.TRASH),)
 
         def create_folder_exact(self, name: str) -> None:
             raise AssertionError(f"junk folder must not be created: {name}")
@@ -8536,9 +8531,7 @@ def test_junk_coordinator_persists_whitespace_provider_trash_exactly(
         def close(self) -> None:
             pass
 
-    coordinator = import_module(
-        "app.email_worker"
-    ).ProviderFolderBindingCoordinator(
+    coordinator = import_module("app.email_worker").ProviderFolderBindingCoordinator(
         lambda _account: WhitespaceTrashProvider(),
         now=lambda: "2026-09-08T10:00:00+00:00",
     )
@@ -8620,10 +8613,11 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
 
     migrated = EmailStore(database)
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 24
-    assert migrated.list_account_folder_bindings("junk")[0][
-        "provider_folder_id"
-    ] == "Deleted"
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 26
+    assert (
+        migrated.list_account_folder_bindings("junk")[0]["provider_folder_id"]
+        == "Deleted"
+    )
     persisted = migrated.upsert_verified_folder_binding(
         "junk",
         _task2_verified_binding(
@@ -8687,7 +8681,13 @@ def test_junk_negative_verification_invalidates_stale_trash_and_disables_writes(
 
 @pytest.mark.parametrize(
     "system_role",
-    (FolderRole.INBOX, FolderRole.JUNK, FolderRole.TRASH, FolderRole.SENT, FolderRole.DRAFT),
+    (
+        FolderRole.INBOX,
+        FolderRole.JUNK,
+        FolderRole.TRASH,
+        FolderRole.SENT,
+        FolderRole.DRAFT,
+    ),
 )
 def test_business_binding_rejects_active_provider_system_folder_role(
     tmp_path: Path,
@@ -8892,14 +8892,11 @@ def test_category_enablement_snapshot_restores_create_and_update_compensation(
 ):
     store = EmailStore(tmp_path / "category-enablement-compensation.sqlite3")
     enabled_before_create = {
-        row["category_key"]: row["enabled"]
-        for row in store.list_category_configs()
+        row["category_key"]: row["enabled"] for row in store.list_category_configs()
     }
 
-    created, create_snapshot = (
-        store.create_account_with_category_enablement_snapshot(
-            _task2_account_values("created")
-        )
+    created, create_snapshot = store.create_account_with_category_enablement_snapshot(
+        _task2_account_values("created")
     )
 
     assert store.delete_account_if_unchanged(
@@ -8909,15 +8906,13 @@ def test_category_enablement_snapshot_restores_create_and_update_compensation(
     )
     assert store.get_account("created") is None
     assert {
-        row["category_key"]: row["enabled"]
-        for row in store.list_category_configs()
+        row["category_key"]: row["enabled"] for row in store.list_category_configs()
     } == enabled_before_create
 
     store.create_account(_task2_account_values("updated", enabled=False))
     account_before_update = store.get_account("updated")
     enabled_before_update = {
-        row["category_key"]: row["enabled"]
-        for row in store.list_category_configs()
+        row["category_key"]: row["enabled"] for row in store.list_category_configs()
     }
     update_result = store.update_account_with_category_enablement_snapshot(
         "updated",
@@ -8934,8 +8929,7 @@ def test_category_enablement_snapshot_restores_create_and_update_compensation(
     )
     assert store.get_account("updated") == account_before_update
     assert {
-        row["category_key"]: row["enabled"]
-        for row in store.list_category_configs()
+        row["category_key"]: row["enabled"] for row in store.list_category_configs()
     } == enabled_before_update
 
 

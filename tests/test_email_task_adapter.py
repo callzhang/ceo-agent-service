@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+import inspect
 from threading import Event
 from urllib.parse import quote
 
@@ -17,9 +18,10 @@ from app.email_classifier_contracts import (
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
+    EmailProviderLocator,
     build_versioned_email_action_plan,
 )
-from app.email_store import EmailStore
+from app.email_store import EmailPersistenceCorruption, EmailStore
 from app.email_imap_readonly import parse_rfc822_message
 from app.email_task_adapter import (
     EmailAgentTaskAdapter,
@@ -31,6 +33,8 @@ from app.email_task_adapter import (
     accepted_email_unsubscribe_effect,
     email_action_identity,
     email_conversation_id,
+    EmailClassificationTaskAdapter,
+    EmailClassificationTaskInput,
 )
 from app.email_task_producer import EmailActionTaskProducer
 from app.email_unsubscribe import (
@@ -140,11 +144,898 @@ def _email_store(tmp_path: Path) -> EmailStore:
     return EmailStore(tmp_path / "email-agent.sqlite3")
 
 
+def _classification_input(*, uid: int) -> EmailClassificationTaskInput:
+    return EmailClassificationTaskInput.from_message(
+        {
+            "accountId": "account-primary",
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": uid,
+            "messageId": f"<mail-{uid}@example.com>",
+            "providerUnread": True,
+        },
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={
+            "work": {"core": "Business."},
+            "junk": {"core": "Unwanted."},
+        },
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        unsubscribe_candidates=(),
+    )
+
+
 def _percent_encode(value: str, rounds: int) -> str:
     encoded = value
     for _ in range(rounds):
         encoded = quote(encoded, safe="")
     return encoded
+
+
+def test_classification_task_adapter_persists_one_stable_task_across_reopen(
+    tmp_path: Path,
+):
+    store = _email_store(tmp_path)
+    task_input = EmailClassificationTaskInput.from_message(
+        {
+            "accountId": "account-primary",
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": 41,
+            "messageId": "<mail-41@example.com>",
+            "threadId": "thread-41",
+            "providerUnread": True,
+            "from": {"email": "customer@example.com"},
+            "subject": "Project decision",
+            "textBody": "Please decide the launch scope.",
+            "attachments": [
+                {
+                    "filename": "scope.pdf",
+                    "mime_type": "application/pdf",
+                    "size_bytes": 12,
+                    "inline": False,
+                }
+            ],
+        },
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={
+            "work": {"core": "Business."},
+            "junk": {"core": "Unwanted."},
+        },
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        unsubscribe_candidates=(),
+    )
+
+    first = EmailClassificationTaskAdapter(store).ensure_task(task_input)
+    reopened = EmailClassificationTaskAdapter(_email_store(tmp_path)).ensure_task(
+        task_input
+    )
+
+    assert first.task_id == reopened.task_id
+    assert first.status == reopened.status == "pending"
+    assert EmailClassificationTaskAdapter(store).has_stable_record(
+        task_input.stable_message_identity
+    )
+    assert EmailClassificationTaskAdapter(store).stable_provider_uids(
+        account_id="account-primary", folder="INBOX", uidvalidity=42
+    ) == frozenset({41})
+    assert "scope.pdf" in first.input_json
+    assert "attachment content" not in first.input_json
+
+
+def test_classifier_queue_schema_is_owned_by_email_store_not_adapter(tmp_path: Path):
+    store = _email_store(tmp_path)
+    with store._connect() as db:
+        columns = {
+            row["name"]
+            for row in db.execute("pragma table_info(email_agent_classification_tasks)")
+        }
+    assert {
+        "generation",
+        "attempt_count",
+        "lease_expires_at",
+        "available_at",
+    } <= columns
+    assert (
+        "create table"
+        not in inspect.getsource(EmailClassificationTaskAdapter).casefold()
+    )
+
+
+def test_email_store_rejects_malformed_classifier_queue_schema(tmp_path: Path):
+    database = tmp_path / "malformed-classifier.sqlite3"
+    EmailStore(database)
+    with sqlite3.connect(database) as db:
+        db.execute("drop index idx_email_agent_classification_tasks_status")
+
+    with pytest.raises(
+        EmailPersistenceCorruption, match="classifier.*index|idx_email_agent"
+    ):
+        EmailStore(database)
+
+
+def test_v25_classifier_queue_migration_preserves_task_and_scrubs_private_url(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v25-classifier.sqlite3"
+    store = EmailStore(database)
+    adapter = EmailClassificationTaskAdapter(store)
+    task = adapter.ensure_task(_classification_input(uid=144))
+    private_url = "https://news.example.test/unsubscribe?token=legacy-secret"
+    payload = json.loads(task.input_json)
+    payload["unsubscribe_candidates"] = [private_url]
+    payload["message"]["text"] = "Click " + private_url
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_agent_classification_tasks set input_json=? where task_id=?",
+            (json.dumps(payload), task.task_id),
+        )
+        db.execute("update email_schema_migrations set version=25 where version=26")
+
+    migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
+        task.task_id
+    )
+
+    assert migrated is not None and migrated.status == "pending"
+    assert private_url not in migrated.input_json
+    assert "unsubscribe-entry:" in migrated.input_json
+    assert private_url.encode() not in database.read_bytes()
+
+
+def test_v25_completed_null_unsubscribe_result_migrates_nullable_projection(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v25-null-result.sqlite3"
+    store = EmailStore(database)
+    adapter = EmailClassificationTaskAdapter(store)
+    task = adapter.ensure_task(_classification_input(uid=145))
+    legacy_result = {
+        "decision_status": "processed",
+        "category": "work",
+        "important": False,
+        "certainty": "certain",
+        "confidence": 0.91,
+        "reason": "Business correspondence.",
+        "unsubscribe_candidate_index": None,
+        "unsubscribe_url": None,
+        "classification_id": 145,
+    }
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_agent_classification_tasks
+            set status='done', result_json=?
+            where task_id=?
+            """,
+            (json.dumps(legacy_result), task.task_id),
+        )
+        db.execute("update email_schema_migrations set version=25 where version=26")
+
+    migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
+        task.task_id
+    )
+
+    assert migrated is not None and migrated.status == "done"
+    result = json.loads(migrated.result_json)
+    assert "unsubscribe_url" not in result
+    assert result["unsubscribe_candidate_index"] is None
+    assert result["unsubscribe_candidate_source"] is None
+    assert result["unsubscribe_candidate_digest"] is None
+    assert result["unsubscribe_candidate_reference"] is None
+
+
+def test_v25_completed_selected_result_preserves_schema_keys_and_replays(
+    tmp_path: Path,
+) -> None:
+    from app.email_classifier_agent import (
+        AgentClassificationResult,
+        DurableAgentClassificationResult,
+    )
+
+    database = tmp_path / "v25-selected-result.sqlite3"
+    store = EmailStore(database)
+    adapter = EmailClassificationTaskAdapter(store)
+    task = adapter.ensure_task(_classification_input(uid=147))
+    private_token = "legacy-secret"
+    private_url = f"https://news.example.test/unsubscribe?token={private_token}"
+    legacy_agent_result = {
+        "category": "junk",
+        "important": False,
+        "certainty": "certain",
+        "confidence": 0.97,
+        "reason": f"Unwanted subscription: {private_url}",
+        "unsubscribe_candidate_index": 0,
+        "unsubscribe_url": private_url,
+    }
+    assert (
+        AgentClassificationResult.model_validate(legacy_agent_result).unsubscribe_url
+        == private_url
+    )
+    queue_result = legacy_agent_result | {
+        "decision_status": "processed",
+        "classification_id": 147,
+    }
+    payload = json.loads(task.input_json)
+    payload["unsubscribe_candidates"] = [private_url]
+    payload["message"]["text"] = f"Select {private_url}"
+
+    classification_id = 9147
+    plan = build_versioned_email_action_plan(
+        action_plan_version=1,
+        classification_id=classification_id,
+        account_id="account-primary",
+        category=EmailCategory.JUNK,
+        classification_source="agent",
+        confidence=0.97,
+        model_id="email-classifier-agent:v1",
+        config_version="config-v1",
+        actions=(),
+        action_parameters={},
+        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+    )
+    store.persist_scan_result(
+        EmailClassification(
+            classification_id=classification_id,
+            stable_message_identity=(
+                "account-primary:message-id:<legacy-canonical-147@example.com>"
+            ),
+            provider_locator=EmailProviderLocator(
+                account_id="account-primary",
+                folder="INBOX",
+                uidvalidity=42,
+                uid=9147,
+                rfc_message_id="<legacy-canonical-147@example.com>",
+            ),
+            category=EmailCategory.JUNK,
+            confidence=0.97,
+            margin=0.97,
+            probabilities={EmailCategory.JUNK: 1.0},
+            model_id="email-classifier-agent:v1",
+            config_version="config-v1",
+            status=EmailClassificationStatus.PROCESSED,
+            classification_source="agent",
+            action_plan=plan,
+        ),
+        agent_result=DurableAgentClassificationResult(
+            category="junk",
+            important=False,
+            certainty="certain",
+            confidence=0.97,
+            reason="Unwanted subscription.",
+            unsubscribe_candidate_index=None,
+            unsubscribe_candidate_source=None,
+            unsubscribe_candidate_digest=None,
+            unsubscribe_candidate_reference=None,
+        ),
+        sender="sender@example.com",
+        subject="Legacy selected Agent result",
+        model_text="__subject__legacy selected agent result",
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_agent_classification_tasks
+            set status='done', input_json=?, result_json=? where task_id=?
+            """,
+            (json.dumps(payload), json.dumps(queue_result), task.task_id),
+        )
+        db.execute(
+            "update email_classifications set agent_result_json=? where id=?",
+            (json.dumps(legacy_agent_result), classification_id),
+        )
+        db.execute("update email_schema_migrations set version=25 where version=26")
+
+    EmailStore(database)
+    with sqlite3.connect(database) as db:
+        migrated_task = db.execute(
+            "select input_json, result_json from email_agent_classification_tasks "
+            "where task_id=?",
+            (task.task_id,),
+        ).fetchone()
+        migrated_canonical = db.execute(
+            "select agent_result_json from email_classifications where id=?",
+            (classification_id,),
+        ).fetchone()
+    assert migrated_task is not None and migrated_canonical is not None
+    migrated_payload = json.loads(migrated_task[0])
+    migrated_queue_result = json.loads(migrated_task[1])
+    migrated_canonical_result = json.loads(migrated_canonical[0])
+    durable_keys = {
+        "category",
+        "important",
+        "certainty",
+        "confidence",
+        "reason",
+        "unsubscribe_candidate_index",
+        "unsubscribe_candidate_source",
+        "unsubscribe_candidate_digest",
+        "unsubscribe_candidate_reference",
+    }
+
+    assert set(migrated_queue_result) == durable_keys | {
+        "decision_status",
+        "classification_id",
+    }
+    assert set(migrated_canonical_result) == durable_keys
+    queue_projection = {
+        key: migrated_queue_result[key] for key in durable_keys
+    }
+    assert DurableAgentClassificationResult.model_validate(queue_projection)
+    assert DurableAgentClassificationResult.model_validate(migrated_canonical_result)
+    assert migrated_queue_result["unsubscribe_candidate_index"] == 0
+    assert migrated_canonical_result["unsubscribe_candidate_index"] == 0
+    assert migrated_queue_result["unsubscribe_candidate_source"] == "legacy"
+    assert migrated_canonical_result["unsubscribe_candidate_source"] == "legacy"
+    all_durable_json = json.dumps(
+        [migrated_payload, migrated_queue_result, migrated_canonical_result],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    assert private_url not in all_durable_json
+    assert private_token not in all_durable_json
+
+
+def test_v25_migration_redacts_only_sensitive_query_and_fragment_values(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v25-path-segment-privacy.sqlite3"
+    store = EmailStore(database)
+    adapter = EmailClassificationTaskAdapter(store)
+    task = adapter.ensure_task(_classification_input(uid=148))
+    unsubscribe_token = "legacy-secret"
+    provider_auth_token = "provider-secret"
+    signature = "signature-secret"
+    private_url = (
+        "https://news.example.test/email/unsubscribe"
+        f"?unsubscribe_token={unsubscribe_token}&utm_medium=email"
+        f"&campaign=newsletter&X-AmZ-SiGnAtUrE={signature}"
+        f"#Provider-Auth-Token={provider_auth_token}&source=footer"
+    )
+    payload = json.loads(task.input_json)
+    payload["unsubscribe_candidates"] = [private_url]
+    payload["message"]["text"] = (
+        f"Private candidate: {private_url}; echoed values: "
+        f"{unsubscribe_token} {provider_auth_token} {signature}"
+    )
+    expected_unrelated_values = {
+        "config_version": "config-email-newsletter-footer-v1",
+        "category_descriptions": {
+            "work": {"core": "Classify ordinary email and newsletter requests."},
+            "junk": {"core": "Newsletter footer metadata."},
+        },
+        "folder_targets": {"work": "email/newsletter/footer"},
+        "subject": "email newsletter footer metadata",
+        "metadata": {
+            "routing_note": "email/newsletter/footer are ordinary values"
+        },
+    }
+    payload["config_version"] = expected_unrelated_values["config_version"]
+    payload["category_descriptions"] = expected_unrelated_values[
+        "category_descriptions"
+    ]
+    payload["folder_targets"] = expected_unrelated_values["folder_targets"]
+    payload["message"]["subject"] = expected_unrelated_values["subject"]
+    payload["message"]["metadata"] = expected_unrelated_values["metadata"]
+    legacy_result = {
+        "decision_status": "processed",
+        "category": "junk",
+        "important": False,
+        "certainty": "certain",
+        "confidence": 0.97,
+        "reason": f"Unwanted candidate: {private_url}",
+        "unsubscribe_candidate_index": 0,
+        "unsubscribe_url": private_url,
+        "classification_id": 148,
+    }
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_agent_classification_tasks
+            set status='done', input_json=?, result_json=? where task_id=?
+            """,
+            (json.dumps(payload), json.dumps(legacy_result), task.task_id),
+        )
+        db.execute("update email_schema_migrations set version=25 where version=26")
+
+    migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
+        task.task_id
+    )
+
+    assert migrated is not None
+    migrated_payload = json.loads(migrated.input_json)
+    migrated_result = json.loads(migrated.result_json)
+    assert migrated_payload["config_version"] == expected_unrelated_values[
+        "config_version"
+    ]
+    assert migrated_payload["category_descriptions"] == expected_unrelated_values[
+        "category_descriptions"
+    ]
+    assert migrated_payload["folder_targets"] == expected_unrelated_values[
+        "folder_targets"
+    ]
+    assert migrated_payload["message"]["subject"] == expected_unrelated_values[
+        "subject"
+    ]
+    assert migrated_payload["message"]["metadata"] == expected_unrelated_values[
+        "metadata"
+    ]
+    durable_json = json.dumps(
+        [migrated_payload, migrated_result], ensure_ascii=False, sort_keys=True
+    )
+    assert private_url not in durable_json
+    assert unsubscribe_token not in durable_json
+    assert provider_auth_token not in durable_json
+    assert signature not in durable_json
+
+
+@pytest.mark.parametrize(
+    ("uid", "parameter_name", "component", "sensitive"),
+    (
+        (160, "auth_code", "query", True),
+        (161, "Authorization-Code", "query", True),
+        (162, "oauth%5Fcode", "query", True),
+        (163, "VERIFICATION-CODE", "query", True),
+        (164, "login%2Dcode", "fragment", True),
+        (165, "Access_Code", "fragment", True),
+        (166, "unsubscribe-code", "fragment", True),
+        (167, "Provider%5FAuth%5FCode", "fragment", True),
+        (168, "campaign_code", "query", False),
+        (169, "Promo-Code", "fragment", False),
+        (170, "zip%5Fcode", "query", False),
+        (171, "session_token", "query", True),
+        (172, "client_secret", "fragment", True),
+        (173, "account_password", "query", True),
+        (174, "session_cookie", "fragment", True),
+        (175, "proxy_authorization", "query", True),
+        (176, "X-AmZ-SiGnAtUrE", "fragment", True),
+        (177, "access_key", "query", True),
+        (178, "private-key", "fragment", True),
+        (179, "api%5Fkey", "query", True),
+        (180, "service_credential", "fragment", True),
+        (181, "signed", "query", True),
+        (182, "PreSigned", "fragment", True),
+        (183, "signed%5Fquery", "query", True),
+        (184, "bearer", "fragment", True),
+        (185, "X-Bearer", "query", True),
+        (186, "webhook", "fragment", True),
+        (187, "x%5Fwebhook", "query", True),
+        (188, "client_auth", "fragment", True),
+        (189, "Provider-Auth", "query", True),
+        (190, "app_key", "fragment", True),
+        (191, "Client-Key", "query", True),
+        (192, "subscription%5Fkey", "fragment", True),
+        (193, "service-token-value", "query", True),
+        (194, "provider_credential_hint", "fragment", True),
+        (195, "request-secret-value", "query", True),
+        (196, "utm_medium", "fragment", False),
+        (197, "campaign", "query", False),
+        (198, "source", "fragment", False),
+        (199, "tracking_id", "query", False),
+        (200, "auth", "query", True),
+        (201, "key", "fragment", True),
+        (202, "sig", "query", True),
+        (203, "code", "fragment", True),
+        (204, "hmac", "query", True),
+        (205, "nonce", "fragment", True),
+    ),
+)
+def test_v25_migration_classifies_shared_sensitive_parameter_families(
+    tmp_path: Path,
+    uid: int,
+    parameter_name: str,
+    component: str,
+    sensitive: bool,
+) -> None:
+    database = tmp_path / f"v25-code-parameter-{uid}.sqlite3"
+    store = EmailStore(database)
+    adapter = EmailClassificationTaskAdapter(store)
+    task = adapter.ensure_task(_classification_input(uid=uid))
+    parameter_value = f"standalone-value-{uid}"
+    ordinary_query = "utm_medium=email&campaign=newsletter&source=footer"
+    if component == "query":
+        private_url = (
+            "https://news.example.test/email/unsubscribe?"
+            f"{parameter_name}={parameter_value}&{ordinary_query}#source=footer"
+        )
+    else:
+        private_url = (
+            "https://news.example.test/email/unsubscribe?"
+            f"{ordinary_query}#{parameter_name}={parameter_value}&source=footer"
+        )
+    unrelated_values = {
+        "config_version": "config-email-newsletter-footer-v1",
+        "category_descriptions": {
+            "work": {"core": "Ordinary email campaign code."},
+            "junk": {"core": "Newsletter footer source."},
+        },
+        "folder_targets": {"work": "email/newsletter/footer"},
+        "subject": "email newsletter footer campaign source",
+        "metadata": {"campaign_code": "visible-campaign-code"},
+    }
+    payload = json.loads(task.input_json)
+    payload["unsubscribe_candidates"] = [private_url]
+    payload["config_version"] = unrelated_values["config_version"]
+    payload["category_descriptions"] = unrelated_values["category_descriptions"]
+    payload["folder_targets"] = unrelated_values["folder_targets"]
+    payload["message"]["subject"] = unrelated_values["subject"]
+    payload["message"]["metadata"] = unrelated_values["metadata"]
+    payload["message"]["text"] = (
+        f"Candidate: {private_url}; standalone echo: {parameter_value}"
+    )
+    legacy_result = {
+        "decision_status": "processed",
+        "category": "junk",
+        "important": False,
+        "certainty": "certain",
+        "confidence": 0.97,
+        "reason": f"Unwanted candidate: {private_url}",
+        "unsubscribe_candidate_index": 0,
+        "unsubscribe_url": private_url,
+        "classification_id": uid,
+    }
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_agent_classification_tasks
+            set status='done', input_json=?, result_json=? where task_id=?
+            """,
+            (json.dumps(payload), json.dumps(legacy_result), task.task_id),
+        )
+        db.execute("update email_schema_migrations set version=25 where version=26")
+
+    migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
+        task.task_id
+    )
+
+    assert migrated is not None
+    migrated_payload = json.loads(migrated.input_json)
+    migrated_result = json.loads(migrated.result_json)
+    assert migrated_payload["config_version"] == unrelated_values["config_version"]
+    assert (
+        migrated_payload["category_descriptions"]
+        == unrelated_values["category_descriptions"]
+    )
+    assert migrated_payload["folder_targets"] == unrelated_values["folder_targets"]
+    assert migrated_payload["message"]["subject"] == unrelated_values["subject"]
+    assert migrated_payload["message"]["metadata"] == unrelated_values["metadata"]
+    durable_json = json.dumps(
+        [migrated_payload, migrated_result], ensure_ascii=False, sort_keys=True
+    )
+    assert private_url not in durable_json
+    if sensitive:
+        assert parameter_value not in durable_json
+    else:
+        assert parameter_value in migrated_payload["message"]["text"]
+
+
+def test_v25_migration_structurally_redacts_unicode_url_and_token_everywhere(
+    tmp_path: Path,
+) -> None:
+    from app.email_classifier_agent import DurableAgentClassificationResult
+
+    database = tmp_path / "v25-unicode-private-data.sqlite3"
+    store = EmailStore(database)
+    adapter = EmailClassificationTaskAdapter(store)
+    task = adapter.ensure_task(_classification_input(uid=146))
+    private_token = "密钥Ω"
+    private_url = f"https://例子.测试/退订?令牌={private_token}"
+    payload = json.loads(task.input_json)
+    payload["unsubscribe_candidates"] = [private_url]
+    payload["message"]["text"] = f"请点击 {private_url}"
+    payload["message"]["subject"] = f"私人值 {private_token}"
+    payload["migration_probe"] = {
+        "nested_url": [private_url],
+        "nested_token": {"value": private_token},
+    }
+    legacy_result = {
+        "decision_status": "processed",
+        "category": "junk",
+        "important": False,
+        "certainty": "certain",
+        "confidence": 0.97,
+        "reason": f"垃圾邮件 {private_url} token={private_token}",
+        "unsubscribe_candidate_index": 0,
+        "unsubscribe_url": private_url,
+        "classification_id": 146,
+    }
+    classification_id = 9146
+    plan = build_versioned_email_action_plan(
+        action_plan_version=1,
+        classification_id=classification_id,
+        account_id="account-primary",
+        category=EmailCategory.JUNK,
+        classification_source="agent",
+        confidence=0.97,
+        model_id="email-classifier-agent:v1",
+        config_version="config-v1",
+        actions=(),
+        action_parameters={},
+        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+    )
+    durable_result = DurableAgentClassificationResult(
+        category="junk",
+        important=False,
+        certainty="certain",
+        confidence=0.97,
+        reason="Unwanted subscription.",
+        unsubscribe_candidate_index=None,
+        unsubscribe_candidate_source=None,
+        unsubscribe_candidate_digest=None,
+        unsubscribe_candidate_reference=None,
+    )
+    store.persist_scan_result(
+        EmailClassification(
+            classification_id=classification_id,
+            stable_message_identity=(
+                "account-primary:message-id:<legacy-canonical-146@example.com>"
+            ),
+            provider_locator=EmailProviderLocator(
+                account_id="account-primary",
+                folder="INBOX",
+                uidvalidity=42,
+                uid=9146,
+                rfc_message_id="<legacy-canonical-146@example.com>",
+            ),
+            category=EmailCategory.JUNK,
+            confidence=0.97,
+            margin=0.97,
+            probabilities={EmailCategory.JUNK: 1.0},
+            model_id="email-classifier-agent:v1",
+            config_version="config-v1",
+            status=EmailClassificationStatus.PROCESSED,
+            classification_source="agent",
+            action_plan=plan,
+        ),
+        agent_result=durable_result,
+        sender="sender@example.com",
+        subject="Legacy canonical Agent result",
+        model_text="__subject__legacy canonical agent result",
+    )
+    canonical_legacy_result = {
+        key: value
+        for key, value in legacy_result.items()
+        if key not in {"decision_status", "classification_id"}
+    }
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_agent_classification_tasks
+            set status='done', input_json=?, result_json=?
+            where task_id=?
+            """,
+            (json.dumps(payload), json.dumps(legacy_result), task.task_id),
+        )
+        db.execute(
+            "update email_classifications set agent_result_json=? where id=?",
+            (json.dumps(canonical_legacy_result), classification_id),
+        )
+        db.execute("update email_schema_migrations set version=25 where version=26")
+
+    EmailStore(database)
+    with sqlite3.connect(database) as db:
+        task_documents = db.execute(
+            """
+            select input_json, result_json
+            from email_agent_classification_tasks where task_id=?
+            """,
+            (task.task_id,),
+        ).fetchone()
+        canonical_document = db.execute(
+            "select agent_result_json from email_classifications where id=?",
+            (classification_id,),
+        ).fetchone()
+    assert task_documents is not None and canonical_document is not None
+    decoded_documents = [
+        json.loads(task_documents[0]),
+        json.loads(task_documents[1]),
+        json.loads(canonical_document[0]),
+    ]
+
+    def decoded_strings(value: object) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [text for item in value for text in decoded_strings(item)]
+        if isinstance(value, dict):
+            return [
+                text
+                for key, item in value.items()
+                for text in [*decoded_strings(key), *decoded_strings(item)]
+            ]
+        return []
+
+    all_strings = [
+        text for document in decoded_documents for text in decoded_strings(document)
+    ]
+    assert all(private_url not in text for text in all_strings)
+    assert all(private_token not in text for text in all_strings)
+    assert all(
+        "unsubscribe_url" not in document
+        for document in decoded_documents[1:]
+    )
+    assert decoded_documents[1]["unsubscribe_candidate_source"] == "legacy"
+    assert decoded_documents[2]["unsubscribe_candidate_source"] == "legacy"
+
+
+def test_classification_task_claim_is_single_owner_and_recoverable(tmp_path: Path):
+    adapter = EmailClassificationTaskAdapter(
+        _email_store(tmp_path), retry_base_seconds=0
+    )
+    task_input = EmailClassificationTaskInput.from_message(
+        {
+            "accountId": "account-primary",
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": 42,
+            "messageId": "<mail-42@example.com>",
+            "providerUnread": True,
+        },
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={
+            "work": {"core": "Business."},
+            "junk": {"core": "Unwanted."},
+        },
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        unsubscribe_candidates=(),
+    )
+    adapter.ensure_task(task_input)
+
+    claimed = adapter.claim_next(owner="worker-1")
+
+    assert claimed is not None and claimed.status == "running"
+    assert adapter.claim_next(owner="worker-2") is None
+    adapter.fail(claimed, error="provider unavailable", retryable=True)
+    assert adapter.claim_next(owner="worker-2") is not None
+
+
+def test_live_classifier_lease_cannot_be_stolen_or_completed_by_stale_claim(
+    tmp_path: Path,
+):
+    now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
+    adapter = EmailClassificationTaskAdapter(
+        _email_store(tmp_path), now=lambda: now[0], lease_seconds=60
+    )
+    adapter.ensure_task(_classification_input(uid=142))
+    first = adapter.claim_next(owner="worker-1")
+    assert first is not None
+    assert adapter.recover_running_tasks() == 0
+    assert adapter.claim_next(owner="worker-2") is None
+
+    now[0] = datetime(2026, 9, 8, 0, 2, tzinfo=timezone.utc)
+    assert adapter.recover_running_tasks() == 1
+    second = adapter.claim_next(owner="worker-2")
+    assert second is not None and second.generation == first.generation + 1
+    with pytest.raises(ValueError, match="lease changed"):
+        adapter.complete(first, {"decision_status": "processed"})
+
+
+def test_fast_restart_reclaims_claim_when_lease_expires_during_normal_polling(
+    tmp_path: Path,
+):
+    now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
+    store = _email_store(tmp_path)
+    original = EmailClassificationTaskAdapter(
+        store, now=lambda: now[0], lease_seconds=60
+    )
+    original.ensure_task(_classification_input(uid=144))
+    first = original.claim_next(owner="worker-before-restart")
+    assert first is not None
+
+    now[0] = datetime(2026, 9, 8, 0, 0, 30, tzinfo=timezone.utc)
+    restarted = EmailClassificationTaskAdapter(
+        _email_store(tmp_path), now=lambda: now[0], lease_seconds=60
+    )
+    assert restarted.claim_next(owner="worker-after-restart") is None
+
+    now[0] = datetime(2026, 9, 8, 0, 1, 1, tzinfo=timezone.utc)
+    reclaimed = restarted.claim_next(owner="worker-after-restart")
+
+    assert reclaimed is not None
+    assert reclaimed.owner == "worker-after-restart"
+    assert reclaimed.generation == first.generation + 1
+    with pytest.raises(ValueError, match="lease changed"):
+        original.complete(first, {"decision_status": "processed"})
+
+
+def test_final_attempt_crash_becomes_terminal_when_lease_expires(
+    tmp_path: Path,
+):
+    now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
+    adapter = EmailClassificationTaskAdapter(
+        _email_store(tmp_path),
+        now=lambda: now[0],
+        lease_seconds=60,
+        max_attempts=2,
+        retry_base_seconds=1,
+    )
+    task = adapter.ensure_task(_classification_input(uid=145))
+    first = adapter.claim_next(owner="worker-first-attempt")
+    assert first is not None
+    adapter.fail(first, error="ConnectionError:offline", retryable=True)
+
+    now[0] = datetime(2026, 9, 8, 0, 0, 2, tzinfo=timezone.utc)
+    final = adapter.claim_next(owner="worker-final-attempt")
+    assert final is not None
+    assert final.attempt_count == 2
+
+    now[0] = datetime(2026, 9, 8, 0, 1, 3, tzinfo=timezone.utc)
+    assert adapter.claim_next(owner="worker-after-final-crash") is None
+
+    terminal = adapter.get_task(task.task_id)
+    assert terminal is not None
+    assert terminal.status == "failed"
+    assert terminal.attempt_count == 2
+    assert terminal.owner == ""
+    assert terminal.lease_expires_at == ""
+    assert terminal.error == "classification task lease expired after final attempt"
+    with pytest.raises(ValueError, match="lease changed"):
+        adapter.complete(final, {"decision_status": "processed"})
+
+
+def test_default_classifier_lease_outlasts_maximum_agent_turn(tmp_path: Path):
+    adapter = EmailClassificationTaskAdapter(_email_store(tmp_path))
+
+    assert adapter.lease_seconds > 900
+
+
+def test_classifier_retry_is_bounded_and_backed_off(tmp_path: Path):
+    now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
+    adapter = EmailClassificationTaskAdapter(
+        _email_store(tmp_path),
+        now=lambda: now[0],
+        max_attempts=2,
+        retry_base_seconds=10,
+    )
+    adapter.ensure_task(_classification_input(uid=143))
+    first = adapter.claim_next(owner="worker")
+    assert first is not None
+    adapter.fail(first, error="ConnectionError:offline", retryable=True)
+    assert adapter.claim_next(owner="worker") is None
+    now[0] = datetime(2026, 9, 8, 0, 0, 11, tzinfo=timezone.utc)
+    second = adapter.claim_next(owner="worker")
+    assert second is not None
+    adapter.fail(second, error="ConnectionError:offline", retryable=True)
+    assert adapter.get_task(second.task_id).status == "failed"
+
+
+def test_classification_task_bootstrap_recovers_crash_interrupted_claim(tmp_path: Path):
+    store = _email_store(tmp_path)
+    now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
+    adapter = EmailClassificationTaskAdapter(
+        store, now=lambda: now[0], lease_seconds=60
+    )
+    task_input = EmailClassificationTaskInput.from_message(
+        {
+            "accountId": "account-primary",
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": 43,
+            "messageId": "<mail-43@example.com>",
+            "providerUnread": True,
+        },
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={
+            "work": {"core": "Business."},
+            "junk": {"core": "Unwanted."},
+        },
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        unsubscribe_candidates=(),
+    )
+    adapter.ensure_task(task_input)
+    assert adapter.claim_next(owner="crashed-worker") is not None
+
+    now[0] = datetime(2026, 9, 8, 0, 2, tzinfo=timezone.utc)
+    reopened = EmailClassificationTaskAdapter(
+        _email_store(tmp_path), now=lambda: now[0], lease_seconds=60
+    )
+    assert reopened.recover_running_tasks() == 1
+    reclaimed = reopened.claim_next(owner="replacement-worker")
+
+    assert reclaimed is not None
+    assert reclaimed.owner == "replacement-worker"
 
 
 def _persist_authorization(

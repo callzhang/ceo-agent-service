@@ -6,7 +6,10 @@ from app.email_classifier_contracts import (
     EmailCategory,
     build_email_action_plan,
 )
-from app.email_task_producer import EmailActionTaskProducer
+from app.email_task_producer import (
+    EmailActionTaskProducer,
+    EmailClassificationTaskProducer,
+)
 
 
 def _plan(actions: tuple[EmailAction, ...]):
@@ -52,3 +55,37 @@ def test_only_unsubscribe_creates_an_agent_task():
         task.action_type for task in task_producer.produce(unsubscribe_plan, {})
     ) == (EmailAction.UNSUBSCRIBE,)
     assert len(adapter.calls) == 1
+
+
+def test_classification_producer_enqueues_without_creating_generic_reply_task():
+    calls = []
+    producer = object.__new__(EmailClassificationTaskProducer)
+    producer.adapter = SimpleNamespace(
+        ensure_task=lambda task_input: (
+            calls.append(task_input)
+            or SimpleNamespace(status="pending", channel="email")
+        )
+    )
+
+    task = producer.produce(
+        {
+            "accountId": "account-1",
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": 7,
+            "messageId": "<message-7@example.com>",
+            "providerUnread": True,
+        },
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={
+            "work": {"core": "Business."},
+            "junk": {"core": "Unwanted."},
+        },
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        unsubscribe_candidates=(),
+    )
+
+    assert task.status == "pending"
+    assert task.channel == "email"
+    assert len(calls) == 1

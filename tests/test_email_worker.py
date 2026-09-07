@@ -23,10 +23,15 @@ from app.email_classifier_contracts import (
 )
 from app.email_imap_readonly import (
     attach_ephemeral_unsubscribe_authentication,
+    ephemeral_body_html,
     parse_rfc822_message,
 )
 from app.email_store import email_action_identity
 from app.email_task_adapter import email_conversation_id
+from app.email_task_adapter import (
+    EmailClassificationTaskAdapter,
+    EmailClassificationTaskInput,
+)
 from app.email_task_producer import EmailActionTaskProducer
 from app.email_unsubscribe import (
     BrowserNetworkPolicy,
@@ -41,6 +46,447 @@ from app.email_provider_folders import FolderRole, ProviderFolder
 
 def _module():
     return import_module("app.email_worker")
+
+
+def test_agent_business_result_plans_move_then_optional_flag() -> None:
+    from app.email_classifier_agent import AgentClassificationResult
+
+    plan = _module()._agent_classification_action_plan(
+        classification_id=71,
+        account_id="account-1",
+        result=AgentClassificationResult(
+            category="work",
+            important=True,
+            certainty="certain",
+            confidence=0.96,
+            reason="Customer delivery decision.",
+            unsubscribe_candidate_index=None,
+            unsubscribe_url=None,
+        ),
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+    )
+
+    assert plan is not None
+    assert plan.actions == (EmailAction.MOVE, EmailAction.FLAG_IMPORTANT)
+    assert plan.action_parameters[EmailAction.MOVE] == {"target_folder": "Work"}
+    assert EmailAction.MARK_READ not in plan.actions
+    assert not plan.agent_actions
+
+
+def test_agent_junk_result_leaves_task7_routing_unimplemented() -> None:
+    from app.email_classifier_agent import AgentClassificationResult
+
+    plan = _module()._agent_classification_action_plan(
+        classification_id=72,
+        account_id="account-1",
+        result=AgentClassificationResult(
+            category="junk",
+            important=False,
+            certainty="certain",
+            confidence=0.98,
+            reason="Unrequested promotion with no retention value.",
+            unsubscribe_candidate_index=0,
+            unsubscribe_url="https://example.com/unsubscribe?id=exact",
+        ),
+        folder_targets={},
+        config_version="config-v1",
+        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+    )
+
+    assert plan is not None
+    assert plan.actions == ()
+
+
+def test_agent_uncertain_result_has_no_action_plan() -> None:
+    from app.email_classifier_agent import AgentClassificationResult
+
+    plan = _module()._agent_classification_action_plan(
+        classification_id=73,
+        account_id="account-1",
+        result=AgentClassificationResult(
+            category=None,
+            important=False,
+            certainty="uncertain",
+            confidence=0.41,
+            reason="Insufficient context.",
+            unsubscribe_candidate_index=None,
+            unsubscribe_url=None,
+        ),
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+    )
+
+    assert plan is None
+
+
+def test_worker_runtime_scan_path_does_not_read_loaded_tfidf_classifier(
+    monkeypatch, tmp_path
+):
+    module = _module()
+    source = Path(module.__file__).read_text(encoding="utf-8")
+
+    assert "current_model.loaded.classifier" not in source
+    assert "scan_agent_classification_batch" in source
+    assert "EmailClassificationTaskProducer" in source
+
+
+def _classification_task_input():
+    from app.email_task_adapter import EmailClassificationTaskInput
+
+    return EmailClassificationTaskInput.from_message(
+        {
+            "accountId": "account-1",
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": 81,
+            "messageId": "<mail-81@example.com>",
+            "threadId": "thread-81",
+            "providerUnread": True,
+            "from": {"email": "customer@example.com"},
+            "toRecipients": [{"email": "derek@example.com"}],
+            "subject": "Launch decision",
+            "date": "2026-09-08T08:00:00+00:00",
+            "textBody": "Please confirm the customer launch decision.",
+        },
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={
+            "work": {"core": "Business."},
+            "junk": {"core": "Unwanted."},
+        },
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        unsubscribe_candidates=(),
+    )
+
+
+def _classification_provider_readback(task, payload):
+    locator = payload["provider_locator"]
+    message = payload["message"]
+    return {
+        "stableMessageIdentity": task.stable_message_identity,
+        "accountId": locator["account_id"],
+        "folder": locator["folder"],
+        "uidValidity": locator["uidvalidity"],
+        "uid": locator["uid"],
+        "messageId": locator.get("rfc_message_id"),
+        "threadId": locator.get("thread_id"),
+        "providerUnread": True,
+        "from": message.get("sender", {}),
+        "toRecipients": message.get("to_recipients", []),
+        "ccRecipients": message.get("cc_recipients", []),
+        "subject": message.get("subject", ""),
+        "date": message.get("date", ""),
+        "textBody": message.get("text", ""),
+        "markdownBody": message.get("text", ""),
+        "listUnsubscribe": message.get("headers", {}).get("list_unsubscribe", ""),
+        "listUnsubscribePost": message.get("headers", {}).get(
+            "list_unsubscribe_post", ""
+        ),
+        "attachments": message.get("attachments", []),
+    }
+
+
+def test_classification_worker_persists_certain_decision_and_direct_plan(tmp_path):
+    from app.email_classifier_agent import AgentClassificationResult
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    email_store = EmailStore(tmp_path / "classification-worker.sqlite3")
+    adapter = EmailClassificationTaskAdapter(email_store)
+    adapter.ensure_task(_classification_task_input())
+    agent = SimpleNamespace(
+        classify=lambda _task, **_kwargs: AgentClassificationResult(
+            category="work",
+            important=True,
+            certainty="certain",
+            confidence=0.96,
+            reason="Customer project decision.",
+            unsubscribe_candidate_index=None,
+            unsubscribe_url=None,
+        )
+    )
+
+    outcome = _module().run_email_classification_task_once(
+        adapter,
+        agent,
+        email_store,
+        owner="email-worker:test",
+        provider_readback=_classification_provider_readback,
+    )
+
+    assert outcome["decision_status"] == "processed"
+    classification = email_store.get_classification(outcome["classification_id"])
+    assert classification["classification_source"] == "agent"
+    assert classification["model_id"] == "email-classifier-agent:v1"
+    assert classification["agent_result"]["reason"] == "Customer project decision."
+    assert classification["action_plan"]["classification_source"] == "agent"
+    assert classification["action_plan"]["actions"] == ["move", "flag_important"]
+    assert classification["status"] == "processed"
+
+
+def test_classification_worker_persists_uncertain_feedback_without_actions(tmp_path):
+    from app.email_classifier_agent import AgentClassificationResult
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    email_store = EmailStore(tmp_path / "classification-worker.sqlite3")
+    adapter = EmailClassificationTaskAdapter(email_store)
+    task = adapter.ensure_task(_classification_task_input())
+    agent = SimpleNamespace(
+        classify=lambda _task, **_kwargs: AgentClassificationResult(
+            category=None,
+            important=False,
+            certainty="uncertain",
+            confidence=0.43,
+            reason="Insufficient business context.",
+            unsubscribe_candidate_index=None,
+            unsubscribe_url=None,
+        )
+    )
+
+    outcome = _module().run_email_classification_task_once(
+        adapter,
+        agent,
+        email_store,
+        owner="email-worker:test",
+        provider_readback=_classification_provider_readback,
+    )
+
+    assert outcome == {
+        "decision_status": "pending_feedback",
+        "category": None,
+        "important": False,
+        "certainty": "uncertain",
+        "confidence": 0.43,
+        "reason": "Insufficient business context.",
+        "unsubscribe_candidate_index": None,
+        "unsubscribe_candidate_source": None,
+        "unsubscribe_candidate_digest": None,
+        "unsubscribe_candidate_reference": None,
+        "classification_id": outcome["classification_id"],
+    }
+    rows, total = email_store.list_classifications(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        limit=20,
+        offset=0,
+    )
+    assert total == 1
+    assert rows[0]["category"] is None
+    assert rows[0]["predicted_category"] is None
+    assert rows[0]["classification_source"] == "agent"
+    assert rows[0]["agent_result"] == {
+        "category": None,
+        "important": False,
+        "certainty": "uncertain",
+        "confidence": 0.43,
+        "reason": "Insufficient business context.",
+        "unsubscribe_candidate_index": None,
+        "unsubscribe_candidate_source": None,
+        "unsubscribe_candidate_digest": None,
+        "unsubscribe_candidate_reference": None,
+    }
+    assert rows[0]["action_plan"] is None
+    assert json.loads(adapter.get_task(task.task_id).result_json) == outcome
+    confirmed = email_store.confirm_classification(
+        rows[0]["id"],
+        "work",
+        feedback_request_id="feedback-agent-uncertain-81",
+        expected_current_action_plan_id=None,
+    )
+    assert confirmed["category"] == "work"
+    assert confirmed["classification_source"] == "user"
+
+
+def test_classification_worker_reconciles_canonical_agent_result_before_second_call(
+    tmp_path,
+):
+    from app.email_classifier_agent import AgentClassificationResult
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    email_store = EmailStore(tmp_path / "classification-worker.sqlite3")
+    real_adapter = EmailClassificationTaskAdapter(email_store)
+    task = real_adapter.ensure_task(_classification_task_input())
+    calls = []
+    agent = SimpleNamespace(
+        classify=lambda _task, **_kwargs: (
+            calls.append(_task.task_id)
+            or AgentClassificationResult(
+                category="work",
+                important=True,
+                certainty="certain",
+                confidence=0.96,
+                reason="Customer project decision.",
+                unsubscribe_candidate_index=None,
+                unsubscribe_url=None,
+            )
+        )
+    )
+
+    class CrashAfterCanonical:
+        def __getattr__(self, name):
+            return getattr(real_adapter, name)
+
+        def complete(self, _task, _result):
+            raise KeyboardInterrupt("crash after canonical persistence")
+
+    with pytest.raises(KeyboardInterrupt, match="crash after canonical"):
+        _module().run_email_classification_task_once(
+            CrashAfterCanonical(),
+            agent,
+            email_store,
+            owner="email-worker:first",
+            provider_readback=_classification_provider_readback,
+        )
+
+    with email_store._connect() as db:
+        db.execute(
+            "update email_agent_classification_tasks set lease_expires_at='2000-01-01T00:00:00+00:00'"
+        )
+    assert real_adapter.recover_running_tasks() == 1
+    outcome = _module().run_email_classification_task_once(
+        real_adapter,
+        agent,
+        email_store,
+        owner="email-worker:retry",
+        provider_readback=_classification_provider_readback,
+    )
+
+    assert len(calls) == 1
+    assert outcome["classification_id"] > 0
+    persisted = email_store.get_classification(outcome["classification_id"])
+    assert persisted["agent_result"]["reason"] == "Customer project decision."
+    assert persisted["action_plan"]["actions"] == ["move", "flag_important"]
+    assert outcome["certainty"] == "certain"
+    assert json.loads(real_adapter.get_task(task.task_id).result_json) == outcome
+
+
+@pytest.mark.parametrize(
+    "current", (None, {"providerUnread": False}, {"folder": "Work"})
+)
+def test_classifier_provider_race_skips_before_agent_and_creates_no_actions(
+    tmp_path: Path, current
+) -> None:
+    adapter = EmailClassificationTaskAdapter(EmailStore(tmp_path / "race.sqlite3"))
+    task = adapter.ensure_task(_classification_task_input())
+    calls = []
+    base = _classification_provider_readback(task, json.loads(task.input_json))
+    readback = None if current is None else base | current
+
+    outcome = _module().run_email_classification_task_once(
+        adapter,
+        SimpleNamespace(classify=lambda *_args, **_kwargs: calls.append(1)),
+        adapter.email_store,
+        owner="email-worker:race",
+        provider_readback=lambda *_args: readback,
+    )
+
+    assert outcome == {
+        "decision_status": "skipped",
+        "reason": "provider_message_no_longer_eligible",
+    }
+    assert calls == []
+    assert (
+        adapter.email_store.get_classification_by_stable_identity(
+            task.stable_message_identity
+        )
+        is None
+    )
+    assert adapter.get_task(task.task_id).status == "done"
+
+
+def test_html_unsubscribe_candidate_is_ephemeral_and_never_reaches_sqlite(
+    tmp_path: Path,
+) -> None:
+    from app.email_classifier_agent import AgentClassificationResult
+
+    private_url = "https://news.example.test/unsubscribe?token=private-html-token"
+    message = parse_rfc822_message(
+        (
+            b"From: blast@example.test\r\nSubject: Offer\r\n"
+            b"Message-ID: <html-classifier@example.test>\r\n"
+            b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+            + f'<a href="{private_url}">Unsubscribe</a>'.encode()
+        ),
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=182,
+    )
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe="",
+        list_unsubscribe_post="",
+        body_text=str(message["textBody"]),
+        body_html=ephemeral_body_html(message),
+    )
+    task_input = EmailClassificationTaskInput.from_message(
+        message,
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": "Business", "junk": "Unwanted"},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        unsubscribe_candidates=entries,
+    )
+    database = tmp_path / "html.sqlite3"
+    store = EmailStore(database)
+    adapter = EmailClassificationTaskAdapter(store)
+    adapter.ensure_task(task_input)
+    seen = []
+    agent = SimpleNamespace(
+        classify=lambda _task, **kwargs: (
+            seen.append(kwargs["unsubscribe_candidates"])
+            or AgentClassificationResult(
+                category="junk",
+                important=False,
+                certainty="certain",
+                confidence=0.99,
+                reason="Unwanted promotion.",
+                unsubscribe_candidate_index=0,
+                unsubscribe_url=private_url,
+            )
+        )
+    )
+
+    outcome = _module().run_email_classification_task_once(
+        adapter,
+        agent,
+        store,
+        owner="email-worker:html",
+        provider_readback=lambda *_args: message,
+    )
+
+    assert seen == [(private_url,)]
+    assert outcome["unsubscribe_candidate_reference"].startswith("unsubscribe-entry:")
+    assert "unsubscribe_url" not in outcome
+    assert private_url.encode() not in database.read_bytes()
+    assert b"private-html-token" not in database.read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status"),
+    (
+        (ValueError("invalid Agent JSON"), "failed"),
+        (ConnectionError("offline"), "pending"),
+    ),
+)
+def test_classifier_distinguishes_permanent_and_transient_failures(
+    tmp_path: Path, error: Exception, expected_status: str
+) -> None:
+    adapter = EmailClassificationTaskAdapter(EmailStore(tmp_path / "failure.sqlite3"))
+    task = adapter.ensure_task(_classification_task_input())
+
+    with pytest.raises(type(error)):
+        _module().run_email_classification_task_once(
+            adapter,
+            SimpleNamespace(
+                classify=lambda *_args, **_kwargs: (_ for _ in ()).throw(error)
+            ),
+            adapter.email_store,
+            owner="email-worker:failure",
+            provider_readback=_classification_provider_readback,
+        )
+
+    assert adapter.get_task(task.task_id).status == expected_status
 
 
 class _FolderProvider:
@@ -139,7 +585,9 @@ def test_folder_materializer_creates_exact_then_requires_one_exact_readback() ->
     assert binding.binding_status == "active"
 
 
-def test_folder_materializer_marks_missing_when_created_folder_is_not_read_back() -> None:
+def test_folder_materializer_marks_missing_when_created_folder_is_not_read_back() -> (
+    None
+):
     provider = _FolderProvider([(), ()])
 
     binding = _folder_coordinator(provider).create_and_verify_bindings(
@@ -152,7 +600,9 @@ def test_folder_materializer_marks_missing_when_created_folder_is_not_read_back(
     assert binding.binding_status == "missing"
 
 
-def test_junk_materializer_binds_system_trash_and_never_creates_business_folder() -> None:
+def test_junk_materializer_binds_system_trash_and_never_creates_business_folder() -> (
+    None
+):
     provider = _FolderProvider(
         [
             (
@@ -175,10 +625,10 @@ def test_junk_materializer_binds_system_trash_and_never_creates_business_folder(
     assert provider.created == []
 
 
-def test_junk_materializer_marks_missing_without_creating_when_trash_is_absent() -> None:
-    provider = _FolderProvider(
-        [(ProviderFolder("spam", "Spam", FolderRole.JUNK),)]
-    )
+def test_junk_materializer_marks_missing_without_creating_when_trash_is_absent() -> (
+    None
+):
+    provider = _FolderProvider([(ProviderFolder("spam", "Spam", FolderRole.JUNK),)])
 
     binding = _folder_coordinator(provider).create_and_verify_bindings(
         category_key="junk",
@@ -219,7 +669,9 @@ def test_folder_materializer_recovers_from_concurrent_exact_create() -> None:
     assert binding.provider_folder_id == "created-work"
 
 
-def test_real_imap_materializer_relists_after_create_no_and_binds_concurrent_folder() -> None:
+def test_real_imap_materializer_relists_after_create_no_and_binds_concurrent_folder() -> (
+    None
+):
     provider_module = import_module("app.email_provider_actions")
 
     class ConcurrentCreateSession:
@@ -241,9 +693,7 @@ def test_real_imap_materializer_relists_after_create_no_and_binds_concurrent_fol
             return "BYE", [b"logout"]
 
     session = ConcurrentCreateSession()
-    provider = provider_module.ImapDeterministicProvider(
-        session, account_id="primary"
-    )
+    provider = provider_module.ImapDeterministicProvider(session, account_id="primary")
     binding = _folder_coordinator(provider).create_and_verify_bindings(
         category_key="work",
         provider_folder_name="Work",
@@ -257,7 +707,13 @@ def test_real_imap_materializer_relists_after_create_no_and_binds_concurrent_fol
 
 @pytest.mark.parametrize(
     "system_role",
-    (FolderRole.INBOX, FolderRole.JUNK, FolderRole.TRASH, FolderRole.SENT, FolderRole.DRAFT),
+    (
+        FolderRole.INBOX,
+        FolderRole.JUNK,
+        FolderRole.TRASH,
+        FolderRole.SENT,
+        FolderRole.DRAFT,
+    ),
 )
 def test_business_folder_materializer_rejects_exact_system_folder_match(
     system_role: FolderRole,
@@ -1431,8 +1887,11 @@ def test_email_orchestrator_scopes_runtime_skill_snapshot_to_consumer(
 ):
     module = _module()
     runtime = SimpleNamespace(
-        config=object(), router=object(), codex_adapter=object(),
-        claude_adapter=object(), friday_adapter=object(),
+        config=object(),
+        router=object(),
+        codex_adapter=object(),
+        claude_adapter=object(),
+        friday_adapter=object(),
         refresh_runtime_capabilities=lambda: None,
     )
     monkeypatch.setattr(
@@ -1451,13 +1910,28 @@ def test_email_orchestrator_scopes_runtime_skill_snapshot_to_consumer(
         return object()
 
     monkeypatch.setattr(
-        "app.audit_agent.AuditAgentRunner", build_audit,
+        "app.audit_agent.AuditAgentRunner",
+        build_audit,
     )
     monkeypatch.setattr(
-        "app.agent_orchestrator.AgentOrchestrator", lambda **kwargs: object(),
+        "app.agent_orchestrator.AgentOrchestrator",
+        lambda **kwargs: object(),
     )
-    snapshot = object()
-    settings = SimpleNamespace(db_path=tmp_path / "worker.sqlite3", workspace=tmp_path, dry_run=False)
+    classifier_skill = "---\nname: ceo-email-classifier\ndescription: Use when testing\nmetadata:\n  managed_by: ceo-agent-service\n---\n"
+    snapshot = SimpleNamespace(
+        revisions=(
+            SimpleNamespace(
+                skill_id=17,
+                revision_number=1,
+                sha256=sha256(classifier_skill.encode("utf-8")).hexdigest(),
+                content=classifier_skill,
+                source="repository:skills",
+            ),
+        )
+    )
+    settings = SimpleNamespace(
+        db_path=tmp_path / "worker.sqlite3", workspace=tmp_path, dry_run=False
+    )
 
     module._build_agent_orchestrator(
         settings, AutoReplyStore(settings.db_path), runtime_skill_snapshot=snapshot
@@ -1471,7 +1945,18 @@ def test_email_dependency_builder_resolves_one_snapshot_for_agent_orchestrator(
     tmp_path, monkeypatch
 ):
     module = _module()
-    snapshot = object()
+    classifier_skill = "---\nname: ceo-email-classifier\ndescription: Use when testing\nmetadata:\n  managed_by: ceo-agent-service\n---\n"
+    snapshot = SimpleNamespace(
+        revisions=(
+            SimpleNamespace(
+                skill_id=17,
+                revision_number=1,
+                sha256=sha256(classifier_skill.encode("utf-8")).hexdigest(),
+                content=classifier_skill,
+                source="repository:skills",
+            ),
+        )
+    )
     calls = []
     monkeypatch.setattr(
         "app.managed_skills.resolve_pending_runtime_skills",
@@ -1481,9 +1966,9 @@ def test_email_dependency_builder_resolves_one_snapshot_for_agent_orchestrator(
     monkeypatch.setattr(
         module,
         "_build_agent_orchestrator",
-        lambda _settings, _store, *, runtime_skill_snapshot: captured.setdefault(
-            "snapshot", runtime_skill_snapshot
-        ) or object(),
+        lambda _settings, _store, *, runtime_skill_snapshot: (
+            captured.setdefault("snapshot", runtime_skill_snapshot) or object()
+        ),
     )
     from app.email_model_registry import EmailModelRegistry
 
@@ -1498,8 +1983,12 @@ def test_email_dependency_builder_resolves_one_snapshot_for_agent_orchestrator(
         module,
         "_scan_config",
         lambda *_args, **_kwargs: SimpleNamespace(
-            config_version="test", thresholds={}, actions={},
-            category_eligibility={}, action_parameters={}, category_enabled={},
+            config_version="test",
+            thresholds={},
+            actions={},
+            category_eligibility={},
+            action_parameters={},
+            category_enabled={},
         ),
     )
     settings = SimpleNamespace(
@@ -2820,7 +3309,9 @@ def test_direct_action_completion_forwards_provider_locator_update():
         def complete_direct_action_attempt(self, claimed, **values):
             completed.append((claimed, values))
 
-    module._run_next_direct_action(Store(), lambda _account_id: SimpleNamespace(execute=lambda _action: result))
+    module._run_next_direct_action(
+        Store(), lambda _account_id: SimpleNamespace(execute=lambda _action: result)
+    )
 
     assert completed[0][1]["updated_locator"] is updated
 
@@ -2863,10 +3354,9 @@ def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
     monkeypatch.setenv("CEO_EMAIL_B_SMTP_SECRET", "must-not-be-read-b")
     monkeypatch.setattr(
         "app.email_provider_actions.ImapDeterministicProvider.connect",
-        lambda host, username, password, **kwargs: calls.append(
-            (host, username, password, kwargs)
-        )
-        or SimpleNamespace(),
+        lambda host, username, password, **kwargs: (
+            calls.append((host, username, password, kwargs)) or SimpleNamespace()
+        ),
     )
 
     factory = module._build_imap_direct_action_executor_factory(Store())
@@ -3005,9 +3495,7 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
     assert (
         module._run_next_direct_action(
             email_store,
-            lambda account_id: (
-                Executor() if account_id == "account-direct" else None
-            ),
+            lambda account_id: Executor() if account_id == "account-direct" else None,
             available_account_ids=("account-direct",),
         )
         is result
@@ -3081,17 +3569,25 @@ def test_direct_action_locator_completion_rolls_back_on_scanner_race(
         else ("INBOX", 9, 901)
     )
     with sqlite3.connect(database) as db:
-        assert db.execute(
-            "select folder, uidvalidity, uid from email_classifications where id=901"
-        ).fetchone() == expected_classification
-        assert db.execute(
-            """
+        assert (
+            db.execute(
+                "select folder, uidvalidity, uid from email_classifications where id=901"
+            ).fetchone()
+            == expected_classification
+        )
+        assert (
+            db.execute(
+                """
             select folder, uidvalidity, uid from email_messages
             where stable_message_identity=?
             """,
-            ("account-direct:message-id:<direct-901@example.com>",),
-        ).fetchone() == expected_message
-        assert db.execute("select count(*) from email_action_attempts").fetchone()[0] == 0
+                ("account-direct:message-id:<direct-901@example.com>",),
+            ).fetchone()
+            == expected_message
+        )
+        assert (
+            db.execute("select count(*) from email_action_attempts").fetchone()[0] == 0
+        )
 
 
 def test_direct_action_does_not_claim_an_unavailable_account():
@@ -3177,8 +3673,9 @@ def test_direct_action_drain_processes_multiple_actions_but_stops_at_count_bound
         ({"account_id": "account-1", "scan_interval_seconds": 60},),
         object(),
         scan_account=lambda _account, _model: {"persisted_count": 0},
-        run_direct_actions_once=lambda: calls.append("action")
-        or SimpleNamespace(status="done"),
+        run_direct_actions_once=lambda: (
+            calls.append("action") or SimpleNamespace(status="done")
+        ),
         sleep=lambda _seconds: None,
         max_cycles=1,
         direct_action_max_actions=3,
@@ -3217,8 +3714,9 @@ def test_direct_action_drain_stops_at_time_bound():
         ({"account_id": "account-1", "scan_interval_seconds": 60},),
         object(),
         scan_account=lambda _account, _model: {"persisted_count": 0},
-        run_direct_actions_once=lambda: calls.append("action")
-        or SimpleNamespace(status="done"),
+        run_direct_actions_once=lambda: (
+            calls.append("action") or SimpleNamespace(status="done")
+        ),
         sleep=lambda _seconds: None,
         max_cycles=1,
         direct_action_max_actions=100,
@@ -3259,7 +3757,8 @@ def test_scan_config_uses_active_model_category_eligibility():
                     "validation_positive_support": 35,
                     "configured_threshold": 0.8,
                     "evaluated_threshold": 0.8,
-                    "auto_action_eligible": category == contracts.EmailCategory.WORK.value,
+                    "auto_action_eligible": category
+                    == contracts.EmailCategory.WORK.value,
                     "eligibility_reason": (
                         "precision_and_sample_gate_met"
                         if category == contracts.EmailCategory.WORK.value
@@ -3334,7 +3833,9 @@ def test_scan_config_non_active_model_record_is_never_action_eligible(status: st
             "description": category,
             "enabled": True,
             "threshold": 0.85,
-            "actions": ["label"] if category == contracts.EmailCategory.WORK.value else [],
+            "actions": ["label"]
+            if category == contracts.EmailCategory.WORK.value
+            else [],
             "action_parameters": (
                 {"label": {"labels": ["Work"]}}
                 if category == contracts.EmailCategory.WORK.value

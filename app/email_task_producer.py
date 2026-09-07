@@ -19,6 +19,9 @@ from app.email_task_adapter import (
     EmailAgentTaskInput,
     EmailAgentTaskRoute,
     EmailAgentTaskAdapter,
+    EmailClassificationTask,
+    EmailClassificationTaskAdapter,
+    EmailClassificationTaskInput,
     EmailThreadMessage,
 )
 from app.email_unsubscribe import (
@@ -26,6 +29,34 @@ from app.email_unsubscribe import (
     extract_unsubscribe_entries,
 )
 from app.store import AutoReplyStore
+
+
+class EmailClassificationTaskProducer:
+    """Enqueue one durable classifier task without creating a CEO reply task."""
+
+    def __init__(self, email_store: EmailStore):
+        self.adapter = EmailClassificationTaskAdapter(email_store)
+
+    def produce(
+        self,
+        message: Mapping[str, object],
+        *,
+        allowed_category_keys: Sequence[str],
+        category_descriptions: Mapping[str, object],
+        folder_targets: Mapping[str, str],
+        config_version: str,
+        unsubscribe_candidates: Sequence[object],
+    ) -> EmailClassificationTask:
+        return self.adapter.ensure_task(
+            EmailClassificationTaskInput.from_message(
+                message,
+                allowed_category_keys=allowed_category_keys,
+                category_descriptions=category_descriptions,
+                folder_targets=folder_targets,
+                config_version=config_version,
+                unsubscribe_candidates=unsubscribe_candidates,
+            )
+        )
 
 
 class EmailActionTaskProducer:

@@ -4,6 +4,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from math import log2
 from typing import Any
+from urllib.parse import unquote_plus
 
 from app.config import forbidden_path_prefixes
 
@@ -55,6 +56,80 @@ _OPAQUE_CREDENTIAL_CANDIDATE = re.compile(
     r"(?<![A-Za-z0-9_+/=])[A-Za-z0-9_+/=]{40,}(?![A-Za-z0-9_+/=])"
 )
 _CREDENTIAL_BOUNDARY_ERROR = "credential-bearing data is not allowed"
+_SENSITIVE_CREDENTIAL_EXACT_NAMES = frozenset(
+    {
+        "accesstoken",
+        "apikey",
+        "authorization",
+        "bearer",
+        "clientsecret",
+        "cookie",
+        "idtoken",
+        "password",
+        "privatekey",
+        "refreshtoken",
+        "secret",
+        "signature",
+        "signedurl",
+        "token",
+        "webhook",
+    }
+)
+_SENSITIVE_URL_COMPONENT_EXACT_NAMES = frozenset(
+    {
+        "auth",
+        "bearer",
+        "code",
+        "hmac",
+        "key",
+        "nonce",
+        "presigned",
+        "sig",
+        "signed",
+        "signedquery",
+        "webhook",
+        "代码",
+        "令牌",
+        "授权",
+        "签名",
+        "认证",
+        "随机数",
+        "密钥",
+    }
+)
+_SENSITIVE_URL_COMPONENT_CODE_NAMES = frozenset(
+    {
+        "accesscode",
+        "authcode",
+        "authorizationcode",
+        "logincode",
+        "oauthcode",
+        "providerauthcode",
+        "unsubscribecode",
+        "verificationcode",
+    }
+)
+_SENSITIVE_URL_COMPONENT_SEGMENTS = frozenset(
+    {
+        "auth",
+        "authorization",
+        "bearer",
+        "cookie",
+        "credential",
+        "credentials",
+        "password",
+        "presigned",
+        "secret",
+        "sig",
+        "signature",
+        "signed",
+        "token",
+        "webhook",
+    }
+)
+_SENSITIVE_URL_COMPONENT_KEY_PREFIXES = frozenset(
+    {"access", "api", "app", "client", "private", "subscription"}
+)
 
 
 def contains_credential(text: str, *, credential_context: bool = False) -> bool:
@@ -182,24 +257,7 @@ def _assert_no_credential_header(header: str) -> None:
 
 
 def is_sensitive_header_name(value: str) -> bool:
-    trimmed = value.strip()
-    segments = tuple(
-        segment for segment in re.split(r"[^a-z0-9]+", trimmed.casefold()) if segment
-    )
-    normalized = "".join(
-        character for character in trimmed.casefold() if character.isalnum()
-    )
-    return (
-        is_sensitive_field_name(trimmed)
-        or normalized in {"authorization", "proxyauthorization", "key", "xkey"}
-        or normalized.endswith("auth")
-        or normalized.endswith(("appkey", "clientkey", "subscriptionkey"))
-        or any(
-            segment
-            in {"auth", "credential", "credentials", "password", "secret", "token"}
-            for segment in segments
-        )
-    )
+    return is_sensitive_url_component_name(value)
 
 
 def redact_credentials(
@@ -274,7 +332,9 @@ def redact_credentials_in_value(
 
 
 def _is_pagination_token_field_name(value: str) -> bool:
-    normalized = "".join(character for character in value.casefold() if character.isalnum())
+    normalized = "".join(
+        character for character in value.casefold() if character.isalnum()
+    )
     return normalized in {
         "continuationtoken",
         "nextpagetoken",
@@ -299,6 +359,57 @@ def is_sensitive_field_name(value: str) -> bool:
         or normalized.endswith("credentials")
         or normalized.endswith("signedurl")
         or normalized.endswith("signature")
+    )
+
+
+def is_sensitive_credential_name(value: str) -> bool:
+    """Apply the canonical credential-bearing field-name policy."""
+
+    normalized = "".join(character for character in value.casefold() if character.isalnum())
+    return (
+        is_sensitive_field_name(value)
+        or normalized in _SENSITIVE_CREDENTIAL_EXACT_NAMES
+        or (
+            normalized.startswith("x")
+            and normalized[1:] in _SENSITIVE_CREDENTIAL_EXACT_NAMES
+        )
+    )
+
+
+def is_sensitive_url_component_name(value: str) -> bool:
+    """Return whether one URL query/fragment name carries credentials.
+
+    This is the canonical repository policy for URL-component names. It extends
+    ``is_sensitive_field_name`` with reviewed URL families shared by Email
+    metadata validation, MCP signed-URL detection, and durable migrations.
+    Generic campaign, promotion, postal, source, and tracking names stay public.
+    """
+
+    decoded = unquote_plus(value).strip()
+    normalized = "".join(
+        character for character in decoded.casefold() if character.isalnum()
+    )
+    segments = tuple(
+        segment for segment in re.split(r"[^a-z0-9]+", decoded.casefold()) if segment
+    )
+    return (
+        is_sensitive_credential_name(decoded)
+        or normalized in _SENSITIVE_URL_COMPONENT_EXACT_NAMES
+        or normalized in _SENSITIVE_URL_COMPONENT_CODE_NAMES
+        or normalized.endswith("auth")
+        or normalized.endswith(("appkey", "clientkey", "subscriptionkey"))
+        or "signed" in normalized
+        or (
+            normalized.startswith("x")
+            and normalized[1:] in _SENSITIVE_URL_COMPONENT_EXACT_NAMES
+        )
+        or any(
+            segment in _SENSITIVE_URL_COMPONENT_SEGMENTS for segment in segments
+        )
+        or any(
+            first in _SENSITIVE_URL_COMPONENT_KEY_PREFIXES and second == "key"
+            for first, second in zip(segments, segments[1:])
+        )
     )
 
 

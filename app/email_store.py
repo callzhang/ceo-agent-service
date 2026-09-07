@@ -18,6 +18,7 @@ import sqlite3
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+from urllib.parse import unquote, unquote_plus, urlsplit
 
 from app.email_classifier_contracts import (
     DIRECT_ACTIONS,
@@ -56,10 +57,10 @@ from app.email_category_config import (
     validate_category_descriptions,
 )
 from app.email_provider_folders import FolderRole
-from app.leak_check import assert_no_credentials
+from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 24
+EMAIL_SCHEMA_VERSION = 26
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -68,7 +69,7 @@ DIRECT_ACTION_RETRY_BASE_SECONDS = 2
 _CLASSIFICATION_STATUSES = frozenset(
     status.value for status in EmailClassificationStatus
 )
-_CLASSIFICATION_SOURCES = frozenset({"model", "user"})
+_CLASSIFICATION_SOURCES = frozenset({"model", "user", "agent"})
 _CURRENT_ACTION_STATUSES = frozenset({"pending", "processing", "done", "failed"})
 _TERMINAL_ATTEMPT_STATUSES = frozenset({"done", "failed"})
 _DIRECT_ACTION_VALUES = frozenset(action.value for action in DIRECT_ACTIONS)
@@ -146,7 +147,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "preview": ("text", True, "''"),
         "model_text": ("text", True, "''"),
         "received_at": ("text", True, "''"),
-        "category": ("text", True, None),
+        "category": ("text", False, None),
         "predicted_category": ("text", False, None),
         "confirmed_category": ("text", False, None),
         "confidence": ("real", True, None),
@@ -156,11 +157,28 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "config_version": ("text", True, None),
         "status": ("text", True, None),
         "classification_source": ("text", True, None),
+        "agent_result_json": ("text", True, "'null'"),
         "action_plan_json": ("text", True, "'null'"),
         "current_action_plan_id": ("text", False, None),
         "included_in_model_id": ("text", False, None),
         "legacy_processed_without_plan": ("integer", True, "0"),
         "confirmed_at": ("text", True, "''"),
+        "created_at": ("text", True, "current_timestamp"),
+        "updated_at": ("text", True, "current_timestamp"),
+    },
+    "email_agent_classification_tasks": {
+        "task_id": ("text", False, None),
+        "channel": ("text", True, None),
+        "stable_message_identity": ("text", True, None),
+        "status": ("text", True, None),
+        "owner": ("text", True, "''"),
+        "generation": ("integer", True, "0"),
+        "attempt_count": ("integer", True, "0"),
+        "lease_expires_at": ("text", True, "''"),
+        "available_at": ("text", True, "''"),
+        "input_json": ("text", True, None),
+        "result_json": ("text", True, "'null'"),
+        "error": ("text", True, "''"),
         "created_at": ("text", True, "current_timestamp"),
         "updated_at": ("text", True, "current_timestamp"),
     },
@@ -415,6 +433,16 @@ _REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
 }
 _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
     "email_classifications": ("legacy_processed_without_plan in (0, 1)",),
+    "email_agent_classification_tasks": (
+        "trim(task_id) != ''",
+        "channel='email'",
+        "trim(stable_message_identity) != ''",
+        "status in ('pending','running','done','failed')",
+        "generation >= 0",
+        "attempt_count >= 0",
+        "json_valid(input_json)",
+        "json_valid(result_json)",
+    ),
     "email_category_configs": CATEGORY_CONFIG_CHECKS,
     "email_category_folder_bindings": FOLDER_BINDING_CHECKS,
     "email_accounts": (
@@ -439,7 +467,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
     ),
     "email_action_plans": (
         "action_plan_version > 0",
-        "classification_source in ('model', 'user')",
+        "classification_source in ('model', 'user', 'agent')",
         "confidence >= 0.0 and confidence <= 1.0",
         "json_valid(actions_json)",
         "json_valid(action_parameters_json)",
@@ -587,6 +615,7 @@ _REQUIRED_AUTOINCREMENT_COLUMNS = frozenset(
 _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_schema_migrations": ("version",),
     "email_classifications": ("id",),
+    "email_agent_classification_tasks": ("task_id",),
     "email_category_configs": ("category_key",),
     "email_category_folder_bindings": ("account_id", "category_key"),
     "email_accounts": ("account_id",),
@@ -612,6 +641,7 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
 }
 _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
     "email_classifications": (("stable_message_identity",),),
+    "email_agent_classification_tasks": (("stable_message_identity",),),
     "email_messages": (("stable_message_identity",),),
     "email_action_plans": (("classification_id", "action_plan_version"),),
     "email_actions": (("action_plan_id", "action_type"),),
@@ -693,6 +723,10 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_classifications_account_status": (
         "email_classifications",
         ("account_id", "status", "updated_at"),
+    ),
+    "idx_email_agent_classification_tasks_status": (
+        "email_agent_classification_tasks",
+        ("status", "available_at", "lease_expires_at", "task_id"),
     ),
     "idx_email_messages_account_locator": (
         "email_messages",
@@ -800,7 +834,7 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
     "trg_email_classification_source_insert": """
         create trigger trg_email_classification_source_insert
         before insert on email_classifications
-        when new.classification_source not in ('model', 'user')
+        when new.classification_source not in ('model', 'user', 'agent')
         begin
             select raise(abort, 'invalid email classification source');
         end
@@ -808,7 +842,7 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
     "trg_email_classification_source_update": """
         create trigger trg_email_classification_source_update
         before update of classification_source on email_classifications
-        when new.classification_source not in ('model', 'user')
+        when new.classification_source not in ('model', 'user', 'agent')
         begin
             select raise(abort, 'invalid email classification source');
         end
@@ -1190,6 +1224,36 @@ def _validate_model_text(model_text: str) -> None:
         raise ValueError("model_text must be redacted")
 
 
+def _validated_agent_result_json(
+    classification: EmailClassification, agent_result: object | None
+) -> str:
+    if classification.classification_source != "agent":
+        if agent_result is not None:
+            raise ValueError("non-Agent classification cannot carry an Agent result")
+        return "null"
+    if agent_result is None:
+        raise ValueError("Agent classification requires its exact typed result")
+    from app.email_classifier_agent import DurableAgentClassificationResult
+
+    result = (
+        agent_result
+        if isinstance(agent_result, DurableAgentClassificationResult)
+        else DurableAgentClassificationResult.model_validate(agent_result)
+    )
+    expected_status = (
+        EmailClassificationStatus.PROCESSED
+        if result.certainty == "certain"
+        else EmailClassificationStatus.PENDING_FEEDBACK
+    )
+    if classification.status is not expected_status:
+        raise ValueError("Agent certainty and canonical status diverge")
+    if classification.category != result.category:
+        raise ValueError("Agent and canonical categories diverge")
+    if classification.confidence != result.confidence:
+        raise ValueError("Agent and canonical confidence diverge")
+    return result.model_dump_json()
+
+
 def _normalized_message_id(value: object) -> str:
     if value in (None, ""):
         return ""
@@ -1223,6 +1287,45 @@ def _json_dump(value: object) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _legacy_unsubscribe_private_values(url: object) -> tuple[str, ...]:
+    """Return exact legacy URL/token values that must not survive migration."""
+
+    candidate = str(url)
+    values = {candidate, unquote(candidate)}
+    parsed = urlsplit(candidate)
+    encoded_components = parsed.query.split("&")
+    if parsed.fragment:
+        encoded_components.extend(parsed.fragment.split("&"))
+    for component in encoded_components:
+        name, separator, private_value = component.partition("=")
+        if not separator or not is_sensitive_url_component_name(name):
+            continue
+        for decoded in (private_value, unquote_plus(private_value)):
+            if decoded:
+                values.add(decoded)
+    return tuple(sorted((value for value in values if value), key=len, reverse=True))
+def _redact_legacy_unsubscribe_json(
+    value: object,
+    replacements: Sequence[tuple[str, str]],
+) -> object:
+    """Redact legacy private values in decoded JSON, including nested fields."""
+
+    if isinstance(value, str):
+        for private_value, reference in replacements:
+            value = value.replace(private_value, reference)
+        return value
+    if isinstance(value, list):
+        return [
+            _redact_legacy_unsubscribe_json(item, replacements) for item in value
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _redact_legacy_unsubscribe_json(item, replacements)
+            for key, item in value.items()
+        }
+    return value
 
 
 def _freeze_action_value(value: object) -> object:
@@ -1922,9 +2025,7 @@ def _current_unsubscribe_task_lineage(
         "consumer_run_ids": [
             int(row["id"]) for row in runs if row["role"] == "consumer"
         ],
-        "audit_run_ids": [
-            int(row["id"]) for row in runs if row["role"] == "audit"
-        ],
+        "audit_run_ids": [int(row["id"]) for row in runs if row["role"] == "audit"],
         "status": str(task["status"]),
         "_sort_created_at": str(task["created_at"] or ""),
     }
@@ -2365,6 +2466,7 @@ class EmailStore:
             except sqlite3.OperationalError as exc:
                 if "locked" not in str(exc).lower():
                     raise
+            db.execute("pragma foreign_keys = off")
             db.execute("begin immediate")
             self._create_migration_table(db)
             latest_version = self._read_schema_version(db)
@@ -2385,7 +2487,9 @@ class EmailStore:
                 legacy_unsubscribe_claims = self._prepare_v10_unsubscribe_migration(db)
             legacy_unsubscribe_schema = False
             if latest_version < 14:
-                legacy_unsubscribe_schema = self._prepare_unsubscribe_schema_migration(db)
+                legacy_unsubscribe_schema = self._prepare_unsubscribe_schema_migration(
+                    db
+                )
             self._create_base_tables(db)
             self._create_durable_tables(db)
             self._ensure_email_context_columns(db)
@@ -2452,6 +2556,12 @@ class EmailStore:
                 latest_version = 23
             if latest_version == 23:
                 self._migrate_v23_to_v24(db, replace_version=is_prototype)
+                latest_version = 24
+            if latest_version == 24:
+                self._migrate_v24_to_v25(db, replace_version=is_prototype)
+                latest_version = 25
+            if latest_version == 25:
+                self._migrate_v25_to_v26(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -2823,7 +2933,7 @@ class EmailStore:
                 preview text not null default '',
                 model_text text not null default '',
                 received_at text not null default '',
-                category text not null,
+                category text,
                 predicted_category text,
                 confirmed_category text,
                 confidence real not null,
@@ -2833,12 +2943,35 @@ class EmailStore:
                 config_version text not null,
                 status text not null,
                 classification_source text not null,
+                agent_result_json text not null default 'null',
                 action_plan_json text not null default 'null',
                 current_action_plan_id text,
                 included_in_model_id text,
                 legacy_processed_without_plan integer not null default 0
                     check(legacy_processed_without_plan in (0, 1)),
                 confirmed_at text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists email_agent_classification_tasks (
+                task_id text primary key check(trim(task_id) != ''),
+                channel text not null check(channel='email'),
+                stable_message_identity text not null unique
+                    check(trim(stable_message_identity) != ''),
+                status text not null
+                    check(status in ('pending','running','done','failed')),
+                owner text not null default '',
+                generation integer not null default 0 check(generation >= 0),
+                attempt_count integer not null default 0 check(attempt_count >= 0),
+                lease_expires_at text not null default '',
+                available_at text not null default '',
+                input_json text not null check(json_valid(input_json)),
+                result_json text not null default 'null' check(json_valid(result_json)),
+                error text not null default '',
                 created_at text not null default current_timestamp,
                 updated_at text not null default current_timestamp
             )
@@ -3115,8 +3248,7 @@ class EmailStore:
         """Allow strictly validated category-key text in feedback history."""
 
         db.execute(
-            "alter table email_feedback_requests "
-            "rename to email_feedback_requests_v18"
+            "alter table email_feedback_requests rename to email_feedback_requests_v18"
         )
         db.execute(
             """
@@ -3231,7 +3363,9 @@ class EmailStore:
             str(row["category"]): row
             for row in db.execute("select * from email_category_configs")
         }
-        db.execute("alter table email_category_configs rename to email_category_configs_v19")
+        db.execute(
+            "alter table email_category_configs rename to email_category_configs_v19"
+        )
         self._create_category_config_tables(db)
         now = self._now()
         has_enabled_account = (
@@ -3479,7 +3613,9 @@ class EmailStore:
     ) -> None:
         """Freeze existing snapshots and gate all later observation inserts."""
 
-        db.execute("drop trigger if exists trg_email_training_snapshots_immutable_update")
+        db.execute(
+            "drop trigger if exists trg_email_training_snapshots_immutable_update"
+        )
         db.execute(
             """
             create trigger trg_email_training_snapshots_immutable_update
@@ -3513,10 +3649,279 @@ class EmailStore:
                 (self._now(),),
             )
 
-    @classmethod
-    def _ensure_training_snapshot_frozen_column(
-        cls, db: sqlite3.Connection
+    def _migrate_v24_to_v25(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
     ) -> None:
+        """Add truthful Agent provenance and nullable uncertain categories."""
+
+        db.execute(
+            """
+            create table email_classifications_v25 (
+                id integer primary key,
+                account_id text not null,
+                folder text not null,
+                uidvalidity integer not null,
+                uid integer not null,
+                rfc_message_id text,
+                thread_id text,
+                stable_message_identity text not null unique,
+                sender text not null default '',
+                subject text not null default '',
+                preview text not null default '',
+                model_text text not null default '',
+                received_at text not null default '',
+                category text,
+                predicted_category text,
+                confirmed_category text,
+                confidence real not null,
+                margin real not null,
+                probabilities_json text not null,
+                model_id text not null,
+                config_version text not null,
+                status text not null,
+                classification_source text not null,
+                agent_result_json text not null default 'null',
+                action_plan_json text not null default 'null',
+                current_action_plan_id text,
+                included_in_model_id text,
+                legacy_processed_without_plan integer not null default 0
+                    check(legacy_processed_without_plan in (0, 1)),
+                confirmed_at text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp
+            )
+            """
+        )
+        db.execute(
+            """
+            insert into email_classifications_v25 (
+                id, account_id, folder, uidvalidity, uid, rfc_message_id,
+                thread_id, stable_message_identity, sender, subject, preview,
+                model_text, received_at, category, predicted_category,
+                confirmed_category, confidence, margin, probabilities_json,
+                model_id, config_version, status, classification_source,
+                action_plan_json, current_action_plan_id, included_in_model_id,
+                legacy_processed_without_plan, confirmed_at, created_at, updated_at
+            )
+            select id, account_id, folder, uidvalidity, uid, rfc_message_id,
+                   thread_id, stable_message_identity, sender, subject, preview,
+                   model_text, received_at, category, predicted_category,
+                   confirmed_category, confidence, margin, probabilities_json,
+                   model_id, config_version, status, classification_source,
+                   action_plan_json, current_action_plan_id, included_in_model_id,
+                   legacy_processed_without_plan, confirmed_at, created_at, updated_at
+            from email_classifications
+            """
+        )
+        db.execute(
+            """
+            create table email_action_plans_v25 (
+                action_plan_id text primary key,
+                action_plan_version integer not null check(action_plan_version > 0),
+                classification_id integer not null,
+                account_id text not null,
+                category text not null,
+                classification_source text not null
+                    check(classification_source in ('model', 'user', 'agent')),
+                confidence real not null check(confidence >= 0.0 and confidence <= 1.0),
+                model_id text not null,
+                config_version text not null,
+                actions_json text not null check(json_valid(actions_json)),
+                action_parameters_json text not null
+                    check(json_valid(action_parameters_json)),
+                authorization_snapshot_json text
+                    check(authorization_snapshot_json is null
+                          or json_valid(authorization_snapshot_json)),
+                legacy_serialization_pre_v16 integer not null default 0
+                    check(legacy_serialization_pre_v16 in (0, 1)),
+                created_at text not null,
+                unique(classification_id, action_plan_version),
+                foreign key(classification_id) references email_classifications(id)
+                    on delete restrict
+            )
+            """
+        )
+        db.execute(
+            """
+            insert into email_action_plans_v25 (
+                action_plan_id, action_plan_version, classification_id,
+                account_id, category, classification_source, confidence,
+                model_id, config_version, actions_json, action_parameters_json,
+                authorization_snapshot_json, legacy_serialization_pre_v16,
+                created_at
+            )
+            select action_plan_id, action_plan_version, classification_id,
+                   account_id, category, classification_source, confidence,
+                   model_id, config_version, actions_json, action_parameters_json,
+                   authorization_snapshot_json, legacy_serialization_pre_v16,
+                   created_at
+            from email_action_plans
+            """
+        )
+        db.execute("drop table email_action_plans")
+        db.execute("drop table email_classifications")
+        db.execute(
+            "alter table email_classifications_v25 rename to email_classifications"
+        )
+        db.execute("alter table email_action_plans_v25 rename to email_action_plans")
+        self._create_indexes_and_triggers(db)
+        self._ensure_training_inclusion_trigger(db)
+        foreign_key_violations = db.execute("pragma foreign_key_check").fetchall()
+        if foreign_key_violations:
+            raise EmailPersistenceCorruption(
+                "v25 migration foreign key violation: "
+                + repr([tuple(row) for row in foreign_key_violations])
+            )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=25, applied_at=? "
+                "where version=24",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (25, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v25_to_v26(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Adopt the classifier queue into the validated Email schema."""
+
+        db.execute("pragma secure_delete = on")
+        tables = {
+            row["name"]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        }
+        legacy_rows = (
+            db.execute("select * from email_agent_classification_tasks").fetchall()
+            if "email_agent_classification_tasks" in tables
+            else ()
+        )
+        if "email_agent_classification_tasks" in tables:
+            db.execute("drop table email_agent_classification_tasks")
+        self._create_base_tables(db)
+        for row in legacy_rows:
+            payload = json.loads(row["input_json"])
+            candidates = payload.get("unsubscribe_candidates", [])
+            redacted_candidates = [
+                {
+                    "index": index,
+                    "source": "legacy",
+                    "digest": sha256(str(url).encode("utf-8")).hexdigest(),
+                    "reference": "unsubscribe-entry:"
+                    + sha256(str(url).encode("utf-8")).hexdigest(),
+                }
+                for index, url in enumerate(candidates)
+            ]
+            replacements: list[tuple[str, str]] = []
+            for candidate, redacted in zip(
+                candidates, redacted_candidates, strict=True
+            ):
+                replacements.extend(
+                    (private_value, str(redacted["reference"]))
+                    for private_value in _legacy_unsubscribe_private_values(candidate)
+                )
+            replacements.sort(key=lambda item: len(item[0]), reverse=True)
+            payload = _redact_legacy_unsubscribe_json(payload, replacements)
+            assert isinstance(payload, dict)
+            payload["unsubscribe_candidates"] = redacted_candidates
+            result = json.loads(row["result_json"])
+            if isinstance(result, dict):
+                selected_url = result.pop("unsubscribe_url", None)
+                result = _redact_legacy_unsubscribe_json(result, replacements)
+                assert isinstance(result, dict)
+                if selected_url is not None:
+                    selected_url = str(selected_url)
+                    digest = sha256(selected_url.encode("utf-8")).hexdigest()
+                    reference = "unsubscribe-entry:" + digest
+                    result = _redact_legacy_unsubscribe_json(
+                        result,
+                        [
+                            (private_value, reference)
+                            for private_value in _legacy_unsubscribe_private_values(
+                                selected_url
+                            )
+                        ],
+                    )
+                    assert isinstance(result, dict)
+                    result["unsubscribe_candidate_digest"] = digest
+                    result["unsubscribe_candidate_reference"] = reference
+                    result["unsubscribe_candidate_source"] = "legacy"
+                else:
+                    result["unsubscribe_candidate_index"] = None
+                    result["unsubscribe_candidate_source"] = None
+                    result["unsubscribe_candidate_digest"] = None
+                    result["unsubscribe_candidate_reference"] = None
+            db.execute(
+                """
+                insert into email_agent_classification_tasks (
+                    task_id, channel, stable_message_identity, status, owner,
+                    input_json, result_json, error, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["task_id"],
+                    row["channel"],
+                    row["stable_message_identity"],
+                    "pending" if row["status"] == "running" else row["status"],
+                    "",
+                    _json_dump(payload),
+                    _json_dump(result),
+                    row["error"],
+                    row["created_at"],
+                    row["updated_at"],
+                ),
+            )
+        for row in db.execute(
+            "select id, agent_result_json from email_classifications where agent_result_json != 'null'"
+        ).fetchall():
+            result = json.loads(row["agent_result_json"])
+            selected_url = result.pop("unsubscribe_url", None)
+            if selected_url is not None:
+                selected_url = str(selected_url)
+                digest = sha256(selected_url.encode("utf-8")).hexdigest()
+                reference = "unsubscribe-entry:" + digest
+                result = _redact_legacy_unsubscribe_json(
+                    result,
+                    [
+                        (private_value, reference)
+                        for private_value in _legacy_unsubscribe_private_values(
+                            selected_url
+                        )
+                    ],
+                )
+                assert isinstance(result, dict)
+                result["unsubscribe_candidate_source"] = "legacy"
+                result["unsubscribe_candidate_digest"] = digest
+                result["unsubscribe_candidate_reference"] = reference
+            else:
+                result["unsubscribe_candidate_index"] = None
+                result["unsubscribe_candidate_source"] = None
+                result["unsubscribe_candidate_digest"] = None
+                result["unsubscribe_candidate_reference"] = None
+            db.execute(
+                "update email_classifications set agent_result_json=? where id=?",
+                (_json_dump(result), row["id"]),
+            )
+        self._create_indexes_and_triggers(db)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=26, applied_at=? where version=25",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (26, ?)",
+                (self._now(),),
+            )
+
+    @classmethod
+    def _ensure_training_snapshot_frozen_column(cls, db: sqlite3.Connection) -> None:
         cls._ensure_column(
             db,
             table="email_training_snapshots",
@@ -3693,7 +4098,7 @@ class EmailStore:
                 account_id text not null,
                 category text not null,
                 classification_source text not null
-                    check(classification_source in ('model', 'user')),
+                    check(classification_source in ('model', 'user', 'agent')),
                 confidence real not null check(confidence >= 0.0 and confidence <= 1.0),
                 model_id text not null,
                 config_version text not null,
@@ -4046,6 +4451,12 @@ class EmailStore:
     def _create_indexes_and_triggers(db: sqlite3.Connection) -> None:
         statements = (
             """
+            create index if not exists idx_email_agent_classification_tasks_status
+            on email_agent_classification_tasks(
+                status, available_at, lease_expires_at, task_id
+            )
+            """,
+            """
             create index if not exists idx_email_classifications_status
             on email_classifications(status, updated_at desc, id desc)
             """,
@@ -4146,7 +4557,7 @@ class EmailStore:
             """
             create trigger if not exists trg_email_classification_source_insert
             before insert on email_classifications
-            when new.classification_source not in ('model', 'user')
+            when new.classification_source not in ('model', 'user', 'agent')
             begin
                 select raise(abort, 'invalid email classification source');
             end
@@ -4154,7 +4565,7 @@ class EmailStore:
             """
             create trigger if not exists trg_email_classification_source_update
             before update of classification_source on email_classifications
-            when new.classification_source not in ('model', 'user')
+            when new.classification_source not in ('model', 'user', 'agent')
             begin
                 select raise(abort, 'invalid email classification source');
             end
@@ -4360,9 +4771,7 @@ class EmailStore:
         ).fetchall()
         for row in rows:
             try:
-                plan = rehydrate_legacy_email_action_plan_json(
-                    row["action_plan_json"]
-                )
+                plan = rehydrate_legacy_email_action_plan_json(row["action_plan_json"])
             except ValueError as exc:
                 raise EmailPersistenceCorruption(
                     f"invalid action_plan_json for classification {row['id']}"
@@ -4634,6 +5043,42 @@ class EmailStore:
             ) from exc
 
     def _validate_durable_rows(self, db: sqlite3.Connection) -> None:
+        for row in db.execute("select * from email_agent_classification_tasks"):
+            payload = _json_load(
+                row["input_json"], field="input_json", expected_type=dict
+            )
+            if payload.get("stable_message_identity") != row["stable_message_identity"]:
+                raise EmailPersistenceCorruption(
+                    "classifier task stable identity diverges from input"
+                )
+            candidates = payload.get("unsubscribe_candidates")
+            if not isinstance(candidates, list) or any(
+                not isinstance(candidate, dict)
+                or set(candidate) != {"index", "source", "digest", "reference"}
+                or candidate["index"] != index
+                or not isinstance(candidate["digest"], str)
+                or not _SHA256_HEX.fullmatch(candidate["digest"])
+                or candidate["reference"] != "unsubscribe-entry:" + candidate["digest"]
+                for index, candidate in enumerate(candidates)
+            ):
+                raise EmailPersistenceCorruption(
+                    "classifier task unsubscribe candidates are not redacted"
+                )
+            result = json.loads(row["result_json"])
+            if isinstance(result, dict) and "unsubscribe_url" in result:
+                raise EmailPersistenceCorruption(
+                    "classifier task result contains private unsubscribe URL"
+                )
+            if row["status"] == "running" and (
+                not row["owner"] or not row["lease_expires_at"]
+            ):
+                raise EmailPersistenceCorruption(
+                    "running classifier task has no durable lease"
+                )
+            if row["status"] != "running" and (row["owner"] or row["lease_expires_at"]):
+                raise EmailPersistenceCorruption(
+                    "non-running classifier task retains a lease"
+                )
         for row in db.execute(
             "select account_id, scan_folders_json from email_accounts"
         ):
@@ -4720,8 +5165,10 @@ class EmailStore:
             ).append(row)
         for row in classifications.values():
             try:
-                rehydrate_legacy_email_category_key(row["category"])
-                rehydrate_legacy_email_category_key(row["predicted_category"])
+                if row["category"] is not None:
+                    rehydrate_legacy_email_category_key(row["category"])
+                if row["predicted_category"] is not None:
+                    rehydrate_legacy_email_category_key(row["predicted_category"])
                 if row["confirmed_category"]:
                     rehydrate_legacy_email_category_key(row["confirmed_category"])
             except ValueError as exc:
@@ -4750,6 +5197,39 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     f"invalid classification probabilities for {row['id']}"
                 ) from exc
+            if row["agent_result_json"] != "null":
+                from app.email_classifier_agent import DurableAgentClassificationResult
+
+                try:
+                    agent_result = DurableAgentClassificationResult.model_validate_json(
+                        row["agent_result_json"]
+                    )
+                except ValueError as exc:
+                    raise EmailPersistenceCorruption(
+                        f"invalid Agent result for classification {row['id']}"
+                    ) from exc
+                if row["classification_source"] == "model":
+                    raise EmailPersistenceCorruption(
+                        f"model classification {row['id']} carries Agent result"
+                    )
+                if row["classification_source"] == "agent":
+                    expected_status = (
+                        EmailClassificationStatus.PROCESSED.value
+                        if agent_result.certainty == "certain"
+                        else EmailClassificationStatus.PENDING_FEEDBACK.value
+                    )
+                    if (
+                        row["category"] != agent_result.category
+                        or row["confidence"] != agent_result.confidence
+                        or row["status"] != expected_status
+                    ):
+                        raise EmailPersistenceCorruption(
+                            f"Agent result diverges for classification {row['id']}"
+                        )
+            elif row["classification_source"] == "agent":
+                raise EmailPersistenceCorruption(
+                    f"Agent classification {row['id']} has no Agent result"
+                )
             message = messages.get(row["stable_message_identity"])
             if (
                 message is None
@@ -4805,9 +5285,18 @@ class EmailStore:
             classification_plans = plans_by_classification.get(row["id"], [])
             has_plan_snapshot = row["action_plan_json"] not in {"", "null"}
             if row["status"] == EmailClassificationStatus.PENDING_FEEDBACK.value:
-                if row["classification_source"] != "model":
+                if row["classification_source"] not in {"model", "agent"}:
                     raise EmailPersistenceCorruption(
-                        f"pending feedback classification {row['id']} must use model source"
+                        f"pending feedback classification {row['id']} must have model "
+                        "or agent source"
+                    )
+                if row["classification_source"] == "agent" and (
+                    row["category"] is not None
+                    or row["predicted_category"] is not None
+                    or probabilities
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"uncertain Agent classification {row['id']} has a category"
                     )
                 if row["legacy_processed_without_plan"] != 0:
                     raise EmailPersistenceCorruption(
@@ -4826,6 +5315,10 @@ class EmailStore:
                         f"pending feedback classification {row['id']} is confirmed"
                     )
                 continue
+            if row["category"] is None:
+                raise EmailPersistenceCorruption(
+                    f"processed classification {row['id']} has no category"
+                )
             if (
                 row["classification_source"] == "user"
                 and row["confirmed_category"] != row["category"]
@@ -4834,7 +5327,7 @@ class EmailStore:
                     f"user-confirmed classification {row['id']} has inconsistent category"
                 )
             if (
-                row["classification_source"] == "model"
+                row["classification_source"] in {"model", "agent"}
                 and row["confirmed_category"] is not None
                 and row["confirmed_category"] != row["category"]
             ):
@@ -5555,12 +6048,18 @@ class EmailStore:
             action_plan = None
         else:
             try:
-                plan = rehydrate_legacy_email_action_plan_json(
-                    row["action_plan_json"]
-                )
+                plan = rehydrate_legacy_email_action_plan_json(row["action_plan_json"])
             except ValueError as exc:
                 raise EmailPersistenceCorruption("invalid action_plan_json") from exc
             action_plan = plan.model_dump(mode="json")
+        if row["agent_result_json"] != "null":
+            agent_result = _json_load(
+                row["agent_result_json"],
+                field="agent_result_json",
+                expected_type=dict,
+            )
+        else:
+            agent_result = None
         return {
             "id": row["id"],
             "account_id": row["account_id"],
@@ -5584,6 +6083,7 @@ class EmailStore:
             "config_version": row["config_version"],
             "status": row["status"],
             "classification_source": row["classification_source"],
+            "agent_result": agent_result,
             "action_plan": action_plan,
             "current_action_plan_id": row["current_action_plan_id"],
             "confirmed_at": row["confirmed_at"],
@@ -6053,6 +6553,7 @@ class EmailStore:
         self,
         classification: EmailClassification,
         *,
+        agent_result: object | None = None,
         sender: str = "",
         recipients: Sequence[str] = (),
         subject: str = "",
@@ -6072,6 +6573,7 @@ class EmailStore:
         """Atomically persist scan state and advance its folder cursor last."""
 
         _validate_model_text(model_text)
+        agent_result_json = _validated_agent_result_json(classification, agent_result)
         now = self._now()
         locator = classification.provider_locator
         if (cursor_uidvalidity is None) != (cursor_last_seen_uid is None):
@@ -6117,8 +6619,9 @@ class EmailStore:
                         model_text, received_at, category, predicted_category,
                         confirmed_category, confidence, margin, probabilities_json,
                         model_id, config_version, status, classification_source,
-                        action_plan_json, current_action_plan_id, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'null', null, ?)
+                        agent_result_json, action_plan_json,
+                        current_action_plan_id, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'null', null, ?)
                     """,
                     (
                         classification.classification_id,
@@ -6144,6 +6647,7 @@ class EmailStore:
                         classification.config_version,
                         classification.status.value,
                         classification.classification_source,
+                        agent_result_json,
                         now,
                     ),
                 )
@@ -6163,6 +6667,13 @@ class EmailStore:
                         ),
                     )
             else:
+                if (
+                    existing["classification_source"] == "agent"
+                    and existing["agent_result_json"] != agent_result_json
+                ):
+                    raise EmailClassificationConflict(
+                        "canonical Agent result diverges from retry"
+                    )
                 db.execute(
                     """
                     update email_classifications
@@ -6262,6 +6773,37 @@ class EmailStore:
                 (account_id, folder),
             ).fetchone()
         return None if row is None else dict(row)
+
+    def record_scan_cursor(
+        self,
+        *,
+        account_id: str,
+        folder: str,
+        uidvalidity: int,
+        last_seen_uid: int,
+        expected_uidvalidity: int | None = None,
+    ) -> dict[str, Any]:
+        """Advance an observation-only scan after durable task enqueue."""
+
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            self._advance_cursor(
+                db,
+                account_id=account_id,
+                folder=folder,
+                uidvalidity=uidvalidity,
+                last_seen_uid=last_seen_uid,
+                last_success_at=now,
+                last_error="",
+                expected_uidvalidity=expected_uidvalidity,
+            )
+            row = db.execute(
+                "select * from email_scan_cursors where account_id=? and folder=?",
+                (account_id, folder),
+            ).fetchone()
+        assert row is not None
+        return dict(row)
 
     def list_accounts(self) -> list[dict[str, Any]]:
         with self._connect() as db:
@@ -9080,11 +9622,14 @@ class EmailStore:
         values: Mapping[str, object],
         *,
         allow_shared_email: bool = False,
-    ) -> tuple[
-        dict[str, Any],
-        dict[str, Any],
-        EmailCategoryEnablementSnapshot,
-    ] | None:
+    ) -> (
+        tuple[
+            dict[str, Any],
+            dict[str, Any],
+            EmailCategoryEnablementSnapshot,
+        ]
+        | None
+    ):
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
@@ -9645,8 +10190,39 @@ class EmailStore:
             **self._classification_evidence_row(row),
             "message_text": message.get_payload(),
             "cc": message.get("Cc", ""),
-            "recipients": [address for _, address in getaddresses(message.get_all("To", []))],
+            "recipients": [
+                address for _, address in getaddresses(message.get_all("To", []))
+            ],
         }
+
+    def get_classification_by_stable_identity(
+        self, stable_message_identity: str
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_classifications where stable_message_identity=?",
+                (stable_message_identity,),
+            ).fetchone()
+        return None if row is None else self._classification_row(row)
+
+    def has_stable_classification(self, stable_message_identity: str) -> bool:
+        return (
+            self.get_classification_by_stable_identity(stable_message_identity)
+            is not None
+        )
+
+    def stable_classification_uids(
+        self, *, account_id: str, folder: str, uidvalidity: int
+    ) -> frozenset[int]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select uid from email_classifications
+                where account_id=? and folder=? and uidvalidity=?
+                """,
+                (account_id, folder, uidvalidity),
+            ).fetchall()
+        return frozenset(int(row["uid"]) for row in rows)
 
     def list_email_classification_observability(
         self, classification_id: int
@@ -10096,8 +10672,7 @@ class EmailStore:
                 seed=snapshot["seed"],
                 observed_at=snapshot["observed_at"],
                 observations=tuple(
-                    TrainingSnapshotObservation(**value)
-                    for value in observation_values
+                    TrainingSnapshotObservation(**value) for value in observation_values
                 ),
                 snapshot_digest=snapshot["snapshot_digest"],
                 _manifest_json=snapshot["manifest_json"],
@@ -11193,8 +11768,12 @@ class EmailStore:
             action_parameters=action_parameters,
             config_version=config_version,
         )
-        if any(not isinstance(binding, VerifiedEmailFolderBinding) for binding in bindings):
-            raise TypeError("bindings must contain coordinator-produced verified folder binding values")
+        if any(
+            not isinstance(binding, VerifiedEmailFolderBinding) for binding in bindings
+        ):
+            raise TypeError(
+                "bindings must contain coordinator-produced verified folder binding values"
+            )
         if category_key == "junk" and bindings:
             raise ValueError("junk does not accept a business-folder binding")
         for binding in bindings:
@@ -11340,8 +11919,7 @@ class EmailStore:
             if existing is None:
                 return None
             final_enabled = bool(
-                enabled
-                and self._bindings_cover_enabled_accounts(db, category_key)
+                enabled and self._bindings_cover_enabled_accounts(db, category_key)
             )
             db.execute(
                 """
@@ -11451,8 +12029,7 @@ class EmailStore:
                         ),
                     )
                 final_enabled = bool(
-                    enabled
-                    and self._bindings_cover_enabled_accounts(db, category_key)
+                    enabled and self._bindings_cover_enabled_accounts(db, category_key)
                 )
                 db.execute(
                     """
@@ -11637,10 +12214,7 @@ class EmailStore:
         configured = [
             row for row in rows if row["config_version"] != SEEDED_CONFIG_VERSION
         ]
-        return [
-            self._legacy_config_row(row)
-            for row in configured or rows
-        ]
+        return [self._legacy_config_row(row) for row in configured or rows]
 
     def upsert_config(
         self,
@@ -11671,8 +12245,7 @@ class EmailStore:
             if existing is None:
                 raise ValueError("email category config does not exist")
             final_enabled = bool(
-                enabled
-                and self._bindings_cover_enabled_accounts(db, category_key)
+                enabled and self._bindings_cover_enabled_accounts(db, category_key)
             )
             db.execute(
                 """

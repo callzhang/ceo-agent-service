@@ -158,7 +158,9 @@ class FolderListSession:
         return "OK", self.responses
 
 
-def test_imap_folder_inventory_parses_special_use_modified_utf7_and_stable_ids() -> None:
+def test_imap_folder_inventory_parses_special_use_modified_utf7_and_stable_ids() -> (
+    None
+):
     adapter = ImapReadonlyAdapter(
         FolderListSession(
             [
@@ -183,7 +185,9 @@ def test_imap_folder_inventory_parses_special_use_modified_utf7_and_stable_ids()
     )
 
 
-def test_imap_folder_inventory_uses_protocol_flags_not_localized_name_guessing() -> None:
+def test_imap_folder_inventory_uses_protocol_flags_not_localized_name_guessing() -> (
+    None
+):
     adapter = ImapReadonlyAdapter(
         FolderListSession([b'() "/" "&V4NXPpCuTvY-"']),
         account_id="account-1",
@@ -210,7 +214,9 @@ def test_imap_folder_inventory_excludes_non_addressable_noselect_entries() -> No
     )
 
 
-def test_imap_folder_inventory_uses_safe_precedence_for_multiple_special_roles() -> None:
+def test_imap_folder_inventory_uses_safe_precedence_for_multiple_special_roles() -> (
+    None
+):
     adapter = ImapReadonlyAdapter(
         FolderListSession(
             [
@@ -229,7 +235,9 @@ def test_imap_folder_inventory_uses_safe_precedence_for_multiple_special_roles()
     )
 
 
-def test_readonly_folder_inventory_parses_literal_and_whitespace_mailbox_names() -> None:
+def test_readonly_folder_inventory_parses_literal_and_whitespace_mailbox_names() -> (
+    None
+):
     adapter = ImapReadonlyAdapter(
         FolderListSession(
             [
@@ -287,6 +295,21 @@ def test_imap_adapter_fetches_only_headers_bodystructure_and_bounded_text_sectio
     }
 
 
+def test_imap_adapter_can_search_all_unread_uids_without_cursor_date_gate():
+    session = _plain_session()
+    adapter = ImapReadonlyAdapter(session, account_id="dingtalk-account")
+
+    adapter.fetch_uid_batch(
+        "INBOX",
+        cursor_uidvalidity=42,
+        last_seen_uid=99,
+        limit=1,
+        unread_only=True,
+    )
+
+    assert ("uid", "SEARCH", None, "UNSEEN") in session.calls
+
+
 def test_imap_adapter_normalizes_trusted_flags_without_using_priority_headers():
     from app.email_important import ImportantSignals
 
@@ -309,6 +332,20 @@ def test_imap_adapter_normalizes_trusted_flags_without_using_priority_headers():
     )
 
     assert message["importantSignals"] == ImportantSignals(("$Important",), True)
+    assert message["providerUnread"] is False
+
+
+def test_imap_adapter_exposes_unread_from_provider_seen_flag() -> None:
+    session = _plain_session()
+    session.flags = ()
+
+    message = (
+        ImapReadonlyAdapter(session, account_id="account-a")
+        .fetch_uid_batch("INBOX", cursor_uidvalidity=42, last_seen_uid=0, limit=1)
+        .messages[0]
+    )
+
+    assert message["providerUnread"] is True
 
 
 @pytest.mark.parametrize("flags_attribute", ("flags", "FlAgS"))

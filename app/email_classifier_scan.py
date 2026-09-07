@@ -23,7 +23,10 @@ from app.email_classifier_contracts import (
 )
 from app.email_classifier_model import email_message_to_text
 from app.email_classifier_training import CategoryEligibility
+from app.email_provider_folders import FolderRole
+from app.email_unsubscribe import extract_unsubscribe_entries
 from app.email_imap_readonly import ImapUidBatch, fallback_stable_message_identity
+from app.email_imap_readonly import ephemeral_body_html
 from app.email_pipeline import (
     EmailCategoryConfig,
     EmailModelPrediction,
@@ -48,6 +51,137 @@ class PredictionLike(Protocol):
 
 class MessageClassifier(Protocol):
     def predict_message(self, message: Mapping[str, object]) -> PredictionLike: ...
+
+
+@dataclass(frozen=True)
+class AgentScanContext:
+    allowed_category_keys: tuple[str, ...]
+    category_descriptions: Mapping[str, object]
+    folder_targets: Mapping[str, str]
+    config_version: str
+
+    def __post_init__(self) -> None:
+        categories = tuple(
+            validate_email_category_key(key) for key in self.allowed_category_keys
+        )
+        if not categories or len(categories) != len(set(categories)):
+            raise ValueError("allowed category keys must be unique and nonempty")
+        if set(self.category_descriptions) != set(categories):
+            raise ValueError("category descriptions must cover allowed categories")
+        if not self.config_version.strip():
+            raise ValueError("config_version must be nonblank")
+
+
+def should_enqueue_agent_classification(
+    *,
+    provider_unread: bool,
+    folder_role: FolderRole,
+    configured_unclassified_source: bool,
+    has_stable_record: bool,
+) -> bool:
+    """Apply the complete cold-start gate without any message-date condition."""
+
+    if type(provider_unread) is not bool:
+        raise TypeError("provider_unread must be a strict bool")
+    if type(folder_role) is not FolderRole:
+        raise TypeError("folder_role must be a FolderRole")
+    source_is_eligible = folder_role is FolderRole.INBOX or (
+        folder_role is FolderRole.UNBOUND and configured_unclassified_source
+    )
+    return provider_unread and source_is_eligible and not has_stable_record
+
+
+def scan_agent_classification_batch(
+    source: object,
+    store: object,
+    task_producer: object,
+    context: AgentScanContext,
+    *,
+    mailbox: str = "INBOX",
+    folder_role: FolderRole,
+    configured_unclassified_source: bool,
+    limit: int = 50,
+) -> EmailScanResult:
+    """Observe provider state and enqueue Agent work without model inference."""
+
+    cursor = store.get_scan_cursor(_source_account_id(source), mailbox)
+    cursor_uidvalidity = None if cursor is None else int(cursor["uidvalidity"])
+    last_seen_uid = 0 if cursor is None else int(cursor["last_seen_uid"])
+    stable_provider_uids = getattr(task_producer.adapter, "stable_provider_uids", None)
+    excluded_uids = (
+        stable_provider_uids(
+            account_id=_source_account_id(source),
+            folder=mailbox,
+            uidvalidity=cursor_uidvalidity,
+        )
+        if cursor_uidvalidity is not None and callable(stable_provider_uids)
+        else frozenset()
+    )
+    stable_classification_uids = getattr(store, "stable_classification_uids", None)
+    if cursor_uidvalidity is not None and callable(stable_classification_uids):
+        excluded_uids = excluded_uids | stable_classification_uids(
+            account_id=_source_account_id(source),
+            folder=mailbox,
+            uidvalidity=cursor_uidvalidity,
+        )
+    batch = source.fetch_uid_batch(
+        mailbox,
+        cursor_uidvalidity=cursor_uidvalidity,
+        last_seen_uid=last_seen_uid,
+        limit=limit,
+        unread_only=True,
+        excluded_uids=excluded_uids,
+    )
+    if not isinstance(batch, ImapUidBatch):
+        raise TypeError("fetch_uid_batch must return ImapUidBatch")
+    enqueued = 0
+    highest_uid = last_seen_uid
+    for message in batch.messages:
+        locator = _provider_locator(message)
+        stable_identity = _stable_message_identity(message, locator)
+        highest_uid = max(highest_uid, locator.uid)
+        has_record = task_producer.adapter.has_stable_record(stable_identity)
+        has_canonical = getattr(store, "has_stable_classification", None)
+        if callable(has_canonical):
+            has_record = has_record or has_canonical(stable_identity)
+        if not should_enqueue_agent_classification(
+            provider_unread=message.get("providerUnread"),
+            folder_role=folder_role,
+            configured_unclassified_source=configured_unclassified_source,
+            has_stable_record=has_record,
+        ):
+            continue
+        body_html = ephemeral_body_html(message)
+        entries = extract_unsubscribe_entries(
+            list_unsubscribe=str(message.get("listUnsubscribe") or ""),
+            list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
+            body_text=str(message.get("markdownBody") or message.get("textBody") or ""),
+            body_html=str(body_html),
+        )
+        task_producer.produce(
+            message,
+            allowed_category_keys=context.allowed_category_keys,
+            category_descriptions=context.category_descriptions,
+            folder_targets=context.folder_targets,
+            config_version=context.config_version,
+            unsubscribe_candidates=entries,
+        )
+        enqueued += 1
+    uidvalidity = batch.uidvalidity
+    record_cursor = getattr(store, "record_scan_cursor", None)
+    if callable(record_cursor):
+        record_cursor(
+            account_id=batch.account_id,
+            folder=batch.folder,
+            uidvalidity=uidvalidity,
+            last_seen_uid=highest_uid,
+            expected_uidvalidity=(
+                cursor_uidvalidity
+                if cursor_uidvalidity is not None and cursor_uidvalidity != uidvalidity
+                else None
+            ),
+        )
+    return EmailScanResult(len(batch.messages), enqueued, 0, 0)
 
 
 @dataclass(frozen=True)

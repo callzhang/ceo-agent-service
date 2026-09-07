@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sqlite3
 from threading import Barrier, Thread
@@ -9,8 +10,10 @@ from pathlib import Path
 import pytest
 
 import app.store as store_module
-from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES, load_bundled_business_skills
+from app.business_skills import load_bundled_business_skills
+from app.email_classifier_agent import EmailClassifierAgent
 from app.managed_skills import (
+    EMAIL_CLASSIFIER_SKILL_NAME,
     ManagedSkillValidationError,
     REPOSITORY_IMPORT_SOURCE,
     REPOSITORY_MANAGED_SKILL_NAMES,
@@ -40,6 +43,25 @@ metadata:
 
 # Version two
 """
+
+COLLIDING_CLASSIFIER_SKILL = """---
+name: ceo-email-classifier
+description: Use when a user created a colliding Skill
+metadata:
+  managed_by: ceo-agent-service
+---
+
+# User-owned collision
+"""
+
+
+def _repository_classifier_content() -> str:
+    return (
+        Path(__file__).resolve().parents[1]
+        / "skills"
+        / EMAIL_CLASSIFIER_SKILL_NAME
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
 
 
 def _copy_existing_feedback_schema_without_managed_skill_tables(path: Path) -> None:
@@ -87,9 +109,9 @@ def test_managed_skill_migration_is_additive_for_existing_feedback_database(
     assert snapshot.revisions
     assert active is not None
     assert active.id == snapshot.config_id
-    assert {
-        skill.name for skill in migrated.list_managed_skills()
-    } == set(REPOSITORY_MANAGED_SKILL_NAMES)
+    assert {skill.name for skill in migrated.list_managed_skills()} == set(
+        REPOSITORY_MANAGED_SKILL_NAMES
+    )
 
 
 def test_initial_import_creates_revisions_and_initial_config_for_service_owned_skills(
@@ -105,15 +127,27 @@ def test_initial_import_creates_revisions_and_initial_config_for_service_owned_s
     config = store.get_pending_or_active_runtime_skill_config()
     assert config is not None
     assert config.status == "pending_restart"
-    assert {binding.skill_id for binding in store.list_runtime_skill_bindings(config.id)} == {
-        skill.id for skill in store.list_managed_skills()
-    }
+    assert {
+        binding.skill_id for binding in store.list_runtime_skill_bindings(config.id)
+    } == {skill.id for skill in store.list_managed_skills()}
     feedback_skill = store.get_managed_skill_by_name("ceo-feedback-iteration")
     assert feedback_skill is not None
-    assert next(
-        binding for binding in store.list_runtime_skill_bindings(config.id)
-        if binding.skill_id == feedback_skill.id
-    ).purpose == "feedback_iteration"
+    assert (
+        next(
+            binding
+            for binding in store.list_runtime_skill_bindings(config.id)
+            if binding.skill_id == feedback_skill.id
+        ).purpose
+        == "feedback_iteration"
+    )
+    classifier = store.get_managed_skill_by_name("ceo-email-classifier")
+    assert classifier is not None
+    classifier_revision = store.list_managed_skill_revisions(classifier.id)[0]
+    assert len(classifier_revision.sha256) == 64
+    snapshot = resolve_pending_runtime_skills(store, pid=os.getpid())
+    assert classifier_revision in snapshot.revisions
+    receipt = store.list_runtime_skill_load_receipts(snapshot.config_id)[-1]
+    assert classifier_revision.sha256 in receipt.loaded_json
 
 
 def test_repository_import_is_idempotent_and_preserves_user_owned_name(
@@ -162,18 +196,266 @@ def test_repository_import_reconciles_partial_service_owned_records_into_initial
     } == set(REPOSITORY_MANAGED_SKILL_NAMES)
 
 
-def test_repository_import_preserves_an_existing_runtime_config(tmp_path: Path) -> None:
+def test_repository_import_preserves_existing_binding_when_adding_classifier(
+    tmp_path: Path,
+) -> None:
     store = AutoReplyStore(tmp_path / "configured.sqlite3")
     skill = store.create_managed_skill("ceo-test", "Test Skill")
-    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+    revision = store.create_managed_skill_revision(
+        skill.id, SKILL_V1, source="settings"
+    )
     existing_config = store.create_runtime_skill_config(
         {skill.id: revision.id}, expected_parent_id=None
     )
 
     import_repository_managed_skills(store)
 
-    assert store.get_pending_or_active_runtime_skill_config() == existing_config
-    assert store.list_runtime_skill_bindings(existing_config.id)[0].revision_id == revision.id
+    upgraded = store.get_pending_or_active_runtime_skill_config()
+    assert upgraded is not None
+    assert upgraded.parent_id == existing_config.id
+    bindings = store.list_runtime_skill_bindings(upgraded.id)
+    assert bindings[0].revision_id == revision.id
+    assert {
+        store.get_managed_skill(binding.skill_id).name for binding in bindings
+    } == {"ceo-test", EMAIL_CLASSIFIER_SKILL_NAME}
+
+
+def test_settings_runtime_upgrade_preserves_bindings_and_loads_email_classifier(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "configured-upgrade.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "Test Skill")
+    revision = store.create_managed_skill_revision(
+        skill.id, SKILL_V1, source="settings"
+    )
+    existing_config = store.create_runtime_skill_config(
+        [
+            {
+                "skill_id": skill.id,
+                "revision_id": revision.id,
+                "enabled": False,
+                "load_order": 0,
+                "purpose": "user-selected-purpose",
+            }
+        ],
+        expected_parent_id=None,
+    )
+    store.record_runtime_skill_load(existing_config.id, pid=8100, loaded={})
+
+    snapshot = resolve_pending_runtime_skills(store, pid=8101)
+
+    upgraded = store.get_active_runtime_skill_config()
+    assert upgraded is not None
+    assert upgraded.id == snapshot.config_id
+    assert upgraded.parent_id == existing_config.id
+    bindings = store.list_runtime_skill_bindings(upgraded.id)
+    custom = next(binding for binding in bindings if binding.skill_id == skill.id)
+    assert (
+        custom.revision_id,
+        custom.enabled,
+        custom.load_order,
+        custom.purpose,
+    ) == (revision.id, False, 0, "user-selected-purpose")
+    bound_names = {
+        store.get_managed_skill(binding.skill_id).name for binding in bindings
+    }
+    assert bound_names == {"ceo-test", EMAIL_CLASSIFIER_SKILL_NAME}
+    classifier = store.get_managed_skill_by_name(EMAIL_CLASSIFIER_SKILL_NAME)
+    assert classifier is not None
+    classifier_revision = next(
+        revision
+        for revision in snapshot.revisions
+        if revision.skill_id == classifier.id
+    )
+    receipt = store.list_runtime_skill_load_receipts(snapshot.config_id)[-1]
+    assert classifier_revision.sha256 in receipt.loaded_json
+    agent = EmailClassifierAgent(object(), runtime_skill_snapshot=snapshot)
+    assert classifier_revision.sha256 in agent.skill_receipt
+
+
+def test_unbound_reserved_classifier_collision_adopts_exact_repository_revision(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "unbound-collision.sqlite3")
+    collision = store.create_managed_skill(
+        EMAIL_CLASSIFIER_SKILL_NAME, "User classifier collision"
+    )
+    user_revision = store.create_managed_skill_revision(
+        collision.id, COLLIDING_CLASSIFIER_SKILL, source="settings"
+    )
+    other = store.create_managed_skill("ceo-test", "Test Skill")
+    other_revision = store.create_managed_skill_revision(
+        other.id, SKILL_V1, source="settings"
+    )
+    original = store.create_runtime_skill_config(
+        {other.id: other_revision.id}, expected_parent_id=None
+    )
+    store.record_runtime_skill_load(
+        original.id, pid=8200, loaded={other.id: other_revision.sha256}
+    )
+
+    snapshot = resolve_pending_runtime_skills(store, pid=8201)
+
+    repository_content = _repository_classifier_content()
+    repository_digest = hashlib.sha256(repository_content.encode("utf-8")).hexdigest()
+    revisions = store.list_managed_skill_revisions(collision.id)
+    assert user_revision in revisions
+    assert user_revision.content == COLLIDING_CLASSIFIER_SKILL
+    repository_revision = next(
+        revision
+        for revision in revisions
+        if revision.source == REPOSITORY_IMPORT_SOURCE
+    )
+    assert repository_revision.content == repository_content
+    assert repository_revision.sha256 == repository_digest
+    assert repository_revision in snapshot.revisions
+    assert user_revision not in snapshot.revisions
+    receipt = store.list_runtime_skill_load_receipts(snapshot.config_id)[-1]
+    assert json.loads(receipt.loaded_json)[str(collision.id)] == repository_digest
+    EmailClassifierAgent(object(), runtime_skill_snapshot=snapshot)
+
+
+def test_bound_reserved_classifier_collision_rebinds_without_overwriting_user_revision(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "bound-collision.sqlite3")
+    collision = store.create_managed_skill(
+        EMAIL_CLASSIFIER_SKILL_NAME, "User classifier collision"
+    )
+    user_revision = store.create_managed_skill_revision(
+        collision.id, COLLIDING_CLASSIFIER_SKILL, source="settings"
+    )
+    other = store.create_managed_skill("ceo-test", "Test Skill")
+    other_revision = store.create_managed_skill_revision(
+        other.id, SKILL_V1, source="settings"
+    )
+    original = store.create_runtime_skill_config(
+        [
+            {
+                "skill_id": other.id,
+                "revision_id": other_revision.id,
+                "enabled": False,
+                "load_order": 0,
+                "purpose": "preserve-me",
+            },
+            {
+                "skill_id": collision.id,
+                "revision_id": user_revision.id,
+                "enabled": True,
+                "load_order": 1,
+                "purpose": "user-collision",
+            },
+        ],
+        expected_parent_id=None,
+    )
+    store.record_runtime_skill_load(
+        original.id, pid=8300, loaded={collision.id: user_revision.sha256}
+    )
+
+    snapshot = resolve_pending_runtime_skills(store, pid=8301)
+
+    upgraded = store.get_active_runtime_skill_config()
+    assert upgraded is not None and upgraded.parent_id == original.id
+    bindings = store.list_runtime_skill_bindings(upgraded.id)
+    preserved = next(binding for binding in bindings if binding.skill_id == other.id)
+    rebound = next(binding for binding in bindings if binding.skill_id == collision.id)
+    assert (
+        preserved.revision_id,
+        preserved.enabled,
+        preserved.load_order,
+        preserved.purpose,
+    ) == (other_revision.id, False, 0, "preserve-me")
+    assert rebound.revision_id != user_revision.id
+    assert rebound.enabled is True
+    assert rebound.load_order == 1
+    assert rebound.purpose == "email_classification"
+    repository_revision = store.get_managed_skill_revision(rebound.revision_id)
+    assert repository_revision is not None
+    assert repository_revision.source == REPOSITORY_IMPORT_SOURCE
+    assert repository_revision.content == _repository_classifier_content()
+    assert store.get_managed_skill_revision(user_revision.id).content == (
+        COLLIDING_CLASSIFIER_SKILL
+    )
+    assert repository_revision in snapshot.revisions
+    assert user_revision not in snapshot.revisions
+    receipt = store.list_runtime_skill_load_receipts(snapshot.config_id)[-1]
+    assert json.loads(receipt.loaded_json)[str(collision.id)] == (
+        repository_revision.sha256
+    )
+    EmailClassifierAgent(object(), runtime_skill_snapshot=snapshot)
+
+
+def test_exact_content_settings_classifier_collision_migrates_and_starts_agent(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "exact-content-collision.sqlite3"
+    store = AutoReplyStore(path)
+    collision = store.create_managed_skill(
+        EMAIL_CLASSIFIER_SKILL_NAME, "Exact user classifier collision"
+    )
+    repository_content = _repository_classifier_content()
+    user_revision = store.create_managed_skill_revision(
+        collision.id, repository_content, source="settings"
+    )
+    original = store.create_runtime_skill_config(
+        {collision.id: user_revision.id}, expected_parent_id=None
+    )
+    store.record_runtime_skill_load(
+        original.id, pid=8400, loaded={collision.id: user_revision.sha256}
+    )
+    with store._connect() as db:
+        db.execute("drop index if exists idx_managed_skill_revisions_identity")
+        db.execute(
+            """
+            create unique index if not exists idx_managed_skill_revisions_sha256
+            on managed_skill_revisions(skill_id, sha256)
+            """
+        )
+        db.execute(
+            "update service_state set value='legacy-before-provenance-identity' "
+            "where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+
+    reopened = AutoReplyStore(path)
+    snapshot = resolve_pending_runtime_skills(reopened, pid=8401)
+
+    revisions = reopened.list_managed_skill_revisions(collision.id)
+    assert len(revisions) == 2
+    assert reopened.get_managed_skill_revision(user_revision.id) == user_revision
+    repository_revision = next(
+        revision
+        for revision in revisions
+        if revision.source == REPOSITORY_IMPORT_SOURCE
+    )
+    assert repository_revision.id != user_revision.id
+    assert repository_revision.content == user_revision.content
+    assert repository_revision.sha256 == user_revision.sha256
+    binding = next(
+        binding
+        for binding in reopened.list_runtime_skill_bindings(snapshot.config_id)
+        if binding.skill_id == collision.id
+    )
+    assert binding.revision_id == repository_revision.id
+    receipt = reopened.list_runtime_skill_load_receipts(snapshot.config_id)[-1]
+    assert json.loads(receipt.loaded_json)[str(collision.id)] == (
+        repository_revision.sha256
+    )
+    with reopened._connect() as db:
+        identity_columns = tuple(
+            row[2]
+            for row in db.execute(
+                "pragma index_info(idx_managed_skill_revisions_identity)"
+            )
+        )
+        legacy_index = db.execute(
+            "select 1 from sqlite_master where type='index' "
+            "and name='idx_managed_skill_revisions_sha256'"
+        ).fetchone()
+    assert identity_columns == ("skill_id", "sha256", "source")
+    assert legacy_index is None
+    EmailClassifierAgent(object(), runtime_skill_snapshot=snapshot)
 
 
 def test_repository_import_serializes_two_independent_store_initializers(
@@ -211,7 +493,9 @@ def test_repository_import_serializes_two_independent_store_initializers(
         for binding in final.list_runtime_skill_bindings(config.id)
     } == set(REPOSITORY_MANAGED_SKILL_NAMES)
     with final._connect() as db:
-        assert db.execute("select count(*) from runtime_skill_configs").fetchone()[0] == 1
+        assert (
+            db.execute("select count(*) from runtime_skill_configs").fetchone()[0] == 1
+        )
 
 
 def test_create_revision_keeps_prior_body_and_hash(tmp_path: Path) -> None:
@@ -235,13 +519,19 @@ def test_explicit_repository_export_writes_only_the_selected_immutable_revision(
 ) -> None:
     store = AutoReplyStore(tmp_path / "skills.sqlite3")
     skill = store.create_managed_skill("ceo-test", "Test Skill")
-    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+    revision = store.create_managed_skill_revision(
+        skill.id, SKILL_V1, source="settings"
+    )
 
-    exported = export_managed_skill_revision(store, revision.id, skills_root=tmp_path / "skills")
+    exported = export_managed_skill_revision(
+        store, revision.id, skills_root=tmp_path / "skills"
+    )
 
     assert exported.name == "ceo-test"
     assert exported.revision_id == revision.id
-    assert (tmp_path / "skills" / "ceo-test" / "SKILL.md").read_text(encoding="utf-8") == SKILL_V1
+    assert (tmp_path / "skills" / "ceo-test" / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == SKILL_V1
 
 
 def test_export_rejects_a_symlinked_destination_directory_without_writing_outside(
@@ -249,7 +539,9 @@ def test_export_rejects_a_symlinked_destination_directory_without_writing_outsid
 ) -> None:
     store = AutoReplyStore(tmp_path / "skills.sqlite3")
     skill = store.create_managed_skill("ceo-test", "Test Skill")
-    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+    revision = store.create_managed_skill_revision(
+        skill.id, SKILL_V1, source="settings"
+    )
     skills_root = tmp_path / "skills"
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -299,12 +591,16 @@ def test_duplicate_skill_name_is_rejected(tmp_path: Path) -> None:
         store.create_managed_skill("ceo-test", "Other title")
 
 
-def test_duplicate_revision_content_is_rejected_without_new_revision(tmp_path: Path) -> None:
+def test_duplicate_revision_content_is_rejected_without_new_revision(
+    tmp_path: Path,
+) -> None:
     store = AutoReplyStore(tmp_path / "skills.sqlite3")
     skill = store.create_managed_skill("ceo-test", "Test Skill")
     first = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
 
-    with pytest.raises(ValueError, match="managed Skill revision content already exists"):
+    with pytest.raises(
+        ValueError, match="managed Skill revision content already exists"
+    ):
         store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
 
     assert store.list_managed_skill_revisions(skill.id) == (first,)
@@ -330,10 +626,14 @@ def test_parent_revision_must_belong_to_the_same_skill(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "skills.sqlite3")
     first_skill = store.create_managed_skill("ceo-test", "Test Skill")
     other_skill = store.create_managed_skill("ceo-other", "Other Skill")
-    parent = store.create_managed_skill_revision(first_skill.id, SKILL_V1, source="settings")
+    parent = store.create_managed_skill_revision(
+        first_skill.id, SKILL_V1, source="settings"
+    )
     other_content = SKILL_V2.replace("ceo-test", "ceo-other")
 
-    with pytest.raises(ValueError, match="parent revision does not belong to managed Skill"):
+    with pytest.raises(
+        ValueError, match="parent revision does not belong to managed Skill"
+    ):
         store.create_managed_skill_revision(
             other_skill.id,
             other_content,
@@ -344,7 +644,7 @@ def test_parent_revision_must_belong_to_the_same_skill(tmp_path: Path) -> None:
     assert store.list_managed_skill_revisions(other_skill.id) == ()
 
 
-def test_schema_initialization_is_idempotent_and_has_revision_indexes(
+def test_schema_initialization_is_idempotent_and_has_provenance_revision_identity(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "skills.sqlite3"
@@ -353,11 +653,21 @@ def test_schema_initialization_is_idempotent_and_has_revision_indexes(
 
     with sqlite3.connect(path) as db:
         indexes = {
-            row[1]
-            for row in db.execute("pragma index_list(managed_skill_revisions)")
+            row[1] for row in db.execute("pragma index_list(managed_skill_revisions)")
         }
+        identity_columns = tuple(
+            row[2]
+            for row in db.execute(
+                "pragma index_info(idx_managed_skill_revisions_identity)"
+            )
+        )
 
-    assert {"idx_managed_skill_revisions_number", "idx_managed_skill_revisions_sha256"} <= indexes
+    assert {
+        "idx_managed_skill_revisions_number",
+        "idx_managed_skill_revisions_identity",
+    } <= indexes
+    assert "idx_managed_skill_revisions_sha256" not in indexes
+    assert identity_columns == ("skill_id", "sha256", "source")
 
 
 def test_revision_rows_reject_sql_update_and_delete_without_data_loss(
@@ -365,17 +675,25 @@ def test_revision_rows_reject_sql_update_and_delete_without_data_loss(
 ) -> None:
     store = AutoReplyStore(tmp_path / "skills.sqlite3")
     skill = store.create_managed_skill("ceo-test", "Test Skill")
-    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+    revision = store.create_managed_skill_revision(
+        skill.id, SKILL_V1, source="settings"
+    )
 
-    with store._connect() as db, pytest.raises(
-        sqlite3.IntegrityError, match="managed Skill revisions are immutable"
+    with (
+        store._connect() as db,
+        pytest.raises(
+            sqlite3.IntegrityError, match="managed Skill revisions are immutable"
+        ),
     ):
         db.execute(
             "update managed_skill_revisions set content=? where id=?",
             (SKILL_V2, revision.id),
         )
-    with store._connect() as db, pytest.raises(
-        sqlite3.IntegrityError, match="managed Skill revisions are immutable"
+    with (
+        store._connect() as db,
+        pytest.raises(
+            sqlite3.IntegrityError, match="managed Skill revisions are immutable"
+        ),
     ):
         db.execute("delete from managed_skill_revisions where id=?", (revision.id,))
 
@@ -400,7 +718,9 @@ def test_reopening_an_existing_database_repairs_missing_immutability_triggers(
     path = tmp_path / "skills.sqlite3"
     store = AutoReplyStore(path)
     skill = store.create_managed_skill("ceo-test", "Test Skill")
-    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+    revision = store.create_managed_skill_revision(
+        skill.id, SKILL_V1, source="settings"
+    )
     with store._connect() as db:
         db.execute("drop trigger trg_managed_skill_revisions_immutable_update")
         db.execute("drop trigger trg_managed_skill_revisions_immutable_delete")
@@ -408,8 +728,11 @@ def test_reopening_an_existing_database_repairs_missing_immutability_triggers(
 
     reopened = AutoReplyStore(path)
 
-    with reopened._connect() as db, pytest.raises(
-        sqlite3.IntegrityError, match="managed Skill revisions are immutable"
+    with (
+        reopened._connect() as db,
+        pytest.raises(
+            sqlite3.IntegrityError, match="managed Skill revisions are immutable"
+        ),
     ):
         db.execute(
             "update managed_skill_revisions set content=? where id=?",

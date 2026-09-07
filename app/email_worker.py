@@ -26,6 +26,260 @@ DIRECT_ACTION_DRAIN_MAX_ACTIONS = 25
 DIRECT_ACTION_DRAIN_MAX_SECONDS = 2.0
 
 
+def _agent_classification_action_plan(
+    *,
+    classification_id: int,
+    account_id: str,
+    result: object,
+    folder_targets: Mapping[str, str],
+    config_version: str,
+    created_at: datetime,
+):
+    """Translate a validated Agent decision into Task 3/4 deterministic actions."""
+
+    from app.email_classifier_contracts import (
+        EmailAction,
+        build_email_action_plan,
+    )
+
+    if getattr(result, "certainty") == "uncertain":
+        return None
+    category = str(getattr(result, "category"))
+    actions: tuple[EmailAction, ...]
+    parameters: dict[EmailAction, Mapping[str, object]]
+    if category == "junk":
+        actions = ()
+        parameters = {}
+    else:
+        target = str(folder_targets.get(category) or "").strip()
+        if not target:
+            raise ValueError("certain business category has no verified folder target")
+        actions = (EmailAction.MOVE,)
+        parameters = {EmailAction.MOVE: {"target_folder": target}}
+        if getattr(result, "important") is True:
+            actions += (EmailAction.FLAG_IMPORTANT,)
+    return build_email_action_plan(
+        classification_id=classification_id,
+        account_id=account_id,
+        category=category,
+        classification_source="agent",
+        confidence=float(getattr(result, "confidence")),
+        model_id="email-classifier-agent:v1",
+        config_version=config_version,
+        actions=actions,
+        action_parameters=parameters,
+        created_at=created_at,
+    )
+
+
+def run_email_classification_task_once(
+    adapter: object,
+    agent: object,
+    email_store: object,
+    *,
+    owner: str,
+    provider_readback: Callable[
+        [object, Mapping[str, object]], Mapping[str, object] | None
+    ],
+) -> Mapping[str, object] | None:
+    """Run one dedicated classifier task and persist its non-action decision."""
+
+    from hashlib import sha256
+
+    from app.email_classifier_contracts import (
+        EmailAttachmentMetadata,
+        EmailClassification,
+        EmailClassificationStatus,
+        EmailProviderLocator,
+    )
+
+    task = adapter.claim_next(owner=owner)
+    if task is None:
+        return None
+    try:
+        payload = json.loads(task.input_json)
+        canonical = email_store.get_classification_by_stable_identity(
+            task.stable_message_identity
+        )
+        if canonical is not None:
+            if not canonical.get("agent_result"):
+                raise ValueError(
+                    "stable canonical classification lacks Agent provenance"
+                )
+            from app.email_classifier_agent import DurableAgentClassificationResult
+
+            stored_result = DurableAgentClassificationResult.model_validate(
+                canonical["agent_result"]
+            )
+            outcome = {
+                "decision_status": (
+                    "processed"
+                    if stored_result.certainty == "certain"
+                    else "pending_feedback"
+                ),
+                "category": stored_result.category,
+                "important": stored_result.important,
+                "certainty": stored_result.certainty,
+                "confidence": stored_result.confidence,
+                "reason": stored_result.reason,
+                "unsubscribe_candidate_index": (
+                    stored_result.unsubscribe_candidate_index
+                ),
+                "unsubscribe_candidate_source": stored_result.unsubscribe_candidate_source,
+                "unsubscribe_candidate_digest": stored_result.unsubscribe_candidate_digest,
+                "unsubscribe_candidate_reference": stored_result.unsubscribe_candidate_reference,
+                "classification_id": canonical["id"],
+            }
+            adapter.complete(task, outcome)
+            return outcome
+        current_message = provider_readback(task, payload)
+        locator_payload = payload.get("provider_locator")
+        if not isinstance(locator_payload, Mapping):
+            raise ValueError("classification task provider locator is invalid")
+        if (
+            current_message is None
+            or current_message.get("stableMessageIdentity")
+            != task.stable_message_identity
+            or current_message.get("folder") != locator_payload.get("folder")
+            or current_message.get("providerUnread") is not True
+        ):
+            outcome = {
+                "decision_status": "skipped",
+                "reason": "provider_message_no_longer_eligible",
+            }
+            adapter.complete(task, outcome)
+            return outcome
+        from app.email_imap_readonly import ephemeral_body_html
+        from app.email_unsubscribe import extract_unsubscribe_entries
+        from app.email_classifier_agent import durable_agent_classification_result
+
+        body_text = str(
+            current_message.get("markdownBody") or current_message.get("textBody") or ""
+        )
+        entries = extract_unsubscribe_entries(
+            list_unsubscribe=str(current_message.get("listUnsubscribe") or ""),
+            list_unsubscribe_post=str(current_message.get("listUnsubscribePost") or ""),
+            body_text=body_text,
+            body_html=ephemeral_body_html(current_message),
+        )
+        candidate_urls = tuple(entry.private_url for entry in entries)
+        prompt_message = dict(payload.get("message") or {})
+        prompt_message["text"] = body_text
+        prompt_message["subject"] = str(current_message.get("subject") or "")
+        result = agent.classify(
+            task,
+            current_message=prompt_message,
+            unsubscribe_candidates=candidate_urls,
+        )
+        durable_result = durable_agent_classification_result(result, entries)
+        outcome = {
+            "decision_status": (
+                "processed" if result.certainty == "certain" else "pending_feedback"
+            ),
+            "category": result.category,
+            "important": result.important,
+            "certainty": result.certainty,
+            "confidence": result.confidence,
+            "reason": durable_result.reason,
+            "unsubscribe_candidate_index": result.unsubscribe_candidate_index,
+            "unsubscribe_candidate_source": durable_result.unsubscribe_candidate_source,
+            "unsubscribe_candidate_digest": durable_result.unsubscribe_candidate_digest,
+            "unsubscribe_candidate_reference": durable_result.unsubscribe_candidate_reference,
+        }
+        locator = EmailProviderLocator.model_validate(payload["provider_locator"])
+        classification_id = (
+            int.from_bytes(
+                sha256(task.stable_message_identity.encode("utf-8")).digest()[:8], "big"
+            )
+            & ((1 << 63) - 1)
+            or 1
+        )
+        plan = _agent_classification_action_plan(
+            classification_id=classification_id,
+            account_id=locator.account_id,
+            result=result,
+            folder_targets=payload["folder_targets"],
+            config_version=payload["config_version"],
+            created_at=datetime.now(timezone.utc),
+        )
+        message = payload["message"]
+        sender_value = message.get("sender") or {}
+        sender = (
+            str(sender_value.get("email") or sender_value.get("name") or "")
+            if isinstance(sender_value, Mapping)
+            else str(sender_value)
+        )
+        classification = EmailClassification(
+            classification_id=classification_id,
+            stable_message_identity=task.stable_message_identity,
+            provider_locator=locator,
+            category=result.category,
+            confidence=result.confidence,
+            margin=0.0,
+            probabilities=(
+                {result.category: result.confidence}
+                if result.category is not None
+                else {}
+            ),
+            model_id="email-classifier-agent:v1",
+            config_version=payload["config_version"],
+            status=(
+                EmailClassificationStatus.PROCESSED
+                if result.certainty == "certain"
+                else EmailClassificationStatus.PENDING_FEEDBACK
+            ),
+            classification_source="agent",
+            action_plan=plan,
+        )
+        email_store.persist_scan_result(
+            classification,
+            agent_result=durable_result,
+            sender=sender,
+            recipients=tuple(
+                str(item.get("email") or item.get("name") or "")
+                if isinstance(item, Mapping)
+                else str(item)
+                for item in (
+                    *(message.get("to_recipients") or ()),
+                    *(message.get("cc_recipients") or ()),
+                )
+            ),
+            subject=str(message.get("subject") or ""),
+            normalized_text=str(message.get("text") or ""),
+            attachment_metadata=tuple(
+                EmailAttachmentMetadata.model_validate(item)
+                for item in message.get("attachments") or ()
+            ),
+            received_at=str(message.get("date") or ""),
+            model_text=str(message.get("text") or "") or "__empty__",
+        )
+        outcome = {**outcome, "classification_id": classification_id}
+        adapter.complete(task, outcome)
+        return outcome
+    except Exception as exc:
+        from pydantic import ValidationError
+        from app.email_store import (
+            EmailClassificationConflict,
+            EmailClassificationIdentityCollision,
+        )
+
+        permanent = isinstance(
+            exc,
+            (
+                json.JSONDecodeError,
+                ValidationError,
+                EmailClassificationConflict,
+                EmailClassificationIdentityCollision,
+            ),
+        ) or (isinstance(exc, ValueError) and not isinstance(exc, ConnectionError))
+        adapter.fail(
+            task,
+            error=f"{type(exc).__name__}:{exc}",
+            retryable=not permanent,
+        )
+        raise
+
+
 class EmailWorkerStartupError(RuntimeError):
     """The email worker could not construct its required runtime."""
 
@@ -94,9 +348,7 @@ class ProviderFolderBindingCoordinator:
                 provider.create_folder_exact(provider_folder_name)
             except Exception:
                 readback = tuple(provider.list_folders())
-                readback_matches = self._exact_matches(
-                    readback, provider_folder_name
-                )
+                readback_matches = self._exact_matches(readback, provider_folder_name)
                 if not readback_matches:
                     return self._unresolved_binding(
                         account_id, provider_folder_name, binding_status="error"
@@ -127,7 +379,9 @@ class ProviderFolderBindingCoordinator:
     def _exact_matches(
         folders: Sequence[ProviderFolder], display_name: str
     ) -> tuple[ProviderFolder, ...]:
-        return tuple(folder for folder in folders if folder.display_name == display_name)
+        return tuple(
+            folder for folder in folders if folder.display_name == display_name
+        )
 
     def _binding_from_matches(
         self,
@@ -158,9 +412,7 @@ class ProviderFolderBindingCoordinator:
         return self._unresolved_binding(
             account_id,
             requested_name,
-            binding_status=(
-                "ambiguous" if len(matches) > 1 else "missing"
-            ),
+            binding_status=("ambiguous" if len(matches) > 1 else "missing"),
         )
 
     def _unresolved_binding(
@@ -220,6 +472,7 @@ class EmailWorkerDependencies:
     training_tick: Callable[[], object]
     record_health: Callable[[str, Mapping[str, object]], object]
     email_store: object | None = None
+    run_classification_once: Callable[[], object] | None = None
 
 
 @dataclass(frozen=True)
@@ -299,10 +552,7 @@ def _drain_direct_actions(
         raise ValueError("direct action drain bounds must be positive")
     started_at = monotonic()
     results: list[object] = []
-    while (
-        len(results) < max_actions
-        and monotonic() - started_at < time_budget_seconds
-    ):
+    while len(results) < max_actions and monotonic() - started_at < time_budget_seconds:
         result = run_direct_actions_once()
         if result is None:
             break
@@ -351,6 +601,7 @@ def run_scan_and_direct_actions_loop(
     *,
     scan_account: Callable[[Mapping[str, object], object], object],
     run_direct_actions_once: Callable[[], object],
+    run_classification_once: Callable[[], object] | None = None,
     record_health: Callable[[str, Mapping[str, object]], object] = _ignore_health,
     component_ready: Callable[[str], object] | None = None,
     sleep: Callable[[float], None] = time.sleep,
@@ -389,6 +640,19 @@ def run_scan_and_direct_actions_loop(
                     ),
                 },
             )
+        if run_classification_once is not None:
+            try:
+                _drain_direct_actions(
+                    run_classification_once,
+                    max_actions=direct_action_max_actions,
+                    time_budget_seconds=direct_action_time_budget_seconds,
+                    monotonic=monotonic,
+                )
+            except Exception as exc:  # noqa: BLE001 - keep scan cadence alive
+                failures += 1
+                record_health(
+                    "component:email-classifier-agent", _safe_health_error(exc)
+                )
         try:
             direct_results = _drain_direct_actions(
                 run_direct_actions_once,
@@ -397,8 +661,7 @@ def run_scan_and_direct_actions_loop(
                 monotonic=monotonic,
             )
             failed_actions = sum(
-                getattr(result, "status", "") == "failed"
-                for result in direct_results
+                getattr(result, "status", "") == "failed" for result in direct_results
             )
             if failed_actions:
                 failures += failed_actions
@@ -552,6 +815,9 @@ def email_worker_components(
                 active_model,
                 scan_account=dependencies.scan_account,
                 run_direct_actions_once=dependencies.run_direct_actions_once,
+                run_classification_once=getattr(
+                    dependencies, "run_classification_once", None
+                ),
                 record_health=dependencies.record_health,
                 component_ready=component_ready,
             ),
@@ -599,9 +865,7 @@ def _scan_config(email_store: object, model_record: object | None):
     if len(versions) != 1:
         raise EmailWorkerStartupError("email category config versions are inconsistent")
     config_version = next(iter(versions))
-    by_category = {
-        validate_email_category_key(row["category"]): row for row in rows
-    }
+    by_category = {validate_email_category_key(row["category"]): row for row in rows}
     if set(by_category) != set(INITIAL_EMAIL_CATEGORY_KEYS):
         return EmailScanConfig.cold_start(config_version="email-config-missing-v1")
     thresholds = {
@@ -948,22 +1212,29 @@ def build_email_worker_dependencies(
     *,
     direct_action_executor_factory: Callable[[str], object] | None = None,
 ) -> EmailWorkerBootstrap:
+    from app.email_classifier_agent import (
+        EmailClassifierAgent,
+        EmailClassifierRoutedBackend,
+    )
     from app.email_classifier_learning import EmailClassifierLearningService
     from app.email_classifier_runtime import EmailClassifierRuntime
-    from app.email_classifier_scan import scan_imap_accounts
+    from app.email_classifier_scan import (
+        AgentScanContext,
+        scan_agent_classification_batch,
+    )
     from app.email_model_registry import EmailModelRegistry
     from app.email_store import EmailStore
-    from app.email_task_producer import EmailActionTaskProducer
+    from app.email_task_producer import EmailClassificationTaskProducer
+    from app.agent_runtime_production import build_production_routed_codex_execution
     from app.store import AutoReplyStore
 
     email_store = EmailStore(Path(settings.db_path))
     task_store = AutoReplyStore(Path(settings.db_path))
     from app.managed_skills import resolve_pending_runtime_skills
 
-    runtime_skill_snapshot = resolve_pending_runtime_skills(
-        task_store, pid=os.getpid()
-    )
-    task_producer = EmailActionTaskProducer(task_store, email_store)
+    runtime_skill_snapshot = resolve_pending_runtime_skills(task_store, pid=os.getpid())
+    classification_task_producer = EmailClassificationTaskProducer(email_store)
+    classification_task_producer.adapter.recover_running_tasks()
     source_factory = _build_email_source_factory(settings)
     model_root = Path(settings.db_path).parent / "email-models"
     registry = EmailModelRegistry(model_root)
@@ -983,10 +1254,19 @@ def build_email_worker_dependencies(
         )
 
     def load_active_model():
-        return EmailClassifierRuntime(
-            registry,
-            learning_service=learning,
-        )
+        try:
+            return EmailClassifierRuntime(registry, learning_service=learning)
+        except Exception as exc:
+            from app.email_classifier_runtime import EmailClassifierUnavailable
+
+            if not isinstance(exc, EmailClassifierUnavailable):
+                raise
+
+            class ColdStartLearningRuntime:
+                def tick(self):
+                    return learning.poll_retrain()
+
+            return ColdStartLearningRuntime()
 
     def record_health(scope: str, payload: Mapping[str, object]):
         task_store.set_service_state(
@@ -1028,17 +1308,131 @@ def build_email_worker_dependencies(
         _accounts: Sequence[Mapping[str, object]],
         active_model: object,
     ) -> EmailWorkerDependencies:
-        load_scan_config(active_model)
+        routed_classifier = EmailClassifierAgent(
+            EmailClassifierRoutedBackend(
+                build_production_routed_codex_execution(
+                    store=task_store,
+                    workspace=Path(settings.workspace),
+                    total_timeout_seconds=900.0,
+                    idle_timeout_seconds=120.0,
+                )
+            ),
+            runtime_skill_snapshot=runtime_skill_snapshot,
+            skill_name="ceo-email-classifier",
+        )
+
+        def read_current_classification_message(
+            task: object, payload: Mapping[str, object]
+        ) -> Mapping[str, object] | None:
+            locator = payload.get("provider_locator")
+            if not isinstance(locator, Mapping):
+                raise ValueError("classification task provider locator is invalid")
+            account_id = str(locator.get("account_id") or "")
+            account = email_store.get_account(account_id)
+            if not isinstance(account, Mapping):
+                raise ValueError("classification task account is unavailable")
+            folder = str(locator.get("folder") or "")
+            configured = tuple(account.get("scan_folders") or ())
+            bindings = tuple(
+                item
+                for item in email_store.list_account_folder_bindings()
+                if item["account_id"] == account_id
+                and item["binding_status"] == "active"
+            )
+            if folder.casefold() != "inbox" and (
+                folder not in configured
+                or any(item["provider_folder_name"] == folder for item in bindings)
+            ):
+                return None
+            source = source_factory(account)
+            try:
+                uid = int(locator.get("uid") or 0)
+                uidvalidity = int(locator.get("uidvalidity") or 0)
+                batch = source.fetch_uid_batch(
+                    folder,
+                    cursor_uidvalidity=uidvalidity,
+                    last_seen_uid=max(0, uid - 1),
+                    limit=2,
+                )
+                if int(batch.uidvalidity) != uidvalidity:
+                    return None
+                return next(
+                    (
+                        message
+                        for message in batch.messages
+                        if _message_identity(message)
+                        == str(getattr(task, "stable_message_identity"))
+                    ),
+                    None,
+                )
+            finally:
+                _close_email_source(source)
 
         def scan_account(account: Mapping[str, object], current_model: object):
-            return scan_imap_accounts(
-                (account,),
-                source_factory,
-                current_model.loaded.classifier,
-                email_store,
-                load_scan_config(current_model),
-                task_producer=task_producer.produce,
+            del current_model
+            configs = tuple(
+                item for item in email_store.list_category_configs() if item["enabled"]
             )
+            bindings = tuple(
+                item
+                for item in email_store.list_account_folder_bindings()
+                if item["account_id"] == str(account["account_id"])
+                and item["binding_status"] == "active"
+            )
+            context = AgentScanContext(
+                allowed_category_keys=tuple(item["category_key"] for item in configs),
+                category_descriptions={
+                    item["category_key"]: {
+                        "core": item["core_description"],
+                        "include": item["include"],
+                        "exclude": item["exclude"],
+                    }
+                    for item in configs
+                },
+                folder_targets={
+                    item["category_key"]: item["provider_folder_name"]
+                    for item in bindings
+                    if item["category_key"] != "junk"
+                },
+                config_version="|".join(
+                    sorted({str(item["config_version"]) for item in configs})
+                ),
+            )
+            source = source_factory(account)
+            try:
+                inventory = tuple(source.list_folders())
+                results = []
+                for folder_name in account["scan_folders"]:
+                    matches = tuple(
+                        folder
+                        for folder in inventory
+                        if folder.display_name == folder_name
+                    )
+                    if len(matches) != 1:
+                        continue
+                    folder = matches[0]
+                    is_bound = any(
+                        binding["provider_folder_id"] == folder.provider_folder_id
+                        and binding["category_key"] != "junk"
+                        for binding in bindings
+                    )
+                    role = FolderRole.CATEGORY if is_bound else folder.role
+                    results.append(
+                        scan_agent_classification_batch(
+                            source,
+                            email_store,
+                            classification_task_producer,
+                            context,
+                            mailbox=folder_name,
+                            folder_role=role,
+                            configured_unclassified_source=(
+                                role is FolderRole.UNBOUND and not is_bound
+                            ),
+                        )
+                    )
+                return tuple(results)
+            finally:
+                _close_email_source(source)
 
         return EmailWorkerDependencies(
             load_enabled_accounts=load_enabled_accounts,
@@ -1070,6 +1464,14 @@ def build_email_worker_dependencies(
             training_tick=active_model.tick,
             record_health=record_health,
             email_store=email_store,
+            run_classification_once=partial(
+                run_email_classification_task_once,
+                classification_task_producer.adapter,
+                routed_classifier,
+                email_store,
+                owner=f"email-classifier:{os.getpid()}",
+                provider_readback=read_current_classification_message,
+            ),
         )
 
     return EmailWorkerBootstrap(
@@ -1097,7 +1499,9 @@ def _build_imap_direct_action_executor_factory(email_store: object):
             raise LookupError("email IMAP account identity mismatch")
         if not bool(account.get("imap_tls")):
             raise ConnectionError("email IMAP TLS is required")
-        secret = resolve_secret(str(account.get("imap_secret_reference") or ""), os.environ)
+        secret = resolve_secret(
+            str(account.get("imap_secret_reference") or ""), os.environ
+        )
         if not secret:
             raise ConnectionError("email IMAP credential is unavailable")
 

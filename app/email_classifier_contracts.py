@@ -72,6 +72,7 @@ EmailCategoryKey = Annotated[
     AfterValidator(_reject_reserved_email_category_key),
     WrapValidator(_validate_email_category_key_with_context),
 ]
+EmailClassificationSource = Literal["model", "user", "agent"]
 _EMAIL_CATEGORY_KEY_ADAPTER = TypeAdapter(EmailCategoryKey)
 
 
@@ -299,7 +300,7 @@ def _action_plan_identity(
     classification_id: int,
     account_id: str,
     category: EmailCategoryKey,
-    classification_source: Literal["model", "user"],
+    classification_source: EmailClassificationSource,
     confidence: float,
     model_id: str,
     config_version: str,
@@ -358,7 +359,7 @@ class EmailActionPlan(BaseModel):
     classification_id: int = Field(gt=0)
     account_id: str = Field(min_length=1)
     category: EmailCategoryKey
-    classification_source: Literal["model", "user"]
+    classification_source: EmailClassificationSource
     confidence: float = Field(ge=0.0, le=1.0)
     model_id: str = Field(min_length=1)
     config_version: str = Field(min_length=1)
@@ -552,7 +553,7 @@ def build_versioned_email_action_plan(
     classification_id: int,
     account_id: str,
     category: EmailCategoryKey,
-    classification_source: Literal["model", "user"],
+    classification_source: EmailClassificationSource,
     confidence: float,
     model_id: str,
     config_version: str,
@@ -622,7 +623,7 @@ def build_email_action_plan(
     classification_id: int,
     account_id: str,
     category: EmailCategoryKey,
-    classification_source: Literal["model", "user"],
+    classification_source: EmailClassificationSource,
     confidence: float,
     model_id: str,
     config_version: str,
@@ -703,14 +704,14 @@ class EmailClassification(BaseModel):
     classification_id: int = Field(gt=0)
     stable_message_identity: str = Field(min_length=1)
     provider_locator: EmailProviderLocator
-    category: EmailCategoryKey
+    category: EmailCategoryKey | None
     confidence: float = Field(ge=0.0, le=1.0)
     margin: float = Field(ge=0.0, le=1.0)
-    probabilities: dict[EmailCategoryKey, float] = Field(min_length=1)
+    probabilities: dict[EmailCategoryKey, float]
     model_id: str = Field(min_length=1)
     config_version: str = Field(min_length=1)
     status: EmailClassificationStatus
-    classification_source: Literal["model", "user"]
+    classification_source: EmailClassificationSource
     action_plan: EmailActionPlan | None
 
     @field_validator("stable_message_identity", "model_id", "config_version")
@@ -740,7 +741,18 @@ class EmailClassification(BaseModel):
         if self.status is EmailClassificationStatus.PENDING_FEEDBACK:
             if self.action_plan is not None:
                 raise ValueError("pending feedback cannot have an action plan")
+            if self.classification_source == "agent":
+                if self.category is not None or self.probabilities:
+                    raise ValueError(
+                        "uncertain Agent feedback requires null category and no probabilities"
+                    )
+            elif self.category is None or not self.probabilities:
+                raise ValueError(
+                    "non-Agent pending feedback requires a predicted category"
+                )
             return self
+        if self.category is None:
+            raise ValueError("processed classification requires a category")
         if self.action_plan is None:
             raise ValueError("processed classification requires an action plan")
 

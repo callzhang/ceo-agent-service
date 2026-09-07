@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from pathlib import PurePosixPath, PureWindowsPath
+import sqlite3
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from app.agent_context import (
@@ -20,6 +22,8 @@ from app.email_classifier_contracts import (
     EmailAction,
     EmailActionPlan,
     EmailAttachmentMetadata,
+    EmailProviderLocator,
+    validate_email_category_key,
 )
 from app.email_store import EmailStore, is_valid_unsubscribe_opaque_reference
 from app.email_reply_delivery import EmailReplyEffect, email_action_identity
@@ -29,6 +33,7 @@ from app.email_unsubscribe import (
     UnsubscribeAuthenticationEvidence,
     UnsubscribeDiscoveredControl,
     UnsubscribeEntrySource,
+    UnsubscribeEntry,
     UnsubscribeOperation,
     UnsubscribeOperationKind,
     browser_unsubscribe_entries,
@@ -37,7 +42,7 @@ from app.email_unsubscribe import (
 from app.leak_check import (
     assert_no_credentials,
     contains_local_runtime_leak,
-    is_sensitive_field_name,
+    is_sensitive_url_component_name,
 )
 from app.store import (
     AutoReplyStore,
@@ -79,6 +84,405 @@ _UNSUBSCRIBE_ENTRY_OPERATION_SOURCES = {
         }
     ),
 }
+
+
+@dataclass(frozen=True)
+class EmailClassificationTaskInput:
+    """Durable, metadata-bounded input for one classifier Agent call."""
+
+    stable_message_identity: str
+    provider_locator: EmailProviderLocator
+    provider_unread: bool
+    message: Mapping[str, object]
+    allowed_category_keys: tuple[str, ...]
+    category_descriptions: Mapping[str, object]
+    folder_targets: Mapping[str, str]
+    config_version: str
+    unsubscribe_candidates: tuple[Mapping[str, object], ...]
+
+    @classmethod
+    def from_message(
+        cls,
+        message: Mapping[str, object],
+        *,
+        allowed_category_keys: Sequence[str],
+        category_descriptions: Mapping[str, object],
+        folder_targets: Mapping[str, str],
+        config_version: str,
+        unsubscribe_candidates: Sequence[object],
+    ) -> "EmailClassificationTaskInput":
+        locator = EmailProviderLocator.model_validate(
+            {
+                "account_id": message.get("accountId"),
+                "folder": message.get("folder"),
+                "uidvalidity": message.get("uidValidity"),
+                "uid": message.get("uid"),
+                "rfc_message_id": message.get("messageId"),
+                "thread_id": message.get("threadId"),
+            }
+        )
+        stable_identity = str(
+            message.get("stableMessageIdentity") or locator.stable_message_identity
+        ).strip()
+        if not stable_identity.startswith(f"{locator.account_id}:"):
+            raise ValueError("classification task identity is not account-scoped")
+        if type(message.get("providerUnread")) is not bool:
+            raise ValueError(
+                "classification task requires strict provider unread state"
+            )
+        categories = tuple(
+            validate_email_category_key(key) for key in allowed_category_keys
+        )
+        if not categories or len(categories) != len(set(categories)):
+            raise ValueError("allowed category keys must be unique and nonempty")
+        if set(category_descriptions) != set(categories):
+            raise ValueError(
+                "category descriptions must cover the allowed category set"
+            )
+        if not isinstance(config_version, str) or not config_version.strip():
+            raise ValueError("config_version must be nonblank")
+        attachments = message.get("attachments") or ()
+        if not isinstance(attachments, Sequence) or isinstance(
+            attachments, str | bytes
+        ):
+            raise ValueError("attachments must be metadata records")
+        safe_attachments = tuple(
+            EmailAttachmentMetadata.model_validate(item).model_dump(mode="json")
+            for item in attachments
+        )
+        sender = message.get("from")
+        safe_text = str(message.get("markdownBody") or message.get("textBody") or "")
+        for index, candidate in enumerate(unsubscribe_candidates):
+            private_url = (
+                candidate.private_url
+                if isinstance(candidate, UnsubscribeEntry)
+                else str(candidate)
+            )
+            if private_url:
+                safe_text = safe_text.replace(
+                    private_url, f"[UNSUBSCRIBE_CANDIDATE:{index}]"
+                )
+        safe_message = {
+            "sender": dict(sender)
+            if isinstance(sender, Mapping)
+            else str(sender or ""),
+            "to_recipients": list(message.get("toRecipients") or ()),
+            "cc_recipients": list(message.get("ccRecipients") or ()),
+            "subject": str(message.get("subject") or ""),
+            "date": str(message.get("date") or ""),
+            "text": safe_text,
+            "headers": {
+                "auto_submitted": str(message.get("autoSubmitted") or ""),
+            },
+            "attachments": list(safe_attachments),
+        }
+        redacted_candidates = tuple(
+            (
+                dict(candidate.redacted)
+                | {
+                    "index": index,
+                    "digest": candidate.reference.removeprefix("unsubscribe-entry:"),
+                }
+                if isinstance(candidate, UnsubscribeEntry)
+                else {
+                    "index": index,
+                    "source": "legacy",
+                    "digest": sha256(str(candidate).encode("utf-8")).hexdigest(),
+                    "reference": "unsubscribe-entry:"
+                    + sha256(str(candidate).encode("utf-8")).hexdigest(),
+                }
+            )
+            for index, candidate in enumerate(unsubscribe_candidates)
+        )
+        return cls(
+            stable_message_identity=stable_identity,
+            provider_locator=locator,
+            provider_unread=message["providerUnread"],
+            message=safe_message,
+            allowed_category_keys=categories,
+            category_descriptions=dict(category_descriptions),
+            folder_targets=dict(folder_targets),
+            config_version=config_version.strip(),
+            unsubscribe_candidates=redacted_candidates,
+        )
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "stable_message_identity": self.stable_message_identity,
+            "provider_locator": self.provider_locator.model_dump(mode="json"),
+            "provider_unread": self.provider_unread,
+            "message": dict(self.message),
+            "allowed_category_keys": list(self.allowed_category_keys),
+            "category_descriptions": dict(self.category_descriptions),
+            "folder_targets": dict(self.folder_targets),
+            "config_version": self.config_version,
+            "unsubscribe_candidates": list(self.unsubscribe_candidates),
+        }
+
+
+@dataclass(frozen=True)
+class EmailClassificationTask:
+    task_id: str
+    channel: str
+    stable_message_identity: str
+    status: str
+    owner: str
+    generation: int
+    attempt_count: int
+    lease_expires_at: str
+    available_at: str
+    input_json: str
+    result_json: str
+    error: str
+
+
+class EmailClassificationTaskAdapter:
+    """Dedicated Email queue, intentionally separate from generic reply tasks."""
+
+    def __init__(
+        self,
+        email_store: EmailStore,
+        *,
+        now=lambda: datetime.now(timezone.utc),
+        lease_seconds: int = 1_200,
+        max_attempts: int = 3,
+        retry_base_seconds: int = 2,
+    ):
+        self.email_store = email_store
+        self._now = now
+        self.lease_seconds = lease_seconds
+        self.max_attempts = max_attempts
+        self.retry_base_seconds = retry_base_seconds
+
+    def ensure_task(
+        self, task_input: EmailClassificationTaskInput
+    ) -> EmailClassificationTask:
+        input_json = json.dumps(
+            task_input.payload(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        task_id = (
+            "email-classification:"
+            + sha256(task_input.stable_message_identity.encode("utf-8")).hexdigest()
+        )
+        with self.email_store._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from email_agent_classification_tasks where stable_message_identity=?",
+                (task_input.stable_message_identity,),
+            ).fetchone()
+            if row is None:
+                db.execute(
+                    """
+                    insert into email_agent_classification_tasks (
+                        task_id, channel, stable_message_identity, status, input_json
+                    ) values (?, 'email', ?, 'pending', ?)
+                    """,
+                    (task_id, task_input.stable_message_identity, input_json),
+                )
+                row = db.execute(
+                    "select * from email_agent_classification_tasks where task_id=?",
+                    (task_id,),
+                ).fetchone()
+            elif row["input_json"] != input_json:
+                raise ValueError("stable classification task input changed")
+        assert row is not None
+        return self._row(row)
+
+    def has_stable_record(self, stable_message_identity: str) -> bool:
+        with self.email_store._connect() as db:
+            return (
+                db.execute(
+                    "select 1 from email_agent_classification_tasks where stable_message_identity=?",
+                    (stable_message_identity,),
+                ).fetchone()
+                is not None
+            )
+
+    def stable_provider_uids(
+        self, *, account_id: str, folder: str, uidvalidity: int
+    ) -> frozenset[int]:
+        """Return provider UIDs already protected by durable classifier state."""
+
+        with self.email_store._connect() as db:
+            rows = db.execute(
+                """
+                select json_extract(input_json, '$.provider_locator.uid') as uid
+                from email_agent_classification_tasks
+                where json_extract(input_json, '$.provider_locator.account_id')=?
+                  and json_extract(input_json, '$.provider_locator.folder')=?
+                  and json_extract(input_json, '$.provider_locator.uidvalidity')=?
+                  and status in ('pending','running','done')
+                """,
+                (account_id, folder, uidvalidity),
+            ).fetchall()
+        return frozenset(int(row["uid"]) for row in rows)
+
+    def get_task(self, task_id: str) -> EmailClassificationTask | None:
+        with self.email_store._connect() as db:
+            row = db.execute(
+                "select * from email_agent_classification_tasks where task_id=?",
+                (task_id,),
+            ).fetchone()
+        return None if row is None else self._row(row)
+
+    def recover_running_tasks(self) -> int:
+        """Retry eligible expired claims and terminalize exhausted claims."""
+
+        with self.email_store._connect() as db:
+            db.execute("begin immediate")
+            return self._expire_running_claims(db, now=self._timestamp())
+
+    def claim_next(self, *, owner: str) -> EmailClassificationTask | None:
+        if not owner.strip():
+            raise ValueError("owner must be nonblank")
+        now = self._timestamp()
+        lease_expires_at = self._timestamp(
+            self._now() + timedelta(seconds=self.lease_seconds)
+        )
+        with self.email_store._connect() as db:
+            db.execute("begin immediate")
+            self._expire_running_claims(db, now=now)
+            row = db.execute(
+                """
+                select * from email_agent_classification_tasks
+                where status='pending' and attempt_count < ?
+                  and (available_at='' or available_at <= ?)
+                order by created_at, task_id limit 1
+                """,
+                (self.max_attempts, now),
+            ).fetchone()
+            if row is None:
+                return None
+            updated = db.execute(
+                """
+                update email_agent_classification_tasks
+                set status='running', owner=?, generation=generation+1,
+                    attempt_count=attempt_count+1, lease_expires_at=?, updated_at=?
+                where task_id=? and status='pending'
+                """,
+                (owner.strip(), lease_expires_at, now, row["task_id"]),
+            ).rowcount
+            if updated != 1:
+                return None
+            claimed = db.execute(
+                "select * from email_agent_classification_tasks where task_id=?",
+                (row["task_id"],),
+            ).fetchone()
+        assert claimed is not None
+        return self._row(claimed)
+
+    def _expire_running_claims(self, db: sqlite3.Connection, *, now: str) -> int:
+        exhausted = db.execute(
+            """
+            update email_agent_classification_tasks
+            set status='failed', owner='', lease_expires_at='', available_at='',
+                error='classification task lease expired after final attempt',
+                updated_at=?
+            where status='running' and lease_expires_at <= ?
+              and attempt_count >= ?
+            """,
+            (now, now, self.max_attempts),
+        ).rowcount
+        retryable = db.execute(
+            """
+            update email_agent_classification_tasks
+            set status='pending', owner='', lease_expires_at='', updated_at=?
+            where status='running' and lease_expires_at <= ?
+              and attempt_count < ?
+            """,
+            (now, now, self.max_attempts),
+        ).rowcount
+        return exhausted + retryable
+
+    def complete(
+        self, task: EmailClassificationTask, result: Mapping[str, object]
+    ) -> None:
+        self._finish(task, status="done", result=result, error="")
+
+    def fail(
+        self, task: EmailClassificationTask, *, error: str, retryable: bool
+    ) -> None:
+        retryable = retryable and task.attempt_count < self.max_attempts
+        available_at = (
+            self._timestamp(
+                self._now()
+                + timedelta(
+                    seconds=self.retry_base_seconds
+                    * (2 ** max(task.attempt_count - 1, 0))
+                )
+            )
+            if retryable
+            else ""
+        )
+        self._finish(
+            task,
+            status="pending" if retryable else "failed",
+            result=None,
+            error=error,
+            available_at=available_at,
+        )
+
+    def _finish(
+        self,
+        task: EmailClassificationTask,
+        *,
+        status: str,
+        result: Mapping[str, object] | None,
+        error: str,
+        available_at: str = "",
+    ) -> None:
+        result_json = (
+            "null"
+            if result is None
+            else json.dumps(
+                dict(result), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+        )
+        with self.email_store._connect() as db:
+            updated = db.execute(
+                """
+                update email_agent_classification_tasks
+                set status=?, result_json=?, error=?, owner='', lease_expires_at='',
+                    available_at=?, updated_at=?
+                where task_id=? and status='running' and owner=? and generation=?
+                """,
+                (
+                    status,
+                    result_json,
+                    error,
+                    available_at,
+                    self._timestamp(),
+                    task.task_id,
+                    task.owner,
+                    task.generation,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise ValueError("classification task lease changed")
+
+    def _timestamp(self, value: datetime | None = None) -> str:
+        candidate = value or self._now()
+        return candidate.astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+    @staticmethod
+    def _row(row: sqlite3.Row) -> EmailClassificationTask:
+        return EmailClassificationTask(
+            task_id=row["task_id"],
+            channel=row["channel"],
+            stable_message_identity=row["stable_message_identity"],
+            status=row["status"],
+            owner=row["owner"],
+            generation=int(row["generation"]),
+            attempt_count=int(row["attempt_count"]),
+            lease_expires_at=row["lease_expires_at"],
+            available_at=row["available_at"],
+            input_json=row["input_json"],
+            result_json=row["result_json"],
+            error=row["error"],
+        )
 
 
 class EmailAgentTaskConflict(RuntimeError):
@@ -189,19 +593,6 @@ def _contains_absolute_local_path(text: str) -> bool:
     return False
 
 
-def _url_component_is_sensitive(name: str) -> bool:
-    normalized = "".join(
-        character for character in name.casefold() if character.isalnum()
-    )
-    return (
-        is_sensitive_field_name(name)
-        or normalized in {"auth", "key", "sig"}
-        or "signed" in normalized
-        or normalized.startswith("xamz")
-        and "signature" in normalized
-    )
-
-
 def _is_unsubscribe_target(value: str) -> bool:
     normalized = value.casefold().replace("\\", "/")
     for delimiter in ".?&=#_":
@@ -244,8 +635,8 @@ def _contains_forbidden_url(text: str) -> bool:
             decoded_name = _decode_metadata_token(name)
             decoded_value = _decode_metadata_token(component_value)
             if (
-                _url_component_is_sensitive(decoded_name)
-                or _url_component_is_sensitive(decoded_value)
+                is_sensitive_url_component_name(decoded_name)
+                or is_sensitive_url_component_name(decoded_value)
                 or _is_unsubscribe_target(decoded_name)
                 or _is_unsubscribe_target(decoded_value)
                 or _contains_local_path_token(decoded_value)

@@ -103,9 +103,7 @@ def ephemeral_unsubscribe_authentication(
 ) -> UnsubscribeAuthenticationEvidence | None:
     value = message.get("_ephemeralUnsubscribeAuthentication")
     return (
-        value.value
-        if isinstance(value, _EphemeralUnsubscribeAuthentication)
-        else None
+        value.value if isinstance(value, _EphemeralUnsubscribeAuthentication) else None
     )
 
 
@@ -160,6 +158,8 @@ class ImapReadonlyAdapter:
         cursor_uidvalidity: int | None,
         last_seen_uid: int,
         limit: int = 50,
+        unread_only: bool = False,
+        excluded_uids: frozenset[int] = frozenset(),
     ) -> ImapUidBatch:
         mailbox = mailbox.strip()
         if not mailbox:
@@ -179,9 +179,15 @@ class ImapReadonlyAdapter:
         uidvalidity = _uidvalidity(self.session.response("UIDVALIDITY"))
         search_after = last_seen_uid if cursor_uidvalidity == uidvalidity else 0
         first_uid = search_after + 1
-        status, data = self.session.uid("SEARCH", None, f"UID {first_uid}:*")
+        criterion = "UNSEEN" if unread_only else f"UID {first_uid}:*"
+        status, data = self.session.uid("SEARCH", None, criterion)
         _require_ok(status, "IMAP UID search failed")
-        uids = [uid for uid in _search_uids(data) if int(uid) >= first_uid][:limit]
+        uids = [
+            uid
+            for uid in _search_uids(data)
+            if (unread_only or int(uid) >= first_uid)
+            and int(uid) not in excluded_uids
+        ][:limit]
         messages: list[dict[str, object]] = []
         for uid in uids:
             status, structure_data = self.session.uid("FETCH", uid, "(BODYSTRUCTURE)")
@@ -191,6 +197,10 @@ class ImapReadonlyAdapter:
             _require_ok(status, "IMAP header fetch failed")
             headers = email.message_from_bytes(
                 _fetch_payload(header_data), policy=email.policy.default
+            )
+            provider_unread = all(
+                flag.casefold() != "\\seen"
+                for flag in parse_imap_fetch_flags(header_data)
             )
             important_signals = _imap_important_signals(header_data)
             remaining = _MAX_TEXT_FETCH_BYTES
@@ -226,9 +236,7 @@ class ImapReadonlyAdapter:
                         else ""
                     )
                 else:
-                    text = (
-                        decoded if part.section in selected_text_sections else ""
-                    )
+                    text = decoded if part.section in selected_text_sections else ""
                 if text := text.strip():
                     body_parts.append(text)
             body = "\n".join(body_parts).strip()
@@ -244,6 +252,7 @@ class ImapReadonlyAdapter:
                     uidvalidity=uidvalidity,
                     uid=int(uid),
                     important_signals=important_signals,
+                    provider_unread=provider_unread,
                 )
             )
         return ImapUidBatch(
@@ -332,6 +341,7 @@ def parse_rfc822_message(
         uidvalidity=uidvalidity,
         uid=uid,
         important_signals=ImportantSignals((), False),
+        provider_unread=True,
     )
 
 
@@ -346,6 +356,7 @@ def _normalized_message_record(
     uidvalidity: int,
     uid: int,
     important_signals: ImportantSignals,
+    provider_unread: bool,
 ) -> dict[str, object]:
     message_id = _decode_header(parsed.get("Message-ID", ""))
     in_reply_to = _message_ids(parsed.get("In-Reply-To", ""))
@@ -405,6 +416,7 @@ def _normalized_message_record(
         "hasAttachment": bool(attachments),
         "attachments": attachments,
         "importantSignals": important_signals,
+        "providerUnread": provider_unread,
     }
     if body_html:
         result["_ephemeralBodyHtml"] = _EphemeralBodyHtml(body_html)
@@ -721,9 +733,7 @@ def _message_html_body(message: email.message.Message) -> str:
                 return _message_html_body(child).strip()
         return ""
     return "\n".join(
-        html
-        for child in children
-        if (html := _message_html_body(child).strip())
+        html for child in children if (html := _message_html_body(child).strip())
     ).strip()
 
 

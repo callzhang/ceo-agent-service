@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,13 +13,18 @@ from app.email_classifier_contracts import (
 )
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_scan import (
+    AgentScanContext,
     EmailScanConfig,
+    scan_agent_classification_batch,
+    should_enqueue_agent_classification,
     scan_imap_accounts,
     scan_readonly_batch,
 )
+from app.email_provider_folders import FolderRole
 from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
-from app.email_imap_readonly import ImapUidBatch
+from app.email_imap_readonly import ImapUidBatch, parse_rfc822_message
 from app.email_store import EmailStore
+from app.email_task_producer import EmailClassificationTaskProducer
 from app.email_worker import _scan_config
 
 
@@ -35,10 +41,18 @@ class FakeSource:
         cursor_uidvalidity: int | None,
         last_seen_uid: int,
         limit: int = 50,
+        unread_only: bool = False,
+        excluded_uids: frozenset[int] = frozenset(),
     ) -> ImapUidBatch:
         uidvalidity = int(self.messages[0]["uidValidity"])
         self.calls.append((mailbox, cursor_uidvalidity, last_seen_uid, limit))
-        minimum_uid = last_seen_uid if cursor_uidvalidity == uidvalidity else 0
+        minimum_uid = (
+            0
+            if unread_only
+            else last_seen_uid
+            if cursor_uidvalidity == uidvalidity
+            else 0
+        )
         return ImapUidBatch(
             account_id=str(self.messages[0]["accountId"]),
             folder=mailbox,
@@ -48,6 +62,7 @@ class FakeSource:
                 message
                 for message in self.messages
                 if int(message["uid"]) > minimum_uid
+                and int(message["uid"]) not in excluded_uids
             ][:limit],
         )
 
@@ -127,6 +142,317 @@ def _message() -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize(
+    ("unread", "role", "configured", "has_record", "expected"),
+    (
+        (True, FolderRole.INBOX, False, False, True),
+        (True, FolderRole.UNBOUND, True, False, True),
+        (False, FolderRole.INBOX, False, False, False),
+        (True, FolderRole.CATEGORY, True, False, False),
+        (True, FolderRole.JUNK, True, False, False),
+        (True, FolderRole.TRASH, True, False, False),
+        (True, FolderRole.SENT, True, False, False),
+        (True, FolderRole.DRAFT, True, False, False),
+        (True, FolderRole.UNBOUND, False, False, False),
+        (True, FolderRole.INBOX, False, True, False),
+    ),
+)
+def test_agent_scan_gate_is_exact(unread, role, configured, has_record, expected):
+    assert (
+        should_enqueue_agent_classification(
+            provider_unread=unread,
+            folder_role=role,
+            configured_unclassified_source=configured,
+            has_stable_record=has_record,
+        )
+        is expected
+    )
+
+
+def test_old_unread_mail_is_eligible_without_a_date_gate() -> None:
+    message = _message() | {"date": "1999-01-01T00:00:00Z", "providerUnread": True}
+
+    assert should_enqueue_agent_classification(
+        provider_unread=message["providerUnread"],
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        has_stable_record=False,
+    )
+
+
+def test_agent_scan_enqueues_once_without_invoking_local_model(tmp_path: Path) -> None:
+    message = _message() | {"providerUnread": True, "date": "1999-01-01"}
+    source = FakeSource([message])
+    store = EmailStore(tmp_path / "agent-scan.sqlite3")
+    calls = []
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: bool(calls)),
+        produce=lambda value, **context: calls.append((value, context)),
+    )
+    scan_context = AgentScanContext(
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={
+            "work": {"core": "Business."},
+            "junk": {"core": "Unwanted."},
+        },
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+    )
+
+    first = scan_agent_classification_batch(
+        source,
+        store,
+        producer,
+        scan_context,
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+    )
+
+    assert first.persisted_count == 1
+    assert len(calls) == 1
+    assert calls[0][0]["date"] == "1999-01-01"
+
+
+def test_agent_scan_never_enqueues_read_mail() -> None:
+    message = _message() | {"providerUnread": False}
+    source = FakeSource([message])
+    calls = []
+    store = SimpleNamespace(
+        get_scan_cursor=lambda *_args: None,
+        record_scan_cursor=lambda **_kwargs: None,
+    )
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: False),
+        produce=lambda *_args, **_kwargs: calls.append("called"),
+    )
+
+    scan_agent_classification_batch(
+        source,
+        store,
+        producer,
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+    )
+
+    assert calls == []
+
+
+def test_agent_scan_extracts_real_html_candidate_ephemerally_without_persistence(
+    tmp_path: Path,
+) -> None:
+    private_url = "https://news.example.test/unsubscribe?token=scan-html-secret"
+    message = parse_rfc822_message(
+        (
+            b"From: blast@example.test\r\nSubject: Offer\r\n"
+            b"Message-ID: <scan-html@example.test>\r\n"
+            b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+            + f'<a href="{private_url}">Unsubscribe</a>'.encode()
+        ),
+        account_id="dingtalk-account",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=87,
+    )
+    database = tmp_path / "html-scan.sqlite3"
+    store = EmailStore(database)
+
+    result = scan_agent_classification_batch(
+        FakeSource([message]),
+        store,
+        EmailClassificationTaskProducer(store),
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+    )
+
+    assert result.persisted_count == 1
+    assert private_url.encode() not in database.read_bytes()
+    with store._connect() as db:
+        payload = db.execute(
+            "select input_json from email_agent_classification_tasks"
+        ).fetchone()[0]
+    assert "body_html_https" in payload
+    assert "unsubscribe-entry:" in payload
+    assert "_ephemeralBodyHtml" not in payload
+
+
+def test_agent_scan_revisits_old_unread_uids_after_cursor_advance(
+    tmp_path: Path,
+) -> None:
+    message = _message() | {"providerUnread": True, "uid": 1}
+    source = FakeSource([message])
+    store = EmailStore(tmp_path / "email.sqlite3")
+    store.record_scan_cursor(
+        account_id="dingtalk-account",
+        folder="INBOX",
+        uidvalidity=42,
+        last_seen_uid=99,
+    )
+    calls = []
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: False),
+        produce=lambda *_args, **_kwargs: calls.append("called"),
+    )
+
+    result = scan_agent_classification_batch(
+        source,
+        store,
+        producer,
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+    )
+
+    assert result.persisted_count == 1
+    assert calls == ["called"]
+
+
+def test_agent_scan_excludes_stable_unread_records_before_provider_limit() -> None:
+    messages = [
+        _message() | {"providerUnread": True, "uid": 1},
+        _message()
+        | {
+            "providerUnread": True,
+            "uid": 2,
+            "messageId": "<message-2@example.com>",
+        },
+    ]
+    source = FakeSource(messages)
+    calls = []
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(
+            stable_provider_uids=lambda **_kwargs: frozenset({1}),
+            has_stable_record=lambda identity: identity.endswith(
+                ":<message-1@example.com>"
+            ),
+        ),
+        produce=lambda message, **_kwargs: calls.append(message["uid"]),
+    )
+
+    result = scan_agent_classification_batch(
+        source,
+        SimpleNamespace(
+            get_scan_cursor=lambda *_args: {
+                "uidvalidity": 42,
+                "last_seen_uid": 1,
+            },
+            record_scan_cursor=lambda **_kwargs: None,
+        ),
+        producer,
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        limit=1,
+    )
+
+    assert result.persisted_count == 1
+    assert calls == [2]
+
+
+@pytest.mark.parametrize(
+    "status",
+    (
+        EmailClassificationStatus.PENDING_FEEDBACK,
+        EmailClassificationStatus.PROCESSED,
+    ),
+)
+def test_agent_scan_skips_legacy_canonical_only_classification(
+    tmp_path: Path, status: EmailClassificationStatus
+) -> None:
+    from datetime import datetime, timezone
+
+    from app.email_classifier_contracts import (
+        EmailClassification,
+        EmailProviderLocator,
+        build_email_action_plan,
+    )
+
+    message = _message() | {"providerUnread": True}
+    source = FakeSource([message])
+    calls = []
+    store = EmailStore(tmp_path / f"canonical-{status.value}.sqlite3")
+    locator = EmailProviderLocator(
+        account_id="dingtalk-account",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=1,
+        rfc_message_id="<message-1@example.com>",
+    )
+    plan = None
+    if status is EmailClassificationStatus.PROCESSED:
+        plan = build_email_action_plan(
+            classification_id=71,
+            account_id="dingtalk-account",
+            category="work",
+            classification_source="model",
+            confidence=0.81,
+            model_id="legacy-model:v1",
+            config_version="legacy-config:v1",
+            actions=(),
+            action_parameters={},
+            created_at=datetime(2026, 9, 7, tzinfo=timezone.utc),
+        )
+    store.persist_scan_result(
+        EmailClassification(
+            classification_id=71,
+            stable_message_identity=locator.stable_message_identity,
+            provider_locator=locator,
+            category="work",
+            confidence=0.81,
+            margin=0.2,
+            probabilities={"work": 0.81},
+            model_id="legacy-model:v1",
+            config_version="legacy-config:v1",
+            status=status,
+            classification_source="model",
+            action_plan=plan,
+        ),
+        model_text="__subject__legacy canonical",
+    )
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: False),
+        produce=lambda *_args, **_kwargs: calls.append(status.value),
+    )
+
+    result = scan_agent_classification_batch(
+        source,
+        store,
+        producer,
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+    )
+
+    assert result.persisted_count == 0
+    assert calls == []
+
+
 def _training_messages() -> tuple[list[dict[str, object]], list[str]]:
     return (
         [
@@ -203,7 +529,9 @@ def test_cpu_model_feeds_readonly_scan_and_persists_only_classification(tmp_path
         thresholds={category: 0.0 for category in INITIAL_EMAIL_CATEGORY_KEYS},
         actions={},
         category_eligibility=_category_eligibility(
-            eligible=tuple(EmailCategory(category) for category in INITIAL_EMAIL_CATEGORY_KEYS),
+            eligible=tuple(
+                EmailCategory(category) for category in INITIAL_EMAIL_CATEGORY_KEYS
+            ),
             threshold=0.0,
             model_id="model-integration-test",
         ),
@@ -325,9 +653,10 @@ def test_task_producer_failure_does_not_advance_cursor_and_retries_idempotently(
 
     assert attempts == 2
     assert result.persisted_count == 1
-    assert store.get_scan_cursor("dingtalk-account", "INBOX")["last_seen_uid"] == message[
-        "uid"
-    ]
+    assert (
+        store.get_scan_cursor("dingtalk-account", "INBOX")["last_seen_uid"]
+        == message["uid"]
+    )
 
 
 def test_scan_config_rejects_auto_reply_when_outbound_reply_is_disabled():

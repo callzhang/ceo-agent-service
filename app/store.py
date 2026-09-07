@@ -111,7 +111,7 @@ SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-05.3"
+STORE_SCHEMA_VERSION = "2026-09-07.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -178,7 +178,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_todo_evidence_candidates_work_input",
     "idx_todo_evidence_candidates_project",
     "idx_managed_skill_revisions_number",
-    "idx_managed_skill_revisions_sha256",
+    "idx_managed_skill_revisions_identity",
     "idx_managed_skill_export_receipts_revision",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
@@ -2030,8 +2030,9 @@ class AutoReplyStore:
                 );
                 create unique index if not exists idx_managed_skill_revisions_number
                     on managed_skill_revisions(skill_id, revision_number);
-                create unique index if not exists idx_managed_skill_revisions_sha256
-                    on managed_skill_revisions(skill_id, sha256);
+                drop index if exists idx_managed_skill_revisions_sha256;
+                create unique index if not exists idx_managed_skill_revisions_identity
+                    on managed_skill_revisions(skill_id, sha256, source);
                 create table if not exists managed_skill_export_receipts (
                     id integer primary key autoincrement,
                     revision_id integer not null,
