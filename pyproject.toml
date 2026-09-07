@@ -7,21 +7,23 @@ license = "MIT"
 dependencies = [
   "cryptography>=42",
   "fastapi>=0.115",
+  "httpx>=0.28,<1",
   "jieba>=0.42",
   "keyring>=25,<26",
   "markdown-it-py>=4,<5",
   "mcp[cli]==1.28.1",
+  "numpy>=2,<3",
   "Pillow>=11",
   "pypdf>=5.0",
   "pydantic>=2.10,<2.13",
   "pydantic-settings>=2.5.2,<2.14",
   "robust-json-parser>=0.1.6,<0.2",
+  "scikit-learn>=1.6,<2",
   "uvicorn>=0.34"
 ]
 
 [project.optional-dependencies]
 dev = [
-  "httpx>=0.28",
   "httpx2>=2.9,<3",
   "playwright>=1.50,<2",
   "pytest>=8.3",
