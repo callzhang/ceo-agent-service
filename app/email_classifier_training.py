@@ -195,12 +195,9 @@ def assess_email_action_eligibility(
         elif action is EmailAction.AUTO_REPLY:
             eligible = False
             reason = "auto_reply_disabled"
-        elif (
-            action is EmailAction.UNSUBSCRIBE
-            and category != EmailCategory.SUBSCRIPTION.value
-        ):
+        elif action is EmailAction.UNSUBSCRIBE and category != EmailCategory.JUNK.value:
             eligible = False
-            reason = "subscription_category_required"
+            reason = "junk_category_required"
         else:
             requirement = _ACTION_REQUIREMENTS.get(action)
             if requirement is None:
@@ -762,9 +759,7 @@ def _validation_predictions(
 def _validated_training_category_keys(
     examples: Sequence[Mapping[str, object]],
 ) -> tuple[EmailCategoryKey, ...]:
-    validated = {
-        validate_email_category_key(example["label"]) for example in examples
-    }
+    validated = {validate_email_category_key(example["label"]) for example in examples}
     return tuple(sorted(validated))
 
 
@@ -825,9 +820,7 @@ def _default_requirements(
         EmailCategory(label): EligibilityRequirement(
             configured_threshold=0.85,
             minimum_precision=0.95,
-            minimum_validation_samples=(
-                20 if label == EmailCategory.SUBSCRIPTION.value else 30
-            ),
+            minimum_validation_samples=30,
         )
         for label in labels
     }

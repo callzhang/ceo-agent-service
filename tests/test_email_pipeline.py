@@ -74,6 +74,31 @@ def test_pipeline_category_contracts_store_exact_plain_strings(category: str):
     assert all(type(key) is str for key in decision.probabilities)
 
 
+def test_only_junk_category_may_authorize_unsubscribe() -> None:
+    with pytest.raises(ValueError, match="only junk may authorize unsubscribe"):
+        EmailCategoryConfig(
+            category="notification",
+            description="Notification",
+            threshold=0.8,
+            actions=(EmailAction.UNSUBSCRIBE,),
+            action_parameters={},
+            enabled=True,
+            config_version="email-config-v1",
+        )
+
+    junk = EmailCategoryConfig(
+        category="junk",
+        description="Junk",
+        threshold=0.8,
+        actions=(EmailAction.UNSUBSCRIBE, EmailAction.TRASH),
+        action_parameters={EmailAction.UNSUBSCRIBE: {}},
+        enabled=True,
+        config_version="email-config-v1",
+    )
+
+    assert junk.actions == (EmailAction.UNSUBSCRIBE, EmailAction.TRASH)
+
+
 def test_human_confirmation_forwards_a_valid_custom_category_key():
     calls = []
 
@@ -399,19 +424,19 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
     store = EmailStore(tmp_path / "email.sqlite3")
     pending = _persist_decision(store, _decision(confidence=0.79))
     store.upsert_config(
-        category=_legacy_store_category("notification"),
-        description="notification",
+        category=_legacy_store_category("junk"),
+        description="junk",
         threshold=0.97,
         actions=(EmailAction.UNSUBSCRIBE,),
         action_parameters={},
         enabled=True,
-        config_version="notification-v3",
+        config_version="junk-v3",
     )
 
     application = apply_human_confirmation(
         store,
         pending["id"],
-        "notification",
+        "junk",
         feedback_request_id="feedback-pending-confirmation",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -421,8 +446,8 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
     confirmed = application.confirmed
     assert confirmed["status"] == "processed"
     assert confirmed["classification_source"] == "user"
-    assert confirmed["action_plan"]["category"] == "notification"
-    assert confirmed["action_plan"]["config_version"] == "notification-v3"
+    assert confirmed["action_plan"]["category"] == "junk"
+    assert confirmed["action_plan"]["config_version"] == "junk-v3"
     assert confirmed["action_plan"]["model_id"] == MODEL_ID
     assert confirmed["action_plan"]["actions"] == ["unsubscribe"]
     assert EmailAction.AUTO_REPLY.value not in confirmed["action_plan"]["actions"]
@@ -431,8 +456,8 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
     assert authorization["authorized"] is True
     assert authorization["authorization_source"] == "user_confirmation"
     assert authorization["source_model_id"] == MODEL_ID
-    assert authorization["config_version"] == "notification-v3"
-    assert store.list_training_examples()[0]["label"] == "notification"
+    assert authorization["config_version"] == "junk-v3"
+    assert store.list_training_examples()[0]["label"] == "junk"
     with sqlite3.connect(store.path) as db:
         table_names = {
             row[0]
@@ -465,7 +490,7 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
         category=_legacy_store_category("personal"),
         description="personal",
         threshold=0.97,
-        actions=(EmailAction.ARCHIVE, EmailAction.UNSUBSCRIBE),
+        actions=(EmailAction.ARCHIVE,),
         action_parameters={},
         enabled=True,
         config_version="personal-v4",

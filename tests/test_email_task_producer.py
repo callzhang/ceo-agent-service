@@ -21,7 +21,11 @@ def _plan(actions: tuple[EmailAction, ...]):
     return build_email_action_plan(
         classification_id=17,
         account_id="account-1",
-        category=EmailCategory.WORK,
+        category=(
+            EmailCategory.JUNK
+            if EmailAction.UNSUBSCRIBE in actions
+            else EmailCategory.WORK
+        ),
         classification_source="user",
         confidence=0.61,
         model_id="email-model:v1",

@@ -22,9 +22,14 @@ from app.email_classifier_scan import (
 )
 from app.email_provider_folders import FolderRole
 from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
-from app.email_imap_readonly import ImapUidBatch, parse_rfc822_message
+from app.email_imap_readonly import (
+    ImapUidBatch,
+    attach_ephemeral_unsubscribe_authentication,
+    parse_rfc822_message,
+)
 from app.email_store import EmailStore
 from app.email_task_producer import EmailClassificationTaskProducer
+from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 from app.email_worker import _scan_config
 
 
@@ -285,6 +290,56 @@ def test_agent_scan_extracts_real_html_candidate_ephemerally_without_persistence
     assert "body_html_https" in payload
     assert "unsubscribe-entry:" in payload
     assert "_ephemeralBodyHtml" not in payload
+
+
+def test_agent_scan_preserves_verified_one_click_candidate_metadata(
+    tmp_path: Path,
+) -> None:
+    private_url = "https://news.example.test/unsubscribe?token=scan-one-click"
+    message = parse_rfc822_message(
+        (
+            b"From: blast@example.test\r\nSubject: Offer\r\n"
+            b"Message-ID: <scan-one-click@example.test>\r\n"
+            b"List-Unsubscribe: <"
+            + private_url.encode()
+            + b">\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n\r\n"
+            b"Unwanted promotion"
+        ),
+        account_id="dingtalk-account",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=88,
+    )
+    attach_ephemeral_unsubscribe_authentication(
+        message,
+        UnsubscribeAuthenticationEvidence(
+            dkim_covers_list_unsubscribe=True,
+            dkim_covers_list_unsubscribe_post=True,
+            evidence_reference="dkim-evidence:scan-one-click",
+        ),
+    )
+    store = EmailStore(tmp_path / "one-click-scan.sqlite3")
+
+    scan_agent_classification_batch(
+        FakeSource([message]),
+        store,
+        EmailClassificationTaskProducer(store),
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+    )
+
+    with store._connect() as db:
+        payload = db.execute(
+            "select input_json from email_agent_classification_tasks"
+        ).fetchone()[0]
+    assert '"source":"header_one_click_https"' in payload
+    assert private_url not in payload
 
 
 def test_agent_scan_revisits_old_unread_uids_after_cursor_advance(
@@ -569,9 +624,9 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
     config = EmailScanConfig(
         config_version="scan-task-production-v1",
         thresholds={category: 0.0 for category in INITIAL_EMAIL_CATEGORY_KEYS},
-        actions={EmailCategory.NOTIFICATION: (EmailAction.UNSUBSCRIBE,)},
+        actions={EmailCategory.JUNK: (EmailAction.UNSUBSCRIBE,)},
         category_eligibility=_category_eligibility(
-            eligible=(EmailCategory.NOTIFICATION,),
+            eligible=(EmailCategory.JUNK,),
             threshold=0.0,
         ),
     )
@@ -579,7 +634,7 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
 
     result = scan_readonly_batch(
         source,
-        StaticClassifier(StaticPrediction("notification", 0.99)),
+        StaticClassifier(StaticPrediction("junk", 0.99)),
         store,
         config,
         task_producer=lambda classification, raw_message: callbacks.append(
@@ -609,9 +664,9 @@ def test_task_producer_failure_does_not_advance_cursor_and_retries_idempotently(
     config = EmailScanConfig(
         config_version="scan-task-retry-v1",
         thresholds={category: 0.0 for category in INITIAL_EMAIL_CATEGORY_KEYS},
-        actions={EmailCategory.NOTIFICATION: (EmailAction.UNSUBSCRIBE,)},
+        actions={EmailCategory.JUNK: (EmailAction.UNSUBSCRIBE,)},
         category_eligibility=_category_eligibility(
-            eligible=(EmailCategory.NOTIFICATION,),
+            eligible=(EmailCategory.JUNK,),
             threshold=0.0,
         ),
     )
@@ -629,7 +684,7 @@ def test_task_producer_failure_does_not_advance_cursor_and_retries_idempotently(
     with pytest.raises(RuntimeError, match="injected task producer failure"):
         scan_readonly_batch(
             source,
-            StaticClassifier(StaticPrediction("notification", 0.99)),
+            StaticClassifier(StaticPrediction("junk", 0.99)),
             store,
             config,
             task_producer=produce,
@@ -645,7 +700,7 @@ def test_task_producer_failure_does_not_advance_cursor_and_retries_idempotently(
 
     result = scan_readonly_batch(
         source,
-        StaticClassifier(StaticPrediction("notification", 0.99)),
+        StaticClassifier(StaticPrediction("junk", 0.99)),
         store,
         config,
         task_producer=produce,

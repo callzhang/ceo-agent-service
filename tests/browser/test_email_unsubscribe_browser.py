@@ -142,9 +142,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     "action_required",
                     "Choose unsubscribe",
                     content=(
-                        "<script>fetch('"
-                        f"{type(self).blocked_origin}/effect"
-                        "')</script>"
+                        f"<script>fetch('{type(self).blocked_origin}/effect')</script>"
                     ),
                 )
             )
@@ -217,7 +215,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     next_step="step-2",
                     content=(
                         '<form method="post" action="/two-step-second" '
-                        '>'
+                        ">"
                         '<button type="submit">Continue</button></form>'
                     ),
                 )
@@ -256,9 +254,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
         elif path.startswith("/auth-control-"):
             secret = "profile-secret-never-persist"
             controls = {
-                "/auth-control-password": (
-                    f'<input type="password" value="{secret}">'
-                ),
+                "/auth-control-password": (f'<input type="password" value="{secret}">'),
                 "/auth-control-hidden-otp": (
                     f'<input type="text" autocomplete="one-time-code" '
                     f'value="{secret}" hidden>'
@@ -398,10 +394,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     "action_required",
                     "Confirm unsubscribe",
                     next_step="step-2",
-                    content=(
-                        '<a href="/terminal-click" '
-                        '>Confirm</a>'
-                    ),
+                    content=('<a href="/terminal-click" >Confirm</a>'),
                 )
             )
         elif path in {"/terminal-click", "/unsubscribe"}:
@@ -486,7 +479,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     next_step="step-3",
                     content=(
                         '<form method="post" action="/two-step-terminal" '
-                        '>'
+                        ">"
                         '<button type="submit">Unsubscribe</button></form>'
                     ),
                 )
@@ -499,9 +492,10 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     receipt="receipt-two-step",
                 )
             )
-        elif path == "/safe-form-terminal" and self.headers.get(
-            "Cookie"
-        ) != "audit_session=persistent-profile":
+        elif (
+            path == "/safe-form-terminal"
+            and self.headers.get("Cookie") != "audit_session=persistent-profile"
+        ):
             self._send(b"browser session missing", status=403)
         elif path in {"/safe-form-terminal", "/implicit-terminal"}:
             self._send(_page("done", "You are unsubscribed"))
@@ -631,9 +625,7 @@ def test_dedicated_profile_restores_page_across_audit_invocations_without_reopen
             session = profile.load_audit_session(effect.action_identity)
             assert session is not None
             session["html"] = "<!doctype html><html><body>Preferences</body></html>"
-            session["html_digest"] = sha256(
-                str(session["html"]).encode()
-            ).hexdigest()
+            session["html_digest"] = sha256(str(session["html"]).encode()).hexdigest()
             profile.save_audit_session(effect.action_identity, session)
         extension = replace(
             effect,
@@ -826,9 +818,7 @@ def _operations(
         UnsubscribeOperation(
             operation_reference=f"step-{index}",
             kind=kind,
-            target_reference=(
-                "entry" if index == 1 else targets[index - 2]
-            ),
+            target_reference=("entry" if index == 1 else targets[index - 2]),
         )
         for index, kind in enumerate(kinds, start=1)
     )
@@ -866,7 +856,7 @@ def _setup(
         action_plan_version=1,
         classification_id=701,
         account_id="fixture-account",
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.JUNK,
         classification_source="model",
         confidence=0.99,
         model_id="email-model:browser-fixture",
@@ -910,10 +900,10 @@ def _setup(
                     "rfc_message_id": "<browser-701@example.com>",
                     "thread_id": "fixture-thread",
                 },
-                "category": EmailCategory.SUBSCRIPTION,
+                "category": EmailCategory.JUNK,
                 "confidence": 0.99,
                 "margin": 0.5,
-                "probabilities": {"subscription": 0.99},
+                "probabilities": {"junk": 0.99},
                 "model_id": plan.model_id,
                 "config_version": plan.config_version,
                 "status": EmailClassificationStatus.PROCESSED,
@@ -927,10 +917,14 @@ def _setup(
         received_at="2026-08-30T08:00:00+00:00",
     )
     entry = UnsubscribeEntry(
+        index=0,
         source=UnsubscribeEntrySource.BODY_HTML_HTTPS,
         reference=unsubscribe_entry_reference(private_url),
         private_url=private_url,
         priority=30,
+        scheme=urlsplit(private_url).scheme,
+        host=urlsplit(private_url).hostname or "",
+        context="Unsubscribe",
     )
     parsed = urlsplit(private_url)
     origin = (
@@ -987,11 +981,14 @@ def _run(
                 owner=_BROWSER_OWNER,
             )
             assert claim is not None and claim["acquired"] is True
-            assert store.recover_terminated_email_unsubscribe_claims(
-                owner=_BROWSER_OWNER,
-                termination_verifier=lambda candidate: candidate == _BROWSER_OWNER,
-                recovered_at="2026-08-30T12:00:00+00:00",
-            ) == 1
+            assert (
+                store.recover_terminated_email_unsubscribe_claims(
+                    owner=_BROWSER_OWNER,
+                    termination_verifier=lambda candidate: candidate == _BROWSER_OWNER,
+                    recovered_at="2026-08-30T12:00:00+00:00",
+                )
+                == 1
+            )
             owner = _RESTART_OWNER
         context = chrome_browser.new_context()
         page = context.new_page()
@@ -1170,12 +1167,12 @@ def test_page_control_reference_is_local_digest_and_never_persists_dom_attribute
         )
     )
 
-    serialized = json.dumps(first.redacted, sort_keys=True) + repr(first) + repr(durable)
+    serialized = (
+        json.dumps(first.redacted, sort_keys=True) + repr(first) + repr(durable)
+    )
     assert "customerSegmentPlatinum42" not in serialized
     assert "Confirm unsubscribe" not in serialized
-    assert first.continuation.controls[0].reference.startswith(
-        "unsubscribe-control:"
-    )
+    assert first.continuation.controls[0].reference.startswith("unsubscribe-control:")
 
 
 def test_mutated_audited_link_target_has_zero_unauthorized_requests(
@@ -1251,13 +1248,11 @@ def test_ordinary_form_executes_exact_audited_submitter(
     path: str,
     expected_body: str,
 ) -> None:
-    _first, result, requests, details, _durable = (
-        _open_then_execute_discovered_control(
-            tmp_path,
-            chrome_browser,
-            path=path,
-            operation_kind=UnsubscribeOperationKind.SUBMIT_FORM,
-        )
+    _first, result, requests, details, _durable = _open_then_execute_discovered_control(
+        tmp_path,
+        chrome_browser,
+        path=path,
+        operation_kind=UnsubscribeOperationKind.SUBMIT_FORM,
     )
 
     assert result.outcome is UnsubscribeOutcome.DONE
@@ -1320,7 +1315,7 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
             action_plan_version=1,
             classification_id=701,
             account_id="fixture-account",
-            category=EmailCategory.SUBSCRIPTION,
+            category=EmailCategory.JUNK,
             classification_source="model",
             confidence=0.99,
             model_id="email-model:browser-fixture",
@@ -1336,9 +1331,7 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
             thread_identity="fixture-thread",
             subject="Fixture newsletter",
             trigger=EmailThreadMessage(
-                message_id=(
-                    "fixture-account:message-id:<browser-701@example.com>"
-                ),
+                message_id=("fixture-account:message-id:<browser-701@example.com>"),
                 sender="newsletter@example.com",
                 text="Newsletter body without attachment content.",
                 create_time="2026-08-30T08:00:00+00:00",
@@ -1363,9 +1356,7 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
                     "target": {
                         "action_identity": metadata["action_identity"],
                         "account_id": metadata["account_id"],
-                        "stable_message_identity": metadata[
-                            "stable_message_identity"
-                        ],
+                        "stable_message_identity": metadata["stable_message_identity"],
                         "thread_identity": metadata["thread_identity"],
                         "entry_reference": metadata["unsubscribe_entries"][0][
                             "reference"
@@ -1676,9 +1667,7 @@ def test_confirmation_email_fixture(tmp_path: Path, chrome_browser) -> None:
         operations=_operations(
             UnsubscribeOperationKind.OPEN_ENTRY,
             UnsubscribeOperationKind.CONFIRM_EMAIL,
-            targets=(
-                confirmation_target_reference("fixture-confirmation-message"),
-            ),
+            targets=(confirmation_target_reference("fixture-confirmation-message"),),
         ),
         confirmation_path="/confirmation-receipt",
     )
@@ -1704,9 +1693,7 @@ def test_confirmation_email_target_is_bound_to_effect_mail_and_control(
         operations=_operations(
             UnsubscribeOperationKind.OPEN_ENTRY,
             UnsubscribeOperationKind.CONFIRM_EMAIL,
-            targets=(
-                confirmation_target_reference("fixture-confirmation-message"),
-            ),
+            targets=(confirmation_target_reference("fixture-confirmation-message"),),
         ),
         confirmation_path="/confirmation-receipt",
         confirmation_binding=binding,
@@ -1764,9 +1751,9 @@ def test_unapproved_redirect_and_subresources_are_blocked_before_request(
             ),
         )
         try:
-            result = UnsubscribeExecutor(
-                store, browser, owner=_BROWSER_OWNER
-            ).execute(effect, (entry,))
+            result = UnsubscribeExecutor(store, browser, owner=_BROWSER_OWNER).execute(
+                effect, (entry,)
+            )
         finally:
             context.close()
 
@@ -1839,9 +1826,9 @@ def test_unapproved_form_popup_and_download_have_zero_external_effect(
             ),
         )
         try:
-            result = UnsubscribeExecutor(
-                store, browser, owner=_BROWSER_OWNER
-            ).execute(effect, (entry,))
+            result = UnsubscribeExecutor(store, browser, owner=_BROWSER_OWNER).execute(
+                effect, (entry,)
+            )
         finally:
             context.close()
 
@@ -1879,9 +1866,9 @@ def test_verified_one_click_posts_exact_body_without_cookie(
             ),
         )
         try:
-            result = UnsubscribeExecutor(
-                store, browser, owner=_BROWSER_OWNER
-            ).execute(effect, (entry,))
+            result = UnsubscribeExecutor(store, browser, owner=_BROWSER_OWNER).execute(
+                effect, (entry,)
+            )
         finally:
             context.close()
 

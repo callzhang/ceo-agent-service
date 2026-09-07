@@ -48,9 +48,9 @@ def test_email_category_key_accepts_initial_and_custom_keys_without_normalizing(
     assert hasattr(email_contracts, "validate_email_category_key")
     validate = email_contracts.validate_email_category_key
 
-    assert [validate(key) for key in email_contracts.INITIAL_EMAIL_CATEGORY_KEYS] == list(
-        email_contracts.INITIAL_EMAIL_CATEGORY_KEYS
-    )
+    assert [
+        validate(key) for key in email_contracts.INITIAL_EMAIL_CATEGORY_KEYS
+    ] == list(email_contracts.INITIAL_EMAIL_CATEGORY_KEYS)
     assert validate("board_governance") == "board_governance"
 
 
@@ -602,7 +602,7 @@ def test_attachment_metadata_is_immutable_and_cannot_hold_payload_content():
                     EmailAction.UNSUBSCRIBE: {"unsubscribe_url": "https://example.test"}
                 },
             },
-            "does not accept parameters",
+            "unsupported parameters",
         ),
     ),
 )

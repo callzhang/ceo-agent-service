@@ -26,7 +26,9 @@ from app.email_task_adapter import (
 )
 from app.email_unsubscribe import (
     browser_network_policy_for_entries,
+    browser_unsubscribe_entries,
     extract_unsubscribe_entries,
+    select_exact_unsubscribe_entry,
 )
 from app.store import AutoReplyStore
 
@@ -149,13 +151,19 @@ class EmailActionTaskProducer:
         body_text = str(message.get("markdownBody") or message.get("textBody") or "")
         body_html = ephemeral_body_html(message)
         authentication = ephemeral_unsubscribe_authentication(message)
-        entries = extract_unsubscribe_entries(
-            list_unsubscribe=str(message.get("listUnsubscribe") or ""),
-            list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
-            body_text=body_text,
-            body_html=body_html,
-            authentication_evidence=authentication,
+        entries = browser_unsubscribe_entries(
+            extract_unsubscribe_entries(
+                list_unsubscribe=str(message.get("listUnsubscribe") or ""),
+                list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
+                body_text=body_text,
+                body_html=body_html,
+                authentication_evidence=authentication,
+            ),
+            normalize_indexes=True,
         )
+        selection = dict(action_plan.action_parameters.get(EmailAction.UNSUBSCRIBE, {}))
+        if selection:
+            entries = (select_exact_unsubscribe_entry(entries, selection),)
         policy = browser_network_policy_for_entries(entries)
         return EmailAgentTaskInput(
             stable_message_identity=stable_identity,

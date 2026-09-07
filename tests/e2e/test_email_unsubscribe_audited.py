@@ -307,9 +307,7 @@ class _AuditedTurnExecutor:
                 "account_id": task_payload["account_id"],
                 "stable_message_identity": task_payload["stable_message_identity"],
                 "thread_identity": task_payload["thread_identity"],
-                "entry_reference": task_payload["unsubscribe_entries"][0][
-                    "reference"
-                ],
+                "entry_reference": task_payload["unsubscribe_entries"][0]["reference"],
                 "network_policy_reference": task_payload[
                     "unsubscribe_network_policy_reference"
                 ],
@@ -448,7 +446,7 @@ def _persist_confirmed_subscription(
         action_plan_version=1,
         classification_id=CLASSIFICATION_ID,
         account_id=ACCOUNT_ID,
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.JUNK,
         classification_source="user",
         confidence=1.0,
         model_id="email-model:audited-e2e:v1",
@@ -470,10 +468,10 @@ def _persist_confirmed_subscription(
                     "rfc_message_id": "<newsletter-801@example.com>",
                     "thread_id": THREAD_IDENTITY,
                 },
-                "category": EmailCategory.SUBSCRIPTION,
+                "category": EmailCategory.JUNK,
                 "confidence": 1.0,
                 "margin": 1.0,
-                "probabilities": {"subscription": 1.0},
+                "probabilities": {"junk": 1.0},
                 "model_id": plan.model_id,
                 "config_version": plan.config_version,
                 "status": EmailClassificationStatus.PROCESSED,
@@ -740,9 +738,7 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             )
             if destination != allowed_browser_destination:
                 blocked_browser_requests.append(value)
-                raise AssertionError(
-                    f"browser left exact fixture destination: {value}"
-                )
+                raise AssertionError(f"browser left exact fixture destination: {value}")
             browser_requests.append(destination)
             return original_validate_url(browser_policy, value)
 
@@ -882,9 +878,7 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     assert [run.role for run in runs].count(AgentRole.AUDIT) == 2
     assert all(run.status == "completed" for run in runs)
     assert len(executor.audit_invocations) == 2
-    assert [
-        (run.role.value, run.proposal_revision) for run in runs
-    ] == [
+    assert [(run.role.value, run.proposal_revision) for run in runs] == [
         ("consumer", 0),
         ("audit", 0),
         ("consumer", 1),
@@ -951,9 +945,10 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
         for key, value in expected_binding.items()
         if key != "entry_reference"
     )
-    assert payload["unsubscribe_entries"][0]["reference"] == expected_binding[
-        "entry_reference"
-    ]
+    assert (
+        payload["unsubscribe_entries"][0]["reference"]
+        == expected_binding["entry_reference"]
+    )
     expected_target_binding = {
         key: expected_binding[key]
         for key in (
@@ -964,9 +959,7 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             "entry_reference",
         )
     } | {
-        "network_policy_reference": payload[
-            "unsubscribe_network_policy_reference"
-        ],
+        "network_policy_reference": payload["unsubscribe_network_policy_reference"],
         "network_policy_origin_references": payload[
             "unsubscribe_network_policy_origin_references"
         ],
@@ -1034,8 +1027,9 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     assert second_effect["previous_effect_digest"] == first_effect["effect_digest"]
     assert receipt["effect_digest"] == second_effect["effect_digest"]
     assert claim["effect_digest"] == second_effect["effect_digest"]
-    assert executor.continuation_receipts[0]["previous_effect_digest"] == (
-        first_effect["effect_digest"]
+    assert (
+        executor.continuation_receipts[0]["previous_effect_digest"]
+        == (first_effect["effect_digest"])
     )
     assert [step["action_identity"] for step in step_rows] == [
         expected_binding["action_identity"],

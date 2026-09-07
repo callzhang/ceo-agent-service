@@ -51,7 +51,7 @@ def _payload(**overrides: object) -> dict[str, object]:
         "account_id": "account-primary",
         "stable_message_identity": "message-42",
         "thread_identity": "thread-42",
-        "category": "subscription",
+        "category": "junk",
         "classification_source": "model",
         "confidence": 0.98,
         "model_id": "email-model:2026-08-30:test",
@@ -60,9 +60,7 @@ def _payload(**overrides: object) -> dict[str, object]:
         "unsubscribe_entries": [],
         "unsubscribe_authentication": None,
         "unsubscribe_network_policy_reference": "network-policy:test",
-        "unsubscribe_network_policy_origin_references": [
-            "network-origin:test"
-        ],
+        "unsubscribe_network_policy_origin_references": ["network-origin:test"],
     }
     value.update(overrides)
     return value
@@ -78,9 +76,7 @@ def _task(
 ) -> ReplyTask:
     encoded = value if isinstance(value, str) else json.dumps(value)
     identity = (
-        str(value.get("action_identity", ""))
-        if isinstance(value, dict)
-        else "invalid"
+        str(value.get("action_identity", "")) if isinstance(value, dict) else "invalid"
     )
     return ReplyTask(
         id=task_id,
@@ -201,19 +197,25 @@ def test_private_material_in_unconstrained_text_fields_fails_closed(
 def test_nonempty_unsubscribe_action_parameters_fail_closed():
     payload = _payload(action_parameters={"target": "opaque"})
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 def test_unknown_top_level_payload_key_fails_closed():
     payload = _payload(unexpected="value")
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -229,10 +231,13 @@ def test_missing_unsubscribe_specific_field_fails_closed(missing_field: str):
     payload = _payload()
     payload.pop(missing_field)
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -242,45 +247,56 @@ def test_missing_unsubscribe_specific_field_fails_closed(missing_field: str):
 def test_unsubscribe_entries_must_be_a_json_list_of_objects(invalid_entries):
     payload = _payload(unsubscribe_entries=invalid_entries)
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 def _valid_unsubscribe_entry(**overrides: object) -> dict[str, object]:
     entry: dict[str, object] = {
+        "index": 0,
         "source": UnsubscribeEntrySource.HEADER_HTTPS.value,
+        "digest": "a" * 64,
         "reference": "unsubscribe-entry:" + "a" * 64,
-        "priority": 10,
     }
     entry.update(overrides)
     return entry
 
 
 @pytest.mark.parametrize(
-    ("source", "priority"),
+    "source",
     (
-        (UnsubscribeEntrySource.HEADER_HTTPS.value, 10),
-        (UnsubscribeEntrySource.HEADER_MAILTO.value, 20),
-        (UnsubscribeEntrySource.BODY_HTML_HTTPS.value, 30),
-        (UnsubscribeEntrySource.BODY_TEXT_HTTPS.value, 40),
+        UnsubscribeEntrySource.HEADER_HTTPS.value,
+        UnsubscribeEntrySource.BODY_HTML_HTTPS.value,
+        UnsubscribeEntrySource.BODY_TEXT_HTTPS.value,
     ),
 )
-def test_ordinary_unsubscribe_entry_source_and_priority_are_valid(
-    source: str,
-    priority: int,
-):
+def test_ordinary_unsubscribe_entry_source_is_valid(source: str):
+    payload = _payload(unsubscribe_entries=[_valid_unsubscribe_entry(source=source)])
+
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is True
+    )
+
+
+def test_mailto_unsubscribe_entry_source_is_not_authorized() -> None:
     payload = _payload(
         unsubscribe_entries=[
-            _valid_unsubscribe_entry(source=source, priority=priority)
+            _valid_unsubscribe_entry(
+                source=UnsubscribeEntrySource.HEADER_MAILTO.value,
+            )
         ]
     )
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is True
+    assert validate_audited_email_task(_task(payload), _context(payload)) is False
 
 
 def test_authenticated_one_click_entry_is_valid():
@@ -288,7 +304,6 @@ def test_authenticated_one_click_entry_is_valid():
         unsubscribe_entries=[
             _valid_unsubscribe_entry(
                 source=UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS.value,
-                priority=0,
             )
         ],
         unsubscribe_authentication={
@@ -297,10 +312,13 @@ def test_authenticated_one_click_entry_is_valid():
         },
     )
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is True
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is True
+    )
 
 
 @pytest.mark.parametrize(
@@ -314,15 +332,16 @@ def test_unsubscribe_entry_reference_must_be_canonical_sha256(
     invalid_reference: str,
 ):
     payload = _payload(
-        unsubscribe_entries=[
-            _valid_unsubscribe_entry(reference=invalid_reference)
-        ]
+        unsubscribe_entries=[_valid_unsubscribe_entry(reference=invalid_reference)]
     )
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -340,65 +359,47 @@ def test_one_click_entry_requires_verified_authentication(authentication):
         unsubscribe_entries=[
             _valid_unsubscribe_entry(
                 source=UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS.value,
-                priority=0,
             )
         ],
         unsubscribe_authentication=authentication,
     )
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
-
-
-@pytest.mark.parametrize(
-    ("source", "wrong_priority"),
-    (
-        (UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS.value, 1),
-        (UnsubscribeEntrySource.HEADER_HTTPS.value, 11),
-        (UnsubscribeEntrySource.HEADER_MAILTO.value, 21),
-        (UnsubscribeEntrySource.BODY_HTML_HTTPS.value, 31),
-        (UnsubscribeEntrySource.BODY_TEXT_HTTPS.value, 41),
-    ),
-)
-def test_unsubscribe_entry_source_priority_mismatch_fails_closed(
-    source: str,
-    wrong_priority: int,
-):
-    payload = _payload(
-        unsubscribe_entries=[
-            _valid_unsubscribe_entry(
-                source=source,
-                priority=wrong_priority,
-            )
-        ],
-        unsubscribe_authentication=(
-            {
-                "evidence_reference": "dkim-evidence:mail-42",
-                "one_click_verified": True,
-            }
-            if source == UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS.value
-            else None
-        ),
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
     )
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+
+def test_unsubscribe_entry_digest_reference_mismatch_fails_closed():
+    payload = _payload(
+        unsubscribe_entries=[_valid_unsubscribe_entry(digest="b" * 64)],
+    )
+
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
-@pytest.mark.parametrize("missing_field", ("source", "reference", "priority"))
+@pytest.mark.parametrize("missing_field", ("index", "source", "digest", "reference"))
 def test_unsubscribe_entry_requires_every_exact_field(missing_field: str):
     entry = _valid_unsubscribe_entry()
     entry.pop(missing_field)
     payload = _payload(unsubscribe_entries=[entry])
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 def test_unsubscribe_entry_rejects_extra_field():
@@ -406,10 +407,13 @@ def test_unsubscribe_entry_rejects_extra_field():
         unsubscribe_entries=[_valid_unsubscribe_entry(private_url="redacted")]
     )
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -421,9 +425,10 @@ def test_unsubscribe_entry_rejects_extra_field():
         ("reference", "opaque-reference:without-required-prefix"),
         ("reference", "https://example.com/unsubscribe?token=private"),
         ("reference", "file:///Users/derek/private/unsubscribe"),
-        ("priority", -1),
-        ("priority", True),
-        ("priority", 1.0),
+        ("index", -1),
+        ("index", True),
+        ("index", 1.0),
+        ("digest", "b" * 64),
     ),
 )
 def test_unsubscribe_entry_scalar_contract_fails_closed(
@@ -434,20 +439,26 @@ def test_unsubscribe_entry_scalar_contract_fails_closed(
         unsubscribe_entries=[_valid_unsubscribe_entry(**{field: invalid_value})]
     )
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 def test_duplicate_unsubscribe_entry_references_fail_closed():
     entry = _valid_unsubscribe_entry()
     payload = _payload(unsubscribe_entries=[entry, dict(entry)])
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 def test_exact_unsubscribe_authentication_object_is_valid():
@@ -458,10 +469,13 @@ def test_exact_unsubscribe_authentication_object_is_valid():
         }
     )
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is True
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is True
+    )
 
 
 @pytest.mark.parametrize(
@@ -495,10 +509,13 @@ def test_unsubscribe_authentication_contract_fails_closed(
 ):
     payload = _payload(unsubscribe_authentication=invalid_authentication)
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -513,10 +530,13 @@ def test_unsubscribe_authentication_contract_fails_closed(
 def test_unsubscribe_network_policy_reference_fails_closed(invalid_reference):
     payload = _payload(unsubscribe_network_policy_reference=invalid_reference)
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -532,14 +552,15 @@ def test_unsubscribe_network_policy_reference_fails_closed(invalid_reference):
     ),
 )
 def test_unsubscribe_network_policy_origins_fail_closed(invalid_references):
-    payload = _payload(
-        unsubscribe_network_policy_origin_references=invalid_references
-    )
+    payload = _payload(unsubscribe_network_policy_origin_references=invalid_references)
 
-    assert validate_audited_email_task(
-        _task(payload),
-        _context(payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            _task(payload),
+            _context(payload),
+        )
+        is False
+    )
 
 
 def test_legacy_v1_unsubscribe_cannot_select_a_direct_lifecycle():
@@ -657,9 +678,14 @@ def test_invalid_json_and_other_channels_remain_audited():
     other_task = _task(payload, channel="dingtalk")
     other_context = _context(payload, channel="dingtalk")
 
-    assert select_task_lifecycle(invalid_task, email_context) is TaskLifecycle.CONSUMER_AUDIT
+    assert (
+        select_task_lifecycle(invalid_task, email_context)
+        is TaskLifecycle.CONSUMER_AUDIT
+    )
     assert validate_audited_email_task(invalid_task, email_context) is False
-    assert select_task_lifecycle(other_task, other_context) is TaskLifecycle.CONSUMER_AUDIT
+    assert (
+        select_task_lifecycle(other_task, other_context) is TaskLifecycle.CONSUMER_AUDIT
+    )
     assert validate_audited_email_task(other_task, other_context) is False
 
 
@@ -671,10 +697,13 @@ def test_four_thousand_digit_confidence_fails_closed_without_exception():
         trigger_message_id=str(decoded_payload["action_identity"]),
     )
 
-    assert validate_audited_email_task(
-        task,
-        _context(decoded_payload),
-    ) is False
+    assert (
+        validate_audited_email_task(
+            task,
+            _context(decoded_payload),
+        )
+        is False
+    )
 
 
 def test_integer_over_python_digit_limit_fails_closed_without_exception():

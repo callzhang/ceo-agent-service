@@ -47,6 +47,7 @@ from app.email_unsubscribe import (
     UnsubscribePageState,
     UnsubscribeProviderAuthError,
     UnsubscribeTerminalReceipt,
+    browser_unsubscribe_entries,
     disposition_for_unsubscribe_outcome,
     extract_unsubscribe_entries,
     normalize_unsubscribe_result_text,
@@ -61,8 +62,7 @@ from app.email_unsubscribe import (
 def test_unsubscribe_result_text_is_redacted_bounded_and_digest_is_full_text() -> None:
     result, digest = normalize_unsubscribe_result_text(
         "退订成功\r\nhttps://news.example.com/unsubscribe?token=private-token "
-        "/Users/derek/private-profile secret=super-secret\x00\n"
-        + "你好" * 10_000
+        "/Users/derek/private-profile secret=super-secret\x00\n" + "你好" * 10_000
     )
 
     assert "private-token" not in result
@@ -82,7 +82,7 @@ RUNTIME_PLAN = build_versioned_email_action_plan(
     action_plan_version=1,
     classification_id=41,
     account_id="account-primary",
-    category=EmailCategory.NOTIFICATION,
+    category=EmailCategory.JUNK,
     classification_source="model",
     confidence=0.98,
     model_id="email-model:task11-test",
@@ -204,9 +204,12 @@ def _task() -> ReplyTask:
         "thread_identity": "thread-41",
         "unsubscribe_entries": [
             {
+                "index": 0,
                 "source": "header_https",
+                "digest": unsubscribe_entry_reference(TOKEN_URL).removeprefix(
+                    "unsubscribe-entry:"
+                ),
                 "reference": unsubscribe_entry_reference(TOKEN_URL),
-                "priority": 10,
             }
         ],
         "unsubscribe_authentication": None,
@@ -309,11 +312,20 @@ def test_network_policy_reference_binds_test_only_loopback_mode() -> None:
     assert production.reference != test_only.reference
 
 
-def test_extracts_and_prioritizes_rfc_entries_without_rendering_private_urls() -> None:
+def test_extracts_candidates_in_offline_semantic_order_with_ephemeral_metadata(
+    monkeypatch,
+) -> None:
+    def network_forbidden(*_args, **_kwargs):
+        raise AssertionError("candidate discovery must not use the network")
+
+    monkeypatch.setattr("socket.getaddrinfo", network_forbidden)
+    ordinary_header = "https://header.example.com/unsubscribe?id=header-token"
+    semantic_html = "https://html.example.com/preferences?id=html-token"
+    nearby_text = "https://text.example.com/leave?id=text-token"
     entries = extract_unsubscribe_entries(
         list_unsubscribe=(
             "<mailto:leave@example.com?subject=unsubscribe>, "
-            f"<{TOKEN_URL}>"
+            f"<{TOKEN_URL}>, <{ordinary_header}>"
         ),
         list_unsubscribe_post="List-Unsubscribe=One-Click",
         authentication_evidence=UnsubscribeAuthenticationEvidence(
@@ -321,10 +333,8 @@ def test_extracts_and_prioritizes_rfc_entries_without_rendering_private_urls() -
             dkim_covers_list_unsubscribe_post=True,
             evidence_reference="dkim-evidence:message-41",
         ),
-        body_text=(
-            "Manage your subscription: "
-            "https://body.example.com/preferences/unsubscribe?id=body-token"
-        ),
+        body_html=f'<a href="{semantic_html}">取消订阅</a>',
+        body_text=f"如不希望继续接收，请退订 {nearby_text}",
     )
 
     selected = select_browser_unsubscribe_entry(entries)
@@ -333,12 +343,43 @@ def test_extracts_and_prioritizes_rfc_entries_without_rendering_private_urls() -
     assert selected.source is UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS
     assert selected.private_url == TOKEN_URL
     assert selected.reference.startswith("unsubscribe-entry:")
+    assert [entry.source for entry in entries] == [
+        UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS,
+        UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS,
+        UnsubscribeEntrySource.HEADER_MAILTO,
+        UnsubscribeEntrySource.BODY_HTML_HTTPS,
+        UnsubscribeEntrySource.BODY_TEXT_HTTPS,
+    ]
+    assert [entry.index for entry in entries] == list(range(5))
+    assert entries[0].scheme == "https"
+    assert entries[0].host == "news.example.com"
+    assert entries[3].context == "取消订阅"
+    assert len(entries[4].context.encode("utf-8")) <= 160
+    assert set(entries[0].redacted) == {"index", "source", "digest", "reference"}
     assert "private-token" not in repr(entries)
-    assert "body-token" not in repr(entries)
+    assert "html-token" not in repr(entries)
+    assert "text-token" not in repr(entries)
     assert "private-token" not in json.dumps(
         [entry.redacted for entry in entries],
         sort_keys=True,
     )
+
+
+def test_executable_candidate_indexes_stay_stable_after_exact_selection() -> None:
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe="<mailto:leave@example.test?subject=unsubscribe>",
+        body_html=(
+            '<a href="https://first.example.test/unsubscribe?id=first">Unsubscribe</a>'
+            '<a href="https://second.example.test/unsubscribe?id=second">Unsubscribe</a>'
+        ),
+    )
+
+    executable = browser_unsubscribe_entries(entries, normalize_indexes=True)
+    selected = browser_unsubscribe_entries((executable[1],))
+
+    assert [entry.index for entry in executable] == [0, 1]
+    assert selected[0].index == 1
+    assert selected[0].reference == executable[1].reference
 
 
 def test_unverified_rfc_one_click_is_downgraded_to_ordinary_https() -> None:
@@ -402,12 +443,62 @@ def test_extracts_only_explicit_body_unsubscribe_links() -> None:
     assert "id=private" not in repr(entries)
 
 
+def test_plain_text_candidates_use_symmetric_cross_line_context_in_source_order() -> (
+    None
+):
+    first = "https://first.example.com/preferences?id=first-private"
+    second = "https://second.example.net/preferences?id=second-private"
+    entries = extract_unsubscribe_entries(
+        body_text=(f"{first}\n退订\n" + "普通说明" * 30 + f"\n{second}\nunsubscribe\n")
+    )
+
+    assert [entry.private_url for entry in entries] == [first, second]
+    assert [entry.index for entry in entries] == [0, 1]
+    assert "退订" in entries[0].context
+    assert "unsubscribe" in entries[1].context.casefold()
+    assert all(len(entry.context.encode("utf-8")) <= 160 for entry in entries)
+
+
+def test_plain_text_context_never_leaks_an_adjacent_url_fragment() -> None:
+    private_token = "adjacent-private-token-" * 8
+    first = f"https://first.example.com/unsubscribe?token={private_token}"
+    second = "https://second.example.net/unsubscribe?token=second-private"
+
+    entries = extract_unsubscribe_entries(body_text=f"{first} {second}\n退订")
+
+    assert [entry.private_url for entry in entries] == [first, second]
+    assert "adjacent-private-token" not in repr(entries)
+    assert "second-private" not in repr(entries)
+
+
+def test_plain_text_distant_marker_does_not_bind_single_ordinary_url() -> None:
+    ordinary_url = "https://news.example.com/preferences?id=distant-private"
+
+    entries = extract_unsubscribe_entries(
+        body_text="unsubscribe\n" + ("ordinary body text " * 800) + ordinary_url
+    )
+
+    assert entries == ()
+    assert "distant-private" not in repr(entries)
+
+
+def test_plain_text_distant_marker_does_not_bind_any_of_multiple_urls() -> None:
+    first = "https://first.example.com/preferences?id=first-distant"
+    second = "https://second.example.net/preferences?id=second-distant"
+
+    entries = extract_unsubscribe_entries(
+        body_text=("退订\n" + ("普通正文" * 3500) + f"\n{first}\n普通链接\n{second}")
+    )
+
+    assert entries == ()
+    assert "first-distant" not in repr(entries)
+    assert "second-distant" not in repr(entries)
+
+
 def test_accepted_unsubscribe_effect_binds_exact_audited_operations() -> None:
     effect = accepted_email_unsubscribe_effect(_task(), _accepted_action())
 
-    assert effect == _effect(
-        _operations(UnsubscribeOperationKind.OPEN_ENTRY)
-    )
+    assert effect == _effect(_operations(UnsubscribeOperationKind.OPEN_ENTRY))
 
 
 def test_accepted_unsubscribe_effect_rejects_url_or_wrong_authorization() -> None:
@@ -422,7 +513,9 @@ def test_accepted_unsubscribe_effect_rejects_url_or_wrong_authorization() -> Non
         accepted_email_unsubscribe_effect(wrong_task, _accepted_action())
 
 
-def test_accepted_unsubscribe_effect_rejects_private_url_in_any_proposal_field() -> None:
+def test_accepted_unsubscribe_effect_rejects_private_url_in_any_proposal_field() -> (
+    None
+):
     action = _accepted_action().model_copy(
         update={"description": f"Open {TOKEN_URL}"},
         deep=True,
@@ -662,10 +755,10 @@ def _authorized_store(tmp_path: Path) -> EmailStore:
                     "rfc_message_id": "<mail-41@example.com>",
                     "thread_id": "thread-41",
                 },
-                "category": EmailCategory.NOTIFICATION,
+                "category": EmailCategory.JUNK,
                 "confidence": 0.98,
                 "margin": 0.4,
-                "probabilities": {"notification": 0.98},
+                "probabilities": {"junk": 0.98},
                 "model_id": RUNTIME_PLAN.model_id,
                 "config_version": RUNTIME_PLAN.config_version,
                 "status": EmailClassificationStatus.PROCESSED,
@@ -755,8 +848,14 @@ def test_restart_reconciles_receipt_before_page_and_never_replays_operations(
 @pytest.mark.parametrize(
     ("state", "outcome"),
     [
-        (UnsubscribePageState.ALREADY_UNSUBSCRIBED, UnsubscribeOutcome.ALREADY_UNSUBSCRIBED),
-        (UnsubscribePageState.LOGIN_REQUIRED, UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED),
+        (
+            UnsubscribePageState.ALREADY_UNSUBSCRIBED,
+            UnsubscribeOutcome.ALREADY_UNSUBSCRIBED,
+        ),
+        (
+            UnsubscribePageState.LOGIN_REQUIRED,
+            UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED,
+        ),
         (UnsubscribePageState.CAPTCHA, UnsubscribeOutcome.SKIPPED_CAPTCHA),
         (UnsubscribePageState.PAYMENT, UnsubscribeOutcome.SKIPPED_PAYMENT),
     ],
@@ -981,11 +1080,14 @@ def test_terminated_claim_after_external_effect_is_reconciliation_only(
         "dispatching"
     )
     assert store.list_email_unsubscribe_steps(effect.action_identity) == []
-    assert store.recover_terminated_email_unsubscribe_claims(
-        owner=UNSUBSCRIBE_OWNER,
-        termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
-        recovered_at="2026-08-30T11:00:00+00:00",
-    ) == 1
+    assert (
+        store.recover_terminated_email_unsubscribe_claims(
+            owner=UNSUBSCRIBE_OWNER,
+            termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
+            recovered_at="2026-08-30T11:00:00+00:00",
+        )
+        == 1
+    )
     restarted_browser = _ScriptedBrowser(
         [
             UnsubscribeObservation(
@@ -1022,11 +1124,14 @@ def test_uncertain_claim_without_journal_does_not_replay_from_blank_state(
     )
     assert claim is not None and claim["acquired"] is True
     assert store.list_email_unsubscribe_steps(effect.action_identity) == []
-    assert store.recover_terminated_email_unsubscribe_claims(
-        owner=UNSUBSCRIBE_OWNER,
-        termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
-        recovered_at="2026-08-30T11:01:00+00:00",
-    ) == 1
+    assert (
+        store.recover_terminated_email_unsubscribe_claims(
+            owner=UNSUBSCRIBE_OWNER,
+            termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
+            recovered_at="2026-08-30T11:01:00+00:00",
+        )
+        == 1
+    )
     restarted_browser = _ScriptedBrowser(
         [
             UnsubscribeObservation(
@@ -1060,11 +1165,14 @@ def test_uncertain_claim_missing_browser_state_stays_unresolved(tmp_path: Path) 
         owner=UNSUBSCRIBE_OWNER,
     )
     assert claim is not None and claim["acquired"] is True
-    assert store.recover_terminated_email_unsubscribe_claims(
-        owner=UNSUBSCRIBE_OWNER,
-        termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
-        recovered_at="2026-08-30T11:01:30+00:00",
-    ) == 1
+    assert (
+        store.recover_terminated_email_unsubscribe_claims(
+            owner=UNSUBSCRIBE_OWNER,
+            termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
+            recovered_at="2026-08-30T11:01:30+00:00",
+        )
+        == 1
+    )
     browser = _ScriptedBrowser(
         [],
         error=UnsubscribeBrowserError("recoverable browser state is missing"),
@@ -1096,11 +1204,14 @@ def test_uncertain_claim_matching_terminal_evidence_completes_without_write(
         owner=UNSUBSCRIBE_OWNER,
     )
     assert claim is not None and claim["acquired"] is True
-    assert store.recover_terminated_email_unsubscribe_claims(
-        owner=UNSUBSCRIBE_OWNER,
-        termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
-        recovered_at="2026-08-30T11:02:00+00:00",
-    ) == 1
+    assert (
+        store.recover_terminated_email_unsubscribe_claims(
+            owner=UNSUBSCRIBE_OWNER,
+            termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
+            recovered_at="2026-08-30T11:02:00+00:00",
+        )
+        == 1
+    )
     terminal_receipt = _terminal_receipt(effect)
     browser = (
         _ScriptedBrowser([], receipt=terminal_receipt)
@@ -1251,10 +1362,7 @@ def test_redacted_receipt_rejects_credentials_and_urls(
 
 def test_mail_review_skill_keeps_review_boundaries_and_adds_unsubscribe_rules() -> None:
     skill = (
-        Path(__file__).resolve().parents[1]
-        / "skills"
-        / "ceo-mail-review"
-        / "SKILL.md"
+        Path(__file__).resolve().parents[1] / "skills" / "ceo-mail-review" / "SKILL.md"
     ).read_text(encoding="utf-8")
     prose = " ".join(skill.split())
 
@@ -1324,7 +1432,9 @@ def test_action_required_persists_typed_continuation_without_executing_control(
     assert durable["controls"] == [
         {"reference": "control-form", "kind": "form", "intent": "unsubscribe"}
     ]
-    assert store.get_email_unsubscribe_claim(ACTION_IDENTITY)["status"] == "awaiting_audit"
+    assert (
+        store.get_email_unsubscribe_claim(ACTION_IDENTITY)["status"] == "awaiting_audit"
+    )
 
 
 def test_unsubscribe_executor_has_no_automatic_continuation_api(
@@ -1467,7 +1577,12 @@ def test_awaiting_audit_matching_terminal_receipt_completes_without_new_write(
 @pytest.mark.parametrize(
     ("mutator", "expected_error"),
     [
-        (lambda effect: _effect(effect.operations[1:], previous_effect_digest=effect.effect_digest), "prefix"),
+        (
+            lambda effect: _effect(
+                effect.operations[1:], previous_effect_digest=effect.effect_digest
+            ),
+            "prefix",
+        ),
         (
             lambda effect: EmailUnsubscribeEffect(
                 **{
@@ -1675,7 +1790,7 @@ def test_stale_plan_cannot_claim_a_persisted_continuation(tmp_path: Path) -> Non
         action_plan_version=2,
         classification_id=41,
         account_id="account-primary",
-        category=EmailCategory.NOTIFICATION,
+        category=EmailCategory.JUNK,
         classification_source="user",
         confidence=1.0,
         model_id=RUNTIME_PLAN.model_id,
@@ -1687,7 +1802,7 @@ def test_stale_plan_cannot_claim_a_persisted_continuation(tmp_path: Path) -> Non
     store.append_action_plan_version(
         41,
         corrected,
-        confirmed_category=EmailCategory.NOTIFICATION,
+        confirmed_category=EmailCategory.JUNK,
     )
     extension = _effect(
         initial.operations
@@ -1701,16 +1816,21 @@ def test_stale_plan_cannot_claim_a_persisted_continuation(tmp_path: Path) -> Non
         previous_effect_digest=initial.effect_digest,
     )
 
-    assert store.claim_email_unsubscribe_write(
-        **UnsubscribeExecutor._store_arguments(extension),
-        owner=RESTART_OWNER,
-    ) is None
+    assert (
+        store.claim_email_unsubscribe_write(
+            **UnsubscribeExecutor._store_arguments(extension),
+            owner=RESTART_OWNER,
+        )
+        is None
+    )
     assert store.get_email_unsubscribe_claim(ACTION_IDENTITY)["status"] == (
         "awaiting_audit"
     )
 
 
-def test_email_browser_profile_is_owner_only_and_serializes_access(tmp_path: Path) -> None:
+def test_email_browser_profile_is_owner_only_and_serializes_access(
+    tmp_path: Path,
+) -> None:
     profile = EmailBrowserProfile(tmp_path / "runtime")
 
     with profile.lock(timeout_seconds=0) as profile_path:
@@ -1740,7 +1860,9 @@ def test_email_browser_profile_rejects_symlink_and_main_browser_locations(
         )
 
 
-def test_persistent_email_browser_launch_is_always_headless_and_dedicated(tmp_path: Path) -> None:
+def test_persistent_email_browser_launch_is_always_headless_and_dedicated(
+    tmp_path: Path,
+) -> None:
     calls: list[dict[str, object]] = []
 
     class Chromium:

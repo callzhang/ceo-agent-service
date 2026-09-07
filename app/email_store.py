@@ -1306,6 +1306,8 @@ def _legacy_unsubscribe_private_values(url: object) -> tuple[str, ...]:
             if decoded:
                 values.add(decoded)
     return tuple(sorted((value for value in values if value), key=len, reverse=True))
+
+
 def _redact_legacy_unsubscribe_json(
     value: object,
     replacements: Sequence[tuple[str, str]],
@@ -1317,9 +1319,7 @@ def _redact_legacy_unsubscribe_json(
             value = value.replace(private_value, reference)
         return value
     if isinstance(value, list):
-        return [
-            _redact_legacy_unsubscribe_json(item, replacements) for item in value
-        ]
+        return [_redact_legacy_unsubscribe_json(item, replacements) for item in value]
     if isinstance(value, dict):
         return {
             key: _redact_legacy_unsubscribe_json(item, replacements)
@@ -11287,9 +11287,11 @@ class EmailStore:
                 """
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
-                       c.current_action_plan_id
+                       c.current_action_plan_id, p.actions_json,
+                       p.action_plan_version
                 from email_actions as a
                 join email_classifications as c on c.id=a.classification_id
+                join email_action_plans as p on p.action_plan_id=a.action_plan_id
                 where c.status='processed'
                 """
             ).fetchall()
@@ -11335,6 +11337,7 @@ class EmailStore:
                             and _retry_is_due(sibling["next_attempt_at"], claimed_at)
                         )
                     )
+                    and self._direct_action_dependency_satisfied(db, sibling)
                 ]
                 if not unfinished:
                     continue
@@ -11384,6 +11387,39 @@ class EmailStore:
                 attempt_number=attempt_number,
                 claimed_at=claimed_at,
             )
+
+    @staticmethod
+    def _direct_action_dependency_satisfied(
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> bool:
+        """Require audited terminal evidence before a dependent junk Trash."""
+
+        if row["action_type"] != EmailAction.TRASH.value:
+            return True
+        actions = _json_load(
+            row["actions_json"], field="actions_json", expected_type=list
+        )
+        if EmailAction.UNSUBSCRIBE.value not in actions:
+            return True
+        action_identity = email_action_identity(
+            account_id=row["account_id"],
+            stable_message_identity=row["stable_message_identity"],
+            action_type=EmailAction.UNSUBSCRIBE,
+            action_plan_version=int(row["action_plan_version"]),
+        )
+        receipt = db.execute(
+            """
+            select outcome from email_unsubscribe_receipts
+            where action_identity=? and action_plan_id=? and classification_id=?
+            """,
+            (action_identity, row["action_plan_id"], row["classification_id"]),
+        ).fetchone()
+        return receipt is not None and receipt["outcome"] in {
+            "done",
+            "already_unsubscribed",
+            "skipped_no_reliable_entry",
+        }
 
     @staticmethod
     def _claimed_direct_action(

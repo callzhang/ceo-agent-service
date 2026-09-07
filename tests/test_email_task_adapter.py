@@ -45,11 +45,6 @@ from app.email_unsubscribe import (
 )
 from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
-from app.task_lifecycle import (
-    TaskLifecycle,
-    select_task_lifecycle,
-    validate_audited_email_task,
-)
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
@@ -64,8 +59,11 @@ def _plan(
     account_id: str = "account-primary",
     instruction: str = "Reply in Chinese and acknowledge receipt.",
     classification_source: str = "model",
-    category: EmailCategory = EmailCategory.WORK,
+    category: EmailCategory | None = None,
 ):
+    category = category or (
+        EmailCategory.JUNK if EmailAction.UNSUBSCRIBE in actions else EmailCategory.WORK
+    )
     parameters = {}
     for action in actions:
         if action is EmailAction.AUTO_REPLY:
@@ -458,9 +456,7 @@ def test_v25_completed_selected_result_preserves_schema_keys_and_replays(
         "classification_id",
     }
     assert set(migrated_canonical_result) == durable_keys
-    queue_projection = {
-        key: migrated_queue_result[key] for key in durable_keys
-    }
+    queue_projection = {key: migrated_queue_result[key] for key in durable_keys}
     assert DurableAgentClassificationResult.model_validate(queue_projection)
     assert DurableAgentClassificationResult.model_validate(migrated_canonical_result)
     assert migrated_queue_result["unsubscribe_candidate_index"] == 0
@@ -506,9 +502,7 @@ def test_v25_migration_redacts_only_sensitive_query_and_fragment_values(
         },
         "folder_targets": {"work": "email/newsletter/footer"},
         "subject": "email newsletter footer metadata",
-        "metadata": {
-            "routing_note": "email/newsletter/footer are ordinary values"
-        },
+        "metadata": {"routing_note": "email/newsletter/footer are ordinary values"},
     }
     payload["config_version"] = expected_unrelated_values["config_version"]
     payload["category_descriptions"] = expected_unrelated_values[
@@ -545,21 +539,24 @@ def test_v25_migration_redacts_only_sensitive_query_and_fragment_values(
     assert migrated is not None
     migrated_payload = json.loads(migrated.input_json)
     migrated_result = json.loads(migrated.result_json)
-    assert migrated_payload["config_version"] == expected_unrelated_values[
-        "config_version"
-    ]
-    assert migrated_payload["category_descriptions"] == expected_unrelated_values[
-        "category_descriptions"
-    ]
-    assert migrated_payload["folder_targets"] == expected_unrelated_values[
-        "folder_targets"
-    ]
-    assert migrated_payload["message"]["subject"] == expected_unrelated_values[
-        "subject"
-    ]
-    assert migrated_payload["message"]["metadata"] == expected_unrelated_values[
-        "metadata"
-    ]
+    assert (
+        migrated_payload["config_version"]
+        == expected_unrelated_values["config_version"]
+    )
+    assert (
+        migrated_payload["category_descriptions"]
+        == expected_unrelated_values["category_descriptions"]
+    )
+    assert (
+        migrated_payload["folder_targets"]
+        == expected_unrelated_values["folder_targets"]
+    )
+    assert (
+        migrated_payload["message"]["subject"] == expected_unrelated_values["subject"]
+    )
+    assert (
+        migrated_payload["message"]["metadata"] == expected_unrelated_values["metadata"]
+    )
     durable_json = json.dumps(
         [migrated_payload, migrated_result], ensure_ascii=False, sort_keys=True
     )
@@ -850,10 +847,7 @@ def test_v25_migration_structurally_redacts_unicode_url_and_token_everywhere(
     ]
     assert all(private_url not in text for text in all_strings)
     assert all(private_token not in text for text in all_strings)
-    assert all(
-        "unsubscribe_url" not in document
-        for document in decoded_documents[1:]
-    )
+    assert all("unsubscribe_url" not in document for document in decoded_documents[1:])
     assert decoded_documents[1]["unsubscribe_candidate_source"] == "legacy"
     assert decoded_documents[2]["unsubscribe_candidate_source"] == "legacy"
 
@@ -1225,7 +1219,8 @@ def test_task_producer_projects_html_only_unsubscribe_as_opaque_reference(
 
     assert payload["unsubscribe_entries"] == [
         {
-            "priority": 30,
+            "index": 0,
+            "digest": payload["unsubscribe_entries"][0]["digest"],
             "reference": payload["unsubscribe_entries"][0]["reference"],
             "source": "body_html_https",
         }
@@ -1490,7 +1485,8 @@ def test_unsubscribe_task_projects_only_redacted_real_entry_references(
 
     assert entries == [
         {
-            "priority": 0,
+            "index": 0,
+            "digest": entries[0]["digest"],
             "reference": entries[0]["reference"],
             "source": "header_one_click_https",
         }
@@ -1592,7 +1588,7 @@ def test_accepted_unsubscribe_rejects_opening_mailto_entry(tmp_path: Path) -> No
         accepted_email_unsubscribe_effect(persisted_task, accepted)
 
 
-def test_new_non_subscription_unsubscribe_does_not_claim_legacy_audit_contract(
+def test_non_junk_unsubscribe_is_rejected_before_task_creation(
     tmp_path: Path,
 ) -> None:
     plan = _plan(
@@ -1618,45 +1614,13 @@ def test_new_non_subscription_unsubscribe_does_not_claim_legacy_audit_contract(
         ).origin_references,
     )
 
-    [route] = _authorized_adapter(
-        tmp_path,
-        plan,
-        task_input,
-    ).ensure_action_plan_tasks(plan, task_input)
-    payload = json.loads(route.task.trigger_message_json)
-
-    assert payload["lifecycle_version"] == "email_unsubscribe_audited_v2"
-    assert route.task.channel == route.context.channel == "email"
-    assert route.action_type is EmailAction.UNSUBSCRIBE
-    assert payload["action_type"] == "unsubscribe"
-    assert payload["action_identity"] == route.task.trigger_message_id
-    assert route.context.trigger_message_id == route.task.trigger_message_id
-    assert route.context.trigger_raw_payload == payload
-    assert payload["account_id"] == plan.account_id
-    assert payload["stable_message_identity"] == task_input.stable_message_identity
-    assert payload["thread_identity"] == task_input.thread_identity
-    assert payload["action_plan_id"] == plan.action_plan_id
-    assert payload["action_plan_version"] == plan.action_plan_version
-    assert payload["classification_id"] == plan.classification_id
-    assert payload["model_id"] == plan.model_id
-    assert payload["config_version"] == plan.config_version
-    assert payload["unsubscribe_entries"][0]["reference"].startswith(
-        "unsubscribe-entry:"
-    )
-    for forbidden in (
-        private_url,
-        "private-token",
-        "do-not-persist",
-        "/Users/derek/private",
-        "attachment.bin",
-        "contract.pdf",
-        "application/pdf",
+    adapter = _authorized_adapter(tmp_path, plan, task_input)
+    with pytest.raises(
+        EmailAgentTaskMetadataError,
+        match="only junk may create an unsubscribe task",
     ):
-        assert forbidden not in route.task.trigger_message_json
-    assert (
-        select_task_lifecycle(route.task, route.context) is TaskLifecycle.CONSUMER_AUDIT
-    )
-    assert validate_audited_email_task(route.task, route.context) is False
+        adapter.ensure_action_plan_tasks(plan, task_input)
+    assert adapter.store.count_reply_tasks(channel="email") == 0
 
 
 @pytest.mark.parametrize(
@@ -1766,7 +1730,7 @@ def test_refreshed_email_context_contains_one_opaque_continuation_receipt(
     plan = _plan(
         (EmailAction.UNSUBSCRIBE,),
         classification_source="user",
-        category=EmailCategory.NOTIFICATION,
+        category=EmailCategory.JUNK,
     )
     task_input = _task_input()
     email_store = _email_store(tmp_path)
@@ -1876,7 +1840,7 @@ def test_refreshed_email_context_rejects_private_continuation_evidence(
     plan = _plan(
         (EmailAction.UNSUBSCRIBE,),
         classification_source="user",
-        category=EmailCategory.NOTIFICATION,
+        category=EmailCategory.JUNK,
     )
     task_input = _task_input()
     email_store = _email_store(tmp_path)
@@ -1942,7 +1906,7 @@ def test_terminal_unsubscribe_claim_without_continuation_adds_no_receipt(
     plan = _plan(
         (EmailAction.UNSUBSCRIBE,),
         classification_source="user",
-        category=EmailCategory.NOTIFICATION,
+        category=EmailCategory.JUNK,
     )
     task_input = _task_input()
     email_store = _email_store(tmp_path)

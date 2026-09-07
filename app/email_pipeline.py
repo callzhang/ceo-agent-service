@@ -57,6 +57,8 @@ class EmailCategoryConfig:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "category", validate_email_category_key(self.category))
+        if EmailAction.UNSUBSCRIBE in self.actions and self.category != "junk":
+            raise ValueError("only junk may authorize unsubscribe")
         if not 0.0 <= self.threshold <= 1.0:
             raise ValueError("threshold must be between zero and one")
         if not self.config_version.strip():

@@ -31,6 +31,7 @@ def _agent_classification_action_plan(
     classification_id: int,
     account_id: str,
     result: object,
+    unsubscribe_selection: object | None = None,
     folder_targets: Mapping[str, str],
     config_version: str,
     created_at: datetime,
@@ -48,8 +49,37 @@ def _agent_classification_action_plan(
     actions: tuple[EmailAction, ...]
     parameters: dict[EmailAction, Mapping[str, object]]
     if category == "junk":
-        actions = ()
-        parameters = {}
+        if unsubscribe_selection is None:
+            actions = (EmailAction.TRASH,)
+            parameters = {}
+        else:
+            index = getattr(unsubscribe_selection, "unsubscribe_candidate_index")
+            source = getattr(unsubscribe_selection, "unsubscribe_candidate_source")
+            digest = getattr(unsubscribe_selection, "unsubscribe_candidate_digest")
+            reference = getattr(
+                unsubscribe_selection, "unsubscribe_candidate_reference"
+            )
+            if any(value is None for value in (index, source, digest, reference)):
+                raise ValueError("junk unsubscribe selection is incomplete")
+            from app.email_unsubscribe import UnsubscribeEntrySource
+
+            try:
+                selected_source = UnsubscribeEntrySource(str(source))
+            except ValueError as exc:
+                raise ValueError(
+                    "junk unsubscribe selection is not executable HTTPS"
+                ) from exc
+            if not selected_source.value.endswith("_https"):
+                raise ValueError("junk unsubscribe selection is not executable HTTPS")
+            actions = (EmailAction.UNSUBSCRIBE, EmailAction.TRASH)
+            parameters = {
+                EmailAction.UNSUBSCRIBE: {
+                    "candidate_index": index,
+                    "candidate_source": source,
+                    "candidate_digest": digest,
+                    "candidate_reference": reference,
+                }
+            }
     else:
         target = str(folder_targets.get(category) or "").strip()
         if not target:
@@ -81,6 +111,7 @@ def run_email_classification_task_once(
     provider_readback: Callable[
         [object, Mapping[str, object]], Mapping[str, object] | None
     ],
+    action_task_producer: object,
 ) -> Mapping[str, object] | None:
     """Run one dedicated classifier task and persist its non-action decision."""
 
@@ -88,6 +119,7 @@ def run_email_classification_task_once(
 
     from app.email_classifier_contracts import (
         EmailAttachmentMetadata,
+        EmailActionPlan,
         EmailClassification,
         EmailClassificationStatus,
         EmailProviderLocator,
@@ -130,6 +162,16 @@ def run_email_classification_task_once(
                 "unsubscribe_candidate_reference": stored_result.unsubscribe_candidate_reference,
                 "classification_id": canonical["id"],
             }
+            persisted_plan = canonical.get("action_plan")
+            if persisted_plan is not None:
+                plan = EmailActionPlan.model_validate_json(json.dumps(persisted_plan))
+                if plan.agent_actions:
+                    current_message = provider_readback(task, payload)
+                    if current_message is None:
+                        raise ValueError(
+                            "persisted Agent action message is unavailable"
+                        )
+                    action_task_producer.produce(plan, current_message)
             adapter.complete(task, outcome)
             return outcome
         current_message = provider_readback(task, payload)
@@ -149,20 +191,45 @@ def run_email_classification_task_once(
             }
             adapter.complete(task, outcome)
             return outcome
-        from app.email_imap_readonly import ephemeral_body_html
-        from app.email_unsubscribe import extract_unsubscribe_entries
+        from app.email_imap_readonly import (
+            ephemeral_body_html,
+            ephemeral_unsubscribe_authentication,
+        )
+        from app.email_unsubscribe import (
+            browser_unsubscribe_entries,
+            extract_unsubscribe_entries,
+        )
         from app.email_classifier_agent import durable_agent_classification_result
 
         body_text = str(
             current_message.get("markdownBody") or current_message.get("textBody") or ""
         )
-        entries = extract_unsubscribe_entries(
-            list_unsubscribe=str(current_message.get("listUnsubscribe") or ""),
-            list_unsubscribe_post=str(current_message.get("listUnsubscribePost") or ""),
-            body_text=body_text,
-            body_html=ephemeral_body_html(current_message),
+        entries = browser_unsubscribe_entries(
+            extract_unsubscribe_entries(
+                list_unsubscribe=str(current_message.get("listUnsubscribe") or ""),
+                list_unsubscribe_post=str(
+                    current_message.get("listUnsubscribePost") or ""
+                ),
+                body_text=body_text,
+                body_html=ephemeral_body_html(current_message),
+                authentication_evidence=ephemeral_unsubscribe_authentication(
+                    current_message
+                ),
+            ),
+            normalize_indexes=True,
         )
         candidate_urls = tuple(entry.private_url for entry in entries)
+        candidate_metadata = tuple(
+            {
+                "index": entry.index,
+                "source": entry.source.value,
+                "scheme": entry.scheme,
+                "host": entry.host,
+                "context": entry.context,
+                "reference": entry.reference,
+            }
+            for entry in entries
+        )
         prompt_message = dict(payload.get("message") or {})
         prompt_message["text"] = body_text
         prompt_message["subject"] = str(current_message.get("subject") or "")
@@ -170,6 +237,7 @@ def run_email_classification_task_once(
             task,
             current_message=prompt_message,
             unsubscribe_candidates=candidate_urls,
+            unsubscribe_candidate_metadata=candidate_metadata,
         )
         durable_result = durable_agent_classification_result(result, entries)
         outcome = {
@@ -198,6 +266,11 @@ def run_email_classification_task_once(
             classification_id=classification_id,
             account_id=locator.account_id,
             result=result,
+            unsubscribe_selection=(
+                durable_result
+                if durable_result.unsubscribe_candidate_index is not None
+                else None
+            ),
             folder_targets=payload["folder_targets"],
             config_version=payload["config_version"],
             created_at=datetime.now(timezone.utc),
@@ -253,6 +326,8 @@ def run_email_classification_task_once(
             received_at=str(message.get("date") or ""),
             model_text=str(message.get("text") or "") or "__empty__",
         )
+        if plan is not None and plan.agent_actions:
+            action_task_producer.produce(plan, current_message)
         outcome = {**outcome, "classification_id": classification_id}
         adapter.complete(task, outcome)
         return outcome
@@ -1224,7 +1299,10 @@ def build_email_worker_dependencies(
     )
     from app.email_model_registry import EmailModelRegistry
     from app.email_store import EmailStore
-    from app.email_task_producer import EmailClassificationTaskProducer
+    from app.email_task_producer import (
+        EmailActionTaskProducer,
+        EmailClassificationTaskProducer,
+    )
     from app.agent_runtime_production import build_production_routed_codex_execution
     from app.store import AutoReplyStore
 
@@ -1234,6 +1312,7 @@ def build_email_worker_dependencies(
 
     runtime_skill_snapshot = resolve_pending_runtime_skills(task_store, pid=os.getpid())
     classification_task_producer = EmailClassificationTaskProducer(email_store)
+    action_task_producer = EmailActionTaskProducer(task_store, email_store)
     classification_task_producer.adapter.recover_running_tasks()
     source_factory = _build_email_source_factory(settings)
     model_root = Path(settings.db_path).parent / "email-models"
@@ -1471,6 +1550,7 @@ def build_email_worker_dependencies(
                 email_store,
                 owner=f"email-classifier:{os.getpid()}",
                 provider_readback=read_current_classification_message,
+                action_task_producer=action_task_producer,
             ),
         )
 
@@ -1605,15 +1685,22 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
                 body_html=ephemeral_body_html(message),
                 authentication_evidence=authentication,
             )
-            entries = browser_unsubscribe_entries(entries)
+            entries = tuple(
+                entry
+                for entry in browser_unsubscribe_entries(
+                    entries,
+                    normalize_indexes=True,
+                )
+                if entry.reference == expected_reference
+            )
+            if len(entries) != 1:
+                raise ValueError("email unsubscribe entry changed")
             policy = browser_network_policy_for_entries(entries)
             if (
                 policy.reference != network_policy_reference
                 or policy.origin_references != network_policy_origin_references
             ):
                 raise ValueError("email unsubscribe network policy changed")
-            if not any(entry.reference == expected_reference for entry in entries):
-                raise ValueError("email unsubscribe entry changed")
             return entries
         finally:
             _close_email_source(source)

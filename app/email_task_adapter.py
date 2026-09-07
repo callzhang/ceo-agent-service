@@ -38,6 +38,7 @@ from app.email_unsubscribe import (
     UnsubscribeOperationKind,
     browser_unsubscribe_entries,
     extract_unsubscribe_entries,
+    select_exact_unsubscribe_entry,
 )
 from app.leak_check import (
     assert_no_credentials,
@@ -67,7 +68,6 @@ _UNSUBSCRIBE_CONTROL_INTENTS = frozenset({"continue", "unsubscribe", "confirm"})
 _UNSUBSCRIBE_ENTRY_PRIORITIES = {
     "header_one_click_https": 0,
     "header_https": 10,
-    "header_mailto": 20,
     "body_html_https": 30,
     "body_text_https": 40,
 }
@@ -916,7 +916,7 @@ def validate_unsubscribe_entry_operation_semantics(
             item
             for item in entries
             if type(item) is dict
-            and set(item) == {"source", "reference", "priority"}
+            and set(item) == {"index", "source", "digest", "reference"}
             and item.get("reference") == entry_reference
         ),
         None,
@@ -924,12 +924,15 @@ def validate_unsubscribe_entry_operation_semantics(
     if entry is None or operation.target_reference != entry_reference:
         raise ValueError("unsubscribe entry operation is invalid")
     source = entry.get("source")
-    priority = entry.get("priority")
+    index = entry.get("index")
+    digest = entry.get("digest")
     if (
         not isinstance(source, str)
         or source not in _UNSUBSCRIBE_ENTRY_PRIORITIES
-        or type(priority) is not int
-        or priority != _UNSUBSCRIBE_ENTRY_PRIORITIES[source]
+        or type(index) is not int
+        or index < 0
+        or not isinstance(digest, str)
+        or entry_reference != f"unsubscribe-entry:{digest}"
     ):
         raise ValueError("unsubscribe entry semantics are invalid")
     allowed_sources = _UNSUBSCRIBE_ENTRY_OPERATION_SOURCES.get(operation.kind)
@@ -1495,6 +1498,10 @@ class EmailAgentTaskAdapter:
             "action_parameters": parameters,
         }
         if action_type is EmailAction.UNSUBSCRIBE:
+            if action_plan.category != "junk":
+                raise EmailAgentTaskMetadataError(
+                    "only junk may create an unsubscribe task"
+                )
             entries = extract_unsubscribe_entries(
                 list_unsubscribe=task_input.list_unsubscribe,
                 list_unsubscribe_post=task_input.list_unsubscribe_post,
@@ -1510,7 +1517,10 @@ class EmailAgentTaskAdapter:
                 allow_loopback_for_tests=(
                     task_input.unsubscribe_allow_loopback_for_tests
                 ),
+                normalize_indexes=True,
             )
+            if parameters:
+                entries = (select_exact_unsubscribe_entry(entries, parameters),)
             if not entries:
                 raise EmailAgentTaskMetadataError(
                     "email unsubscribe has no HTTPS browser candidate"

@@ -671,7 +671,7 @@ def _projected_entry_references(payload: Mapping[str, object]) -> tuple[str, ...
         value.get("reference")
         for value in entries
         if isinstance(value, Mapping)
-        and set(value) == {"source", "reference", "priority"}
+        and set(value) == {"index", "source", "digest", "reference"}
         and isinstance(value.get("reference"), str)
         and str(value.get("reference")).strip()
     ]

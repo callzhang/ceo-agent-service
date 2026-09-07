@@ -463,6 +463,12 @@ class EmailActionPlan(BaseModel):
             EmailAction.LABEL: {"labels"},
             EmailAction.MOVE: {"target_folder"},
             EmailAction.AUTO_REPLY: {"instruction"},
+            EmailAction.UNSUBSCRIBE: {
+                "candidate_index",
+                "candidate_source",
+                "candidate_digest",
+                "candidate_reference",
+            },
         }
         for action, parameters in self.action_parameters.items():
             allowed_keys = parameter_schemas.get(action)
@@ -501,6 +507,27 @@ class EmailActionPlan(BaseModel):
             )
             if not isinstance(instruction, str) or not instruction.strip():
                 raise ValueError("auto_reply action requires a non-blank instruction")
+
+        if EmailAction.UNSUBSCRIBE in self.actions:
+            selection = self.action_parameters.get(EmailAction.UNSUBSCRIBE, {})
+            if selection and set(selection) != {
+                "candidate_index",
+                "candidate_source",
+                "candidate_digest",
+                "candidate_reference",
+            }:
+                raise ValueError("unsubscribe requires one exact redacted candidate")
+            digest = selection.get("candidate_digest") if selection else None
+            reference = selection.get("candidate_reference") if selection else None
+            if selection and (
+                type(selection.get("candidate_index")) is not int
+                or selection["candidate_index"] < 0
+                or not isinstance(selection.get("candidate_source"), str)
+                or not isinstance(digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                or reference != f"unsubscribe-entry:{digest}"
+            ):
+                raise ValueError("unsubscribe candidate binding is invalid")
 
         expected_identity = _action_plan_identity(
             action_plan_version=self.action_plan_version,

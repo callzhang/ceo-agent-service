@@ -25,8 +25,12 @@ from app.email_classifier_model import email_message_to_text
 from app.email_classifier_training import CategoryEligibility
 from app.email_provider_folders import FolderRole
 from app.email_unsubscribe import extract_unsubscribe_entries
-from app.email_imap_readonly import ImapUidBatch, fallback_stable_message_identity
-from app.email_imap_readonly import ephemeral_body_html
+from app.email_imap_readonly import (
+    ImapUidBatch,
+    ephemeral_body_html,
+    ephemeral_unsubscribe_authentication,
+    fallback_stable_message_identity,
+)
 from app.email_pipeline import (
     EmailCategoryConfig,
     EmailModelPrediction,
@@ -157,6 +161,7 @@ def scan_agent_classification_batch(
             list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
             body_text=str(message.get("markdownBody") or message.get("textBody") or ""),
             body_html=str(body_html),
+            authentication_evidence=ephemeral_unsubscribe_authentication(message),
         )
         task_producer.produce(
             message,

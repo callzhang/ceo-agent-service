@@ -365,8 +365,9 @@ class EmailClassifierAgent:
                     f"---\nname: {skill_name}\n"
                 )
                 and getattr(item, "source", None) == REPOSITORY_IMPORT_SOURCE
-                and sha256(str(getattr(item, "content", "")).encode("utf-8"))
-                .hexdigest()
+                and sha256(
+                    str(getattr(item, "content", "")).encode("utf-8")
+                ).hexdigest()
                 == getattr(item, "sha256", None)
             ),
             None,
@@ -387,10 +388,23 @@ class EmailClassifierAgent:
         *,
         current_message: Mapping[str, object],
         unsubscribe_candidates: Sequence[str],
+        unsubscribe_candidate_metadata: Sequence[Mapping[str, object]] = (),
     ) -> AgentClassificationResult:
         payload = json.loads(str(getattr(task, "input_json")))
         payload["message"] = dict(current_message)
-        payload["unsubscribe_candidates"] = list(unsubscribe_candidates)
+        if unsubscribe_candidate_metadata:
+            if len(unsubscribe_candidate_metadata) != len(unsubscribe_candidates):
+                raise ValueError("unsubscribe candidate metadata does not align")
+            payload["unsubscribe_candidates"] = [
+                dict(metadata) | {"url": url}
+                for metadata, url in zip(
+                    unsubscribe_candidate_metadata,
+                    unsubscribe_candidates,
+                    strict=True,
+                )
+            ]
+        else:
+            payload["unsubscribe_candidates"] = list(unsubscribe_candidates)
         prompt = build_agent_classification_prompt(
             payload,
             skill_text=f"{self.skill_receipt}\n{self.skill_text}",

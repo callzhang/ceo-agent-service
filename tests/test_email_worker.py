@@ -75,28 +75,231 @@ def test_agent_business_result_plans_move_then_optional_flag() -> None:
     assert not plan.agent_actions
 
 
-def test_agent_junk_result_leaves_task7_routing_unimplemented() -> None:
-    from app.email_classifier_agent import AgentClassificationResult
+def test_agent_junk_with_exact_candidate_plans_audited_unsubscribe_then_trash() -> None:
+    from app.email_classifier_agent import (
+        AgentClassificationResult,
+        durable_agent_classification_result,
+    )
+
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe="<https://example.com/unsubscribe?id=exact>"
+    )
+    result = AgentClassificationResult(
+        category="junk",
+        important=False,
+        certainty="certain",
+        confidence=0.98,
+        reason="Unrequested promotion with no retention value.",
+        unsubscribe_candidate_index=0,
+        unsubscribe_url="https://example.com/unsubscribe?id=exact",
+    )
 
     plan = _module()._agent_classification_action_plan(
         classification_id=72,
         account_id="account-1",
-        result=AgentClassificationResult(
-            category="junk",
-            important=False,
-            certainty="certain",
-            confidence=0.98,
-            reason="Unrequested promotion with no retention value.",
-            unsubscribe_candidate_index=0,
-            unsubscribe_url="https://example.com/unsubscribe?id=exact",
-        ),
+        result=result,
+        unsubscribe_selection=durable_agent_classification_result(result, entries),
         folder_targets={},
         config_version="config-v1",
         created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
     )
 
     assert plan is not None
-    assert plan.actions == ()
+    assert plan.actions == (EmailAction.UNSUBSCRIBE, EmailAction.TRASH)
+    assert plan.action_parameters[EmailAction.UNSUBSCRIBE] == {
+        "candidate_index": 0,
+        "candidate_source": "header_https",
+        "candidate_digest": entries[0].reference.removeprefix("unsubscribe-entry:"),
+        "candidate_reference": entries[0].reference,
+    }
+
+
+def test_agent_junk_without_candidate_plans_direct_trash() -> None:
+    from app.email_classifier_agent import AgentClassificationResult
+
+    result = AgentClassificationResult(
+        category="junk",
+        important=False,
+        certainty="certain",
+        confidence=0.98,
+        reason="Unwanted mail without a reliable unsubscribe entry.",
+        unsubscribe_candidate_index=None,
+        unsubscribe_url=None,
+    )
+    plan = _module()._agent_classification_action_plan(
+        classification_id=74,
+        account_id="account-1",
+        result=result,
+        unsubscribe_selection=None,
+        folder_targets={},
+        config_version="config-v1",
+        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+    )
+
+    assert plan is not None
+    assert plan.actions == (EmailAction.TRASH,)
+
+
+def test_agent_junk_mailto_selection_cannot_authorize_unsubscribe() -> None:
+    from app.email_classifier_agent import (
+        AgentClassificationResult,
+        durable_agent_classification_result,
+    )
+
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe="<mailto:leave@example.test?subject=unsubscribe>"
+    )
+    result = AgentClassificationResult(
+        category="junk",
+        important=False,
+        certainty="certain",
+        confidence=0.98,
+        reason="Unwanted promotion.",
+        unsubscribe_candidate_index=0,
+        unsubscribe_url=entries[0].private_url,
+    )
+
+    with pytest.raises(ValueError, match="executable HTTPS"):
+        _module()._agent_classification_action_plan(
+            classification_id=75,
+            account_id="account-1",
+            result=result,
+            unsubscribe_selection=durable_agent_classification_result(result, entries),
+            folder_targets={},
+            config_version="config-v1",
+            created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+        )
+
+
+@pytest.mark.parametrize(
+    ("outcome", "trash_allowed"),
+    (
+        (None, False),
+        ("done", True),
+        ("already_unsubscribed", True),
+        ("skipped_no_reliable_entry", True),
+        ("skipped_login_required", False),
+        ("skipped_captcha", False),
+        ("skipped_payment", False),
+        ("failed_browser", False),
+    ),
+)
+def test_dependent_trash_waits_for_safe_unsubscribe_terminal_evidence(
+    tmp_path: Path,
+    outcome: str | None,
+    trash_allowed: bool,
+) -> None:
+    database = tmp_path / f"junk-dependent-{outcome or 'none'}.sqlite3"
+    store = EmailStore(database)
+    account_id = "account-junk"
+    stable_identity = "account-junk:message-id:<junk-77@example.com>"
+    entry = extract_unsubscribe_entries(
+        list_unsubscribe="<https://news.example.com/unsubscribe?token=private>"
+    )[0]
+    selection = {
+        "candidate_index": entry.index,
+        "candidate_source": entry.source.value,
+        "candidate_digest": entry.reference.removeprefix("unsubscribe-entry:"),
+        "candidate_reference": entry.reference,
+    }
+    plan = build_versioned_email_action_plan(
+        action_plan_version=1,
+        classification_id=77,
+        account_id=account_id,
+        category="junk",
+        classification_source="user",
+        confidence=0.99,
+        model_id="email-classifier-agent:v1",
+        config_version="config-v1",
+        actions=(EmailAction.UNSUBSCRIBE, EmailAction.TRASH),
+        action_parameters={EmailAction.UNSUBSCRIBE: selection},
+        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+    )
+    store.create_account(
+        {
+            "account_id": account_id,
+            "display_name": "Junk",
+            "email_address": "derek@example.com",
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_tls": True,
+            "imap_username": "derek@example.com",
+            "imap_secret_reference": "keychain://junk-imap",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 465,
+            "smtp_tls": True,
+            "smtp_username": "derek@example.com",
+            "smtp_secret_reference": "keychain://junk-smtp",
+            "enabled": True,
+            "scan_folders": ["INBOX"],
+            "scan_interval_seconds": 60,
+        }
+    )
+    store.upsert_classification(
+        EmailClassification(
+            classification_id=77,
+            stable_message_identity=stable_identity,
+            provider_locator=EmailProviderLocator(
+                account_id=account_id,
+                folder="INBOX",
+                uidvalidity=1,
+                uid=77,
+                rfc_message_id="<junk-77@example.com>",
+                thread_id="thread-junk-77",
+            ),
+            category="junk",
+            confidence=0.99,
+            margin=1.0,
+            probabilities={"junk": 0.99},
+            model_id=plan.model_id,
+            config_version=plan.config_version,
+            status=EmailClassificationStatus.PROCESSED,
+            classification_source="user",
+            action_plan=plan,
+        ),
+        sender="sender@example.com",
+        subject="Junk",
+        model_text="junk",
+        received_at="2026-09-08T00:00:00+00:00",
+    )
+    if outcome is not None:
+        action_identity = email_action_identity(
+            account_id=account_id,
+            stable_message_identity=stable_identity,
+            action_type=EmailAction.UNSUBSCRIBE,
+            action_plan_version=1,
+        )
+        with sqlite3.connect(database) as db:
+            db.execute(
+                """
+                insert into email_unsubscribe_receipts (
+                    action_identity, effect_digest, action_plan_id,
+                    action_plan_version, classification_id, account_id,
+                    stable_message_identity, thread_identity, entry_reference,
+                    outcome, receipt_id, evidence, result_text,
+                    observation_digest, started_at, completed_at,
+                    result_text_truncated, result_text_digest, created_at
+                ) values (?, ?, ?, 1, 77, ?, ?, ?, ?, ?, ?, ?, '', '', '', '', 0, '', ?)
+                """,
+                (
+                    action_identity,
+                    "f" * 64,
+                    plan.action_plan_id,
+                    account_id,
+                    stable_identity,
+                    "thread-junk-77",
+                    entry.reference,
+                    outcome,
+                    f"receipt:{outcome}",
+                    "terminal evidence",
+                    "2026-09-08T00:01:00+00:00",
+                ),
+            )
+
+    claimed = store.claim_next_direct_action(claimed_at="2026-09-08T00:02:00+00:00")
+    assert (claimed is not None) is trash_allowed
+    if claimed is not None:
+        assert claimed.action_type is EmailAction.TRASH
 
 
 def test_agent_uncertain_result_has_no_action_plan() -> None:
@@ -189,6 +392,14 @@ def _classification_provider_readback(task, payload):
     }
 
 
+def _forbid_action_task_production():
+    return SimpleNamespace(
+        produce=lambda *_args, **_kwargs: pytest.fail(
+            "unexpected Email Agent task production"
+        )
+    )
+
+
 def test_classification_worker_persists_certain_decision_and_direct_plan(tmp_path):
     from app.email_classifier_agent import AgentClassificationResult
     from app.email_task_adapter import EmailClassificationTaskAdapter
@@ -214,6 +425,7 @@ def test_classification_worker_persists_certain_decision_and_direct_plan(tmp_pat
         email_store,
         owner="email-worker:test",
         provider_readback=_classification_provider_readback,
+        action_task_producer=_forbid_action_task_production(),
     )
 
     assert outcome["decision_status"] == "processed"
@@ -251,6 +463,7 @@ def test_classification_worker_persists_uncertain_feedback_without_actions(tmp_p
         email_store,
         owner="email-worker:test",
         provider_readback=_classification_provider_readback,
+        action_task_producer=_forbid_action_task_production(),
     )
 
     assert outcome == {
@@ -298,30 +511,58 @@ def test_classification_worker_persists_uncertain_feedback_without_actions(tmp_p
     assert confirmed["classification_source"] == "user"
 
 
-def test_classification_worker_reconciles_canonical_agent_result_before_second_call(
-    tmp_path,
-):
+def test_classification_worker_retries_after_production_crash_and_deduplicates_task(
+    tmp_path: Path,
+) -> None:
     from app.email_classifier_agent import AgentClassificationResult
     from app.email_task_adapter import EmailClassificationTaskAdapter
 
-    email_store = EmailStore(tmp_path / "classification-worker.sqlite3")
+    private_url = "https://news.example.test/unsubscribe?token=crash-after"
+    message = parse_rfc822_message(
+        (
+            b"From: blast@example.test\r\nSubject: Offer\r\n"
+            b"Message-ID: <crash-after@example.test>\r\n"
+            b"Date: Sun, 07 Sep 2026 12:00:00 -0700\r\n"
+            b"List-Unsubscribe: <"
+            + private_url.encode()
+            + b">\r\n\r\nUnwanted promotion"
+        ),
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=184,
+    )
+    task_input = EmailClassificationTaskInput.from_message(
+        message,
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": "Business", "junk": "Unwanted"},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        unsubscribe_candidates=extract_unsubscribe_entries(
+            list_unsubscribe=f"<{private_url}>"
+        ),
+    )
+    database = tmp_path / "classification-worker.sqlite3"
+    email_store = EmailStore(database)
+    task_store = AutoReplyStore(database)
     real_adapter = EmailClassificationTaskAdapter(email_store)
-    task = real_adapter.ensure_task(_classification_task_input())
+    task = real_adapter.ensure_task(task_input)
     calls = []
     agent = SimpleNamespace(
         classify=lambda _task, **_kwargs: (
             calls.append(_task.task_id)
             or AgentClassificationResult(
-                category="work",
-                important=True,
+                category="junk",
+                important=False,
                 certainty="certain",
-                confidence=0.96,
-                reason="Customer project decision.",
-                unsubscribe_candidate_index=None,
-                unsubscribe_url=None,
+                confidence=0.99,
+                reason="Unwanted promotion.",
+                unsubscribe_candidate_index=0,
+                unsubscribe_url=private_url,
             )
         )
     )
+    producer = EmailActionTaskProducer(task_store, email_store)
 
     class CrashAfterCanonical:
         def __getattr__(self, name):
@@ -336,8 +577,11 @@ def test_classification_worker_reconciles_canonical_agent_result_before_second_c
             agent,
             email_store,
             owner="email-worker:first",
-            provider_readback=_classification_provider_readback,
+            provider_readback=lambda *_args: message,
+            action_task_producer=producer,
         )
+
+    [first_audited_task] = task_store.list_reply_tasks(channel="email")
 
     with email_store._connect() as db:
         db.execute(
@@ -349,14 +593,17 @@ def test_classification_worker_reconciles_canonical_agent_result_before_second_c
         agent,
         email_store,
         owner="email-worker:retry",
-        provider_readback=_classification_provider_readback,
+        provider_readback=lambda *_args: message,
+        action_task_producer=producer,
     )
 
     assert len(calls) == 1
+    [replayed_audited_task] = task_store.list_reply_tasks(channel="email")
+    assert replayed_audited_task.id == first_audited_task.id
     assert outcome["classification_id"] > 0
     persisted = email_store.get_classification(outcome["classification_id"])
-    assert persisted["agent_result"]["reason"] == "Customer project decision."
-    assert persisted["action_plan"]["actions"] == ["move", "flag_important"]
+    assert persisted["agent_result"]["reason"] == "Unwanted promotion."
+    assert persisted["action_plan"]["actions"] == ["unsubscribe", "trash"]
     assert outcome["certainty"] == "certain"
     assert json.loads(real_adapter.get_task(task.task_id).result_json) == outcome
 
@@ -379,6 +626,7 @@ def test_classifier_provider_race_skips_before_agent_and_creates_no_actions(
         adapter.email_store,
         owner="email-worker:race",
         provider_readback=lambda *_args: readback,
+        action_task_producer=_forbid_action_task_production(),
     )
 
     assert outcome == {
@@ -395,7 +643,7 @@ def test_classifier_provider_race_skips_before_agent_and_creates_no_actions(
     assert adapter.get_task(task.task_id).status == "done"
 
 
-def test_html_unsubscribe_candidate_is_ephemeral_and_never_reaches_sqlite(
+def test_classification_worker_automatically_produces_one_audited_unsubscribe_task(
     tmp_path: Path,
 ) -> None:
     from app.email_classifier_agent import AgentClassificationResult
@@ -405,6 +653,7 @@ def test_html_unsubscribe_candidate_is_ephemeral_and_never_reaches_sqlite(
         (
             b"From: blast@example.test\r\nSubject: Offer\r\n"
             b"Message-ID: <html-classifier@example.test>\r\n"
+            b"Date: Sun, 07 Sep 2026 12:00:00 -0700\r\n"
             b"Content-Type: text/html; charset=utf-8\r\n\r\n"
             + f'<a href="{private_url}">Unsubscribe</a>'.encode()
         ),
@@ -429,12 +678,26 @@ def test_html_unsubscribe_candidate_is_ephemeral_and_never_reaches_sqlite(
     )
     database = tmp_path / "html.sqlite3"
     store = EmailStore(database)
+    task_store = AutoReplyStore(database)
     adapter = EmailClassificationTaskAdapter(store)
-    adapter.ensure_task(task_input)
+    classifier_task = adapter.ensure_task(task_input)
+    production_statuses: list[str] = []
+    real_producer = EmailActionTaskProducer(task_store, store)
+
+    class ObservedProducer:
+        def produce(self, plan, current_message):
+            production_statuses.append(adapter.get_task(classifier_task.task_id).status)
+            return real_producer.produce(plan, current_message)
+
     seen = []
     agent = SimpleNamespace(
         classify=lambda _task, **kwargs: (
-            seen.append(kwargs["unsubscribe_candidates"])
+            seen.append(
+                (
+                    kwargs["unsubscribe_candidates"],
+                    kwargs.get("unsubscribe_candidate_metadata"),
+                )
+            )
             or AgentClassificationResult(
                 category="junk",
                 important=False,
@@ -453,13 +716,418 @@ def test_html_unsubscribe_candidate_is_ephemeral_and_never_reaches_sqlite(
         store,
         owner="email-worker:html",
         provider_readback=lambda *_args: message,
+        action_task_producer=ObservedProducer(),
     )
 
-    assert seen == [(private_url,)]
+    assert seen == [
+        (
+            (private_url,),
+            (
+                {
+                    "index": 0,
+                    "source": "body_html_https",
+                    "scheme": "https",
+                    "host": "news.example.test",
+                    "context": "Unsubscribe",
+                    "reference": entries[0].reference,
+                },
+            ),
+        )
+    ]
     assert outcome["unsubscribe_candidate_reference"].startswith("unsubscribe-entry:")
     assert "unsubscribe_url" not in outcome
+    [task] = task_store.list_reply_tasks(channel="email")
+    assert production_statuses == ["running"]
+    payload = json.loads(task.trigger_message_json)
+    assert payload["category"] == "junk"
+    assert payload["action_parameters"] == {
+        "candidate_index": 0,
+        "candidate_source": "body_html_https",
+        "candidate_digest": outcome["unsubscribe_candidate_digest"],
+        "candidate_reference": outcome["unsubscribe_candidate_reference"],
+    }
+    assert payload["unsubscribe_entries"] == [
+        {
+            "index": 0,
+            "source": "body_html_https",
+            "digest": outcome["unsubscribe_candidate_digest"],
+            "reference": outcome["unsubscribe_candidate_reference"],
+        }
+    ]
+    assert payload["lifecycle_version"] == "email_unsubscribe_audited_v2"
     assert private_url.encode() not in database.read_bytes()
     assert b"private-html-token" not in database.read_bytes()
+
+
+def test_classification_worker_preserves_verified_one_click_candidate_end_to_end(
+    tmp_path: Path,
+) -> None:
+    from app.email_classifier_agent import AgentClassificationResult
+
+    private_url = "https://news.example.test/unsubscribe?token=one-click-private"
+    message = parse_rfc822_message(
+        (
+            b"From: blast@example.test\r\nSubject: Offer\r\n"
+            b"Message-ID: <one-click-classifier@example.test>\r\n"
+            b"Date: Sun, 07 Sep 2026 12:00:00 -0700\r\n"
+            b"List-Unsubscribe: <"
+            + private_url.encode()
+            + b">\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n\r\n"
+            b"Unwanted promotion"
+        ),
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=185,
+    )
+    authentication = UnsubscribeAuthenticationEvidence(
+        dkim_covers_list_unsubscribe=True,
+        dkim_covers_list_unsubscribe_post=True,
+        evidence_reference="dkim-evidence:one-click-classifier",
+    )
+    attach_ephemeral_unsubscribe_authentication(message, authentication)
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe=str(message["listUnsubscribe"]),
+        list_unsubscribe_post=str(message["listUnsubscribePost"]),
+        authentication_evidence=authentication,
+    )
+    task_input = EmailClassificationTaskInput.from_message(
+        message,
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": "Business", "junk": "Unwanted"},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        unsubscribe_candidates=entries,
+    )
+    database = tmp_path / "one-click.sqlite3"
+    email_store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    adapter = EmailClassificationTaskAdapter(email_store)
+    adapter.ensure_task(task_input)
+    seen_metadata: list[object] = []
+    agent = SimpleNamespace(
+        classify=lambda _task, **kwargs: (
+            seen_metadata.append(kwargs["unsubscribe_candidate_metadata"])
+            or AgentClassificationResult(
+                category="junk",
+                important=False,
+                certainty="certain",
+                confidence=0.99,
+                reason="Unwanted promotion.",
+                unsubscribe_candidate_index=0,
+                unsubscribe_url=private_url,
+            )
+        )
+    )
+
+    outcome = _module().run_email_classification_task_once(
+        adapter,
+        agent,
+        email_store,
+        owner="email-worker:one-click",
+        provider_readback=lambda *_args: message,
+        action_task_producer=EmailActionTaskProducer(task_store, email_store),
+    )
+
+    assert seen_metadata[0][0]["source"] == "header_one_click_https"
+    [task] = task_store.list_reply_tasks(channel="email")
+    payload = json.loads(task.trigger_message_json)
+    assert payload["lifecycle_version"] == "email_unsubscribe_audited_v2"
+    assert payload["action_parameters"] == {
+        "candidate_index": 0,
+        "candidate_source": "header_one_click_https",
+        "candidate_digest": outcome["unsubscribe_candidate_digest"],
+        "candidate_reference": outcome["unsubscribe_candidate_reference"],
+    }
+    assert payload["unsubscribe_authentication"] == {
+        "evidence_reference": authentication.evidence_reference,
+        "one_click_verified": True,
+    }
+
+
+def test_classification_worker_treats_mailto_only_junk_as_direct_trash(
+    tmp_path: Path,
+) -> None:
+    from app.email_classifier_agent import AgentClassificationResult
+
+    private_mailto = "mailto:leave@example.test?subject=unsubscribe&token=private-mail"
+    message = parse_rfc822_message(
+        (
+            b"From: blast@example.test\r\nSubject: Offer\r\n"
+            b"Message-ID: <mailto-only@example.test>\r\n"
+            b"Date: Sun, 07 Sep 2026 12:00:00 -0700\r\n"
+            b"List-Unsubscribe: <"
+            + private_mailto.encode()
+            + b">\r\n\r\nUnwanted promotion"
+        ),
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=186,
+    )
+    discovered = extract_unsubscribe_entries(
+        list_unsubscribe=str(message["listUnsubscribe"])
+    )
+    assert len(discovered) == 1
+    assert discovered[0].scheme == "mailto"
+    database = tmp_path / "mailto-only.sqlite3"
+    email_store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    adapter = EmailClassificationTaskAdapter(email_store)
+    adapter.ensure_task(
+        EmailClassificationTaskInput.from_message(
+            message,
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": "Business", "junk": "Unwanted"},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+            unsubscribe_candidates=discovered,
+        )
+    )
+    seen: list[tuple[object, object]] = []
+    agent = SimpleNamespace(
+        classify=lambda _task, **kwargs: (
+            seen.append(
+                (
+                    kwargs["unsubscribe_candidates"],
+                    kwargs["unsubscribe_candidate_metadata"],
+                )
+            )
+            or AgentClassificationResult(
+                category="junk",
+                important=False,
+                certainty="certain",
+                confidence=0.99,
+                reason="Unwanted promotion.",
+                unsubscribe_candidate_index=None,
+                unsubscribe_url=None,
+            )
+        )
+    )
+
+    outcome = _module().run_email_classification_task_once(
+        adapter,
+        agent,
+        email_store,
+        owner="email-worker:mailto-only",
+        provider_readback=lambda *_args: message,
+        action_task_producer=EmailActionTaskProducer(task_store, email_store),
+    )
+
+    assert seen == [((), ())]
+    classification = email_store.get_classification(outcome["classification_id"])
+    assert classification["action_plan"]["actions"] == ["trash"]
+    assert classification["action_plan"]["action_parameters"] == {}
+    assert task_store.list_reply_tasks(channel="email") == []
+    claimed = email_store.claim_next_direct_action(
+        claimed_at="2026-09-08T00:02:00+00:00"
+    )
+    assert claimed is not None
+    assert claimed.action_type is EmailAction.TRASH
+    assert b"private-mail" not in database.read_bytes()
+
+
+def test_classification_worker_exposes_only_deduplicated_https_from_mixed_mailto(
+    tmp_path: Path,
+) -> None:
+    from app.email_classifier_agent import AgentClassificationResult
+
+    private_mailto = "mailto:leave@example.test?subject=unsubscribe&token=private-mail"
+    private_https = "https://news.example.test/unsubscribe?token=private-web"
+    message = parse_rfc822_message(
+        (
+            b"From: blast@example.test\r\nSubject: Offer\r\n"
+            b"Message-ID: <mailto-mixed@example.test>\r\n"
+            b"Date: Sun, 07 Sep 2026 12:00:00 -0700\r\n"
+            b"List-Unsubscribe: <"
+            + private_mailto.encode()
+            + b">, <"
+            + private_mailto.encode()
+            + b">\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
+            + (
+                f'<a href="{private_https}">Unsubscribe</a>'
+                f'<a href="{private_https}">Unsubscribe again</a>'
+            ).encode()
+        ),
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=187,
+    )
+    discovered = extract_unsubscribe_entries(
+        list_unsubscribe=str(message["listUnsubscribe"]),
+        body_html=ephemeral_body_html(message),
+    )
+    assert [entry.scheme for entry in discovered] == ["mailto", "https"]
+    assert "private-mail" not in repr(discovered)
+    assert "private-web" not in repr(discovered)
+    database = tmp_path / "mailto-mixed.sqlite3"
+    email_store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    adapter = EmailClassificationTaskAdapter(email_store)
+    adapter.ensure_task(
+        EmailClassificationTaskInput.from_message(
+            message,
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": "Business", "junk": "Unwanted"},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+            unsubscribe_candidates=discovered,
+        )
+    )
+    seen: list[tuple[object, object]] = []
+    agent = SimpleNamespace(
+        classify=lambda _task, **kwargs: (
+            seen.append(
+                (
+                    kwargs["unsubscribe_candidates"],
+                    kwargs["unsubscribe_candidate_metadata"],
+                )
+            )
+            or AgentClassificationResult(
+                category="junk",
+                important=False,
+                certainty="certain",
+                confidence=0.99,
+                reason="Unwanted promotion.",
+                unsubscribe_candidate_index=0,
+                unsubscribe_url=private_https,
+            )
+        )
+    )
+
+    outcome = _module().run_email_classification_task_once(
+        adapter,
+        agent,
+        email_store,
+        owner="email-worker:mailto-mixed",
+        provider_readback=lambda *_args: message,
+        action_task_producer=EmailActionTaskProducer(task_store, email_store),
+    )
+
+    assert seen == [
+        (
+            (private_https,),
+            (
+                {
+                    "index": 0,
+                    "source": "body_html_https",
+                    "scheme": "https",
+                    "host": "news.example.test",
+                    "context": "Unsubscribe",
+                    "reference": discovered[1].reference,
+                },
+            ),
+        )
+    ]
+    [task] = task_store.list_reply_tasks(channel="email")
+    payload = json.loads(task.trigger_message_json)
+    assert payload["action_parameters"] == {
+        "candidate_index": 0,
+        "candidate_source": "body_html_https",
+        "candidate_digest": outcome["unsubscribe_candidate_digest"],
+        "candidate_reference": outcome["unsubscribe_candidate_reference"],
+    }
+    assert payload["unsubscribe_entries"] == [
+        {
+            "index": 0,
+            "source": "body_html_https",
+            "digest": outcome["unsubscribe_candidate_digest"],
+            "reference": outcome["unsubscribe_candidate_reference"],
+        }
+    ]
+    assert b"private-mail" not in database.read_bytes()
+    assert b"private-web" not in database.read_bytes()
+
+
+def test_classification_worker_recovers_crash_before_task_production_without_agent_recall(
+    tmp_path: Path,
+) -> None:
+    from app.email_classifier_agent import AgentClassificationResult
+
+    private_url = "https://news.example.test/unsubscribe?token=crash-before"
+    message = parse_rfc822_message(
+        (
+            b"From: blast@example.test\r\nSubject: Offer\r\n"
+            b"Message-ID: <crash-before@example.test>\r\n"
+            b"Date: Sun, 07 Sep 2026 12:00:00 -0700\r\n"
+            b"List-Unsubscribe: <"
+            + private_url.encode()
+            + b">\r\n\r\nUnwanted promotion"
+        ),
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=183,
+    )
+    entries = extract_unsubscribe_entries(list_unsubscribe=f"<{private_url}>")
+    task_input = EmailClassificationTaskInput.from_message(
+        message,
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": "Business", "junk": "Unwanted"},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        unsubscribe_candidates=entries,
+    )
+    database = tmp_path / "crash-before.sqlite3"
+    email_store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    adapter = EmailClassificationTaskAdapter(email_store)
+    classifier_task = adapter.ensure_task(task_input)
+    agent_calls: list[str] = []
+    agent = SimpleNamespace(
+        classify=lambda task, **_kwargs: (
+            agent_calls.append(task.task_id)
+            or AgentClassificationResult(
+                category="junk",
+                important=False,
+                certainty="certain",
+                confidence=0.99,
+                reason="Unwanted promotion.",
+                unsubscribe_candidate_index=0,
+                unsubscribe_url=private_url,
+            )
+        )
+    )
+
+    class CrashBeforeProduction:
+        def produce(self, _plan, _message):
+            raise KeyboardInterrupt("crash before task production")
+
+    with pytest.raises(KeyboardInterrupt, match="before task production"):
+        _module().run_email_classification_task_once(
+            adapter,
+            agent,
+            email_store,
+            owner="email-worker:first",
+            provider_readback=lambda *_args: message,
+            action_task_producer=CrashBeforeProduction(),
+        )
+
+    assert task_store.list_reply_tasks(channel="email") == []
+    with email_store._connect() as db:
+        db.execute(
+            "update email_agent_classification_tasks "
+            "set lease_expires_at='2000-01-01T00:00:00+00:00'"
+        )
+    assert adapter.recover_running_tasks() == 1
+
+    outcome = _module().run_email_classification_task_once(
+        adapter,
+        agent,
+        email_store,
+        owner="email-worker:retry",
+        provider_readback=lambda *_args: message,
+        action_task_producer=EmailActionTaskProducer(task_store, email_store),
+    )
+
+    assert len(agent_calls) == 1
+    assert outcome["decision_status"] == "processed"
+    [audited_task] = task_store.list_reply_tasks(channel="email")
+    assert json.loads(audited_task.trigger_message_json)["lifecycle_version"] == (
+        "email_unsubscribe_audited_v2"
+    )
+    assert adapter.get_task(classifier_task.task_id).status == "done"
 
 
 @pytest.mark.parametrize(
@@ -484,6 +1152,7 @@ def test_classifier_distinguishes_permanent_and_transient_failures(
             adapter.email_store,
             owner="email-worker:failure",
             provider_readback=_classification_provider_readback,
+            action_task_producer=_forbid_action_task_production(),
         )
 
     assert adapter.get_task(task.task_id).status == expected_status
@@ -884,6 +1553,125 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
     assert execution_calls[0][2]["executed_prefix_length"] == 0
 
 
+def test_execution_resolves_selected_candidate_before_verifying_network_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.email_classifier_agent import (
+        AgentClassificationResult,
+        durable_agent_classification_result,
+    )
+
+    module = _module()
+    selected_url = "https://selected.example.com/unsubscribe?token=selected"
+    unrelated_url = "https://unrelated.example.net/unsubscribe?token=unrelated"
+    provider_message = parse_rfc822_message(
+        (
+            b"From: sender@example.com\r\n"
+            b"Message-ID: <multi-origin@example.com>\r\n"
+            b"List-Unsubscribe: <"
+            + selected_url.encode()
+            + b">, <"
+            + unrelated_url.encode()
+            + b">\r\n\r\nBody"
+        ),
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=8,
+    )
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe=str(provider_message["listUnsubscribe"])
+    )
+    selected = entries[0]
+    result = AgentClassificationResult(
+        category="junk",
+        important=False,
+        certainty="certain",
+        confidence=0.99,
+        reason="Unwanted promotion.",
+        unsubscribe_candidate_index=selected.index,
+        unsubscribe_url=selected.private_url,
+    )
+    plan = module._agent_classification_action_plan(
+        classification_id=809,
+        account_id="account-1",
+        result=result,
+        unsubscribe_selection=durable_agent_classification_result(result, entries),
+        folder_targets={},
+        config_version="config-v1",
+        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+    )
+    selection = plan.action_parameters[EmailAction.UNSUBSCRIBE]
+    assert selection["candidate_digest"] == selected.reference.removeprefix(
+        "unsubscribe-entry:"
+    )
+    selected_policy = BrowserNetworkPolicy(frozenset({"https://selected.example.com"}))
+    execution_calls: list[tuple[object, tuple[object, ...]]] = []
+    sentinel_result = object()
+
+    def fake_execute(effect, resolved_entries, **_kwargs):
+        execution_calls.append((effect, resolved_entries))
+        return sentinel_result
+
+    monkeypatch.setattr(
+        "app.email_unsubscribe.execute_unsubscribe_in_dedicated_profile",
+        fake_execute,
+    )
+
+    class Source:
+        def fetch_uid_batch(self, *_args, **_kwargs):
+            return SimpleNamespace(uidvalidity=42, messages=(provider_message,))
+
+        def logout(self):
+            return None
+
+    monkeypatch.setattr(
+        module,
+        "_build_email_source_factory",
+        lambda _settings: lambda _account: Source(),
+    )
+    operation = module.build_audited_email_unsubscribe_operation(
+        SimpleNamespace(db_path=tmp_path / "multi-origin.sqlite3", workspace=tmp_path)
+    )
+    monkeypatch.setattr(
+        operation.email_store,
+        "get_account",
+        lambda account_id: {"account_id": account_id},
+    )
+    locator = EmailProviderLocator(
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=8,
+        rfc_message_id="<multi-origin@example.com>",
+        thread_id="thread-multi-origin",
+    )
+
+    resolved = operation.resolve_entries(
+        locator,
+        str(selection["candidate_reference"]),
+        network_policy_reference=selected_policy.reference,
+        network_policy_origin_references=selected_policy.origin_references,
+    )
+    assert resolved == (selected,)
+    effect = SimpleNamespace(
+        entry_reference=selected.reference,
+        network_policy_reference=selected_policy.reference,
+        network_policy_origin_references=selected_policy.origin_references,
+    )
+    assert (
+        operation.execute_effect(
+            effect,
+            resolved,
+            owner={"owner_id": "audit", "generation": 1, "lease_token": "lease"},
+            executed_prefix_length=0,
+        )
+        is sentinel_result
+    )
+    assert execution_calls == [(effect, (selected,))]
+
+
 def test_audited_unsubscribe_resolves_html_only_provider_entry_in_memory(
     tmp_path,
     monkeypatch,
@@ -1017,7 +1805,7 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
         action_plan_version=1,
         classification_id=41,
         account_id=account_id,
-        category=EmailCategory.NOTIFICATION,
+        category=EmailCategory.JUNK,
         classification_source="user",
         confidence=1.0,
         model_id="email-model:production-path",
@@ -1093,10 +1881,10 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
                 rfc_message_id="<mail-41@example.com>",
                 thread_id=thread_identity,
             ),
-            category=EmailCategory.NOTIFICATION,
+            category=EmailCategory.JUNK,
             confidence=1.0,
             margin=1.0,
-            probabilities={EmailCategory.NOTIFICATION: 1.0},
+            probabilities={EmailCategory.JUNK: 1.0},
             model_id=plan.model_id,
             config_version=plan.config_version,
             status=EmailClassificationStatus.PROCESSED,
@@ -1694,7 +2482,7 @@ def test_unsubscribe_task_uses_consumer_audit_orchestrator():
         "account_id": account_id,
         "stable_message_identity": stable_message_identity,
         "thread_identity": thread_identity,
-        "category": "subscription",
+        "category": "junk",
         "classification_source": "user",
         "confidence": 1.0,
         "model_id": "email-model:test",
@@ -1702,9 +2490,10 @@ def test_unsubscribe_task_uses_consumer_audit_orchestrator():
         "action_parameters": {},
         "unsubscribe_entries": [
             {
+                "index": entry.index,
                 "source": entry.source.value,
+                "digest": entry.reference.removeprefix("unsubscribe-entry:"),
                 "reference": entry.reference,
-                "priority": entry.priority,
             }
         ],
         "unsubscribe_authentication": None,
@@ -1822,6 +2611,10 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
 
     assert dependencies.orchestrator is sentinel
     assert dependencies.run_direct_actions_once.args[1] is direct_factory
+    assert isinstance(
+        dependencies.run_classification_once.keywords["action_task_producer"],
+        EmailActionTaskProducer,
+    )
     assert not hasattr(dependencies, "unsubscribe_consumer")
     assert not hasattr(module, "_build_email_unsubscribe_consumer")
     assert not hasattr(module, "build_email_unsubscribe_operation")
