@@ -1641,6 +1641,39 @@ def test_console_agent_runtime_preserves_omitted_auth_disabled_setting(monkeypat
     assert "CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1" in env_path.read_text(encoding="utf-8")
 
 
+def test_console_agent_runtime_preserves_api_fallback_when_token_is_omitted(monkeypatch, tmp_path: Path):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api\n"
+        "CEO_CODEX_API_KEY=existing-token\n"
+        "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY=\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/console/settings/agent-runtime",
+            json={"fields": {
+                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
+                "CEO_CODEX_MODEL": "gpt-5.5",
+                "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
+                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
+                "CEO_CODEX_API_MODEL": "gpt-5.5",
+                "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080",
+                "CEO_FRIDAY_RUNTIME_PROJECT_ID": "",
+                "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "",
+                "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": "",
+                "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "0",
+            }},
+        )
+
+    assert response.status_code == 200
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api" in env_text
+    assert "CEO_CODEX_API_KEY=existing-token" in env_text
+
+
 def test_console_attention_returns_grouped_json_with_snapshot(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         audit_web_module,

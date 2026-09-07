@@ -1762,6 +1762,14 @@ def register_console_routes(
         elif section == "agent-runtime":
             from app import config as app_config
 
+            routes = {
+                route.strip()
+                for route in str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or "").split(",")
+                if route.strip()
+            }
+            codex_api_enabled = fields.get("codex_api_enabled")
+            if codex_api_enabled is None:
+                codex_api_enabled = "1" if "codex_api" in routes else "0"
             friday_auth_disabled = fields.get("friday_runtime_auth_disabled")
             if friday_auth_disabled is None:
                 friday_auth_disabled = fields.get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED")
@@ -1770,7 +1778,7 @@ def register_console_routes(
             encoded = {
                 "codex_model": str(fields.get("codex_model") or fields.get("CEO_CODEX_MODEL") or ""),
                 "codex_reasoning_effort": str(fields.get("codex_reasoning_effort") or fields.get("CEO_CODEX_MODEL_REASONING_EFFORT") or ""),
-                "codex_api_enabled": "1" if str(fields.get("codex_api_enabled") or "CEO_CODEX_API_KEY" in fields).lower() in {"1", "true", "yes", "on"} else "0",
+                "codex_api_enabled": "1" if str(codex_api_enabled).lower() in {"1", "true", "yes", "on"} else "0",
                 "codex_api_model": str(fields.get("codex_api_model") or fields.get("CEO_CODEX_API_MODEL") or ""),
                 "codex_api_base_url": str(fields.get("codex_api_base_url") or fields.get("CEO_CODEX_API_BASE_URL") or ""),
                 "codex_api_token": str(fields.get("codex_api_token") or fields.get("CEO_CODEX_API_KEY") or ""),
