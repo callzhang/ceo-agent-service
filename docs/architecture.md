@@ -138,7 +138,10 @@ agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显�
 
 消息 provider 返回稳定消息 ID，即构成已完成的发送事实；应用层不再要求额外 read-back
 证据才能写入投影。投影按 `action_identity` 精确关联 proposal action，不能从动作数组中猜正文，
-也不能要求发送目标会话等于源任务会话，因为会议群不可用时允许发送给会议组织者。服务启动后
+也不能要求发送目标会话等于源任务会话。会议跟进优先发送到 Agent 选定的业务群；该群不存在、
+已解散或不可发送时，使用会议上下文中已经存在的组织者 `user_id` 或 `open_dingtalk_id` 发送
+单聊。服务不得根据组织者姓名搜索或猜测身份；上下文没有稳定组织者标识时保留任务重试，不发送。
+群发与组织者单聊使用同一个稳定业务投递键，因此重试或新 run 不会重复投递。服务启动后
 会从 append-only Consumer/Audit typed results 修复缺失的 `external_action_results`、`sent_replies`
 与 observer；该修复不重放 provider 动作，也不改写历史 run/event。
 

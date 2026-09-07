@@ -371,14 +371,70 @@ def test_personal_direct_delivery_rejects_incomplete_transcript_roster():
     assert dws.sent == []
 
 
-def test_unsendable_group_retries_without_direct_message():
+def test_unsendable_group_sends_to_stable_meeting_organizer_once():
     dws = FakeDws()
     dws.conversation_info["singleChat"] = True
+    sender = ServiceMessageSender(store=_MemoryPostfixStore(), dingtalk=dws)
 
-    with pytest.raises(MeetingDeliveryRetry, match="selected target is not a sendable group"):
-        deliver_meeting_alignment(send_decision(mention_names=[]), meeting_source(), dws)
+    result = deliver_meeting_alignment(
+        send_decision(mention_names=[]),
+        meeting_source(),
+        dws,
+        message_sender=sender,
+        delivery_key="meeting-alignment:minutes-1:job-1",
+    )
+    replay = deliver_meeting_alignment(
+        send_decision(mention_names=[]),
+        meeting_source(),
+        dws,
+        message_sender=sender,
+        delivery_key="meeting-alignment:minutes-1:job-1",
+    )
+
+    assert result.status == "sent"
+    assert result.target_kind == "direct"
+    assert result.target_id == "u-a"
+    assert result.target_title == "A"
+    assert replay.send_result == result.send_result
+    assert len(dws.sent) == 1
+    assert dws.sent[0]["conversation_id"] is None
+    assert dws.sent[0]["user_id"] == "u-a"
+    assert dws.search_queries == []
+
+
+def test_unsendable_group_uses_organizer_open_id_without_name_lookup():
+    dws = FakeDws()
+    dws.conversation_info["singleChat"] = True
+    source_payload = meeting_source().model_dump(mode="json")
+    source_payload["creator"]["user_id"] = ""
+
+    result = deliver_meeting_alignment(
+        send_decision(mention_names=[]),
+        MeetingSource.model_validate(source_payload),
+        dws,
+    )
+
+    assert result.target_kind == "direct"
+    assert result.target_id == "open-a"
+    assert dws.sent[0]["open_dingtalk_id"] == "open-a"
+    assert dws.search_queries == []
+
+
+def test_unsendable_group_without_stable_organizer_id_retries_without_lookup():
+    dws = FakeDws()
+    dws.conversation_info["singleChat"] = True
+    source_payload = meeting_source().model_dump(mode="json")
+    source_payload["creator"].update(user_id="", open_dingtalk_id="")
+
+    with pytest.raises(MeetingDeliveryRetry, match="organizer identity is unresolved"):
+        deliver_meeting_alignment(
+            send_decision(mention_names=[]),
+            MeetingSource.model_validate(source_payload),
+            dws,
+        )
 
     assert dws.sent == []
+    assert dws.search_queries == []
 
 
 def test_unresolved_decision_can_reach_agent_selected_business_group():

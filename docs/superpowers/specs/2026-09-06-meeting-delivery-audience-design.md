@@ -30,9 +30,9 @@ content and the group that owns the resulting work.
    message merely because the transcript identified only one other speaker.
 4. When several business groups are plausible, the agent selects the best
    group itself from evidence. This is not a `needs_human` condition.
-5. When the discussion is business-related and no sendable business group can
-   be evidenced, the service does not send. It must not fall back to a direct
-   message.
+5. When the discussion is business-related and no selected business group is
+   sendable, the service sends the follow-up to the meeting organizer using
+   the stable organizer identity already present in the meeting source.
 
 ## Evidence Model
 
@@ -71,7 +71,8 @@ Classify the meeting content.
 |-- Business-related
 |   |-- Discover and rank business groups from delivery evidence.
 |   |-- A best supported sendable group exists -> send there.
-|   `-- No group can be supported -> do not send; never direct-message.
+|   `-- No selected group is sendable -> direct-message the meeting organizer
+|       using the source's stable user_id or open_dingtalk_id.
 |
 `-- Personal / non-business
     |-- Reliable complete evidence proves strict 1:1 -> direct-message the
@@ -91,11 +92,15 @@ into a personal message merely by listing two attendees.
   route possible; continue with business-group discovery.
 - Group discovery returns several candidates: rank them and let the agent
   choose the strongest one, preserving the comparison evidence.
-- The selected group's metadata is incomplete or it is unsendable: retry group
-  validation or select the next evidence-ranked group. Do not direct-message a
-  creator or any participant.
-- No evidence-backed group for business content: record a non-delivery outcome
-  with the discovery evidence. No external message is sent.
+- The selected group's metadata is incomplete or it is unsendable: send to the
+  organizer identified by the meeting source's stable `user_id` or
+  `open_dingtalk_id`.
+- Never resolve this fallback from a display name or directory search. If the
+  meeting source has no stable organizer identifier, keep the delivery retryable
+  and do not send.
+- The group route and organizer route share the same stable business delivery
+  key. A retry or later run therefore reuses the completed provider result
+  instead of sending the same follow-up twice.
 
 ## Regression Cases
 
@@ -110,10 +115,10 @@ into a personal message merely by listing two attendees.
    message the other participant.
 5. A business meeting with multiple viable groups: send to the best-ranked
    group and persist why it outranked the others.
-6. A business meeting with no evidence-backed group: no external send and no
-   direct-message fallback.
-7. A selected group whose sendability check fails: retry or move to the next
-   ranked group; never send to the meeting creator.
+6. A business meeting with no sendable group and a stable organizer identity:
+   send exactly once to that organizer.
+7. A selected group whose sendability check fails and whose organizer has no
+   stable identifier: do not guess from the name; retain the delivery for retry.
 
 ## Non-goals
 

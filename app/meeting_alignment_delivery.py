@@ -141,17 +141,22 @@ def deliver_meeting_alignment(
         info = dws.get_conversation_info(target.conversation_id)
         group_state = _group_delivery_state(info, target.conversation_id)
         if group_state != "sendable":
-            raise MeetingDeliveryRetry("selected target is not a sendable group")
-        conversation = DingTalkConversation(
-            open_conversation_id=target.conversation_id,
-            title=str(info.get("title") or target.title),
-            single_chat=False,
-            unread_point=0,
-        )
-        recent_messages = dws.read_recent_messages(conversation, limit=50)
-        target_kind = "group"
-        target_id = target.conversation_id
-        target_title = target.title
+            direct_user_id, direct_open_dingtalk_id, target_title = (
+                _stable_organizer_identity(source)
+            )
+            target_kind = "direct"
+            target_id = direct_user_id or direct_open_dingtalk_id
+        else:
+            conversation = DingTalkConversation(
+                open_conversation_id=target.conversation_id,
+                title=str(info.get("title") or target.title),
+                single_chat=False,
+                unread_point=0,
+            )
+            recent_messages = dws.read_recent_messages(conversation, limit=50)
+            target_kind = "group"
+            target_id = target.conversation_id
+            target_title = target.title
     else:
         counterpart = _direct_target_participant(source, target)
         if counterpart.user_id:
@@ -295,6 +300,17 @@ def _group_delivery_state(
     if member_count > 0:
         return "sendable"
     return "incomplete"
+
+
+def _stable_organizer_identity(source: MeetingSource) -> tuple[str, str, str]:
+    organizer = source.creator
+    if organizer is None or not organizer.name.strip():
+        raise MeetingDeliveryRetry("meeting organizer identity is unresolved")
+    if organizer.user_id.strip():
+        return organizer.user_id.strip(), "", organizer.name.strip()
+    if organizer.open_dingtalk_id.strip():
+        return "", organizer.open_dingtalk_id.strip(), organizer.name.strip()
+    raise MeetingDeliveryRetry("meeting organizer identity is unresolved")
 
 
 def _direct_target_participant(
