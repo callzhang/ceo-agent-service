@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-06: add sender-local foreground telemetry for WeChat. The dedicated
+  Sender records only foreground transitions and its own activation call site,
+  with no contact or message content, so any unexpected desktop switch can be
+  attributed without relying on operator observation.
+
 - 2026-09-06: make Tutorial's WeChat connection check passive. Connecting now
   verifies the dedicated Reader and Sender without activating the WeChat app;
   its Accessibility permission prompt also reports permission only, rather than

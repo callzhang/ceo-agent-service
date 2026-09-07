@@ -16,8 +16,13 @@ tests, which inject a fake runner.
 from __future__ import annotations
 
 import hashlib
+import logging
+import sys
 import time as system_time
 from dataclasses import dataclass
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -454,6 +459,15 @@ class MacWechatAccessibility:
 
     @staticmethod
     def _reactivate(app_ref):
+        caller = sys._getframe(1).f_code.co_name
+        parent = sys._getframe(2).f_code.co_name
+        bundle_id = str(app_ref.bundleIdentifier() or "") if app_ref is not None else ""
+        LOGGER.warning(
+            "wechat_activation_requested caller=%s parent=%s bundle_id=%s",
+            caller,
+            parent,
+            bundle_id,
+        )
         try:
             from AppKit import (
                 NSApplicationActivateAllWindows,
