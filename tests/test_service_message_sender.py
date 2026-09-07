@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from uuid import UUID
 
 import pytest
 
@@ -145,6 +146,30 @@ def test_dingtalk_facade_dispatches_only_the_prepared_final_body(
     ]
     assert receipt.message.final_body.count("/api/dingtalk-feedback-spike") == 2
     assert receipt.provider_result == {"message_id": "dingtalk-message-1"}
+
+
+def test_dingtalk_prepared_dispatch_reuses_durable_receipt_after_restart(tmp_path):
+    store = AutoReplyStore(tmp_path / "service-message-sender.sqlite3")
+    dingtalk = RecordingDingTalkAdapter()
+    sender = ServiceMessageSender(store=store, dingtalk=dingtalk)
+    prepared = sender.prepare(
+        channel="dingtalk",
+        delivery_key="meeting-alignment:2494:minutes-2494",
+        body="会议总结",
+    )
+
+    first = sender.send_dingtalk_prepared(prepared, conversation_id="cid-1")
+    resumed = ServiceMessageSender(
+        store=store, dingtalk=dingtalk
+    ).send_dingtalk_prepared(prepared, conversation_id="cid-1")
+
+    assert resumed == first
+    assert len(dingtalk.calls) == 1
+    # The provider key is deterministic and is valid for DingTalk's --uuid flag.
+    assert UUID(str(dingtalk.calls[0][-1])).version == 5
+    assert store.get_outbound_postfix_receipt("dingtalk", prepared.delivery_key) == (
+        first.provider_result
+    )
 
 
 @pytest.mark.parametrize("user_id", [None, "user-1"])

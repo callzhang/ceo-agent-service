@@ -683,6 +683,24 @@ def test_send_message_treats_dws_idempotency_duplicate_as_confirmed_delivery(mon
     }
 
 
+def test_verify_message_send_result_treats_confirmed_idempotency_duplicate_as_sent():
+    result = DwsClient().verify_message_send_result(
+        {
+            "success": True,
+            "idempotency": {
+                "state": "duplicate_confirmed",
+                "uuid": "f04f7dd0-d614-4f4f-814c-ec8f65e094e1",
+            },
+        }
+    )
+
+    assert result == {
+        "state": "sent",
+        "open_task_id": "",
+        "status_result": {},
+    }
+
+
 def test_send_message_keeps_other_business_error_terminal(monkeypatch):
     def fake_run(command, text, capture_output, check, timeout, env=None):
         return SimpleNamespace(

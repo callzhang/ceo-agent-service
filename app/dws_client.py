@@ -3051,6 +3051,18 @@ class DwsClient:
                 "open_task_id": "",
                 "status_result": {},
             }
+        idempotency = send_result.get("idempotency")
+        if (
+            isinstance(idempotency, dict)
+            and idempotency.get("state") == "duplicate_confirmed"
+            and isinstance(idempotency.get("uuid"), str)
+            and idempotency["uuid"].strip()
+        ):
+            return {
+                "state": "sent",
+                "open_task_id": "",
+                "status_result": {},
+            }
         message_id = self._find_nested_string(
             send_result,
             {"openMessageId", "messageId", "msgId"},

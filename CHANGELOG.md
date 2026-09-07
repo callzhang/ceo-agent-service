@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-09-07: make DingTalk meeting-summary delivery resumable across a service
+  restart. A prepared delivery now has a stable provider UUID and durable receipt;
+  a recovered worker continues that delivery rather than sending a second message.
+
 - 2026-09-06: require every meeting-alignment run to produce one delivered
   summary. The structured decision contract now permits only `send`; business
   group-discovery and delivery problems remain retryable or failed work rather

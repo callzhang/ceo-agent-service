@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 from app.outbound_postfix import PreparedOutboundMessage
 
@@ -71,12 +72,28 @@ class ServiceMessageSender:
         self._require_persisted_message(message, channel="dingtalk")
         if self.dingtalk is None:
             raise RuntimeError("DingTalk adapter is required")
+        persisted_receipt = self.store.get_outbound_postfix_receipt(
+            message.channel, message.delivery_key
+        )
+        if persisted_receipt is not None:
+            return SendReceipt(message=message, provider_result=persisted_receipt)
+        target.setdefault(
+            "idempotency_uuid",
+            str(uuid5(NAMESPACE_URL, f"{message.channel}:{message.delivery_key}")),
+        )
         provider_result = self.dingtalk.send_message(
             conversation_id,
             message.final_body,
             **target,
         )
-        return SendReceipt(message=message, provider_result=provider_result)
+        if isinstance(provider_result, dict) and provider_result.get("success") is False:
+            return SendReceipt(message=message, provider_result=provider_result)
+        receipt = self.store.record_outbound_postfix_receipt(
+            message.channel,
+            message.delivery_key,
+            provider_result,
+        )
+        return SendReceipt(message=message, provider_result=receipt)
 
     def send_dingtalk_ding(
         self,

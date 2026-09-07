@@ -22,6 +22,7 @@ from app.outbound_postfix import compose_outbound_postfix
 class _MemoryPostfixStore:
     def __init__(self):
         self.messages = {}
+        self.receipts = {}
 
     def prepare_outbound_postfix(self, channel, delivery_key, body, original_text, **_):
         key = (channel, delivery_key)
@@ -38,13 +39,20 @@ class _MemoryPostfixStore:
     def get_outbound_postfix(self, channel, delivery_key):
         return self.messages.get((channel, delivery_key))
 
+    def get_outbound_postfix_receipt(self, channel, delivery_key):
+        return self.receipts.get((channel, delivery_key))
 
-_TEST_POSTFIX_STORE = _MemoryPostfixStore()
+    def record_outbound_postfix_receipt(self, channel, delivery_key, provider_result):
+        return self.receipts.setdefault((channel, delivery_key), provider_result)
 
 
 def deliver_meeting_alignment(decision, source, dws, **kwargs):
+    postfix_store = getattr(dws, "_postfix_store", None)
+    if postfix_store is None:
+        postfix_store = _MemoryPostfixStore()
+        dws._postfix_store = postfix_store
     sender = kwargs.pop(
-        "message_sender", ServiceMessageSender(store=_TEST_POSTFIX_STORE, dingtalk=dws)
+        "message_sender", ServiceMessageSender(store=postfix_store, dingtalk=dws)
     )
     delivery_key = kwargs.pop(
         "delivery_key",
@@ -269,7 +277,7 @@ def test_group_delivery_uses_first_candidate_and_real_mentions(tmp_path):
         delivery_key="meeting-alignment:minutes-1:job-1",
     )
     assert replay.message_text == result.message_text
-    assert dws.sent[1]["text"] == dws.sent[0]["text"]
+    assert len(dws.sent) == 1
 
 
 def test_group_delivery_uses_provider_mentions_without_rewriting_message():

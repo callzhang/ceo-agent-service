@@ -1806,6 +1806,42 @@ def test_startup_recovery_only_requeues_processing_and_unlocks_ready(tmp_path):
     )
 
 
+def test_startup_recovery_continues_locked_delivery_without_second_send(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.verification_states = ["sent", "sent"]
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    # Finish analysis, then model an interrupted process after provider acceptance:
+    # the durable provider receipt exists but the meeting job has not yet advanced.
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1, deliver=False)
+    [claimed] = store.claim_ready_to_send_meeting_alignment_jobs(
+        limit=1, now=NOW.isoformat()
+    )
+    meeting_alignment.deliver_meeting_alignment(
+        consumer_send_decision(),
+        meeting_alignment.read_meeting_source(
+            dws,
+            claimed.meeting_id,
+            calendar_evidence=meeting_alignment.CalendarMeetingEvidence.model_validate(
+                json.loads(claimed.source_json)["calendar_evidence"]
+            ),
+        ),
+        dws,
+        message_sender=meeting_alignment.ServiceMessageSender(store=store, dingtalk=dws),
+        delivery_key=f"meeting-alignment:{claimed.id}:{claimed.meeting_id}",
+    )
+    assert len(dws.send_calls) == 1
+
+    assert recover_meeting_alignment_jobs(store) == 1
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1) == 1
+
+    recovered = store.get_meeting_alignment_job(job_id)
+    assert recovered.status == "sent"
+    assert len(dws.send_calls) == 1
+
+
 @pytest.mark.parametrize("lookback", [timedelta(0), timedelta(seconds=-1)])
 def test_producer_rejects_nonpositive_discovery_lookback(tmp_path, lookback):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
