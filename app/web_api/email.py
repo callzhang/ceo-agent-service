@@ -6,6 +6,7 @@ account connectivity test is IMAP-only; SMTP remains disabled.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import imaplib
@@ -23,6 +24,13 @@ from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
     EmailClassificationStatus,
+    build_email_action_plan,
+    validate_email_category_key,
+)
+from app.email_category_config import (
+    EmailFolderBindingCoordinator,
+    VerifiedEmailFolderBinding,
+    validate_category_descriptions,
 )
 from app.email_connector_config import EmailAccountPayload, resolve_secret
 from app.email_classifier_retrain import load_retrain_state
@@ -31,6 +39,7 @@ from app.email_pipeline import apply_human_confirmation
 from app.email_store import (
     EmailAccountConflict,
     EmailClassificationConflict,
+    EmailFolderBindingConflict,
     EmailStore,
 )
 from app.email_store import EmailPersistenceCorruption
@@ -58,14 +67,32 @@ def _initialization_diagnostic(exc: BaseException) -> str:
     return "filesystem_error"
 
 
-class EmailConfigPayload(BaseModel):
+class EmailCategoryCreatePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    description: str = ""
+    category_key: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    provider_folder_name: str | None = None
+    core_description: str = Field(min_length=1)
+    include: list[str] = Field(min_length=1)
+    exclude: list[str] = Field(min_length=1)
     threshold: float = Field(ge=0.0, le=1.0)
     actions: list[str] = Field(default_factory=list)
     action_parameters: dict[str, dict[str, object]] = Field(default_factory=dict)
     enabled: bool = True
+    description_version: str = Field(min_length=1)
+    config_version: str = Field(min_length=1)
+
+
+class EmailCategoryUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    core_description: str = Field(min_length=1)
+    include: list[str] = Field(min_length=1)
+    exclude: list[str] = Field(min_length=1)
+    threshold: float = Field(ge=0.0, le=1.0)
+    enabled: bool = True
+    description_version: str = Field(min_length=1)
     config_version: str = Field(min_length=1)
 
 
@@ -101,6 +128,7 @@ def register_email_routes(
     email_env_path: Path | None = None,
     imap_client_factory: Any | None = None,
     smtp_client_factory: Any | None = None,
+    folder_binding_coordinator: EmailFolderBindingCoordinator | None = None,
 ) -> None:
     del smtp_client_factory  # Legacy injection point; SMTP is intentionally inert.
     try:
@@ -284,10 +312,11 @@ def register_email_routes(
         if isinstance(payload, JSONResponse):
             return payload
         try:
-            row = store.create_account(
+            create_result = store.create_account_with_category_enablement_snapshot(
                 payload.stored_values(),
                 allow_shared_email=payload.allow_shared_email,
             )
+            row, category_snapshot = create_result
         except EmailAccountConflict as exc:
             return error_response(
                 exc.code,
@@ -301,6 +330,7 @@ def register_email_routes(
                 compensated = store.delete_account_if_unchanged(
                     payload.account_id,
                     expected_updated_at=row["updated_at"],
+                    category_enablement_snapshot=category_snapshot,
                 )
             except sqlite3.DatabaseError:
                 compensated = False
@@ -334,7 +364,7 @@ def register_email_routes(
                 400,
             )
         try:
-            update_result = store.update_account(
+            update_result = store.update_account_with_category_enablement_snapshot(
                 account_id,
                 payload.stored_values(),
                 allow_shared_email=payload.allow_shared_email,
@@ -347,7 +377,7 @@ def register_email_routes(
             )
         if update_result is None:
             return error_response("not_found", "Email account not found", 404)
-        row, previous = update_result
+        row, previous, category_snapshot = update_result
         try:
             save_secret_values(payload)
         except (OSError, ValueError):
@@ -356,6 +386,7 @@ def register_email_routes(
                 compensated = store.restore_account_if_unchanged(
                     previous,
                     expected_updated_at=row["updated_at"],
+                    category_enablement_snapshot=category_snapshot,
                 )
             except sqlite3.DatabaseError:
                 compensated = False
@@ -672,65 +703,228 @@ def register_email_routes(
             "meta": {"snapshot_at": datetime.now(timezone.utc).isoformat()},
         }
 
+    def category_response(email_store: EmailStore, row: dict[str, Any]):
+        return {
+            **row,
+            "bindings": email_store.list_account_folder_bindings(
+                row["category_key"]
+            ),
+        }
+
+    def category_actions(
+        *,
+        category_key: str,
+        threshold: float,
+        actions: list[str],
+        action_parameters: dict[str, dict[str, object]],
+        config_version: str,
+    ) -> tuple[
+        tuple[EmailAction, ...],
+        dict[EmailAction, dict[str, object]],
+    ]:
+        parsed_actions = tuple(EmailAction(action) for action in actions)
+        parsed_parameters = {
+            EmailAction(action): dict(parameters)
+            for action, parameters in action_parameters.items()
+        }
+        if len(parsed_actions) != len(set(parsed_actions)):
+            raise ValueError("actions must be unique")
+        if EmailAction.AUTO_REPLY in parsed_actions:
+            raise ValueError("auto_reply is disabled")
+        if EmailAction.UNSUBSCRIBE in parsed_actions:
+            raise ValueError("unsubscribe is not a current category action")
+        build_email_action_plan(
+            classification_id=1,
+            account_id="configuration-validation",
+            category=category_key,
+            classification_source="model",
+            confidence=threshold,
+            model_id="configuration-validation",
+            config_version=config_version,
+            actions=parsed_actions,
+            action_parameters=parsed_parameters,
+            created_at=datetime.now(timezone.utc),
+        )
+        return parsed_actions, parsed_parameters
+
     @app.get("/api/console/email/config")
     def email_config():
         email_store = require_store()
-        return {"items": email_store.list_configs(), "meta": meta()}
+        return {
+            "items": [
+                category_response(email_store, row)
+                for row in email_store.list_category_configs()
+            ],
+            "meta": meta(),
+        }
 
-    @app.put("/api/console/email/config/{category}")
-    async def email_config_update(category: str, request: Request):
+    @app.post("/api/console/email/config")
+    async def email_config_create(request: Request):
         email_store = require_store()
-        try:
-            email_category = EmailCategory(category)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="category is invalid") from exc
         if "application/json" not in request.headers.get("content-type", ""):
-            raise HTTPException(status_code=415, detail="JSON Content-Type required")
-        try:
-            payload = EmailConfigPayload.model_validate(await request.json())
-        except (ValidationError, ValueError, TypeError) as exc:
-            raise HTTPException(
-                status_code=400, detail="invalid email category config"
-            ) from exc
-        try:
-            actions = tuple(EmailAction(action) for action in payload.actions)
-            action_parameters = {
-                EmailAction(action): dict(parameters)
-                for action, parameters in payload.action_parameters.items()
-            }
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail="actions or action_parameters contain an invalid value",
-            ) from exc
-        if len(actions) != len(set(actions)):
-            raise HTTPException(status_code=400, detail="actions must be unique")
-        if EmailAction.AUTO_REPLY in actions:
-            raise HTTPException(
-                status_code=400,
-                detail="auto_reply is disabled; email worker cannot send replies",
-            )
-        if (
-            EmailAction.UNSUBSCRIBE in actions
-            and email_category is not EmailCategory.SUBSCRIPTION
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="unsubscribe can only be configured for subscription",
+            return error_response(
+                "invalid_email_category",
+                "Email category configuration must be JSON",
+                400,
             )
         try:
-            row = email_store.upsert_config(
-                category=email_category,
-                description=payload.description,
+            payload = EmailCategoryCreatePayload.model_validate(await request.json())
+            category_key = validate_email_category_key(payload.category_key)
+            if category_key == "junk":
+                raise ValueError("junk is a system category")
+            provider_folder_name = (
+                payload.provider_folder_name or payload.display_name
+            )
+            validate_category_descriptions(
+                display_name=payload.display_name,
+                core_description=payload.core_description,
+                include=payload.include,
+                exclude=payload.exclude,
+                description_version=payload.description_version,
+            )
+            if (
+                not provider_folder_name.strip()
+                or provider_folder_name != provider_folder_name.strip()
+            ):
+                raise ValueError("provider_folder_name must be canonical")
+            actions, action_parameters = category_actions(
+                category_key=category_key,
+                threshold=payload.threshold,
+                actions=payload.actions,
+                action_parameters=payload.action_parameters,
+                config_version=payload.config_version,
+            )
+        except (ValidationError, ValueError, TypeError):
+            return error_response(
+                "invalid_email_category",
+                "Email category configuration is invalid",
+                400,
+            )
+        if email_store.get_category_config(category_key) is not None:
+            return error_response(
+                "email_folder_binding_conflict",
+                "Email category already exists",
+                409,
+            )
+        if folder_binding_coordinator is None:
+            return error_response(
+                "email_folder_binding_unavailable",
+                "Email folder binding is not available",
+                503,
+            )
+        enabled_accounts = [
+            account for account in email_store.list_accounts() if account["enabled"]
+        ]
+        try:
+            coordinator_bindings = (
+                folder_binding_coordinator.create_and_verify_bindings(
+                    category_key=category_key,
+                    provider_folder_name=provider_folder_name,
+                    enabled_accounts=enabled_accounts,
+                )
+            )
+            if isinstance(coordinator_bindings, (str, bytes)) or not isinstance(
+                coordinator_bindings,
+                Sequence,
+            ):
+                raise TypeError("coordinator returned a non-sequence result")
+            if any(
+                type(binding) is not VerifiedEmailFolderBinding
+                for binding in coordinator_bindings
+            ):
+                raise TypeError("coordinator returned an unverified binding")
+            bindings = tuple(coordinator_bindings)
+        except EmailFolderBindingConflict:
+            return error_response(
+                "email_folder_binding_conflict",
+                "Email category or folder binding conflicts with stored state",
+                409,
+            )
+        except Exception:
+            return error_response(
+                "email_folder_binding_unavailable",
+                "Email folder binding could not be verified",
+                503,
+            )
+        try:
+            row = email_store.create_category_with_bindings(
+                category_key=category_key,
+                display_name=payload.display_name,
+                core_description=payload.core_description,
+                include=payload.include,
+                exclude=payload.exclude,
                 threshold=payload.threshold,
                 actions=actions,
                 action_parameters=action_parameters,
                 enabled=payload.enabled,
+                description_version=payload.description_version,
+                config_version=payload.config_version,
+                bindings=bindings,
+            )
+        except EmailFolderBindingConflict:
+            return error_response(
+                "email_folder_binding_conflict",
+                "Email category or folder binding conflicts with stored state",
+                409,
+            )
+        except (ValidationError, ValueError, TypeError):
+            return error_response(
+                "invalid_email_category",
+                "Email category configuration is invalid",
+                400,
+            )
+        return JSONResponse(
+            {
+                "ok": True,
+                "item": category_response(email_store, row),
+                "message": "邮件分类已创建",
+            },
+            status_code=201,
+        )
+
+    @app.put("/api/console/email/config/{category_key}")
+    async def email_config_update(category_key: str, request: Request):
+        email_store = require_store()
+        if "application/json" not in request.headers.get("content-type", ""):
+            return error_response(
+                "invalid_email_category",
+                "Email category configuration must be JSON",
+                400,
+            )
+        try:
+            category_key = validate_email_category_key(category_key)
+            payload = EmailCategoryUpdatePayload.model_validate(await request.json())
+            validate_category_descriptions(
+                display_name="unchanged",
+                core_description=payload.core_description,
+                include=payload.include,
+                exclude=payload.exclude,
+                description_version=payload.description_version,
+            )
+            row = email_store.update_category_descriptions(
+                category_key,
+                core_description=payload.core_description,
+                include=payload.include,
+                exclude=payload.exclude,
+                threshold=payload.threshold,
+                enabled=payload.enabled,
+                description_version=payload.description_version,
                 config_version=payload.config_version,
             )
-        except (ValidationError, ValueError, TypeError) as exc:
-            raise HTTPException(
-                status_code=400,
-                detail="invalid email action parameters",
-            ) from exc
-        return {"ok": True, "item": row, "message": "邮件配置已保存"}
+        except (ValidationError, ValueError, TypeError):
+            return error_response(
+                "invalid_email_category",
+                "Email category configuration is invalid",
+                400,
+            )
+        if row is None:
+            return error_response(
+                "email_category_not_found",
+                "Email category was not found",
+                404,
+            )
+        return {
+            "ok": True,
+            "item": category_response(email_store, row),
+            "message": "邮件配置已保存",
+        }

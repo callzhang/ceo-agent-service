@@ -21,6 +21,7 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     build_versioned_email_action_plan,
 )
+from app.email_category_config import VerifiedEmailFolderBinding
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_model_registry import (
     EmailModelMetadata,
@@ -28,6 +29,7 @@ from app.email_model_registry import (
     build_model_id,
 )
 from app.email_store import (
+    EmailFolderBindingConflict,
     EmailStore,
     email_action_identity,
     email_unsubscribe_effect_digest,
@@ -181,10 +183,12 @@ def test_email_routes_initialize_and_reuse_one_store(
         update = client.put(
             "/api/console/email/config/work",
             json={
-                "description": "Work",
+                "core_description": "Daily work operations.",
+                "include": ["customer delivery"],
+                "exclude": ["personal matters"],
                 "threshold": 0.9,
-                "actions": [],
                 "enabled": True,
+                "description_version": "work-description-v2",
                 "config_version": "email-config-v1",
             },
         )
@@ -1451,9 +1455,9 @@ def test_paginated_get_does_not_compete_with_scanner_write_transaction(
 @pytest.mark.parametrize(
     ("category", "actions", "action_parameters"),
     (
-        ("work", ["label"], {"label": {"labels": ["work"]}}),
+        ("configured_work", ["label"], {"label": {"labels": ["work"]}}),
         (
-            "external_billing",
+            "configured_billing",
             ["move"],
             {"move": {"target_folder": "Archive/Billing"}},
         ),
@@ -1465,64 +1469,79 @@ def test_email_config_api_persists_valid_action_parameters(
     actions: list[str],
     action_parameters: dict[str, dict[str, object]],
 ):
-    with _client(tmp_path) as client:
-        response = client.put(
-            f"/api/console/email/config/{category}",
-            json={
-                "description": "Configured category",
-                "threshold": 0.95,
-                "actions": actions,
-                "action_parameters": action_parameters,
-                "enabled": True,
-                "config_version": "email-config-v1",
-            },
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "action-config.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+    payload = {
+        **_dynamic_category_payload(category),
+        "actions": actions,
+        "action_parameters": action_parameters,
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/console/email/config",
+            json=payload,
         )
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     assert response.json()["item"]["action_parameters"] == action_parameters
 
 
 def test_email_config_api_rejects_auto_reply_even_with_valid_instruction(
     tmp_path: Path,
 ):
-    with _client(tmp_path) as client:
-        response = client.put(
-            "/api/console/email/config/important",
-            json={
-                "description": "No outbound replies",
-                "threshold": 0.95,
-                "actions": ["auto_reply"],
-                "action_parameters": {
-                    "auto_reply": {"instruction": "Acknowledge receipt"}
-                },
-                "enabled": True,
-                "config_version": "email-config-v1",
-            },
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "auto-reply-config.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+    payload = {
+        **_dynamic_category_payload("auto_reply_category"),
+        "actions": ["auto_reply"],
+        "action_parameters": {
+            "auto_reply": {"instruction": "Acknowledge receipt"}
+        },
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/console/email/config",
+            json=payload,
         )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == (
-        "auto_reply is disabled; email worker cannot send replies"
-    )
+    assert response.json()["code"] == "invalid_email_category"
+    assert coordinator.calls == []
 
 
 def test_email_config_api_rejects_reserved_unsubscribe_categories(tmp_path: Path):
     payload = {
-        "description": "Wrong unsubscribe category",
-        "threshold": 0.95,
+        **_dynamic_category_payload("important"),
         "actions": ["unsubscribe"],
-        "enabled": True,
-        "config_version": "email-config-v1",
     }
-    with _client(tmp_path) as client:
-        rejected = client.put("/api/console/email/config/important", json=payload)
-        reserved = client.put("/api/console/email/config/subscription", json=payload)
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "reserved-config.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+    with TestClient(app) as client:
+        rejected = client.post("/api/console/email/config", json=payload)
+        reserved = client.post(
+            "/api/console/email/config",
+            json={**payload, "category_key": "subscription"},
+        )
 
     assert rejected.status_code == 400
-    assert rejected.json()["detail"] == (
-        "unsubscribe can only be configured for subscription"
-    )
+    assert rejected.json()["code"] == "invalid_email_category"
     assert reserved.status_code == 400
+    assert reserved.json()["code"] == "invalid_email_category"
 
 
 def test_email_account_api_accepts_nontechnical_payload_without_secret_reference(
@@ -1584,36 +1603,332 @@ def test_email_config_api_returns_controlled_4xx_for_invalid_action_parameters(
     action_parameters: dict[str, dict[str, object]] | None,
 ):
     payload = {
-        "description": "Invalid category config",
-        "threshold": 0.95,
+        **_dynamic_category_payload("invalid_action_config"),
         "actions": actions,
-        "enabled": True,
-        "config_version": "email-config-v1",
     }
     if action_parameters is not None:
         payload["action_parameters"] = action_parameters
-    with _client(tmp_path) as client:
-        response = client.put(
-            "/api/console/email/config/work",
-            json=payload,
-        )
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "invalid-action-config.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+    with TestClient(app) as client:
+        response = client.post("/api/console/email/config", json=payload)
 
     assert response.status_code == 400
 
 
 def test_email_config_api_retains_no_parameter_archive_behavior(tmp_path: Path):
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "archive-config.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+    payload = {
+        **_dynamic_category_payload("archive_notification"),
+        "actions": ["archive"],
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/console/email/config",
+            json=payload,
+        )
+
+    assert response.status_code == 201
+    assert response.json()["item"]["actions"] == ["archive"]
+    assert response.json()["item"]["action_parameters"] == {}
+
+
+def _task2_api_account(account_id: str = "primary") -> dict[str, object]:
+    return {
+        "account_id": account_id,
+        "display_name": account_id,
+        "email_address": f"{account_id}@example.com",
+        "imap_host": "imap.example.com",
+        "imap_port": 993,
+        "imap_tls": True,
+        "imap_username": f"{account_id}@example.com",
+        "imap_secret_reference": f"keychain://{account_id}",
+        "smtp_host": "",
+        "smtp_port": 465,
+        "smtp_tls": True,
+        "smtp_username": "",
+        "smtp_secret_reference": "",
+        "enabled": True,
+        "scan_folders": ["INBOX"],
+        "scan_interval_seconds": 60,
+    }
+
+
+def _dynamic_category_payload(category_key: str = "partner_updates") -> dict[str, object]:
+    return {
+        "category_key": category_key,
+        "display_name": "合作伙伴",
+        "provider_folder_name": "合作伙伴",
+        "core_description": "Material partner relationship updates.",
+        "include": ["partner discussions"],
+        "exclude": ["unsolicited partnership promotion"],
+        "threshold": 0.91,
+        "actions": [],
+        "action_parameters": {},
+        "enabled": True,
+        "description_version": "partner-description-v1",
+        "config_version": "partner-config-v1",
+    }
+
+
+class _VerifiedFolderCoordinator:
+    def __init__(self, *, folder_id: str = "folder-partners"):
+        self.folder_id = folder_id
+        self.calls: list[dict[str, object]] = []
+
+    def create_and_verify_bindings(
+        self,
+        *,
+        category_key: str,
+        provider_folder_name: str,
+        enabled_accounts: list[dict[str, object]],
+    ) -> tuple[VerifiedEmailFolderBinding, ...]:
+        self.calls.append(
+            {
+                "category_key": category_key,
+                "provider_folder_name": provider_folder_name,
+                "account_ids": [account["account_id"] for account in enabled_accounts],
+            }
+        )
+        return tuple(
+            VerifiedEmailFolderBinding(
+                account_id=str(account["account_id"]),
+                provider_folder_id=self.folder_id,
+                provider_folder_name=provider_folder_name,
+                binding_status="active",
+                last_verified_at="2026-09-07T13:00:00+00:00",
+            )
+            for account in enabled_accounts
+        )
+
+
+class _CoordinatorFailure:
+    def __init__(self, failure: Exception):
+        self.failure = failure
+
+    def create_and_verify_bindings(self, **_kwargs):
+        raise self.failure
+
+
+class _IteratorFolderCoordinator(_VerifiedFolderCoordinator):
+    def create_and_verify_bindings(self, **kwargs):
+        return iter(super().create_and_verify_bindings(**kwargs))
+
+
+def test_email_config_get_returns_structured_descriptions_and_bindings(tmp_path: Path):
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/email/config")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 9
+    work = next(item for item in items if item["category_key"] == "work")
+    assert work["display_name"] == "工作"
+    assert work["core_description"]
+    assert work["include"]
+    assert work["exclude"]
+    assert work["bindings"] == []
+    assert "category" not in work
+    assert "description" not in work
+
+
+def test_email_config_post_requires_injected_folder_binding_coordinator(
+    tmp_path: Path,
+):
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/console/email/config",
+            json=_dynamic_category_payload(),
+        )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "email_folder_binding_unavailable"
+
+
+def test_email_config_post_maps_coordinator_binding_conflict_to_409(tmp_path: Path):
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "coordinator-conflict-api.sqlite3"),
+        folder_binding_coordinator=_CoordinatorFailure(
+            EmailFolderBindingConflict("provider folder conflict")
+        ),
+    )
+
+    response = TestClient(app).post(
+        "/api/console/email/config",
+        json=_dynamic_category_payload(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "email_folder_binding_conflict"
+
+
+def test_email_config_post_rejects_non_sequence_coordinator_result(tmp_path: Path):
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "coordinator-result-api.sqlite3"),
+        folder_binding_coordinator=_IteratorFolderCoordinator(),
+    )
+
+    response = TestClient(app).post(
+        "/api/console/email/config",
+        json=_dynamic_category_payload(),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "email_folder_binding_unavailable"
+
+
+def test_email_config_post_uses_coordinator_readback_and_rejects_client_bindings(
+    tmp_path: Path,
+):
+    database = tmp_path / "dynamic-category-api.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_api_account())
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=coordinator,
+    )
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/console/email/config",
+            json=_dynamic_category_payload(),
+        )
+        rejected = client.post(
+            "/api/console/email/config",
+            json={
+                **_dynamic_category_payload("raw_claim"),
+                "bindings": [
+                    {
+                        "account_id": "primary",
+                        "provider_folder_id": "client-claimed-id",
+                        "binding_status": "active",
+                    }
+                ],
+            },
+        )
+
+    assert created.status_code == 201
+    assert created.json()["item"]["category_key"] == "partner_updates"
+    assert created.json()["item"]["enabled"] is True
+    assert created.json()["item"]["bindings"][0]["provider_folder_id"] == (
+        "folder-partners"
+    )
+    assert coordinator.calls == [
+        {
+            "category_key": "partner_updates",
+            "provider_folder_name": "合作伙伴",
+            "account_ids": ["primary"],
+        }
+    ]
+    assert rejected.status_code == 400
+    assert rejected.json()["code"] == "invalid_email_category"
+    assert store.get_category_config("raw_claim") is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        _dynamic_category_payload("important"),
+        {**_dynamic_category_payload(), "core_description": " "},
+        {**_dynamic_category_payload(), "include": []},
+        {**_dynamic_category_payload(), "exclude": [""]},
+    ),
+)
+def test_email_config_post_returns_category_error_for_invalid_semantics(
+    tmp_path: Path,
+    payload: dict[str, object],
+):
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "invalid-category-api.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+
+    response = TestClient(app).post("/api/console/email/config", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_email_category"
+    assert coordinator.calls == []
+
+
+def test_email_config_post_returns_conflict_for_active_provider_folder_collision(
+    tmp_path: Path,
+):
+    database = tmp_path / "category-conflict-api.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_api_account())
+    coordinator = _VerifiedFolderCoordinator(folder_id="shared-provider-folder")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=coordinator,
+    )
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/console/email/config",
+            json=_dynamic_category_payload("partners"),
+        )
+        duplicate = client.post(
+            "/api/console/email/config",
+            json=_dynamic_category_payload("partners"),
+        )
+        second = client.post(
+            "/api/console/email/config",
+            json=_dynamic_category_payload("vendors"),
+        )
+
+    assert first.status_code == 201
+    assert duplicate.status_code == 409
+    assert duplicate.json()["code"] == "email_folder_binding_conflict"
+    assert second.status_code == 409
+    assert second.json()["code"] == "email_folder_binding_conflict"
+    assert len(coordinator.calls) == 2
+    assert store.get_category_config("vendors") is None
+
+
+def test_email_config_put_updates_structured_descriptions_and_versions(tmp_path: Path):
     with _client(tmp_path) as client:
         response = client.put(
-            "/api/console/email/config/notification",
+            "/api/console/email/config/work",
             json={
-                "description": "Archive notification",
-                "threshold": 0.98,
-                "actions": ["archive"],
+                "core_description": "Material daily company operations.",
+                "include": ["customer delivery"],
+                "exclude": ["personal matters"],
+                "threshold": 0.93,
                 "enabled": True,
-                "config_version": "email-config-v1",
+                "description_version": "work-description-v2",
+                "config_version": "work-config-v2",
             },
         )
 
     assert response.status_code == 200
-    assert response.json()["item"]["actions"] == ["archive"]
-    assert response.json()["item"]["action_parameters"] == {}
+    item = response.json()["item"]
+    assert item["category_key"] == "work"
+    assert item["core_description"] == "Material daily company operations."
+    assert item["include"] == ["customer delivery"]
+    assert item["exclude"] == ["personal matters"]
+    assert item["threshold"] == 0.93
+    assert item["enabled"] is True
+    assert item["description_version"] == "work-description-v2"
+    assert item["config_version"] == "work-config-v2"
+    assert item["bindings"] == []

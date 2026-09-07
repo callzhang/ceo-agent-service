@@ -203,7 +203,7 @@ def test_v18_feedback_table_migrates_and_accepts_custom_human_confirmation(
     with sqlite3.connect(database) as db:
         assert db.execute(
             "select max(version) from email_schema_migrations"
-        ).fetchone()[0] == 19
+        ).fetchone()[0] == email_store_module.EMAIL_SCHEMA_VERSION
         table_sql = db.execute(
             "select sql from sqlite_master where name='email_feedback_requests'"
         ).fetchone()[0]
@@ -1997,7 +1997,11 @@ def test_email_store_persists_category_configuration(tmp_path: Path):
 
     assert config["actions"] == ["label", "unsubscribe"]
     assert config["action_parameters"] == {"label": {"labels": ["subscription"]}}
-    assert store.list_configs() == [config]
+    assert next(
+        row
+        for row in store.list_configs()
+        if row["category"] == "external_billing"
+    ) == config
 
 
 def test_email_store_rejects_auto_reply_category_configuration(tmp_path: Path):
@@ -2594,7 +2598,19 @@ def test_migration_preserves_prototype_feedback_config_and_unrelated_state(
             "label": "important",
         }
     ]
-    assert store.list_configs()[0]["description"] == "prototype config"
+    assert {
+        row["category_key"] for row in store.list_category_configs()
+    } == {
+        "work",
+        "human_resources",
+        "legal",
+        "financing",
+        "personal",
+        "notification",
+        "external_billing",
+        "shopping",
+        "junk",
+    }
     state = _fetchall(database, "select state_json from email_retraining_state")
     assert state[0]["state_json"] == '{"last_feedback_count": 1}'
     assert len(_fetchall(database, "select * from email_messages")) == 1
@@ -2709,8 +2725,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_19() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 19
+def test_email_schema_version_is_20() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 20
 
 
 def test_current_schema_initialization_preserves_delete_journal_mode(
@@ -3188,8 +3204,8 @@ def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path)
 @pytest.mark.parametrize(
     "damaged_declaration",
     (
-        "threshold text not null",
-        "description text not null default 'missing-default-contract'",
+        "threshold text not null check(threshold >= 0.0 and threshold <= 1.0)",
+        "core_description text check(trim(core_description) != '')",
     ),
 )
 def test_current_schema_rejects_wrong_config_column_type_or_default(
@@ -3199,36 +3215,52 @@ def test_current_schema_rejects_wrong_config_column_type_or_default(
     database = tmp_path / "wrong-config-declaration.sqlite3"
     EmailStore(database)
     gc.collect()
-    description_declaration = (
+    core_description_declaration = (
         damaged_declaration
-        if damaged_declaration.startswith("description")
-        else "description text not null default ''"
+        if damaged_declaration.startswith("core_description")
+        else "core_description text not null check(trim(core_description) != '')"
     )
     threshold_declaration = (
         damaged_declaration
         if damaged_declaration.startswith("threshold")
-        else "threshold real not null"
+        else "threshold real not null check(threshold >= 0.0 and threshold <= 1.0)"
     )
     with sqlite3.connect(database) as db:
         db.executescript(
             f"""
-            alter table email_category_configs rename to old_email_category_configs;
-            create table email_category_configs (
-                category text primary key,
-                {description_declaration},
-                {threshold_declaration},
-                actions_json text not null,
-                action_parameters_json text not null default '{{}}',
-                enabled integer not null default 1,
-                config_version text not null,
-                updated_at text not null default current_timestamp
-            );
+                alter table email_category_configs rename to old_email_category_configs;
+                create table email_category_configs (
+                    category_key text primary key check(trim(category_key) != ''),
+                    display_name text not null check(trim(display_name) != ''),
+                    {core_description_declaration},
+                    include_json text not null
+                        check(json_valid(include_json))
+                        check(json_type(include_json) = 'array')
+                        check(json_array_length(include_json) > 0)
+                        check(trim(json_extract(include_json, '$[0]')) != ''),
+                    exclude_json text not null
+                        check(json_valid(exclude_json))
+                        check(json_type(exclude_json) = 'array')
+                        check(json_array_length(exclude_json) > 0)
+                        check(trim(json_extract(exclude_json, '$[0]')) != ''),
+                    {threshold_declaration},
+                    actions_json text not null check(json_valid(actions_json)),
+                    action_parameters_json text not null
+                        check(json_valid(action_parameters_json)),
+                    enabled integer not null check(enabled in (0, 1)),
+                    description_version text not null
+                        check(trim(description_version) != ''),
+                    config_version text not null check(trim(config_version) != ''),
+                    updated_at text not null check(trim(updated_at) != '')
+                );
             drop table old_email_category_configs;
             """
         )
 
     expected_column = (
-        "description" if damaged_declaration.startswith("description") else "threshold"
+        "core_description"
+        if damaged_declaration.startswith("core_description")
+        else "threshold"
     )
     with pytest.raises(
         EmailPersistenceCorruption,
@@ -3360,7 +3392,7 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == [16, 17, 18, 19]
+        ] == [16, 17, 18, 19, email_store_module.EMAIL_SCHEMA_VERSION]
         assert {
             row[1]
             for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
@@ -3579,7 +3611,9 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             "label": "important",
         }
     ]
-    assert store.list_configs()[0]["description"] == "v2 important config"
+    assert "important" not in {
+        row["category"] for row in store.list_configs()
+    }
     assert (
         _fetchall(
             database,
@@ -3597,7 +3631,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 16, 17, 18, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [2, 16, 17, 18, 19, email_store_module.EMAIL_SCHEMA_VERSION]
 
     EmailStore(database)
 
@@ -3660,7 +3694,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [15, 16, 17, 18, 19]
+    ] == [15, 16, 17, 18, 19, email_store_module.EMAIL_SCHEMA_VERSION]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
     assert projected["action_plan"]["action_plan_id"] == historical_plan_id
@@ -4063,7 +4097,7 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [16, 17, 18, 19]
+    ] == [16, 17, 18, 19, email_store_module.EMAIL_SCHEMA_VERSION]
 
 
 @pytest.mark.parametrize("missing_table", ["email_messages", "email_actions"])
@@ -7153,3 +7187,791 @@ def test_account_scan_folders_json_must_be_a_list_of_folder_names(tmp_path: Path
 
     with pytest.raises(EmailPersistenceCorruption, match="scan_folders_json"):
         EmailStore(database)
+
+
+def _task2_account_values(
+    account_id: str,
+    *,
+    enabled: bool = True,
+) -> dict[str, object]:
+    return {
+        "account_id": account_id,
+        "display_name": account_id,
+        "email_address": f"{account_id}@example.com",
+        "imap_host": "imap.example.com",
+        "imap_port": 993,
+        "imap_tls": True,
+        "imap_username": f"{account_id}@example.com",
+        "imap_secret_reference": f"keychain://{account_id}",
+        "smtp_host": "",
+        "smtp_port": 465,
+        "smtp_tls": True,
+        "smtp_username": "",
+        "smtp_secret_reference": "",
+        "enabled": enabled,
+        "scan_folders": ["INBOX"],
+        "scan_interval_seconds": 60,
+    }
+
+
+def _task2_verified_binding(
+    *,
+    account_id: str = "primary",
+    folder_id: str = "folder-partners",
+    folder_name: str = "合作伙伴",
+    status: str = "active",
+    verified_at: str = "2026-09-07T12:10:00+00:00",
+):
+    binding_type = getattr(email_store_module, "VerifiedEmailFolderBinding")
+    return binding_type(
+        account_id=account_id,
+        provider_folder_id=folder_id,
+        provider_folder_name=folder_name,
+        binding_status=status,
+        last_verified_at=verified_at,
+    )
+
+
+def _create_task2_category(
+    store: EmailStore,
+    *,
+    category_key: str = "partner_updates",
+    display_name: str = "合作伙伴",
+    bindings: tuple[object, ...] | None = None,
+) -> dict[str, object]:
+    if bindings is None:
+        bindings = (_task2_verified_binding(folder_name=display_name),)
+    return store.create_category_with_bindings(
+        category_key=category_key,
+        display_name=display_name,
+        core_description=f"Material messages for {category_key}.",
+        include=(f"included {category_key} messages",),
+        exclude=(f"excluded {category_key} promotion",),
+        threshold=0.91,
+        actions=(),
+        action_parameters={},
+        enabled=True,
+        description_version=f"{category_key}-description-v1",
+        config_version=f"{category_key}-config-v1",
+        bindings=bindings,
+    )
+
+
+def _replace_category_schema_with_v19(database: Path) -> None:
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("drop table if exists email_category_folder_bindings")
+        db.execute("drop table email_category_configs")
+        db.execute(
+            """
+            create table email_category_configs (
+                category text primary key,
+                description text not null default '',
+                threshold real not null,
+                actions_json text not null,
+                action_parameters_json text not null default '{}',
+                enabled integer not null default 1,
+                config_version text not null,
+                updated_at text not null default current_timestamp
+            )
+            """
+        )
+        db.execute("delete from email_schema_migrations where version >= 20")
+        db.execute(
+            "insert or replace into email_schema_migrations(version, applied_at) "
+            "values (19, '2026-09-07T12:00:00+00:00')"
+        )
+
+
+def test_v19_category_config_migration_maps_active_rows_and_preserves_history(
+    tmp_path: Path,
+):
+    database = tmp_path / "category-v19.sqlite3"
+    store = EmailStore(database)
+    persisted = store.persist_scan_result(
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            category=EmailCategory.EXTERNAL_BILLING,
+        ),
+        model_text="__subject__legacy billing history",
+    )
+    _replace_category_schema_with_v19(database)
+    with sqlite3.connect(database) as db:
+        db.executemany(
+            """
+            insert into email_category_configs (
+                category, description, threshold, actions_json,
+                action_parameters_json, enabled, config_version, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    "billing",
+                    "Legacy billing",
+                    0.87,
+                    '["archive"]',
+                    "{}",
+                    1,
+                    "legacy-billing-v4",
+                    "2026-09-07T12:01:00+00:00",
+                ),
+                (
+                    "important",
+                    "Legacy important",
+                    0.81,
+                    "[]",
+                    "{}",
+                    1,
+                    "legacy-important-v2",
+                    "2026-09-07T12:01:00+00:00",
+                ),
+                (
+                    "subscription",
+                    "Legacy subscription",
+                    0.82,
+                    "[]",
+                    "{}",
+                    1,
+                    "legacy-subscription-v3",
+                    "2026-09-07T12:01:00+00:00",
+                ),
+            ),
+        )
+        db.execute(
+            """
+            update email_classifications
+            set category='billing', predicted_category='billing',
+                probabilities_json='{"billing":0.93,"work":0.07}'
+            where id=?
+            """,
+            (persisted["id"],),
+        )
+        history_before = tuple(
+            db.execute(
+                "select * from email_classifications where id=?",
+                (persisted["id"],),
+            ).fetchone()
+        )
+
+    migrated = EmailStore(database)
+
+    configs = {
+        row["category_key"]: row for row in migrated.list_category_configs()
+    }
+    assert set(configs) == {
+        "work",
+        "human_resources",
+        "legal",
+        "financing",
+        "personal",
+        "notification",
+        "external_billing",
+        "shopping",
+        "junk",
+    }
+    assert "important" not in configs
+    assert "subscription" not in configs
+    assert configs["external_billing"]["threshold"] == 0.87
+    assert configs["external_billing"]["actions"] == ["archive"]
+    assert configs["external_billing"]["config_version"] == "legacy-billing-v4"
+    assert configs["external_billing"]["description_version"] == (
+        "email-category-descriptions-v1"
+    )
+    assert migrated.list_account_folder_bindings() == []
+    with sqlite3.connect(database) as db:
+        history_after = tuple(
+            db.execute(
+                "select * from email_classifications where id=?",
+                (persisted["id"],),
+            ).fetchone()
+        )
+        versions = [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ]
+    assert history_after == history_before
+    assert migrated.get_classification(persisted["id"])["category"] == "billing"
+    assert versions[-1] == 20
+
+
+def test_fresh_category_configs_seed_structured_approved_boundaries(tmp_path: Path):
+    store = EmailStore(tmp_path / "seeded-categories.sqlite3")
+
+    configs = {row["category_key"]: row for row in store.list_category_configs()}
+
+    assert configs["work"]["display_name"] == "工作"
+    assert "daily operations" in configs["work"]["core_description"]
+    assert "customers" in configs["work"]["include"]
+    assert "human resources" in configs["work"]["exclude"]
+    assert "recruiting" in configs["human_resources"]["include"]
+    assert "legal disputes" in configs["human_resources"]["exclude"]
+    assert "non-financing contracts" in configs["legal"]["include"]
+    assert "financing legal documents" in configs["legal"]["exclude"]
+    assert "due diligence" in configs["financing"]["include"]
+    assert "unsolicited fundraising promotion" in configs["financing"]["exclude"]
+    assert "Derek" in configs["personal"]["include"]
+    assert "company operations" in configs["personal"]["exclude"]
+    assert "verification codes" in configs["notification"]["include"]
+    assert "real business discussion" in configs["notification"]["exclude"]
+    assert "requests payment" in configs["external_billing"]["include"]
+    assert "our invoices to customers" in configs["external_billing"]["exclude"]
+    assert "logistics" in configs["shopping"]["include"]
+    assert "external professional-service invoices" in configs["shopping"]["exclude"]
+    assert "suspicious promotion" in configs["junk"]["include"]
+    assert (
+        "Unsubscribe-link presence must not be classification evidence"
+        in configs["junk"]["exclude"]
+    )
+    assert all(config["threshold"] == 0.95 for config in configs.values())
+    assert all(config["actions"] == [] for config in configs.values())
+    assert all(config["action_parameters"] == {} for config in configs.values())
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "update email_category_configs set include_json='not-json' where category_key='work'",
+        "update email_category_configs set core_description=' ' where category_key='work'",
+        "update email_category_configs set include_json='[]' where category_key='work'",
+        "update email_category_configs set include_json='[\" \" ]' where category_key='work'",
+        "update email_category_configs set exclude_json='[]' where category_key='work'",
+        "update email_category_configs set exclude_json='[\"\"]' where category_key='work'",
+    ),
+)
+def test_category_config_schema_rejects_invalid_structured_descriptions(
+    tmp_path: Path,
+    statement: str,
+):
+    database = tmp_path / "invalid-category-description.sqlite3"
+    EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(statement)
+
+
+def test_create_category_with_verified_bindings_is_atomic_and_account_complete(
+    tmp_path: Path,
+):
+    database = tmp_path / "create-category.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("primary"))
+    store.create_account(_task2_account_values("disabled", enabled=False))
+
+    created = _create_task2_category(store)
+
+    assert created["enabled"] is True
+    assert store.get_category_config("partner_updates") == created
+    assert store.list_account_folder_bindings("partner_updates") == [
+        {
+            "account_id": "primary",
+            "category_key": "partner_updates",
+            "provider_folder_id": "folder-partners",
+            "provider_folder_name": "合作伙伴",
+            "binding_status": "active",
+            "last_verified_at": "2026-09-07T12:10:00+00:00",
+        }
+    ]
+    with pytest.raises(TypeError, match="verified folder binding"):
+        store.create_category_with_bindings(
+            category_key="raw_binding",
+            display_name="Raw",
+            core_description="Raw client binding claims.",
+            include=("raw claim",),
+            exclude=("verified claim",),
+            threshold=0.9,
+            actions=(),
+            action_parameters={},
+            enabled=True,
+            description_version="raw-v1",
+            config_version="raw-v1",
+            bindings=(
+                {
+                    "account_id": "primary",
+                    "provider_folder_id": "raw-folder",
+                    "provider_folder_name": "Raw",
+                    "binding_status": "active",
+                    "last_verified_at": "2026-09-07T12:11:00+00:00",
+                },
+            ),
+        )
+    assert store.get_category_config("raw_binding") is None
+
+
+def test_unresolved_binding_is_persisted_but_forces_category_disabled(tmp_path: Path):
+    store = EmailStore(tmp_path / "ambiguous-category.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+
+    created = _create_task2_category(
+        store,
+        category_key="vendor_updates",
+        display_name="供应商",
+        bindings=(
+            _task2_verified_binding(
+                folder_id="",
+                folder_name="供应商",
+                status="ambiguous",
+                verified_at="2026-09-07T12:12:00+00:00",
+            ),
+        ),
+    )
+
+    assert created["enabled"] is False
+    assert store.list_account_folder_bindings("vendor_updates")[0][
+        "binding_status"
+    ] == "ambiguous"
+
+
+def test_active_provider_folder_conflict_rolls_back_dynamic_category(tmp_path: Path):
+    conflict_type = getattr(email_store_module, "EmailFolderBindingConflict")
+    store = EmailStore(tmp_path / "binding-conflict.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+
+    def create(category_key: str, folder_id: str) -> dict[str, object]:
+        return _create_task2_category(
+            store,
+            category_key=category_key,
+            display_name=category_key,
+            bindings=(
+                _task2_verified_binding(
+                    folder_id=folder_id,
+                    folder_name=category_key,
+                    verified_at="2026-09-07T12:13:00+00:00",
+                ),
+            ),
+        )
+
+    create("partners", "shared-folder-id")
+    with pytest.raises(conflict_type):
+        create("vendors", "shared-folder-id")
+
+    assert store.get_category_config("vendors") is None
+    assert store.list_account_folder_bindings("vendors") == []
+
+
+def test_update_descriptions_and_binding_status_round_trip(tmp_path: Path):
+    store = EmailStore(tmp_path / "update-category.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    _create_task2_category(
+        store,
+        category_key="partners",
+        display_name="合作伙伴",
+        bindings=(
+            _task2_verified_binding(
+                folder_id="partners-folder",
+                verified_at="2026-09-07T12:14:00+00:00",
+            ),
+        ),
+    )
+
+    updated = store.update_category_descriptions(
+        "partners",
+        core_description="Material partner discussions.",
+        include=("partner contracts",),
+        exclude=("generic sales promotion",),
+        threshold=0.94,
+        enabled=True,
+        description_version="partners-description-v2",
+        config_version="partners-config-v2",
+    )
+    binding = store.set_folder_binding_status(
+        account_id="primary",
+        category_key="partners",
+        provider_folder_id="",
+        provider_folder_name="合作伙伴",
+        binding_status="missing",
+        last_verified_at="2026-09-07T12:15:00+00:00",
+    )
+
+    assert updated is not None
+    assert updated["core_description"] == "Material partner discussions."
+    assert updated["include"] == ["partner contracts"]
+    assert updated["exclude"] == ["generic sales promotion"]
+    assert updated["threshold"] == 0.94
+    assert updated["description_version"] == "partners-description-v2"
+    assert updated["config_version"] == "partners-config-v2"
+    assert binding["binding_status"] == "missing"
+    assert store.get_category_config("partners")["enabled"] is False
+
+
+def test_v19_migration_disables_categories_when_enabled_account_has_no_binding(
+    tmp_path: Path,
+):
+    database = tmp_path / "migration-binding-completeness.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("primary"))
+    _replace_category_schema_with_v19(database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            insert into email_category_configs (
+                category, description, threshold, actions_json,
+                action_parameters_json, enabled, config_version, updated_at
+            ) values ('work', 'Legacy work', 0.88, '[]', '{}', 1,
+                      'legacy-work-v1', '2026-09-07T12:20:00+00:00')
+            """
+        )
+
+    migrated = EmailStore(database)
+
+    assert all(not row["enabled"] for row in migrated.list_category_configs())
+
+
+def test_compatibility_upsert_cannot_enable_without_complete_active_bindings(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "compatibility-binding-completeness.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+
+    updated = store.upsert_config(
+        category=EmailCategory.WORK,
+        description="Daily work.",
+        threshold=0.9,
+        actions=(),
+        action_parameters={},
+        enabled=True,
+        config_version="work-v2",
+    )
+
+    assert updated["enabled"] is False
+    assert store.get_category_config("work")["enabled"] is False
+
+
+def test_v19_migration_rejects_structured_legacy_hybrid_table(tmp_path: Path):
+    database = tmp_path / "hybrid-category-table.sqlite3"
+    EmailStore(database)
+    with sqlite3.connect(database) as db:
+        db.execute("alter table email_category_configs add column description text")
+        db.execute("delete from email_schema_migrations where version=20")
+        db.execute(
+            "insert into email_schema_migrations(version, applied_at) "
+            "values (19, '2026-09-07T12:21:00+00:00')"
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="structured category config schema is malformed",
+    ):
+        EmailStore(database)
+
+
+def test_creating_enabled_account_disables_categories_without_its_active_binding(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "create-enabled-account-bindings.sqlite3")
+    assert all(row["enabled"] for row in store.list_category_configs())
+
+    store.create_account(_task2_account_values("new-enabled"))
+
+    assert all(not row["enabled"] for row in store.list_category_configs())
+
+
+def test_enabling_account_keeps_only_categories_with_complete_active_bindings(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "enable-account-bindings.sqlite3")
+    store.create_account(_task2_account_values("secondary", enabled=False))
+    _create_task2_category(
+        store,
+        category_key="covered_category",
+        bindings=(
+            _task2_verified_binding(
+                account_id="secondary",
+                folder_id="covered-folder",
+            ),
+        ),
+    )
+    _create_task2_category(
+        store,
+        category_key="uncovered_category",
+        bindings=(),
+    )
+
+    store.update_account(
+        "secondary",
+        _task2_account_values("secondary", enabled=True),
+    )
+
+    configs = {
+        row["category_key"]: row for row in store.list_category_configs()
+    }
+    assert configs["covered_category"]["enabled"] is True
+    assert configs["uncovered_category"]["enabled"] is False
+    assert configs["work"]["enabled"] is False
+
+
+def test_account_enable_and_category_disabling_are_one_transaction(tmp_path: Path):
+    database = tmp_path / "account-category-atomicity.sqlite3"
+    store = EmailStore(database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            create trigger abort_category_disabling
+            before update of enabled on email_category_configs
+            when old.enabled=1 and new.enabled=0
+            begin
+                select raise(abort, 'forced category disable failure');
+            end
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced category disable failure"):
+        store.create_account(_task2_account_values("rolled-back-account"))
+
+    assert store.get_account("rolled-back-account") is None
+    assert all(row["enabled"] for row in store.list_category_configs())
+
+
+def test_reopen_rejects_enabled_category_missing_enabled_account_binding(
+    tmp_path: Path,
+):
+    database = tmp_path / "category-binding-corruption.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("primary"))
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_category_configs set enabled=1 "
+            "where category_key='work'"
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="enabled email category is missing an active account folder binding",
+    ):
+        EmailStore(database)
+
+
+def test_seeded_category_requires_explicit_enable_after_bindings_complete(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "upsert-first-binding.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    store.create_account(_task2_account_values("secondary"))
+    assert store.get_category_config("work")["enabled"] is False
+
+    first = store.upsert_verified_folder_binding(
+        "work",
+        _task2_verified_binding(
+            account_id="primary",
+            folder_id="work-primary",
+            folder_name="工作",
+        ),
+    )
+    updated = store.upsert_verified_folder_binding(
+        "work",
+        _task2_verified_binding(
+            account_id="primary",
+            folder_id="work-primary-updated",
+            folder_name="工作更新",
+            verified_at="2026-09-07T12:30:00+00:00",
+        ),
+    )
+
+    assert first["provider_folder_id"] == "work-primary"
+    assert updated["provider_folder_id"] == "work-primary-updated"
+    assert updated["provider_folder_name"] == "工作更新"
+    assert store.get_category_config("work")["enabled"] is False
+
+    store.upsert_verified_folder_binding(
+        "work",
+        _task2_verified_binding(
+            account_id="secondary",
+            folder_id="work-secondary",
+            folder_name="工作",
+        ),
+    )
+
+    complete = store.get_category_config("work")
+    assert complete["enabled"] is False
+
+    enabled = store.update_category_descriptions(
+        "work",
+        core_description=complete["core_description"],
+        include=complete["include"],
+        exclude=complete["exclude"],
+        threshold=complete["threshold"],
+        enabled=True,
+        description_version=complete["description_version"],
+        config_version="work-explicitly-enabled-v1",
+    )
+
+    assert enabled is not None
+    assert enabled["enabled"] is True
+
+
+def test_active_binding_upsert_preserves_explicitly_disabled_category(tmp_path: Path):
+    store = EmailStore(tmp_path / "binding-preserves-disabled.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    binding = _task2_verified_binding(
+        account_id="primary",
+        folder_id="work-primary",
+        folder_name="工作",
+    )
+    store.upsert_verified_folder_binding("work", binding)
+    work = store.get_category_config("work")
+    explicitly_enabled = store.update_category_descriptions(
+        "work",
+        core_description=work["core_description"],
+        include=work["include"],
+        exclude=work["exclude"],
+        threshold=work["threshold"],
+        enabled=True,
+        description_version=work["description_version"],
+        config_version="work-enabled-v1",
+    )
+    explicitly_disabled = store.update_category_descriptions(
+        "work",
+        core_description=work["core_description"],
+        include=work["include"],
+        exclude=work["exclude"],
+        threshold=work["threshold"],
+        enabled=False,
+        description_version=work["description_version"],
+        config_version="work-disabled-v1",
+    )
+
+    store.upsert_verified_folder_binding(
+        "work",
+        _task2_verified_binding(
+            account_id="primary",
+            folder_id="work-primary-updated",
+            folder_name="工作更新",
+            verified_at="2026-09-07T12:40:00+00:00",
+        ),
+    )
+
+    assert explicitly_enabled is not None
+    assert explicitly_enabled["enabled"] is True
+    assert explicitly_disabled is not None
+    assert explicitly_disabled["enabled"] is False
+    assert store.get_category_config("work")["enabled"] is False
+
+
+def test_upsert_verified_folder_binding_is_typed_atomic_and_unique(tmp_path: Path):
+    conflict_type = getattr(email_store_module, "EmailFolderBindingConflict")
+    store = EmailStore(tmp_path / "upsert-binding-conflict.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    work_binding = _task2_verified_binding(
+        account_id="primary",
+        folder_id="claimed-folder",
+        folder_name="工作",
+    )
+    store.upsert_verified_folder_binding("work", work_binding)
+
+    with pytest.raises(conflict_type):
+        store.upsert_verified_folder_binding(
+            "legal",
+            _task2_verified_binding(
+                account_id="primary",
+                folder_id="claimed-folder",
+                folder_name="法务",
+            ),
+        )
+    with pytest.raises(TypeError, match="VerifiedEmailFolderBinding"):
+        store.upsert_verified_folder_binding(
+            "legal",
+            {
+                "account_id": "primary",
+                "provider_folder_id": "raw-folder",
+                "provider_folder_name": "法务",
+                "binding_status": "active",
+                "last_verified_at": "2026-09-07T12:31:00+00:00",
+            },
+        )
+
+    assert store.list_account_folder_bindings("legal") == []
+    assert store.list_account_folder_bindings("work") == [
+        {
+            "account_id": "primary",
+            "category_key": "work",
+            "provider_folder_id": "claimed-folder",
+            "provider_folder_name": "工作",
+            "binding_status": "active",
+            "last_verified_at": "2026-09-07T12:10:00+00:00",
+        }
+    ]
+
+
+def test_category_enablement_snapshot_restores_create_and_update_compensation(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "category-enablement-compensation.sqlite3")
+    enabled_before_create = {
+        row["category_key"]: row["enabled"]
+        for row in store.list_category_configs()
+    }
+
+    created, create_snapshot = (
+        store.create_account_with_category_enablement_snapshot(
+            _task2_account_values("created")
+        )
+    )
+
+    assert store.delete_account_if_unchanged(
+        "created",
+        expected_updated_at=created["updated_at"],
+        category_enablement_snapshot=create_snapshot,
+    )
+    assert store.get_account("created") is None
+    assert {
+        row["category_key"]: row["enabled"]
+        for row in store.list_category_configs()
+    } == enabled_before_create
+
+    store.create_account(_task2_account_values("updated", enabled=False))
+    account_before_update = store.get_account("updated")
+    enabled_before_update = {
+        row["category_key"]: row["enabled"]
+        for row in store.list_category_configs()
+    }
+    update_result = store.update_account_with_category_enablement_snapshot(
+        "updated",
+        _task2_account_values("updated", enabled=True),
+    )
+    assert update_result is not None
+    updated, previous, update_snapshot = update_result
+
+    assert previous == account_before_update
+    assert store.restore_account_if_unchanged(
+        previous,
+        expected_updated_at=updated["updated_at"],
+        category_enablement_snapshot=update_snapshot,
+    )
+    assert store.get_account("updated") == account_before_update
+    assert {
+        row["category_key"]: row["enabled"]
+        for row in store.list_category_configs()
+    } == enabled_before_update
+
+
+def test_category_enablement_snapshot_refuses_concurrent_category_edit(tmp_path: Path):
+    store = EmailStore(tmp_path / "category-enablement-conflict.sqlite3")
+    created, snapshot = store.create_account_with_category_enablement_snapshot(
+        _task2_account_values("primary")
+    )
+    work = store.get_category_config("work")
+    assert work is not None
+    store.update_category_descriptions(
+        "work",
+        core_description=work["core_description"],
+        include=work["include"],
+        exclude=work["exclude"],
+        threshold=work["threshold"],
+        enabled=False,
+        description_version=work["description_version"],
+        config_version="concurrent-work-edit-v1",
+    )
+
+    restored = store.delete_account_if_unchanged(
+        "primary",
+        expected_updated_at=created["updated_at"],
+        category_enablement_snapshot=snapshot,
+    )
+
+    assert restored is False
+    assert store.get_account("primary") == created
+    assert store.get_category_config("work")["config_version"] == (
+        "concurrent-work-edit-v1"
+    )

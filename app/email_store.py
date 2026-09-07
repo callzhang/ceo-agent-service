@@ -36,10 +36,29 @@ from app.email_classifier_contracts import (
     rehydrate_legacy_email_category_key,
     validate_email_category_key,
 )
+from app.email_category_config import (
+    ACTIVE_BINDING_INDEX_SQL,
+    CATEGORY_CONFIG_CHECKS,
+    CATEGORY_CONFIG_COLUMN_CONTRACTS,
+    CATEGORY_CONFIG_TABLE_SQL,
+    DESCRIPTION_VERSION,
+    FOLDER_BINDING_CHECKS,
+    FOLDER_BINDING_COLUMN_CONTRACTS,
+    FOLDER_BINDING_TABLE_SQL,
+    INITIAL_CATEGORY_CONFIGS,
+    SEEDED_CONFIG_VERSION,
+    SEEDED_THRESHOLD,
+    STRUCTURED_CATEGORY_CONFIG_COLUMNS,
+    CategoryConfigDataError,
+    VerifiedEmailFolderBinding,
+    category_config_row,
+    legacy_config_row,
+    validate_category_descriptions,
+)
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 19
+EMAIL_SCHEMA_VERSION = 20
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -144,16 +163,8 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "created_at": ("text", True, "current_timestamp"),
         "updated_at": ("text", True, "current_timestamp"),
     },
-    "email_category_configs": {
-        "category": ("text", False, None),
-        "description": ("text", True, "''"),
-        "threshold": ("real", True, None),
-        "actions_json": ("text", True, None),
-        "action_parameters_json": ("text", True, "'{}'"),
-        "enabled": ("integer", True, "1"),
-        "config_version": ("text", True, None),
-        "updated_at": ("text", True, "current_timestamp"),
-    },
+    "email_category_configs": CATEGORY_CONFIG_COLUMN_CONTRACTS,
+    "email_category_folder_bindings": FOLDER_BINDING_COLUMN_CONTRACTS,
     "email_accounts": {
         "account_id": ("text", False, None),
         "display_name": ("text", True, None),
@@ -369,6 +380,8 @@ _REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
 }
 _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
     "email_classifications": ("legacy_processed_without_plan in (0, 1)",),
+    "email_category_configs": CATEGORY_CONFIG_CHECKS,
+    "email_category_folder_bindings": FOLDER_BINDING_CHECKS,
     "email_accounts": (
         "imap_port between 1 and 65535",
         "imap_tls in (0, 1)",
@@ -507,7 +520,8 @@ _REQUIRED_AUTOINCREMENT_COLUMNS = frozenset(
 _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_schema_migrations": ("version",),
     "email_classifications": ("id",),
-    "email_category_configs": ("category",),
+    "email_category_configs": ("category_key",),
+    "email_category_folder_bindings": ("account_id", "category_key"),
     "email_accounts": ("account_id",),
     "email_scan_cursors": ("account_id", "folder"),
     "email_messages": ("id",),
@@ -541,6 +555,10 @@ _REQUIRED_FOREIGN_KEYS: Mapping[
     str,
     tuple[tuple[str, str, str, str], ...],
 ] = {
+    "email_category_folder_bindings": (
+        ("account_id", "email_accounts", "account_id", "CASCADE"),
+        ("category_key", "email_category_configs", "category_key", "CASCADE"),
+    ),
     "email_action_plans": (
         ("classification_id", "email_classifications", "id", "RESTRICT"),
     ),
@@ -618,6 +636,16 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_unsubscribe_receipts_classification_action": (
         "email_unsubscribe_receipts",
         ("classification_id", "action_identity"),
+    ),
+}
+_REQUIRED_PARTIAL_UNIQUE_INDEXES: Mapping[
+    str,
+    tuple[str, tuple[str, ...], str],
+] = {
+    "idx_email_category_folder_bindings_active_provider": (
+        "email_category_folder_bindings",
+        ("account_id", "provider_folder_id"),
+        "where binding_status = 'active'",
     ),
 }
 _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
@@ -963,6 +991,27 @@ class EmailAccountConflict(RuntimeError):
     def __init__(self, code: str):
         super().__init__("email account configuration conflicts with stored state")
         self.code = code
+
+
+class EmailFolderBindingConflict(RuntimeError):
+    """A category or active provider folder conflicts with durable configuration."""
+
+
+@dataclass(frozen=True)
+class EmailCategoryEnablementState:
+    """One category state changed by an account mutation."""
+
+    category_key: str
+    enabled: bool
+    updated_at: str
+    mutation_updated_at: str
+
+
+@dataclass(frozen=True)
+class EmailCategoryEnablementSnapshot:
+    """Optimistic restore token for one exact account mutation."""
+
+    states: tuple[EmailCategoryEnablementState, ...]
 
 
 class EmailPersistenceCorruption(RuntimeError):
@@ -2226,6 +2275,9 @@ class EmailStore:
                 latest_version = 18
             if latest_version == 18:
                 self._migrate_v18_to_v19(db, replace_version=is_prototype)
+                latest_version = 19
+            if latest_version == 19:
+                self._migrate_v19_to_v20(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -2949,6 +3001,152 @@ class EmailStore:
                 "insert into email_schema_migrations(version, applied_at) "
                 "values (19, ?)",
                 (self._now(),),
+            )
+
+    @staticmethod
+    def _create_category_config_tables(db: sqlite3.Connection) -> None:
+        db.execute(CATEGORY_CONFIG_TABLE_SQL)
+        db.execute(FOLDER_BINDING_TABLE_SQL)
+        db.execute(ACTIVE_BINDING_INDEX_SQL)
+
+    def _migrate_v19_to_v20(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Replace mutable category configuration without rewriting history."""
+
+        current_columns = self._table_columns(db, "email_category_configs")
+        if "category_key" in current_columns:
+            if current_columns != STRUCTURED_CATEGORY_CONFIG_COLUMNS:
+                raise EmailPersistenceCorruption(
+                    "structured category config schema is malformed"
+                )
+            tables = {
+                row["name"]
+                for row in db.execute(
+                    "select name from sqlite_master where type='table'"
+                )
+            }
+            if "email_category_folder_bindings" not in tables:
+                db.execute(
+                    "alter table email_category_configs "
+                    "rename to email_category_configs_v20"
+                )
+                self._create_category_config_tables(db)
+                db.execute(
+                    "insert into email_category_configs "
+                    "select * from email_category_configs_v20"
+                )
+                db.execute("drop table email_category_configs_v20")
+            if replace_version:
+                db.execute(
+                    "update email_schema_migrations set version=20, applied_at=? "
+                    "where version=19",
+                    (self._now(),),
+                )
+            else:
+                db.execute(
+                    "insert into email_schema_migrations(version, applied_at) "
+                    "values (20, ?)",
+                    (self._now(),),
+                )
+            return
+        legacy_rows = {
+            str(row["category"]): row
+            for row in db.execute("select * from email_category_configs")
+        }
+        db.execute("alter table email_category_configs rename to email_category_configs_v19")
+        self._create_category_config_tables(db)
+        now = self._now()
+        has_enabled_account = (
+            db.execute(
+                "select 1 from email_accounts where enabled=1 limit 1"
+            ).fetchone()
+            is not None
+        )
+        migrated_keys = set(INITIAL_CATEGORY_CONFIGS)
+        migrated_keys.update(
+            key
+            for key in legacy_rows
+            if key not in {"important", "subscription", "billing"}
+        )
+        for category_key in sorted(migrated_keys):
+            try:
+                validated_key = validate_email_category_key(category_key)
+            except ValueError as exc:
+                raise EmailPersistenceCorruption(
+                    "invalid configured email category"
+                ) from exc
+            legacy = legacy_rows.get(category_key)
+            if category_key == "external_billing" and legacy is None:
+                legacy = legacy_rows.get("billing")
+            definition = INITIAL_CATEGORY_CONFIGS.get(category_key)
+            if definition is None:
+                assert legacy is not None
+                legacy_description = str(legacy["description"]).strip()
+                core = legacy_description or f"Messages classified as {validated_key}."
+                display_name = validated_key.replace("_", " ").title()
+                include = (core,)
+                exclude = ("Messages outside this category.",)
+            else:
+                display_name = str(definition["display_name"])
+                core = str(definition["core"])
+                include = tuple(definition["include"])
+                exclude = tuple(definition["exclude"])
+            db.execute(
+                """
+                insert into email_category_configs (
+                    category_key, display_name, core_description,
+                    include_json, exclude_json, threshold, actions_json,
+                    action_parameters_json, enabled, description_version,
+                    config_version, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    validated_key,
+                    display_name,
+                    core,
+                    _json_dump(list(include)),
+                    _json_dump(list(exclude)),
+                    (
+                        float(legacy["threshold"])
+                        if legacy is not None
+                        else SEEDED_THRESHOLD
+                    ),
+                    str(legacy["actions_json"]) if legacy is not None else "[]",
+                    (
+                        str(legacy["action_parameters_json"])
+                        if legacy is not None
+                        else "{}"
+                    ),
+                    (
+                        int(bool(legacy["enabled"]) and not has_enabled_account)
+                        if legacy is not None
+                        else int(not has_enabled_account)
+                    ),
+                    DESCRIPTION_VERSION,
+                    (
+                        str(legacy["config_version"])
+                        if legacy is not None
+                        else SEEDED_CONFIG_VERSION
+                    ),
+                    str(legacy["updated_at"]) if legacy is not None else now,
+                ),
+            )
+        db.execute("drop table email_category_configs_v19")
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=20, applied_at=? "
+                "where version=19",
+                (now,),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) "
+                "values (20, ?)",
+                (now,),
             )
 
     @classmethod
@@ -3727,7 +3925,14 @@ class EmailStore:
                 )
 
             indexes_by_table: dict[str, dict[str, sqlite3.Row]] = {}
-            for table, required_columns in _REQUIRED_TABLE_COLUMNS.items():
+            table_order = [
+                table
+                for table in _REQUIRED_TABLE_COLUMNS
+                if table != "email_category_folder_bindings"
+            ]
+            table_order.append("email_category_folder_bindings")
+            for table in table_order:
+                required_columns = _REQUIRED_TABLE_COLUMNS[table]
                 column_rows = list(
                     db.execute(f"pragma table_info({json.dumps(table)})")
                 )
@@ -3864,6 +4069,31 @@ class EmailStore:
                 ):
                     raise EmailPersistenceCorruption(
                         f"required index {index_name} is missing or malformed"
+                    )
+
+            for index_name, (
+                table,
+                required_columns,
+                required_predicate,
+            ) in _REQUIRED_PARTIAL_UNIQUE_INDEXES.items():
+                index_row = indexes_by_table[table].get(index_name)
+                sql_row = db.execute(
+                    "select sql from sqlite_master where type='index' and name=?",
+                    (index_name,),
+                ).fetchone()
+                if (
+                    index_row is None
+                    or not index_row["unique"]
+                    or not index_row["partial"]
+                    or cls._index_columns(db, index_name) != required_columns
+                    or sql_row is None
+                    or not isinstance(sql_row["sql"], str)
+                    or "".join(_schema_sql_tokens(required_predicate))
+                    not in "".join(_schema_sql_tokens(sql_row["sql"]))
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"required partial unique index {index_name} "
+                        "is missing or malformed"
                     )
 
             trigger_rows = {
@@ -4643,12 +4873,24 @@ class EmailStore:
                     "unsubscribe receipt does not match its exact accepted effect"
                 )
 
-        for row in db.execute(
-            "select category, actions_json, action_parameters_json "
-            "from email_category_configs"
-        ):
+        for row in db.execute("select * from email_category_configs"):
             try:
-                rehydrate_legacy_email_category_key(row["category"])
+                validate_email_category_key(row["category_key"])
+                validate_category_descriptions(
+                    display_name=row["display_name"],
+                    core_description=row["core_description"],
+                    include=_json_load(
+                        row["include_json"],
+                        field="include_json",
+                        expected_type=list,
+                    ),
+                    exclude=_json_load(
+                        row["exclude_json"],
+                        field="exclude_json",
+                        expected_type=list,
+                    ),
+                    description_version=row["description_version"],
+                )
             except ValueError as exc:
                 raise EmailPersistenceCorruption(
                     "invalid configured email category"
@@ -4668,6 +4910,23 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     "invalid configured email action"
                 ) from exc
+
+        for row in db.execute("select * from email_category_folder_bindings"):
+            try:
+                VerifiedEmailFolderBinding(
+                    account_id=row["account_id"],
+                    provider_folder_id=row["provider_folder_id"],
+                    provider_folder_name=row["provider_folder_name"],
+                    binding_status=row["binding_status"],
+                    last_verified_at=row["last_verified_at"],
+                )
+                validate_email_category_key(row["category_key"])
+            except ValueError as exc:
+                raise EmailPersistenceCorruption(
+                    "invalid email category folder binding"
+                ) from exc
+
+        self._validate_category_binding_completeness(db)
 
         action_rows = list(db.execute("select * from email_actions"))
         actions_by_plan: dict[str, list[sqlite3.Row]] = {}
@@ -8260,6 +8519,18 @@ class EmailStore:
         *,
         allow_shared_email: bool = False,
     ) -> dict[str, Any]:
+        row, _snapshot = self.create_account_with_category_enablement_snapshot(
+            values,
+            allow_shared_email=allow_shared_email,
+        )
+        return row
+
+    def create_account_with_category_enablement_snapshot(
+        self,
+        values: Mapping[str, object],
+        *,
+        allow_shared_email: bool = False,
+    ) -> tuple[dict[str, Any], EmailCategoryEnablementSnapshot]:
         now = self._now()
         with self._connect() as db:
             db.execute("begin immediate")
@@ -8278,12 +8549,17 @@ class EmailStore:
             )
             now = self._next_account_timestamp()
             self._insert_account(db, values, created_at=now, updated_at=now)
+            category_snapshot = self._disable_categories_missing_active_bindings(
+                db,
+                updated_at=now,
+            )
+            self._validate_category_binding_completeness(db)
             row = db.execute(
                 "select * from email_accounts where account_id=?",
                 (values["account_id"],),
             ).fetchone()
         assert row is not None
-        return self._account_row(row)
+        return self._account_row(row), category_snapshot
 
     def update_account(
         self,
@@ -8292,6 +8568,27 @@ class EmailStore:
         *,
         allow_shared_email: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        result = self.update_account_with_category_enablement_snapshot(
+            account_id,
+            values,
+            allow_shared_email=allow_shared_email,
+        )
+        if result is None:
+            return None
+        row, previous, _snapshot = result
+        return row, previous
+
+    def update_account_with_category_enablement_snapshot(
+        self,
+        account_id: str,
+        values: Mapping[str, object],
+        *,
+        allow_shared_email: bool = False,
+    ) -> tuple[
+        dict[str, Any],
+        dict[str, Any],
+        EmailCategoryEnablementSnapshot,
+    ] | None:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
@@ -8338,25 +8635,44 @@ class EmailStore:
                     account_id,
                 ),
             )
+            category_snapshot = self._disable_categories_missing_active_bindings(
+                db,
+                updated_at=updated_at,
+            )
+            self._validate_category_binding_completeness(db)
             row = db.execute(
                 "select * from email_accounts where account_id=?",
                 (account_id,),
             ).fetchone()
         assert row is not None
-        return self._account_row(row), previous
+        return self._account_row(row), previous, category_snapshot
 
     def delete_account_if_unchanged(
         self,
         account_id: str,
         *,
         expected_updated_at: str,
+        category_enablement_snapshot: EmailCategoryEnablementSnapshot | None = None,
     ) -> bool:
         with self._connect() as db:
             db.execute("begin immediate")
+            if category_enablement_snapshot is not None and not (
+                self._category_enablement_snapshot_is_current(
+                    db,
+                    category_enablement_snapshot,
+                )
+            ):
+                return False
             cursor = db.execute(
                 "delete from email_accounts where account_id=? and updated_at=?",
                 (account_id, expected_updated_at),
             )
+            if cursor.rowcount == 1 and category_enablement_snapshot is not None:
+                self._restore_category_enablement_snapshot(
+                    db,
+                    category_enablement_snapshot,
+                )
+                self._validate_category_binding_completeness(db)
         return cursor.rowcount == 1
 
     def restore_account_if_unchanged(
@@ -8364,9 +8680,17 @@ class EmailStore:
         snapshot: Mapping[str, object],
         *,
         expected_updated_at: str,
+        category_enablement_snapshot: EmailCategoryEnablementSnapshot | None = None,
     ) -> bool:
         with self._connect() as db:
             db.execute("begin immediate")
+            if category_enablement_snapshot is not None and not (
+                self._category_enablement_snapshot_is_current(
+                    db,
+                    category_enablement_snapshot,
+                )
+            ):
+                return False
             cursor = db.execute(
                 """
                 update email_accounts set
@@ -8399,7 +8723,139 @@ class EmailStore:
                     expected_updated_at,
                 ),
             )
+            if cursor.rowcount == 1:
+                if category_enablement_snapshot is None:
+                    self._disable_categories_missing_active_bindings(
+                        db,
+                        updated_at=self._now(),
+                    )
+                else:
+                    self._restore_category_enablement_snapshot(
+                        db,
+                        category_enablement_snapshot,
+                    )
+                self._validate_category_binding_completeness(db)
         return cursor.rowcount == 1
+
+    @staticmethod
+    def _disable_categories_missing_active_bindings(
+        db: sqlite3.Connection,
+        *,
+        updated_at: str,
+    ) -> EmailCategoryEnablementSnapshot:
+        rows = db.execute(
+            """
+            select category_key, enabled, updated_at
+            from email_category_configs
+            where enabled=1 and exists (
+                select 1 from email_accounts as accounts
+                where accounts.enabled=1
+                  and not exists (
+                      select 1 from email_category_folder_bindings as bindings
+                      where bindings.account_id=accounts.account_id
+                        and bindings.category_key=
+                            email_category_configs.category_key
+                        and bindings.binding_status='active'
+                  )
+            )
+            order by category_key
+            """
+        ).fetchall()
+        db.execute(
+            """
+            update email_category_configs set enabled=0, updated_at=?
+            where enabled=1 and exists (
+                select 1 from email_accounts as accounts
+                where accounts.enabled=1
+                  and not exists (
+                      select 1 from email_category_folder_bindings as bindings
+                      where bindings.account_id=accounts.account_id
+                        and bindings.category_key=
+                            email_category_configs.category_key
+                        and bindings.binding_status='active'
+                  )
+            )
+            """,
+            (updated_at,),
+        )
+        return EmailCategoryEnablementSnapshot(
+            states=tuple(
+                EmailCategoryEnablementState(
+                    category_key=row["category_key"],
+                    enabled=bool(row["enabled"]),
+                    updated_at=row["updated_at"],
+                    mutation_updated_at=updated_at,
+                )
+                for row in rows
+            )
+        )
+
+    @staticmethod
+    def _category_enablement_snapshot_is_current(
+        db: sqlite3.Connection,
+        snapshot: EmailCategoryEnablementSnapshot,
+    ) -> bool:
+        if type(snapshot) is not EmailCategoryEnablementSnapshot:
+            return False
+        for state in snapshot.states:
+            if type(state) is not EmailCategoryEnablementState:
+                return False
+            row = db.execute(
+                "select enabled, updated_at from email_category_configs "
+                "where category_key=?",
+                (state.category_key,),
+            ).fetchone()
+            if (
+                row is None
+                or bool(row["enabled"]) is not False
+                or row["updated_at"] != state.mutation_updated_at
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _restore_category_enablement_snapshot(
+        db: sqlite3.Connection,
+        snapshot: EmailCategoryEnablementSnapshot,
+    ) -> None:
+        for state in snapshot.states:
+            updated = db.execute(
+                """
+                update email_category_configs set enabled=?, updated_at=?
+                where category_key=? and enabled=0 and updated_at=?
+                """,
+                (
+                    int(state.enabled),
+                    state.updated_at,
+                    state.category_key,
+                    state.mutation_updated_at,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise EmailPersistenceCorruption(
+                    "category enablement changed during account compensation"
+                )
+
+    @staticmethod
+    def _validate_category_binding_completeness(db: sqlite3.Connection) -> None:
+        incomplete = db.execute(
+            """
+            select configs.category_key, accounts.account_id
+            from email_category_configs as configs
+            cross join email_accounts as accounts
+            left join email_category_folder_bindings as bindings
+              on bindings.category_key=configs.category_key
+             and bindings.account_id=accounts.account_id
+             and bindings.binding_status='active'
+            where configs.enabled=1 and accounts.enabled=1
+              and bindings.account_id is null
+            limit 1
+            """
+        ).fetchone()
+        if incomplete is not None:
+            raise EmailPersistenceCorruption(
+                "enabled email category is missing an active account folder binding"
+            )
 
     @staticmethod
     def _assert_email_address_available(
@@ -9356,7 +9812,7 @@ class EmailStore:
         selected_config = db.execute(
             """
             select actions_json, action_parameters_json, enabled, config_version
-            from email_category_configs where category=?
+            from email_category_configs where category_key=?
             """,
             (category,),
         ).fetchone()
@@ -10010,12 +10466,383 @@ class EmailStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def list_configs(self) -> list[dict[str, Any]]:
+    def list_category_configs(self) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from email_category_configs order by category"
+                "select * from email_category_configs order by category_key"
             ).fetchall()
-        return [self._config_row(row) for row in rows]
+        return [self._category_config_row(row) for row in rows]
+
+    def get_category_config(self, category_key: str) -> dict[str, Any] | None:
+        category_key = validate_email_category_key(category_key)
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+        return None if row is None else self._category_config_row(row)
+
+    def create_category_with_bindings(
+        self,
+        *,
+        category_key: str,
+        display_name: str,
+        core_description: str,
+        include: Sequence[str],
+        exclude: Sequence[str],
+        threshold: float,
+        actions: tuple[EmailAction, ...],
+        action_parameters: Mapping[EmailAction, Mapping[str, object]],
+        enabled: bool,
+        description_version: str,
+        config_version: str,
+        bindings: Sequence[VerifiedEmailFolderBinding],
+    ) -> dict[str, Any]:
+        category_key = validate_email_category_key(category_key)
+        include_values, exclude_values = validate_category_descriptions(
+            display_name=display_name,
+            core_description=core_description,
+            include=include,
+            exclude=exclude,
+            description_version=description_version,
+        )
+        _validate_config(
+            category=category_key,
+            threshold=threshold,
+            actions=actions,
+            action_parameters=action_parameters,
+            config_version=config_version,
+        )
+        if any(not isinstance(binding, VerifiedEmailFolderBinding) for binding in bindings):
+            raise TypeError("bindings must contain coordinator-produced verified folder binding values")
+        if category_key == "junk" and bindings:
+            raise ValueError("junk does not accept a business-folder binding")
+        account_ids = [binding.account_id for binding in bindings]
+        if len(account_ids) != len(set(account_ids)):
+            raise EmailFolderBindingConflict("duplicate category/account binding")
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            enabled_accounts = {
+                row["account_id"]
+                for row in db.execute(
+                    "select account_id from email_accounts where enabled=1"
+                )
+            }
+            existing_accounts = {
+                row["account_id"]
+                for row in db.execute("select account_id from email_accounts")
+            }
+            if not set(account_ids) <= existing_accounts:
+                raise EmailFolderBindingConflict("folder binding account is unknown")
+            active_accounts = {
+                binding.account_id
+                for binding in bindings
+                if binding.binding_status == "active"
+            }
+            final_enabled = bool(enabled and enabled_accounts <= active_accounts)
+            try:
+                db.execute(
+                    """
+                    insert into email_category_configs (
+                        category_key, display_name, core_description,
+                        include_json, exclude_json, threshold, actions_json,
+                        action_parameters_json, enabled, description_version,
+                        config_version, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        category_key,
+                        display_name,
+                        core_description,
+                        _json_dump(list(include_values)),
+                        _json_dump(list(exclude_values)),
+                        threshold,
+                        _json_dump([action.value for action in actions]),
+                        _json_dump(
+                            {
+                                action.value: dict(parameters)
+                                for action, parameters in action_parameters.items()
+                            }
+                        ),
+                        int(final_enabled),
+                        description_version,
+                        config_version,
+                        now,
+                    ),
+                )
+                for binding in bindings:
+                    db.execute(
+                        """
+                        insert into email_category_folder_bindings (
+                            account_id, category_key, provider_folder_id,
+                            provider_folder_name, binding_status, last_verified_at
+                        ) values (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            binding.account_id,
+                            category_key,
+                            binding.provider_folder_id,
+                            binding.provider_folder_name,
+                            binding.binding_status,
+                            binding.last_verified_at,
+                        ),
+                    )
+            except sqlite3.IntegrityError as exc:
+                raise EmailFolderBindingConflict(
+                    "email category or folder binding conflicts with stored state"
+                ) from exc
+            row = db.execute(
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+        assert row is not None
+        return self._category_config_row(row)
+
+    @staticmethod
+    def _bindings_cover_enabled_accounts(
+        db: sqlite3.Connection,
+        category_key: str,
+    ) -> bool:
+        return (
+            db.execute(
+                """
+                select not exists (
+                    select 1 from email_accounts as accounts
+                    where accounts.enabled=1
+                      and not exists (
+                          select 1 from email_category_folder_bindings as bindings
+                          where bindings.account_id=accounts.account_id
+                            and bindings.category_key=?
+                            and bindings.binding_status='active'
+                      )
+                )
+                """,
+                (category_key,),
+            ).fetchone()[0]
+            == 1
+        )
+
+    def update_category_descriptions(
+        self,
+        category_key: str,
+        *,
+        core_description: str,
+        include: Sequence[str],
+        exclude: Sequence[str],
+        threshold: float,
+        enabled: bool,
+        description_version: str,
+        config_version: str,
+    ) -> dict[str, Any] | None:
+        category_key = validate_email_category_key(category_key)
+        include_values, exclude_values = validate_category_descriptions(
+            display_name="unchanged",
+            core_description=core_description,
+            include=include,
+            exclude=exclude,
+            description_version=description_version,
+        )
+        if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+            raise ValueError("threshold must be numeric")
+        if not 0.0 <= float(threshold) <= 1.0:
+            raise ValueError("threshold must be between zero and one")
+        if type(config_version) is not str or not config_version.strip():
+            raise ValueError("config_version must be non-empty")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            existing = db.execute(
+                "select 1 from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+            if existing is None:
+                return None
+            final_enabled = bool(
+                enabled
+                and self._bindings_cover_enabled_accounts(db, category_key)
+            )
+            db.execute(
+                """
+                update email_category_configs set
+                    core_description=?, include_json=?, exclude_json=?,
+                    threshold=?, enabled=?, description_version=?,
+                    config_version=?, updated_at=?
+                where category_key=?
+                """,
+                (
+                    core_description,
+                    _json_dump(list(include_values)),
+                    _json_dump(list(exclude_values)),
+                    float(threshold),
+                    int(final_enabled),
+                    description_version,
+                    config_version,
+                    self._now(),
+                    category_key,
+                ),
+            )
+            row = db.execute(
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+        assert row is not None
+        return self._category_config_row(row)
+
+    def set_folder_binding_status(
+        self,
+        *,
+        account_id: str,
+        category_key: str,
+        provider_folder_id: str,
+        provider_folder_name: str,
+        binding_status: str,
+        last_verified_at: str,
+    ) -> dict[str, Any]:
+        category_key = validate_email_category_key(category_key)
+        binding = VerifiedEmailFolderBinding(
+            account_id=account_id,
+            provider_folder_id=provider_folder_id,
+            provider_folder_name=provider_folder_name,
+            binding_status=binding_status,
+            last_verified_at=last_verified_at,
+        )
+        if category_key == "junk":
+            raise ValueError("junk does not accept a business-folder binding")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            try:
+                updated = db.execute(
+                    """
+                    update email_category_folder_bindings set
+                        provider_folder_id=?, provider_folder_name=?,
+                        binding_status=?, last_verified_at=?
+                    where account_id=? and category_key=?
+                    """,
+                    (
+                        binding.provider_folder_id,
+                        binding.provider_folder_name,
+                        binding.binding_status,
+                        binding.last_verified_at,
+                        binding.account_id,
+                        category_key,
+                    ),
+                ).rowcount
+            except sqlite3.IntegrityError as exc:
+                raise EmailFolderBindingConflict(
+                    "email folder binding conflicts with stored state"
+                ) from exc
+            if updated != 1:
+                raise EmailFolderBindingConflict("email folder binding does not exist")
+            if binding.binding_status != "active":
+                db.execute(
+                    "update email_category_configs set enabled=0, updated_at=? "
+                    "where category_key=?",
+                    (self._now(), category_key),
+                )
+            row = db.execute(
+                """
+                select * from email_category_folder_bindings
+                where account_id=? and category_key=?
+                """,
+                (binding.account_id, category_key),
+            ).fetchone()
+        assert row is not None
+        return dict(row)
+
+    def upsert_verified_folder_binding(
+        self,
+        category_key: str,
+        binding: VerifiedEmailFolderBinding,
+    ) -> dict[str, Any]:
+        category_key = validate_email_category_key(category_key)
+        if type(binding) is not VerifiedEmailFolderBinding:
+            raise TypeError("binding must be a VerifiedEmailFolderBinding")
+        if category_key == "junk":
+            raise ValueError("junk does not accept a business-folder binding")
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            try:
+                db.execute(
+                    """
+                    insert into email_category_folder_bindings (
+                        account_id, category_key, provider_folder_id,
+                        provider_folder_name, binding_status, last_verified_at
+                    ) values (?, ?, ?, ?, ?, ?)
+                    on conflict(account_id, category_key) do update set
+                        provider_folder_id=excluded.provider_folder_id,
+                        provider_folder_name=excluded.provider_folder_name,
+                        binding_status=excluded.binding_status,
+                        last_verified_at=excluded.last_verified_at
+                    """,
+                    (
+                        binding.account_id,
+                        category_key,
+                        binding.provider_folder_id,
+                        binding.provider_folder_name,
+                        binding.binding_status,
+                        binding.last_verified_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise EmailFolderBindingConflict(
+                    "email folder binding conflicts with stored state"
+                ) from exc
+            complete = self._bindings_cover_enabled_accounts(db, category_key)
+            if not complete:
+                db.execute(
+                    """
+                    update email_category_configs
+                    set enabled=0, updated_at=?
+                    where category_key=? and enabled=1
+                    """,
+                    (now, category_key),
+                )
+            row = db.execute(
+                """
+                select * from email_category_folder_bindings
+                where account_id=? and category_key=?
+                """,
+                (binding.account_id, category_key),
+            ).fetchone()
+            self._validate_category_binding_completeness(db)
+        assert row is not None
+        return dict(row)
+
+    def list_account_folder_bindings(
+        self,
+        category_key: str | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if category_key is None:
+                rows = db.execute(
+                    """
+                    select * from email_category_folder_bindings
+                    order by account_id, category_key
+                    """
+                ).fetchall()
+            else:
+                validated_key = validate_email_category_key(category_key)
+                rows = db.execute(
+                    """
+                    select * from email_category_folder_bindings
+                    where category_key=? order by account_id
+                    """,
+                    (validated_key,),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_configs(self) -> list[dict[str, Any]]:
+        """Return the established worker-facing shape during its later migration."""
+
+        rows = self.list_category_configs()
+        configured = [
+            row for row in rows if row["config_version"] != SEEDED_CONFIG_VERSION
+        ]
+        return [
+            self._legacy_config_row(row)
+            for row in configured or rows
+        ]
 
     def upsert_config(
         self,
@@ -10028,8 +10855,9 @@ class EmailStore:
         enabled: bool,
         config_version: str,
     ) -> dict[str, Any]:
+        category_key = validate_email_category_key(category.value)
         _validate_config(
-            category=category,
+            category=category_key,
             threshold=threshold,
             actions=actions,
             action_parameters=action_parameters,
@@ -10037,23 +10865,25 @@ class EmailStore:
         )
         now = self._now()
         with self._connect() as db:
+            db.execute("begin immediate")
+            existing = db.execute(
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+            if existing is None:
+                raise ValueError("email category config does not exist")
+            final_enabled = bool(
+                enabled
+                and self._bindings_cover_enabled_accounts(db, category_key)
+            )
             db.execute(
                 """
-                insert into email_category_configs (
-                    category, description, threshold, actions_json,
-                    action_parameters_json, enabled, config_version, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(category) do update set
-                    description=excluded.description,
-                    threshold=excluded.threshold,
-                    actions_json=excluded.actions_json,
-                    action_parameters_json=excluded.action_parameters_json,
-                    enabled=excluded.enabled,
-                    config_version=excluded.config_version,
-                    updated_at=excluded.updated_at
+                update email_category_configs set
+                    core_description=?, threshold=?, actions_json=?,
+                    action_parameters_json=?, enabled=?, config_version=?,
+                    updated_at=? where category_key=?
                 """,
                 (
-                    category.value,
                     description,
                     threshold,
                     _json_dump([action.value for action in actions]),
@@ -10063,41 +10893,36 @@ class EmailStore:
                             for action, parameters in action_parameters.items()
                         }
                     ),
-                    int(enabled),
+                    int(final_enabled),
                     config_version,
                     now,
+                    category_key,
                 ),
             )
             row = db.execute(
-                "select * from email_category_configs where category=?",
-                (category.value,),
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
             ).fetchone()
         assert row is not None
-        return self._config_row(row)
+        return self._legacy_config_row(self._category_config_row(row))
 
     @staticmethod
-    def _config_row(row: sqlite3.Row) -> dict[str, Any]:
-        return {
-            "category": row["category"],
-            "description": row["description"],
-            "threshold": row["threshold"],
-            "actions": _json_load(
-                row["actions_json"], field="actions_json", expected_type=list
-            ),
-            "action_parameters": _json_load(
-                row["action_parameters_json"],
-                field="action_parameters_json",
-                expected_type=dict,
-            ),
-            "enabled": bool(row["enabled"]),
-            "config_version": row["config_version"],
-            "updated_at": row["updated_at"],
-        }
+    def _category_config_row(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            return category_config_row(row)
+        except (CategoryConfigDataError, KeyError, TypeError, ValueError) as exc:
+            raise EmailPersistenceCorruption(
+                "invalid structured email category config"
+            ) from exc
+
+    @staticmethod
+    def _legacy_config_row(row: Mapping[str, Any]) -> dict[str, Any]:
+        return legacy_config_row(row)
 
 
 def _validate_config(
     *,
-    category: EmailCategory,
+    category: str,
     threshold: float,
     actions: tuple[EmailAction, ...],
     action_parameters: Mapping[EmailAction, Mapping[str, object]],

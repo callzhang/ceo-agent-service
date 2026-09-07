@@ -594,7 +594,7 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
         set actions_json='["move"]',
             action_parameters_json='{"move":{"target_folder":"Important"}}',
             config_version='personal-v2'
-        where category='personal'
+        where category_key='personal'
         """
     )
     results = []
@@ -636,7 +636,8 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
     }
     with sqlite3.connect(database) as db:
         committed_config_version = db.execute(
-            "select config_version from email_category_configs where category='personal'"
+            "select config_version from email_category_configs "
+            "where category_key='personal'"
         ).fetchone()[0]
         current_plan_and_action = db.execute(
             """
