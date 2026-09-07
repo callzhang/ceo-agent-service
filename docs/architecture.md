@@ -211,6 +211,8 @@ History 是执行历史的单一展示入口，不把同一次执行拆成多行
   `okr_review_requests` 的会话和触发消息关联识别；同一执行记录只能归入一个类型。
 - `okr_review_requests` 的队列状态不能覆盖对应执行记录的 History 状态。若未来需要
   展示队列生命周期，应设计独立视图，不能在 History 中制造第二行或混合两种状态。
+- 这项隔离同样适用于兼容的服务端渲染路径：`reply_tasks` 的 `pending` 与
+  `processing` 只在 Worker/Status 视图呈现，绝不插入 History 列表。
 
 History 不承诺旧查询参数或旧 URL 的兼容别名；接口和页面使用当前语义，历史数据只
 通过当前代码的分类规则重新解释。

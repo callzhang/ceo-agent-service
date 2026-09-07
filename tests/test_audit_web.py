@@ -5937,7 +5937,7 @@ def test_render_attempt_list_reuses_one_read_connection(tmp_path: Path, monkeypa
     assert connection_calls == 1
 
 
-def test_render_attempt_list_shows_pending_reply_tasks(tmp_path: Path):
+def test_render_attempt_list_excludes_pending_reply_tasks(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-1",
@@ -5951,17 +5951,12 @@ def test_render_attempt_list_shows_pending_reply_tasks(tmp_path: Path):
 
     html = render_attempt_list(store)
 
-    assert "💬 Pending" in html
-    assert (
-        'class="pill status-action action-state-pending">💬 Pending</span>' in html
-    )
-    assert "#task-1" in html
-    assert "HR管理" in html
-    assert "Mina" in html
-    assert "@Alex Chen(明哥) 这个候选人怎么看？" in html
+    assert "💬 Pending" not in html
+    assert "#task-1" not in html
+    assert "@Alex Chen(明哥) 这个候选人怎么看？" not in html
 
 
-def test_render_attempt_list_formats_pending_backoff_time_in_local_timezone(
+def test_render_attempt_list_excludes_pending_backoff_tasks(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -5979,13 +5974,11 @@ def test_render_attempt_list_formats_pending_backoff_time_in_local_timezone(
 
     html = render_attempt_list(store)
 
-    expected_time = audit_web_module._format_local_time("2026-06-04 08:06:52")
-    assert f"快路径已触发，等待到 {expected_time} 后确认是否仍需处理" in html
-    if expected_time != "2026-06-04 08:06:52":
-        assert "等待到 2026-06-04 08:06:52" not in html
+    assert "快路径已触发" not in html
+    assert "@Alex Chen(明哥) 这个候选人怎么看？" not in html
 
 
-def test_render_attempt_list_shows_processing_reply_tasks(tmp_path: Path):
+def test_render_attempt_list_excludes_processing_reply_tasks(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-1",
@@ -6000,8 +5993,8 @@ def test_render_attempt_list_shows_processing_reply_tasks(tmp_path: Path):
 
     html = render_attempt_list(store)
 
-    assert "#task-1" in html
-    assert "processing" in html
+    assert "#task-1" not in html
+    assert "@Alex Chen(明哥) 这个候选人怎么看？" not in html
 
 
 def test_render_attempt_list_does_not_pin_failed_reply_tasks(tmp_path: Path):

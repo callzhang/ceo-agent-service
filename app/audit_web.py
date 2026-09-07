@@ -5580,7 +5580,6 @@ def render_attempt_list(
     query_embedding: list[float] | None = None,
     search_object_type: str = "",
     include_chart: bool = True,
-    include_pending_tasks: bool = True,
     include_feedback_count: bool = True,
 ) -> str:
     with store.read_snapshot():
@@ -5593,7 +5592,6 @@ def render_attempt_list(
             query_embedding=query_embedding,
             search_object_type=search_object_type,
             include_chart=include_chart,
-            include_pending_tasks=include_pending_tasks,
             include_feedback_count=include_feedback_count,
         )
 
@@ -5607,7 +5605,6 @@ def _render_attempt_list(
     query_embedding: list[float] | None = None,
     search_object_type: str = "",
     include_chart: bool = True,
-    include_pending_tasks: bool = True,
     include_feedback_count: bool = True,
 ) -> str:
     query = query.strip()
@@ -5615,7 +5612,6 @@ def _render_attempt_list(
     search_object_type = _history_search_object_type(search_object_type)
     object_types = _history_search_object_types(search_object_type)
     search_history_items = bool(object_types)
-    search_reply_tasks = "task" in object_types
     search_codex_sessions = "meeting" in object_types
     repository_upgrade_html = (
         render_repository_upgrade_mount()
@@ -5659,19 +5655,9 @@ def _render_attempt_list(
     )
     page = _bounded_page(page, limit, total_count)
     offset = _page_offset(page, limit)
+    # History is an execution ledger. Queue lifecycle belongs to worker status,
+    # so pending and processing reply_tasks must never be rendered as history rows.
     items = []
-    if include_pending_tasks and page == 1 and not type_filters and search_reply_tasks:
-        task_limit = limit if not query else None
-        for task in store.list_reply_tasks(
-            statuses=("pending", "processing"),
-            limit=task_limit,
-            channel="dingtalk",
-        ):
-            if not _reply_task_matches_query(task, query):
-                continue
-            items.append(_reply_task_item(task))
-            if query and limit is not None and len(items) >= limit:
-                break
     session_search_html = ""
     if query and page == 1 and search_codex_sessions:
         session_results = store.search_codex_sessions(
@@ -9932,7 +9918,6 @@ def create_audit_app(
             query_embedding=None,
             search_object_type="",
             include_chart=True,
-            include_pending_tasks=False,
             include_feedback_count=False,
         )
 
@@ -10295,7 +10280,6 @@ def create_audit_app(
                 query_embedding=_history_query_embedding(query),
                 search_object_type=str(request.query_params.get("object_type", "")),
                 include_chart=True,
-                include_pending_tasks=bool(query or request.query_params),
                 include_feedback_count=False,
             )
 
