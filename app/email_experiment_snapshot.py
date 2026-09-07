@@ -226,17 +226,31 @@ def _validate_serialized_example(value: object) -> dict[str, str]:
 
 
 def _snapshot_digest(snapshot: EmailExperimentSnapshot) -> str:
-    payload = json.dumps(
+    return deterministic_payload_digest(
         {
             "snapshot_version": snapshot.snapshot_version,
             "captured_at": snapshot.captured_at,
             "label_source": snapshot.label_source,
             "examples": [dict(example) for example in snapshot.examples],
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+        }
+    )
+
+
+def deterministic_payload_digest(value: object) -> str:
+    """Hash one JSON-domain value using its canonical UTF-8 representation."""
+
+    try:
+        payload = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise EmailExperimentSnapshotError(
+            "digest payload must contain only finite JSON values"
+        ) from exc
     return sha256(payload).hexdigest()
 
 

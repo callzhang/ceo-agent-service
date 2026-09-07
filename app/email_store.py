@@ -59,7 +59,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 22
+EMAIL_SCHEMA_VERSION = 24
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -375,6 +375,40 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "result_text_digest": ("text", True, "''"),
         "created_at": ("text", True, None),
     },
+    "email_training_snapshots": {
+        "snapshot_id": ("text", False, None),
+        "snapshot_version": ("text", True, None),
+        "description_version": ("text", True, None),
+        "input_schema_version": ("text", True, None),
+        "seed": ("integer", True, None),
+        "observed_at": ("text", True, None),
+        "snapshot_digest": ("text", True, None),
+        "manifest_json": ("text", True, None),
+        "frozen": ("integer", True, "1"),
+        "created_at": ("text", True, None),
+    },
+    "email_training_snapshot_observations": {
+        "snapshot_id": ("text", True, None),
+        "account_id": ("text", True, None),
+        "stable_message_identity": ("text", True, None),
+        "provider_folder_id": ("text", True, None),
+        "provider_folder_name": ("text", True, None),
+        "category_key": ("text", False, None),
+        "important": ("integer", True, None),
+        "normalized_model_input": ("text", True, None),
+        "normalized_model_input_hash": ("text", True, None),
+        "input_schema_version": ("text", True, None),
+        "provider_thread_id": ("text", False, None),
+        "normalized_body_digest": ("text", True, None),
+        "sender_template_signature": ("text", False, None),
+        "explicit_matter_group": ("text", False, None),
+        "group_key": ("text", True, None),
+        "observed_at": ("text", True, None),
+        "source": ("text", True, None),
+        "split": ("text", True, None),
+        "selected_for_training": ("integer", True, None),
+        "ordered_record_digest": ("text", True, None),
+    },
 }
 _REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
     table: frozenset(columns) for table, columns in _REQUIRED_COLUMN_CONTRACTS.items()
@@ -510,6 +544,38 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "result_text_digest = '' or length(result_text_digest) = 64",
         "trim(created_at) != ''",
     ),
+    "email_training_snapshots": (
+        "trim(snapshot_id) != ''",
+        "trim(snapshot_version) != ''",
+        "trim(description_version) != ''",
+        "trim(input_schema_version) != ''",
+        "seed >= 0",
+        "trim(observed_at) != ''",
+        "length(snapshot_digest) = 64",
+        "json_valid(manifest_json)",
+        "frozen in (0, 1)",
+        "trim(created_at) != ''",
+    ),
+    "email_training_snapshot_observations": (
+        "trim(snapshot_id) != ''",
+        "trim(account_id) != ''",
+        "trim(stable_message_identity) != ''",
+        "trim(provider_folder_id) != ''",
+        "trim(provider_folder_name) != ''",
+        "category_key is null or trim(category_key) != ''",
+        "important in (0, 1)",
+        "trim(normalized_model_input) != ''",
+        "length(normalized_model_input_hash) = 64",
+        "trim(input_schema_version) != ''",
+        "length(normalized_body_digest) = 64",
+        "sender_template_signature is null or length(sender_template_signature) = 64",
+        "length(group_key) = 64",
+        "trim(observed_at) != ''",
+        "source in ('natural', 'targeted')",
+        "split in ('train', 'validation', 'test')",
+        "selected_for_training in (0, 1)",
+        "length(ordered_record_digest) = 64",
+    ),
 }
 _REQUIRED_AUTOINCREMENT_COLUMNS = frozenset(
     {
@@ -537,6 +603,12 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_unsubscribe_continuations": ("action_identity",),
     "email_unsubscribe_steps": ("id",),
     "email_unsubscribe_receipts": ("action_identity",),
+    "email_training_snapshots": ("snapshot_id",),
+    "email_training_snapshot_observations": (
+        "snapshot_id",
+        "account_id",
+        "stable_message_identity",
+    ),
 }
 _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
     "email_classifications": (("stable_message_identity",),),
@@ -551,6 +623,7 @@ _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
     "email_reply_receipts": (("outgoing_message_id",),),
     "email_reply_dispatch_claims": (("outgoing_message_id",),),
     "email_unsubscribe_steps": (("action_identity", "sequence"),),
+    "email_training_snapshots": (("snapshot_digest",),),
 }
 _REQUIRED_FOREIGN_KEYS: Mapping[
     str,
@@ -608,6 +681,9 @@ _REQUIRED_FOREIGN_KEYS: Mapping[
         ("action_plan_id", "email_action_plans", "action_plan_id", "RESTRICT"),
         ("classification_id", "email_classifications", "id", "RESTRICT"),
     ),
+    "email_training_snapshot_observations": (
+        ("snapshot_id", "email_training_snapshots", "snapshot_id", "RESTRICT"),
+    ),
 }
 _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_classifications_status": (
@@ -638,6 +714,10 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
         "email_unsubscribe_receipts",
         ("classification_id", "action_identity"),
     ),
+    "idx_email_training_observations_split": (
+        "email_training_snapshot_observations",
+        ("snapshot_id", "split", "category_key", "group_key"),
+    ),
 }
 _REQUIRED_PARTIAL_UNIQUE_INDEXES: Mapping[
     str,
@@ -650,6 +730,57 @@ _REQUIRED_PARTIAL_UNIQUE_INDEXES: Mapping[
     ),
 }
 _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
+    "trg_email_training_snapshots_immutable_update": """
+        create trigger trg_email_training_snapshots_immutable_update
+        before update on email_training_snapshots
+        when not (
+            old.frozen=0 and new.frozen=1
+            and old.snapshot_id is new.snapshot_id
+            and old.snapshot_version is new.snapshot_version
+            and old.description_version is new.description_version
+            and old.input_schema_version is new.input_schema_version
+            and old.seed is new.seed
+            and old.observed_at is new.observed_at
+            and old.snapshot_digest is new.snapshot_digest
+            and old.manifest_json is new.manifest_json
+            and old.created_at is new.created_at
+        )
+        begin
+            select raise(abort, 'email training snapshot is immutable');
+        end
+    """,
+    "trg_email_training_snapshots_immutable_delete": """
+        create trigger trg_email_training_snapshots_immutable_delete
+        before delete on email_training_snapshots
+        begin
+            select raise(abort, 'email training snapshot is immutable');
+        end
+    """,
+    "trg_email_training_observations_immutable_update": """
+        create trigger trg_email_training_observations_immutable_update
+        before update on email_training_snapshot_observations
+        begin
+            select raise(abort, 'email training snapshot observation is immutable');
+        end
+    """,
+    "trg_email_training_observations_immutable_delete": """
+        create trigger trg_email_training_observations_immutable_delete
+        before delete on email_training_snapshot_observations
+        begin
+            select raise(abort, 'email training snapshot observation is immutable');
+        end
+    """,
+    "trg_email_training_observations_require_unfrozen_snapshot": """
+        create trigger trg_email_training_observations_require_unfrozen_snapshot
+        before insert on email_training_snapshot_observations
+        when not exists (
+            select 1 from email_training_snapshots
+            where snapshot_id=new.snapshot_id and frozen=0
+        )
+        begin
+            select raise(abort, 'email training snapshot is frozen');
+        end
+    """,
     "trg_email_classification_status_insert": """
         create trigger trg_email_classification_status_insert
         before insert on email_classifications
@@ -869,6 +1000,17 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
     """,
 }
 _REQUIRED_TRIGGER_TABLES: Mapping[str, str] = {
+    "trg_email_training_snapshots_immutable_update": "email_training_snapshots",
+    "trg_email_training_snapshots_immutable_delete": "email_training_snapshots",
+    "trg_email_training_observations_immutable_update": (
+        "email_training_snapshot_observations"
+    ),
+    "trg_email_training_observations_immutable_delete": (
+        "email_training_snapshot_observations"
+    ),
+    "trg_email_training_observations_require_unfrozen_snapshot": (
+        "email_training_snapshot_observations"
+    ),
     "trg_email_direct_action_blocks_account_update": "email_accounts",
     "trg_email_direct_action_blocks_account_delete": "email_accounts",
     "trg_email_reply_dispatch_blocks_account_update": "email_accounts",
@@ -907,6 +1049,10 @@ class EmailTrainingInclusionConflict(RuntimeError):
 
 class EmailTrainingConsistencyError(RuntimeError):
     """Registry manifests could not be proven restored after a DB failure."""
+
+
+class EmailTrainingSnapshotConflict(RuntimeError):
+    """A frozen snapshot identity is already bound to different content."""
 
 
 class EmailClassificationIdentityCollision(RuntimeError):
@@ -2249,6 +2395,7 @@ class EmailStore:
             self._ensure_unsubscribe_claim_columns(db)
             self._ensure_unsubscribe_audit_columns(db)
             self._ensure_unsubscribe_receipt_columns(db)
+            self._ensure_training_snapshot_frozen_column(db)
             if legacy_reply_claims:
                 self._finish_v8_reply_claim_migration(db)
             if legacy_unsubscribe_claims:
@@ -2299,6 +2446,12 @@ class EmailStore:
                 latest_version = 21
             if latest_version == 21:
                 self._migrate_v21_to_v22(db, replace_version=is_prototype)
+                latest_version = 22
+            if latest_version == 22:
+                self._migrate_v22_to_v23(db, replace_version=is_prototype)
+                latest_version = 23
+            if latest_version == 23:
+                self._migrate_v23_to_v24(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -3298,6 +3451,79 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v22_to_v23(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Add append-only folder-derived training snapshot storage."""
+
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=23, applied_at=? "
+                "where version=22",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (23, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v23_to_v24(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Freeze existing snapshots and gate all later observation inserts."""
+
+        db.execute("drop trigger if exists trg_email_training_snapshots_immutable_update")
+        db.execute(
+            """
+            create trigger trg_email_training_snapshots_immutable_update
+            before update on email_training_snapshots
+            when not (
+                old.frozen=0 and new.frozen=1
+                and old.snapshot_id is new.snapshot_id
+                and old.snapshot_version is new.snapshot_version
+                and old.description_version is new.description_version
+                and old.input_schema_version is new.input_schema_version
+                and old.seed is new.seed
+                and old.observed_at is new.observed_at
+                and old.snapshot_digest is new.snapshot_digest
+                and old.manifest_json is new.manifest_json
+                and old.created_at is new.created_at
+            )
+            begin
+                select raise(abort, 'email training snapshot is immutable');
+            end
+            """
+        )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=24, applied_at=? "
+                "where version=23",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (24, ?)",
+                (self._now(),),
+            )
+
+    @classmethod
+    def _ensure_training_snapshot_frozen_column(
+        cls, db: sqlite3.Connection
+    ) -> None:
+        cls._ensure_column(
+            db,
+            table="email_training_snapshots",
+            column="frozen",
+            declaration="integer not null default 1 check(frozen in (0, 1))",
+        )
+
     @classmethod
     def _ensure_unsubscribe_claim_columns(cls, db: sqlite3.Connection) -> None:
         had_phase = "phase" in cls._table_columns(db, "email_unsubscribe_claims")
@@ -3752,6 +3978,66 @@ class EmailStore:
                     on delete restrict
             )
             """,
+            """
+            create table if not exists email_training_snapshots (
+                snapshot_id text primary key check(trim(snapshot_id) != ''),
+                snapshot_version text not null check(trim(snapshot_version) != ''),
+                description_version text not null
+                    check(trim(description_version) != ''),
+                input_schema_version text not null
+                    check(trim(input_schema_version) != ''),
+                seed integer not null check(seed >= 0),
+                observed_at text not null check(trim(observed_at) != ''),
+                snapshot_digest text not null unique
+                    check(length(snapshot_digest) = 64),
+                manifest_json text not null check(json_valid(manifest_json)),
+                frozen integer not null default 1 check(frozen in (0, 1)),
+                created_at text not null check(trim(created_at) != '')
+            )
+            """,
+            """
+            create table if not exists email_training_snapshot_observations (
+                snapshot_id text not null check(trim(snapshot_id) != ''),
+                account_id text not null check(trim(account_id) != ''),
+                stable_message_identity text not null
+                    check(trim(stable_message_identity) != ''),
+                provider_folder_id text not null
+                    check(trim(provider_folder_id) != ''),
+                provider_folder_name text not null
+                    check(trim(provider_folder_name) != ''),
+                category_key text
+                    check(category_key is null or trim(category_key) != ''),
+                important integer not null check(important in (0, 1)),
+                normalized_model_input text not null
+                    check(trim(normalized_model_input) != ''),
+                normalized_model_input_hash text not null
+                    check(length(normalized_model_input_hash) = 64),
+                input_schema_version text not null
+                    check(trim(input_schema_version) != ''),
+                provider_thread_id text,
+                normalized_body_digest text not null
+                    check(length(normalized_body_digest) = 64),
+                sender_template_signature text
+                    check(
+                        sender_template_signature is null
+                        or length(sender_template_signature) = 64
+                    ),
+                explicit_matter_group text,
+                group_key text not null check(length(group_key) = 64),
+                observed_at text not null check(trim(observed_at) != ''),
+                source text not null check(source in ('natural', 'targeted')),
+                split text not null
+                    check(split in ('train', 'validation', 'test')),
+                selected_for_training integer not null
+                    check(selected_for_training in (0, 1)),
+                ordered_record_digest text not null
+                    check(length(ordered_record_digest) = 64),
+                primary key(snapshot_id, account_id, stable_message_identity),
+                foreign key(snapshot_id)
+                    references email_training_snapshots(snapshot_id)
+                    on delete restrict
+            )
+            """,
         )
         for statement in statements:
             db.execute(statement)
@@ -3782,6 +4068,64 @@ class EmailStore:
             """
             create index if not exists idx_email_unsubscribe_claims_status
             on email_unsubscribe_claims(status, updated_at, action_identity)
+            """,
+            """
+            create index if not exists idx_email_training_observations_split
+            on email_training_snapshot_observations(
+                snapshot_id, split, category_key, group_key
+            )
+            """,
+            """
+            create trigger if not exists trg_email_training_snapshots_immutable_update
+            before update on email_training_snapshots
+            when not (
+                old.frozen=0 and new.frozen=1
+                and old.snapshot_id is new.snapshot_id
+                and old.snapshot_version is new.snapshot_version
+                and old.description_version is new.description_version
+                and old.input_schema_version is new.input_schema_version
+                and old.seed is new.seed
+                and old.observed_at is new.observed_at
+                and old.snapshot_digest is new.snapshot_digest
+                and old.manifest_json is new.manifest_json
+                and old.created_at is new.created_at
+            )
+            begin
+                select raise(abort, 'email training snapshot is immutable');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_training_snapshots_immutable_delete
+            before delete on email_training_snapshots
+            begin
+                select raise(abort, 'email training snapshot is immutable');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_training_observations_immutable_update
+            before update on email_training_snapshot_observations
+            begin
+                select raise(abort, 'email training snapshot observation is immutable');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_training_observations_immutable_delete
+            before delete on email_training_snapshot_observations
+            begin
+                select raise(abort, 'email training snapshot observation is immutable');
+            end
+            """,
+            """
+            create trigger if not exists
+                trg_email_training_observations_require_unfrozen_snapshot
+            before insert on email_training_snapshot_observations
+            when not exists (
+                select 1 from email_training_snapshots
+                where snapshot_id=new.snapshot_id and frozen=0
+            )
+            begin
+                select raise(abort, 'email training snapshot is frozen');
+            end
             """,
             """
             create trigger if not exists trg_email_classification_status_insert
@@ -9592,6 +9936,178 @@ class EmailStore:
                 sample["sample_digest"] = _training_sample_digest(sample)
             result.append(sample)
         return result
+
+    def persist_training_snapshot(self, snapshot: object) -> dict[str, object]:
+        """Atomically append one validated immutable training snapshot."""
+
+        from app.email_training_snapshot import (
+            FolderTrainingSnapshot,
+            validate_folder_training_snapshot,
+        )
+
+        if type(snapshot) is not FolderTrainingSnapshot:
+            raise TypeError("snapshot must be a FolderTrainingSnapshot")
+        validate_folder_training_snapshot(snapshot)
+        manifest = snapshot.manifest
+        manifest_json = json.dumps(
+            manifest,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        created_at = self._now()
+        with self._connect() as db:
+            existing = db.execute(
+                "select snapshot_digest from email_training_snapshots "
+                "where snapshot_id=?",
+                (snapshot.snapshot_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing["snapshot_digest"] != snapshot.snapshot_digest:
+                    raise EmailTrainingSnapshotConflict(
+                        "training snapshot id already exists with different content"
+                    )
+                loaded = self._get_training_snapshot(db, snapshot.snapshot_id)
+                assert loaded is not None
+                return loaded
+            try:
+                db.execute(
+                    """
+                    insert into email_training_snapshots (
+                        snapshot_id, snapshot_version, description_version,
+                        input_schema_version, seed, observed_at, snapshot_digest,
+                        manifest_json, frozen, created_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    """,
+                    (
+                        snapshot.snapshot_id,
+                        snapshot.snapshot_version,
+                        snapshot.description_version,
+                        snapshot.input_schema_version,
+                        snapshot.seed,
+                        snapshot.observed_at,
+                        snapshot.snapshot_digest,
+                        manifest_json,
+                        created_at,
+                    ),
+                )
+                db.executemany(
+                    """
+                    insert into email_training_snapshot_observations (
+                        snapshot_id, account_id, stable_message_identity,
+                        provider_folder_id, provider_folder_name, category_key,
+                        important, normalized_model_input,
+                        normalized_model_input_hash, input_schema_version,
+                        provider_thread_id, normalized_body_digest,
+                        sender_template_signature, explicit_matter_group,
+                        group_key, observed_at, source, split,
+                        selected_for_training, ordered_record_digest
+                    ) values (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    [
+                        (
+                            row.snapshot_id,
+                            row.account_id,
+                            row.stable_message_identity,
+                            row.provider_folder_id,
+                            row.provider_folder_name,
+                            row.category_key,
+                            int(row.important),
+                            row.normalized_model_input,
+                            row.normalized_model_input_hash,
+                            row.input_schema_version,
+                            row.provider_thread_id,
+                            row.normalized_body_digest,
+                            row.sender_template_signature,
+                            row.explicit_matter_group,
+                            row.group_key,
+                            row.observed_at,
+                            row.source,
+                            row.split,
+                            int(row.selected_for_training),
+                            row.ordered_record_digest,
+                        )
+                        for row in snapshot.observations
+                    ],
+                )
+                frozen = db.execute(
+                    "update email_training_snapshots set frozen=1 "
+                    "where snapshot_id=? and frozen=0",
+                    (snapshot.snapshot_id,),
+                ).rowcount
+                if frozen != 1:
+                    raise EmailTrainingSnapshotConflict(
+                        "training snapshot could not be atomically frozen"
+                    )
+            except sqlite3.IntegrityError as exc:
+                raise EmailTrainingSnapshotConflict(
+                    "training snapshot already exists or violates frozen constraints"
+                ) from exc
+            stored = self._get_training_snapshot(db, snapshot.snapshot_id)
+            assert stored is not None
+            return stored
+
+    def get_training_snapshot(self, snapshot_id: str) -> dict[str, object] | None:
+        if not isinstance(snapshot_id, str) or not snapshot_id.strip():
+            raise ValueError("snapshot_id must be non-empty text")
+        with self._connect() as db:
+            return self._get_training_snapshot(db, snapshot_id)
+
+    @staticmethod
+    def _get_training_snapshot(
+        db: sqlite3.Connection, snapshot_id: str
+    ) -> dict[str, object] | None:
+        snapshot = db.execute(
+            "select * from email_training_snapshots where snapshot_id=?",
+            (snapshot_id,),
+        ).fetchone()
+        if snapshot is None:
+            return None
+        if snapshot["frozen"] != 1:
+            raise EmailPersistenceCorruption("training snapshot is not frozen")
+        rows = db.execute(
+            """
+            select * from email_training_snapshot_observations
+            where snapshot_id=?
+            order by stable_message_identity
+            """,
+            (snapshot_id,),
+        ).fetchall()
+        observation_values = []
+        for row in rows:
+            value = dict(row)
+            value["important"] = bool(value["important"])
+            value["selected_for_training"] = bool(value["selected_for_training"])
+            observation_values.append(value)
+        try:
+            from app.email_training_snapshot import (
+                FolderTrainingSnapshot,
+                TrainingSnapshotObservation,
+                validate_folder_training_snapshot,
+            )
+
+            restored = FolderTrainingSnapshot(
+                snapshot_id=snapshot["snapshot_id"],
+                snapshot_version=snapshot["snapshot_version"],
+                description_version=snapshot["description_version"],
+                input_schema_version=snapshot["input_schema_version"],
+                seed=snapshot["seed"],
+                observed_at=snapshot["observed_at"],
+                observations=tuple(
+                    TrainingSnapshotObservation(**value)
+                    for value in observation_values
+                ),
+                snapshot_digest=snapshot["snapshot_digest"],
+                _manifest_json=snapshot["manifest_json"],
+            )
+            validate_folder_training_snapshot(restored, allow_legacy_manifest=True)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise EmailPersistenceCorruption(
+                "persisted training snapshot does not match its manifest"
+            ) from exc
+        return restored.to_dict()
 
     def list_unincluded_training_examples(self) -> list[dict[str, Any]]:
         return [

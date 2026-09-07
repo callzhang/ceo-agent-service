@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import gc
 from hashlib import sha256
@@ -11,6 +12,8 @@ from threading import Barrier
 import pytest
 
 import app.email_store as email_store_module
+from app.email_training_snapshot import build_folder_training_snapshot
+from app.email_experiment_snapshot import deterministic_payload_digest
 from app.email_classifier_contracts import (
     EmailAction,
     EmailActionAuthorization,
@@ -30,16 +33,465 @@ from app.email_store import (
     EmailClassificationIdentityCollision,
     EmailPersistenceCorruption,
     EmailTrainingInclusionConflict,
+    EmailTrainingSnapshotConflict,
     EmailUnsubscribeClaimConflict,
     EmailUnsubscribeReceiptConflict,
     EmailStore,
     email_unsubscribe_effect_digest,
 )
+from app.email_important import ImportantSignals
 from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_task_adapter import email_action_identity
 from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
 from app.store import AutoReplyStore
+
+
+def _frozen_training_observation(**overrides):
+    value = {
+        "account_id": "account-a",
+        "stable_message_identity": "account-a:message-id:<one@example.test>",
+        "provider_folder_id": "folder-work",
+        "provider_folder_name": "Work",
+        "folder_role": "category",
+        "bound_category_key": "work",
+        "folder_binding_status": "active",
+        "processed_by_email_service": True,
+        "important_signals": ImportantSignals(("STARRED",), True),
+        "sender": {"name": "Sender", "email": "sender@example.test"},
+        "to_recipients": [{"name": "Derek", "email": "derek@example.test"}],
+        "cc_recipients": [],
+        "subject": "One",
+        "body": "Body including quoted reply\n> prior body",
+        "headers": {"message-id": "<one@example.test>"},
+        "attachments": [],
+        "provider_thread_id": "thread-one",
+        "explicit_matter_group": None,
+        "source": "natural",
+        "received_at": "2026-09-07T12:00:00+00:00",
+    }
+    value.update(overrides)
+    return value
+
+
+def _frozen_training_snapshot(snapshot_id: str = "snapshot-store-1"):
+    return build_folder_training_snapshot(
+        [_frozen_training_observation()],
+        snapshot_id=snapshot_id,
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc),
+        seed=17,
+    )
+
+
+def _append_copied_training_observation(
+    database: Path, *, stable_message_identity: str
+) -> None:
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            insert into email_training_snapshot_observations (
+                snapshot_id, account_id, stable_message_identity,
+                provider_folder_id, provider_folder_name, category_key,
+                important, normalized_model_input,
+                normalized_model_input_hash, input_schema_version,
+                provider_thread_id, normalized_body_digest,
+                sender_template_signature, explicit_matter_group,
+                group_key, observed_at, source, split,
+                selected_for_training, ordered_record_digest
+            )
+            select snapshot_id, account_id, ?,
+                   provider_folder_id, provider_folder_name, category_key,
+                   important, normalized_model_input,
+                   normalized_model_input_hash, input_schema_version,
+                   provider_thread_id, normalized_body_digest,
+                   sender_template_signature, explicit_matter_group,
+                   group_key, observed_at, source, split,
+                   selected_for_training, ordered_record_digest
+            from email_training_snapshot_observations
+            limit 1
+            """,
+            (stable_message_identity,),
+        )
+
+
+def _legacy_unsigned_record_digest(row) -> str:
+    return deterministic_payload_digest(
+        {
+            "account_id": row.account_id,
+            "stable_message_identity": row.stable_message_identity,
+            "provider_folder_id": row.provider_folder_id,
+            "provider_folder_name": row.provider_folder_name,
+            "category_key": row.category_key,
+            "important": row.important,
+            "normalized_model_input_hash": row.normalized_model_input_hash,
+            "input_schema_version": row.input_schema_version,
+            "provider_thread_id": row.provider_thread_id,
+            "normalized_body_digest": row.normalized_body_digest,
+            "sender_template_signature": row.sender_template_signature,
+            "explicit_matter_group": row.explicit_matter_group,
+            "group_key": row.group_key,
+            "source": row.source,
+            "split": row.split,
+            "selected_for_training": row.selected_for_training,
+        }
+    )
+
+
+def _unsigned_time_legacy_manifest(snapshot, *, include_counts: bool):
+    legacy_manifest = snapshot.manifest
+    legacy_manifest.pop("observed_at")
+    legacy_manifest.pop("overall_sha256")
+    legacy_record_digests = [
+        _legacy_unsigned_record_digest(row) for row in snapshot.observations
+    ]
+    legacy_manifest["ordered_record_digests"] = legacy_record_digests
+    if not include_counts:
+        for field in (
+            "observation_count",
+            "selected_group_count",
+            "selected_category_counts",
+            "conflicted_group_count",
+            "conflicted_groups",
+        ):
+            legacy_manifest.pop(field)
+    legacy_digest = deterministic_payload_digest(legacy_manifest)
+    legacy_manifest["overall_sha256"] = legacy_digest
+    return legacy_manifest, legacy_digest, legacy_record_digests
+
+
+def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
+    database = tmp_path / "training-snapshot-migration.sqlite3"
+    store = EmailStore(database)
+    classification = _pending_category_classification("work", classification_id=991)
+    persisted = store.persist_scan_result(
+        classification,
+        model_text="__subject__preserved migration row",
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("drop table email_training_snapshot_observations")
+        db.execute("drop table email_training_snapshots")
+        db.execute(
+            "update email_schema_migrations set version=22 where version=24"
+        )
+
+    EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        preserved_model_text = db.execute(
+            "select model_text from email_classifications where id=?",
+            (persisted["id"],),
+        ).fetchone()[0]
+        tables = {
+            row[0]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        }
+        versions = [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ]
+    assert "email_training_snapshots" in tables
+    assert "email_training_snapshot_observations" in tables
+    assert preserved_model_text == "__subject__preserved migration row"
+    assert versions[-1] == email_store_module.EMAIL_SCHEMA_VERSION == 24
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select frozen from email_training_snapshots"
+        ).fetchall() == []
+
+
+def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
+    tmp_path: Path,
+):
+    database = tmp_path / "training-snapshot-v23.sqlite3"
+    store = EmailStore(database)
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    with sqlite3.connect(database) as db:
+        for trigger in (
+            "trg_email_training_snapshots_immutable_update",
+            "trg_email_training_snapshots_immutable_delete",
+            "trg_email_training_observations_immutable_update",
+            "trg_email_training_observations_require_unfrozen_snapshot",
+        ):
+            db.execute(f"drop trigger {trigger}")
+        db.execute("alter table email_training_snapshots drop column frozen")
+        db.execute(
+            "update email_schema_migrations set version=23 where version=24"
+        )
+
+    reopened = EmailStore(database)
+
+    assert reopened.get_training_snapshot(snapshot.snapshot_id) == snapshot.to_dict()
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select frozen from email_training_snapshots"
+        ).fetchone()[0] == 1
+
+
+def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path):
+    database = tmp_path / "training-snapshot-v23-legacy-manifest.sqlite3"
+    store = EmailStore(database)
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    legacy_manifest, legacy_digest, legacy_record_digests = (
+        _unsigned_time_legacy_manifest(snapshot, include_counts=False)
+    )
+    with sqlite3.connect(database) as db:
+        for trigger in (
+            "trg_email_training_snapshots_immutable_update",
+            "trg_email_training_snapshots_immutable_delete",
+            "trg_email_training_observations_immutable_update",
+            "trg_email_training_observations_require_unfrozen_snapshot",
+        ):
+            db.execute(f"drop trigger {trigger}")
+        db.execute(
+            "update email_training_snapshots "
+            "set manifest_json=?, snapshot_digest=?",
+            (
+                json.dumps(
+                    legacy_manifest,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                legacy_digest,
+            ),
+        )
+        db.executemany(
+            "update email_training_snapshot_observations "
+            "set ordered_record_digest=? where snapshot_id=? "
+            "and stable_message_identity=?",
+            [
+                (digest, snapshot.snapshot_id, row.stable_message_identity)
+                for row, digest in zip(
+                    snapshot.observations, legacy_record_digests, strict=True
+                )
+            ],
+        )
+        db.execute("alter table email_training_snapshots drop column frozen")
+        db.execute(
+            "update email_schema_migrations set version=23 where version=24"
+        )
+
+    reopened = EmailStore(database)
+    restored = reopened.get_training_snapshot(snapshot.snapshot_id)
+
+    assert restored is not None
+    assert restored["snapshot_digest"] == legacy_digest
+    assert restored["manifest"] == legacy_manifest
+
+
+def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "training-snapshot-v24-legacy-manifest.sqlite3")
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    legacy_manifest, legacy_digest, legacy_record_digests = (
+        _unsigned_time_legacy_manifest(snapshot, include_counts=True)
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
+        db.execute("drop trigger trg_email_training_observations_immutable_update")
+        db.execute(
+            "update email_training_snapshots set manifest_json=?, snapshot_digest=?",
+            (
+                json.dumps(
+                    legacy_manifest,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                legacy_digest,
+            ),
+        )
+        db.executemany(
+            "update email_training_snapshot_observations "
+            "set ordered_record_digest=? where snapshot_id=? "
+            "and stable_message_identity=?",
+            [
+                (digest, snapshot.snapshot_id, row.stable_message_identity)
+                for row, digest in zip(
+                    snapshot.observations, legacy_record_digests, strict=True
+                )
+            ],
+        )
+
+    restored = store.get_training_snapshot(snapshot.snapshot_id)
+
+    assert restored is not None
+    assert restored["snapshot_digest"] == legacy_digest
+    assert restored["manifest"] == legacy_manifest
+
+
+def test_store_round_trips_frozen_training_snapshot(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot.sqlite3")
+    snapshot = _frozen_training_snapshot()
+
+    stored = store.persist_training_snapshot(snapshot)
+    loaded = store.get_training_snapshot(snapshot.snapshot_id)
+
+    assert stored["snapshot_digest"] == snapshot.snapshot_digest
+    assert loaded is not None
+    assert loaded["manifest"] == snapshot.manifest
+    assert loaded["observations"] == [
+        row.to_dict() for row in snapshot.observations
+    ]
+
+
+def test_identical_training_snapshot_persistence_is_idempotent(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot-idempotent.sqlite3")
+    snapshot = _frozen_training_snapshot()
+
+    first = store.persist_training_snapshot(snapshot)
+    second = store.persist_training_snapshot(snapshot)
+
+    assert second == first
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from email_training_snapshots").fetchone()[
+            0
+        ] == 1
+        assert db.execute(
+            "select count(*) from email_training_snapshot_observations"
+        ).fetchone()[0] == 1
+
+
+def test_same_snapshot_id_rejects_changed_frozen_content(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot-conflict.sqlite3")
+    first = _frozen_training_snapshot()
+    changed = build_folder_training_snapshot(
+        [
+            _frozen_training_observation(
+                provider_folder_id="folder-legal",
+                provider_folder_name="Legal",
+                bound_category_key="legal",
+                important_signals=ImportantSignals((), False),
+            )
+        ],
+        snapshot_id=first.snapshot_id,
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 19, 0, tzinfo=timezone.utc),
+        seed=17,
+    )
+    store.persist_training_snapshot(first)
+
+    with pytest.raises(EmailTrainingSnapshotConflict, match="already exists"):
+        store.persist_training_snapshot(changed)
+
+
+def test_store_rejects_observation_metadata_tampering(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot-tamper.sqlite3")
+    snapshot = _frozen_training_snapshot()
+    forged_row = replace(snapshot.observations[0], category_key="legal")
+    forged = replace(snapshot, observations=(forged_row,))
+
+    with pytest.raises(ValueError, match="observation digest"):
+        store.persist_training_snapshot(forged)
+
+
+def test_later_snapshot_does_not_mutate_earlier_observation(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot-history.sqlite3")
+    first = _frozen_training_snapshot("snapshot-before-move")
+    moved = build_folder_training_snapshot(
+        [
+            _frozen_training_observation(
+                provider_folder_id="folder-legal",
+                provider_folder_name="Legal",
+                bound_category_key="legal",
+                important_signals=ImportantSignals((), False),
+            )
+        ],
+        snapshot_id="snapshot-after-move",
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 19, 0, tzinfo=timezone.utc),
+        seed=17,
+    )
+
+    store.persist_training_snapshot(first)
+    store.persist_training_snapshot(moved)
+
+    assert store.get_training_snapshot("snapshot-before-move")["observations"][0][
+        "category_key"
+    ] == "work"
+    assert store.get_training_snapshot("snapshot-after-move")["observations"][0][
+        "category_key"
+    ] == "legal"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "update email_training_snapshots set seed=99",
+        "update email_training_snapshot_observations set source='targeted'",
+        "delete from email_training_snapshot_observations",
+    ),
+)
+def test_database_rejects_frozen_snapshot_mutation(tmp_path: Path, statement: str):
+    store = EmailStore(tmp_path / "training-snapshot-immutable.sqlite3")
+    store.persist_training_snapshot(_frozen_training_snapshot())
+
+    with sqlite3.connect(store.path) as db, pytest.raises(
+        sqlite3.IntegrityError, match="immutable"
+    ):
+        db.execute(statement)
+
+
+def test_database_rejects_observation_append_after_snapshot_freeze(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot-append.sqlite3")
+    store.persist_training_snapshot(_frozen_training_snapshot())
+
+    with pytest.raises(sqlite3.IntegrityError, match="frozen"):
+        _append_copied_training_observation(
+            store.path,
+            stable_message_identity="account-a:message-id:<appended@example.test>",
+        )
+
+
+def test_readback_rejects_persisted_observation_not_covered_by_manifest(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "training-snapshot-corrupt.sqlite3")
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "drop trigger if exists "
+            "trg_email_training_observations_require_unfrozen_snapshot"
+        )
+    _append_copied_training_observation(
+        store.path,
+        stable_message_identity="account-a:message-id:<corrupt@example.test>",
+    )
+
+    with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
+        store.get_training_snapshot(snapshot.snapshot_id)
+
+
+def test_readback_rejects_coordinated_parent_and_child_timestamp_tampering(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "training-snapshot-time-corrupt.sqlite3")
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    tampered_time = "2026-09-07T19:00:00+00:00"
+    with sqlite3.connect(store.path) as db:
+        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
+        db.execute("drop trigger trg_email_training_observations_immutable_update")
+        db.execute(
+            "update email_training_snapshots set observed_at=? where snapshot_id=?",
+            (tampered_time, snapshot.snapshot_id),
+        )
+        db.execute(
+            "update email_training_snapshot_observations set observed_at=? "
+            "where snapshot_id=?",
+            (tampered_time, snapshot.snapshot_id),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
+        store.get_training_snapshot(snapshot.snapshot_id)
 
 
 def _pending_category_classification(
@@ -2727,8 +3179,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_22() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 22
+def test_email_schema_version_is_24() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 24
 
 
 def test_current_schema_initialization_preserves_delete_journal_mode(
@@ -3396,7 +3848,17 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == [16, 17, 18, 19, 20, 21, email_store_module.EMAIL_SCHEMA_VERSION]
+        ] == [
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            email_store_module.EMAIL_SCHEMA_VERSION,
+        ]
         assert {
             row[1]
             for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
@@ -3635,7 +4097,18 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 16, 17, 18, 19, 20, 21, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [
+            2,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            email_store_module.EMAIL_SCHEMA_VERSION,
+        ]
 
     EmailStore(database)
 
@@ -3698,7 +4171,18 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [15, 16, 17, 18, 19, 20, 21, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            email_store_module.EMAIL_SCHEMA_VERSION,
+        ]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
     assert projected["action_plan"]["action_plan_id"] == historical_plan_id
@@ -4101,7 +4585,17 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [16, 17, 18, 19, 20, 21, email_store_module.EMAIL_SCHEMA_VERSION]
+        ] == [
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            email_store_module.EMAIL_SCHEMA_VERSION,
+        ]
 
 
 @pytest.mark.parametrize("missing_table", ["email_messages", "email_actions"])
@@ -5979,7 +6473,7 @@ def test_v21_schema_migrates_to_allow_flag_important_actions(tmp_path: Path):
         )
         assert (
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 22
+            == 24
         )
     assert (
         migrated.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
@@ -8126,7 +8620,7 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
 
     migrated = EmailStore(database)
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 22
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 24
     assert migrated.list_account_folder_bindings("junk")[0][
         "provider_folder_id"
     ] == "Deleted"

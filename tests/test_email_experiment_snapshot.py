@@ -7,6 +7,7 @@ from app.email_experiment_snapshot import (
     SNAPSHOT_VERSION,
     EmailExperimentSnapshotError,
     build_snapshot,
+    deterministic_payload_digest,
     load_snapshot,
     save_snapshot,
 )
@@ -115,3 +116,9 @@ def test_snapshot_rejects_tampered_digest(tmp_path):
 
     with pytest.raises(EmailExperimentSnapshotError, match="digest"):
         load_snapshot(path)
+
+
+def test_deterministic_payload_digest_ignores_mapping_insertion_order():
+    assert deterministic_payload_digest({"b": 2, "a": [1, {"d": 4, "c": 3}]}) == (
+        deterministic_payload_digest({"a": [1, {"c": 3, "d": 4}], "b": 2})
+    )
