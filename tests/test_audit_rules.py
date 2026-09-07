@@ -36,6 +36,8 @@ def test_default_oa_rules_trust_the_actual_applicant_statement():
     assert "the actual applicant is the authoritative source" in rules
     assert "do not require a separate source-system read to corroborate it" in rules
     assert "do not let a stale or conflicting source-system view override it" in rules
+    assert "do not introduce a new supplementary requirement in that review cycle" in rules
+    assert "is not a missing mandatory field and must not delay approval" in rules
 
 
 def test_empty_custom_body_keeps_fixed_role_wrappers(

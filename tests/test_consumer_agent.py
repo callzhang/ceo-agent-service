@@ -308,6 +308,8 @@ def test_consumer_and_audit_instructions_treat_oa_applicant_as_authoritative():
         assert "the actual OA applicant is authoritative" in instructions
         assert "Do not require another source to corroborate that statement" in instructions
         assert "must not override the applicant" in instructions
+        assert "Do not introduce a new supplementary requirement in that review cycle" in instructions
+        assert "must not delay approval" in instructions
 
 
 def test_consumer_contract_hash_changes_with_work_profile(tmp_path, monkeypatch):
