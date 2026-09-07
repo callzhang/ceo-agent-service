@@ -756,9 +756,9 @@ def test_mcp_write_tool_consumes_durable_intent_and_persists_ack(
             command, 0, '{"messageId":"sent-1"}', ""
         ),
     )
-    receipt = agent_cli.execute_reviewed_write_tool(
-        argv, authorization_id="authorization-1",
-    )
+    # The runtime already binds the exact argv to one persisted action. Agents
+    # need not echo the opaque authorization ID back into the MCP call.
+    receipt = agent_cli.execute_reviewed_write_tool(argv)
     assert receipt["authorization_id"] == "authorization-1"
     [persisted] = store.list_agent_execution_receipts(run.id)
     assert persisted.receipt_id == "authorization-1"

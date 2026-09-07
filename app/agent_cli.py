@@ -301,6 +301,7 @@ def _recovery_write_authorization(
     argv: Sequence[str],
     *,
     authorization_id: str | None,
+    allow_unique_argv_match: bool = False,
 ) -> dict[str, object] | None:
     raw_allowlist = os.environ.get(RECOVERY_WRITE_ALLOWLIST_ENV, "")
     if not raw_allowlist:
@@ -309,29 +310,31 @@ def _recovery_write_authorization(
         allowlist = json.loads(raw_allowlist)
     except json.JSONDecodeError as exc:
         raise AgentReadOnlyViolationError("recovery_write_allowlist_invalid") from exc
-    if not isinstance(allowlist, list) or not isinstance(authorization_id, str):
+    if not isinstance(allowlist, list):
         raise AgentReadOnlyViolationError("recovery_write_not_authorized")
     actual = {
-        "authorization_id": authorization_id,
         "capability": f"agent_cli.{command.cli}",
         "operation": command.command_path,
         "operation_digest": command.command_digest,
         "target_identifiers": command.target_identifiers,
         "arguments_digest": _json_digest({"argv": list(argv)}),
     }
-    match = next(
-        (
-            entry
-            for entry in allowlist
-            if isinstance(entry, dict)
-            and all(entry.get(key) == value for key, value in actual.items())
-            and isinstance(entry.get("action_index"), int)
-        ),
-        None,
-    )
-    if match is None:
+    matches = [
+        entry
+        for entry in allowlist
+        if isinstance(entry, dict)
+        and all(entry.get(key) == value for key, value in actual.items())
+        and isinstance(entry.get("action_index"), int)
+        and isinstance(entry.get("authorization_id"), str)
+        and (
+            entry.get("authorization_id") == authorization_id
+            if isinstance(authorization_id, str)
+            else allow_unique_argv_match
+        )
+    ]
+    if len(matches) != 1:
         raise AgentReadOnlyViolationError("recovery_write_not_authorized")
-    return match
+    return matches[0]
 
 
 def _effect_intent_context() -> tuple[Path, int]:
@@ -929,6 +932,7 @@ def execute_reviewed_write_tool(
         command,
         canonical_argv,
         authorization_id=authorization_id,
+        allow_unique_argv_match=True,
     )
     if authorization is None:
         raise AgentReadOnlyViolationError("reviewed_write_not_authorized")
@@ -938,7 +942,7 @@ def execute_reviewed_write_tool(
     store = AutoReplyStore(db_path)
     receipt = execute_reviewed_write(
         canonical_argv,
-        authorization_id=authorization_id,
+        authorization_id=str(authorization["authorization_id"]),
         authorization_consumer=lambda consumed: store.dispatch_agent_effect_intent(
             run_id, consumed
         ),
