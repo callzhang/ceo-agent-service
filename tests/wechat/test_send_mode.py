@@ -74,6 +74,23 @@ def test_sender_disabled_holds_even_in_auto(tmp_path):
     assert sender.sent == []
 
 
+def test_auto_mode_with_no_delivery_does_not_preflight_sender(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+
+    class Runner:
+        @staticmethod
+        def preflight(*, activate=False):
+            raise AssertionError("an empty delivery queue must not touch WeChat")
+
+    sender = FakeSender()
+    sender.runner = Runner()
+
+    assert service.process_ready_wechat_deliveries(
+        store, sender, mode="auto", sender_enabled=True
+    ) == 0
+    assert sender.sent == []
+
+
 def test_auto_mode_sends(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     _seed(store)

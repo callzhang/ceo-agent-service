@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-09-06: stop the idle WeChat Sender loop from actively preflighting the
+  desktop client. It now reads the local `ready_to_send` queue first and only
+  performs the foreground-capable accessibility check for an actual delivery.
+
 - 2026-09-06: add sender-local foreground telemetry for WeChat. The dedicated
   Sender records only foreground transitions and its own activation call site,
   with no contact or message content, so any unexpected desktop switch can be

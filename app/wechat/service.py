@@ -189,10 +189,16 @@ def process_ready_wechat_deliveries(
     recover_before_sender(store, reader, account=account)
     if not sender_enabled or mode != "auto":
         return 0
+    deliveries = pending_wechat_deliveries(store)
+    # An active preflight is intentionally delivery-scoped: it may need to
+    # bring WeChat to the foreground when its AX window is unavailable. Do not
+    # perform that UI operation merely because the periodic sender loop ran.
+    if not deliveries:
+        return 0
     if not _sender_is_ready(sender):
         return 0
     sent = 0
-    for delivery in pending_wechat_deliveries(store):
+    for delivery in deliveries:
         try:
             delivery = _refresh_direct_binding_evidence(delivery, reader, account)
         except Exception:
