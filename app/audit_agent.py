@@ -361,6 +361,20 @@ def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, objec
         if process_id and isinstance(comment, str) and comment:
             argv = ["dws", "oa", "approval", "oa-comments", "--instance-id", process_id,
                     "--content", comment, "--format", "json", "--yes"]
+    elif capability in {"dingtalk-misc", "dingtalk_oa", "dingtalk-oa"} and operation in {
+        "dws oa approval approve", "oa approval approve", "approval.approve"
+    }:
+        process_id = str(target.get("process_instance_id") or "").strip()
+        task_id = str(target.get("task_id") or "").strip()
+        remark = payload.get("remark")
+        if process_id and task_id and isinstance(remark, str):
+            argv = [
+                "dws", "oa", "approval", "approve",
+                "--instance-id", process_id,
+                "--task-id", task_id,
+                "--remark", remark,
+                "--format", "json", "--yes",
+            ]
     if argv is None:
         return {"action_index": action_index}
     descriptor = describe_native_command(

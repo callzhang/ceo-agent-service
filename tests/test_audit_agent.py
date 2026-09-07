@@ -217,9 +217,14 @@ def test_initial_write_authorization_binds_direct_message_content_and_recipient(
         (SimpleNamespace(capability="dingtalk_oa", operation="approval.comment",
             payload={"comment_text": "请补材料"}, target={"process_instance_id": "process-1"}),
          ["dws", "oa", "approval", "oa-comments", "--instance-id", "process-1", "--content", "请补材料", "--format", "json", "--yes"]),
+        (SimpleNamespace(capability="dingtalk-misc", operation="dws oa approval approve",
+            payload={"remark": "同意"},
+            target={"process_instance_id": "process-1", "task_id": "task-1"}),
+         ["dws", "oa", "approval", "approve", "--instance-id", "process-1",
+          "--task-id", "task-1", "--remark", "同意", "--format", "json", "--yes"]),
     ],
 )
-def test_expected_effect_action_binds_supported_group_and_oa_comment(action, expected_argv):
+def test_expected_effect_action_binds_supported_dingtalk_actions(action, expected_argv):
     assert _expected_effect_action(action)["argv"] == expected_argv
 
 
