@@ -884,6 +884,94 @@ def _context(task) -> AgentTaskContext:
     )
 
 
+def test_invalid_completed_consumer_result_is_regenerated_without_rewriting_history(
+    store,
+):
+    task = _task(store)
+    task = store.claim_reply_tasks(limit=1)[0]
+    stale = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="stale-consumer",
+    ).run
+    store.complete_agent_run(
+        stale.id,
+        {"outcome": "proposal", "summary": "pre-contract result"},
+        owner="stale-consumer",
+    )
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "current"))
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+
+    result = AgentOrchestrator(
+        store=store,
+        consumer=consumer,
+        audit=audit,
+    ).process(task, _context(task), refresh_context=lambda: _context(task))
+
+    assert result.status == "executed"
+    assert len(consumer.calls) == 1
+    assert store.get_agent_run(stale.id).final_result_json == (
+        '{"outcome":"proposal","summary":"pre-contract result"}'
+    )
+
+
+def test_invalid_completed_audit_result_is_regenerated_without_rerunning_consumer(
+    store,
+):
+    task = _task(store)
+    task = store.claim_reply_tasks(limit=1)[0]
+    consumer_run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="completed-consumer",
+    ).run
+    store.complete_agent_run(
+        consumer_run.id,
+        _consumer_result("proposal", "current").model_dump(mode="json"),
+        owner="completed-consumer",
+    )
+    stale = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer_run.id,
+        operation_id="stale-audit",
+        owner="stale-audit",
+    ).run
+    store.complete_agent_run(
+        stale.id,
+        {"outcome": "executed", "summary": "pre-contract result"},
+        owner="stale-audit",
+    )
+    consumer = ScriptedConsumer(store)
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+
+    result = AgentOrchestrator(
+        store=store,
+        consumer=consumer,
+        audit=audit,
+    ).process(task, _context(task), refresh_context=lambda: _context(task))
+
+    assert result.status == "executed"
+    assert consumer.calls == []
+    assert len(audit.calls) == 1
+    assert store.get_agent_run(stale.id).final_result_json == (
+        '{"outcome":"executed","summary":"pre-contract result"}'
+    )
+
+
 def _scripted_continuation_receipt() -> PriorReceipt:
     return PriorReceipt(
         receipt_id="email-unsubscribe-continuation:scripted-current",
@@ -2123,7 +2211,7 @@ def test_running_child_still_validates_current_parent_continuation(store):
     )
 
 
-def test_malformed_completed_child_validates_parent_then_defers_safely(store):
+def test_malformed_completed_child_validates_parent_then_retries_audit(store):
     task, email_state, orchestrator = _email_chain_with_unconsumed_child_audit(
         store,
         child_state="malformed_completed",
@@ -2133,8 +2221,8 @@ def test_malformed_completed_child_validates_parent_then_defers_safely(store):
     recovered = orchestrator._derive_state(task)
 
     assert email_state.read_count > 0
-    assert isinstance(recovered, _Deferred)
-    assert recovered.code == "agent_turn_state_incomplete"
+    assert isinstance(recovered, _NextAudit)
+    assert recovered.turn_attempt == 1
 
 
 @pytest.mark.parametrize(

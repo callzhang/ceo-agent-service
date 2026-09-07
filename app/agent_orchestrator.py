@@ -802,7 +802,14 @@ class AgentOrchestrator:
         domain_snapshot: object | None = None,
     ) -> ConsumerAgentResult | _NextConsumer | _Deferred | OrchestrationResult:
         if run.status == "completed":
-            return _consumer_result(run)
+            try:
+                return _consumer_result(run)
+            except (ResultParseError, ValueError):
+                return _NextConsumer(
+                    run.proposal_revision,
+                    run.parent_agent_run_id,
+                    self._retry_feedback(run, runs_by_id=runs_by_id),
+                )
         error = _run_error(run)
         if run.status == "failed" and error.authorization_required:
             if task.error == error.code:
@@ -899,10 +906,11 @@ class AgentOrchestrator:
             try:
                 return _audit_result(run)
             except (ResultParseError, ValueError):
-                return _Deferred(
-                    run,
-                    "agent_turn_state_incomplete",
-                    feedback_cycles,
+                return _NextAudit(
+                    run.proposal_revision,
+                    run.turn_attempt + 1,
+                    run.parent_agent_run_id or 0,
+                    None,
                 )
         if run.status == "unknown":
             # Legacy rows may still carry this projection.  The current
