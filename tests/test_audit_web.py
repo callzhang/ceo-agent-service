@@ -24,7 +24,6 @@ from app.audit_web import (
     handle_feedback_post,
     handle_needs_human_decision_post,
     handle_rerun_attempt_post,
-    handle_agent_run_resolution_post,
     handle_user_feedback_resolve_post,
     handle_user_feedback_sync_post,
     handle_recall_post,
@@ -9013,48 +9012,6 @@ def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
     assert store.get_reply_attempt(source_id).send_status == "pending"
 
 
-def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Friday",
-        single_chat=False,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-07-29 09:00:00",
-        trigger_sender="Mina",
-        trigger_text="请处理",
-    )
-    task = store.claim_reply_tasks(1)[0]
-    run = _claim_audit_run(store, task).run
-    store.fail_agent_run(
-        run.id,
-        {"code": "codex_result_invalid", "retryable": False},
-        owner="worker",
-    )
-    client = TestClient(
-        create_audit_app(store.path),
-        client=("127.0.0.1", 50000),
-        headers={"Host": "127.0.0.1:8765"},
-    )
-
-    response = client.post(
-        f"/agent-runs/{run.id}/resolution",
-        json={
-            "execution_generation": task.execution_generation,
-            "resolution": "confirmed_not_occurred",
-            "reason": "普通失败应通过重试或反馈处理",
-            "actor": "untrusted-client-value",
-        },
-    )
-
-    assert response.status_code == 409
-    assert store.get_agent_run(run.id).status == "failed"
-    assert store.get_reply_task(task.id).status == "processing"
-    assert store.get_latest_reply_attempt_for_trigger(
-        task.conversation_id, task.trigger_message_id
-    ) is None
-
-
 def test_exhausted_failed_run_remains_ordinary_retry_candidate(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(conversation_id="cid-suspended", conversation_title="Operations", single_chat=False,
@@ -9064,56 +9021,6 @@ def test_exhausted_failed_run_remains_ordinary_retry_candidate(tmp_path: Path):
     store.fail_agent_run(run.id, {"code": "codex_result_invalid", "retryable": True}, owner="worker")
     assert store.get_agent_run(run.id).status == "failed"
     assert store.list_unknown_agent_runs() == []
-
-
-def test_agent_run_resolution_handler_rejects_free_text_without_enum(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    with pytest.raises(ValueError, match="invalid manual reconciliation resolution"):
-        handle_agent_run_resolution_post(
-            store,
-            {
-                "run_id": 1,
-                "execution_generation": "initial",
-                "resolution": "看起来应该成功了",
-                "reason": "备注",
-            },
-        )
-
-
-def test_agent_run_resolution_api_rejects_non_loopback_client(tmp_path: Path):
-    client = TestClient(
-        create_audit_app(tmp_path / "audit.sqlite3"),
-        client=("192.0.2.10", 50000),
-    )
-
-    response = client.post(
-        "/agent-runs/1/resolution",
-        json={
-            "execution_generation": "initial",
-            "resolution": "confirmed_occurred",
-            "reason": "已核对",
-        },
-    )
-
-    assert response.status_code == 403
-
-
-def test_agent_run_resolution_api_rejects_text_plain_csrf(tmp_path: Path):
-    client = TestClient(
-        create_audit_app(tmp_path / "audit.sqlite3"),
-        client=("127.0.0.1", 50000),
-    )
-
-    response = client.post(
-        "/agent-runs/1/resolution",
-        content='{"execution_generation":"initial"}',
-        headers={
-            "Content-Type": "text/plain",
-            "Origin": "https://attacker.example",
-        },
-    )
-
-    assert response.status_code == 403
 
 
 def test_reviewed_reply_api_rejects_cross_origin_browser_request(tmp_path: Path):
@@ -9202,41 +9109,6 @@ def test_audit_mutation_accepts_loopback_origin(tmp_path: Path, monkeypatch):
 
     assert response.status_code == 303
     assert "CEO_WORKSPACE=/tmp/changed" in env_path.read_text(encoding="utf-8")
-
-
-def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "audit.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Friday",
-        single_chat=False,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-07-29 09:00:00",
-        trigger_sender="Mina",
-        trigger_text="请处理",
-    )
-    task = store.claim_reply_tasks(1)[0]
-    run = _claim_audit_run(store, task).run
-    store.fail_agent_run(run.id, {"code": "codex_result_invalid"}, owner="worker")
-    app = create_audit_app(db_path=store.path)
-
-    response = TestClient(
-        app,
-        client=("127.0.0.1", 50000),
-        headers={"Host": "127.0.0.1:8765"},
-    ).post(
-        f"/agent-runs/{run.id}/resolution",
-        json={
-            "execution_generation": "stale-generation",
-            "resolution": "confirmed_not_occurred",
-            "reason": "operator verified no effect",
-            "actor": "operator@example.com",
-        },
-    )
-
-    assert response.status_code == 409
-    assert store.get_agent_run(run.id).status == "failed"
-    assert store.get_reply_task(task.id).status == "processing"
 
 
 def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation(

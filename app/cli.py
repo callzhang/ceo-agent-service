@@ -337,7 +337,6 @@ def build_parser() -> argparse.ArgumentParser:
         "test-ding",
         "rerun-message",
         "send-attempt",
-        "resolve-agent-run",
         "reset-codex-sessions",
         "build-work-profile",
         "replay-recent-meetings",
@@ -738,20 +737,6 @@ def build_parser() -> argparse.ArgumentParser:
                 default="CEO-2 管理群",
                 help="DingTalk group whose members define the company OKR archive roster",
             )
-        if command == "resolve-agent-run":
-            subparser.add_argument("--run-id", type=int, required=True)
-            subparser.add_argument("--execution-generation", required=True)
-            subparser.add_argument(
-                "--resolution",
-                required=True,
-                choices=(
-                    "confirmed_occurred",
-                    "confirmed_not_occurred",
-                    "terminate_unrecoverable",
-                ),
-            )
-            subparser.add_argument("--reason", required=True)
-            subparser.add_argument("--actor", required=True)
         if command == "build-work-profile":
             include_dingtalk_messages_default = not _env_bool(
                 "CEO_PROFILE_SKIP_DINGTALK_MESSAGES", False
@@ -2136,33 +2121,6 @@ def send_attempt_command(
         "send_status": "queued",
         "task_id": queued_task.id,
         "execution_generation": queued_task.execution_generation,
-    }
-    print(json.dumps(result, ensure_ascii=False), flush=True)
-    return result
-
-
-def resolve_agent_run_command(
-    settings: WorkerSettings,
-    *,
-    run_id: int,
-    execution_generation: str,
-    resolution: str,
-    reason: str,
-    actor: str,
-) -> dict[str, object]:
-    resolved = AutoReplyStore(settings.db_path).resolve_agent_run_manually(
-        run_id,
-        expected_execution_generation=execution_generation,
-        resolution=resolution,
-        reason=reason,
-        actor=actor,
-    )
-    result = {
-        "run_id": resolved.run_id,
-        "task_id": resolved.task_id,
-        "attempt_id": resolved.attempt_id,
-        "resolution": resolved.resolution,
-        "execution_generation": resolved.execution_generation,
     }
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return result
@@ -3831,15 +3789,6 @@ def main() -> None:
             settings,
             attempt_id=args.attempt_id,
             instruction=args.instruction,
-        )
-    elif args.command == "resolve-agent-run":
-        resolve_agent_run_command(
-            settings,
-            run_id=args.run_id,
-            execution_generation=args.execution_generation,
-            resolution=args.resolution,
-            reason=args.reason,
-            actor=args.actor,
         )
     elif args.command == "reset-codex-sessions":
         reset_codex_sessions_command(settings)

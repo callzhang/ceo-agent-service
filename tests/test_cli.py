@@ -781,29 +781,6 @@ def test_quality_check_help_names_the_default_live_channel_gates():
 
 
 
-def test_parser_requires_structured_agent_run_resolution():
-    args = build_parser().parse_args(
-        [
-            "resolve-agent-run",
-            "--run-id",
-            "7",
-            "--execution-generation",
-            "gen-1",
-            "--resolution",
-            "confirmed_not_occurred",
-            "--reason",
-            "已核对外部系统",
-            "--actor",
-            "Derek",
-        ]
-    )
-
-    assert args.run_id == 7
-    assert args.resolution == "confirmed_not_occurred"
-
-
-
-
 def test_parser_supports_recent_meeting_replay():
     args = build_parser().parse_args(
         ["replay-recent-meetings", "--limit", "9", "--offset", "1"]

@@ -9461,63 +9461,6 @@ def handle_needs_human_decision_post(
     return 303, {"Location": _safe_action_return_to(return_to, source.id)}, ""
 
 
-def handle_agent_run_resolution_post(
-    store: AutoReplyStore,
-    payload: Mapping[str, object],
-) -> dict[str, object]:
-    required = (
-        "run_id",
-        "execution_generation",
-        "resolution",
-        "reason",
-    )
-    missing = [name for name in required if payload.get(name) in {None, ""}]
-    if missing:
-        raise ValueError(f"missing manual reconciliation fields: {', '.join(missing)}")
-    resolved = store.resolve_agent_run_manually(
-        int(payload["run_id"]),
-        expected_execution_generation=str(payload["execution_generation"]),
-        resolution=str(payload["resolution"]),
-        reason=str(payload["reason"]),
-        actor=principal_display_name(),
-    )
-    return {
-        "run_id": resolved.run_id,
-        "task_id": resolved.task_id,
-        "attempt_id": resolved.attempt_id,
-        "resolution": resolved.resolution,
-        "execution_generation": resolved.execution_generation,
-    }
-
-
-def handle_agent_run_resolution_form_post(
-    store: AutoReplyStore,
-    run_id: int,
-    body: bytes,
-) -> tuple[int, dict[str, str], str]:
-    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
-    return_to = parsed.get("return_to", [""])[0]
-    payload: dict[str, object] = {
-        "run_id": run_id,
-        "execution_generation": parsed.get("execution_generation", [""])[0],
-        "resolution": parsed.get("resolution", [""])[0],
-        "reason": parsed.get("reason", [""])[0],
-    }
-    try:
-        result = handle_agent_run_resolution_post(store, payload)
-    except (AgentRunLeaseLostError, TypeError, ValueError) as exc:
-        return (
-            409,
-            {},
-            render_page(
-                "Resolution unavailable",
-                f"<p>该事项已变化，不能重复提交：{escape(str(exc))}</p>",
-            ),
-        )
-    attempt_id = int(result["attempt_id"])
-    return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
-
-
 def handle_follow_up_resolution_form_post(
     store: AutoReplyStore,
     draft_id: int,
@@ -10851,31 +10794,6 @@ def create_audit_app(
             attempt_id,
             await request.body(),
             return_to=request.query_params.get("return_to", ""),
-        )
-        return _fastapi_post_response(status, headers, html)
-
-    @app.post("/agent-runs/{run_id}/resolution")
-    async def resolve_agent_run(run_id: int, request: Request):
-        _require_trusted_json_mutation(request)
-        payload = json.loads((await request.body()).decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="JSON object required")
-        payload["run_id"] = run_id
-        try:
-            result = handle_agent_run_resolution_post(
-                AutoReplyStore(db_path),
-                payload,
-            )
-        except (AgentRunLeaseLostError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return JSONResponse(result)
-
-    @app.post("/agent-runs/{run_id}/resolution-form")
-    async def resolve_agent_run_form(run_id: int, request: Request):
-        status, headers, html = handle_agent_run_resolution_form_post(
-            AutoReplyStore(db_path),
-            run_id,
-            await request.body(),
         )
         return _fastapi_post_response(status, headers, html)
 

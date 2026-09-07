@@ -672,19 +672,6 @@ class AgentOrchestrator:
                     frozen_delivery_retry=frozen_delivery_retry,
                 )
             latest = audits[-1]
-            # ``unknown`` was a legacy projection used by the removed
-            # application side-effect state machine.  Historical rows may
-            # still contain it, but they must not re-enter a recovery
-            # workflow; surface the durable failure as a terminal result.
-            if latest.status == "unknown":
-                legacy_error = _run_error(latest)
-                result = _failed_audit_result(latest, AuditOutcome.FAILED, legacy_error)
-                return _audit_terminal(
-                    "failed",
-                    latest,
-                    result,
-                    feedback_cycles,
-                )
             audit_state = self._audit_state(
                 task,
                 latest,
@@ -912,13 +899,6 @@ class AgentOrchestrator:
                     run.parent_agent_run_id or 0,
                     None,
                 )
-        if run.status == "unknown":
-            # Legacy rows may still carry this projection.  The current
-            # contract has no unknown/reconciliation state machine, so expose
-            # the persisted error as an ordinary terminal failure.
-            error = _run_error(run)
-            result = _failed_audit_result(run, AuditOutcome.FAILED, error)
-            return _audit_terminal("failed", run, result, feedback_cycles)
         error = _run_error(run)
         if run.status == "failed" and error.authorization_required:
             if task.error == error.code:
