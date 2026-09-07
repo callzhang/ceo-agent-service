@@ -1510,102 +1510,6 @@ def test_consumer_dry_run_analyzes_but_does_not_claim_or_send(tmp_path):
     assert dws.send_calls == []
 
 
-def test_consumer_reconciles_ambiguous_task_without_duplicate_send(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    dws = ConsumerDws()
-    dws.send_result = {
-        "success": True,
-        "result": {"openTaskId": "task-1"},
-    }
-    dws.verification_states = ["ambiguous", "sent"]
-    job_id = seed_consumer_job(store, dws)
-    runner = FakeMeetingRunner(consumer_send_decision())
-
-    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
-    first = store.get_meeting_alignment_job(job_id)
-    assert first.status == "ready_to_send"
-    assert len(dws.send_calls) == 1
-    assert json.loads(first.send_result_json)["send_verification"][
-        "open_task_id"
-    ] == "task-1"
-
-    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
-    assert len(dws.verify_calls) == 1
-    assert len(dws.send_calls) == 1
-
-    consume_meeting_alignment_jobs(
-        store, dws, runner, now=NOW + timedelta(minutes=1), limit=1
-    )
-    second = store.get_meeting_alignment_job(job_id)
-    assert second.status == "sent"
-    assert len(dws.send_calls) == 1
-    assert runner.calls == 1
-    assert len(dws.verify_calls) == 2
-
-
-def test_confirmed_failed_reconciliation_uses_counted_retry_backoff(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    dws = ConsumerDws()
-    dws.send_result = {
-        "success": True,
-        "result": {"openTaskId": "task-1"},
-    }
-    dws.verification_states = ["ambiguous", "failed"]
-    job_id = seed_consumer_job(store, dws)
-    runner = FakeMeetingRunner(consumer_send_decision())
-
-    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
-    consume_meeting_alignment_jobs(
-        store, dws, runner, now=NOW + timedelta(minutes=1), limit=1
-    )
-
-    job = store.get_meeting_alignment_job(job_id)
-    assert job.status == "retry"
-    assert job.available_at == "2026-07-14T10:12:00+08:00"
-    assert json.loads(job.error)["kind"] == (
-        "meeting_send_reconcile_failed"
-    )
-    assert len(dws.send_calls) == 1
-    assert runner.calls == 1
-
-
-def test_ambiguous_reconciliation_hits_max_without_resend_or_reanalysis(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    dws = ConsumerDws()
-    dws.send_result = {
-        "success": True,
-        "result": {"openTaskId": "task-1"},
-    }
-    dws.verification_states = ["ambiguous", "ambiguous"]
-    job_id = seed_consumer_job(store, dws)
-    runner = FakeMeetingRunner(consumer_send_decision())
-
-    consume_meeting_alignment_jobs(
-        store, dws, runner, now=NOW, limit=1, max_attempts=2
-    )
-    first = store.get_meeting_alignment_job(job_id)
-    assert first.status == "ready_to_send"
-    assert first.attempts == 2
-
-    consume_meeting_alignment_jobs(
-        store,
-        dws,
-        runner,
-        now=NOW + timedelta(minutes=1),
-        limit=1,
-        max_attempts=2,
-    )
-    final = store.get_meeting_alignment_job(job_id)
-    assert final.status == "failed"
-    assert json.loads(final.error)["kind"] == "meeting_send_reconcile_max"
-    assert json.loads(final.send_result_json)["send_verification"][
-        "open_task_id"
-    ] == "task-1"
-    assert len(dws.send_calls) == 1
-    assert runner.calls == 1
-    assert len(dws.verify_calls) == 2
-
-
 def test_ready_delivery_source_failure_uses_counted_retry(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
@@ -1704,27 +1608,6 @@ def test_source_read_failure_never_degrades_to_creator_direct(tmp_path):
     assert dws.send_calls == []
 
 
-def test_consumer_quarantines_ambiguous_send_without_verifiable_id(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    dws = ConsumerDws()
-    dws.send_result = {"success": True, "result": {}}
-    dws.verification_states = ["ambiguous"]
-    job_id = seed_consumer_job(store, dws)
-    runner = FakeMeetingRunner(consumer_send_decision())
-
-    consume_meeting_alignment_jobs(
-        store, dws, runner, now=NOW + timedelta(minutes=1), limit=1
-    )
-    job = store.get_meeting_alignment_job(job_id)
-    assert job.status == "quarantined"
-    assert json.loads(job.error)["kind"] == "meeting_send_ambiguous_no_id"
-    assert len(dws.send_calls) == 1
-
-    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
-    assert len(dws.send_calls) == 1
-    assert runner.calls == 1
-
-
 def test_consumer_quarantines_corrupt_persisted_send_evidence(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
@@ -1740,6 +1623,7 @@ def test_consumer_quarantines_corrupt_persisted_send_evidence(tmp_path):
     assert len(dws.send_calls) == 1
     store.update_meeting_alignment_job(
         job_id,
+        status="ready_to_send",
         send_result_json='{"status":"ambiguous","truncated":true}',
     )
 

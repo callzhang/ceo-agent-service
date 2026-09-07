@@ -1,5 +1,6 @@
 import errno
 import importlib.util
+import inspect
 import json
 import sqlite3
 import time
@@ -223,7 +224,9 @@ def _get_audit_run(
     )
 
 
-def test_recover_no_effect_dingtalk_run_after_service_restart(tmp_path: Path) -> None:
+def test_restart_recovery_requeues_interrupted_run_without_classifying_effects(
+    tmp_path: Path,
+) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-restart",
@@ -262,14 +265,14 @@ def test_recover_no_effect_dingtalk_run_after_service_restart(tmp_path: Path) ->
     )
     store.mark_agent_runtime_attempt_running_once(runtime_attempt.id)
 
-    recovered = store.recover_no_effect_agent_runs_after_service_restart()
+    recovered = store.recover_interrupted_agent_runs_after_service_restart()
 
     assert [item.id for item in recovered] == [task_id]
     updated = store.get_reply_task(task_id)
     assert updated is not None
     assert updated.status == "pending"
     assert updated.execution_generation == task.execution_generation
-    assert updated.error == "service_restart_before_effect"
+    assert updated.error == "service_restart_interrupted"
     assert updated.force_new_decision is False
     run = store.get_agent_run(claim.run.id)
     assert run is not None and run.status == "failed"
@@ -2175,7 +2178,6 @@ def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
         audit.id,
         {"outcome": "executed", "summary": "Readback verified."},
         owner="audit",
-        side_effect_state="confirmed",
     )
 
     sent_reply_text = (
@@ -4081,17 +4083,6 @@ def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
             owner="worker-a",
             now="2026-07-29 00:30:02",
         ),
-        lambda: store.record_agent_execution_receipt(
-            first.run.id,
-            receipt_id="stale-receipt",
-            operation_id="stale-write",
-            cli="dws",
-            command_path="chat message send",
-            command_digest="digest",
-            exit_code=0,
-            owner="worker-a",
-            now="2026-07-29 00:30:02",
-        ),
     ]
     for mutate in stale_mutations:
         with pytest.raises(AgentRunLeaseLostError, match="agent run lease lost"):
@@ -4337,55 +4328,6 @@ def test_agent_run_event_migration_backfills_legacy_json_once(tmp_path: Path):
 
 
 
-def test_execution_receipt_requires_current_unexpired_owner(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    run = _claim_audit_run(store,
-        task_id,
-        "initial",
-        owner="worker-a",
-        lease_seconds=60,
-        now="2026-07-29 00:00:00",
-    ).run
-
-    with pytest.raises(AgentRunLeaseLostError, match="agent run lease lost"):
-        store.record_agent_execution_receipt(
-            run.id,
-            receipt_id="receipt-stale-owner",
-            operation_id="write-1",
-            cli="dws",
-            command_path="chat message send",
-            command_digest="digest",
-            exit_code=0,
-            owner="worker-b",
-            now="2026-07-29 00:00:30",
-        )
-    with pytest.raises(AgentRunLeaseLostError, match="agent run lease lost"):
-        store.record_agent_execution_receipt(
-            run.id,
-            receipt_id="receipt-expired",
-            operation_id="write-1",
-            cli="dws",
-            command_path="chat message send",
-            command_digest="digest",
-            exit_code=0,
-            owner="worker-a",
-            now="2026-07-29 00:01:01",
-        )
-
-    assert store.list_agent_execution_receipts(run.id) == []
-
-
-
-
-
-
-
-
-
-
-
-
 def _effect_intent_authorization(
     authorization_id: str,
     *,
@@ -4405,91 +4347,6 @@ def _effect_intent_authorization(
         "arguments_digest": "arguments-digest",
         "target_identifiers": {"to": "recipient"},
     }
-
-
-def test_effect_actions_execute_in_declared_order(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    run = _claim_audit_run(
-        store, task_id, "initial", owner="worker-1"
-    ).run
-    first = _effect_intent_authorization("authorization-first")
-    second = _effect_intent_authorization(
-        "authorization-second", action_index=1
-    )
-    store.prepare_agent_effect_intents(
-        run.id, (first, second), owner="worker-1"
-    )
-
-    with pytest.raises(ValueError, match="agent_action_dependency_incomplete"):
-        store.dispatch_agent_effect_intent(run.id, second)
-
-    store.dispatch_agent_effect_intent(run.id, first)
-    store.acknowledge_agent_effect_intent(
-        run.id,
-        first,
-        result_digest="first-result",
-        exit_code=0,
-        provider_result={"messageId": "sent-first"},
-    )
-    store.dispatch_agent_effect_intent(run.id, second)
-
-
-def test_completed_external_action_is_reused_without_dispatch(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    first_task_id = _enqueue_universal_reply_task(store)
-    first_run = _claim_audit_run(
-        store, first_task_id, "initial", owner="worker-1"
-    ).run
-    stable_key = "stable-external-action"
-    first = _effect_intent_authorization(
-        "authorization-first", external_action_key=stable_key
-    )
-    store.prepare_agent_effect_intents(
-        first_run.id, (first,), owner="worker-1"
-    )
-    store.dispatch_agent_effect_intent(first_run.id, first)
-    store.acknowledge_agent_effect_intent(
-        first_run.id,
-        first,
-        result_digest="provider-result",
-        exit_code=0,
-        provider_result={"messageId": "sent-once"},
-    )
-
-    store.enqueue_reply_task(
-        conversation_id="cid-2",
-        conversation_title="Other input for the same action",
-        single_chat=False,
-        trigger_message_id="msg-2",
-        trigger_create_time="2026-08-21 00:01:00",
-        trigger_sender="Derek",
-        trigger_text="retry",
-    )
-    second_task = store.claim_reply_tasks(limit=1)[0]
-    second_run = _claim_audit_run(
-        store, second_task.id, second_task.execution_generation,
-        owner="worker-2",
-    ).run
-    second = _effect_intent_authorization(
-        "authorization-second", external_action_key=stable_key
-    )
-    store.prepare_agent_effect_intents(
-        second_run.id, (second,), owner="worker-2"
-    )
-
-    reused = store.reuse_completed_external_action(second_run.id, second)
-
-    assert reused is not None
-    assert reused["messageId"] == "sent-once"
-    assert reused["reused"] is True
-    assert len(store.list_agent_execution_receipts(second_run.id)) == 1
-    with store._connect() as db:
-        row = db.execute(
-            "select state from agent_effect_intents where agent_run_id=?",
-            (second_run.id,),
-        ).fetchone()
-    assert row["state"] == "acknowledged"
 
 
 def test_message_delivery_history_is_single_projection_with_run_observers(
@@ -4581,121 +4438,6 @@ def test_completed_message_delivery_persists_action_result_and_history_atomicall
         ).fetchone()[0] == 1
 
 
-
-
-def test_prepared_effect_intent_cannot_dispatch_after_run_is_terminal(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    run = _claim_audit_run(
-        store, task_id, "initial", owner="worker-1",
-        now="2026-08-21 00:00:00",
-    ).run
-    authorization = _effect_intent_authorization("authorization-terminal")
-    store.prepare_agent_effect_intents(
-        run.id, (authorization,), owner="worker-1", now="2026-08-21 00:00:01",
-    )
-    store.fail_agent_run(
-        run.id, {"code": "audit_revision_required"}, owner="worker-1",
-        now="2026-08-21 00:00:02",
-    )
-    with pytest.raises(ValueError, match="effect intent run is not active"):
-        store.dispatch_agent_effect_intent(
-            run.id, authorization, now="2026-08-21 00:00:03",
-        )
-
-
-def test_dispatched_effect_result_is_terminal_failure_without_unknown_state(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    run = _claim_audit_run(
-        store, task_id, "initial", owner="worker-1",
-        now="2026-08-21 00:00:00",
-    ).run
-    authorization = _effect_intent_authorization("authorization-dispatched")
-    store.prepare_agent_effect_intents(
-        run.id, (authorization,), owner="worker-1", now="2026-08-21 00:00:01",
-    )
-    store.dispatch_agent_effect_intent(
-        run.id, authorization, now="2026-08-21 00:00:02",
-    )
-
-    completed = store.complete_agent_run(
-        run.id,
-        {"outcome": "executed", "summary": "provider result omitted"},
-        owner="worker-1",
-        now="2026-08-21 00:00:03",
-    )
-
-    assert completed.status == "failed"
-    assert json.loads(completed.structured_error_json) == {
-        "code": "audit_external_action_result_missing",
-        "retryable": False,
-    }
-    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
-        row = db.execute(
-            "select status from agent_runs where id=?",
-            (run.id,),
-        ).fetchone()
-    assert row == ("failed",)
-    retry_claim = store.claim_agent_run(
-        task_id,
-        "initial",
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id=run.operation_id,
-        owner="worker-2",
-    )
-    assert retry_claim.claimed is False
-    assert retry_claim.run.status == "failed"
-
-
-def test_restart_after_effect_terminalizes_run_and_requeues_same_generation(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    run = _claim_audit_run(
-        store, task_id, "initial", owner="worker-1",
-        now="2026-08-21 00:00:00",
-    ).run
-    authorization = _effect_intent_authorization("restart-dispatched")
-    store.prepare_agent_effect_intents(
-        run.id, (authorization,), owner="worker-1", now="2026-08-21 00:00:00",
-    )
-    store.dispatch_agent_effect_intent(
-        run.id, authorization, now="2026-08-21 00:00:01",
-    )
-    store.append_agent_run_event(
-        run.id,
-        _runtime_effect_started_event(run.operation_id),
-        owner="worker-1",
-        now="2026-08-21 00:00:02",
-    )
-
-    recovered = store.recover_effectful_audit_runs_after_service_restart()
-
-    assert len(recovered) == 1
-    assert recovered[0].status == "pending"
-    assert recovered[0].execution_generation == "initial"
-    failed = store.get_agent_run(run.id)
-    assert failed is not None
-    assert failed.status == "failed"
-    assert json.loads(failed.structured_error_json) == {
-        "code": "service_restart_effect_failed",
-        "retryable": True,
-    }
-    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
-        row = db.execute(
-            "select status from agent_runs where id=?",
-            (run.id,),
-        ).fetchone()
-    assert row == ("failed",)
 
 
 def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):
@@ -4840,14 +4582,12 @@ def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
         run.id,
         final_result,
         owner="worker-1",
-        side_effect_state="confirmed",
         transcript_end_line=12,
     )
     repeated = store.complete_agent_run(
         run.id,
         final_result,
         owner="worker-1",
-        side_effect_state="confirmed",
         transcript_end_line=12,
     )
 
@@ -4860,8 +4600,7 @@ def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
             run.id,
             {"outcome": "completed", "summary": "different"},
             owner="worker-1",
-            side_effect_state="confirmed",
-            transcript_end_line=12,
+                transcript_end_line=12,
         )
     with pytest.raises(ValueError, match="transition from completed"):
         store.fail_agent_run(
@@ -5323,7 +5062,7 @@ def test_retry_failed_reply_task_reopens_effect_free_failure_without_retryable_f
     assert recovered.execution_generation == task.execution_generation
 
 
-def test_retry_failed_reply_task_rejects_exact_delivery_ledger(tmp_path: Path):
+def test_retry_failed_reply_task_uses_durable_delivery_for_idempotency(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
@@ -5354,12 +5093,14 @@ def test_retry_failed_reply_task_rejects_exact_delivery_ledger(tmp_path: Path):
         ),
     )
 
-    with pytest.raises(ValueError, match="not safely retryable"):
-        store.retry_failed_reply_task(
-            task_id,
-            run.id,
-            reason="operator_retry_after_runtime_fix",
-        )
+    recovered = store.retry_failed_reply_task(
+        task_id,
+        run.id,
+        reason="operator_retry_after_runtime_fix",
+    )
+
+    assert recovered.status == "pending"
+    assert store.get_sent_reply(task.conversation_id, task.trigger_message_id) is not None
 
 
 
@@ -5407,7 +5148,7 @@ def test_retry_failed_reply_task_rejects_older_run_and_reopens_safe_latest_audit
         expected_execution_generation=task.execution_generation,
     )
 
-    with pytest.raises(ValueError, match="not safely retryable"):
+    with pytest.raises(ValueError, match="not retryable"):
         store.retry_failed_reply_task(
             task_id,
             older.run.id,
@@ -5518,24 +5259,11 @@ def test_generation_switch_revokes_old_run_write_access_and_only_new_run_claims(
             now="2026-07-29 09:00:01",
         )
     with pytest.raises(AgentRunLeaseLostError):
-        store.record_agent_execution_receipt(
-            old.id,
-            receipt_id="receipt-old",
-            operation_id="send-1",
-            cli="dws",
-            command_path="chat message send",
-            command_digest="digest-old",
-            exit_code=0,
-            owner="old-worker",
-            now="2026-07-29 09:00:01",
-        )
-    with pytest.raises(AgentRunLeaseLostError):
         store.complete_agent_run(
             old.id,
             {"outcome": "completed"},
             owner="old-worker",
-            side_effect_state="confirmed",
-            now="2026-07-29 09:00:01",
+                now="2026-07-29 09:00:01",
         )
 
     superseded = store.get_agent_run(old.id)
@@ -5842,6 +5570,57 @@ def test_requeue_reply_task_can_delay_next_claim(tmp_path: Path):
     assert after[0].error == "temporary failure"
 
 
+def test_requeue_reply_task_records_stale_run_terminal_failure_event(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="stale-worker",
+        lease_seconds=1,
+        now="2026-05-13 17:00:00",
+    ).run
+
+    store.requeue_reply_task(
+        task.id,
+        "stale_agent_turn_recovery",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    failed = store.get_agent_run(run.id)
+    assert failed is not None
+    assert failed.status == "failed"
+    with store._connect() as db:
+        events = db.execute(
+            "select phase, structured_error_json from agent_run_state_events "
+            "where agent_run_id=? order by id",
+            (run.id,),
+        ).fetchall()
+    assert [(row["phase"], json.loads(row["structured_error_json"])) for row in events] == [
+        (
+            "terminal_failure",
+            {
+                "authorization_required": False,
+                "code": "stale_agent_turn_recovery",
+                "retryable": True,
+            },
+        )
+    ]
+
+
+def test_finalize_orchestrated_reply_task_has_no_unknown_run_compatibility():
+    source = inspect.getsource(AutoReplyStore.finalize_orchestrated_reply_task)
+
+    assert '"unknown"' not in source
+
+
 def test_complete_reply_task_marks_generation_bound_task_done(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
@@ -5864,113 +5643,10 @@ def test_complete_reply_task_marks_generation_bound_task_done(tmp_path: Path):
     assert tasks[0].error == ""
 
 
-def test_settle_failed_reply_task_without_replay_records_skipped_terminal_attempt(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Private chat",
-        single_chat=True,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
-        trigger_text="time-sensitive fragment",
-        channel="dingtalk",
-    )
-    task = store.claim_reply_tasks(limit=1)[0]
-    store.fail_reply_task(
-        task.id,
-        "provider unavailable",
-        expected_execution_generation=task.execution_generation,
-    )
-
-    attempt_id = store.settle_failed_reply_task_without_replay(
-        task.id,
-        reason="Later live conversation made the fragment stale.",
-        audit_summary="Read-only reconciliation found no delivery or side effect.",
-    )
-
-    settled = store.list_reply_tasks(limit=1)[0]
-    attempt = store.get_reply_attempt(attempt_id)
-    assert settled.status == "done"
-    assert settled.recovery_code == "settled_without_replay"
-    assert attempt is not None
-    assert attempt.action == "no_reply"
-    assert attempt.send_status == "skipped"
-    assert attempt.send_error == "settled_without_replay"
 
 
-def test_settle_failed_reply_task_without_replay_rejects_delivery_receipt(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Private chat",
-        single_chat=True,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
-        trigger_text="hello",
-        channel="dingtalk",
-    )
-    task = store.claim_reply_tasks(limit=1)[0]
-    store.fail_reply_task(
-        task.id,
-        "provider unavailable",
-        expected_execution_generation=task.execution_generation,
-    )
-    store.record_sent_reply(
-        conversation_id="cid-1",
-        trigger_message_id="msg-1",
-        reply_text="delivered",
-        send_result_json="{}",
-    )
-
-    with pytest.raises(ValueError, match="external reconciliation"):
-        store.settle_failed_reply_task_without_replay(
-            task.id,
-            reason="stale",
-            audit_summary="read-only reconciliation",
-        )
 
 
-def test_handoff_failed_reply_task_without_replay_records_needs_human(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Private chat",
-        single_chat=True,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
-        trigger_text="please decide",
-        channel="dingtalk",
-    )
-    task = store.claim_reply_tasks(limit=1)[0]
-    store.fail_reply_task(
-        task.id,
-        "external document update required",
-        expected_execution_generation=task.execution_generation,
-    )
-
-    attempt_id = store.handoff_failed_reply_task_without_replay(
-        task.id,
-        reason="Updating the document requires an external write.",
-        audit_summary="Read-only reconciliation found no delivery or side effect.",
-    )
-
-    settled = store.list_reply_tasks(limit=1)[0]
-    attempt = store.get_reply_attempt(attempt_id)
-    assert settled.status == "done"
-    assert settled.recovery_code == "needs_human_without_replay"
-    assert attempt is not None
-    assert attempt.action == "needs_human"
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "external_action_required"
 
 
 def test_list_reply_tasks_filters_statuses_newest_first(tmp_path: Path):
@@ -8838,7 +8514,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-07.3"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-07.4"
     assert {
         "lease_owner",
         "lease_expires_at",
@@ -8962,73 +8638,3 @@ def test_current_schema_reopens_and_adds_agent_run_recovery_index(
 
     assert "idx_reply_attempts_agent_run_recovery" in index_names
     assert reopened._schema_is_current() is True
-
-
-def test_prior_schema_reopen_creates_durable_effect_state_machine_tables(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "prior-effect-intent-schema.sqlite3"
-    store = AutoReplyStore(db_path)
-    with store._connect() as db:
-        db.execute("drop table agent_effect_intents")
-        db.execute("drop table agent_run_state_events")
-        db.execute(
-            "update service_state set value='2026-08-20.1' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    reopened = AutoReplyStore(db_path)
-
-    with reopened._connect() as db:
-        tables = {
-            row["name"]
-            for row in db.execute(
-                "select name from sqlite_master where type='table'"
-            ).fetchall()
-        }
-        indexes = {
-            row["name"]
-            for row in db.execute(
-                "select name from sqlite_master where type='index'"
-            ).fetchall()
-        }
-    assert {"agent_effect_intents", "agent_run_state_events"} <= tables
-    assert {
-        "idx_agent_effect_intents_run",
-        "idx_agent_effect_intents_operation",
-        "idx_agent_run_state_events_run",
-    } <= indexes
-    assert reopened.foreign_key_violations() == []
-
-    task_id = _enqueue_universal_reply_task(reopened)
-    run = _claim_audit_run(
-        reopened,
-        task_id,
-        "initial",
-        owner="worker-1",
-        now="2026-08-22 00:00:00",
-    ).run
-    authorization = _effect_intent_authorization("migration-authorization")
-    reopened.prepare_agent_effect_intents(
-        run.id,
-        (authorization,),
-        owner="worker-1",
-        now="2026-08-22 00:00:01",
-    )
-    reopened.dispatch_agent_effect_intent(
-        run.id,
-        authorization,
-        now="2026-08-22 00:00:02",
-    )
-    failed = reopened.fail_agent_run(
-        run.id,
-        {"code": "post_dispatch_disconnect", "retryable": True},
-        owner="worker-1",
-        now="2026-08-22 00:00:03",
-    )
-    assert failed.status == "failed"
-    assert json.loads(failed.structured_error_json) == {
-        "code": "audit_external_action_result_missing",
-        "retryable": False,
-    }

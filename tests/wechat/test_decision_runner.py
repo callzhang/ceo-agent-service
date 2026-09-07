@@ -1,6 +1,5 @@
 import json
 
-from app.wechat.codex_safety import make_read_only_with_memory_tools
 from app.wechat.decision_runner import WechatDecisionRunner
 
 
@@ -25,7 +24,7 @@ class CapturingExecutor:
         )
 
 
-def test_wechat_decision_runner_uses_read_only_memory_only_command(
+def test_wechat_decision_runner_uses_normal_runtime_command(
     tmp_path, monkeypatch
 ):
     manifest = tmp_path / "service-mcp.json"
@@ -48,24 +47,7 @@ def test_wechat_decision_runner_uses_read_only_memory_only_command(
     command = executor.commands[0]
     command_text = " ".join(command)
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
-    assert "--sandbox read-only" in command_text
-    assert 'approval_policy="never"' in command_text
+    assert "--sandbox read-only" not in command_text
+    assert 'approval_policy="on-failure"' in command_text
     assert "features.plugins=false" not in command_text
     assert "features.apps=false" not in command_text
-    assert 'web_search="disabled"' in command_text
-    assert "mcp_servers.memory_connector.enabled_tools=" not in command_text
-
-
-def test_read_only_command_preserves_principal_mcp_configuration():
-    command = [
-        "codex",
-        "exec",
-        "-c",
-        'mcp_servers.exa.url="https://mcp.exa.ai/mcp"',
-    ]
-
-    make_read_only_with_memory_tools(command)
-
-    command_text = " ".join(command)
-    assert "mcp_servers.exa.enabled=false" not in command_text
-    assert "mcp_servers.memory_connector" not in command_text

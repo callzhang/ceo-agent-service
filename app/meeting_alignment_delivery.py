@@ -22,14 +22,13 @@ class MeetingDeliveryError(RuntimeError):
 class MeetingDeliveryResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["sent", "ambiguous"]
+    status: Literal["sent"] = "sent"
     target_kind: Literal["group", "direct"]
     target_id: str
     target_title: str
     resolved_mentions: list["ResolvedMention"]
     unresolved_mention_names: list[str]
     send_result: dict[str, Any]
-    send_verification: dict[str, Any]
     message_text: str = ""
 
 
@@ -37,12 +36,6 @@ class MeetingDeliveryRetry(RuntimeError):
     def __init__(
         self, message: str, *, result: MeetingDeliveryResult | None = None
     ) -> None:
-        super().__init__(message)
-        self.result = result
-
-
-class MeetingDeliveryAmbiguous(RuntimeError):
-    def __init__(self, message: str, *, result: MeetingDeliveryResult) -> None:
         super().__init__(message)
         self.result = result
 
@@ -59,10 +52,7 @@ class ResolvedMention(BaseModel):
 def meeting_delivery_conversation_id(result: MeetingDeliveryResult) -> str:
     if result.target_kind == "group":
         return result.target_id.strip()
-    return _find_nested_string(
-        result.send_verification,
-        "openConversationId",
-    ) or _find_nested_string(result.send_result, "openConversationId")
+    return _find_nested_string(result.send_result, "openConversationId")
 
 
 def meeting_followup_message(
@@ -231,54 +221,15 @@ def deliver_meeting_alignment(
                 title=target_title,
             ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
-        result = MeetingDeliveryResult(
-            status="ambiguous",
-            target_kind=target_kind,
-            target_id=target_id,
-            target_title=target_title,
-            resolved_mentions=resolved_mentions,
-            unresolved_mention_names=unresolved_names,
-            send_result={},
-            send_verification={
-                "state": "ambiguous",
-                "open_task_id": "",
-                "status_result": {},
-                "send_error": str(exc),
-            },
-            message_text=message_text,
-        )
-        raise MeetingDeliveryAmbiguous(
-            "meeting send outcome is ambiguous; do not send again immediately",
-            result=result,
-        ) from exc
-    try:
-        verification = dws.verify_message_send_result(send_result)
-    except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
-        verification = {
-            "state": "ambiguous",
-            "open_task_id": _find_nested_string(send_result, "openTaskId"),
-            "status_result": {},
-            "status_error": str(exc),
-        }
-    result_status = "sent" if verification.get("state") == "sent" else "ambiguous"
-    result = MeetingDeliveryResult(
-        status=result_status,
+        raise MeetingDeliveryRetry("meeting send failed") from exc
+    return MeetingDeliveryResult(
         target_kind=target_kind,
         target_id=target_id,
         target_title=target_title,
         resolved_mentions=resolved_mentions,
         unresolved_mention_names=unresolved_names,
         send_result=send_result,
-        send_verification=verification,
         message_text=message_text,
-    )
-    if verification.get("state") == "sent":
-        return result
-    if verification.get("state") == "failed":
-        raise MeetingDeliveryRetry("meeting send confirmed failed", result=result)
-    raise MeetingDeliveryAmbiguous(
-        "meeting send outcome is ambiguous; do not send again immediately",
-        result=result,
     )
 
 

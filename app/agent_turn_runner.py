@@ -21,7 +21,6 @@ from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
     LEASE_SECONDS,
     TOTAL_TIMEOUT_SECONDS,
-    McpToolEffectRegistry,
     _is_sensitive_key,
     _is_signed_url,
     _normalized_key,
@@ -65,10 +64,6 @@ from app.leak_check import (
     contains_local_runtime_leak,
     redact_forbidden_leak_markers,
 )
-from app.native_cli_metadata import (
-    AgentReadOnlyViolationError,
-    NativeCliMetadataClassifier,
-)
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import (
     AgentRole,
@@ -86,39 +81,9 @@ CLAUDE_INPUT_MAX_BYTES = 1024 * 1024
 _COMMON_RUNTIME_CAPABILITIES = frozenset(
     {"structured_output", "local_schema_validation"}
 )
-_CONSUMER_RUNTIME_CAPABILITIES = frozenset({"reviewed_read_tools"})
-_AUDIT_RUNTIME_CAPABILITIES = frozenset(
-    {"audit_effect_visibility", "reviewed_read_tools", "reviewed_write_tools"}
-)
 _RUNTIME_DOMAIN_RESULT_CODEC_VERSION = 1
 _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 32 * 1024
 _RUNTIME_RESULT_SUMMARY_MAX_CHARS = 2048
-_RUNTIME_RESULT_REFERENCE_KEYS = frozenset(
-    {
-        "action",
-        "action_identity",
-        "conversation_id",
-        "evidence",
-        "id",
-        "message_id",
-        "open_message_id",
-        "open_task_id",
-        "operation_id",
-        "process_instance_id",
-        "receipt_id",
-        "recovery_action_indexes",
-        "remark",
-        "readback",
-        "readback_complete",
-        "readback_failures",
-        "readback_has_more",
-        "send_status",
-        "status",
-        "create_time",
-        "sender_id",
-        "task_id",
-    }
-)
 _RUNTIME_RESULT_FORBIDDEN_DOCUMENT_FIELDS = frozenset(
     {
         "documentbody",
@@ -132,23 +97,6 @@ _RUNTIME_RESULT_FORBIDDEN_DOCUMENT_FIELDS = frozenset(
         "transcript",
     }
 )
-
-_RUNTIME_RESULT_READBACK_KEYS = frozenset(
-    {
-        "conversationId",
-        "conversation_id",
-        "content",
-        "createTime",
-        "create_time",
-        "messageId",
-        "message_id",
-        "sender",
-        "senderId",
-        "sender_id",
-        "text",
-    }
-)
-
 
 class RuntimeRouteUnavailableError(RuntimeError):
     """No configured runtime route can serve this turn."""
@@ -182,6 +130,14 @@ class CompletedRuntimeResultBlockedError(ValueError):
         super().__init__(code)
 
 
+class RuntimeResultValidationError(ValueError):
+    """A typed result contains data outside the durable runtime contract."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
 @dataclass(frozen=True)
 class _DecodedRuntimeDomainResult:
     result: ConsumerAgentResult | AuditAgentResult
@@ -196,59 +152,9 @@ def _bounded_runtime_result_text(value: str, *, field: str, limit: int) -> str:
 def _project_runtime_external_reference(
     reference: dict[str, object],
 ) -> dict[str, object]:
-    if not set(reference).issubset(_RUNTIME_RESULT_REFERENCE_KEYS):
-        raise ValueError("runtime_result_envelope_external_reference_invalid")
-    projected: dict[str, object] = {}
-    for key, value in reference.items():
-        if key == "readback":
-            if not isinstance(value, dict) or not set(value).issubset(
-                _RUNTIME_RESULT_READBACK_KEYS
-            ):
-                raise ValueError("runtime_result_envelope_external_reference_invalid")
-            readback: dict[str, str] = {}
-            for readback_key, readback_value in value.items():
-                if not isinstance(readback_value, str) or not readback_value:
-                    raise ValueError(
-                        "runtime_result_envelope_external_reference_invalid"
-                    )
-                if len(readback_value) > 2048 or contains_local_runtime_leak(
-                    readback_value
-                ):
-                    raise ValueError(
-                        "runtime_result_envelope_external_reference_invalid"
-                    )
-                readback[readback_key] = readback_value
-            projected[key] = readback
-            continue
-        if key == "recovery_action_indexes":
-            if (
-                not isinstance(value, list)
-                or any(type(index) is not int or index < 0 for index in value)
-                or len(value) > 128
-            ):
-                raise ValueError("runtime_result_envelope_external_reference_invalid")
-            projected[key] = list(value)
-            continue
-        if key == "readback_failures":
-            if (
-                not isinstance(value, list)
-                or len(value) > 32
-                or any(not isinstance(item, str) or len(item) > 512 for item in value)
-            ):
-                raise ValueError("runtime_result_envelope_external_reference_invalid")
-            projected[key] = list(value)
-            continue
-        if not isinstance(value, (str, int, bool)) or isinstance(value, float):
-            raise ValueError("runtime_result_envelope_external_reference_invalid")
-        if isinstance(value, str) and (
-            not value
-            or len(value) > 512
-            or "://" in value
-            or contains_local_runtime_leak(value)
-        ):
-            raise ValueError("runtime_result_envelope_external_reference_invalid")
-        projected[key] = value
-    return projected
+    # This is an opaque provider result, not an application-defined evidence
+    # schema. Generic size and secret checks run on the complete typed result.
+    return dict(reference)
 
 
 def _project_runtime_domain_result(
@@ -275,7 +181,6 @@ def _project_runtime_domain_result(
                         "operation": action.operation,
                         "target": action.target,
                         "payload": action.payload,
-                        "expected_verification": action.expected_verification,
                     }
                     for action in result.proposal.actions
                 ],
@@ -304,11 +209,6 @@ def _project_runtime_domain_result(
                 result.external_result.operation_id,
                 field="operation_id",
                 limit=512,
-            ),
-            "verification_summary": _bounded_runtime_result_text(
-                result.external_result.verification_summary,
-                field="verification_summary",
-                limit=2048,
             ),
             "live_result_reference": _project_runtime_external_reference(
                 result.external_result.live_result_reference
@@ -464,37 +364,14 @@ def _decode_runtime_domain_result(
 def _required_runtime_capabilities(
     *,
     run: AgentRun,
-    expected_effect_actions: tuple[dict[str, object], ...],
+    expected_actions: tuple[dict[str, object], ...],
     explicit_capabilities: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
-    required = set(_COMMON_RUNTIME_CAPABILITIES)
-    # Provider/runtime owns execution surfaces. The application only requires
-    # structured result and local schema validation; it does not impose
-    # Provider execution and state checks are runtime concerns, not application
-    # Audit capabilities.
-    for action in expected_effect_actions:
-        capability = action.get("capability")
-        # Consumer capabilities are descriptive business labels until the
-        # Audit layer canonicalizes a reviewed native command to an
-        # ``agent_cli.*`` or ``native_cli.*`` execution surface.  A raw
-        # label such as ``dingtalk_chat`` must not make route selection
-        # fail before Audit can reject or revise the proposal.
-        if (
-            isinstance(capability, str)
-            and capability.strip()
-            and capability.strip().startswith(("agent_cli.", "native_cli."))
-        ):
-            required.add(capability.strip())
-    required.update(
-        capability.strip()
-        for capability in explicit_capabilities
-        # Skill availability is governed by agent_cli.read_skill and then
-        # rechecked from exact receipts before an Audit effect starts. It is
-        # not a route-health capability, so a static surface must never block
-        # a currently installed Codex Skill before that validation runs.
-        if capability.strip() and not capability.startswith("reviewed_skill:")
-    )
-    return frozenset(required)
+    del run, expected_actions, explicit_capabilities
+    # Route selection is infrastructure-only. Business capabilities, command
+    # names, tools, and Skill availability are resolved inside the selected
+    # Agent runtime and must not become application routing gates.
+    return _COMMON_RUNTIME_CAPABILITIES
 
 
 @dataclass(frozen=True)
@@ -577,7 +454,7 @@ def _claude_input_contract(*, prompt: str, developer_instructions: str) -> str:
 class AgentTurnProcess(Generic[ResultT]):
     def _claude_provider_policy(self) -> ClaudeCommandPolicy:
         """Use the provider default; application Audit does not review tools."""
-        return ClaudeCommandPolicy.no_tools()
+        return ClaudeCommandPolicy.normal()
 
     def __init__(
         self,
@@ -593,8 +470,6 @@ class AgentTurnProcess(Generic[ResultT]):
         codex_adapter: CodexRuntimeAdapter | None = None,
         claude_adapter: ClaudeRuntimeAdapter | None = None,
         friday_adapter: FridayRuntimeAdapter | None = None,
-        mcp_effect_registry: McpToolEffectRegistry | None = None,
-        native_cli_classifier: NativeCliMetadataClassifier | None = None,
         refresh_runtime_capabilities: Callable[[], object] | None = None,
     ) -> None:
         self.store = store
@@ -614,8 +489,6 @@ class AgentTurnProcess(Generic[ResultT]):
             snapshots={},
         )
         self.executor = executor or run_process_with_idle_timeout
-        self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
-        self.native_cli = native_cli_classifier or NativeCliMetadataClassifier()
         self.refresh_runtime_capabilities = refresh_runtime_capabilities
 
     def execute(
@@ -629,7 +502,7 @@ class AgentTurnProcess(Generic[ResultT]):
         parse_result: Callable[[str], ResultT],
         persist_conversation_session: bool,
         prepare_result: Callable[[ResultT], ResultT] | None = None,
-        expected_effect_actions: tuple[dict[str, object], ...] = (),
+        expected_actions: tuple[dict[str, object], ...] = (),
         on_progress: Callable[[], None] | None = None,
         image_paths: list[Path] | None = None,
         required_capabilities: frozenset[str] = frozenset(),
@@ -789,7 +662,7 @@ class AgentTurnProcess(Generic[ResultT]):
 
         required_capabilities = _required_runtime_capabilities(
             run=run,
-            expected_effect_actions=expected_effect_actions,
+            expected_actions=expected_actions,
             explicit_capabilities=required_capabilities,
         )
         execution_contract = {
@@ -804,7 +677,7 @@ class AgentTurnProcess(Generic[ResultT]):
             "required_capabilities": sorted(required_capabilities),
             "expected_actions_sha256": hashlib.sha256(
                 json.dumps(
-                    expected_effect_actions,
+                    expected_actions,
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode("utf-8")
@@ -1160,7 +1033,6 @@ class AgentTurnProcess(Generic[ResultT]):
                     failed_attempt=failed_attempt,
                     failure=failure,
                     required_capabilities=required_capabilities,
-                    recovery_phase="",
                 )
                 if decision.route is None:
                     self._raise_for_process_failure(process, run=run)
@@ -1262,17 +1134,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 parse_error_code,
                 detail=_result_parse_error_detail(exc),
                 stage="result",
-                source="codex",
-                session_continuable=True,
-            )
-            raise
-        except AgentReadOnlyViolationError as exc:
-            self._fail_runtime_attempt_unclassified(active_attempt)
-            code = str(exc).strip() or "agent_read_only_violation"
-            self._fail_running(
-                run,
-                code,
-                stage="execution",
                 source="codex",
                 session_continuable=True,
             )
@@ -1403,7 +1264,12 @@ class AgentTurnProcess(Generic[ResultT]):
         if force_new_session and route.name != "codex_api":
             return None
         if role is AgentRole.AUDIT:
-            return None
+            # Audit retries are new immutable runs, but they continue the same
+            # runtime conversation when that route owns the recorded session.
+            # The proposal and operation identity stay fixed; opening a fresh
+            # session would discard the failed turn's context and can repeat
+            # feedback or an external action.
+            return requested_session_id if route.name == "codex_oauth" else None
         persisted = self.store.get_conversation_runtime_session(
             self.task.conversation_id,
             route.name,
@@ -1424,8 +1290,6 @@ class AgentTurnProcess(Generic[ResultT]):
             self.claude_adapter = ClaudeRuntimeAdapter(
                 workspace=self.workspace,
                 config=self.runtime_config,
-                effect_registry=self.effects,
-                native_cli_classifier=self.native_cli,
             )
         return self.claude_adapter
 
@@ -1734,17 +1598,14 @@ def _validate_runtime_reference_domain_result(
             ),
         )
     _redact_local_runtime_values(domain_result)
-    # Local paths can be accidentally echoed by an agent while describing
-    # read-only evidence.  They are not a valid external side effect and must
-    # never make an otherwise safe, structured result impossible to persist.
-    # Redact only the serialized domain fields; effect receipts and sensitive
-    # values remain subject to their existing hard rejection checks below.
+    # Local paths can be accidentally echoed while describing source material.
+    # Redact the serialized domain fields before enforcing the result boundary.
     _validate_runtime_reference_text_bounds(domain_result)
     sensitive_projection = domain_result
     if _contains_sensitive_value(sensitive_projection):
         raise ValueError("agent_result_contains_sensitive_value")
     if _contains_local_runtime_value(domain_result):
-        raise AgentReadOnlyViolationError("runtime_result_contains_local_runtime_leak")
+        raise RuntimeResultValidationError("runtime_result_contains_local_runtime_leak")
     encoded = json.dumps(
         domain_result,
         ensure_ascii=False,

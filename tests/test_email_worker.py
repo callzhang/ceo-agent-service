@@ -485,7 +485,6 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
                     }
                 ]
             },
-            "expected_verification": "Read terminal provider evidence",
         }
     ).model_dump(mode="json")
     consumer = task_store.claim_agent_run(

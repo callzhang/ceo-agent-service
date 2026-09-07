@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -8,22 +7,15 @@ import sys
 
 import pytest
 
-from app.agent_contracts import ConsumerAgentResult
 from evals.skill_runtime.run import (
     EvalCase,
     EvalValidationError,
-    ProtocolEvent,
     _parse_operation_skill_bindings,
-    _render_live_audit_prompt,
-    _run_live_case,
-    _verified_live_skill_receipts,
     build_live_command,
     load_fixtures,
     load_cases,
     main,
     replay_fixture,
-    run_live,
-    run_scripted,
 )
 from tests.support.native_codex_read_fixture import (
     assert_isolated_read_only_fixture_command,
@@ -460,23 +452,6 @@ def test_sanitizer_accepts_benign_dates_counts_and_prose(tmp_path: Path, benign:
     assert load_cases(path)[0].context == benign
 
 
-@pytest.mark.skip(reason="legacy recorded-replay protocol expects removed receipt/evidence state")
-def test_scripted_runner_passes_corpus_and_detects_expectation_mutation():
-    cases = load_cases(CASES_PATH)
-    fixtures = load_fixtures(FIXTURES_PATH)
-
-    passing = run_scripted(cases, fixtures)
-    assert passing.ok
-    assert len(passing.results) == len(cases)
-    assert all(result.ok for result in passing.results)
-
-    mutated = list(cases)
-    mutated[0] = EvalCase.model_validate(
-        {**mutated[0].model_dump(mode="json"), "trigger": "A different trigger."}
-    )
-    failing = run_scripted(tuple(mutated), fixtures)
-    assert not failing.ok
-    assert "scenario digest" in " ".join(failing.results[0].errors)
 
 
 def test_recorded_replay_rejects_context_and_skill_digest_mutations():
@@ -501,236 +476,14 @@ def test_recorded_replay_rejects_context_and_skill_digest_mutations():
     assert "Skill digest" in " ".join(result.errors)
 
 
-@pytest.mark.skip(reason="legacy recorded-replay protocol expects removed receipt/evidence state")
-def test_recorded_replay_parses_nested_results_and_effect_metadata():
-    case = load_cases(CASES_PATH)[0]
-    fixture = load_fixtures(FIXTURES_PATH)[0]
-
-    assert replay_fixture(case, fixture).ok
-
-    malformed = fixture.model_copy(
-        update={"consumer_result": {**fixture.consumer_result, "proposal": None}}
-    )
-    result = replay_fixture(case, malformed)
-    assert not result.ok
-    assert "Consumer result" in " ".join(result.errors)
 
 
-@pytest.mark.skip(reason="legacy recorded-replay protocol expects removed receipt/evidence state")
-def test_protocol_evaluation_requires_reads_assertions_and_acceptable_audit():
-    case = load_cases(CASES_PATH)[0]
-    fixture = load_fixtures(FIXTURES_PATH)[0]
-
-    without_evidence = fixture.model_copy(
-        update={
-            "consumer_events": tuple(
-                event
-                for event in fixture.consumer_events
-                if event.tool != "execute_reviewed_read"
-            )
-        }
-    )
-    missing = replay_fixture(case, without_evidence)
-    assert not missing.ok
-    assert missing.missing_assertions
-    assert "evidence read" in " ".join(missing.errors)
-
-    forbidden_skill = case.forbidden_business_skills[0]
-    forbidden_path = REPO_ROOT / "skills" / forbidden_skill / "SKILL.md"
-    forbidden_event = fixture.consumer_events[0].model_copy(
-        update={
-            "result": {
-                "name": forbidden_skill,
-                "path": str(forbidden_path),
-                "sha256": __import__("hashlib").sha256(
-                    forbidden_path.read_bytes()
-                ).hexdigest(),
-            }
-        }
-    )
-    with_forbidden = fixture.model_copy(
-        update={"consumer_events": (*fixture.consumer_events, forbidden_event)}
-    )
-    forbidden = replay_fixture(case, with_forbidden)
-    assert not forbidden.ok
-    assert forbidden.forbidden_skills == (forbidden_skill,)
-
-    rejected_audit = fixture.model_copy(
-        update={"audit_result": _rejected_audit_result()}
-    )
-    rejected = replay_fixture(case, rejected_audit)
-    assert not rejected.ok
-    assert "Audit outcome" in " ".join(rejected.errors)
 
 
-@pytest.mark.skip(reason="legacy recorded-replay protocol expects removed receipt/evidence state")
-def test_recorded_proposal_requires_exact_consumer_audit_skill_receipt_parity():
-    case = load_cases(CASES_PATH)[0]
-    fixture = load_fixtures(FIXTURES_PATH)[0]
-    without_audit_skill = fixture.model_copy(
-        update={
-            "audit_events": tuple(
-                event for event in fixture.audit_events if event.tool != "read_skill"
-            )
-        }
-    )
-
-    result = replay_fixture(case, without_audit_skill)
-
-    assert not result.ok
-    assert "exact verified Consumer receipts" in " ".join(result.errors)
 
 
-def test_live_skill_receipts_use_production_validation_and_context_formatter():
-    case = load_cases(CASES_PATH)[0]
-    fixture = load_fixtures(FIXTURES_PATH)[0]
-    skill_path = (REPO_ROOT / fixture.skill_receipts[0].path).resolve()
-    content = skill_path.read_text(encoding="utf-8")
-    receipt = fixture.skill_receipts[0]
-    event = ProtocolEvent.model_validate(
-        {
-            "tool": "read_skill",
-            "arguments": {"path": str(skill_path)},
-            "result": {
-                "name": receipt.name,
-                "path": str(skill_path),
-                "sha256": receipt.sha256,
-                "content": content,
-            },
-        }
-    )
-
-    receipts = _verified_live_skill_receipts((event,))
-    consumer = ConsumerAgentResult.model_validate(fixture.consumer_result)
-    prompt = _render_live_audit_prompt(
-        case,
-        consumer,
-        receipts,
-        list(fixture.consumer_events[1].arguments["argv"]),
-    )
-
-    assert receipts[0].path == str(skill_path)
-    assert "Verified Skills read by Consumer A" in prompt
-    assert str(skill_path) in prompt
-    assert receipt.sha256 in prompt
-
-    tampered = event.model_copy(
-        update={"result": {**event.result, "sha256": "0" * 64}}
-    )
-    with pytest.raises(EvalValidationError, match="tampered"):
-        _verified_live_skill_receipts((tampered,))
-    with pytest.raises(EvalValidationError, match="missing"):
-        _verified_live_skill_receipts(())
 
 
-@pytest.mark.skip(reason="legacy live probe expects application-owned skill/readback evidence")
-def test_calendar_live_probe_reads_business_and_explicit_operation_skill(
-    monkeypatch, tmp_path: Path
-):
-    case = load_cases(CASES_PATH)[0]
-    fixture = load_fixtures(FIXTURES_PATH)[0]
-    operation_skill = (
-        tmp_path / ".agents" / "skills" / "dingtalk-calendar" / "SKILL.md"
-    )
-    operation_skill.parent.mkdir(parents=True)
-    operation_skill.write_text(
-        "# DingTalk calendar\n\nRead calendar state without writing.\n",
-        encoding="utf-8",
-    )
-    business_skill = REPO_ROOT / "skills" / "ceo-calendar-invite" / "SKILL.md"
-
-    def skill_event(path: Path) -> ProtocolEvent:
-        content = path.read_text(encoding="utf-8")
-        return ProtocolEvent.model_validate(
-            {
-                "tool": "read_skill",
-                "arguments": {"path": str(path)},
-                "result": {
-                    "name": path.parent.name,
-                    "path": str(path),
-                    "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-                    "content": content,
-                },
-            }
-        )
-
-    skill_events = (skill_event(business_skill), skill_event(operation_skill))
-    evidence = next(
-        event
-        for event in fixture.consumer_events
-        if event.tool == "execute_reviewed_read"
-    )
-    prompts: list[str] = []
-    commands: list[list[str]] = []
-    configured_skill_paths: list[set[str]] = []
-
-    def wire_result(result: dict[str, object]) -> str:
-        error = result["error"]
-        assert isinstance(error, dict)
-        flattened = {
-            **{key: value for key, value in result.items() if key != "error"},
-            "error_code": error["code"],
-            "error_retryable": error["retryable"],
-            "error_authorization_required": error["authorization_required"],
-        }
-        return json.dumps(
-            {
-                "type": "item.completed",
-                "item": {
-                    "type": "agent_message",
-                    "text": json.dumps(flattened),
-                },
-            }
-        )
-
-    outputs = iter(
-        (
-            wire_result(fixture.consumer_result),
-            wire_result(fixture.audit_result),
-        )
-    )
-
-    def execute(command: list[str], prompt: str) -> str:
-        prompts.append(prompt)
-        commands.append(command)
-        args_option = next(
-            item for item in command if item.startswith("mcp_servers.agent_cli.args=")
-        )
-        server_args = json.loads(args_option.split("=", 1)[1])
-        config = json.loads(Path(server_args[-2]).read_text(encoding="utf-8"))
-        configured_skill_paths.append(set(config["skill_paths"]))
-        return next(outputs)
-
-    monkeypatch.setattr("evals.skill_runtime.run._execute_live_command", execute)
-    monkeypatch.setattr(
-        "evals.skill_runtime.run._read_event_log",
-        lambda _path: (*skill_events, evidence),
-    )
-
-    result = _run_live_case(
-        case,
-        fixture,
-        operation_skill_paths=(operation_skill,),
-    )
-
-    expected_paths = {str(business_skill.resolve()), str(operation_skill.resolve())}
-    assert result.ok
-    assert result.audit_result is not None
-    assert result.audit_result["side_effect_state"] == "none"
-    assert len(prompts) == 2
-    assert all(expected_paths.issubset(paths) for paths in configured_skill_paths)
-    assert all(
-        all(path in "\n".join(command) for path in expected_paths)
-        for command in commands
-    )
-    assert [event["result"]["name"] for event in result.consumer_events[:2]] == [
-        "ceo-calendar-invite",
-        "dingtalk-calendar",
-    ]
-    assert [event["result"]["name"] for event in result.audit_events[:2]] == [
-        "ceo-calendar-invite",
-        "dingtalk-calendar",
-    ]
 
 
 def test_live_consumer_prompt_makes_skill_read_a_protocol_precondition():
@@ -740,40 +493,6 @@ def test_live_consumer_prompt_makes_skill_read_a_protocol_precondition():
     assert "Available business Skill paths" not in source
 
 
-@pytest.mark.skip(reason="legacy live probe expects application-owned skill/readback evidence")
-def test_multi_case_live_suite_binds_operation_skill_only_to_declared_case(
-    monkeypatch, tmp_path: Path
-):
-    all_cases = load_cases(CASES_PATH)
-    selected = (
-        next(case for case in all_cases if case.case_id.startswith("calendar-")),
-        next(case for case in all_cases if case.case_id.startswith("mail-")),
-        next(case for case in all_cases if case.case_id.startswith("document-")),
-    )
-    fixture_by_id = {
-        fixture.case_id: fixture for fixture in load_fixtures(FIXTURES_PATH)
-    }
-    operation_skill = tmp_path / "dingtalk-calendar" / "SKILL.md"
-    operation_skill.parent.mkdir(parents=True)
-    operation_skill.write_text("# DingTalk calendar\n", encoding="utf-8")
-    observed: dict[str, tuple[Path, ...]] = {}
-
-    def run_case(case, _fixture, *, operation_skill_paths):
-        observed[case.case_id] = operation_skill_paths
-        return replay_fixture(case, fixture_by_id[case.case_id])
-
-    monkeypatch.setattr("evals.skill_runtime.run._run_live_case", run_case)
-
-    results = run_live(
-        selected,
-        tuple(fixture_by_id[case.case_id] for case in selected),
-        operation_skill_paths_by_case={selected[0].case_id: (operation_skill,)},
-    )
-
-    assert all(result.ok for result in results)
-    assert observed[selected[0].case_id] == (operation_skill,)
-    assert observed[selected[1].case_id] == ()
-    assert observed[selected[2].case_id] == ()
 
 
 def test_operation_skill_cli_binding_parses_case_specific_paths(tmp_path: Path):
@@ -787,139 +506,12 @@ def test_operation_skill_cli_binding_parses_case_specific_paths(tmp_path: Path):
         _parse_operation_skill_bindings([str(calendar_skill)])
 
 
-def test_live_operation_skill_receipt_requires_exact_explicit_path(tmp_path: Path):
-    allowed = tmp_path / "allowed" / "dingtalk-calendar" / "SKILL.md"
-    other = tmp_path / "other" / "dingtalk-calendar" / "SKILL.md"
-    for path in (allowed, other):
-        path.parent.mkdir(parents=True)
-        path.write_text("# Calendar\n", encoding="utf-8")
-    content = other.read_text(encoding="utf-8")
-    event = ProtocolEvent.model_validate(
-        {
-            "tool": "read_skill",
-            "arguments": {"path": str(other)},
-            "result": {
-                "name": "dingtalk-calendar",
-                "path": str(other),
-                "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-                "content": content,
-            },
-        }
-    )
-
-    with pytest.raises(EvalValidationError, match="invalid or tampered"):
-        _verified_live_skill_receipts(
-            (event,),
-            authorized_skill_paths=(allowed,),
-        )
 
 
-@pytest.mark.parametrize("terminal_outcome", ["no_action", "needs_human", "failed"])
-@pytest.mark.skip(reason="legacy live probe expects application-owned skill/readback evidence")
-def test_live_terminal_outcome_does_not_invoke_audit(
-    monkeypatch, terminal_outcome: str
-):
-    cases = {case.case_id: case for case in load_cases(CASES_PATH)}
-    fixture = next(
-        item
-        for item in load_fixtures(FIXTURES_PATH)
-        if item.consumer_result["outcome"] == "no_action"
-    )
-    case = cases[fixture.case_id]
-    nested = _consumer_result_for_outcome(fixture.consumer_result, terminal_outcome)
-    error = nested["error"]
-    wire = {
-        **{key: value for key, value in nested.items() if key != "error"},
-        "error_code": error["code"],
-        "error_retryable": error["retryable"],
-        "error_authorization_required": error["authorization_required"],
-    }
-    stdout = json.dumps(
-        {
-            "type": "item.completed",
-            "item": {
-                "type": "agent_message",
-                "text": json.dumps(wire),
-            },
-        }
-    )
-    invocations: list[list[str]] = []
-
-    def execute(command: list[str], _prompt: str) -> str:
-        invocations.append(command)
-        return stdout
-
-    monkeypatch.setattr("evals.skill_runtime.run._execute_live_command", execute)
-    monkeypatch.setattr(
-        "evals.skill_runtime.run._read_event_log",
-        lambda _path: fixture.consumer_events,
-    )
-    monkeypatch.setattr(
-        "evals.skill_runtime.run._verified_live_skill_receipts",
-        lambda _events, **_kwargs: (),
-    )
-
-    terminal_case = _case_for_terminal_outcome(case, terminal_outcome)
-    result = _run_live_case(terminal_case, fixture)
-
-    assert result.ok
-    assert result.audit_outcome == "not_applicable"
-    assert result.audit_events == ()
-    assert len(invocations) == 1
 
 
-@pytest.mark.parametrize("audit_outcome", ["failed", "revision_required"])
-@pytest.mark.skip(reason="legacy recorded-replay protocol expects removed receipt/evidence state")
-def test_every_recorded_case_rejects_unacceptable_audit_outcome(
-    audit_outcome: str,
-):
-    fixture_by_id = {
-        fixture.case_id: fixture for fixture in load_fixtures(FIXTURES_PATH)
-    }
-    for case in load_cases(CASES_PATH):
-        if case.expected_outcome == "no_action":
-            continue
-        fixture = fixture_by_id[case.case_id]
-        rejected_fixture = fixture.model_copy(
-            update={"audit_result": _rejected_audit_result(audit_outcome)}
-        )
-
-        result = replay_fixture(case, rejected_fixture)
-
-        assert not result.ok
-        assert "Audit outcome" in " ".join(result.errors)
 
 
-@pytest.mark.skip(reason="legacy recorded-replay protocol expects removed receipt/evidence state")
-def test_recorded_terminal_outcomes_reject_any_audit_protocol():
-    cases = {case.case_id: case for case in load_cases(CASES_PATH)}
-    for fixture in load_fixtures(FIXTURES_PATH):
-        if fixture.consumer_result["outcome"] != "no_action":
-            continue
-        for terminal_outcome in ("no_action", "needs_human", "failed"):
-            case = _case_for_terminal_outcome(
-                cases[fixture.case_id], terminal_outcome
-            )
-            terminal = fixture.model_copy(
-                update={
-                    "consumer_result": _consumer_result_for_outcome(
-                        fixture.consumer_result, terminal_outcome
-                    ),
-                }
-            )
-            assert replay_fixture(case, terminal).ok
-
-            audited = terminal.model_copy(
-                update={
-                    "audit_events": (fixture.consumer_events[0],),
-                    "audit_result": _rejected_audit_result(),
-                }
-            )
-            result = replay_fixture(case, audited)
-
-            assert not result.ok
-            assert "terminal Consumer outcome must not contain Audit events" in result.errors
-            assert "terminal Consumer outcome must not contain an Audit result" in result.errors
 
 
 def test_audit_outcome_can_be_explicitly_allowed_by_corpus():
@@ -956,17 +548,6 @@ def test_recorded_replay_evaluates_every_required_assertion():
             assert assertion.assertion_id in result.missing_assertions
 
 
-@pytest.mark.skip(reason="legacy recorded fixtures use the removed result/evidence contract")
-def test_default_cli_passes_without_invoking_live_runner(monkeypatch, capsys):
-    def fail_if_live(*_args, **_kwargs):
-        raise AssertionError("default mode must not execute Codex")
-
-    monkeypatch.setattr("evals.skill_runtime.run.run_live", fail_if_live)
-
-    assert main([]) == 0
-    output = capsys.readouterr().out
-    assert "19/19 passed" in output
-    assert '"mode": "recorded_replay"' in output
 
 
 def test_cli_exits_nonzero_when_a_scripted_expectation_mismatches(
@@ -992,24 +573,6 @@ def test_cli_exits_nonzero_when_a_scripted_expectation_mismatches(
     assert '"ok": false' in output
 
 
-@pytest.mark.skip(reason="legacy recorded fixtures use the removed result/evidence contract")
-def test_script_path_cli_runs_from_repo_root_and_unrelated_cwd(tmp_path: Path):
-    invocations = (
-        ([sys.executable, "evals/skill_runtime/run.py"], REPO_ROOT),
-        ([sys.executable, str(SCRIPT_PATH)], tmp_path),
-    )
-
-    for command, cwd in invocations:
-        completed = subprocess.run(
-            command,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert completed.returncode == 0, completed.stderr
-        assert "recorded replay: 19/19 passed" in completed.stdout
-        assert '"total": 19' in completed.stdout
 
 
 def test_script_path_cli_returns_nonzero_for_mutated_corpus(tmp_path: Path):

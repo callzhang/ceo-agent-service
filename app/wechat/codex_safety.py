@@ -2,12 +2,9 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import tomllib
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
 
 from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX, _config_string
 from app.service_codex_config import service_mcp_config_options
@@ -31,12 +28,6 @@ WECHAT_MEMORY_READ_TOOLS = (
     "timeline_get",
     "user_get",
 )
-
-_BACKGROUND_DISABLED_FEATURES = (
-    "plugins", "apps", "chronicle", "computer_use", "browser_use",
-    "in_app_browser", "memories", "skill_search",
-)
-
 
 @dataclass(frozen=True)
 class ControlledCliConfig:
@@ -103,16 +94,6 @@ def completed_mcp_tool_calls(raw: str) -> list[dict]:
     return calls
 
 
-def has_any_tool_event(raw: str) -> bool:
-    """Detect any Codex tool lifecycle event, including attempted/started calls."""
-    for payload in _jsonl_payloads(raw):
-        item = payload.get("item") if isinstance(payload.get("item"), dict) else payload
-        item_type = str(item.get("type") or "").strip().lower()
-        if item_type in _TOOL_ITEM_TYPES or item_type.endswith("_tool_call"):
-            return True
-    return False
-
-
 def configured_transport_server_names(command: list[str]) -> tuple[str, ...]:
     """Find service-owned MCP transports present in the generated command."""
     names: set[str] = set()
@@ -125,63 +106,10 @@ def configured_transport_server_names(command: list[str]) -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
-def disable_configured_mcp_servers(
-    command: list[str], *, except_names: frozenset[str] = frozenset(),
-) -> None:
-    for name in configured_transport_server_names(command):
-        if name not in except_names:
-            _insert_command_options(
-                command, ["-c", f"mcp_servers.{name}.enabled=false"]
-            )
-
-
-def _user_mcp_server_names() -> tuple[str, ...]:
-    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
-    config_path = codex_home / "config.toml"
-    if not config_path.is_file():
-        return ()
-    with config_path.open("rb") as handle:
-        configured = tomllib.load(handle).get("mcp_servers", {})
-    if not isinstance(configured, dict):
-        return ()
-    return tuple(sorted(str(name) for name in configured))
-
-
-def _isolate_background_agent_context(command: list[str]) -> None:
-    options: list[str] = []
-    service_owned_servers = frozenset(configured_transport_server_names(command))
-    for feature in _BACKGROUND_DISABLED_FEATURES:
-        options.extend(["--disable", feature])
-    for server_name in _user_mcp_server_names():
-        if server_name != "agent_cli" and server_name not in service_owned_servers:
-            options.extend(["-c", f"mcp_servers.{server_name}.enabled=false"])
-    _insert_command_options(command, options)
-
-
-def make_read_only_without_tools(command: list[str]) -> None:
-    """Constrain extraction to read-only Codex with no MCP, web, or other tools."""
-    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
-        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
-    _remove_config_options(
-        command,
-        prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
-    )
-    _insert_command_options(
-        command,
-        [
-            *_read_only_sandbox_options(command),
-            "-c", 'approval_policy="never"',
-            "-c", "tools.enabled_tools=[]",
-            "-c", 'web_search="disabled"',
-        ],
-    )
-
-
 def make_role_agent_command(
     command: list[str],
     *,
     controlled_cli: ControlledCliConfig | None = None,
-    additional_agent_cli_tools: tuple[str, ...] = (),
 ) -> None:
     """Use the native Codex capability surface and its automatic reviewer.
 
@@ -202,9 +130,7 @@ def make_role_agent_command(
         "-c",
         'approvals_reviewer="auto_review"',
     ]
-    if additional_agent_cli_tools:
-        if controlled_cli is None:
-            raise ValueError("task-bound agent_cli tools require a server config")
+    if controlled_cli is not None:
         options.extend(
             [
                 "-c",
@@ -223,9 +149,6 @@ def make_role_agent_command(
                     if controlled_cli.env
                     else []
                 ),
-                "-c",
-                "mcp_servers.agent_cli.enabled_tools="
-                + json.dumps(list(additional_agent_cli_tools)),
             ]
         )
     _insert_command_options(
@@ -244,107 +167,10 @@ def make_audit_agent_command(
     command: list[str],
     *,
     controlled_cli: ControlledCliConfig | None = None,
-    additional_agent_cli_tools: tuple[str, ...] = (),
 ) -> None:
     make_role_agent_command(
         command,
         controlled_cli=controlled_cli,
-        additional_agent_cli_tools=additional_agent_cli_tools,
-    )
-
-
-def make_read_only_with_memory_tools(command: list[str]) -> None:
-    """Allow only durable-memory reads while a WeChat reply is being decided."""
-    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
-        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
-    _remove_config_options(
-        command,
-        prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
-    )
-    _insert_command_options(
-        command,
-        [
-            *_read_only_sandbox_options(command),
-            "-c",
-            'approval_policy="never"',
-            "-c",
-            'web_search="disabled"',
-        ],
-    )
-
-
-def make_read_only_with_reviewed_tools(
-    command: list[str],
-    *,
-    reviewed_mcp_tools: dict[str, tuple[str, ...]],
-    controlled_cli_command: str,
-    controlled_cli_args: tuple[str, ...],
-    controlled_cli_cwd: str,
-) -> None:
-    """Use a read-only sandbox and expose only explicitly reviewed MCP reads."""
-    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
-        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
-    _remove_config_options(
-        command,
-        prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
-    )
-    _insert_command_options(
-        command,
-        [
-            *_read_only_sandbox_options(command),
-            "-c",
-            'approval_policy="never"',
-            "-c",
-            'web_search="disabled"',
-            "-c",
-            f"mcp_servers.agent_cli.command={json.dumps(controlled_cli_command)}",
-            "-c",
-            "mcp_servers.agent_cli.args="
-            + json.dumps(list(controlled_cli_args), ensure_ascii=True),
-            "-c",
-            f"mcp_servers.agent_cli.cwd={json.dumps(controlled_cli_cwd)}",
-            "-c",
-            "mcp_servers.agent_cli.enabled_tools="
-            '["execute_reviewed_read","read_skill","read_text_file","read_spreadsheet"]',
-        ],
-    )
-
-
-def make_direct_agent_sandbox(
-    command: list[str],
-    *,
-    reviewed_mcp_tools: dict[str, tuple[str, ...]],
-    controlled_cli_command: str,
-    controlled_cli_args: tuple[str, ...],
-    controlled_cli_cwd: str,
-) -> None:
-    """Expose sandboxed local reads and only reviewed external capabilities."""
-    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
-        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
-    _remove_command_options(command, names=("--sandbox",))
-    _remove_config_options(
-        command,
-        prefixes=("approval_policy=", "tools.enabled_tools=", "web_search="),
-    )
-    _insert_command_options(
-        command,
-        [
-            *_read_only_sandbox_options(command),
-            "-c",
-            'approval_policy="never"',
-            "-c",
-            'web_search="disabled"',
-            "-c",
-            f"mcp_servers.agent_cli.command={json.dumps(controlled_cli_command)}",
-            "-c",
-            "mcp_servers.agent_cli.args="
-            + json.dumps(list(controlled_cli_args), ensure_ascii=True),
-            "-c",
-            f"mcp_servers.agent_cli.cwd={json.dumps(controlled_cli_cwd)}",
-            "-c",
-            "mcp_servers.agent_cli.enabled_tools="
-            '["execute_reviewed_read","execute_reviewed_write","read_skill","read_text_file","read_spreadsheet"]',
-        ],
     )
 
 
@@ -355,26 +181,10 @@ def _insert_command_options(command: list[str], options: list[str]) -> None:
     command[prompt_index:prompt_index] = options
 
 
-def _read_only_sandbox_options(command: list[str]) -> list[str]:
-    """Use the CLI form accepted by both fresh and resumed Codex sessions."""
-    if command[1:3] == ["exec", "resume"]:
-        return ["-c", 'sandbox_mode="read-only"']
-    return ["--sandbox", "read-only"]
-
-
 def _remove_config_options(command: list[str], *, prefixes: tuple[str, ...]) -> None:
     index = 0
     while index + 1 < len(command):
         if command[index] == "-c" and command[index + 1].startswith(prefixes):
-            del command[index : index + 2]
-            continue
-        index += 1
-
-
-def _remove_command_options(command: list[str], *, names: tuple[str, ...]) -> None:
-    index = 0
-    while index + 1 < len(command):
-        if command[index] in names:
             del command[index : index + 2]
             continue
         index += 1

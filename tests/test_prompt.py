@@ -32,18 +32,18 @@ from app.prompt import (
     work_profile_instruction,
 )
 from app.consumer_agent import (
+    AGENT_CAPABILITY_INSTRUCTIONS,
     CORE_DYNAMIC_SKILL_BODY,
-    REVIEWED_DWS_READ_INSTRUCTIONS,
 )
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS
 from tests.prompt_structure import validate_prompt_structure
 
 
 def test_consumer_oa_work_is_completed_by_agent_instead_of_generic_handoff():
-    assert "Do not stop at a generic" in REVIEWED_DWS_READ_INSTRUCTIONS
-    assert "carry the workflow through the documented" in REVIEWED_DWS_READ_INSTRUCTIONS
-    assert "normal retry contract" in REVIEWED_DWS_READ_INSTRUCTIONS
-    assert "only when the information required" in REVIEWED_DWS_READ_INSTRUCTIONS
+    assert "Do not stop at a generic" in AGENT_CAPABILITY_INSTRUCTIONS
+    assert "carry the workflow through the documented" in AGENT_CAPABILITY_INSTRUCTIONS
+    assert "normal retry contract" in AGENT_CAPABILITY_INSTRUCTIONS
+    assert "only when the information required" in AGENT_CAPABILITY_INSTRUCTIONS
 
 
 CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会议进行了修改，您是否已完成审核？是否可以定稿了？

@@ -578,9 +578,7 @@ def accepted_email_unsubscribe_effect(
 
     try:
         _assert_safe_email_metadata(accepted_action.model_dump(mode="json"))
-        if _contains_unsubscribe_url_like_text(
-            accepted_action.description
-        ) or _contains_unsubscribe_url_like_text(accepted_action.expected_verification):
+        if _contains_unsubscribe_url_like_text(accepted_action.description):
             raise EmailAgentTaskMetadataError(
                 "email unsubscribe proposal contains URL-like text"
             )

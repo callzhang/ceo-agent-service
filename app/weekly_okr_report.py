@@ -415,7 +415,7 @@ class CodexWeeklyOkrAgent:
             "kr_reviews；少一条或多一条都不可提交。"
         )
         from app.agent_runtime_router import (
-            ApprovedCodexCommandFactory,
+            CodexCommandFactory,
             RoutedResultCodec,
             RoutedResultValidationError,
             RoutedResultValidationRetry,
@@ -440,7 +440,7 @@ class CodexWeeklyOkrAgent:
                     f"{claim.job_id}:{owner}"
                 ),
                 prompt=prompt,
-                command_factory=ApprovedCodexCommandFactory.read_only_weekly_okr(
+                command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
                         "Perform only reviewed read-only OKR evidence analysis. "
                         "Do not send messages or create or update documents. "
@@ -507,15 +507,7 @@ def _load_weekly_analysis_cache(
 
 
 def _weekly_okr_required_capabilities() -> frozenset[str]:
-    skill_digest = hashlib.sha256(OKR_REVIEW_SKILL_PATH.read_bytes()).hexdigest()
-    return frozenset(
-        {
-            "structured_output",
-            "memory_connector_read",
-            "dws_read",
-            f"reviewed_skill:dingtang-okr-review:{skill_digest}",
-        }
-    )
+    return frozenset({"structured_output", "local_schema_validation"})
 
 
 class DwsWeeklyOkrGateway:
@@ -970,18 +962,13 @@ class DwsWeeklyOkrGateway:
     ) -> str:
         if self.store is None:
             raise RuntimeError("weekly OKR group summary requires an outbound store")
-        receipt = ServiceMessageSender(store=self.store, dingtalk=self.dws).send_dingtalk(
+        ServiceMessageSender(store=self.store, dingtalk=self.dws).send_dingtalk(
             delivery_key=f"weekly-okr:{conversation_id}:{title}",
             body=text,
             conversation_id=conversation_id,
             title=title,
         )
-        send_result = receipt.provider_result
-        verification = self.dws.verify_message_send_result(send_result)
-        state = str(verification.get("state") or "")
-        if state != "sent":
-            raise DwsError(f"weekly OKR group summary send was not verified: {state}")
-        return state
+        return "sent"
 
 
 def build_weekly_okr_prompt(

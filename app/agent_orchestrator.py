@@ -16,7 +16,6 @@ from app.agent_contracts import (
     DecisionOption,
 )
 from app.agent_result import AgentError, ResultParseError
-from app.agent_skill_usage import LoadedSkillReceipt, loaded_skill_receipts
 from app.agent_turn_runner import AgentTurnRunResult
 from app.codex_capacity import is_codex_provider_recovery_code
 from app.config import principal_display_name
@@ -134,23 +133,6 @@ class AuditRunner(Protocol):
         *,
         turn_attempt: int,
         parent_agent_run_id: int,
-        frozen_delivery_retry: bool = False,
-    ) -> AgentTurnRunResult[AuditAgentResult]: ...
-
-    def recover(
-        self,
-        task: ReplyTask,
-        context: AuditTurnContext,
-        *,
-        run: AgentRun,
-    ) -> AgentTurnRunResult[AuditAgentResult]: ...
-
-    def execute_recovery(
-        self,
-        task: ReplyTask,
-        context: AuditTurnContext,
-        *,
-        run: AgentRun,
     ) -> AgentTurnRunResult[AuditAgentResult]: ...
 
 
@@ -187,7 +169,6 @@ class _NextAudit:
     proposal: ConsumerProposal | None
     authorization_error_code: str = ""
     deferred_error_code: str = ""
-    frozen_delivery_retry: bool = False
 
 
 @dataclass(frozen=True)
@@ -372,11 +353,6 @@ class AgentOrchestrator:
                                 detail=_context_refresh_failure_detail(exc),
                             )
                         )
-                    consumer_skills = self._consumer_skills(
-                        task,
-                        state.parent_run_id,
-                        state.proposal_revision,
-                    )
                     proposal = _enrich_oa_applicant_target(
                         state.proposal,
                         audit_task_context,
@@ -387,15 +363,14 @@ class AgentOrchestrator:
                         operation_id=_operation_id(task, state.proposal_revision),
                         proposal=proposal,
                         audit_rules="",
-                        consumer_skills=consumer_skills,
                     )
-                    run_kwargs = {
-                        "turn_attempt": state.turn_attempt,
-                        "parent_agent_run_id": state.parent_run_id,
-                    }
-                    if state.frozen_delivery_retry:
-                        run_kwargs["frozen_delivery_retry"] = True
-                    self.audit.run(task, audit_context, **run_kwargs)
+                    self._validate_audit_parent(task, state)
+                    self.audit.run(
+                        task,
+                        audit_context,
+                        turn_attempt=state.turn_attempt,
+                        parent_agent_run_id=state.parent_run_id,
+                    )
             except (RuntimeError, ResultParseError) as exc:
                 if str(exc) in {
                     "agent_run_unavailable",
@@ -426,25 +401,23 @@ class AgentOrchestrator:
             )
         )
 
-    def _consumer_skills(
-        self,
-        task: ReplyTask,
-        parent_run_id: int | None,
-        proposal_revision: int,
-    ) -> tuple[LoadedSkillReceipt, ...]:
-        if parent_run_id is None:
-            raise RuntimeError("audit_consumer_parent_invalid")
-        parent = self.store.get_agent_run(parent_run_id)
+    def _validate_audit_parent(self, task: ReplyTask, state: _NextAudit) -> None:
+        """Require an Audit turn to point at its exact completed Consumer result."""
+
+        parent = (
+            self.store.get_agent_run(state.parent_run_id)
+            if state.parent_run_id is not None
+            else None
+        )
         if (
             parent is None
             or parent.reply_task_id != task.id
             or parent.execution_generation != task.execution_generation
             or parent.role is not AgentRole.CONSUMER
-            or parent.proposal_revision != proposal_revision
+            or parent.proposal_revision != state.proposal_revision
             or parent.status != "completed"
         ):
             raise RuntimeError("audit_consumer_parent_invalid")
-        return loaded_skill_receipts(parent.tool_events)
 
     def _derive_state(
         self,
@@ -465,50 +438,7 @@ class AgentOrchestrator:
             default=0,
         )
 
-        frozen_delivery_retry = (
-            task.recovery_code == "legacy_sessionless_audit_delivery_replay"
-        )
-        # A frozen recovery is a delivery retry, not a new content-review loop.
-        # The preserved Consumer result can legitimately be revision 1 or 2 from
-        # the old workflow.  Starting from revision 0 would invite a fresh
-        # Consumer decision and silently turn a resend into ``no_action``.
-        frozen_consumer: AgentRun | None = None
-        if frozen_delivery_retry:
-            frozen_candidates = sorted(
-                (
-                    run
-                    for run in runs
-                    if run.role is AgentRole.CONSUMER and run.status == "completed"
-                ),
-                key=lambda run: (run.proposal_revision, run.turn_attempt, run.id),
-                reverse=True,
-            )
-            for candidate in frozen_candidates:
-                state = self._consumer_state(
-                    task,
-                    candidate,
-                    candidate.proposal_revision,
-                    runs_by_id=runs_by_id,
-                    domain_snapshot=domain_snapshot,
-                )
-                if (
-                    isinstance(state, ConsumerAgentResult)
-                    and state.proposal is not None
-                ):
-                    frozen_consumer = candidate
-                    break
-            if frozen_consumer is None:
-                return _Deferred(
-                    None,
-                    "frozen_delivery_replay_proposal_missing",
-                    0,
-                )
-
-        revisions = (
-            (frozen_consumer.proposal_revision,)
-            if frozen_consumer is not None
-            else range(highest_materialized_revision + 2)
-        )
+        revisions = range(highest_materialized_revision + 2)
         for revision in revisions:
             revision_runs = by_revision.get(revision, [])
             consumer_turns = sorted(
@@ -599,7 +529,7 @@ class AgentOrchestrator:
             if consumer.status == "failed" and _run_error(consumer).code in {
                 "runtime_execution_failed",
                 "codex_process_failed",
-                "service_restart_before_effect",
+                "service_restart_interrupted",
                 "provider_read_failed",
             }:
                 prior = [
@@ -620,7 +550,7 @@ class AgentOrchestrator:
                         consumer = candidate
                         consumer_state = candidate_state
                         break
-            if revision > 0 and not frozen_delivery_retry:
+            if revision > 0:
                 parent_state = self._validate_consumer_revision_parent(
                     task,
                     consumer,
@@ -669,7 +599,6 @@ class AgentOrchestrator:
                     0,
                     consumer.id,
                     consumer_state.proposal,
-                    frozen_delivery_retry=frozen_delivery_retry,
                 )
             latest = audits[-1]
             audit_state = self._audit_state(
@@ -685,7 +614,6 @@ class AgentOrchestrator:
                     consumer_state.proposal,
                     audit_state.authorization_error_code,
                     audit_state.deferred_error_code,
-                    frozen_delivery_retry=frozen_delivery_retry,
                 )
             if not isinstance(audit_state, AuditAgentResult):
                 return audit_state
@@ -750,16 +678,6 @@ class AgentOrchestrator:
                     latest,
                     audit_state,
                     feedback_cycles,
-                )
-            if frozen_delivery_retry:
-                # A frozen delivery retry cannot return to Consumer for a new
-                # content proposal, even if Audit asks for a revision.
-                return _NextAudit(
-                    revision,
-                    latest.turn_attempt + 1,
-                    consumer.id,
-                    consumer_state.proposal,
-                    frozen_delivery_retry=True,
                 )
             if audit_state.outcome is AuditOutcome.FEEDBACK_PROVIDED:
                 if feedback_cycles > MAX_CONTENT_FEEDBACK_CYCLES:
@@ -927,7 +845,7 @@ class AgentOrchestrator:
                 if _retryable_route_error_can_resume(task, error):
                     return _NextAudit(
                         run.proposal_revision,
-                        run.turn_attempt,
+                        run.turn_attempt + 1,
                         run.parent_agent_run_id or 0,
                         None,
                         deferred_error_code=error.code,
@@ -937,7 +855,7 @@ class AgentOrchestrator:
                 if task.error == error.code:
                     return _NextAudit(
                         run.proposal_revision,
-                        run.turn_attempt,
+                        run.turn_attempt + 1,
                         run.parent_agent_run_id or 0,
                         None,
                         deferred_error_code=error.code,
@@ -952,9 +870,14 @@ class AgentOrchestrator:
         if run.status == "running":
             if self.store.agent_run_lease_is_active(run.id):
                 return _Deferred(run, "agent_run_active", feedback_cycles)
+            self.store.fail_expired_agent_run(
+                run.id,
+                {"code": "audit_lease_expired", "retryable": True},
+                expected_execution_generation=task.execution_generation,
+            )
             return _NextAudit(
                 run.proposal_revision,
-                run.turn_attempt,
+                run.turn_attempt + 1,
                 run.parent_agent_run_id or 0,
                 None,
             )

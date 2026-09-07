@@ -53,7 +53,6 @@ def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
                     "operation": _operation_name(case),
                     "target": {"case_id": case.id},
                     "payload": {"candidate": case.candidate},
-                    "expected_verification": "Read the controlled sink by operation ID.",
                 }
             ],
             "sourced_facts": [
@@ -102,7 +101,6 @@ def _audit_result(case: EvalCase, operation_id: str) -> AuditAgentResult:
         payload.update(
             external_result={
                 "operation_id": operation_id,
-                "verification_summary": "Controlled sink readback matched the operation ID.",
                 "live_result_reference": {"operation_id": operation_id},
             },
         )

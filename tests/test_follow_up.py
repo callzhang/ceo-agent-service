@@ -1595,7 +1595,6 @@ def test_old_due_follow_up_refreshes_live_todo_then_queues_agent_reevaluation(tm
         summary_input_id=queued[0].id,
         work_item=WorkItem.model_validate_json(queued[0].payload_json),
         decision=decision,
-        memory_recall_attempted=True,
         now="2026-06-10 01:05:00",
     )
     store.mark_work_summary_input_done(queued[0].id)

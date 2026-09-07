@@ -1,11 +1,9 @@
-"""Strict command, credential, permission, and event boundary for Claude CLI."""
+"""Claude CLI transport, credential, session, event, and result adapter."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import sys
 import tempfile
 import uuid
 from collections.abc import Callable
@@ -14,8 +12,6 @@ from pathlib import Path
 from threading import RLock
 from typing import TypeVar
 
-from app.agent_effects import McpToolEffectRegistry
-from app.agent_result import EffectKind
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import (
     CredentialMode,
@@ -27,47 +23,14 @@ from app.agent_runtime_contracts import (
 )
 from app.claude_mcp_proxy import ClaudeMcpCredentialProxyManager
 from app.codex_runtime_adapter import _safe_child_environment
-from app.native_cli_metadata import (
-    NativeCliMetadataClassifier,
-    describe_native_command,
-)
 from app.service_codex_config import ServiceMcpServer, load_service_mcp_servers
 
 ResultT = TypeVar("ResultT")
 _POLICY_SEAL = object()
-_PERMISSION_TOOL = "mcp__ceo_runtime_permission__permission_prompt"
-_BUILTIN_TOOLS = frozenset(
-    {
-        "Agent",
-        "AskUserQuestion",
-        "Bash",
-        "Edit",
-        "EnterPlanMode",
-        "ExitPlanMode",
-        "Glob",
-        "Grep",
-        "KillShell",
-        "LS",
-        "NotebookEdit",
-        "Read",
-        "Skill",
-        "Task",
-        "TaskCreate",
-        "TaskGet",
-        "TaskList",
-        "TaskOutput",
-        "TaskStop",
-        "TaskUpdate",
-        "TodoWrite",
-        "WebFetch",
-        "WebSearch",
-        "Write",
-    }
-)
 
 
 class ClaudeEventPolicyError(RuntimeError):
-    """A Claude event cannot be proven safe under the reviewed event grammar."""
+    """A Claude event violates the transport/session event grammar."""
 
 
 class ClaudeRuntimeResultError(RuntimeError):
@@ -87,42 +50,24 @@ class ClaudeTerminalProof:
 
 @dataclass(frozen=True, slots=True, init=False)
 class ClaudeCommandPolicy:
-    """Sealed pre-execution tool surface for one Claude invocation."""
+    """Choose a normal runtime turn or an isolated no-tool health probe."""
 
-    mcp_tools: tuple[str, ...]
-    allow_native_cli: bool
+    tools_enabled: bool
     _seal: object
 
-    def __init__(
-        self, *, mcp_tools: tuple[str, ...], allow_native_cli: bool, seal: object
-    ) -> None:
+    def __init__(self, *, tools_enabled: bool, seal: object) -> None:
         if seal is not _POLICY_SEAL:
             raise ValueError("Claude command policies use named constructors")
-        if len(mcp_tools) != len(set(mcp_tools)) or any(
-            not item.startswith("mcp__")
-            or item.count("__") != 2
-            or "*" in item
-            or not item.strip()
-            for item in mcp_tools
-        ):
-            raise ValueError("Claude MCP tools must be unique exact names")
-        object.__setattr__(self, "mcp_tools", tuple(sorted(mcp_tools)))
-        object.__setattr__(self, "allow_native_cli", allow_native_cli)
+        object.__setattr__(self, "tools_enabled", tools_enabled)
         object.__setattr__(self, "_seal", seal)
 
     @classmethod
     def no_tools(cls) -> ClaudeCommandPolicy:
-        return cls(mcp_tools=(), allow_native_cli=False, seal=_POLICY_SEAL)
+        return cls(tools_enabled=False, seal=_POLICY_SEAL)
 
     @classmethod
-    def reviewed(
-        cls, *, mcp_tools: tuple[str, ...] = (), allow_native_cli: bool = False
-    ) -> ClaudeCommandPolicy:
-        return cls(
-            mcp_tools=mcp_tools,
-            allow_native_cli=allow_native_cli,
-            seal=_POLICY_SEAL,
-        )
+    def normal(cls) -> ClaudeCommandPolicy:
+        return cls(tools_enabled=True, seal=_POLICY_SEAL)
 
 
 def require_claude_session_id(session_id: str) -> str:
@@ -150,15 +95,11 @@ class ClaudeRuntimeAdapter:
         workspace: Path,
         config: AgentRuntimeConfig,
         claude_bin: str = "claude",
-        effect_registry: McpToolEffectRegistry | None = None,
-        native_cli_classifier: NativeCliMetadataClassifier | None = None,
         service_mcp_servers: tuple[ServiceMcpServer, ...] | None = None,
     ) -> None:
         self.workspace = workspace
         self.config = config
         self.claude_bin = claude_bin
-        self.effects = effect_registry or McpToolEffectRegistry.default()
-        self.native_cli = native_cli_classifier or NativeCliMetadataClassifier()
         self._service_mcp_servers = service_mcp_servers
         self._runtime_root = tempfile.TemporaryDirectory(
             prefix="ceo-agent-claude-", dir=workspace
@@ -183,10 +124,9 @@ class ClaudeRuntimeAdapter:
         session_id: str | None,
         max_turns: int,
         policy: ClaudeCommandPolicy | None = None,
-        effect_fence: Callable[[dict[str, object]], bool] | None = None,
     ) -> list[str]:
         configured = self._configured_route(route)
-        selected_policy = policy or ClaudeCommandPolicy.no_tools()
+        selected_policy = policy or ClaudeCommandPolicy.normal()
         if not isinstance(selected_policy, ClaudeCommandPolicy):
             raise ValueError("Claude command policy is invalid")  # noqa: TRY004
         if (
@@ -197,14 +137,7 @@ class ClaudeRuntimeAdapter:
             raise ValueError("max_turns must be a positive integer")
         if session_id is not None:
             require_claude_session_id(session_id)
-        settings_path, mcp_path = self._write_invocation_boundary(
-            selected_policy,
-            effect_fence=effect_fence,
-        )
-        exposed_builtins = "Bash" if selected_policy.allow_native_cli else ""
-        denied_builtins = sorted(
-            _BUILTIN_TOOLS - ({"Bash"} if selected_policy.allow_native_cli else set())
-        )
+        settings_path, mcp_path = self._write_invocation_boundary(selected_policy)
         command = [
             self.claude_bin,
             "-p",
@@ -225,22 +158,11 @@ class ClaudeRuntimeAdapter:
             "--max-turns",
             str(max_turns),
             "--verbose",
-            "--tools",
-            exposed_builtins,
-            "--disallowedTools",
-            *denied_builtins,
+            "--permission-mode",
+            "default",
         ]
-        if selected_policy.mcp_tools or selected_policy.allow_native_cli:
-            command.extend(
-                [
-                    "--allowedTools",
-                    _PERMISSION_TOOL,
-                    "--permission-mode",
-                    "default",
-                    "--permission-prompt-tool",
-                    _PERMISSION_TOOL,
-                ]
-            )
+        if not selected_policy.tools_enabled:
+            command.extend(["--tools", ""])
         if session_id is not None:
             command.extend(["--resume", session_id])
         return command
@@ -282,8 +204,6 @@ class ClaudeRuntimeAdapter:
             with self._lock:
                 self._invocations_by_owner[owner] = invocation_id
         return ClaudeEventNormalizer(
-            effect_registry=self.effects,
-            native_cli_classifier=self.native_cli,
             expected_session_id=expected_session_id,
             owner=owner,
             proof_issuer=self._issue_terminal_proof,
@@ -463,54 +383,22 @@ class ClaudeRuntimeAdapter:
         )
 
     def _write_invocation_boundary(
-        self,
-        policy: ClaudeCommandPolicy,
-        *,
-        effect_fence: Callable[[dict[str, object]], bool] | None,
+        self, policy: ClaudeCommandPolicy
     ) -> tuple[Path, Path]:
         root = Path(self._runtime_root.name)
         invocation_id = uuid.uuid4().hex
-        policy_path = root / f"broker-{invocation_id}.json"
         settings_path = root / f"settings-{invocation_id}.json"
         mcp_path = root / f"mcp-{invocation_id}.json"
-        denied_builtins = sorted(
-            _BUILTIN_TOOLS - ({"Bash"} if policy.allow_native_cli else set())
-        )
-        broker_enabled = bool(policy.mcp_tools or policy.allow_native_cli)
-        artifacts = (policy_path, settings_path, mcp_path)
+        artifacts = (settings_path, mcp_path)
         try:
-            reviewed_transports = self._reviewed_mcp_transports(
-                policy,
-                invocation_id=invocation_id,
-                effect_fence=effect_fence,
-            )
-            grant_endpoints = {
-                server: self._mcp_proxy.grant_descriptor(invocation_id, server)
-                for server in reviewed_transports
-            }
-            policy_path.write_text(
-                json.dumps(
-                    {
-                        "allowed_mcp_tools": list(policy.mcp_tools),
-                        "allow_native_cli": policy.allow_native_cli,
-                        "grant_endpoints": grant_endpoints,
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-                encoding="utf-8",
-            )
+            transports = self._mcp_transports(
+                invocation_id=invocation_id
+            ) if policy.tools_enabled else {}
             settings_path.write_text(
                 json.dumps(
                     {
-                        "permissions": {"allow": [], "deny": denied_builtins},
-                        "enableAllProjectMcpServers": False,
-                        "enabledMcpjsonServers": (
-                            [
-                                *(["ceo_runtime_permission"] if broker_enabled else []),
-                                *sorted(reviewed_transports),
-                            ]
-                        ),
+                        "enableAllProjectMcpServers": policy.tools_enabled,
+                        "enabledMcpjsonServers": sorted(transports),
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -519,28 +407,7 @@ class ClaudeRuntimeAdapter:
             )
             mcp_path.write_text(
                 json.dumps(
-                    {
-                        "mcpServers": {
-                            **(
-                                {
-                                    "ceo_runtime_permission": {
-                                        "type": "stdio",
-                                        "command": sys.executable,
-                                        "args": [
-                                            "-m",
-                                            "app.claude_permission_broker",
-                                            "--policy",
-                                            str(policy_path),
-                                        ],
-                                        "env": {},
-                                    }
-                                }
-                                if broker_enabled
-                                else {}
-                            ),
-                            **reviewed_transports,
-                        }
-                    },
+                    {"mcpServers": transports},
                     sort_keys=True,
                     separators=(",", ":"),
                 ),
@@ -556,66 +423,19 @@ class ClaudeRuntimeAdapter:
             self._artifact_paths[invocation_id] = artifacts
         return settings_path, mcp_path
 
-    def _reviewed_mcp_transports(
-        self,
-        policy: ClaudeCommandPolicy,
-        *,
-        invocation_id: str,
-        effect_fence: Callable[[dict[str, object]], bool] | None,
-    ) -> dict[str, dict[str, object]]:
-        if not policy.mcp_tools:
-            return {}
-        reviewed = self.effects.reviewed_tools()
-        required_servers: set[str] = set()
-        for exact_name in policy.mcp_tools:
-            _, server, tool = exact_name.split("__", 2)
-            if tool not in reviewed.get(server, ()):
-                raise ValueError("Claude policy requires a reviewed MCP tool")
-            reviewed_call = self.effects.classify(
-                {
-                    "type": "mcp_tool_call",
-                    "server": server,
-                    "tool": tool,
-                    "arguments": {},
-                }
-            )
-            if reviewed_call is not None and reviewed_call.effect is EffectKind.EFFECTFUL:
-                if effect_fence is not None:
-                    required_servers.add(server)
-                    continue
-                raise ValueError(
-                    "Claude effectful MCP permission callback origin is not trusted"
-                )
-            required_servers.add(server)
-        configured = {
-            server.name: server
-            for server in (
-                self._service_mcp_servers
-                if self._service_mcp_servers is not None
-                else load_service_mcp_servers(env=os.environ)
-            )
-        }
-        missing = required_servers - configured.keys()
-        if missing:
-            raise ValueError("Claude reviewed MCP transport is missing")
-        selected = [configured[name] for name in sorted(required_servers)]
-        tools_by_server = {
-            server.name: tuple(
-                tool
-                for tool in policy.mcp_tools
-                if tool.startswith(f"mcp__{server.name}__")
-            )
-            for server in selected
-        }
+    def _mcp_transports(self, *, invocation_id: str) -> dict[str, dict[str, object]]:
+        configured = (
+            self._service_mcp_servers
+            if self._service_mcp_servers is not None
+            else load_service_mcp_servers(env=os.environ)
+        )
         return {
             server.name: self._mcp_proxy.prepare(
                 server,
                 invocation_id=invocation_id,
-                allowed_tools=tools_by_server[server.name],
                 source_env=os.environ,
-                effect_fence=effect_fence,
             )
-            for server in selected
+            for server in configured
         }
 
     def _configured_route(self, route: RuntimeRoute) -> RuntimeRoute:
@@ -639,13 +459,11 @@ class ClaudeRuntimeAdapter:
 
 
 class ClaudeEventNormalizer:
-    """Invocation-scoped strict Claude stream state machine."""
+    """Invocation-scoped Claude stream state machine."""
 
     def __init__(
         self,
         *,
-        effect_registry: McpToolEffectRegistry,
-        native_cli_classifier: NativeCliMetadataClassifier,
         expected_session_id: str | None,
         owner: object,
         proof_issuer: Callable[[object, str, str], ClaudeTerminalProof],
@@ -656,8 +474,6 @@ class ClaudeEventNormalizer:
             and _required_string(expected_session_id) is None
         ):
             raise ValueError("expected_session_id must be normalized")
-        self._effects = effect_registry
-        self._native_cli = native_cli_classifier
         self._expected_session_id = expected_session_id
         self._owner = owner
         self._proof_issuer = proof_issuer
@@ -670,11 +486,6 @@ class ClaudeEventNormalizer:
         self._terminal_proof: ClaudeTerminalProof | None = None
         self._started_items: dict[str, dict[str, object]] = {}
         self._seen_call_ids: set[str] = set()
-        self._mcp_tool_names = {
-            f"mcp__{server}__{tool}": (server, tool)
-            for server, tools in self._effects.reviewed_tools().items()
-            for tool in tools
-        }
 
     @property
     def session_id(self) -> str | None:
@@ -833,103 +644,36 @@ class ClaudeEventNormalizer:
             raise ClaudeEventPolicyError("claude_event_unrecognized")
         if call_id in self._seen_call_ids:
             raise ClaudeEventPolicyError("claude_tool_id_duplicate")
-        item = self._reviewed_tool_item(call_id, tool_name, arguments)
+        item = self._tool_item(call_id, tool_name)
         self._seen_call_ids.add(call_id)
         self._started_items[call_id] = item
         return {"type": RuntimeEventType.ITEM_STARTED.value, "item": item}
 
-    def _reviewed_tool_item(
-        self, call_id: str, tool_name: str, arguments: dict[str, object]
-    ) -> dict[str, object]:
-        mcp_identity = self._mcp_tool_names.get(tool_name)
-        if mcp_identity is not None:
-            server, tool = mcp_identity
-            reviewed_arguments = dict(arguments)
-            grant = reviewed_arguments.pop("__ceo_runtime_grant", None)
-            call = self._effects.classify(
-                {
+    def _tool_item(self, call_id: str, tool_name: str) -> dict[str, object]:
+        if tool_name.startswith("mcp__"):
+            parts = tool_name.split("__", 2)
+            if len(parts) == 3 and parts[1] and parts[2]:
+                _, server, tool = parts
+                return {
                     "type": "mcp_tool_call",
+                    "id": call_id,
+                    "status": "in_progress",
                     "server": server,
                     "tool": tool,
-                    "arguments": reviewed_arguments,
                 }
-            )
-            if call is None:
-                raise ClaudeEventPolicyError("claude_tool_unreviewed")
-            item_id = call_id
-            capability = call.server
-            operation = call.operation
-            operation_digest = call.operation_digest
-            target_identifiers = call.target_identifiers
-            native_cli = ""
-            arguments_digest = _json_digest(reviewed_arguments)
-            if server == "agent_cli" and tool in {
-                "execute_reviewed_read",
-                "execute_reviewed_write",
-            }:
-                descriptor = describe_native_command(
-                    {
-                        "type": "command_execution",
-                        "argv": reviewed_arguments.get("argv"),
-                    }
-                )
-                if descriptor is None:
-                    raise ClaudeEventPolicyError("claude_tool_unreviewed")
-                capability = f"agent_cli.{descriptor.cli}"
-                operation = descriptor.command_path
-                operation_digest = descriptor.command_digest
-                target_identifiers = descriptor.target_identifiers
-                native_cli = descriptor.cli
-                arguments_digest = _json_digest(
-                    {"argv": reviewed_arguments.get("argv")}
-                )
-            if call.effect is EffectKind.EFFECTFUL:
-                if not isinstance(grant, str) or not grant:
-                    raise ClaudeEventPolicyError("claude_effect_fence_evidence_missing")
-                item_id = "claude-dispatch:" + hashlib.sha256(
-                    grant.encode("utf-8")
-                ).hexdigest()
-            return {
-                "type": "mcp_tool_call",
-                "id": item_id,
-                "status": "in_progress",
-                "server": server,
-                "tool": tool,
-                "metadata": {
-                    "effect": call.effect.value,
-                    "capability": capability,
-                    "reviewed_server": server,
-                    "reviewed_tool": tool,
-                    "operation": operation,
-                    "operation_digest": operation_digest,
-                    "target_identifiers": target_identifiers,
-                    "arguments_digest": arguments_digest,
-                    **({"native_cli": native_cli} if native_cli else {}),
-                },
-            }
         if tool_name == "Bash":
-            command = arguments.get("command")
-            if not isinstance(command, str):
-                raise ClaudeEventPolicyError("claude_tool_unreviewed")
-            reviewed = self._native_cli.classify(
-                {"type": "command_execution", "command": command}
-            )
-            if reviewed is None or reviewed.effect is None:
-                raise ClaudeEventPolicyError("claude_tool_unreviewed")
             return {
                 "type": "command_execution",
                 "id": call_id,
                 "status": "in_progress",
-                "metadata": {
-                    "effect": reviewed.effect.value,
-                    "capability": f"agent_cli.{reviewed.cli}",
-                    "operation": reviewed.command_path,
-                    "operation_digest": reviewed.command_digest,
-                    "target_identifiers": reviewed.target_identifiers,
-                    "native_cli": reviewed.cli,
-                },
+                "tool": tool_name,
             }
-        raise ClaudeEventPolicyError("claude_tool_unreviewed")
+        return {
+            "type": "provider_tool_call",
+            "id": call_id,
+            "status": "in_progress",
+            "tool": tool_name,
+        }
 
     def _normalize_user_block(self, block: object) -> dict[str, object]:
         if not isinstance(block, dict) or block.get("type") != "tool_result":
@@ -943,16 +687,6 @@ class ClaudeEventNormalizer:
             raise ClaudeEventPolicyError("claude_tool_result_without_start")
         item = dict(started)
         item["status"] = "failed" if is_error else "completed"
-        if not is_error:
-            item["metadata"] = dict(item["metadata"])
-            item["metadata"]["result_digest"] = hashlib.sha256(
-                json.dumps(
-                    block.get("content"),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest()
         return {
             "type": RuntimeEventType.ITEM_FAILED.value
             if is_error
@@ -965,18 +699,6 @@ def _required_string(value: object) -> str | None:
     return (
         value if isinstance(value, str) and value and value == value.strip() else None
     )
-
-
-def _json_digest(value: object) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        ).encode("utf-8")
-    ).hexdigest()
 
 
 def _validated_success_result(event: dict[str, object]) -> str:

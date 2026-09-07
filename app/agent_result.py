@@ -2,7 +2,7 @@ import json
 from enum import StrEnum
 from typing import TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 def _strict_agent_error_json_schema(schema: dict[str, object]) -> None:

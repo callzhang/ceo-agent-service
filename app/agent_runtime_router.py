@@ -6,40 +6,25 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import sys
-import tomllib
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
 from pathlib import Path
 from typing import TypeVar
 from zoneinfo import ZoneInfo
 
-from app.agent_effects import (
-    IDLE_TIMEOUT_SECONDS,
-    TOTAL_TIMEOUT_SECONDS,
-    McpToolEffectRegistry,
-)
-from app.agent_skill_usage import (
-    REVIEWED_SKILL_RECEIPT_VALIDATION_CAPABILITY,
-    is_reviewed_skill_capability,
-)
-from app.agent_result import EffectKind
+from app.agent_effects import IDLE_TIMEOUT_SECONDS, TOTAL_TIMEOUT_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import (
-    PROBE_VERIFIED_RUNTIME_CAPABILITIES,
     RuntimeCapabilitySnapshot,
     RuntimeFailure,
     RuntimeFailureClass,
     RuntimeKind,
     RuntimeRoute,
-    RuntimeRouteSurfaceManifest,
 )
 from app.codex_decision import extract_codex_session_id
-from app.codex_history import count_codex_session_lines, find_codex_session_path
+from app.codex_history import count_codex_session_lines
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import (
     FridayExecutionResult,
@@ -47,7 +32,6 @@ from app.friday_runtime_adapter import (
     FridayRuntimeError,
 )
 from app.leak_check import contains_credential, contains_local_runtime_leak
-from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import (
     MAX_RUNTIME_RESULT_ENVELOPE_BYTES,
@@ -62,7 +46,6 @@ from app.store import (
 ResultT = TypeVar("ResultT")
 StepT = TypeVar("StepT")
 ProcessExecutor = Callable[..., ProcessRunResult]
-_APPROVED_COMMAND_FACTORY_SEAL = object()
 _ROUTED_RESULT_CODEC_SEAL = object()
 _RESULT_VALIDATION_RETRY_SEAL = object()
 
@@ -81,7 +64,7 @@ class RoutedResultValidationError(ValueError):
 
 @dataclass(frozen=True, slots=True, init=False)
 class RoutedResultValidationRetry:
-    """Sealed policy permitting exactly one fresh read-only correction turn."""
+    """Sealed policy permitting exactly one typed-result correction turn."""
 
     correction_instructions: str
     correction_prompt: Callable[[str], str] | None
@@ -116,6 +99,7 @@ class RoutedResultValidationRetry:
     ) -> RoutedResultValidationRetry:
         return cls(
             correction_instructions=correction_instructions,
+            resume_same_session=True,
             seal=_RESULT_VALIDATION_RETRY_SEAL,
         )
 
@@ -168,280 +152,41 @@ class RoutedResultValidationRetry:
         return f"result_validation_retry.v1:{digest}"
 
 
-class ExecutionEffectMode(StrEnum):
-    READ_ONLY = "read_only"
-    EFFECTFUL = "effectful"
-
-
-class _ReadOnlyCommandIsolation(StrEnum):
-    STANDARD = "standard"
-    NO_TOOLS = "no_tools"
-    MEMORY_RECALL_ONLY = "memory_recall_only"
-    MEMORY_READS = "memory_reads"
-    MEMORY_WRITE_ONLY = "memory_write_only"
-    AGENT_CLI_READS = "agent_cli_reads"
-    REVIEWED_READS = "reviewed_reads"
-
-
-_READ_ONLY_DISABLED_DYNAMIC_FEATURES = (
-    "plugins",
-    "apps",
-    "chronicle",
-    "computer_use",
-    "browser_use",
-    "in_app_browser",
-    "memories",
-    "skill_search",
-)
-
-
-READ_ONLY_BACKGROUND_AGENT_BOUNDARY = """
-This is a background decision. Use the capabilities and execution space
-available to the calling agent and return one valid structured result. The
-service consumes the result and does not reinterpret provider-specific tools.
+BACKGROUND_AGENT_RUNTIME_BOUNDARY = """
+This is a background Agent turn. Use the capabilities and execution space
+available to the runtime and return one valid structured result. The service
+consumes that result and does not reinterpret provider-specific commands or tools.
 """.strip()
 
 
 @dataclass(frozen=True, slots=True)
-class _ApprovedExecutionPolicy:
-    effect_mode: ExecutionEffectMode
-    seal: object
+class CodexCommandFactory:
+    """Build a normal Codex command and leave tool review to the runtime."""
+
+    developer_instructions: str
+    output_schema_path: Path | None = None
+    use_output_schema: bool = False
+    image_paths: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.seal is not _APPROVED_COMMAND_FACTORY_SEAL:
-            raise ValueError("execution policy was not issued by the approved factory")
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ApprovedCodexCommandFactory:
-    """Build only the two reviewed Codex command policy shapes.
-
-    The sealed policy is consumed internally by ``RoutedCodexExecution``. A
-    caller cannot opt into failover by passing a boolean or an arbitrary policy
-    object.
-    """
-
-    _policy: _ApprovedExecutionPolicy
-    _developer_instructions: str
-    _output_schema_path: Path | None
-    _use_output_schema: bool
-    _image_paths: tuple[Path, ...]
-    _command_isolation: _ReadOnlyCommandIsolation
-    _required_reviewed_mcp_servers: frozenset[str]
-
-    def __init__(
-        self,
-        *,
-        effect_mode: ExecutionEffectMode,
-        developer_instructions: str,
-        output_schema_path: Path | None,
-        use_output_schema: bool,
-        image_paths: tuple[Path, ...],
-        command_isolation: _ReadOnlyCommandIsolation,
-        required_reviewed_mcp_servers: frozenset[str],
-        seal: object,
-    ) -> None:
-        if seal is not _APPROVED_COMMAND_FACTORY_SEAL:
-            raise ValueError("approved command factories use named constructors")
-        developer_instructions = developer_instructions.strip()
-        if not developer_instructions:
+        if not self.developer_instructions.strip():
             raise ValueError("developer_instructions must be non-empty")
-        object.__setattr__(self, "_policy", _ApprovedExecutionPolicy(effect_mode, seal))
-        object.__setattr__(self, "_developer_instructions", developer_instructions)
-        object.__setattr__(self, "_output_schema_path", output_schema_path)
-        object.__setattr__(self, "_use_output_schema", use_output_schema)
-        object.__setattr__(self, "_image_paths", image_paths)
-        object.__setattr__(self, "_command_isolation", command_isolation)
-        object.__setattr__(
-            self,
-            "_required_reviewed_mcp_servers",
-            required_reviewed_mcp_servers,
-        )
 
     @classmethod
-    def read_only(
+    def standard(
         cls,
         *,
         developer_instructions: str,
         output_schema_path: Path | None = None,
         use_output_schema: bool = False,
         image_paths: Sequence[Path] = (),
-    ) -> ApprovedCodexCommandFactory:
+    ) -> "CodexCommandFactory":
         return cls(
-            effect_mode=ExecutionEffectMode.READ_ONLY,
             developer_instructions=developer_instructions,
             output_schema_path=output_schema_path,
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
-            command_isolation=_ReadOnlyCommandIsolation.NO_TOOLS,
-            required_reviewed_mcp_servers=frozenset(),
-            seal=_APPROVED_COMMAND_FACTORY_SEAL,
         )
-
-    @classmethod
-    def read_only_without_tools(
-        cls,
-        *,
-        developer_instructions: str,
-        output_schema_path: Path | None = None,
-        use_output_schema: bool = False,
-        image_paths: Sequence[Path] = (),
-    ) -> ApprovedCodexCommandFactory:
-        return cls(
-            effect_mode=ExecutionEffectMode.READ_ONLY,
-            developer_instructions=developer_instructions,
-            output_schema_path=output_schema_path,
-            use_output_schema=use_output_schema,
-            image_paths=tuple(image_paths),
-            command_isolation=_ReadOnlyCommandIsolation.NO_TOOLS,
-            required_reviewed_mcp_servers=frozenset(),
-            seal=_APPROVED_COMMAND_FACTORY_SEAL,
-        )
-
-    @classmethod
-    def read_only_memory_recall(
-        cls,
-        *,
-        developer_instructions: str,
-        output_schema_path: Path | None = None,
-        use_output_schema: bool = False,
-        image_paths: Sequence[Path] = (),
-    ) -> ApprovedCodexCommandFactory:
-        return cls(
-            effect_mode=ExecutionEffectMode.READ_ONLY,
-            developer_instructions=developer_instructions,
-            output_schema_path=output_schema_path,
-            use_output_schema=use_output_schema,
-            image_paths=tuple(image_paths),
-            command_isolation=_ReadOnlyCommandIsolation.MEMORY_RECALL_ONLY,
-            required_reviewed_mcp_servers=frozenset({"memory_connector"}),
-            seal=_APPROVED_COMMAND_FACTORY_SEAL,
-        )
-
-    @classmethod
-    def read_only_project_memory(cls, **kwargs) -> ApprovedCodexCommandFactory:
-        return cls._reviewed_read_only(
-            command_isolation=_ReadOnlyCommandIsolation.MEMORY_READS,
-            required_reviewed_mcp_servers=frozenset({"memory_connector"}),
-            **kwargs,
-        )
-
-    @classmethod
-    def read_only_structured(cls, **kwargs) -> ApprovedCodexCommandFactory:
-        return cls._reviewed_read_only(
-            command_isolation=_ReadOnlyCommandIsolation.AGENT_CLI_READS,
-            required_reviewed_mcp_servers=frozenset({"agent_cli"}),
-            **kwargs,
-        )
-
-    @classmethod
-    def read_only_task(cls, **kwargs) -> ApprovedCodexCommandFactory:
-        return cls._reviewed_read_only(
-            command_isolation=_ReadOnlyCommandIsolation.REVIEWED_READS,
-            required_reviewed_mcp_servers=frozenset({"agent_cli", "memory_connector"}),
-            **kwargs,
-        )
-
-    @classmethod
-    def read_only_meeting(cls, **kwargs) -> ApprovedCodexCommandFactory:
-        return cls._reviewed_read_only(
-            command_isolation=_ReadOnlyCommandIsolation.AGENT_CLI_READS,
-            required_reviewed_mcp_servers=frozenset({"agent_cli"}),
-            **kwargs,
-        )
-
-    @classmethod
-    def read_only_weekly_okr(cls, **kwargs) -> ApprovedCodexCommandFactory:
-        return cls._reviewed_read_only(
-            command_isolation=_ReadOnlyCommandIsolation.REVIEWED_READS,
-            required_reviewed_mcp_servers=frozenset({"agent_cli", "memory_connector"}),
-            **kwargs,
-        )
-
-    @classmethod
-    def _reviewed_read_only(
-        cls,
-        *,
-        command_isolation: _ReadOnlyCommandIsolation,
-        required_reviewed_mcp_servers: frozenset[str],
-        developer_instructions: str,
-        output_schema_path: Path | None = None,
-        use_output_schema: bool = False,
-        image_paths: Sequence[Path] = (),
-    ) -> ApprovedCodexCommandFactory:
-        return cls(
-            effect_mode=ExecutionEffectMode.READ_ONLY,
-            developer_instructions=developer_instructions,
-            output_schema_path=output_schema_path,
-            use_output_schema=use_output_schema,
-            image_paths=tuple(image_paths),
-            command_isolation=command_isolation,
-            required_reviewed_mcp_servers=required_reviewed_mcp_servers,
-            seal=_APPROVED_COMMAND_FACTORY_SEAL,
-        )
-
-    @classmethod
-    def effectful(
-        cls,
-        *,
-        developer_instructions: str,
-        output_schema_path: Path | None = None,
-        use_output_schema: bool = False,
-        image_paths: Sequence[Path] = (),
-    ) -> ApprovedCodexCommandFactory:
-        return cls(
-            effect_mode=ExecutionEffectMode.EFFECTFUL,
-            developer_instructions=developer_instructions,
-            output_schema_path=output_schema_path,
-            use_output_schema=use_output_schema,
-            image_paths=tuple(image_paths),
-            command_isolation=_ReadOnlyCommandIsolation.STANDARD,
-            required_reviewed_mcp_servers=frozenset(),
-            seal=_APPROVED_COMMAND_FACTORY_SEAL,
-        )
-
-    @classmethod
-    def effectful_memory_write(
-        cls,
-        *,
-        developer_instructions: str,
-        output_schema_path: Path | None = None,
-        use_output_schema: bool = False,
-    ) -> ApprovedCodexCommandFactory:
-        return cls(
-            effect_mode=ExecutionEffectMode.EFFECTFUL,
-            developer_instructions=developer_instructions,
-            output_schema_path=output_schema_path,
-            use_output_schema=use_output_schema,
-            image_paths=(),
-            command_isolation=_ReadOnlyCommandIsolation.MEMORY_WRITE_ONLY,
-            required_reviewed_mcp_servers=frozenset({"memory_connector"}),
-            seal=_APPROVED_COMMAND_FACTORY_SEAL,
-        )
-
-    @property
-    def _approved_policy(self) -> _ApprovedExecutionPolicy:
-        return self._policy
-
-    @property
-    def required_reviewed_mcp_servers(self) -> frozenset[str]:
-        return self._required_reviewed_mcp_servers
-
-    def missing_reviewed_mcp_transports(
-        self, *, adapter: CodexRuntimeAdapter, route: RuntimeRoute
-    ) -> frozenset[str]:
-        if not self._required_reviewed_mcp_servers:
-            return frozenset()
-        available = frozenset(
-            _configured_mcp_server_transport_names((), env=adapter.build_env(route))
-        )
-        available |= self._service_owned_mcp_transports
-        return self._required_reviewed_mcp_servers - available
-
-    @property
-    def _service_owned_mcp_transports(self) -> frozenset[str]:
-        """Transports installed by this approved command factory itself."""
-        return frozenset({"agent_cli"}) & self._required_reviewed_mcp_servers
 
     def build(
         self,
@@ -452,221 +197,22 @@ class ApprovedCodexCommandFactory:
         session_id: str | None,
         skip_git_repo_check: bool = False,
     ) -> tuple[list[str], dict[str, str]]:
-        read_only = self._policy.effect_mode is ExecutionEffectMode.READ_ONLY
         build_options = dict(
             route=route,
             prompt=prompt,
             session_id=session_id,
-            image_paths=list(self._image_paths),
-            output_schema_path=self._output_schema_path,
-            use_output_schema=self._use_output_schema,
-            approval_policy="never" if read_only else "on-failure",
-            developer_instructions=self._developer_instructions,
-            use_approval_bypass=not read_only,
-            sandbox_mode="read-only" if read_only else None,
+            image_paths=list(self.image_paths),
+            output_schema_path=self.output_schema_path,
+            use_output_schema=self.use_output_schema,
+            approval_policy="on-failure",
+            developer_instructions=self.developer_instructions,
+            use_approval_bypass=False,
+            sandbox_mode=None,
         )
         if skip_git_repo_check:
             build_options["skip_git_repo_check"] = True
         command = adapter.build_command(**build_options)
-        env = adapter.build_env(route)
-        if "agent_cli" in self._service_owned_mcp_transports:
-            _inject_service_owned_agent_cli_transport(command)
-        if read_only or self._command_isolation is not _ReadOnlyCommandIsolation.STANDARD:
-            _apply_read_only_command_isolation(
-                command,
-                env=env,
-                isolation=self._command_isolation,
-            )
-        return command, env
-
-
-def _inject_service_owned_agent_cli_transport(command: list[str]) -> None:
-    """Install the reviewed local MCP only for approved factory workloads."""
-    service_root = Path(__file__).resolve().parent.parent
-    insertion_index = len(command) - 1
-    if command[1:3] == ["exec", "resume"]:
-        insertion_index -= 1
-    command[insertion_index:insertion_index] = [
-        "-c",
-        "mcp_servers.agent_cli.command=" + json.dumps(sys.executable),
-        "-c",
-        "mcp_servers.agent_cli.args=" + json.dumps(["-m", "app.agent_cli"]),
-        "-c",
-        "mcp_servers.agent_cli.cwd=" + json.dumps(str(service_root)),
-    ]
-
-
-def _apply_read_only_command_isolation(
-    command: list[str],
-    *,
-    env: Mapping[str, str],
-    isolation: _ReadOnlyCommandIsolation,
-) -> None:
-    server_names = _configured_mcp_server_names(command, env=env)
-    transport_names = frozenset(
-        _configured_mcp_server_transport_names(command, env=env)
-    )
-    _remove_read_only_isolation_conflicts(command)
-    options = [
-        *(
-            option
-            for feature in _READ_ONLY_DISABLED_DYNAMIC_FEATURES
-            for option in ("--disable", feature)
-        ),
-        "-c",
-        "tools.enabled_tools=[]",
-        "-c",
-        'web_search="disabled"',
-    ]
-    allowed_tools: dict[str, tuple[str, ...]] = {}
-    if isolation is _ReadOnlyCommandIsolation.MEMORY_RECALL_ONLY:
-        allowed_tools["memory_connector"] = ("memory_recall",)
-    elif isolation is _ReadOnlyCommandIsolation.MEMORY_WRITE_ONLY:
-        allowed_tools["memory_connector"] = ("memory_write",)
-    elif isolation is _ReadOnlyCommandIsolation.MEMORY_READS:
-        allowed_tools["memory_connector"] = (
-            "memory_get",
-            "memory_recall",
-            "timeline_get",
-            "user_get",
-        )
-    elif isolation in {
-        _ReadOnlyCommandIsolation.AGENT_CLI_READS,
-        _ReadOnlyCommandIsolation.REVIEWED_READS,
-    }:
-        allowed_tools["agent_cli"] = (
-            "execute_reviewed_read",
-            "read_skill",
-            "read_text_file",
-            "read_spreadsheet",
-        )
-        if isolation is _ReadOnlyCommandIsolation.REVIEWED_READS:
-            allowed_tools["memory_connector"] = (
-                "memory_get",
-                "memory_recall",
-                "timeline_get",
-                "user_get",
-            )
-    for server_name in server_names:
-        if server_name in allowed_tools:
-            continue
-        options.extend(["-c", f"mcp_servers.{server_name}.enabled=false"])
-    if "memory_connector" not in allowed_tools and "memory_connector" not in server_names:
-        options.extend(["-c", "mcp_servers.memory_connector.enabled=false"])
-    for server_name, tools in allowed_tools.items():
-        if server_name not in transport_names:
-            continue
-        options.extend(
-            [
-                "-c",
-                f"mcp_servers.{server_name}.enabled=true",
-                "-c",
-                f"mcp_servers.{server_name}.enabled_tools="
-                + json.dumps(list(tools), separators=(",", ":")),
-                "-c",
-                f"mcp_servers.{server_name}.disabled_tools="
-                + json.dumps(
-                    (
-                        ["execute_reviewed_write"]
-                        if server_name == "agent_cli"
-                        else [
-                            "memory_recall"
-                            if isolation is _ReadOnlyCommandIsolation.MEMORY_WRITE_ONLY
-                            else "memory_write"
-                        ]
-                    ),
-                    separators=(",", ":"),
-                ),
-            ]
-        )
-    insertion_index = len(command) - 1
-    if command[1:3] == ["exec", "resume"]:
-        insertion_index -= 1
-    command[insertion_index:insertion_index] = options
-
-
-def _remove_read_only_isolation_conflicts(command: list[str]) -> None:
-    index = 0
-    feature_prefixes = tuple(
-        f"features.{feature}=" for feature in _READ_ONLY_DISABLED_DYNAMIC_FEATURES
-    )
-    while index + 1 < len(command):
-        if (
-            command[index] == "--enable"
-            and command[index + 1] in _READ_ONLY_DISABLED_DYNAMIC_FEATURES
-        ):
-            del command[index : index + 2]
-            continue
-        if command[index] == "-c" and command[index + 1].startswith(
-            ("tools.enabled_tools=", "web_search=", *feature_prefixes)
-        ):
-            del command[index : index + 2]
-            continue
-        index += 1
-
-
-def _configured_mcp_server_names(
-    command: Sequence[str], *, env: Mapping[str, str]
-) -> tuple[str, ...]:
-    names: set[str] = set()
-    for index, value in enumerate(command[:-1]):
-        if value != "-c":
-            continue
-        option = command[index + 1]
-        if option.startswith("mcp_servers."):
-            parts = option.split(".", 2)
-            if len(parts) == 3 and parts[1]:
-                names.add(parts[1])
-    codex_home_text = env.get("CODEX_HOME", os.environ.get("CODEX_HOME", "")).strip()
-    config_path = Path(codex_home_text) / "config.toml" if codex_home_text else None
-    if config_path is not None and config_path.is_file():
-        try:
-            configured = tomllib.loads(config_path.read_text(encoding="utf-8")).get(
-                "mcp_servers", {}
-            )
-        except (OSError, tomllib.TOMLDecodeError) as exc:
-            raise ValueError("Codex MCP configuration is not safely readable") from exc
-        if isinstance(configured, dict):
-            names.update(str(name) for name in configured if str(name).strip())
-    return tuple(sorted(names))
-
-
-def _configured_mcp_server_transport_names(
-    command: Sequence[str], *, env: Mapping[str, str]
-) -> tuple[str, ...]:
-    names: set[str] = set()
-    for index, value in enumerate(command[:-1]):
-        if value != "-c":
-            continue
-        option = command[index + 1]
-        if not option.startswith("mcp_servers."):
-            continue
-        parts = option.split(".", 2)
-        if len(parts) != 3 or not parts[1]:
-            continue
-        field, separator, raw_value = parts[2].partition("=")
-        if separator and field in {"command", "url"} and raw_value.strip(" '\""):
-            names.add(parts[1])
-    codex_home_text = env.get("CODEX_HOME", os.environ.get("CODEX_HOME", "")).strip()
-    config_path = Path(codex_home_text) / "config.toml" if codex_home_text else None
-    if config_path is not None and config_path.is_file():
-        try:
-            configured = tomllib.loads(config_path.read_text(encoding="utf-8")).get(
-                "mcp_servers", {}
-            )
-        except (OSError, tomllib.TOMLDecodeError) as exc:
-            raise ValueError("Codex MCP configuration is not safely readable") from exc
-        if not isinstance(configured, dict):
-            raise ValueError("Codex MCP configuration has invalid server registry")
-        for name, server in configured.items():
-            if not isinstance(server, dict):
-                continue
-            if any(
-                isinstance(server.get(field), str) and server[field].strip()
-                for field in ("command", "url")
-            ):
-                names.add(str(name))
-    return tuple(sorted(names))
+        return command, adapter.build_env(route)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -878,24 +424,6 @@ class RuntimeRouteDecision:
     reason: str
 
 
-def failover_is_safe(
-    *,
-    run: AgentRun,
-    attempt: AgentRuntimeAttempt,
-    failure: RuntimeFailure,
-    has_confirmed_receipt: bool,
-    recovery_phase: str,
-) -> tuple[bool, str]:
-    # Route selection is infrastructure recovery, not an application-level
-    # effect policy.  The runtime may fail over any retryable provider failure;
-    # whether a business action should be repeated is decided by the next
-    # Consumer/Audit turn from current provider state.  Persisted event counts
-    # and receipts remain evidence only and never veto a route.
-    if not failure.failover_permitted:
-        return False, "failure_not_eligible"
-    return True, "safe"
-
-
 class AgentRuntimeRouter:
     """Select one untried, healthy route without starting or mutating work."""
 
@@ -905,13 +433,11 @@ class AgentRuntimeRouter:
         routes: Sequence[RuntimeRoute],
         store: AutoReplyStore,
         snapshots: Mapping[str, RuntimeCapabilitySnapshot],
-        surface_manifests: Mapping[str, RuntimeRouteSurfaceManifest] | None = None,
         now: Callable[[], datetime | str] | None = None,
     ) -> None:
         self._routes = tuple(routes)
         self._store = store
         self._snapshots = snapshots
-        self._surface_manifests = surface_manifests or {}
         self._now = now or (lambda: datetime.now(UTC))
 
     def first_eligible_route(
@@ -1005,8 +531,6 @@ class AgentRuntimeRouter:
         failed_attempt: AgentRuntimeAttempt,
         failure: RuntimeFailure,
         required_capabilities: frozenset[str],
-        recovery_phase: str,
-        has_confirmed_receipt: bool = False,
     ) -> RuntimeRouteDecision:
         persisted_run = self._store.get_agent_run(run.id)
         if persisted_run is None:
@@ -1030,21 +554,8 @@ class AgentRuntimeRouter:
             return RuntimeRouteDecision(None, False, "failure_mismatch")
 
         attempts = self._store.list_agent_runtime_attempts(persisted_run.id)
-        has_persisted_confirmed_receipt = any(
-            receipt.completed and receipt.persisted and receipt.safe_to_confirm
-            for receipt in self._store.list_agent_execution_receipts(persisted_run.id)
-        )
-        safe, reason = failover_is_safe(
-            run=persisted_run,
-            attempt=persisted_attempt,
-            failure=failure,
-            has_confirmed_receipt=(
-                has_confirmed_receipt or has_persisted_confirmed_receipt
-            ),
-            recovery_phase=recovery_phase,
-        )
-        if not safe:
-            return RuntimeRouteDecision(None, False, reason)
+        if not failure.failover_permitted:
+            return RuntimeRouteDecision(None, False, "failure_not_eligible")
 
         now = _parse_timestamp(self._now())
         attempted_routes = {attempt.route_name for attempt in attempts}
@@ -1212,36 +723,8 @@ class AgentRuntimeRouter:
         snapshot: RuntimeCapabilitySnapshot,
         required_capabilities: frozenset[str],
     ) -> tuple[list[str], list[str]]:
-        # Test/future probe snapshots may carry additional directly verified
-        # capabilities. Production no-tools probes intentionally carry only the
-        # base set; reviewed local surfaces are a separate typed manifest.
         unresolved = required_capabilities - snapshot.capabilities
-        missing_probe = sorted(
-            unresolved & PROBE_VERIFIED_RUNTIME_CAPABILITIES
-        )
-        manifest = self._surface_manifests.get(route.name)
-        manifest_capabilities = (
-            manifest.capabilities
-            if manifest is not None and manifest.route_name == route.name
-            else frozenset()
-        )
-        if REVIEWED_SKILL_RECEIPT_VALIDATION_CAPABILITY in manifest_capabilities:
-            # A concrete Skill capability is a persisted receipt, not a
-            # static provider feature. The controlled agent_cli read_skill
-            # operation revalidates its exact path, name, and content digest
-            # during the turn, so route selection needs proof only that this
-            # validation surface is installed.
-            unresolved = {
-                capability
-                for capability in unresolved
-                if not is_reviewed_skill_capability(capability)
-            }
-        missing_surface = sorted(
-            unresolved
-            - PROBE_VERIFIED_RUNTIME_CAPABILITIES
-            - manifest_capabilities
-        )
-        return missing_probe, missing_surface
+        return sorted(unresolved), []
 
 
 class RoutedCodexExecution:
@@ -1258,11 +741,8 @@ class RoutedCodexExecution:
         executor: ProcessExecutor = run_process_with_idle_timeout,
         session_id_parser: Callable[[str], str | None] = extract_codex_session_id,
         session_line_counter: Callable[[str], int] = count_codex_session_lines,
-        session_effect_probe: Callable[[str, int, int], bool | None] | None = None,
         total_timeout_seconds: float = TOTAL_TIMEOUT_SECONDS,
         idle_timeout_seconds: float = IDLE_TIMEOUT_SECONDS,
-        effect_registry: McpToolEffectRegistry | None = None,
-        native_cli_classifier: NativeCliMetadataClassifier | None = None,
         owner: str | None = None,
         lease_seconds: int | None = None,
         allow_legacy_oauth_bootstrap: bool = False,
@@ -1277,15 +757,8 @@ class RoutedCodexExecution:
         self._executor = executor
         self._session_id_parser = session_id_parser
         self._session_line_counter = session_line_counter
-        self._session_effect_probe = session_effect_probe or (
-            lambda _session_id, _start, _end: None
-        )
         self._total_timeout_seconds = total_timeout_seconds
         self._idle_timeout_seconds = idle_timeout_seconds
-        self._effect_registry = effect_registry or McpToolEffectRegistry.default()
-        self._native_cli_classifier = (
-            native_cli_classifier or NativeCliMetadataClassifier()
-        )
         self._owner = (owner or f"routed-codex-{uuid.uuid4().hex}").strip()
         if not self._owner:
             raise ValueError("owner must be non-empty")
@@ -1307,7 +780,7 @@ class RoutedCodexExecution:
         workload_kind: str,
         workload_key: str,
         prompt: str,
-        command_factory: ApprovedCodexCommandFactory,
+        command_factory: CodexCommandFactory,
         parser: Callable[[str], ResultT],
         result_codec: RoutedResultCodec[ResultT],
         conversation_id: str | None = None,
@@ -1316,21 +789,18 @@ class RoutedCodexExecution:
     ) -> RoutedCodexExecutionResult[ResultT]:
         if self._refresh_runtime_capabilities is not None:
             self._refresh_runtime_capabilities(force=False)
-        if type(command_factory) is not ApprovedCodexCommandFactory:
-            raise ValueError("command_factory must be approved")
-        policy = command_factory._approved_policy
-        if policy.seal is not _APPROVED_COMMAND_FACTORY_SEAL:
-            raise ValueError("command_factory policy is not approved")
+        if not isinstance(command_factory, CodexCommandFactory):
+            raise ValueError("command_factory is invalid")
         if (
             type(result_codec) is not RoutedResultCodec
             or result_codec._seal is not _ROUTED_RESULT_CODEC_SEAL
         ):
-            raise ValueError("result_codec must be approved")
+            raise ValueError("result_codec is invalid")
         if result_validation_retry is not None and (
             type(result_validation_retry) is not RoutedResultValidationRetry
             or result_validation_retry._seal is not _RESULT_VALIDATION_RETRY_SEAL
         ):
-            raise ValueError("result_validation_retry must be approved")
+            raise ValueError("result_validation_retry is invalid")
         prompt = prompt.strip()
         if not prompt:
             raise ValueError("prompt must be non-empty")
@@ -1474,26 +944,10 @@ class RoutedCodexExecution:
                 ),
             )
         route = decision.route
-        if route.runtime_kind is not RuntimeKind.FRIDAY_RUNTIME:
-            try:
-                missing_reviewed_mcp = command_factory.missing_reviewed_mcp_transports(
-                    adapter=self._adapter,
-                    route=route,
-                )
-            except ValueError as exc:
-                raise RoutedCodexExecutionError(
-                    "runtime_reviewed_mcp_registry_invalid",
-                    failure_class=RuntimeFailureClass.CAPABILITY,
-                    failure_code="runtime_reviewed_mcp_registry_invalid",
-                ) from exc
-            if missing_reviewed_mcp:
-                raise RoutedCodexExecutionError(
-                    "runtime_reviewed_mcp_surface_unavailable",
-                    ",".join(sorted(missing_reviewed_mcp)),
-                    failure_class=RuntimeFailureClass.CAPABILITY,
-                    failure_code="runtime_reviewed_mcp_surface_unavailable",
-                )
-        elif self._friday_adapter is None:
+        if (
+            route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME
+            and self._friday_adapter is None
+        ):
             raise RoutedCodexExecutionError(
                 "friday_runtime_unavailable",
                 "Friday Runtime adapter is not configured",
@@ -2101,7 +1555,6 @@ class RoutedCodexExecution:
             failed_attempt=failed_attempt,
             failure=failure,
             required_capabilities=required_capabilities,
-            recovery_phase="",
         )
 
     def _session_for_route(
@@ -2110,14 +1563,6 @@ class RoutedCodexExecution:
         if not conversation_id:
             return None
         return self._store.get_conversation_runtime_session(conversation_id, route_name)
-
-    def _probe_session_effect(
-        self, session_id: str, transcript_start: int, transcript_end: int
-    ) -> bool | None:
-        # Effect accounting belongs to the runtime/provider. The application
-        # only consumes the structured result and must not turn an unavailable
-        # provider probe into a business failure.
-        return False
 
     def _finalized_step(
         self,
@@ -2199,115 +1644,6 @@ class RoutedCodexExecution:
             owner=self._owner,
             now=self._now(),
         )
-
-
-def local_codex_session_effect_probe(
-    *,
-    codex_home: Path | None = None,
-    effect_registry: McpToolEffectRegistry | None = None,
-    native_cli_classifier: NativeCliMetadataClassifier | None = None,
-) -> Callable[[str, int, int], bool | None]:
-    """Build a fail-closed probe over an exact persisted Codex transcript range."""
-
-    registry = effect_registry or McpToolEffectRegistry.default()
-    classifier = native_cli_classifier or NativeCliMetadataClassifier()
-
-    def probe(session_id: str, start_line: int, end_line: int) -> bool | None:
-        if start_line < 0 or end_line < start_line:
-            return None
-        path = find_codex_session_path(session_id, codex_home=codex_home)
-        if path is None:
-            return None
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError):
-            return None
-        if end_line > len(lines):
-            return None
-        for raw_line in lines[start_line:end_line]:
-            try:
-                payload = json.loads(raw_line)
-            except json.JSONDecodeError:
-                return None
-            item = _persisted_session_effect_item(payload)
-            if item is None:
-                continue
-            outcome = _classify_session_effect_item(
-                item,
-                effect_registry=registry,
-                native_cli_classifier=classifier,
-            )
-            if outcome is not False:
-                return outcome
-        return False
-
-    return probe
-
-
-def _persisted_session_effect_item(payload: object) -> dict[str, object] | None:
-    if not isinstance(payload, dict):
-        return None
-    if payload.get("type") == "item.started":
-        item = payload.get("item")
-        return item if isinstance(item, dict) else None
-    if payload.get("type") != "response_item":
-        return None
-    item = payload.get("payload")
-    if not isinstance(item, dict) or item.get("type") != "function_call":
-        return None
-    name = item.get("name")
-    if not isinstance(name, str) or not name.strip():
-        return {"type": "unknown_tool_call"}
-    arguments = item.get("arguments")
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments)
-        except json.JSONDecodeError:
-            return {"type": "unknown_tool_call"}
-    if not isinstance(arguments, dict):
-        return {"type": "unknown_tool_call"}
-    if name.startswith("mcp__"):
-        parts = name.split("__", 2)
-        if len(parts) != 3 or not parts[1] or not parts[2]:
-            return {"type": "unknown_tool_call"}
-        return {
-            "type": "mcp_tool_call",
-            "server": parts[1],
-            "tool": parts[2],
-            "arguments": arguments,
-        }
-    if name in {"exec_command", "shell", "command_execution"}:
-        command = arguments.get("cmd") or arguments.get("command")
-        return {"type": "command_execution", "command": command}
-    return {"type": "unknown_tool_call"}
-
-
-def _classify_session_effect_item(
-    item: dict[str, object],
-    *,
-    effect_registry: McpToolEffectRegistry,
-    native_cli_classifier: NativeCliMetadataClassifier,
-) -> bool | None:
-    metadata = item.get("metadata")
-    if isinstance(metadata, dict):
-        if metadata.get("effect") == "effectful":
-            return True
-        if metadata.get("effect") == "read_only":
-            return False
-    if item.get("type") == "mcp_tool_call":
-        call = effect_registry.classify(item)
-        if call is None:
-            return None
-        return call.effect is EffectKind.EFFECTFUL
-    if item.get("type") == "command_execution":
-        try:
-            command = native_cli_classifier.classify(item)
-        except RuntimeError:
-            return None
-        if command is None or command.effect is None:
-            return None
-        return command.effect is EffectKind.EFFECTFUL
-    return None
 
 
 _DEFAULT_NAIVE_TIME_ZONE = ZoneInfo("Asia/Shanghai")

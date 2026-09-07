@@ -13,11 +13,10 @@ from app.agent_context import (
     MaterialReference,
 )
 from app.agent_contracts import ConsumerProposal
-from app.agent_result import EffectKind, ResultParseError
+from app.agent_result import ResultParseError
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
-from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import RuntimeRouteUnavailableError
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import (
@@ -30,7 +29,6 @@ from app.consumer_agent import (
 from app.developer_prompt import DeveloperPromptTemplateError
 from app.outbound_postfix import PreparedOutboundMessage
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
-from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 
@@ -389,7 +387,6 @@ def test_audit_contract_requires_profile_guided_response_to_substantive_input(
                             "收到，我看一下。",
                         ]
                     },
-                    "expected_verification": "Read back the sent message.",
                 }
             ],
             "sourced_facts": [],
@@ -539,7 +536,6 @@ def _proposal_jsonl(
                     "operation": operation,
                     "target": target or {"group": "cid-agent"},
                     "payload": payload,
-                    "expected_verification": "Message exists",
                 }
             ],
             "sourced_facts": [],
@@ -570,7 +566,7 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert '"objective"' in instructions
     assert '"sourced_facts"' in instructions
     assert '"authored_judgment"' in instructions
-    assert '"expected_verification"' in instructions
+    assert '"expected_verification"' not in instructions
     assert "proposal_json" not in instructions
     assert "decision_options_json" not in instructions
     assert "proposal is" in instructions
@@ -717,12 +713,8 @@ def test_audit_instructions_reserve_human_for_unsupported_skill_only():
     assert "Skill" in instructions
 
 
-def test_audit_recovery_arguments_do_not_create_reconciliation_prompt():
-    instructions = audit_developer_instructions(
-        "Verify every supported fact.",
-        allow_write=False,
-        recovery_reconciliation=True,
-    )
+def test_audit_instructions_do_not_create_reconciliation_prompt():
+    instructions = audit_developer_instructions("Verify every supported fact.")
 
     assert "unknown-outcome recovery" not in instructions
     assert "Return executed" in instructions
@@ -912,7 +904,7 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     )
     assert "proposal_json" not in executor.prompts[0]
     assert "proposal must match the supplied JSON Schema exactly" in executor.prompts[0]
-    assert '"expected_verification"' in executor.prompts[0]
+    assert '"expected_verification"' not in executor.prompts[0]
     assert any(
         "each array item must contain exactly these non-empty string fields" in option
         and "`key`" in option
@@ -942,12 +934,12 @@ def test_consumer_rotates_session_when_wire_contract_changes(store, task, contex
     )
 
 
-def test_consumer_forced_rerun_starts_a_fresh_session(store, task, context):
+def test_consumer_forced_rerun_resumes_the_compatible_session(store, task, context):
     store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
     store.set_codex_session_contract_hash(
         task.conversation_id, consumer_wire_contract_hash()
     )
-    executor = CapturingExecutor(_result_jsonl(session="session-fresh"))
+    executor = CapturingExecutor(_result_jsonl(session="session-old"))
 
     ConsumerAgentRunner(
         store=store,
@@ -961,9 +953,9 @@ def test_consumer_forced_rerun_starts_a_fresh_session(store, task, context):
         parent_agent_run_id=None,
     )
 
-    assert executor.commands[0][:2] == ["codex", "exec"]
-    assert executor.commands[0][2] != "resume"
-    assert store.get_codex_session_id(task.conversation_id) == "session-fresh"
+    assert executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert executor.commands[0][-2:] == ["session-old", "-"]
+    assert store.get_codex_session_id(task.conversation_id) == "session-old"
 
 
 def test_consumer_service_restart_recovery_continues_existing_session(
@@ -976,7 +968,7 @@ def test_consumer_service_restart_recovery_continues_existing_session(
     executor = CapturingExecutor(_result_jsonl(session="session-old"))
     recovered_task = task.model_copy(
         update={
-            "error": "service_restart_before_effect",
+            "error": "service_restart_interrupted",
             "force_new_decision": False,
         }
     )
@@ -1062,7 +1054,7 @@ def test_consumer_rotates_session_when_agent_capability_contract_changes(
     )
 
 
-def test_consumer_retryable_failure_without_tool_progress_rotates_session(
+def test_consumer_retryable_failure_without_tool_progress_preserves_session(
     store, task, context
 ):
     store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
@@ -1436,7 +1428,7 @@ def test_retryable_consumer_turn_uses_the_current_conversation_session(
     assert recovered is not None and recovered.status == "completed"
 
 
-def test_retry_turn_parse_failure_clears_only_its_current_conversation_session(
+def test_retry_turn_parse_failure_preserves_original_run_session_lineage(
     store, task, context
 ):
     provider_failure = "\n".join(
@@ -1494,10 +1486,10 @@ def test_retry_turn_parse_failure_clears_only_its_current_conversation_session(
         turn_attempt=1,
     )
     assert failed is not None and failed.codex_session_id == "session-old"
-    assert retry is not None and retry.codex_session_id == ""
+    assert retry is not None and retry.codex_session_id == "session-old"
 
 
-def test_retry_after_failed_session_creates_a_new_turn_and_session(store, task, context):
+def test_retry_after_missing_result_creates_new_run_in_same_session(store, task, context):
     first = CapturingExecutor(json.dumps({"type": "thread.started", "thread_id": "session-old"}))
     with pytest.raises(ResultParseError, match="no valid typed result"):
         ConsumerAgentRunner(
@@ -1508,10 +1500,11 @@ def test_retry_after_failed_session_creates_a_new_turn_and_session(store, task, 
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     assert store.get_codex_session_id(task.conversation_id) == "session-old"
+    second = CapturingExecutor(_result_jsonl(session="session-old"))
     recovered = ConsumerAgentRunner(
         store=store,
         workspace=Path("/workspace"),
-        executor=CapturingExecutor(_result_jsonl(session="session-fresh")),
+        executor=second,
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
@@ -1526,8 +1519,10 @@ def test_retry_after_failed_session_creates_a_new_turn_and_session(store, task, 
     assert failed is not None and failed.status == "failed"
     assert failed.codex_session_id == "session-old"
     assert retry is not None and retry.turn_attempt == 1
-    assert retry.codex_session_id == "session-fresh"
-    assert store.get_codex_session_id(task.conversation_id) == "session-fresh"
+    assert second.commands[0][:3] == ["codex", "exec", "resume"]
+    assert second.commands[0][-2:] == ["session-old", "-"]
+    assert retry.codex_session_id == "session-old"
+    assert store.get_codex_session_id(task.conversation_id) == "session-old"
 
 
 def test_consumer_preserves_codex_cli_authentication_failure(store, task, context):
@@ -2036,9 +2031,6 @@ def test_consumer_preserves_direct_native_read_in_runtime_trace(store, task, con
         store=store,
         workspace=Path("/workspace"),
         executor=CapturingExecutor(stream),
-        native_cli_classifier=NativeCliMetadataClassifier(
-            reviewed_effects={("dws", "oa approval detail"): EffectKind.READ_ONLY}
-        ),
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
     persisted = store.get_agent_run(result.run_id)
     assert persisted is not None
@@ -2075,7 +2067,6 @@ def test_consumer_preserves_generic_local_read_tool_call(store, task, context):
         store=store,
         workspace=Path("/workspace"),
         executor=CapturingExecutor(stream),
-        native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
     persisted = store.get_agent_run(result.run_id)
     assert persisted is not None
@@ -2099,9 +2090,6 @@ def test_consumer_preserves_direct_native_write_in_runtime_trace(store, task, co
         store=store,
         workspace=Path("/workspace"),
         executor=executor,
-        native_cli_classifier=NativeCliMetadataClassifier(
-            reviewed_effects={("dws", "chat message send"): EffectKind.EFFECTFUL}
-        ),
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     run = store.get_agent_run_for_turn(
@@ -2225,32 +2213,11 @@ def test_consumer_derives_concrete_turn_capabilities_for_images_and_channel(
         replace(context, image_paths=("/tmp/evidence.png",))
     )
 
-    assert {"image_input", "channel:dingtalk", "task_context"} <= required
+    assert required == {"image_input"}
     assert not any(
         capability.startswith(("native_cli:", "mcp:", "reviewed_skill:"))
         for capability in required
     )
-
-
-def test_consumer_requires_only_explicit_exact_reviewed_skills(store, context):
-    config, router, _ = _consumer_runtime_dependencies(store, routes="codex_api")
-    runner = ConsumerAgentRunner(store=store, workspace=Path("/workspace"))
-    assert not any(
-        capability.startswith("reviewed_skill:")
-        for capability in runner._required_capabilities(context)
-    )
-    receipt = LoadedSkillReceipt(
-        name="ceo-message-triage",
-        path="/reviewed/ceo-message-triage/SKILL.md",
-        sha256="a" * 64,
-    )
-    required = runner._required_capabilities(
-        replace(context, required_reviewed_skills=(receipt,))
-    )
-    exact = f"reviewed_skill:{receipt.name}:{receipt.sha256}"
-
-    assert exact not in required
-    assert router.first_eligible_route(required_capabilities=required).name == "codex_api"
 
 
 def test_api_retry_without_progress_clears_only_api_consumer_session(

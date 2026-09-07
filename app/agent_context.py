@@ -7,7 +7,6 @@ from zoneinfo import ZoneInfo
 from app.agent_contracts import AuditFeedback, ConsumerProposal
 from app.email_classifier_contracts import EmailAttachmentMetadata
 from app.agent_result import AgentError
-from app.agent_skill_usage import LoadedSkillReceipt
 
 CRITICAL_INFO_UNAVAILABLE_CODE = "critical_info_unavailable"
 CRITICAL_INFO_UNAVAILABLE_SUMMARY = "关键信息暂时无法读取，未作出业务判断。"
@@ -96,7 +95,6 @@ class AgentTaskContext:
     trigger_raw_payload: dict[str, object] = field(default_factory=dict)
     image_paths: tuple[str, ...] = ()
     image_sha256s: tuple[str, ...] = ()
-    required_reviewed_skills: tuple[LoadedSkillReceipt, ...] = ()
 
     @property
     def unresolved_image_count(self) -> int:
@@ -289,7 +287,6 @@ class AuditTurnContext:
     operation_id: str
     proposal: ConsumerProposal
     audit_rules: str
-    consumer_skills: tuple[LoadedSkillReceipt, ...] = ()
 
     def render(self, *, current_time: str | None = None) -> str:
         context_facts = "\n\n".join(
@@ -297,17 +294,6 @@ class AuditTurnContext:
                 self.task.render_business_context(
                     current_time=current_time,
                     include_heading=False,
-                ),
-                "Verified Skills read by Consumer A\n"
-                + _json(
-                    [
-                        {
-                            "name": receipt.name,
-                            "path": receipt.path,
-                            "sha256": receipt.sha256,
-                        }
-                        for receipt in self.consumer_skills
-                    ]
                 ),
                 "Candidate revision\n"
                 + _json(

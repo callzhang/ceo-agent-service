@@ -80,7 +80,6 @@ from app.notification import (
     send_browser_notification,
     send_macos_notification,
 )
-from app.native_cli_metadata import describe_native_command, dingtalk_message_text
 from app.leak_check import contains_forbidden_leak, redact_forbidden_leak_markers
 from app.oa_approval import extract_oa_url
 from app.org_cache import (
@@ -114,10 +113,6 @@ ORCHESTRATION_ATTEMPT_STATUS = {
     "dry_run": ("dry_run", "done"),
     "failed_retryable": ("failed", "pending"),
     "failed_terminal": ("failed", "failed"),
-    # Unknown outcomes follow the ordinary retry contract.  They are not a
-    # user-visible terminal/reconciliation state: the attempt is failed and
-    # the task remains eligible for the normal retry budget.
-    "unknown": ("failed", "pending"),
 }
 RESOURCE_DEADLOCK_WAIT_ERROR = "os_resource_deadlock_wait"
 logger = logging.getLogger(__name__)
@@ -1850,7 +1845,6 @@ class DingTalkAutoReplyWorker:
                         )
                     continue
                 try:
-                    failed_run = self._latest_failed_agent_run(task, run_snapshot)
                     task_status, attempt_id = self._record_agent_runtime_failure_attempt(
                         task,
                         error,
@@ -2118,10 +2112,9 @@ class DingTalkAutoReplyWorker:
     ) -> Iterator[ReplyTask]:
         """Yield the ordinary pending queue in id order.
 
-        Legacy ``unknown``/``pending_reconciliation`` records remain visible
-        as historical failures, but they do not form a second scheduling
-        queue.  A retry is represented by a normal pending task and therefore
-        follows the same path as every other failed task.
+        A retry is represented by a normal pending task and therefore follows
+        the same path as every other failed task. Historical recovery states
+        are display-only data and never participate in scheduling.
         """
         if max_id is None:
             return
@@ -2365,12 +2358,6 @@ class DingTalkAutoReplyWorker:
             send_error = "oa_skill_workflow_incomplete"
         elif result.status == "needs_human":
             send_error = send_error or "needs_human"
-        elif result.status == "unknown":
-            # Legacy typed results used ``unknown`` for an interrupted
-            # provider action.  The current contract has no unknown outcome
-            # state: persist the turn as an ordinary retryable failure and let
-            # the next Consumer turn inspect current provider state.
-            send_error = send_error or "agent_result_failed"
         elif result.status in {"failed_retryable", "failed_terminal"}:
             send_error = send_error or "agent_failed"
 
@@ -2397,13 +2384,13 @@ class DingTalkAutoReplyWorker:
         run = self.store.get_agent_run(result.final_run_id)
         if run is None:
             raise RuntimeError("orchestration final run was not persisted")
-        if result.status not in {"failed_retryable", "failed_terminal", "unknown"}:
+        if result.status not in {"failed_retryable", "failed_terminal"}:
             self.store.clear_codex_capacity_pause()
         # Persist a DingTalk message projection only from the typed Audit
         # result's structured delivery reference.  This does not inspect the
         # command stream or re-audit the business action: it merely keeps the
         # message visible in History when the provider already returned a
-        # successful, target-matched read-back.
+        # successful provider result.
         sent_reply = self._sent_reply_projection_from_result(task, result)
         if sent_reply is not None:
             self.store.record_completed_agent_message_delivery(

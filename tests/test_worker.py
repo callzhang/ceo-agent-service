@@ -116,7 +116,6 @@ def test_audit_proposal_receives_cached_oa_open_id():
             operation="send_direct_message",
             target={"user_id": "applicant-user-1", "name": "张三"},
             payload={"content": "请补充材料"},
-            expected_verification="sent",
         ),),
         sourced_facts=[],
         authored_judgment="use the cached target",
@@ -174,12 +173,21 @@ def _claim_audit_run(
     owner: str,
     **kwargs,
 ):
+    turn_attempt = kwargs.pop(
+        "turn_attempt",
+        store.next_agent_run_turn_attempt(
+            task_id,
+            execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=0,
+        ),
+    )
     return store.claim_agent_run(
         task_id,
         execution_generation,
         role=AgentRole.AUDIT,
         proposal_revision=0,
-        turn_attempt=0,
+        turn_attempt=turn_attempt,
         parent_agent_run_id=None,
         operation_id=f"audit-agent:{task_id}:{execution_generation}",
         owner=owner,
@@ -254,7 +262,6 @@ class FakeAgentResultRunner:
         if self.scripts:
             script = self.scripts.pop(0)
             result, events, session_id = script[:3]
-            receipts = script[3] if len(script) == 4 else ()
         else:
             raise AssertionError(
                 "Agent invocation was not explicitly scripted: "
@@ -275,17 +282,6 @@ class FakeAgentResultRunner:
                 event,
                 owner=self.owner,
             )
-        for operation_id, command_path, command_digest in receipts:
-            self.store.record_agent_execution_receipt(
-                run.id,
-                receipt_id=f"native:{operation_id}:{command_digest}",
-                operation_id=operation_id,
-                cli="dws",
-                command_path=command_path,
-                command_digest=command_digest,
-                exit_code=0,
-                owner=self.owner,
-            )
         if result.outcome is ScriptOutcome.FAILED:
             run = self.store.fail_agent_run(
                 run.id,
@@ -298,7 +294,6 @@ class FakeAgentResultRunner:
                 run.id,
                 result.model_dump(mode="json"),
                 owner=self.owner,
-                side_effect_state=("confirmed" if receipts else "none"),
                 transcript_end_line=len(events),
             )
         return ScriptedRunResult(
@@ -353,7 +348,6 @@ class FakeAgentOrchestrator:
                     "feedback": None,
                     "external_result": {
                         "operation_id": run.operation_id,
-                        "verification_summary": result.summary,
                         "live_result_reference": {
                             "process_instance_id": receipt.process_instance_id,
                             "task_id": receipt.task_id,
@@ -403,7 +397,6 @@ def test_sent_reply_projection_accepts_flat_send_receipt_and_proposal_text():
             "feedback": None,
             "external_result": {
                 "operation_id": "op-1",
-                "verification_summary": "provider success",
                 "live_result_reference": {
                     "action_identity": "send-result",
                     "sendStatus": "SUCCESS",
@@ -433,7 +426,6 @@ def test_sent_reply_projection_accepts_flat_send_receipt_and_proposal_text():
                         "operation": "send_to_group",
                         "target": {"conversation_id": "cid-1"},
                         "payload": {"content": "来自 proposal 的回复"},
-                        "expected_verification": "provider success",
                     }
                 ],
                 "sourced_facts": [],
@@ -477,7 +469,6 @@ def test_sent_reply_projection_accepts_stable_message_id_without_send_status():
             "feedback": None,
             "external_result": {
                 "operation_id": "op-1",
-                "verification_summary": "provider accepted and returned stable message id",
                 "live_result_reference": {
                     "action_identity": "send-result",
                     "message_id": "msg-2",
@@ -507,7 +498,6 @@ def test_sent_reply_projection_accepts_stable_message_id_without_send_status():
                         "operation": "send_to_group",
                         "target": {"conversation_id": "cid-1"},
                         "payload": {"content": "来自 proposal 的群回复"},
-                        "expected_verification": "provider success",
                     }
                 ],
                 "sourced_facts": [],
@@ -546,7 +536,7 @@ def test_sent_reply_projection_accepts_reply_action_text():
         {
             "outcome": "executed", "summary": "sent", "proposal_revision": 0,
             "feedback": None,
-            "external_result": {"operation_id": "op-1", "verification_summary": "ok",
+            "external_result": {"operation_id": "op-1",
                 "live_result_reference": {
                     "action_identity": "reply-to-message",
                     "send_status": "SUCCESS",
@@ -566,7 +556,6 @@ def test_sent_reply_projection_accepts_reply_action_text():
                     "conversation_id": "cid-1", "message_id": "trigger-message"
                 },
                 "payload": {"reply_text": "引用回复正文"},
-                "expected_verification": "provider success",
             }], "sourced_facts": [], "authored_judgment": ""},
             "error": {"code": "", "retryable": False, "authorization_required": False},
         }
@@ -611,7 +600,6 @@ def test_completed_message_delivery_projection_repair_is_idempotent(tmp_path: Pa
                         "conversation_id": "destination-conversation",
                     },
                     "payload": {"content": "最终正文"},
-                    "expected_verification": "provider accepts message",
                 }], "sourced_facts": [], "authored_judgment": "",
             },
             "error": {"code": "", "retryable": False, "authorization_required": False},
@@ -635,7 +623,7 @@ def test_completed_message_delivery_projection_repair_is_idempotent(tmp_path: Pa
             "outcome": "executed", "summary": "sent", "proposal_revision": 0,
             "feedback": None,
             "external_result": {
-                "operation_id": "provider-1", "verification_summary": "sent",
+                "operation_id": "provider-1",
                 "live_result_reference": {
                     "action_identity": "send-result",
                     "conversation_id": "destination-conversation",
@@ -779,13 +767,13 @@ def script_completed_result(
     *,
     operation_id: str = "worker-write",
 ) -> FakeAgentResultRunner:
+    del operation_id
     return script_agent_result(
         worker,
         explicit_agent_result(
             ScriptOutcome.COMPLETED,
             summary,
         ),
-        receipts=(execution_receipt(operation_id),),
     )
 
 
@@ -5066,7 +5054,7 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
     assert final_sent(dws) == []
 
 
-def test_consume_once_prioritizes_pending_reconciliation(
+def test_consume_once_processes_ordinary_pending_queue_in_order(
     tmp_path: Path, monkeypatch
 ):
     first = message("@Alex Chen(明哥) 先处理这条")
@@ -5097,14 +5085,8 @@ def test_consume_once_prioritizes_pending_reconciliation(
         trigger_text=second.content,
         trigger_message_json=second.model_dump_json(),
     )
-    priority = worker.store.peek_reply_tasks(limit=10)[-1]
+    priority = worker.store.peek_reply_tasks(limit=10)[0]
     claimed_task_ids: list[int] = []
-    monkeypatch.setattr(
-        worker.store,
-        "peek_pending_reconciliation_reply_tasks",
-        lambda *args, **kwargs: [priority],
-        raising=False,
-    )
     monkeypatch.setattr(
         worker,
         "_process_queued_task",
@@ -5114,197 +5096,6 @@ def test_consume_once_prioritizes_pending_reconciliation(
     assert worker.consume_once(max_tasks=1) == 1
 
     assert claimed_task_ids == [priority.id]
-
-
-@pytest.mark.skip(reason="obsolete unknown/reconciliation recovery contract")
-def test_consume_once_suspends_exhausted_runs_before_and_after_recovery(
-    tmp_path: Path, monkeypatch
-):
-    worker = make_worker(
-        tmp_path,
-        FakeDws([], {}),
-        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="unused")),
-        monkeypatch,
-    )
-    calls: list[str] = []
-    monkeypatch.setattr(
-        worker,
-        "_backfill_confirmed_direct_reply_ledgers",
-        lambda *, limit: calls.append("backfill") or 0,
-    )
-    monkeypatch.setattr(
-        worker,
-        "_recover_due_unknown_agent_reply_tasks",
-        lambda *, limit: calls.append("recover") or 0,
-    )
-    monkeypatch.setattr(
-        worker.store,
-        "suspend_exhausted_unknown_agent_runs",
-        lambda: calls.append("suspend") or 0,
-    )
-    monkeypatch.setattr(worker, "_recover_stale_agent_reply_tasks", lambda: None)
-    monkeypatch.setattr(
-        worker_module,
-        "recover_native_codex_auth_failures",
-        lambda *args, **kwargs: 0,
-    )
-    monkeypatch.setattr(
-        worker.store,
-        "active_codex_capacity_pause",
-        lambda **kwargs: True,
-    )
-
-    assert worker.consume_once(max_tasks=1) == 0
-    assert calls == ["backfill", "suspend", "recover", "suspend"]
-
-
-@pytest.mark.skip(reason="obsolete unknown/reconciliation recovery contract")
-def test_due_unknown_audit_run_does_not_requeue_active_processing_task(
-    tmp_path: Path, monkeypatch
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-reconcile",
-        conversation_title="Reconcile",
-        single_chat=False,
-        trigger_message_id="msg-reconcile",
-        trigger_create_time="2026-08-10 10:00:00",
-        trigger_sender="Derek",
-        trigger_text="Check external result",
-    )
-    [task] = store.claim_reply_tasks(limit=1)
-    run = _claim_audit_run(
-        store,
-        task.id,
-        task.execution_generation,
-        owner="crashed-audit",
-    ).run
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "effect_completion_missing"},
-        owner="crashed-audit",
-    )
-    worker = DingTalkAutoReplyWorker(
-        store=store,
-        dws=FakeDws([], {}),
-        codex=FakeCodex(
-            CodexDecision(action=CodexAction.NO_REPLY, audit_summary="unused")
-        ),
-        now_provider=fixed_worker_now,
-        channel_gates=fixed_channel_gates(),
-    )
-
-    recovered = worker._recover_due_unknown_agent_reply_tasks(limit=10)
-
-    persisted = store.get_reply_task(task.id)
-    assert recovered == 1
-    assert persisted is not None
-    assert persisted.status == "pending"
-    assert persisted.execution_generation == task.execution_generation
-    assert persisted.error == "unknown_agent_run_reconciliation"
-
-
-@pytest.mark.skip(reason="obsolete unknown/reconciliation recovery contract")
-def test_due_reconciled_unknown_audit_run_does_not_requeue_active_task(
-    tmp_path: Path, monkeypatch
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-reconcile-finalize",
-        conversation_title="Reconcile finalize",
-        single_chat=False,
-        trigger_message_id="msg-reconcile-finalize",
-        trigger_create_time="2026-08-10 10:00:00",
-        trigger_sender="Derek",
-        trigger_text="Check external result",
-    )
-    [task] = store.claim_reply_tasks(limit=1)
-    run = _claim_audit_run(
-        store,
-        task.id,
-        task.execution_generation,
-        owner="crashed-audit",
-    ).run
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "effect_completion_missing"},
-        owner="crashed-audit",
-    )
-    claim = store.claim_unknown_agent_run(run.id, owner="reconciler")
-    assert claim.claimed
-    store.persist_unknown_agent_run_result(
-        run.id,
-        {"outcome": "reconciled"},
-        owner="reconciler",
-        transcript_end_line=0,
-    )
-    worker = DingTalkAutoReplyWorker(
-        store=store,
-        dws=FakeDws([], {}),
-        codex=FakeCodex(
-            CodexDecision(action=CodexAction.NO_REPLY, audit_summary="unused")
-        ),
-        now_provider=fixed_worker_now,
-        channel_gates=fixed_channel_gates(),
-    )
-
-    recovered = worker._recover_due_unknown_agent_reply_tasks(limit=10)
-
-    persisted = store.get_reply_task(task.id)
-    assert recovered == 0
-    assert persisted is not None
-    assert persisted.status == "processing"
-
-
-@pytest.mark.skip(reason="obsolete unknown/reconciliation recovery contract")
-def test_due_unknown_audit_run_requeues_failed_task_without_rotating_generation(
-    tmp_path: Path, monkeypatch
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-reconcile-failed",
-        conversation_title="Reconcile failed",
-        single_chat=False,
-        trigger_message_id="msg-reconcile-failed",
-        trigger_create_time="2026-08-10 10:00:00",
-        trigger_sender="Derek",
-        trigger_text="Check persisted effect evidence",
-    )
-    [task] = store.claim_reply_tasks(limit=1)
-    run = _claim_audit_run(
-        store,
-        task.id,
-        task.execution_generation,
-        owner="crashed-audit",
-    ).run
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "effect_completion_missing"},
-        owner="crashed-audit",
-    )
-    store.fail_reply_task(
-        task.id,
-        "reconciliation event limit exceeded",
-        expected_execution_generation=task.execution_generation,
-    )
-    worker = DingTalkAutoReplyWorker(
-        store=store,
-        dws=FakeDws([], {}),
-        codex=FakeCodex(
-            CodexDecision(action=CodexAction.NO_REPLY, audit_summary="unused")
-        ),
-        now_provider=fixed_worker_now,
-        channel_gates=fixed_channel_gates(),
-    )
-
-    recovered = worker._recover_due_unknown_agent_reply_tasks(limit=10)
-
-    persisted = store.get_reply_task(task.id)
-    assert recovered == 1
-    assert persisted is not None
-    assert persisted.status == "pending"
-    assert persisted.execution_generation == task.execution_generation
-    assert persisted.error == "unknown_agent_run_reconciliation"
 
 
 def test_consumer_does_not_claim_task_when_required_gate_is_not_ready(
@@ -7151,7 +6942,6 @@ def test_calendar_response_organizer_error_is_terminal_noop(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
     assert attempt.send_status == "skipped"
-    assert worker.store.list_agent_execution_receipts(1) == []
 
 
 def test_calendar_response_missing_event_error_is_terminal_noop(
@@ -7198,7 +6988,6 @@ def test_calendar_response_missing_event_error_is_terminal_noop(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
     assert attempt.send_status == "skipped"
-    assert worker.store.list_agent_execution_receipts(1) == []
 
 
 def test_send_reply_calendar_response_failure_does_not_send_reply(
@@ -12217,14 +12006,14 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
 
     assert agent_runner(worker).calls[0][3] == "session-1"
     assert codex.calls == []
-    run = _get_audit_run(
-        worker.store,
+    runs = worker.store.list_agent_runs_for_task_generation(
         task.id,
         task.execution_generation,
     )
-    assert run is not None
-    assert run.codex_session_id == "session-1"
-    assert run.status == "completed"
+    assert [(run.turn_attempt, run.status, run.codex_session_id) for run in runs] == [
+        (0, "failed", "session-1"),
+        (1, "completed", "session-1"),
+    ]
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
@@ -12354,8 +12143,7 @@ def test_sent_reply_records_recall_key_from_send_result(tmp_path: Path, monkeypa
     assert attempt.send_status == "completed"
     run = _get_audit_run(worker.store, 1, "initial")
     assert run is not None
-    receipts = worker.store.list_agent_execution_receipts(run.id)
-    assert [receipt.operation_id for receipt in receipts] == ["reply-with-receipt"]
+    assert run.status == "completed"
 
 
 def test_existing_dry_run_attempt_does_not_call_codex_again(
@@ -14164,7 +13952,7 @@ def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeyp
     assert attempt.direct_user_id == ""
     assert attempt.direct_open_dingtalk_id == ""
     assert attempt.final_reply_text == ""
-    assert worker.store.list_agent_execution_receipts(1)
+    assert worker.store.get_agent_run(1).status == "completed"
 
 
 def test_user_runtime_term_in_trigger_does_not_block_safe_reply(
@@ -16230,11 +16018,7 @@ def test_mail_reply_action_executes_before_chat_and_persists_result(
     assert attempt is not None
     assert attempt.action == "agent_run"
     assert attempt.send_status == "completed"
-    receipts = worker.store.list_agent_execution_receipts(1)
-    assert [receipt.operation_id for receipt in receipts] == [
-        "mail-1",
-        "dingtalk-reply",
-    ]
+    assert worker.store.get_agent_run(1).status == "completed"
 
 
 @pytest.mark.skip(reason="obsolete side-effect receipt retry contract")

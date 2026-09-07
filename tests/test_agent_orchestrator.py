@@ -24,12 +24,10 @@ from app.agent_orchestrator import (
     MAX_TURNS_PER_PROCESS,
     AgentOrchestrator,
     OrchestrationResult,
-    _Deferred,
     _NextAudit,
     _NextConsumer,
 )
-from app.agent_result import AgentError, ResultParseError
-from app.agent_skill_usage import LoadedSkillReceipt
+from app.agent_result import AgentError
 from app.agent_turn_runner import AgentTurnRunResult
 from app.dws_client import DwsError
 from app.email_unsubscribe_continuation import (
@@ -71,7 +69,6 @@ def _consumer_result(outcome: str, label: str = "candidate") -> ConsumerAgentRes
                             "--yes",
                         ]
                     },
-                    "expected_verification": "Read the live message.",
                 }
             ],
             "sourced_facts": [],
@@ -142,7 +139,6 @@ def _audit_result(
     elif outcome == "executed":
         external_result = {
             "operation_id": "filled-by-runner",
-            "verification_summary": "Verified from live state.",
             "live_result_reference": {"id": f"result-{revision}"},
         }
     elif outcome == "needs_human":
@@ -257,31 +253,6 @@ class ScriptedConsumer:
         return AgentTurnRunResult(claim.run.id, result, 0, 1)
 
 
-class ReceiptScriptedConsumer(ScriptedConsumer):
-    def __init__(self, store, receipt, *results):
-        super().__init__(store, *results)
-        self.receipts = receipt if isinstance(receipt, tuple) else (receipt,)
-        self.tool_events = tuple(
-            {
-                "type": "item.completed",
-                "item": {
-                    "type": "mcp_tool_call",
-                    "id": f"skill-read-{index}",
-                    "server": "agent_cli",
-                    "tool": "read_skill",
-                    "status": "completed",
-                    "metadata": {
-                        "effect": "read_only",
-                        "skill_name": item.name,
-                        "skill_path": item.path,
-                        "skill_sha256": item.sha256,
-                    },
-                },
-            }
-            for index, item in enumerate(self.receipts)
-        )
-
-
 class ScriptedAudit:
     def __init__(self, store: AutoReplyStore, *results: AuditAgentResult) -> None:
         self.store = store
@@ -296,7 +267,6 @@ class ScriptedAudit:
         *,
         turn_attempt,
         parent_agent_run_id,
-        frozen_delivery_retry=False,
     ):
         claim = self.store.claim_agent_run(
             task.id,
@@ -346,7 +316,6 @@ class ScriptedAudit:
                 "session_id": session_id,
                 "proposal": context.proposal,
                 "context": context,
-                "frozen_delivery_retry": frozen_delivery_retry,
             }
         )
         return AgentTurnRunResult(claim.run.id, result, 0, 1)
@@ -423,142 +392,6 @@ class MalformedProtocolDomainContinuation(ScriptedDomainContinuation):
 
     def consumption_state(self, task, **kwargs):
         return self.consumption_decision
-
-
-class RecoveringScriptedAudit(ScriptedAudit):
-    def __init__(self, store, result):
-        super().__init__(store)
-        self.recovery_result = result
-        self.recovery_calls = []
-        self.recovery_contexts = []
-
-    def recover(self, task, context, *, run):
-        claim = self.store.claim_unknown_agent_run(
-            run.id,
-            owner=self.owner,
-        )
-        assert claim.claimed
-        result = self.recovery_result
-        if result.outcome is AuditOutcome.EXECUTED:
-            result = result.model_copy(
-                update={
-                    "external_result": result.external_result.model_copy(
-                        update={"operation_id": run.operation_id}
-                    )
-                }
-            )
-            side_effect_state = "confirmed"
-        else:
-            side_effect_state = "unknown"
-        completed = self.store.complete_agent_run(
-            run.id,
-            result.model_dump(mode="json"),
-            owner=self.owner,
-            side_effect_state=side_effect_state,
-            expected_status="unknown",
-        )
-        self.recovery_calls.append(
-            {
-                "run_id": run.id,
-                "session_id": run.codex_session_id,
-                "operation_id": context.operation_id,
-                "revision": context.proposal_revision,
-            }
-        )
-        self.recovery_contexts.append(context)
-        return AgentTurnRunResult(completed.id, result, 1, 2)
-
-
-class ParseFailingEffectfulAudit(ScriptedAudit):
-    def run(self, task, context, *, turn_attempt, parent_agent_run_id):
-        claim = self.store.claim_agent_run(
-            task.id,
-            task.execution_generation,
-            role=AgentRole.AUDIT,
-            proposal_revision=context.proposal_revision,
-            turn_attempt=turn_attempt,
-            parent_agent_run_id=parent_agent_run_id,
-            operation_id=context.operation_id,
-            owner=self.owner,
-        )
-        assert claim.claimed
-        self.store.set_agent_run_session(
-            claim.run.id,
-            "audit-session-with-effect",
-            owner=self.owner,
-        )
-        self.store.mark_agent_run_unknown(
-            claim.run.id,
-            {"code": "codex_result_invalid", "retryable": True},
-            owner=self.owner,
-        )
-        raise ResultParseError("latest agent result candidate is malformed")
-
-
-class TwoPhaseScriptedAudit(ScriptedAudit):
-    def __init__(self, store):
-        super().__init__(store)
-        self.recovery_calls = 0
-        self.execute_calls = 0
-
-    def recover(self, task, context, *, run):
-        self.recovery_calls += 1
-        claim = self.store.claim_unknown_agent_run(run.id, owner=self.owner)
-        assert claim.claimed
-        result = AuditAgentResult.model_validate(
-            {
-                "outcome": "reconciled",
-                "summary": "Exact live read proved action absent.",
-                "proposal_revision": run.proposal_revision,
-                "side_effect_state": "unknown",
-                "feedback": None,
-                "external_result": None,
-                "reconciliation": [
-                    {
-                        "action_index": 0,
-                        "disposition": "absent",
-                        "read_result_digest": "digest-1",
-                    }
-                ],
-                "error": {
-                    "code": "",
-                    "retryable": False,
-                    "authorization_required": False,
-                },
-            }
-        )
-        persisted = self.store.persist_unknown_agent_run_result(
-            run.id,
-            result.model_dump(mode="json"),
-            owner=self.owner,
-            transcript_end_line=2,
-        )
-        return AgentTurnRunResult(persisted.id, result, 1, 2)
-
-    def execute_recovery(self, task, context, *, run):
-        self.execute_calls += 1
-        claim = self.store.claim_unknown_agent_run(run.id, owner=self.owner)
-        assert claim.claimed
-        result = AuditAgentResult.model_validate(
-            {
-                **_audit_result("executed", run.proposal_revision).model_dump(
-                    mode="json"
-                ),
-                "external_result": {
-                    "operation_id": run.operation_id,
-                    "verification_summary": "Executed persisted absent action.",
-                    "live_result_reference": {"id": "result"},
-                },
-            }
-        )
-        completed = self.store.complete_agent_run(
-            run.id,
-            result.model_dump(mode="json"),
-            owner=self.owner,
-            side_effect_state="confirmed",
-            expected_status="unknown",
-        )
-        return AgentTurnRunResult(completed.id, result, 2, 3)
 
 
 @pytest.fixture
@@ -1263,7 +1096,13 @@ def test_audit_provider_capacity_failure_retries_on_later_task_attempt(store):
 
     assert second.status == "executed"
     assert len(audit.calls) == 2
-    assert audit.calls[0]["run_id"] == audit.calls[1]["run_id"]
+    assert audit.calls[0]["run_id"] != audit.calls[1]["run_id"]
+    runs = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation
+    )
+    audit_runs = [run for run in runs if run.role is AgentRole.AUDIT]
+    assert [run.turn_attempt for run in audit_runs] == [0, 1]
+    assert [run.status for run in audit_runs] == ["failed", "completed"]
 
 
 def test_proposal_is_executed_only_by_fresh_audit_session(store):
@@ -1281,64 +1120,6 @@ def test_proposal_is_executed_only_by_fresh_audit_session(store):
     assert audit.calls[0]["operation_id"] == (
         f"agent-task:{task.id}:{task.execution_generation}:proposal:0"
     )
-
-
-def test_audit_receives_exact_parent_consumer_skill_on_initial_and_normal_retry(store):
-    task = _task(store)
-    receipt = LoadedSkillReceipt(
-        name="business-review",
-        path="/Users/derek/.agents/skills/business-review/SKILL.md",
-        sha256="a" * 64,
-    )
-    consumer = ReceiptScriptedConsumer(
-        store,
-        receipt,
-        _consumer_result("proposal", "candidate"),
-    )
-    audit = ScriptedAudit(
-        store,
-        _audit_result("failed", 0, code="temporary", retryable=True),
-        _audit_result("executed", 0),
-    )
-
-    result = _process(
-        AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
-    )
-
-    assert result.status == "executed"
-    assert [call["context"].consumer_skills for call in audit.calls] == [
-        (receipt,),
-        (receipt,),
-    ]
-
-
-def test_cross_domain_consumer_receipts_reach_audit_together(store):
-    task = _task(store)
-    receipts = (
-        LoadedSkillReceipt(
-            name="ceo-calendar-invite",
-            path="/Users/derek/.agents/skills/ceo-calendar-invite/SKILL.md",
-            sha256="a" * 64,
-        ),
-        LoadedSkillReceipt(
-            name="ceo-document-review",
-            path="/Users/derek/.agents/skills/ceo-document-review/SKILL.md",
-            sha256="b" * 64,
-        ),
-    )
-    consumer = ReceiptScriptedConsumer(
-        store,
-        receipts,
-        _consumer_result("proposal", "cross-domain candidate"),
-    )
-    audit = ScriptedAudit(store, _audit_result("executed", 0))
-
-    result = _process(
-        AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
-    )
-
-    assert result.status == "executed"
-    assert audit.calls[0]["context"].consumer_skills == receipts
 
 
 @pytest.mark.parametrize(
@@ -1393,32 +1174,6 @@ def test_normal_audit_state_with_invalid_parent_defers_without_invoking_audit(
     assert result.status == "failed_retryable"
     assert result.error.code == "audit_consumer_parent_invalid"
     assert audit.calls == []
-
-
-def test_audit_accepts_completed_retrying_consumer_parent(store):
-    task = _task(store)
-    claim = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.CONSUMER,
-        proposal_revision=0,
-        turn_attempt=1,
-        parent_agent_run_id=None,
-        operation_id="",
-        owner="retrying-consumer",
-    )
-    store.complete_agent_run(
-        claim.run.id,
-        _consumer_result("proposal").model_dump(mode="json"),
-        owner="retrying-consumer",
-    )
-    orchestrator = AgentOrchestrator(
-        store=store,
-        consumer=ScriptedConsumer(store),
-        audit=ScriptedAudit(store),
-    )
-
-    assert orchestrator._consumer_skills(task, claim.run.id, 0) == ()
 
 
 def test_two_feedback_cycles_resume_same_consumer_and_create_fresh_auditors(store):
@@ -1695,7 +1450,6 @@ def _persist_domain_continuation_consumer_retry(store, retry_path: str):
             ),
             proposal=_consumer_result("proposal", "open-entry").proposal,
             audit_rules="",
-            consumer_skills=(),
         ),
         turn_attempt=0,
         parent_agent_run_id=first_consumer.calls[0]["run_id"],
@@ -2021,7 +1775,6 @@ def test_restart_rejects_orphan_consumer_when_continuation_disappears(store):
             operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
             proposal=_consumer_result("proposal", "open-entry").proposal,
             audit_rules="",
-            consumer_skills=(),
         ),
         turn_attempt=0,
         parent_agent_run_id=first_consumer_id,
@@ -2083,7 +1836,6 @@ def test_restart_before_next_consumer_fails_closed_on_nonterminal_continuation_s
             operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
             proposal=_consumer_result("proposal", "open-entry").proposal,
             audit_rules="",
-            consumer_skills=(),
         ),
         turn_attempt=0,
         parent_agent_run_id=first_consumer_id,
@@ -2127,7 +1879,6 @@ def _email_chain_with_unconsumed_child_audit(store, *, child_state: str):
             ),
             proposal=_consumer_result("proposal", "open-entry").proposal,
             audit_rules="",
-            consumer_skills=(),
         ),
         turn_attempt=0,
         parent_agent_run_id=consumer.calls[0]["run_id"],
@@ -2305,7 +2056,6 @@ def test_historical_executed_parent_uses_child_audit_lineage_not_current_fence(
             operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
             proposal=_consumer_result("proposal", "open-entry").proposal,
             audit_rules="",
-            consumer_skills=(),
         ),
         turn_attempt=0,
         parent_agent_run_id=consumer.calls[0]["run_id"],
@@ -2328,7 +2078,6 @@ def test_historical_executed_parent_uses_child_audit_lineage_not_current_fence(
             operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:1",
             proposal=_consumer_result("proposal", "confirm-control").proposal,
             audit_rules="",
-            consumer_skills=(),
         ),
         turn_attempt=0,
         parent_agent_run_id=consumer.calls[1]["run_id"],
@@ -2393,8 +2142,7 @@ def _three_step_email_chain(store, *, terminal: bool = False):
                     f"unsubscribe-step-{revision}",
                 ).proposal,
                 audit_rules="",
-                consumer_skills=(),
-            ),
+                ),
             turn_attempt=0,
             parent_agent_run_id=consumer.calls[revision]["run_id"],
         )
@@ -2453,8 +2201,7 @@ def _many_step_email_chain(store, revisions: int):
                     f"unsubscribe-step-{revision}",
                 ).proposal,
                 audit_rules="",
-                consumer_skills=(),
-            ),
+                ),
             turn_attempt=0,
             parent_agent_run_id=consumer.calls[revision]["run_id"],
         )
@@ -2643,7 +2390,6 @@ def test_real_driver_rejects_orphan_consumer_without_current_continuation(store)
             operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
             proposal=_consumer_result("proposal", "open-entry").proposal,
             audit_rules="",
-            consumer_skills=(),
         ),
         turn_attempt=0,
         parent_agent_run_id=consumer.calls[0]["run_id"],
@@ -2801,7 +2547,7 @@ def test_infrastructure_retry_does_not_consume_feedback_cycle(store):
     assert [call["revision"] for call in audit.calls] == [0, 0]
     assert [call["turn_attempt"] for call in audit.calls] == [0, 1]
     assert audit.calls[0]["operation_id"] == audit.calls[1]["operation_id"]
-    assert audit.calls[0]["session_id"] != audit.calls[1]["session_id"]
+    assert audit.calls[0]["session_id"] == audit.calls[1]["session_id"]
 
 
 def test_newer_context_stale_candidate_is_revised_without_write(store):
@@ -2902,8 +2648,10 @@ def test_authorization_recovery_retries_audit_with_next_turn_attempt(store):
     assert [call["turn_attempt"] for call in audit.calls] == [0, 1]
 
 
-def test_expired_audit_turn_without_session_is_reclaimed_in_place(store):
-    task = _task(store)
+def test_expired_audit_turn_creates_a_new_append_only_run(store):
+    pending = _task(store)
+    task = store.claim_reply_task(pending.id)
+    assert task is not None
     consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
     consumer.run(
         task,
@@ -2939,8 +2687,9 @@ def test_expired_audit_turn_without_session_is_reclaimed_in_place(store):
     )
 
     assert result.status == "executed"
-    assert result.final_run_id == stale.id
-    assert audit.calls[0]["turn_attempt"] == 0
+    assert result.final_run_id != stale.id
+    assert store.get_agent_run(stale.id).status == "failed"
+    assert audit.calls[0]["turn_attempt"] == 1
 
 
 def test_dry_run_audit_finishes_without_creating_a_human_decision(store):
@@ -2958,107 +2707,7 @@ def test_dry_run_audit_finishes_without_creating_a_human_decision(store):
     assert result.audit_result.decision_options == ()
 
 
-def test_frozen_delivery_retry_executes_saved_proposal_without_consumer_rerun(store):
-    pending_task = _task(store)
-    with store._connect() as db:
-        db.execute(
-            "update reply_tasks set recovery_code=? where id=?",
-            ("legacy_sessionless_audit_delivery_replay", pending_task.id),
-        )
-    task = store.claim_reply_task(pending_task.id)
-    assert task is not None
-    consumer_result = _consumer_result("proposal", "immutable delivery")
-    consumer = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.CONSUMER,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="",
-        owner="recovered-consumer",
-    )
-    store.complete_agent_run(
-        consumer.run.id,
-        consumer_result.model_dump(mode="json"),
-        owner="recovered-consumer",
-    )
-    with store._connect() as db:
-        db.execute(
-            "update agent_runs set proposal_revision=2 where id=?", (consumer.run.id,)
-        )
-    audit = ScriptedAudit(store, _audit_result("executed", 2))
-    preserved_consumer = ScriptedConsumer(store)
-
-    result = _process(
-        AgentOrchestrator(
-            store=store,
-            consumer=preserved_consumer,
-            audit=audit,
-        ),
-        task,
-    )
-
-    assert result.status == "executed"
-    assert preserved_consumer.calls == []
-    assert audit.calls[0]["frozen_delivery_retry"] is True
-    assert audit.calls[0]["proposal"] == consumer_result.proposal
-
-
-def test_frozen_delivery_retry_never_reopens_consumer_after_audit_revision_request(
-    store,
-):
-    pending_task = _task(store)
-    with store._connect() as db:
-        db.execute(
-            "update reply_tasks set recovery_code=? where id=?",
-            ("legacy_sessionless_audit_delivery_replay", pending_task.id),
-        )
-    task = store.claim_reply_task(pending_task.id)
-    assert task is not None
-    consumer_result = _consumer_result("proposal", "immutable delivery")
-    consumer = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.CONSUMER,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="",
-        owner="recovered-consumer",
-    )
-    store.complete_agent_run(
-        consumer.run.id,
-        consumer_result.model_dump(mode="json"),
-        owner="recovered-consumer",
-    )
-    with store._connect() as db:
-        db.execute(
-            "update agent_runs set proposal_revision=2 where id=?", (consumer.run.id,)
-        )
-    audit = ScriptedAudit(
-        store,
-        _audit_result("revision_required", 2),
-        _audit_result("executed", 2),
-    )
-    preserved_consumer = ScriptedConsumer(store)
-
-    result = _process(
-        AgentOrchestrator(
-            store=store,
-            consumer=preserved_consumer,
-            audit=audit,
-        ),
-        task,
-    )
-
-    assert result.status == "executed"
-    assert preserved_consumer.calls == []
-    assert [call["turn_attempt"] for call in audit.calls] == [0, 1]
-    assert all(call["frozen_delivery_retry"] for call in audit.calls)
-
-
-def test_safely_reopened_runtime_route_retries_same_audit_turn(store):
+def test_safely_reopened_runtime_route_reuses_proposal_in_new_audit_run(store):
     pending_task = _task(store)
     task = store.claim_reply_task(pending_task.id)
     assert task is not None
@@ -3097,7 +2746,8 @@ def test_safely_reopened_runtime_route_retries_same_audit_turn(store):
     second = _process(orchestrator, recovered_task)
 
     assert second.status == "executed"
-    assert [call["turn_attempt"] for call in audit.calls] == [0, 0]
+    assert [call["turn_attempt"] for call in audit.calls] == [0, 1]
+    assert audit.calls[0]["run_id"] != audit.calls[1]["run_id"]
 
 
 def test_live_okr_source_failure_reuses_prior_proposal_for_audit(store):

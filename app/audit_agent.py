@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from app.agent_context import AuditTurnContext
 from app.agent_contracts import AuditAgentResult
-from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
+from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import (
@@ -57,7 +57,6 @@ class AuditAgentRunner:
         friday_adapter: FridayRuntimeAdapter | None = None,
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
-        mcp_effect_registry: McpToolEffectRegistry | None = None,
         dry_run: bool = False,
         refresh_runtime_capabilities: Callable[[], object] | None = None,
     ) -> None:
@@ -71,7 +70,6 @@ class AuditAgentRunner:
         self.friday_adapter = friday_adapter
         self.executor = executor
         self.owner = owner or f"audit-agent-{uuid4().hex}"
-        self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
         self.dry_run = dry_run
         self.refresh_runtime_capabilities = refresh_runtime_capabilities
 
@@ -80,7 +78,7 @@ class AuditAgentRunner:
         context: AuditTurnContext, *, recovery_phase: str = ""
     ) -> frozenset[str]:
         del recovery_phase
-        required = {"task_context", f"channel:{context.task.channel}"}
+        required = set()
         if context.task.image_paths:
             required.add("image_input")
         return frozenset(required)
@@ -92,7 +90,6 @@ class AuditAgentRunner:
         *,
         turn_attempt: int,
         parent_agent_run_id: int,
-        frozen_delivery_retry: bool = False,
     ) -> AgentTurnRunResult[AuditAgentResult]:
         if context.task.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
@@ -114,7 +111,6 @@ class AuditAgentRunner:
             context,
             run=claim.run,
             rendered_rules=render_audit_rules(AgentRole.AUDIT),
-            frozen_delivery_retry=frozen_delivery_retry,
         )
 
     def _execute_claimed(
@@ -124,10 +120,9 @@ class AuditAgentRunner:
         *,
         run: AgentRun,
         rendered_rules: str,
-        frozen_delivery_retry: bool = False,
     ) -> AgentTurnRunResult[AuditAgentResult]:
         prompt = context.render()
-        expected_effect_actions_list: list[dict[str, object]] = []
+        expected_actions_list: list[dict[str, object]] = []
         for index, action in enumerate(context.proposal.actions):
             expected = expected_external_action(
                 action,
@@ -138,10 +133,10 @@ class AuditAgentRunner:
                 business_object_key=task.business_object_key,
                 action_identity=action.action_identity,
             )
-            expected_effect_actions_list.append(expected)
-        expected_effect_actions = tuple(expected_effect_actions_list)
-        if expected_effect_actions:
-            prompt += _external_action_identity_prompt(expected_effect_actions)
+            expected_actions_list.append(expected)
+        expected_actions = tuple(expected_actions_list)
+        if expected_actions:
+            prompt += _external_action_identity_prompt(expected_actions)
 
         process = AgentTurnProcess[AuditAgentResult](
             store=self.store,
@@ -155,7 +150,6 @@ class AuditAgentRunner:
             codex_adapter=self.codex_adapter,
             claude_adapter=self.claude_adapter,
             friday_adapter=self.friday_adapter,
-            mcp_effect_registry=self.effects,
             refresh_runtime_capabilities=self.refresh_runtime_capabilities,
         )
         email_unsubscribe_tools = self._email_unsubscribe_tools(task, run)
@@ -170,11 +164,6 @@ class AuditAgentRunner:
                 "Pass the accepted ProposedAction unchanged as accepted_action. "
                 "Execute at most one new browser operation and never use reply, "
                 "SMTP, mailto, or attachment content."
-            )
-        if frozen_delivery_retry:
-            prompt += (
-                "\n\nThis is a delivery retry. Re-evaluate the same typed proposal "
-                "against the current task context and return one terminal result."
             )
         prompt += (
             "\n\n### Needs Human Display Contract\n"
@@ -202,12 +191,11 @@ class AuditAgentRunner:
                     command=sys.executable,
                     args=("-m", "app.agent_cli"),
                     cwd=str(SERVICE_ROOT),
-                ),
-                additional_agent_cli_tools=email_unsubscribe_tools,
+                ) if email_unsubscribe_tools else None,
             ),
             parse_result=parse_audit_agent_wire_result,
             persist_conversation_session=False,
-            expected_effect_actions=expected_effect_actions,
+            expected_actions=expected_actions,
             image_paths=[Path(path) for path in context.task.image_paths],
             required_capabilities=self._required_capabilities(context),
         )
@@ -269,12 +257,6 @@ class AuditAgentRunner:
         return ("execute_audited_email_unsubscribe",)
 
 
-def _audit_recovery_error_code(exc: Exception) -> str:
-    """Map a process exception to the ordinary failed-result code."""
-    code = getattr(exc, "code", "")
-    return str(code) if code else "codex_process_failed"
-
-
 def _external_action_identity_prompt(
     actions: tuple[dict[str, object], ...],
 ) -> str:
@@ -294,14 +276,4 @@ def _external_action_identity_prompt(
         "Reuse the matching external_action_key as the provider idempotency identity "
         "when the provider supports one.\n"
         + json.dumps(identities, ensure_ascii=False, separators=(",", ":"))
-    )
-
-
-def _recovery_prompt(
-    run: AgentRun, context: AuditTurnContext, actions=(), registry=None
-) -> str:
-    del actions, registry
-    return (
-        "Run the normal typed Audit turn against the current task context and "
-        "the applicable operation Skill.\n\n" + context.render()
     )

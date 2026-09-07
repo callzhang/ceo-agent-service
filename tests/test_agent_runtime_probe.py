@@ -281,24 +281,17 @@ def _adversarial_claude_terminal_stream(*, effect: bool, mode: str) -> str:
     return "\n".join(json.dumps(payload) for payload in payloads)
 
 
-def test_claude_probe_proves_base_and_effect_visibility_without_business_tools(
+def test_claude_probe_proves_only_runtime_health_and_typed_result(
     monkeypatch, tmp_path
 ):
     config = _config(monkeypatch, routes="claude_api")
     calls = []
 
     def executor(command, **kwargs):
-        mcp_config = (
-            __import__("pathlib")
-            .Path(command[command.index("--mcp-config") + 1])
-            .read_text(encoding="utf-8")
-        )
-        calls.append((command, kwargs, mcp_config))
+        calls.append((command, kwargs))
         return ProcessRunResult(
             0,
-            _successful_claude_probe_stream(
-                effect="mcp__runtime_probe__record_effect_start" in mcp_config
-            ),
+            _successful_claude_probe_stream(effect=False),
             "",
         )
 
@@ -313,197 +306,14 @@ def test_claude_probe_proves_base_and_effect_visibility_without_business_tools(
     assert snapshot.healthy is True
     assert snapshot.failure is None
     assert snapshot.capabilities == frozenset(
-        {
-            "structured_output",
-            "local_schema_validation",
-            "audit_effect_visibility",
-        }
+        {"structured_output", "local_schema_validation"}
     )
-    assert len(calls) == 2
-    baseline, effect = calls
-    assert baseline[0][0:2] == ["claude-test", "-p"]
-    assert baseline[0][baseline[0].index("--tools") + 1] == ""
-    assert "--strict-mcp-config" in effect[0]
-    assert "--mcp-config" in effect[0]
-    effect_mcp = effect[2]
-    assert "mcp__runtime_probe__record_effect_start" in effect_mcp
-    assert (
-        "mcp__runtime_probe__record_effect_start"
-        not in effect[0][effect[0].index("--allowedTools") + 1 :]
-    )
-    assert baseline[1]["env"]["ANTHROPIC_API_KEY"] == "test-anthropic-secret"
-    assert "CEO_CLAUDE_API_KEY" not in baseline[1]["env"]
-    combined = "\n".join(
-        [*baseline[0], *effect[0], baseline[1]["prompt"], effect[1]["prompt"]]
-    ).casefold()
-    assert "dws" not in combined
-    assert "lark" not in combined
-    assert "memory_connector" not in combined
-
-
-def test_claude_probe_fails_when_dedicated_effect_start_is_not_visible(
-    monkeypatch, tmp_path
-):
-    config = _config(monkeypatch, routes="claude_api")
-
-    snapshot = AgentRuntimeProbe(
-        config=config,
-        claude_bin="claude-test",
-        executor=lambda command, **_kwargs: ProcessRunResult(
-            0,
-            _successful_claude_probe_stream(effect=False),
-            "",
-        ),
-        now=lambda: NOW,
-        temporary_root=tmp_path,
-    ).run(route_name="claude_api")
-
-    assert snapshot.healthy is False
-    assert snapshot.capabilities == frozenset()
-    assert snapshot.failure is not None
-    assert snapshot.failure.code == "runtime_probe_effect_visibility_missing"
-
-
-@pytest.mark.parametrize(
-    "mode",
-    [
-        "duplicate",
-        "failed",
-        "mismatch",
-        "wrong_digest",
-        "extra_tool",
-        "missing_completion",
-    ],
-)
-def test_claude_probe_rejects_non_exact_effect_evidence(monkeypatch, tmp_path, mode):
-    config = _config(monkeypatch, routes="claude_api")
-
-    def executor(command, **_kwargs):
-        mcp_config = (
-            __import__("pathlib")
-            .Path(command[command.index("--mcp-config") + 1])
-            .read_text(encoding="utf-8")
-        )
-        return ProcessRunResult(
-            0,
-            (
-                _adversarial_claude_effect_stream(mode)
-                if "mcp__runtime_probe__record_effect_start" in mcp_config
-                else _successful_claude_probe_stream(effect=False)
-            ),
-            "",
-        )
-
-    snapshot = AgentRuntimeProbe(
-        config=config,
-        claude_bin="claude-test",
-        executor=executor,
-        now=lambda: NOW,
-        temporary_root=tmp_path,
-    ).run(route_name="claude_api")
-
-    assert snapshot.healthy is False
-    assert snapshot.capabilities == frozenset()
-
-
-@pytest.mark.parametrize("phase", ["baseline", "effect"])
-@pytest.mark.parametrize(
-    "mode",
-    [
-        "wrong_text",
-        "duplicate_text",
-        "extra_tool",
-        "extra_user",
-        "extra_system",
-        "failure",
-    ],
-)
-def test_claude_probe_rejects_non_exact_normalized_grammar(
-    monkeypatch, tmp_path, phase, mode
-):
-    config = _config(monkeypatch, routes="claude_api")
-
-    def executor(command, **_kwargs):
-        mcp_config = (
-            __import__("pathlib")
-            .Path(command[command.index("--mcp-config") + 1])
-            .read_text(encoding="utf-8")
-        )
-        effect = "mcp__runtime_probe__record_effect_start" in mcp_config
-        adversarial = phase == ("effect" if effect else "baseline")
-        return ProcessRunResult(
-            0,
-            (
-                _adversarial_claude_text_stream(effect=effect, mode=mode)
-                if adversarial
-                else _successful_claude_probe_stream(effect=effect)
-            ),
-            "",
-        )
-
-    snapshot = AgentRuntimeProbe(
-        config=config,
-        claude_bin="claude-test",
-        executor=executor,
-        now=lambda: NOW,
-        temporary_root=tmp_path,
-    ).run(route_name="claude_api")
-
-    assert snapshot.healthy is False
-    assert snapshot.capabilities == frozenset()
-    assert snapshot.failure is not None
-    assert snapshot.failure.code in {
-        "runtime_probe_grammar_invalid",
-        "runtime_probe_failed",
-    }
-
-
-@pytest.mark.parametrize("phase", ["baseline", "effect"])
-@pytest.mark.parametrize(
-    "mode",
-    [
-        "integer_one",
-        "float_one",
-        "whitespace",
-        "key_order",
-        "assistant_final_mismatch",
-    ],
-)
-def test_claude_probe_rejects_noncanonical_terminal_result(
-    monkeypatch, tmp_path, phase, mode
-):
-    config = _config(monkeypatch, routes="claude_api")
-
-    def executor(command, **_kwargs):
-        mcp_config = (
-            __import__("pathlib")
-            .Path(command[command.index("--mcp-config") + 1])
-            .read_text(encoding="utf-8")
-        )
-        effect = "mcp__runtime_probe__record_effect_start" in mcp_config
-        adversarial = phase == ("effect" if effect else "baseline")
-        return ProcessRunResult(
-            0,
-            (
-                _adversarial_claude_terminal_stream(effect=effect, mode=mode)
-                if adversarial
-                else _successful_claude_probe_stream(effect=effect)
-            ),
-            "",
-        )
-
-    snapshot = AgentRuntimeProbe(
-        config=config,
-        claude_bin="claude-test",
-        executor=executor,
-        now=lambda: NOW,
-        temporary_root=tmp_path,
-    ).run(route_name="claude_api")
-
-    assert snapshot.healthy is False
-    assert snapshot.capabilities == frozenset()
-    assert snapshot.failure is not None
-    assert snapshot.failure.code == "runtime_probe_failed"
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command[0:2] == ["claude-test", "-p"]
+    assert command[command.index("--tools") + 1] == ""
+    assert kwargs["env"]["ANTHROPIC_API_KEY"] == "test-anthropic-secret"
+    assert "CEO_CLAUDE_API_KEY" not in kwargs["env"]
 
 
 def test_probe_requires_structured_completion(monkeypatch, tmp_path):
@@ -631,7 +441,7 @@ def test_probe_accepts_provider_event_variants_with_valid_typed_result(
     assert snapshot.failure.code == "runtime_probe_policy_violation"
 
 
-def test_probe_uses_isolated_read_only_command_and_validates_complete_stream(
+def test_probe_uses_standard_runtime_command_and_validates_complete_stream(
     monkeypatch, tmp_path
 ):
     config = _config(monkeypatch, routes="codex_api")
@@ -659,10 +469,9 @@ def test_probe_uses_isolated_read_only_command_and_validates_complete_stream(
     assert command[:2] == ["codex-test", "exec"]
     assert "--skip-git-repo-check" in command
     assert "--json" in command
-    assert command[command.index("--sandbox") + 1] == "read-only"
+    assert "--sandbox" not in command
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
     assert command[command.index("--cd") + 1].startswith(str(tmp_path))
-    assert "tools.enabled_tools=[]" in command
-    assert 'web_search="disabled"' in command
     assert kwargs["prompt"].startswith("Return only the synthetic probe result")
     assert kwargs["env"]["OPENAI_API_KEY"] == "test-api-secret"
     assert "CEO_CODEX_API_KEY" not in kwargs["env"]

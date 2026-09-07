@@ -149,7 +149,6 @@ def _accepted_action() -> dict[str, object]:
                     }
                 ]
             },
-            "expected_verification": "Read terminal provider evidence",
         }
     ).model_dump(mode="json")
 
@@ -1322,7 +1321,6 @@ def test_audit_fails_closed_when_parent_consumer_has_no_unique_proposal_action(
     "mutation",
     (
         "description",
-        "expected_verification",
         "capability",
         "operation",
         "operation_reference",
@@ -1338,8 +1336,6 @@ def test_audit_accepted_action_is_exactly_bound_to_parent_consumer_proposal(
     action = _accepted_action()
     if mutation == "description":
         action["description"] = "A different accepted description"
-    elif mutation == "expected_verification":
-        action["expected_verification"] = "A different verification requirement"
     elif mutation == "capability":
         action["capability"] = "email"
     elif mutation == "operation":

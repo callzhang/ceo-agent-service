@@ -193,7 +193,6 @@ def _consumer_result_record(proposal: dict[str, object]) -> dict[str, object]:
 def _audit_result_record(operation_id: str) -> dict[str, object]:
     external_result = {
         "operation_id": operation_id,
-        "verification_summary": "The exact question is present in source group cid-1.",
         "live_result_reference": {
             "conversation_id": "cid-1",
             "message_id": "question-1",
@@ -222,7 +221,6 @@ class CalendarRunnerContractExecutor:
         self.skill_paths = skill_paths
         self.commands: list[list[str]] = []
         self.prompts: list[str] = []
-        self.handed_off_skills: list[dict[str, str]] = []
 
     def __call__(self, command, *, prompt: str, on_stdout_line, **_kwargs):
         self.commands.append(list(command))
@@ -312,7 +310,6 @@ class CalendarRunnerContractExecutor:
                             "--yes",
                         ]
                     },
-                    "expected_verification": "Read source group cid-1 for the exact question.",
                 }
             ],
             "sourced_facts": [
@@ -330,10 +327,6 @@ class CalendarRunnerContractExecutor:
         ]
 
     def _audit_records(self, prompt: str) -> list[dict[str, object]]:
-        self.handed_off_skills = _json_section(
-            prompt,
-            "Verified Skills read by Consumer A\n",
-        )
         candidate = _json_section(prompt, "Candidate revision\n")
         argv = candidate["proposal"]["actions"][0]["payload"]["argv"]
         assert candidate["proposal"]["actions"][0]["target"] == {"group": "cid-1"}
@@ -427,7 +420,6 @@ class SilentMaterialCalendarExecutor(CalendarRunnerContractExecutor):
                             "--id", "event-1", "--status", "accepted", "--yes",
                         ],
                     },
-                    "expected_verification": "Read event-1 and verify accepted.",
                 }
             ],
             "sourced_facts": [
@@ -446,9 +438,6 @@ class SilentMaterialCalendarExecutor(CalendarRunnerContractExecutor):
         ]
 
     def _audit_records(self, prompt: str) -> list[dict[str, object]]:
-        self.handed_off_skills = _json_section(
-            prompt, "Verified Skills read by Consumer A\n"
-        )
         candidate = _json_section(prompt, "Candidate revision\n")
         action = candidate["proposal"]["actions"][0]
         assert candidate["proposal"]["objective"] == (
@@ -589,11 +578,7 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     assert result.audit_result.outcome.value == "executed"
     assert len(executor.commands) == 2
     assert all("--output-schema" not in command for command in executor.commands)
-    assert (
-        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_text_file", "read_spreadsheet"]'
-        in executor.commands[0]
-    )
-    assert "execute_reviewed_write" not in " ".join(executor.commands[0])
+    assert "tools.enabled_tools" not in " ".join(executor.commands[0])
     assert "codex" == executor.commands[1][0]
     assert "Raw material references and exact read commands" in executor.prompts[0]
     assert "Candidate revision" in executor.prompts[1]
@@ -606,7 +591,6 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     assert all(run.status == "completed" for run in runs)
     assert _persisted_skill_receipts(runs[0]) == {}
     assert _persisted_skill_receipts(runs[1]) == {}
-    assert executor.handed_off_skills == []
 
     assert runs[1].tool_events
 

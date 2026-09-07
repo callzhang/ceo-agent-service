@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import app.store as store_module
-from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES, load_bundled_business_skills
+from app.business_skills import load_bundled_business_skills
 from app.managed_skills import (
     ManagedSkillValidationError,
     REPOSITORY_IMPORT_SOURCE,

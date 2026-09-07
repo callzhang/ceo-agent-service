@@ -273,7 +273,6 @@ continuation；`awaiting_audit` 是 effect/claim 的领域状态，
 - WeChat reader 由独立 launchd job 自动保持运行；worker 连续三次 IPC 超时后主动 kickstart 该 job，处理“进程仍在但 IPC 已卡住”的情况。worker 只恢复 reader 进程，不启动 WeChat 主应用，也不重放消息。
 - OKR 无头来源启动使用进程锁；锁被遗留进程占用超过有限等待时间时，该次读取明确失败，不会无限排队或阻塞后续维护循环。该来源命令在独立进程组中运行，超时会终止脚本及其临时 headless Chrome 子进程，不能遗留后台浏览器。
 - 周 OKR 分析任务每次获得新的租约时使用新的 runtime 执行代次。单次执行中的结果格式修正保持有界；已终态的旧代次不得阻断同一分析任务在后续租约中的重新执行。
-- 已失败且经本地读回确认没有执行、送达或持久化回执的 reply task，若下一步只能由人工授权的外部动作完成，服务会保留原失败记录、写入新的 `needs_human` Attempt，并将队列 task 收口为 `done`；不会为此重放外部动作。
 - 所有需要 `BEGIN IMMEDIATE` 的 Store 写路径统一经过同一个有界重试事务。短暂的 SQLite 写锁在 Store 内等待并重试；只有超过上限的持续锁才上升为服务错误。队列 claim、反馈批处理和恢复路径不得绕过这一规则。
 
 ### 应用层边界
@@ -284,24 +283,30 @@ continuation；`awaiting_audit` 是 effect/claim 的领域状态，
 `operation`、`target`、provider 稳定结果标识。纯读取不需要 receipt；写入中断时由下一次 Agent turn
 按业务 Skill 读取目标状态，服务不启动专门的只读核对回合，也不因“未知工具”阻断执行。
 
-历史数据库中已经存在的 `unknown`、`reconciled` 或 `side_effect_state` 值仅作为不可变历史事实展示，
-不得由新代码写入，也不参与当前状态迁移。旧 spec/plan 中描述这些状态机的内容属于历史设计，
+历史数据库升级时会移除 `agent_runs` 中的 `unknown`、`side_effect_state`、effect counter 和
+reconciliation 投影列；旧 `unknown` run 的当前状态迁移为 `failed`，并追加一条
+`legacy_unknown_migrated` state event 保存当时的原始错误。已有 session、runtime attempt、tool event、
+provider 结果和旧错误事件不改写、不删除。旧 spec/plan 中描述这些状态机的内容属于历史设计，
 不应作为实现依据。
+
+反馈、人工重跑、进程失败和 typed-result 失败都会创建新的 append-only `agent_run`，但不会创建
+新的业务 `reply_attempt`。只要原 runtime session 仍可访问且契约兼容，新 run 就向原 session
+发送 continuation；新 revision 表示业务结果版本前进，不表示必须创建新 session。只有 provider
+明确返回 session 不存在、认证上下文失效或契约不兼容时，才创建新 session。
 
 任务 Agent 的 `memory_recall_used` 是 Agent 给出的上下文记录，不是服务的工具调用验收条件。服务不得要求
 `memory_recall` 工具事件、session receipt 或任何特定工具名称作为推进结构化任务决策的前置条件。
 
 ## 任务类型
 
-- `okr_review`：指定人员和周期的逐 KR 评审。执行 Agent 先通过固定只读入口
-  `app.cli read-dingteam-okr --user-id <owner-id> --period-label <period>` 读取实时
+- `okr_review`：指定人员和周期的逐 KR 评审。执行 Agent 按当前业务 Skill 读取实时
   `processed.objectives`/`processed.okrRows`，再生成评审；审核 Agent 审阅并反馈修改，
   修正版通过后才发送。底层读取错误（认证失效、浏览器/profile 锁、周期解析失败等）
   必须原样保留，不能被 `consumer_retry_exhausted` 覆盖。服务入口先复用有效 token；
   缓存过期时只启动 headless 浏览器刷新，不打开可见窗口，也不把“禁止可见浏览器”
   误解为“禁止刷新”。
-- `weekly_okr`：定时生成管理者 OKR 进度周报。分析、报告发布、群摘要发送和外部回读全部完成后，才推进周报成功日期。
-- 普通消息、审批、会议、邮件、任务跟踪和 WeChat 任务都遵循同一生命周期与反馈规则，只在领域输入、工具权限和外部回读方式上不同。
+- `weekly_okr`：定时生成管理者 OKR 进度周报。分析、报告发布和群摘要获得 provider 成功结果后，推进周报成功日期。
+- 普通消息、审批、会议、邮件、任务跟踪和 WeChat 任务都遵循同一生命周期与反馈规则，只在领域输入、provider 能力和稳定结果字段上不同。
 
 ## 文档索引
 

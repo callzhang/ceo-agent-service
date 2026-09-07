@@ -640,7 +640,6 @@ def test_unsubscribe_task_projects_only_redacted_real_entry_references(
                     }
                 ]
             },
-            "expected_verification": "Read terminal provider evidence.",
         }
     )
 
@@ -692,7 +691,6 @@ def test_accepted_unsubscribe_rejects_opening_mailto_entry(tmp_path: Path) -> No
                     }
                 ]
             },
-            "expected_verification": "Read terminal provider evidence.",
         }
     )
 

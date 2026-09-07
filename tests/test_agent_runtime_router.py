@@ -10,11 +10,9 @@ from app.agent_runtime_contracts import (
     RuntimeFailureClass,
     RuntimeKind,
     RuntimeRoute,
-    RuntimeRouteSurfaceManifest,
 )
 from app.agent_runtime_router import (
     AgentRuntimeRouter,
-    failover_is_safe,
     _parse_timestamp,
 )
 from app.store import AgentRole, AutoReplyStore
@@ -150,7 +148,6 @@ def make_router(
     *,
     routes: tuple[RuntimeRoute, ...] = (route("codex_oauth"), route("codex_api")),
     snapshots: dict[str, RuntimeCapabilitySnapshot] | None = None,
-    surface_manifests: dict[str, RuntimeRouteSurfaceManifest] | None = None,
 ) -> AgentRuntimeRouter:
     return AgentRuntimeRouter(
         routes=routes,
@@ -160,74 +157,8 @@ def make_router(
             if snapshots is not None
             else {item.name: snapshot(item.name) for item in routes}
         ),
-        surface_manifests=surface_manifests or {},
         now=lambda: NOW,
     )
-
-
-def test_static_reviewed_surface_satisfies_non_probe_capability(store):
-    router = make_router(
-        store,
-        routes=(route("codex_oauth"),),
-        snapshots={"codex_oauth": snapshot("codex_oauth")},
-        surface_manifests={
-            "codex_oauth": RuntimeRouteSurfaceManifest(
-                route_name="codex_oauth",
-                capabilities=frozenset({"reviewed_read_tools"}),
-            )
-        },
-    )
-
-    decision = router.first_route_decision(
-        required_capabilities=frozenset(
-            {"structured_output", "reviewed_read_tools"}
-        )
-    )
-
-    assert decision.route is not None
-    assert decision.reason == "eligible_route"
-
-
-def test_missing_reviewed_surface_is_distinct_from_probe_health(store):
-    router = make_router(
-        store,
-        routes=(route("codex_oauth"),),
-        snapshots={"codex_oauth": snapshot("codex_oauth")},
-    )
-
-    decision = router.first_route_decision(
-        required_capabilities=frozenset(
-            {"structured_output", "reviewed_read_tools"}
-        )
-    )
-
-    assert decision.route is None
-    assert decision.reason.endswith("surface_missing:reviewed_read_tools")
-
-
-def test_reviewed_skill_requires_exact_discovered_name_and_digest(store):
-    exact = "reviewed_skill:ceo-work-tracking:abc123"
-    router = make_router(
-        store,
-        routes=(route("codex_oauth"),),
-        snapshots={"codex_oauth": snapshot("codex_oauth")},
-        surface_manifests={
-            "codex_oauth": RuntimeRouteSurfaceManifest(
-                route_name="codex_oauth",
-                capabilities=frozenset({exact}),
-            )
-        },
-    )
-
-    assert router.first_eligible_route(required_capabilities=frozenset({exact}))
-    wrong = router.first_route_decision(
-        required_capabilities=frozenset(
-            {"reviewed_skill:ceo-work-tracking:different-sha"}
-        )
-    )
-
-    assert wrong.route is None
-    assert "surface_missing:reviewed_skill:ceo-work-tracking:different-sha" in wrong.reason
 
 
 def test_initial_route_honors_pause_health_freshness_and_capabilities(store):
@@ -531,8 +462,6 @@ def next_route(
     *,
     failure=None,
     capabilities=frozenset({"structured_output"}),
-    recovery_phase="",
-    has_confirmed_receipt=False,
 ):
     requested_failure = failure or failover_failure()
     persisted_attempt = store.get_agent_runtime_attempt(attempt.id)
@@ -548,8 +477,6 @@ def next_route(
         failed_attempt=persisted_attempt,
         failure=requested_failure,
         required_capabilities=capabilities,
-        recovery_phase=recovery_phase,
-        has_confirmed_receipt=has_confirmed_receipt,
     )
 
 
@@ -590,7 +517,6 @@ def test_infrastructure_process_failure_can_failover_to_api(
         failed_attempt=failed_attempt,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
     )
 
     assert decision.route is not None
@@ -620,41 +546,6 @@ def test_infrastructure_failure_can_failover_after_effect_started(
         failed_attempt=failed_attempt,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
-    )
-
-    assert decision.route is not None
-    assert decision.reason == "eligible_route"
-
-
-def test_persisted_confirmable_receipt_blocks_failover_when_caller_says_false(
-    router, store, running_attempt
-):
-    failure = failover_failure()
-    failed_attempt = store.fail_agent_runtime_attempt(
-        running_attempt.id,
-        failure.failure_class.value,
-        failure.code,
-        failure.failover_permitted,
-    )
-    store.record_agent_execution_receipt(
-        running_attempt.agent_run_id,
-        receipt_id="receipt-router",
-        operation_id="write-router",
-        cli="dws",
-        command_path="chat message send",
-        command_digest="router-receipt-digest",
-        exit_code=0,
-        owner="router-test",
-    )
-
-    decision = router.next_route(
-        run=store.get_agent_run(running_attempt.agent_run_id),
-        failed_attempt=failed_attempt,
-        failure=failure,
-        required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
-        has_confirmed_receipt=False,
     )
 
     assert decision.route is not None
@@ -667,10 +558,9 @@ def test_persisted_confirmable_receipt_blocks_failover_when_caller_says_false(
         ({"status": "failed"}, "run_not_eligible"),
         ({"status": "completed"}, "run_not_eligible"),
         ({"status": "failed"}, "run_not_eligible"),
-        ({"effect_started_count": 1}, "eligible_route"),
     ],
 )
-def test_router_uses_current_persisted_run_safety_evidence(
+def test_router_uses_current_persisted_run_status(
     router, store, running_attempt, persisted_update, reason
 ):
     failure = failover_failure()
@@ -693,7 +583,6 @@ def test_router_uses_current_persisted_run_safety_evidence(
         failed_attempt=failed_attempt,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
     )
 
     if reason == "eligible_route":
@@ -722,7 +611,6 @@ def test_router_rejects_caller_run_with_forged_turn_identity(
         failed_attempt=failed_attempt,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
     )
 
     assert decision.route is None
@@ -746,7 +634,6 @@ def test_router_rejects_a_missing_persisted_run(router, store, running_attempt):
         failed_attempt=failed_attempt,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
     )
 
     assert decision.route is None
@@ -785,7 +672,6 @@ def test_router_requires_a_persisted_failed_attempt(
         failed_attempt=attempt,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
     )
 
     assert decision.route is None
@@ -813,7 +699,6 @@ def test_router_rejects_external_failure_that_conflicts_with_persisted_ledger(
         failed_attempt=failed_attempt,
         failure=failover_failure(),
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
     )
 
     assert decision.route is None
@@ -859,7 +744,6 @@ def test_router_requires_each_persisted_failure_authorization_field(
         failed_attempt=failed_attempt,
         failure=external_failure,
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
     )
 
     assert decision.route is None
@@ -897,86 +781,11 @@ def test_fake_session_incompatible_failure_cannot_authorize_fresh_retry(
         failed_attempt=failed_api,
         failure=failover_failure("session_route_incompatible"),
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
     )
 
     assert decision.route is None
     assert decision.fresh_session is False
     assert decision.reason == "failure_mismatch"
-
-
-@pytest.mark.parametrize(
-    (
-        "run_update",
-        "attempt_update",
-        "failure",
-        "receipt",
-        "recovery_phase",
-        "expected_safe",
-        "reason",
-    ),
-    [
-        ({}, {}, failover_failure(), False, "", True, "safe"),
-        ({}, {}, failover_failure(), True, "reconciliation", True, "safe"),
-        (
-            {"effect_started_count": 1},
-            {},
-            failover_failure(),
-            False,
-            "",
-            True,
-            "safe",
-        ),
-        (
-            {},
-            {"first_effect_started_at": "2026-08-20 09:59:00"},
-            failover_failure(),
-            False,
-            "",
-            True,
-            "safe",
-        ),
-        (
-            {},
-            {},
-            RuntimeFailure(
-                failure_class=RuntimeFailureClass.PROCESS,
-                code="process_failed",
-                detail="safe",
-                failover_permitted=False,
-            ),
-            False,
-            "",
-            False,
-            "failure_not_eligible",
-        ),
-    ],
-)
-def test_failover_safety_uses_only_persisted_evidence(
-    store,
-    running_attempt,
-    run_update,
-    attempt_update,
-    failure,
-    receipt,
-    recovery_phase,
-    expected_safe,
-    reason,
-):
-    run = store.get_agent_run(running_attempt.agent_run_id).model_copy(
-        update=run_update
-    )
-    attempt = running_attempt.model_copy(update=attempt_update)
-
-    safe, result_reason = failover_is_safe(
-        run=run,
-        attempt=attempt,
-        failure=failure,
-        has_confirmed_receipt=receipt,
-        recovery_phase=recovery_phase,
-    )
-
-    assert (safe, result_reason) == (expected_safe, reason)
 
 
 def test_router_uses_configured_route_order(store, running_attempt):
@@ -1191,7 +1000,6 @@ def test_fresh_or_conflicting_claude_session_evidence_cannot_retry(
         failed_attempt=conflicting,
         failure=session_incompatible_failure(),
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
     )
 
     assert fresh_decision.route is None
@@ -1272,7 +1080,6 @@ def test_router_rejects_foreign_or_nonledger_failed_attempt(
         failed_attempt=failed_attempt(running_attempt),
         failure=failover_failure(),
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="",
     )
 
     assert decision.route is None

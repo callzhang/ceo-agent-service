@@ -179,7 +179,6 @@ def _audit_result(outcome: str = "executed") -> AuditAgentResult:
     if outcome == "executed":
         external_result = {
             "operation_id": "agent-task:7:generation-1:proposal:0",
-            "verification_summary": "The audited step was read back.",
             "live_result_reference": {"id": "opaque-result"},
         }
     elif outcome == "dry_run":

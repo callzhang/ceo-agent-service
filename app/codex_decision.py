@@ -901,9 +901,9 @@ class CodexDecisionRunner:
         )
 
     def _routed_command_factory(self, image_paths: list[Path]):
-        from app.agent_runtime_router import ApprovedCodexCommandFactory
+        from app.agent_runtime_router import CodexCommandFactory
 
-        return ApprovedCodexCommandFactory.read_only_without_tools(
+        return CodexCommandFactory.standard(
             developer_instructions=(
                 self.developer_instructions
                 or "Produce exactly one read-only AgentEnvelope decision."

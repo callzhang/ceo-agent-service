@@ -137,4 +137,6 @@ def test_project_memory_backfill_uses_persisted_project_identity_and_read_only_r
     assert calls[0]["required_capabilities"] == frozenset(
         {"structured_output", "memory_connector_read"}
     )
-    assert calls[0]["command_factory"]._approved_policy.effect_mode == "read_only"
+    factory = calls[0]["command_factory"]
+    assert "memory_connector_read" in calls[0]["required_capabilities"]
+    assert not hasattr(factory, "_approved_policy")

@@ -29,7 +29,7 @@ from app.agent_runtime_contracts import (
 )
 from app.agent_runtime_router import (
     AgentRuntimeRouter,
-    ApprovedCodexCommandFactory,
+    CodexCommandFactory,
     RoutedCodexExecution,
     RoutedResultCodec,
 )
@@ -211,7 +211,7 @@ def test_oauth_and_codex_failure_fall_back_to_friday_in_one_agent_run(
         workload_kind="agent_run",
         workload_key=str(run_id),
         prompt="return the integer 7",
-        command_factory=ApprovedCodexCommandFactory.effectful(
+        command_factory=CodexCommandFactory.standard(
             developer_instructions="Return one integer."
         ),
         parser=int,
@@ -431,7 +431,7 @@ observability:
             workload_kind="agent_run",
             workload_key=str(run_id),
             prompt='Return exactly this JSON object and no other text: {"ok":true,"value":7}.',
-            command_factory=ApprovedCodexCommandFactory.effectful(developer_instructions="Return JSON."),
+            command_factory=CodexCommandFactory.standard(developer_instructions="Return JSON."),
             parser=_parse_json_text,
             result_codec=RoutedResultCodec.text(schema_id="friday-e2e.json.v1"),
         )

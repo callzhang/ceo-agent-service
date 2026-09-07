@@ -53,7 +53,6 @@ from app.dingtalk_models import DingTalkMessage
 from app.setup_wizard_models import SetupWizardEvent
 from app.setup_wizard import SETUP_WIZARD_STEPS
 from app.store import (
-    MAX_RECONCILIATION_EVENTS,
     AgentRole,
     AgentRun,
     AutoReplyStore,
@@ -339,7 +338,6 @@ def _seed_confirmed_approval_attempt(
                                 "--yes",
                             ]
                         },
-                        "expected_verification": "Read back the approval result.",
                     }
                 ],
                 "sourced_facts": [],
@@ -370,16 +368,13 @@ def _seed_confirmed_approval_attempt(
             "outcome": "executed",
             "summary": "Approval execution was confirmed.",
             "proposal_revision": 0,
-            "side_effect_state": "confirmed",
             "feedback": None,
             "external_result": {
                 "operation_id": operation_id,
-                "verification_summary": "Approval state read back successfully.",
                 "live_result_reference": {
                     "process_instance_id": process_instance_id
                 },
             },
-            "reconciliation": [],
             "decision_options": [],
             "error": {
                 "code": "",
@@ -388,7 +383,6 @@ def _seed_confirmed_approval_attempt(
             },
         },
         owner=f"approval-audit-{suffix}",
-        side_effect_state="confirmed",
     )
     return store.finalize_orchestrated_reply_task(
         task_id=task.id,
@@ -6239,7 +6233,6 @@ def test_pending_reconciliation_names_objective_and_actions():
                             "operation": "oa approval approve",
                             "target": {"instance_id": "process-1"},
                             "payload": {"argv": ["dws", "oa"]},
-                            "expected_verification": "读回审批结果",
                         },
                         {
                             "description": "通知申请人审批结果。",
@@ -6247,7 +6240,6 @@ def test_pending_reconciliation_names_objective_and_actions():
                             "operation": "chat message send",
                             "target": {"user": "user-1"},
                             "payload": {"argv": ["dws", "chat"]},
-                            "expected_verification": "读回消息",
                         },
                     ],
                     "sourced_facts": [],
@@ -9017,10 +9009,16 @@ def test_exhausted_failed_run_remains_ordinary_retry_candidate(tmp_path: Path):
     store.enqueue_reply_task(conversation_id="cid-suspended", conversation_title="Operations", single_chat=False,
         trigger_message_id="msg-suspended", trigger_create_time="2026-08-17 09:00:00", trigger_sender="Mina",
         trigger_text="请处理并确认结果。", trigger_message_json="{}")
-    task = store.claim_reply_tasks(limit=1)[0]; run = _claim_audit_run(store, task).run
+    task = store.claim_reply_tasks(limit=1)[0]
+    run = _claim_audit_run(store, task).run
     store.fail_agent_run(run.id, {"code": "codex_result_invalid", "retryable": True}, owner="worker")
     assert store.get_agent_run(run.id).status == "failed"
-    assert store.list_unknown_agent_runs() == []
+    assert all(
+        item.status != "unknown"
+        for item in store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation
+        )
+    )
 
 
 def test_reviewed_reply_api_rejects_cross_origin_browser_request(tmp_path: Path):

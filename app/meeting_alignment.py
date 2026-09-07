@@ -20,7 +20,6 @@ from app.meeting_alignment_agent import (
     MeetingAlignmentTargetError,
 )
 from app.meeting_alignment_delivery import (
-    MeetingDeliveryAmbiguous,
     MeetingDeliveryError,
     MeetingDeliveryResult,
     MeetingDeliveryRetry,
@@ -1021,18 +1020,6 @@ def _deliver_meeting_job(
     except (ValidationError, ValueError) as exc:
         _fail_job(store, job.id, "meeting_send_evidence", exc)
         return
-    if previous is not None and previous.status == "ambiguous":
-        _reconcile_ambiguous_delivery(
-            store,
-            dws,
-            job,
-            previous,
-            now=now,
-            retry_delay=retry_delay,
-            max_attempts=max_attempts,
-        )
-        return
-
     try:
         decision, canonical_decision_json = (
             load_persisted_meeting_alignment_decision(job.decision_json)
@@ -1100,30 +1087,6 @@ def _deliver_meeting_job(
             message_sender=ServiceMessageSender(store=store, dingtalk=dws),
             delivery_key=f"meeting-alignment:{job.id}:{job.meeting_id}",
         )
-    except MeetingDeliveryAmbiguous as exc:
-        result = exc.result
-        result_json = result.model_dump_json()
-        if not _delivery_open_task_id(result):
-            store.update_meeting_alignment_job(
-                job.id,
-                status="quarantined",
-                send_result_json=result_json,
-                error=_error_json(
-                    "meeting_send_ambiguous_no_id",
-                    "ambiguous delivery has no verifiable identifier; quarantined",
-                ),
-            )
-            return
-        _schedule_ready_reconciliation_or_fail(
-            store,
-            job,
-            result_json=result_json,
-            message=str(exc),
-            now=now,
-            retry_delay=retry_delay,
-            max_attempts=max_attempts,
-        )
-        return
     except MeetingDeliveryRetry as exc:
         values: dict[str, object] = {}
         if exc.result is not None:
@@ -1317,7 +1280,7 @@ def _write_meeting_summary_to_calendar_or_retry(
         )
         # Keep the retry on the delivery lane. A normal queue retry would
         # analyze and send this already-confirmed meeting message again.
-        store.schedule_ready_to_send_meeting_alignment_reconciliation(
+        store.schedule_ready_to_send_meeting_alignment_retry(
             job.id,
             error=_error_json("meeting_calendar_summary", str(exc)),
             available_at=(now + retry_delay).isoformat(),
@@ -1362,122 +1325,6 @@ def _calendar_description_with_summary(existing: str, summary: str) -> str:
             "calendar description exceeds the 5000-character limit"
         )
     return description
-
-
-def _reconcile_ambiguous_delivery(
-    store: AutoReplyStore,
-    dws: Any,
-    job: Any,
-    previous: MeetingDeliveryResult,
-    *,
-    now: datetime,
-    retry_delay: timedelta,
-    max_attempts: int,
-) -> None:
-    open_task_id = _delivery_open_task_id(previous)
-    if not open_task_id:
-        store.update_meeting_alignment_job(
-            job.id,
-            status="quarantined",
-            error=_error_json(
-                "meeting_send_ambiguous_no_id",
-                "stored ambiguous delivery has no verifiable identifier",
-            ),
-        )
-        return
-    try:
-        verification = dws.verify_message_send_result(previous.send_result)
-    except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
-        _schedule_ready_reconciliation_or_fail(
-            store,
-            job,
-            result_json=previous.model_dump_json(),
-            message=str(exc),
-            now=now,
-            retry_delay=retry_delay,
-            max_attempts=max_attempts,
-        )
-        return
-    except Exception as exc:
-        store.update_meeting_alignment_job(
-            job.id,
-            status="failed",
-            error=_error_json("meeting_send_reconcile", str(exc)),
-        )
-        return
-
-    state = verification.get("state")
-    updated = previous.model_copy(
-        update={
-            "status": "sent" if state == "sent" else "ambiguous",
-            "send_verification": verification,
-        }
-    )
-    if state == "sent":
-        store.update_meeting_alignment_job(
-            job.id,
-            status="sent",
-            final_message=updated.message_text or job.final_message,
-            send_result_json=updated.model_dump_json(),
-            error="",
-        )
-        _notify_meeting_sent(job, updated)
-        return
-    if state == "failed":
-        # This attempt only reconciles the old operation. A counted retry may
-        # safely reanalyze and send because the prior operation is confirmed
-        # failed; backoff/max-attempt policy prevents a hot infinite loop.
-        _retry_or_fail(
-            store,
-            job,
-            kind="meeting_send_reconcile_failed",
-            exc=MeetingDeliveryRetry("previous send was confirmed failed"),
-            now=now,
-            retry_delay=retry_delay,
-            max_attempts=max_attempts,
-            extra_values={"send_result_json": updated.model_dump_json()},
-        )
-        return
-    _schedule_ready_reconciliation_or_fail(
-        store,
-        job,
-        result_json=updated.model_dump_json(),
-        message="previous send remains ambiguous",
-        now=now,
-        retry_delay=retry_delay,
-        max_attempts=max_attempts,
-    )
-
-
-def _schedule_ready_reconciliation_or_fail(
-    store: AutoReplyStore,
-    job: Any,
-    *,
-    result_json: str,
-    message: str,
-    now: datetime,
-    retry_delay: timedelta,
-    max_attempts: int,
-) -> None:
-    store.update_meeting_alignment_job(
-        job.id,
-        send_result_json=result_json,
-    )
-    if job.attempts >= max_attempts:
-        store.update_meeting_alignment_job(
-            job.id,
-            status="failed",
-            error=_error_json(
-                "meeting_send_reconcile_max",
-                f"{message}; reconciliation attempt limit reached",
-            ),
-        )
-        return
-    store.schedule_ready_to_send_meeting_alignment_reconciliation(
-        job.id,
-        error=_error_json("meeting_send_reconcile", message),
-        available_at=(now + retry_delay).isoformat(),
-    )
 
 
 def _record_agent_run(
@@ -1558,13 +1405,6 @@ def _saved_delivery_result(raw: str) -> MeetingDeliveryResult | None:
     if not raw.strip() or raw.strip() == "{}":
         return None
     return MeetingDeliveryResult.model_validate_json(raw)
-
-
-def _delivery_open_task_id(result: MeetingDeliveryResult) -> str:
-    value = result.send_verification.get("open_task_id")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return _find_nested_string(result.send_result, "openTaskId")
 
 
 def _find_nested_string(payload: Any, key: str) -> str:

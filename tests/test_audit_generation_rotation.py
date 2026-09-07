@@ -1,7 +1,3 @@
-import sqlite3
-
-from app import cli
-from app.cli import WorkerSettings
 from app.store import AgentRole, AutoReplyStore
 
 
@@ -20,7 +16,7 @@ def _enqueue_task(store: AutoReplyStore, *, message_id: str = "message"):
     return store.claim_reply_tasks(limit=1)[0]
 
 
-def _mark_running_audit_with_legacy_state(
+def _mark_running_audit(
     store: AutoReplyStore, task_id: int, generation: str
 ) -> int:
     run = store.claim_agent_run(
@@ -33,20 +29,13 @@ def _mark_running_audit_with_legacy_state(
         operation_id="audit-operation",
         owner="audit",
     ).run
-    # Historical databases can still carry this value.  Generation rotation
-    # must not consult it or turn a normal retry into a reconciliation lease.
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update agent_runs set side_effect_state='unknown' where id=?",
-            (run.id,),
-        )
     return run.id
 
 
-def test_generation_rotation_supersedes_audit_run_with_legacy_state(tmp_path):
+def test_generation_rotation_supersedes_running_audit_run(tmp_path):
     store = AutoReplyStore(tmp_path / "rotation.sqlite3")
     task = _enqueue_task(store)
-    run_id = _mark_running_audit_with_legacy_state(
+    run_id = _mark_running_audit(
         store, task.id, task.execution_generation
     )
 
@@ -62,7 +51,7 @@ def test_generation_rotation_supersedes_audit_run_with_legacy_state(tmp_path):
     assert superseded.status == "failed"
 
 
-def test_reviewed_feedback_rerun_ignores_legacy_audit_state(tmp_path):
+def test_reviewed_feedback_rerun_supersedes_prior_audit_run(tmp_path):
     store = AutoReplyStore(tmp_path / "feedback.sqlite3")
     attempt_id, task = store.record_reviewed_reply_rerun(
         conversation_id="conversation",
@@ -77,7 +66,7 @@ def test_reviewed_feedback_rerun_ignores_legacy_audit_state(tmp_path):
     )
     claimed = store.claim_reply_task(task.id)
     assert claimed is not None
-    run_id = _mark_running_audit_with_legacy_state(
+    run_id = _mark_running_audit(
         store, claimed.id, claimed.execution_generation
     )
 
@@ -102,18 +91,11 @@ def test_reviewed_feedback_rerun_ignores_legacy_audit_state(tmp_path):
     assert superseded.status == "failed"
 
 
-def test_service_start_does_not_release_legacy_audit_reconciliation(tmp_path, monkeypatch):
-    def fail_if_called(*_args, **_kwargs):
-        raise AssertionError("legacy reconciliation release must not run")
+def test_store_does_not_expose_legacy_audit_reconciliation_queue(tmp_path):
+    store = AutoReplyStore(tmp_path / "startup.sqlite3")
 
-    monkeypatch.setattr(
-        AutoReplyStore,
-        "release_unknown_audit_reconciliation_leases_after_service_restart",
-        fail_if_called,
-    )
-
-    recovered = cli._recover_orphaned_reply_tasks_on_service_start(
-        WorkerSettings(db_path=tmp_path / "startup.sqlite3")
-    )
-
-    assert recovered == 0
+    assert not hasattr(store, "list_unknown_agent_runs")
+    assert not hasattr(store, "claim_unknown_agent_run")
+    assert not hasattr(store, "peek_pending_reconciliation_reply_tasks")
+    assert not hasattr(store, "release_unknown_audit_reconciliation_leases_after_service_restart")
+    assert not hasattr(store, "resolve_agent_run_manually")

@@ -273,7 +273,6 @@ class LocalPipelineOrchestrator:
                             "operation": "chat message send",
                             "target": {"conversation_id": task.conversation_id},
                             "payload": {"text": "Confirmed."},
-                            "expected_verification": "Message is visible.",
                         }
                     ],
                     "sourced_facts": [],
@@ -327,7 +326,6 @@ class LocalPipelineOrchestrator:
                 "feedback": None,
                 "external_result": {
                     "operation_id": operation_id,
-                    "verification_summary": "Message is visible.",
                     "live_result_reference": {"message_id": "sent-1"},
                 },
                 "error": {},
@@ -399,7 +397,7 @@ def test_audit_local_pipeline_send_uses_codex_session_audit(tmp_path):
     task = store.get_reply_task_for_message("cid-1", "msg-1")
     run = _get_audit_run(store, task.id, "g1")
     assert task.status == "done"
-    assert store.list_agent_execution_receipts(run.id) == []
+    assert not hasattr(store, "list_agent_execution_receipts")
     assert run.codex_session_id
 
 
@@ -419,5 +417,5 @@ def test_audit_local_pipeline_handoff_uses_codex_session_audit(
         turn_attempt=0,
     )
     assert task.status == "done"
-    assert store.list_agent_execution_receipts(run.id) == []
+    assert not hasattr(store, "list_agent_execution_receipts")
     assert run.codex_session_id

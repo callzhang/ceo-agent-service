@@ -13,8 +13,7 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     ProposedAction,
 )
-from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
-from app.agent_result import ResultParseError
+from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
 from app.agent_runtime_router import AgentRuntimeRouter
@@ -35,9 +34,6 @@ from app.codex_history import find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
-from app.native_cli_metadata import (
-    NativeCliMetadataClassifier,
-)
 from app.prompt import work_profile_instruction
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore, ReplyTask
@@ -259,8 +255,6 @@ class ConsumerAgentRunner:
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
         refresh_runtime_capabilities: Callable[[], object] | None = None,
-        mcp_effect_registry: McpToolEffectRegistry | None = None,
-        native_cli_classifier: NativeCliMetadataClassifier | None = None,
         codex_session_exists: Callable[[str], bool] | None = None,
         runtime_skill_snapshot: RuntimeSkillSnapshot | None = None,
     ) -> None:
@@ -275,8 +269,6 @@ class ConsumerAgentRunner:
         self.executor = executor
         self.owner = owner or f"consumer-agent-{uuid4().hex}"
         self.refresh_runtime_capabilities = refresh_runtime_capabilities
-        self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
-        self.native_cli_classifier = native_cli_classifier
         self.codex_session_exists = codex_session_exists or (
             lambda session_id: find_codex_session_path(session_id) is not None
         )
@@ -351,10 +343,7 @@ class ConsumerAgentRunner:
 
     @staticmethod
     def _required_capabilities(context: AgentTaskContext) -> frozenset[str]:
-        required = {
-            "task_context",
-            f"channel:{context.channel}",
-        }
+        required = set()
         if context.image_paths:
             required.add("image_input")
         # Skill loading is part of the Agent execution environment.  The
@@ -441,7 +430,7 @@ class ConsumerAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        session_id = None if task.force_new_decision else (
+        session_id = (
             claim.run.codex_session_id if conversation_session_id is not None else None
         ) or conversation_session_id
         persist_conversation_session = not bool(route_sessions)
@@ -457,8 +446,6 @@ class ConsumerAgentRunner:
             codex_adapter=self.codex_adapter,
             claude_adapter=self.claude_adapter,
             friday_adapter=self.friday_adapter,
-            mcp_effect_registry=self.effects,
-            native_cli_classifier=self.native_cli_classifier,
             refresh_runtime_capabilities=self.refresh_runtime_capabilities,
         )
 
@@ -471,7 +458,7 @@ class ConsumerAgentRunner:
 
         continuation_prompt = ""
         if task.error in {
-            "service_restart_before_effect",
+            "service_restart_interrupted",
             "service_restart_immediate_retry",
         }:
             continuation_prompt = (
@@ -480,10 +467,9 @@ class ConsumerAgentRunner:
                 "不要重新开始一个新的业务判断。"
             )
 
-        try:
-            result = process.execute(
+        result = process.execute(
                 run=claim.run,
-                prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries. The proposal must match the supplied JSON Schema exactly. The result includes the required field \"expected_verification\".\n\n" + context.render(
+                prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries. The proposal must match the supplied JSON Schema exactly.\n\n" + context.render(
                     proposal_revision=proposal_revision,
                     feedback=feedback,
                 ) + continuation_prompt,
@@ -512,58 +498,9 @@ class ConsumerAgentRunner:
                 image_paths=[Path(path) for path in context.image_paths],
                 required_capabilities=self._required_capabilities(context),
                 conversation_contract_hash=contract_hash,
-                force_new_session=task.force_new_decision,
-            )
-            if (
-                result.result.outcome.value == "failed"
-                and result.result.error.retryable
-            ):
-                persisted = self.store.get_agent_run(claim.run.id)
-                if persisted is not None and not persisted.tool_events:
-                    attempts = self.store.list_agent_runtime_attempts(claim.run.id)
-                    failed_attempt = attempts[-1] if attempts else None
-                    failed_session_id = (
-                        (failed_attempt.session_id or failed_attempt.source_session_id)
-                        if failed_attempt is not None
-                        else session_id or persisted.codex_session_id
-                    )
-                    if failed_session_id and failed_attempt is not None:
-                        # A retryable result without any controlled tool event
-                        # made no evidence progress. Retry with the current
-                        # instructions instead of resuming that dead-end turn.
-                        self._clear_route_session(
-                            task.conversation_id,
-                            failed_attempt.route_name,
-                            failed_session_id,
-                            failed_attempt.source_session_id,
-                            session_id or "",
-                            persisted.codex_session_id,
-                        )
-            return result
-        except ResultParseError as exc:
-            persisted = self.store.get_agent_run(claim.run.id)
-            if (
-                str(exc) == "no valid typed result JSON found in Codex JSONL"
-                and persisted is not None
-                and not persisted.tool_events
-            ):
-                attempts = self.store.list_agent_runtime_attempts(claim.run.id)
-                failed_attempt = attempts[-1] if attempts else None
-                failed_session_id = (
-                    (failed_attempt.session_id or failed_attempt.source_session_id)
-                    if failed_attempt is not None
-                    else session_id or persisted.codex_session_id
-                )
-                if failed_session_id and failed_attempt is not None:
-                    self._clear_route_session(
-                        task.conversation_id,
-                        failed_attempt.route_name,
-                        failed_session_id,
-                        failed_attempt.source_session_id,
-                        session_id or "",
-                        persisted.codex_session_id,
-                    )
-            raise
+                force_new_session=False,
+        )
+        return result
 
 
 def _prepare_outgoing_dingtalk_messages(
@@ -685,19 +622,12 @@ def consumer_developer_instructions(
 
 def audit_developer_instructions(
     audit_rules: str,
-    *,
-    allow_write: bool = True,
-    recovery_reconciliation: bool = False,
-    frozen_delivery_retry: bool = False,
 ) -> str:
     """Render the Audit contract; provider policy belongs to the runtime."""
-    del allow_write, recovery_reconciliation
     core = _developer_instructions(
         audit_rules=audit_rules, skill_instruction=AUDIT_DYNAMIC_SKILL_BODY,
         wire_model=AuditAgentWireResult,
     )
-    if frozen_delivery_retry:
-        core += "\n\nThis is a retry of the same task. Preserve the business intent and return one terminal structured result."
     instructions = _role_developer_instructions(
         core,
         capability_instructions=(

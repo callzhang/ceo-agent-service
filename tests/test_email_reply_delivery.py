@@ -1312,7 +1312,6 @@ def test_task_adapter_preserves_exact_accepted_proposal_fields(tmp_path: Path) -
                 "subject": "Re: Contract confirmation",
                 "body": "Exact Agent proposal body.\nDo not rewrite.",
             },
-            "expected_verification": "Read Sent and match Message-ID and recipient.",
         }
     )
 
@@ -1355,7 +1354,6 @@ def test_task_adapter_rejects_reply_target_that_does_not_match_task(
                 "subject": "Re: Contract confirmation",
                 "body": "Exact body",
             },
-            "expected_verification": "Read Sent.",
         }
     )
 

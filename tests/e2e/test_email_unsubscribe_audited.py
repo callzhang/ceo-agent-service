@@ -196,6 +196,7 @@ class _AuditedTurnExecutor:
         self.audit_invocations: list[dict[str, object]] = []
         self.commands: list[list[str]] = []
         self.consumer_prompts: list[str] = []
+        self.audit_prompts: list[str] = []
         self.continuation_receipts: list[dict[str, object]] = []
         self.audit_failures: list[str] = []
 
@@ -210,6 +211,7 @@ class _AuditedTurnExecutor:
         self.commands.append(list(command))
         audit_turn = "Candidate revision\n" in prompt
         if audit_turn:
+            self.audit_prompts.append(prompt)
             try:
                 output = self._audit_output(prompt)
             except Exception as exc:
@@ -319,7 +321,6 @@ class _AuditedTurnExecutor:
                 ],
             },
             "payload": {"operations": operations},
-            "expected_verification": "Read terminal provider evidence.",
         }
         self.consumer_proposals.append(action)
         return {
@@ -403,7 +404,6 @@ class _AuditedTurnExecutor:
             "feedback": None,
             "external_result": {
                 "operation_id": operation_id,
-                "verification_summary": str(result["summary"]),
                 "live_result_reference": {
                     "audit_run_id": audit_run.id,
                     "receipt_id": str(result.get("receipt_id") or ""),
@@ -1094,6 +1094,10 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
         for command in executor.commands[0::2]
     )
     assert all(
-        "execute_audited_email_unsubscribe" in json.dumps(command)
+        "mcp_servers.agent_cli.command" in json.dumps(command)
         for command in executor.commands[1::2]
+    )
+    assert all(
+        "execute_audited_email_unsubscribe" in prompt
+        for prompt in executor.audit_prompts
     )

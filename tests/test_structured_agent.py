@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.agent_envelope import AgentEnvelope
+from app.agent_runtime_router import CodexCommandFactory
 from app.store import AutoReplyStore
 from app.structured_agent import (
     AgentSpec,
@@ -75,7 +76,7 @@ def test_agent_spec_developer_instructions_include_skills(tmp_path: Path):
     assert "Return only JSON." in spec.developer_instructions()
 
 
-def test_structured_runner_routes_processing_request_with_read_only_policy(tmp_path):
+def test_structured_runner_routes_processing_request_with_standard_runtime(tmp_path):
     schema = tmp_path / "schema.json"
     schema.write_text("{}", encoding="utf-8")
     raw = json.dumps(
@@ -107,12 +108,11 @@ def test_structured_runner_routes_processing_request_with_read_only_policy(tmp_p
     assert call["workload_kind"] == "structured"
     assert call["workload_key"] == "41"
     assert call["conversation_id"] == "cid-1"
-    assert call["command_factory"]._approved_policy.effect_mode == "read_only"
+    assert isinstance(call["command_factory"], CodexCommandFactory)
     assert call["required_capabilities"] == frozenset(
         {
             "structured_output",
             "local_schema_validation",
-            "reviewed_read_tools",
         }
     )
     assert result.codex_session_id == "structured-session"
@@ -687,26 +687,4 @@ def test_structured_runner_uses_explicit_output_schema_when_configured(tmp_path)
 
     runner.run(1, "cid-1", "Friday", True, "hello", owner="reply:msg-1")
 
-    assert routed.calls[0]["command_factory"]._output_schema_path == output_schema
-
-
-def test_structured_runner_rejects_effectful_mode(tmp_path):
-    schema = tmp_path / "schema.json"
-    schema.write_text("{}", encoding="utf-8")
-    skill = tmp_path / "skill.md"
-    skill.write_text("# Skill", encoding="utf-8")
-    spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
-    runner = StructuredCodexRunner(
-        routed_execution=FakeRoutedExecution("{}"), spec=spec
-    )
-
-    with pytest.raises(ValueError, match="read-only"):
-        runner.run(
-            1,
-            "cid-1",
-            "Friday",
-            True,
-            "hello",
-            owner="reply:msg-1",
-            allow_side_effects=True,
-        )
+    assert routed.calls[0]["command_factory"].output_schema_path == output_schema

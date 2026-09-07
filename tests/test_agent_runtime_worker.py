@@ -55,7 +55,6 @@ def test_worker_orchestration_status_mapping_is_exact():
         "dry_run": ("dry_run", "done"),
         "failed_retryable": ("failed", "pending"),
         "failed_terminal": ("failed", "failed"),
-        "unknown": ("failed", "pending"),
     }
 
 
@@ -130,60 +129,6 @@ class NoActionOrchestrator:
             error=result.error,
             feedback_cycles=0,
             consumer_result=result,
-        )
-
-
-class UnknownEffectOrchestrator:
-    def __init__(self, store: AutoReplyStore) -> None:
-        self.store = store
-
-    def process(self, task, context, *, refresh_context) -> OrchestrationResult:
-        del context, refresh_context
-        claim = _claim_audit_run(
-            self.store,
-            task.id,
-            task.execution_generation,
-            owner="unknown-audit",
-        )
-        assert claim.claimed
-        self.store.set_agent_run_session(
-            claim.run.id,
-            "unknown-audit-session",
-            owner="unknown-audit",
-        )
-        self.store.append_agent_run_event(
-            claim.run.id,
-            _persisted_effect_evidence("unknown-write", "started"),
-            owner="unknown-audit",
-        )
-        run = self.store.mark_agent_run_unknown(
-            claim.run.id,
-            {"code": "agent_side_effect_unknown", "retryable": False},
-            owner="unknown-audit",
-        )
-        result = AuditAgentResult.model_validate(
-            {
-                "outcome": "unknown",
-                "summary": "The external effect requires reconciliation.",
-                "proposal_revision": 0,
-                "side_effect_state": "unknown",
-                "feedback": None,
-                "external_result": None,
-                "error": {
-                    "code": "agent_side_effect_unknown",
-                    "retryable": False,
-                    "authorization_required": False,
-                },
-            }
-        )
-        return OrchestrationResult(
-            status="unknown",
-            final_run_id=run.id,
-            final_role=AgentRole.AUDIT,
-            summary=result.summary,
-            error=result.error,
-            feedback_cycles=0,
-            audit_result=result,
         )
 
 
@@ -311,6 +256,7 @@ def _claim_audit_run(
     execution_generation: str,
     *,
     owner: str,
+    turn_attempt: int = 0,
     **kwargs,
 ):
     return store.claim_agent_run(
@@ -318,7 +264,7 @@ def _claim_audit_run(
         execution_generation,
         role=AgentRole.AUDIT,
         proposal_revision=0,
-        turn_attempt=0,
+        turn_attempt=turn_attempt,
         parent_agent_run_id=None,
         operation_id=f"direct-agent:{task_id}:{execution_generation}",
         owner=owner,
@@ -649,7 +595,6 @@ class ScriptedTaskOrchestrator:
                         "operation": "scripted test action",
                         "target": {"task_id": str(task.id)},
                         "payload": {"task_id": task.id},
-                        "expected_verification": "Scripted test verification.",
                     }
                 ],
                 "sourced_facts": [],
@@ -753,18 +698,6 @@ class ScriptedTaskOrchestrator:
                 owner=self.owner,
                 now=NOW,
             )
-        for receipt in script.receipts:
-            self.store.record_agent_execution_receipt(
-                audit_claim.run.id,
-                receipt_id=f"native:{receipt.operation_id}:{receipt.command_digest}",
-                operation_id=receipt.operation_id,
-                cli=receipt.cli,
-                command_path=receipt.command_path,
-                command_digest=receipt.command_digest,
-                exit_code=0,
-                owner=self.owner,
-                now=NOW,
-            )
         live_reference = {"id": "scripted-result"}
         if direct_result.oa_action_receipt is not None:
             receipt = direct_result.oa_action_receipt
@@ -783,7 +716,6 @@ class ScriptedTaskOrchestrator:
                 "feedback": None,
                 "external_result": {
                     "operation_id": operation_id,
-                    "verification_summary": direct_result.summary,
                     "live_result_reference": live_reference,
                 },
                 "error": {
@@ -797,7 +729,6 @@ class ScriptedTaskOrchestrator:
             audit_claim.run.id,
             audit_result.model_dump(mode="json"),
             owner=self.owner,
-            side_effect_state="confirmed",
             transcript_end_line=len(script.events),
             now=NOW,
         )
@@ -952,7 +883,6 @@ def _audit_protocol_result(
             "external_result": (
                 {
                     "operation_id": operation_id,
-                    "verification_summary": summary,
                     "live_result_reference": live_reference or {},
                 }
                 if executed
@@ -1061,10 +991,15 @@ class ProtocolCodexExecutor:
         self.prompts.append(prompt)
         self.commands.append(list(command))
         self.session_count += 1
+        session_id = (
+            str(command[-2])
+            if len(command) >= 4 and command[2] == "resume"
+            else f"protocol-session-{self.session_count}"
+        )
         records = [
             {
                 "type": "thread.started",
-                "thread_id": f"protocol-session-{self.session_count}",
+                "thread_id": session_id,
             },
             *self._records_with_consumer_skill_receipt(prompt),
         ]
@@ -1239,9 +1174,6 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
                                 "--yes",
                             ]
                         },
-                        "expected_verification": (
-                            "Read the source group and find the exact addressed question."
-                        ),
                     }
                 ],
                 "sourced_facts": [
@@ -1271,10 +1203,7 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
         action = candidate["proposal"]["actions"][0]
         assert action["target"] == {"group": "cid-1"}
         prepared_message_text = action["payload"]["argv"][-2]
-        assert prepared_message_text.startswith(
-            f"{self.message_text}（by明哥分身）"
-        )
-        assert prepared_message_text.count("/api/dingtalk-feedback-spike") == 2
+        assert prepared_message_text == self.message_text
         assert "--user" not in action["payload"]["argv"]
 
         write_command = shlex.join(action["payload"]["argv"])
@@ -1499,9 +1428,6 @@ class ProvidedSkillReceiptProtocolExecutor(SkillReceiptProtocolExecutor):
                                             "--yes",
                                         ]
                                     },
-                                    "expected_verification": (
-                                        "Read the source group and find the exact message."
-                                    ),
                                 }
                             ],
                             "sourced_facts": [],
@@ -1633,9 +1559,6 @@ class MessageClarificationSkillExecutor(SkillReceiptProtocolExecutor):
                                             "--yes",
                                         ]
                                     },
-                                    "expected_verification": (
-                                        "Read the source group and find the exact question."
-                                    ),
                                 }
                             ],
                             "sourced_facts": [
@@ -1777,9 +1700,6 @@ class DocumentReadSkillExecutor(SkillReceiptProtocolExecutor):
                                             "--yes",
                                         ]
                                     },
-                                    "expected_verification": (
-                                        "Read the source group and find the exact review."
-                                    ),
                                 }
                             ],
                             "sourced_facts": [
@@ -2086,7 +2006,6 @@ class Task4BehaviorProtocolExecutor(ConsumerAuditLifecycleExecutor):
                     "operation": operation,
                     "target": {"conversation_id": "cid-1", "message_id": "msg-1"},
                     "payload": {"argv": argv},
-                    "expected_verification": "Verify the exact reviewed action receipt.",
                 }
             ],
             "sourced_facts": [
@@ -2236,7 +2155,6 @@ class OaProtocolExecutor(ProtocolCodexExecutor):
                                         "task_id": task_id,
                                     },
                                     "payload": {"argv": argv},
-                                    "expected_verification": "Read live OA detail again.",
                                 }
                             ],
                             "sourced_facts": [],
@@ -2355,7 +2273,6 @@ class FailedWriteProtocolExecutor(ProtocolCodexExecutor):
                                     "operation": "chat message send",
                                     "target": {"group": "cid-1"},
                                     "payload": {"argv": shlex.split(command)},
-                                    "expected_verification": "Read the live message.",
                                 }
                             ],
                             "sourced_facts": [],
@@ -2426,7 +2343,6 @@ class ContextRefreshingProtocolExecutor(ProtocolCodexExecutor):
                                             "--yes",
                                         ]
                                     },
-                                    "expected_verification": "Read the live message.",
                                 }
                             ],
                             "sourced_facts": [],
@@ -2502,7 +2418,6 @@ class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
                                             "--yes",
                                         ]
                                     },
-                                    "expected_verification": "Read the live message.",
                                 }
                             ],
                             "sourced_facts": [],
@@ -3495,7 +3410,6 @@ def test_retryable_failure_is_requeued_without_custom_receipt_logic(
     assert len(runner.calls) == 1
     run = _get_audit_run(worker.store, task_id, "g1")
     assert run is not None and run.status == "failed"
-    assert worker.store.list_agent_execution_receipts(run.id) == []
 
 
 def test_completed_result_does_not_require_custom_effect_evidence(tmp_path: Path):
@@ -3571,7 +3485,6 @@ def test_no_action_result_does_not_consult_custom_receipts(tmp_path: Path):
     assert attempt.send_status == "skipped"
     run = _get_audit_run(worker.store, task_id, "g1")
     assert run is not None
-    assert worker.store.list_agent_execution_receipts(run.id) == []
 
 
 def test_failed_result_is_a_regular_failure_without_unknown_effect_state(
@@ -3665,14 +3578,7 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
         rerun.execution_generation,
     )
     assert first_run is not None and second_run is not None
-    assert [
-        receipt.operation_id
-        for receipt in worker.store.list_agent_execution_receipts(first_run.id)
-    ] == ["send-a"]
-    assert [
-        receipt.operation_id
-        for receipt in worker.store.list_agent_execution_receipts(second_run.id)
-    ] == ["send-b"]
+    assert first_run.id != second_run.id
 
 
 def test_manual_review_reaches_agent_without_unrelated_attempt_fields(tmp_path: Path):
@@ -3930,6 +3836,7 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
         second_task.id,
         second_task.execution_generation,
         owner="dead-worker-2",
+        turn_attempt=1,
         lease_seconds=60,
         now="2026-07-28 07:01:00",
     )
@@ -5074,7 +4981,6 @@ class MeetingReceiptLifecycleExecutor(ConsumerAuditLifecycleExecutor):
                                         "--yes",
                                     ]
                                 },
-                                "expected_verification": "Read back the source group.",
                             }
                         ],
                         "sourced_facts": [],
@@ -5260,9 +5166,6 @@ class AuthorizedMailReplyProtocolExecutor(ConsumerAuditLifecycleExecutor):
                         "id": self.original_message_id,
                     },
                     "payload": {"argv": command},
-                    "expected_verification": (
-                        "Verify the returned internetMessageId for the same mailbox."
-                    ),
                 }
             ],
             "sourced_facts": [
@@ -5529,7 +5432,6 @@ def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
     run = _get_audit_run(worker.store, task_id, "g1")
     assert run is not None
     assert bool(native_executor.write_calls) is effectful
-    assert worker.store.list_agent_execution_receipts(run.id) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == attempt_status
@@ -5589,7 +5491,6 @@ def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
     run = _get_audit_run(worker.store, task_id, "g1")
     assert run is not None
     assert run.status == "failed"
-    assert worker.store.list_agent_execution_receipts(run.id) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "failed"

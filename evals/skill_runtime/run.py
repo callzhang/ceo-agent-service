@@ -33,20 +33,12 @@ from pydantic import (
 )
 
 from app.agent_context import AgentTaskContext, AuditTurnContext, MaterialReference
-from app.agent_effects import McpToolEffectRegistry
 from app.agent_contracts import ConsumerAgentResult, ProposedAction
-from app.agent_result import EffectKind
-from app.agent_skill_usage import (
-    LoadedSkillReceipt,
-    loaded_skill_receipts,
-    normalized_read_skill_metadata,
-)
 from app.agent_wire_contracts import (
     parse_audit_agent_wire_result,
     parse_consumer_agent_wire_result,
 )
 from app.audit_rules import render_audit_rules
-from app.audit_agent import _expected_effect_action
 from app.business_skills import (
     BUNDLED_BUSINESS_SKILL_NAMES,
     BusinessSkillCatalogEntry,
@@ -58,7 +50,6 @@ from app.consumer_agent import (
     consumer_developer_instructions,
 )
 from app.process_runner import run_process_with_idle_timeout
-from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.store import AgentRole
 from tests.support.native_codex_read_fixture import isolate_read_only_fixture_command
 
@@ -526,7 +517,7 @@ def _evaluate_protocol(
         errors.append(
             f"Consumer outcome {observed_outcome!r} != {case.expected_outcome!r}"
         )
-    errors.extend(_validate_effect_metadata(consumer_result))
+    errors.extend(_validate_action_contracts(consumer_result))
     if terminal_outcome:
         if case.acceptable_audit_outcomes != "not_applicable":
             errors.append("terminal case must declare Audit not_applicable")
@@ -598,59 +589,22 @@ def _evaluate_assertion(
     return False
 
 
-def _validate_effect_metadata(consumer_result: dict[str, object]) -> list[str]:
+def _validate_action_contracts(consumer_result: dict[str, object]) -> list[str]:
     proposal = consumer_result.get("proposal")
     if proposal is None:
         return []
     if not isinstance(proposal, dict) or not isinstance(proposal.get("actions"), list):
-        return ["Consumer proposal actions are unavailable for effect validation"]
-    registry = McpToolEffectRegistry.default()
-    native_classifier = NativeCliMetadataClassifier()
+        return ["Consumer proposal actions are unavailable for contract validation"]
     errors: list[str] = []
     for index, action in enumerate(proposal["actions"]):
         if not isinstance(action, dict):
             errors.append(f"proposal action {index} is not structured")
             continue
         try:
-            parsed_action = ProposedAction.model_validate(action)
+            ProposedAction.model_validate(action)
         except ValidationError as exc:
             errors.append(f"proposal action {index} contract failed: {exc}")
             continue
-        argv = parsed_action.payload.get("argv")
-        if (
-            parsed_action.capability == "agent_cli"
-            and parsed_action.operation == "execute_reviewed_write"
-            and isinstance(argv, list)
-            and argv[:1] == ["fixture-write"]
-        ):
-            continue
-        expected = _expected_effect_action(
-            parsed_action,
-            registry,
-            action_index=index,
-        )
-        if expected.get("operation_contract_valid") is False:
-            errors.append(f"proposal action {index} operation contract is invalid")
-            continue
-        native_call = native_classifier.classify(
-            {"type": "command_execution", **parsed_action.payload}
-        )
-        if native_call is not None:
-            if native_call.effect is not EffectKind.EFFECTFUL:
-                errors.append(f"proposal action {index} is not an executable effect")
-            continue
-        call = registry.classify(
-            {
-                "type": "mcp_tool_call",
-                "server": parsed_action.capability,
-                "tool": parsed_action.operation,
-                "arguments": parsed_action.payload,
-            }
-        )
-        if call is None or expected.get("reviewed_tool") is None:
-            errors.append(f"proposal action {index} has unknown effect metadata")
-        elif call.effect is not EffectKind.EFFECTFUL:
-            errors.append(f"proposal action {index} is not an executable effect")
     return errors
 
 
@@ -855,7 +809,7 @@ def build_live_command(
     instructions = (
         consumer_developer_instructions(rules, skill_protocol=skill_protocol)
         if role == "consumer"
-        else audit_developer_instructions(rules, allow_write=False)
+        else audit_developer_instructions(rules)
     )
     if role == "audit" and skill_protocol:
         instructions += f"\n\n{skill_protocol}"
@@ -1002,11 +956,6 @@ def _run_live_case(
         )
         consumer = parse_consumer_agent_wire_result(consumer_raw)
         consumer_events = _read_event_log(consumer_log)
-        consumer_receipts = _verified_live_skill_receipts(
-            consumer_events,
-            role="Consumer",
-            authorized_skill_paths=skill_paths,
-        )
         if consumer.outcome.value != "proposal":
             return _evaluate_protocol(
                 case,
@@ -1034,7 +983,6 @@ def _run_live_case(
         audit_prompt = _render_live_audit_prompt(
             case,
             consumer,
-            consumer_receipts,
             read_argv,
         )
         audit_raw = _execute_live_command(
@@ -1054,11 +1002,6 @@ def _run_live_case(
         )
         audit = parse_audit_agent_wire_result(audit_raw)
         audit_events = _read_event_log(audit_log)
-        _verified_live_skill_receipts(
-            audit_events,
-            role="Audit",
-            authorized_skill_paths=skill_paths,
-        )
         return _evaluate_protocol(
             case,
             consumer.model_dump(mode="json"),
@@ -1068,57 +1011,6 @@ def _run_live_case(
             authorized_skill_paths=skill_paths,
             required_skill_names=tuple(path.parent.name for path in operation_paths),
         )
-
-
-def _verified_live_skill_receipts(
-    events: tuple[ProtocolEvent, ...],
-    *,
-    role: str = "Consumer",
-    authorized_skill_paths: tuple[Path, ...] | None = None,
-) -> tuple[LoadedSkillReceipt, ...]:
-    persisted_events: list[dict[str, object]] = []
-    read_count = 0
-    for event in events:
-        if event.tool != "read_skill":
-            continue
-        read_count += 1
-        authorized_roots = (
-            tuple(dict.fromkeys(path.parent.parent for path in authorized_skill_paths))
-            if authorized_skill_paths is not None
-            else ((ROOT / "skills").resolve(),)
-        )
-        metadata = normalized_read_skill_metadata(
-            event.arguments,
-            {
-                "structuredContent": event.result,
-                "isError": False,
-            },
-            authorized_roots=authorized_roots,
-        )
-        if metadata is not None and authorized_skill_paths is not None:
-            metadata_path = Path(str(metadata.get("skill_path", ""))).resolve()
-            if metadata_path not in authorized_skill_paths:
-                metadata = None
-        if metadata is None:
-            raise EvalValidationError(
-                f"live {role} Skill read receipt is invalid or tampered"
-            )
-        persisted_events.append(
-            {
-                "type": "item.completed",
-                "item": {
-                    "type": "mcp_tool_call",
-                    "server": "agent_cli",
-                    "tool": "read_skill",
-                    "status": "completed",
-                    "metadata": metadata,
-                },
-            }
-        )
-    receipts = loaded_skill_receipts(persisted_events)
-    if not receipts or len(receipts) != read_count:
-        raise EvalValidationError(f"live {role} Skill receipt is missing")
-    return receipts
 
 
 def _validated_operation_skill_paths(paths: tuple[Path, ...]) -> tuple[Path, ...]:
@@ -1157,7 +1049,6 @@ def _parse_operation_skill_bindings(
 def _render_live_audit_prompt(
     case: EvalCase,
     consumer: ConsumerAgentResult,
-    receipts: tuple[LoadedSkillReceipt, ...],
     read_argv: list[JsonValue],
 ) -> str:
     if consumer.proposal is None:
@@ -1189,17 +1080,16 @@ def _render_live_audit_prompt(
         operation_id=f"skill-runtime-{case.case_id}",
         proposal=consumer.proposal,
         audit_rules="",
-        consumer_skills=receipts,
     )
     return (
         context.render(current_time="2000-01-01 00:00:00 +0000")
         + "\n\n## Eval dry-run\n"
-        "Reread every exact verified Consumer Skill receipt and the supplied evidence. "
-        "Review only and execute nothing. If the candidate passes review and would "
-        "otherwise execute, return outcome=needs_human, side_effect_state=none, "
+        "Use the applicable Skills and supplied source material. Review only and "
+        "execute nothing. If the candidate passes review and would otherwise execute, "
+        "return outcome=failed, "
         "error_code=dry_run_execution_suppressed, error_retryable=false, "
         "error_authorization_required=false, proposal_revision=0, and null feedback "
-        "and external_result with empty reconciliation. Return only the strict Audit result."
+        "and external_result. Return only the strict Audit result."
     )
 
 

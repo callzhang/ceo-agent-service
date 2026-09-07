@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import app.weekly_okr_report as weekly_okr_report_module
+from app.agent_runtime_router import CodexCommandFactory
 from app.store import AutoReplyStore
 from app.weekly_okr_report import (
     DEFAULT_ARCHIVE_DIR_NAME,
@@ -348,8 +349,7 @@ class MessageDws:
         return {"success": True}
 
     def verify_message_send_result(self, send_result):
-        assert send_result == {"success": True}
-        return {"state": "sent"}
+        raise AssertionError("application must not read back a provider success")
 
 
 def test_weekly_okr_group_summary_includes_assistant_postfix(tmp_path):
@@ -1092,8 +1092,7 @@ def test_codex_agent_claims_exact_weekly_job_before_routed_execution(tmp_path):
     assert calls[0]["conversation_id"] is None
     assert calls[0]["required_capabilities"] >= {
         "structured_output",
-        "memory_connector_read",
-        "dws_read",
+        "local_schema_validation",
     }
     with store._connect() as db:
         row = db.execute("select status from weekly_okr_analysis_jobs").fetchone()
@@ -1526,8 +1525,8 @@ def test_codex_agent_delegates_route_model_selection_to_runtime_adapter(tmp_path
     )
 
     assert routed.calls[0]["conversation_id"] is None
-    assert routed.calls[0]["command_factory"]._approved_policy.effect_mode == "read_only"
-    instructions = routed.calls[0]["command_factory"]._developer_instructions
+    assert isinstance(routed.calls[0]["command_factory"], CodexCommandFactory)
+    instructions = routed.calls[0]["command_factory"].developer_instructions
     assert "CEO_PYTHON" in instructions
     assert "never invoke a repository-local .venv/bin/python path" in instructions
 

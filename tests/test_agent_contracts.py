@@ -11,6 +11,7 @@ from app.agent_contracts import (
     AuditOutcome,
     ConsumerAgentResult,
     ConsumerOutcome,
+    ConsumerProposal,
     ProposedAction,
     RiskLevel,
 )
@@ -43,7 +44,6 @@ def _proposal() -> dict[str, object]:
                 "operation": "chat message send",
                 "target": {"conversation_reference": "cid-1"},
                 "payload": {"text": "The published result is effective today."},
-                "expected_verification": "Read the sent message by operation id",
             }
         ],
         "sourced_facts": [
@@ -220,7 +220,6 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
                 outcome="executed",
                 external_result={
                     "operation_id": "op-1",
-                    "verification_summary": "The effect was read back.",
                     "live_result_reference": {"receipt_id": "receipt-1"},
                 },
             ),
@@ -350,7 +349,6 @@ def test_wire_schema_is_discriminated_and_contains_only_nested_fields(model):
                 external_result=json.dumps(
                     {
                         "operation_id": "op-1",
-                        "verification_summary": "Read back.",
                         "live_result_reference": {"id": "one"},
                     }
                 ),
@@ -412,7 +410,6 @@ def test_proposed_action_rejects_empty_target():
                 "operation": "chat message send",
                 "target": {},
                 "payload": {"text": "done"},
-                "expected_verification": "Message exists",
             }
         )
 
@@ -576,7 +573,6 @@ def test_audit_executed_requires_external_result():
             feedback=None,
             external_result={
                 "operation_id": "op-1",
-                "verification_summary": "Sent message is visible by operation id.",
                 "live_result_reference": {"message_id": "mid-1"},
             },
         )
@@ -642,7 +638,6 @@ def test_audit_result_rejects_reconciliation_application_field(
         _audit_payload(
             external_result={
                 "operation_id": "op-1",
-                "verification_summary": "unexpected",
                 "live_result_reference": {},
             }
         ),
@@ -723,6 +718,17 @@ def test_committed_schemas_reject_cross_field_mismatches(schema_name, payload):
 def test_agent_results_reject_removed_side_effect_state_field():
     with pytest.raises(ValidationError, match="side_effect_state"):
         AuditAgentResult.model_validate(_audit_payload(side_effect_state="none"))
+
+
+def test_proposed_action_uses_runtime_result_instead_of_verification_plan():
+    proposal = _proposal()
+
+    parsed = ConsumerProposal.model_validate(proposal)
+    assert parsed.actions[0].action_identity
+
+    proposal["actions"][0]["expected_verification"] = "Read it back."
+    with pytest.raises(ValidationError, match="expected_verification"):
+        ConsumerProposal.model_validate(proposal)
 
 
 def test_nested_removed_error_state_is_rejected_for_python_and_json_inputs():
@@ -854,46 +860,6 @@ def test_parse_typed_agent_result_accepts_single_stray_array_close_after_proposa
     assert result.outcome is ConsumerOutcome.PROPOSAL
 
 
-def test_consumer_wire_result_normalizes_legacy_proposal_layout():
-    legacy_proposal = json.loads(json.dumps(_proposal()))
-    expected_verification = legacy_proposal.pop("expected_verification", None)
-    authored_judgment = legacy_proposal.pop("authored_judgment")
-    if expected_verification is None:
-        expected_verification = legacy_proposal["actions"][0].pop(
-            "expected_verification"
-        )
-    else:
-        legacy_proposal["actions"][0].pop("expected_verification", None)
-    sourced_facts = legacy_proposal.pop("sourced_facts")
-    payload = {
-        "outcome": "proposal",
-        "summary": "Prepare the notice.",
-        "proposal": {
-            **legacy_proposal,
-            "expected_verification": expected_verification,
-        },
-        "sourced_facts": sourced_facts,
-        "authored_judgment": authored_judgment,
-        "error_code": "",
-        "error_retryable": False,
-        "error_authorization_required": False,
-        "risk": "low",
-        "confidence": 1.0,
-        "decision_options": [],
-    }
-    raw = json.dumps(
-        {
-            "type": "item.completed",
-            "item": {"type": "agent_message", "text": json.dumps(payload)},
-        }
-    )
-
-    result = parse_typed_agent_result(raw, ConsumerAgentWireResult)
-
-    assert result.root.proposal.actions[0].expected_verification
-    assert result.root.proposal.sourced_facts
-
-
 def test_consumer_wire_result_preserves_nested_proposal_fields():
     result = ConsumerAgentWireResult.model_validate(
         {
@@ -973,7 +939,6 @@ def test_dingtalk_message_actions_require_canonical_target_fields():
                     "reply_to_message_id": "message-1",
                 },
                 "payload": {"content": "done"},
-                "expected_verification": "provider accepts the message",
             }
         )
 
@@ -985,7 +950,6 @@ def test_dingtalk_message_actions_require_canonical_target_fields():
             "operation": "messages-reply",
             "target": {"conversation_id": "cid-1", "message_id": "message-1"},
             "payload": {"content": "done"},
-            "expected_verification": "provider accepts the message",
         }
     )
     assert canonical.target["conversation_id"] == "cid-1"

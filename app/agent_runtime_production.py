@@ -7,25 +7,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
-from app.agent_effects import McpToolEffectRegistry
-from app.agent_skill_usage import REVIEWED_SKILL_RECEIPT_VALIDATION_CAPABILITY
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
     RuntimeKind,
-    RuntimeRouteSurfaceManifest,
 )
 from app.agent_runtime_router import (
     AgentRuntimeRouter,
     ProcessExecutor,
     RoutedCodexExecution,
-    _configured_mcp_server_transport_names,
-    local_codex_session_effect_probe,
 )
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
-from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.service_codex_config import (
     ServiceMcpConfigError,
     ServiceMcpServer,
@@ -42,8 +36,6 @@ class RuntimeCapabilityRegistry(Mapping[str, RuntimeCapabilitySnapshot]):
     ) -> None:
         self._lock = RLock()
         self._snapshots: dict[str, RuntimeCapabilitySnapshot] = {}
-        self._surface_manifests: dict[str, RuntimeRouteSurfaceManifest] = {}
-        self._surface_view = _RuntimeSurfaceManifestView(self)
         self.refresh(snapshots or {})
 
     def refresh(self, snapshots: Mapping[str, RuntimeCapabilitySnapshot]) -> None:
@@ -65,44 +57,6 @@ class RuntimeCapabilityRegistry(Mapping[str, RuntimeCapabilitySnapshot]):
     def __len__(self) -> int:
         with self._lock:
             return len(self._snapshots)
-
-    def refresh_surface_manifests(
-        self, manifests: Mapping[str, RuntimeRouteSurfaceManifest]
-    ) -> None:
-        replacement = dict(manifests)
-        for route_name, manifest in replacement.items():
-            if route_name != manifest.route_name:
-                raise ValueError("runtime surface manifest key mismatch")
-        with self._lock:
-            self._surface_manifests = replacement
-
-    def surface_manifest(self, route_name: str) -> RuntimeRouteSurfaceManifest | None:
-        with self._lock:
-            return self._surface_manifests.get(route_name)
-
-    @property
-    def surface_manifests(self) -> Mapping[str, RuntimeRouteSurfaceManifest]:
-        return self._surface_view
-
-
-class _RuntimeSurfaceManifestView(Mapping[str, RuntimeRouteSurfaceManifest]):
-    """Live read-only view so existing routers observe reviewed config refreshes."""
-
-    def __init__(self, registry: RuntimeCapabilityRegistry) -> None:
-        self._registry = registry
-
-    def __getitem__(self, key: str) -> RuntimeRouteSurfaceManifest:
-        with self._registry._lock:
-            return self._registry._surface_manifests[key]
-
-    def __iter__(self) -> Iterator[str]:
-        with self._registry._lock:
-            return iter(tuple(self._registry._surface_manifests))
-
-    def __len__(self) -> int:
-        with self._registry._lock:
-            return len(self._registry._surface_manifests)
-
 
 PRODUCTION_RUNTIME_CAPABILITIES = RuntimeCapabilityRegistry()
 
@@ -156,8 +110,6 @@ def build_production_agent_runtime(
     """Build the pure, pre-probed runtime dependencies for Agent workloads."""
 
     runtime_config = load_runtime_config(os.environ)
-    effects = McpToolEffectRegistry.default()
-    native_cli = NativeCliMetadataClassifier()
     has_claude_route = any(
         route.runtime_kind is RuntimeKind.CLAUDE_CLI
         for route in runtime_config.routes
@@ -175,7 +127,6 @@ def build_production_agent_runtime(
             routes=runtime_config.routes,
             store=store,
             snapshots=capability_registry,
-            surface_manifests=capability_registry.surface_manifests,
         ),
         codex_adapter=CodexRuntimeAdapter(
             workspace, runtime_config, codex_bin=codex_bin
@@ -185,8 +136,6 @@ def build_production_agent_runtime(
                 workspace=workspace,
                 config=runtime_config,
                 claude_bin=claude_bin,
-                effect_registry=effects,
-                native_cli_classifier=native_cli,
                 service_mcp_servers=service_servers,
             )
             if has_claude_route
@@ -238,7 +187,6 @@ def build_production_routed_codex_execution(
             routes=runtime_config.routes,
             store=store,
             snapshots=capability_registry,
-            surface_manifests=capability_registry.surface_manifests,
         ),
         "adapter": CodexRuntimeAdapter(workspace, runtime_config, codex_bin=codex_bin),
         "friday_adapter": (
@@ -246,7 +194,6 @@ def build_production_routed_codex_execution(
             if any(route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME for route in runtime_config.routes)
             else None
         ),
-        "session_effect_probe": local_codex_session_effect_probe(),
         "total_timeout_seconds": total_timeout_seconds,
         "idle_timeout_seconds": idle_timeout_seconds,
         "allow_legacy_oauth_bootstrap": False,
@@ -278,12 +225,6 @@ def build_production_runtime_refresher(
     from app.agent_runtime_probe import AgentRuntimeProbe, RuntimeCapabilityRefresher
 
     runtime_config = load_runtime_config(os.environ)
-    capability_registry.refresh_surface_manifests(
-        _reviewed_surface_manifests(
-            runtime_config,
-            codex_bin=codex_bin,
-        )
-    )
     probe_kwargs = {
         "config": runtime_config,
         "codex_bin": codex_bin,
@@ -310,125 +251,3 @@ def build_production_runtime_refresher(
         registry=capability_registry,
         probe=AgentRuntimeProbe(**probe_kwargs),
     )
-
-
-def _reviewed_surface_manifests(
-    runtime_config,
-    *,
-    codex_bin: str,
-):
-    adapter = CodexRuntimeAdapter(Path.cwd(), runtime_config, codex_bin=codex_bin)
-    effects = McpToolEffectRegistry.default()
-    claude_servers = {
-        server.name for server in _production_claude_service_mcp_servers()
-    }
-    claude_read_tools = effects.reviewed_read_tools()
-    manifests = {}
-    for route in runtime_config.routes:
-        if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
-            manifests[route.name] = RuntimeRouteSurfaceManifest(
-                route_name=route.name,
-                capabilities=frozenset(
-                    {
-                        "task_context",
-                        "channel:dingtalk",
-                        "channel:wechat",
-                        "channel:lark",
-                        "channel:feishu",
-                        "structured_output",
-                        "local_schema_validation",
-                    }
-                ),
-            )
-            continue
-        if route.runtime_kind is RuntimeKind.CLAUDE_CLI:
-            capabilities = set()
-            if "agent_cli" in claude_servers and claude_read_tools.get("agent_cli"):
-                capabilities.update(
-                    {
-                        "task_context",
-                        "channel:dingtalk",
-                        "channel:wechat",
-                        "channel:lark",
-                        "channel:feishu",
-                        "reviewed_read_tools",
-                        "mcp:agent_cli:reviewed_read",
-                        "native_cli:reviewed",
-                        "native_cli:dws",
-                        "native_cli:lark",
-                        "reviewed_dws_read_instructions",
-                        "dws_read",
-                        "agent_cli.dws",
-                        "agent_cli.lark-cli",
-                    }
-                )
-            if (
-                "memory_connector" in claude_servers
-                and claude_read_tools.get("memory_connector")
-            ):
-                capabilities.update(
-                    {"memory_connector_read", "mcp:memory_connector:read"}
-                )
-            manifests[route.name] = RuntimeRouteSurfaceManifest(
-                route_name=route.name,
-                capabilities=frozenset(capabilities),
-            )
-            continue
-        # Consumer and Audit turns always install this local, service-owned
-        # transport with their command policy.  It must therefore be reflected
-        # in the surface manifest instead of depending on a user's global
-        # Codex configuration.  The command policy still controls its tools.
-        transports = frozenset(
-            {
-                "agent_cli",
-                *_configured_mcp_server_transport_names(
-                    (), env=adapter.build_env(route)
-                ),
-            }
-        )
-        capabilities = {
-            "audit_effect_visibility",
-            "image_input",
-            "task_context",
-            "channel:dingtalk",
-            "channel:wechat",
-            "channel:lark",
-            "channel:feishu",
-            "native_cli:reviewed",
-            "native_cli:dws",
-            "native_cli:lark",
-            "reviewed_dws_read_instructions",
-        }
-        if "agent_cli" in transports:
-            capabilities.update(
-                {
-                    "reviewed_read_tools",
-                    "reviewed_write_tools",
-                    "mcp:agent_cli:reviewed_read",
-                    "mcp:agent_cli:reviewed_write",
-                    "dws_read",
-                    # The service owns this transport.  Its individual
-                    # commands remain validated against their own reviewed
-                    # metadata at execution time; route selection must not
-                    # scan the complete DWS schema to establish that fact.
-                    "agent_cli.dws",
-                    "agent_cli.lark-cli",
-                    # The route can validate and reread a concrete Skill
-                    # receipt supplied by an already completed Consumer run.
-                    # It does not claim that any ambient Skill file exists.
-                    REVIEWED_SKILL_RECEIPT_VALIDATION_CAPABILITY,
-                }
-            )
-        if "memory_connector" in transports:
-            capabilities.update(
-                {
-                    "memory_connector_read",
-                    "mcp:memory_connector:read",
-                    "mcp:memory_connector:memory_write",
-                }
-            )
-        manifests[route.name] = RuntimeRouteSurfaceManifest(
-            route_name=route.name,
-            capabilities=frozenset(capabilities),
-        )
-    return manifests

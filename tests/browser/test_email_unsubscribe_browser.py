@@ -1387,7 +1387,6 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
                             for item in operations
                         ]
                     },
-                    "expected_verification": "Read redacted provider state.",
                 }
             )
 

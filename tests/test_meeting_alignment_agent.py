@@ -172,10 +172,7 @@ def test_meeting_runner_routes_persisted_run_fresh_with_exact_capabilities(tmp_p
     routed = FakeRoutedMeetingExecution(
         json.dumps(summary_payload(), ensure_ascii=False)
     )
-    runner = MeetingAlignmentCodexRunner(
-        routed_execution=routed,
-        work_profile_source="/profile.md",
-    )
+    runner = MeetingAlignmentCodexRunner(routed_execution=routed)
 
     decision = runner.decide(prompt="decide", run_id=52)
 
@@ -187,12 +184,11 @@ def test_meeting_runner_routes_persisted_run_fresh_with_exact_capabilities(tmp_p
         {
             "structured_output",
             "local_schema_validation",
-            "reviewed_read_tools",
         }
     )
-    assert "Use only reviewed read tools." in (
-        call["command_factory"]._developer_instructions
-    )
+    instructions = call["command_factory"].developer_instructions
+    assert "Use only reviewed read tools." not in instructions
+    assert "does not reinterpret provider-specific commands or tools" in instructions
     assert decision.action == "send"
     assert runner.last_session_id == "meeting-session"
 
@@ -291,7 +287,8 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "target.kind=group" in prompt
     assert "audience_scope=personal" in prompt
     assert "完整日历 1:1" in prompt
-    assert "业务群发现失败是一次可重试的执行失败" in prompt
+    assert "业务群发现失败时，使用日历中已确认的会议组织者" in prompt
+    assert "不得按姓名模糊搜索目标" in prompt
     assert "只保留 audit_summary 与 confidence" not in prompt
     assert "真实 @" in prompt
     assert "放在对应的任务、问题或信息所在句子中" in prompt
@@ -316,7 +313,7 @@ def test_prompt_makes_business_content_group_first_even_for_one_to_one():
     assert "audience_scope=business" in prompt
     assert "DWS 做群发现" in prompt
     assert "target.kind=group" in prompt
-    assert "业务群发现失败是一次可重试的执行失败" in prompt
+    assert "业务群发现失败时，使用日历中已确认的会议组织者" in prompt
 
 
 def test_prompt_requires_a_summary_even_for_candidate_interviews():
@@ -457,7 +454,7 @@ def test_runner_always_starts_fresh_and_uses_schema(tmp_path: Path):
     assert decision.action == "send"
     assert routed.calls[0]["conversation_id"] is None
     assert routed.calls[0]["workload_key"] == "8"
-    assert routed.calls[0]["command_factory"]._output_schema_path.name == (
+    assert routed.calls[0]["command_factory"].output_schema_path.name == (
         "meeting_alignment_decision.schema.json"
     )
     assert runner.last_transcript_start_line == 0
@@ -533,7 +530,7 @@ def test_runner_clears_prior_audit_metadata_before_executor_failure(tmp_path: Pa
     assert runner.last_audit_tool_events == []
 
 
-def test_runner_accepts_historical_sources_with_memory_recall_audit(tmp_path: Path):
+def test_runner_accepts_historical_sources_from_typed_result(tmp_path: Path):
     payload = derek_view_payload(historical_sources=["历史上线案例"])
 
     def executor(command, prompt):
@@ -573,12 +570,11 @@ def test_runner_accepts_configured_profile_as_unqueried_history(tmp_path: Path):
                 ensure_ascii=False,
             )
         ),
-        work_profile_source=configured,
     )
     assert runner.decide(prompt="decide", run_id=1).action == "send"
 
 
-def test_runner_retries_unaudited_historical_sources(tmp_path: Path):
+def test_runner_does_not_require_tool_receipt_for_historical_sources(tmp_path: Path):
     runner = MeetingAlignmentCodexRunner(
         routed_execution=FakeRoutedMeetingExecution(
             json.dumps(
@@ -586,10 +582,8 @@ def test_runner_retries_unaudited_historical_sources(tmp_path: Path):
                 ensure_ascii=False,
             )
         ),
-        work_profile_source="/configured/work_profile.md",
     )
-    with pytest.raises(RuntimeError, match="valid MeetingAlignmentDecision"):
-        runner.decide(prompt="decide", run_id=1)
+    assert runner.decide(prompt="decide", run_id=1).action == "send"
 
 
 def _fixture_cases() -> list[dict]:

@@ -5,8 +5,8 @@ from typing import Protocol
 from pydantic import ValidationError
 
 from app.agent_runtime_router import (
-    ApprovedCodexCommandFactory,
-    READ_ONLY_BACKGROUND_AGENT_BOUNDARY,
+    CodexCommandFactory,
+    BACKGROUND_AGENT_RUNTIME_BOUNDARY,
     RoutedCodexExecution,
     RoutedCodexExecutionError,
     RoutedResultCodec,
@@ -31,7 +31,6 @@ MEETING_RUNTIME_CAPABILITIES = frozenset(
     {
         "structured_output",
         "local_schema_validation",
-        "reviewed_read_tools",
     }
 )
 MEETING_RESULT_CODEC = RoutedResultCodec.text(
@@ -85,7 +84,6 @@ class MeetingAlignmentCodexRunner:
         self,
         *,
         routed_execution: RoutedCodexExecution,
-        work_profile_source: str | None = None,
     ):
         from app.codex_decision import extract_codex_audit_events
         from app.codex_history import (
@@ -93,7 +91,6 @@ class MeetingAlignmentCodexRunner:
         )
 
         self.routed_execution = routed_execution
-        self.work_profile_source = work_profile_source or str(work_profile_path())
         self._extract_codex_audit_events = extract_codex_audit_events
         self._extract_codex_audit_events_from_session = (
             extract_codex_audit_events_from_session
@@ -115,11 +112,10 @@ class MeetingAlignmentCodexRunner:
                 workload_kind="meeting",
                 workload_key=str(run_id),
                 prompt=prompt,
-                command_factory=ApprovedCodexCommandFactory.read_only_meeting(
+                command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
-                        "Return exactly one MeetingAlignmentDecision JSON object. "
-                        "Use only reviewed read tools.\n\n"
-                        + READ_ONLY_BACKGROUND_AGENT_BOUNDARY
+                        "Return exactly one MeetingAlignmentDecision JSON object.\n\n"
+                        + BACKGROUND_AGENT_RUNTIME_BOUNDARY
                     ),
                     output_schema_path=MEETING_ALIGNMENT_DECISION_SCHEMA_PATH,
                     use_output_schema=True,
@@ -153,11 +149,6 @@ class MeetingAlignmentCodexRunner:
         )
         try:
             decision = MeetingAlignmentDecision.model_validate(payload["decision"])
-            _validate_historical_sources(
-                decision,
-                audit_tool_events=self.last_audit_tool_events,
-                work_profile_source=self.work_profile_source,
-            )
         except ValueError as exc:
             raise RuntimeError(
                 "Codex did not return a valid MeetingAlignmentDecision"
@@ -196,7 +187,7 @@ def build_meeting_alignment_prompt(
     )
     target_contract = """每场会议都必须生成并发送一条会议总结，action 只能是 send；不得返回 no_action。
 - 内容优先于参会人数：客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动一律是业务内容，必须返回 audience_scope=business，并使用 DWS 做群发现、按业务承接证据给候选群排序，以最强候选作为 target.kind=group。
-- 不能因为是 1:1、群可访问、议题相似或参会人部分重合而私信；业务群发现失败是一次可重试的执行失败，绝不能伪装成 no_action 或改为 direct target。
+- 不能因为是 1:1、群可访问、议题相似或参会人部分重合而随意私信；业务群发现失败时，使用日历中已确认的会议组织者作为 direct fallback，不得伪装成 no_action，也不得按姓名模糊搜索目标。
 - personal 只适用于真正个人事项，必须返回 audience_scope=personal；只有完整日历 1:1（attendee_evidence=calendar、attendee_roster_complete=true、恰好两名参会人）时，才可以使用 target.kind=direct，目标只能是另一位参会人。其余个人内容也必须产出总结并投递到 Agent 选择的业务群。
 - 没有实质观点分歧时，仍须发送简短的会议结论、已确认事项和下一步；不得因议题平稳而跳过。"""
 
@@ -308,29 +299,6 @@ def _decision_text_candidates(payload: dict[str, object]) -> list[str]:
             if isinstance(value, dict) and isinstance(value.get("text"), str):
                 candidates.append(value["text"])
     return candidates
-
-
-def _validate_historical_sources(
-    decision: MeetingAlignmentDecision,
-    *,
-    audit_tool_events: list[dict[str, str]],
-    work_profile_source: str,
-) -> None:
-    viewpoint = decision.derek_viewpoint
-    if viewpoint is None or not viewpoint.historical_sources:
-        return
-    used_memory_recall = any(
-        "memory_recall" in str(event.get("tool", "")).casefold()
-        for event in audit_tool_events
-    )
-    if used_memory_recall:
-        return
-    if all(source == work_profile_source for source in viewpoint.historical_sources):
-        return
-    raise ValueError(
-        "historical_sources require memory_recall audit evidence or the "
-        "configured work profile source"
-    )
 
 
 def _validate_source_aware_target(

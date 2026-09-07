@@ -114,7 +114,6 @@ class ProposedAction(BaseModel):
     operation: str = Field(min_length=1)
     target: dict[str, JsonValue] = Field(min_length=1)
     payload: dict[str, JsonValue]
-    expected_verification: str = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_dingtalk_message_target(self) -> "ProposedAction":
@@ -275,7 +274,6 @@ class AuditExternalResult(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     operation_id: str = Field(min_length=1)
-    verification_summary: str = Field(min_length=1)
     live_result_reference: dict[str, JsonValue]
 
 

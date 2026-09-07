@@ -1,4 +1,4 @@
-import hashlib
+import inspect
 import json
 import sqlite3
 import threading
@@ -13,15 +13,13 @@ from app.agent_contracts import (
     AuditOutcome,
     ConsumerAgentResult,
 )
-from app.agent_effects import McpToolEffectRegistry
-from app.agent_result import AgentError, EffectKind
+from app.agent_result import AgentError
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import (
     CredentialMode,
     RuntimeCapabilitySnapshot,
     RuntimeKind,
     RuntimeRoute,
-    RuntimeRouteSurfaceManifest,
 )
 from app.agent_runtime_router import AgentRuntimeRouter, RuntimeRouteDecision
 from app.agent_turn_runner import (
@@ -29,7 +27,6 @@ from app.agent_turn_runner import (
     _decode_runtime_domain_result,
     _encode_runtime_domain_result,
     _required_runtime_capabilities,
-    _runtime_result_evidence,
 )
 from app.agent_wire_contracts import (
     parse_audit_agent_wire_result,
@@ -38,15 +35,10 @@ from app.agent_wire_contracts import (
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayExecutionResult
-from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
 from app.service_codex_config import ServiceMcpServer
 from app.store import (
-    MAX_RECONCILIATION_EVENTS,
-    MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS,
-    RECONCILIATION_EVENT_LIMIT_ERROR,
     AgentRole,
-    AgentRunLeaseLostError,
     AgentRuntimeAttemptStartConflictError,
     AutoReplyStore,
 )
@@ -121,21 +113,18 @@ def test_claude_consumer_session_requires_exact_route_and_contract_hash(tmp_path
         _claude_route(),
         role=AgentRole.CONSUMER,
         requested_session_id="oauth-session",
-        recovery_phase="",
         conversation_contract_hash="current-contract",
     ) == "claude-session"
     assert process._session_for_route(
         _claude_route(),
         role=AgentRole.CONSUMER,
         requested_session_id="claude-session",
-        recovery_phase="",
         conversation_contract_hash="different-contract",
     ) is None
     assert process._session_for_route(
         _claude_route(),
         role=AgentRole.AUDIT,
         requested_session_id="claude-session",
-        recovery_phase="",
         conversation_contract_hash="current-contract",
     ) is None
     assert store.get_conversation_runtime_session(
@@ -215,7 +204,6 @@ def test_malformed_or_legacy_claude_session_never_resumes(tmp_path):
         _claude_route(),
         role=AgentRole.CONSUMER,
         requested_session_id=None,
-        recovery_phase="",
         conversation_contract_hash="current-contract",
     ) is None
     with store._connect() as db:
@@ -231,7 +219,6 @@ def test_malformed_or_legacy_claude_session_never_resumes(tmp_path):
             _claude_route(),
             role=AgentRole.CONSUMER,
             requested_session_id=None,
-            recovery_phase="",
             conversation_contract_hash="current-contract",
         )
 
@@ -430,7 +417,6 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
                             "document_content": body_marker,
                             "source_url": url_marker,
                         },
-                        "expected_verification": "Read it back",
                     }
                 ],
                 "sourced_facts": [],
@@ -462,375 +448,6 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     assert url_marker in proposal_run.final_result_json
 
     # Sensitive payload policy is covered by runtime contract tests; this case focuses on session ownership.
-    return
-
-    sensitive_result = json.dumps(
-        {
-            "outcome": "no_action",
-            "summary": "Bearer sk-secret-must-not-persist",
-            "proposal": None,
-            "decision_options": [],
-            "risk": "low",
-            "confidence": 1.0,
-            "error_code": "",
-            "error_retryable": False,
-            "error_authorization_required": False,
-        },
-        separators=(",", ":"),
-    )
-    executor.stream = stream_for_result(sensitive_result)
-    sensitive_task = next_task("msg-turns-secret", "generation-secret")
-    with pytest.raises(ValueError, match="agent_result_contains_sensitive_value"):
-        execute(sensitive_task)
-    [sensitive_attempt] = store.list_agent_runtime_attempts(
-        store.list_agent_runs_for_task_generation(
-            sensitive_task.id, sensitive_task.execution_generation
-        )[0].id
-    )
-    assert sensitive_attempt.session_id == ""
-    assert store.get_conversation_runtime_session(
-        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
-    ) == session_id
-
-    def private_consumer_result(outcome: str, unsafe_value: str) -> str:
-        proposal = None
-        options = []
-        summary = "Reviewed terminal result."
-        if outcome == "no_action":
-            summary = unsafe_value
-        elif outcome == "proposal":
-            proposal = {
-                "objective": "Prepare the reviewed update.",
-                "actions": [
-                    {
-                        "description": "Prepare update",
-                        "action_identity": "prepare-update",
-                        "capability": "agent_cli.dws",
-                        "operation": "chat message send",
-                        "target": {"conversation_id": "cid-privacy"},
-                        "payload": {"document_content": unsafe_value},
-                        "expected_verification": "Read it back",
-                    }
-                ],
-                "sourced_facts": [],
-                "authored_judgment": "Ready.",
-            }
-        else:
-            options = [
-                {
-                    "key": "A",
-                    "label": "Approve",
-                    "instruction": unsafe_value,
-                    "consequence": "The reviewed plan may continue.",
-                },
-                {
-                    "key": "B",
-                    "label": "Hold",
-                    "instruction": "Hold the reviewed option.",
-                    "consequence": "No further action is taken.",
-                },
-            ]
-        return json.dumps(
-            {
-                "outcome": outcome,
-                "summary": summary,
-                "proposal": proposal,
-                "decision_options": options,
-                "error_code": (
-                    "decision_required" if outcome == "needs_human" else ""
-                ),
-                "error_retryable": False,
-                "error_authorization_required": False,
-            },
-            separators=(",", ":"),
-        )
-
-    for unsafe_kind, unsafe_value, expected_error in (
-        (
-            "path",
-            "file:///private/var/tmp/claude-runtime/transcript-settings.jsonl",
-            "runtime_result_contains_local_runtime_leak",
-        ),
-        (
-            "credential",
-            "Bearer sk-private-secret-must-not-persist",
-            "agent_result_contains_sensitive_value",
-        ),
-        (
-            "signed-url",
-            "https://business.example.test/file?X-Amz-Signature=secret",
-            "agent_result_contains_sensitive_value",
-        ),
-        ("oversize", "x" * (33 * 1024), "too_large|summary_invalid"),
-    ):
-        for outcome in ("proposal", "no_action", "needs_human"):
-            executor.stream = stream_for_result(
-                private_consumer_result(outcome, unsafe_value)
-            )
-            private_task = next_task(
-                f"msg-turns-{unsafe_kind}-{outcome}",
-                f"generation-{unsafe_kind}-{outcome}",
-            )
-            with pytest.raises(
-                (ValueError, AgentReadOnlyViolationError), match=expected_error
-            ):
-                execute(private_task)
-            [private_run] = store.list_agent_runs_for_task_generation(
-                private_task.id, private_task.execution_generation
-            )
-            [private_attempt] = store.list_agent_runtime_attempts(private_run.id)
-            assert private_run.status == "failed"
-            assert private_run.final_result_json == ""
-            assert private_attempt.status == "failed"
-            assert private_attempt.session_id == ""
-            assert private_attempt.result_envelope_json == ""
-            assert store.get_conversation_runtime_session(
-                task.conversation_id,
-                "claude_api",
-                required_contract_hash="contract-v1",
-            ) == session_id
-
-    executor.stream = stream_for_result('{"outcome":"no_action"}')
-    invalid_task = next_task("msg-turns-invalid", "generation-invalid")
-    with pytest.raises(RuntimeError, match="claude_result_validation_failed"):
-        execute(invalid_task)
-    [invalid_attempt] = store.list_agent_runtime_attempts(
-        store.list_agent_runs_for_task_generation(
-            invalid_task.id, invalid_task.execution_generation
-        )[0].id
-    )
-    assert invalid_attempt.session_id == ""
-    assert store.get_conversation_runtime_session(
-        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
-    ) == session_id
-
-    failed_result = json.dumps(
-        {
-            "outcome": "failed",
-            "summary": "The business decision failed.",
-            "proposal": None,
-            "decision_options": [],
-            "error_code": "business_decision_failed",
-            "error_retryable": False,
-            "error_authorization_required": False,
-        },
-        separators=(",", ":"),
-    )
-    executor.stream = stream_for_result(failed_result)
-    failed_task = next_task("msg-turns-failed", "generation-failed")
-    execute(failed_task)
-    [failed_attempt] = store.list_agent_runtime_attempts(
-        store.list_agent_runs_for_task_generation(
-            failed_task.id, failed_task.execution_generation
-        )[0].id
-    )
-    assert failed_attempt.status == "failed"
-    assert failed_attempt.failure_code == "runtime_business_result_failed"
-    assert failed_attempt.session_id == ""
-    assert store.get_conversation_runtime_session(
-        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
-    ) == session_id
-
-    executor.stream = stream
-    crash_task = next_task("msg-turns-crash", "generation-crash")
-    original_complete_agent_run = store.complete_agent_run
-    parent_writes = 0
-    preparation_calls = 0
-
-    def prepare_completed_result(result):
-        nonlocal preparation_calls
-        preparation_calls += 1
-        return result.model_copy(update={"summary": "Prepared exactly once."})
-
-    def crash_before_parent_terminal(*args, **kwargs):
-        nonlocal parent_writes
-        parent_writes += 1
-        raise RuntimeError("injected_parent_terminal_failure")
-
-    monkeypatch.setattr(store, "complete_agent_run", crash_before_parent_terminal)
-    with pytest.raises(RuntimeError, match="injected_parent_terminal_failure"):
-        execute(crash_task, prepare_result=prepare_completed_result)
-    executor_calls_after_crash = len(executor.commands)
-    [crash_run] = store.list_agent_runs_for_task_generation(
-        crash_task.id, crash_task.execution_generation
-    )
-    [crash_attempt] = store.list_agent_runtime_attempts(crash_run.id)
-    assert crash_run.status == "completed"
-    assert crash_attempt.status == "completed"
-    assert crash_attempt.session_id == session_id
-    assert crash_attempt.result_envelope_json
-    crash_envelope = json.loads(crash_attempt.result_envelope_json)
-    assert "result" not in crash_envelope
-    assert crash_envelope["result_ref"]["agent_run_id"] == crash_run.id
-    assert "Nothing to do." not in crash_attempt.result_envelope_json
-    assert store.get_conversation_runtime_session(
-        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
-    ) == session_id
-
-    monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
-    execute(crash_task, prepare_result=prepare_completed_result)
-    assert len(executor.commands) == executor_calls_after_crash
-    assert preparation_calls == 2
-    recovered_run = store.get_agent_run(crash_run.id)
-    assert recovered_run is not None and recovered_run.status == "completed"
-    assert parent_writes == 1
-    assert store.get_conversation_runtime_session(
-        task.conversation_id, "codex_oauth", required_contract_hash="contract-v1"
-    ) == "oauth-session"
-    assert store.get_conversation_runtime_session(
-        task.conversation_id, "codex_api", required_contract_hash="contract-v1"
-    ) == "api-session"
-    [first_attempt] = store.list_agent_runtime_attempts(
-        store.list_agent_runs_for_task_generation(
-            task.id, task.execution_generation
-        )[0].id
-    )
-    assert first_attempt.session_id == session_id
-    first_envelope = json.loads(first_attempt.result_envelope_json)
-    assert "result" not in first_envelope
-    assert first_envelope["result_ref"]["agent_run_id"] > 0
-    assert "Nothing to do." not in first_attempt.result_envelope_json
-
-    needs_human_result = json.dumps(
-        {
-            "outcome": "needs_human",
-            "summary": "A management decision is required.",
-            "proposal": None,
-            "decision_options": [
-                {
-                    "key": "A",
-                    "label": "Approve",
-                    "instruction": "Approve the reviewed option.",
-                    "consequence": "The reviewed plan may continue.",
-                },
-                {
-                    "key": "B",
-                    "label": "Hold",
-                    "instruction": "Hold the reviewed option.",
-                    "consequence": "No further action is taken.",
-                },
-            ],
-            "error_code": "decision_required",
-            "error_retryable": False,
-            "error_authorization_required": False,
-        },
-        separators=(",", ":"),
-    )
-    executor.stream = stream_for_result(needs_human_result)
-    needs_human_task = next_task("msg-turns-human", "generation-human")
-    monkeypatch.setattr(store, "complete_agent_run", crash_before_parent_terminal)
-    with pytest.raises(RuntimeError, match="injected_parent_terminal_failure"):
-        execute(needs_human_task)
-    needs_human_executor_calls = len(executor.commands)
-    [needs_human_run] = store.list_agent_runs_for_task_generation(
-        needs_human_task.id, needs_human_task.execution_generation
-    )
-    [needs_human_attempt] = store.list_agent_runtime_attempts(needs_human_run.id)
-    assert needs_human_run.status == "completed"
-    needs_human_envelope = json.loads(needs_human_attempt.result_envelope_json)
-    assert "result" not in needs_human_envelope
-    assert needs_human_envelope["result_ref"]["agent_run_id"] == needs_human_run.id
-    assert "A management decision is required." not in (
-        needs_human_attempt.result_envelope_json
-    )
-    monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
-    execute(needs_human_task)
-    assert len(executor.commands) == needs_human_executor_calls
-    recovered_needs_human = store.get_agent_run(needs_human_run.id)
-    assert recovered_needs_human is not None
-    assert recovered_needs_human.status == "completed"
-
-    # A completed provider result belongs to the full execution contract. Once
-    # the parent and result are atomically terminal, a context mismatch must
-    # block rather than spawn a second model call.
-    stale_task = next_task("msg-turns-stale", "generation-stale")
-    monkeypatch.setattr(store, "complete_agent_run", crash_before_parent_terminal)
-    with pytest.raises(RuntimeError, match="injected_parent_terminal_failure"):
-        execute(stale_task, current_prompt="OLD business context")
-    stale_executor_calls = len(executor.commands)
-    monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
-    with pytest.raises(
-        ValueError, match="completed_runtime_result_contract_mismatch"
-    ):
-        execute(stale_task, current_prompt="NEW business context")
-    assert len(executor.commands) == stale_executor_calls
-    [stale_run] = store.list_agent_runs_for_task_generation(
-        stale_task.id, stale_task.execution_generation
-    )
-    stale_attempts = store.list_agent_runtime_attempts(stale_run.id)
-    assert len(stale_attempts) == 1
-    assert stale_attempts[0].status == "completed"
-
-    corrupt_task = next_task("msg-turns-corrupt", "generation-corrupt")
-    monkeypatch.setattr(store, "complete_agent_run", crash_before_parent_terminal)
-    with pytest.raises(RuntimeError, match="injected_parent_terminal_failure"):
-        execute(corrupt_task)
-    corrupt_executor_calls = len(executor.commands)
-    [corrupt_run] = store.list_agent_runs_for_task_generation(
-        corrupt_task.id, corrupt_task.execution_generation
-    )
-    [corrupt_attempt] = store.list_agent_runtime_attempts(corrupt_run.id)
-    corrupt_envelope = json.loads(corrupt_attempt.result_envelope_json)
-    corrupt_envelope["evidence"]["events_sha256"] = "0" * 64
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update agent_runtime_attempts set result_envelope_json=? where id=?",
-            (json.dumps(corrupt_envelope), corrupt_attempt.id),
-        )
-        db.execute(
-            """
-            update agent_runs
-            set status='running', final_result_json='', completed_at='',
-                lease_owner='consumer', lease_expires_at='2099-01-01 00:00:00'
-            where id=?
-            """,
-            (corrupt_run.id,),
-        )
-    monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
-    with pytest.raises(ValueError, match="completed_runtime_result_invalid"):
-        execute(corrupt_task)
-    assert len(executor.commands) == corrupt_executor_calls
-    blocked_corrupt_run = store.get_agent_run(corrupt_run.id)
-    assert blocked_corrupt_run is not None
-    assert blocked_corrupt_run.status == "unknown"
-    assert blocked_corrupt_run.lease_owner == ""
-    assert blocked_corrupt_run.reconciliation_suspended is True
-    assert json.loads(blocked_corrupt_run.structured_error_json)["code"] == (
-        "completed_runtime_result_invalid"
-    )
-    blocked_corrupt_task = store.get_reply_task(corrupt_task.id)
-    assert blocked_corrupt_task is not None
-    assert blocked_corrupt_task.status == "failed"
-    assert blocked_corrupt_task.locked_at is None
-    assert blocked_corrupt_task.recovery_code == "completed_runtime_result_invalid"
-    assert store.claim_reply_task(blocked_corrupt_task.id) is None
-    assert store.list_unknown_agent_runs(limit=10) == []
-    assert store.list_suspended_unknown_agent_runs(limit=10) == []
-
-    assert store.enqueue_reply_task(
-        conversation_id=task.conversation_id,
-        conversation_title=task.conversation_title,
-        single_chat=task.single_chat,
-        trigger_message_id="msg-turns-2",
-        trigger_create_time="2026-08-06 10:01:00",
-        trigger_sender="Derek",
-        trigger_text="Handle the next task",
-        execution_generation="generation-2",
-    )
-    second = store.get_reply_task_for_message(task.conversation_id, "msg-turns-2")
-    assert second is not None
-    second = store.claim_reply_task(second.id)
-    assert second is not None
-    executor.stream = stream
-    execute(second)
-
-    assert "--resume" not in executor.commands[0]
-    resume_index = executor.commands[1].index("--resume")
-    assert executor.commands[1][resume_index + 1] == session_id
-    assert store.get_conversation_runtime_session(
-        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
-    ) == session_id
-
 
 def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
@@ -860,18 +477,10 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
         )
         for route in config.routes
     }
-    manifests = {
-        route.name: RuntimeRouteSurfaceManifest(
-            route_name=route.name,
-            capabilities=frozenset({"reviewed_read_tools"}),
-        )
-        for route in config.routes
-    }
     router = AgentRuntimeRouter(
         routes=config.routes,
         store=store,
         snapshots=snapshots,
-        surface_manifests=manifests,
     )
     result_json = json.dumps(
         {
@@ -1112,8 +721,7 @@ def test_missing_claude_skill_is_not_a_route_preflight_requirement(tmp_path):
 
     required = _required_runtime_capabilities(
         run=claim.run,
-        recovery_phase="",
-        expected_effect_actions=(),
+        expected_actions=(),
         explicit_capabilities=frozenset({skill}),
     )
 
@@ -1134,58 +742,6 @@ def test_effectful_audit_never_selects_claude_even_with_false_surface_claims(
     assert persisted.tool_events[-1] == event
     assert persisted.status == "running"
 
-
-
-def test_claude_effect_fence_atomically_persists_one_dispatch_start(tmp_path):
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-    run = _claim_audit(store, task)
-    attempt = store.claim_agent_runtime_attempt(
-        run.id,
-        "claude_api",
-        "claude_cli",
-        "service_api",
-        "claude-sonnet-test",
-    )
-    attempt = store.mark_agent_runtime_attempt_running_once(
-        attempt.id,
-        owner="audit",
-        effectful=False,
-    )
-    action = {
-        "capability": "agent_cli.dws",
-        "reviewed_server": "agent_cli",
-        "reviewed_tool": "execute_reviewed_write",
-        "operation": "chat message send",
-        "operation_digest": "operation-digest",
-        "arguments_digest": "arguments-digest",
-        "target_identifiers": {"group": "cid-test"},
-    }
-    event = _effect_event(event_type="item.started", action_index=0, **action)
-    event["item"]["id"] = "claude-call-1"
-
-    first = store.authorize_claude_effect_dispatch(
-        run_id=run.id,
-        attempt_id=attempt.id,
-        owner="audit",
-        event=event,
-        expected_action=action,
-    )
-    duplicate = store.authorize_claude_effect_dispatch(
-        run_id=run.id,
-        attempt_id=attempt.id,
-        owner="audit",
-        event=event,
-        expected_action=action,
-    )
-
-    assert first.dispatch_acquired is True
-    assert duplicate.dispatch_acquired is False
-    persisted_attempt = store.get_agent_runtime_attempt(attempt.id)
-    persisted_run = store.get_agent_run(run.id)
-    assert persisted_attempt is not None and persisted_attempt.first_effect_started_at
-    assert persisted_run is not None and persisted_run.effect_started_count == 1
-    assert persisted_run.tool_events[-1] == event
 
 
 @pytest.mark.parametrize(
@@ -1228,7 +784,6 @@ def test_runtime_domain_result_codec_rejects_private_values(
         _encode_runtime_domain_result(
             schema_id="schema-v1",
             role=AgentRole.CONSUMER,
-            recovery_phase="",
             result=result,
         )
 
@@ -1247,7 +802,6 @@ def test_runtime_domain_result_codec_rejects_corrupt_shape(mutation):
         "schema_id": "schema-v1",
         "version": 1,
         "role": "consumer",
-        "recovery_phase": "",
         "result": {
             "outcome": "no_action",
             "summary": "Nothing to do.",
@@ -1267,7 +821,6 @@ def test_runtime_domain_result_codec_rejects_corrupt_shape(mutation):
             json.dumps(valid),
             schema_id="schema-v1",
             role=AgentRole.CONSUMER,
-            recovery_phase="",
         )
 
 
@@ -1291,7 +844,6 @@ def test_runtime_domain_result_codec_rejects_business_document_reference(tmp_pat
         feedback=None,
         external_result=AuditExternalResult(
             operation_id="operation-0",
-            verification_summary="Confirmed from live state.",
             live_result_reference={
                 "message_id": "mid-1",
                 "document_content": {"confidential": document_marker},
@@ -1300,13 +852,10 @@ def test_runtime_domain_result_codec_rejects_business_document_reference(tmp_pat
         error=AgentError(),
     )
 
-    with pytest.raises(
-        ValueError, match="runtime_result_envelope_external_reference_invalid"
-    ):
+    with pytest.raises(ValueError, match="runtime_result_envelope_document_field_invalid"):
         _encode_runtime_domain_result(
             schema_id="schema-v1",
             role=AgentRole.AUDIT,
-            recovery_phase="execute",
             result=result,
         )
     assert document_marker.encode() not in store.path.read_bytes()
@@ -1322,7 +871,6 @@ def test_runtime_domain_result_codec_preserves_message_readback_for_ledger_proje
         feedback=None,
         external_result=AuditExternalResult(
             operation_id="operation-readback",
-            verification_summary="The message was read back from the same chat.",
             live_result_reference={
                 "send_status": "SUCCESS",
                 "message_id": "message-1",
@@ -1339,7 +887,6 @@ def test_runtime_domain_result_codec_preserves_message_readback_for_ledger_proje
     encoded = _encode_runtime_domain_result(
         schema_id="schema-v1",
         role=AgentRole.AUDIT,
-        recovery_phase="execute",
         result=result,
     )
     decoded = json.loads(encoded)
@@ -1365,7 +912,6 @@ def test_runtime_domain_result_codec_preserves_consumer_action_identity():
                     "operation": "send_to_group",
                     "target": {"conversation_id": "cid-1"},
                     "payload": {"content": "done"},
-                    "expected_verification": "provider accepts the message",
                 }],
                 "sourced_facts": [],
                 "authored_judgment": "",
@@ -1377,14 +923,12 @@ def test_runtime_domain_result_codec_preserves_consumer_action_identity():
     encoded = _encode_runtime_domain_result(
         schema_id="schema-v1",
         role=AgentRole.CONSUMER,
-        recovery_phase="",
         result=result,
     )
     decoded = _decode_runtime_domain_result(
         encoded,
         schema_id="schema-v1",
         role=AgentRole.CONSUMER,
-        recovery_phase="",
     )
 
     assert isinstance(decoded.result, ConsumerAgentResult)
@@ -1417,7 +961,6 @@ def test_runtime_domain_result_codec_rejects_consumer_document_payload():
                                                 "full-business-document-must-not-persist"
                                             )
                                         },
-                                        "expected_verification": "Read it back",
                                     }
                                 ],
                                 "sourced_facts": [],
@@ -1440,12 +983,11 @@ def test_runtime_domain_result_codec_rejects_consumer_document_payload():
         _encode_runtime_domain_result(
             schema_id="schema-v1",
             role=AgentRole.CONSUMER,
-            recovery_phase="",
             result=result,
         )
 
 
-def test_runtime_attempt_completion_rejects_event_appended_after_evidence_snapshot(
+def test_runtime_attempt_completion_does_not_treat_provider_events_as_result_evidence(
     tmp_path,
 ):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
@@ -1488,15 +1030,7 @@ def test_runtime_attempt_completion_rejects_event_appended_after_evidence_snapsh
     envelope = _encode_runtime_domain_result(
         schema_id=schema_id,
         role=AgentRole.CONSUMER,
-        recovery_phase="",
         result=result,
-        evidence=_runtime_result_evidence(
-            run=snapshot,
-            event_start=0,
-            receipts=[],
-            recovery_started_actions=set(),
-            completed_before_recovery=set(),
-        ),
     )
     snapshot_ready = threading.Barrier(2)
     append_done = threading.Barrier(2)
@@ -1530,12 +1064,11 @@ def test_runtime_attempt_completion_rejects_event_appended_after_evidence_snapsh
     thread.join(timeout=5)
 
     assert not thread.is_alive()
-    assert len(completion_errors) == 1
-    assert "evidence changed" in str(completion_errors[0])
+    assert completion_errors == []
     persisted_attempt = store.get_agent_runtime_attempt(attempt.id)
     assert persisted_attempt is not None
-    assert persisted_attempt.status == "running"
-    assert persisted_attempt.result_envelope_json == ""
+    assert persisted_attempt.status == "completed"
+    assert persisted_attempt.result_envelope_json == envelope
 
 
 @pytest.mark.parametrize("outcome", ("no_action", "needs_human"))
@@ -1605,15 +1138,7 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
     envelope = _encode_runtime_domain_result(
         schema_id=schema_id,
         role=AgentRole.CONSUMER,
-        recovery_phase="",
         result=result,
-        evidence=_runtime_result_evidence(
-            run=persisted,
-            event_start=0,
-            receipts=[],
-            recovery_started_actions=set(),
-            completed_before_recovery=set(),
-        ),
         result_reference_run_id=run.id,
     )
     original_upsert = store._upsert_conversation_runtime_session_in_connection
@@ -1681,140 +1206,7 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
     ) == "claude-session"
 
 
-@pytest.mark.parametrize(
-    "evidence_mutation",
-    (
-        {"event_end": -1},
-        {"events_sha256": "short"},
-        {"recovery_started_actions": [True]},
-        {"unexpected": "field"},
-    ),
-)
-def test_runtime_domain_result_codec_rejects_corrupt_evidence(evidence_mutation):
-    result = parse_consumer_agent_wire_result(
-        json.dumps(
-            {
-                "type": "item.completed",
-                "item": {
-                    "type": "agent_message",
-                    "text": json.dumps(
-                        {
-                            "outcome": "no_action",
-                            "summary": "Nothing to do.",
-                            "proposal": None,
-                            "decision_options": [],
-                            "risk": "low",
-                            "confidence": 1.0,
-                            "error_code": "",
-                            "error_retryable": False,
-                            "error_authorization_required": False,
-                        }
-                    ),
-                },
-            }
-        )
-    )
-    envelope = json.loads(
-        _encode_runtime_domain_result(
-            schema_id="schema-v1",
-            role=AgentRole.CONSUMER,
-            recovery_phase="",
-            result=result,
-        )
-    )
-    envelope["evidence"].update(evidence_mutation)
-
-    with pytest.raises(ValueError, match="runtime_result_envelope_invalid"):
-        _decode_runtime_domain_result(
-            json.dumps(envelope),
-            schema_id="schema-v1",
-            role=AgentRole.CONSUMER,
-            recovery_phase="",
-        )
-
-
-def _runtime_result_schema_for_test(
-    run,
-    *,
-    prompt,
-    developer_instructions,
-    recovery_phase,
-    expected_effect_actions,
-    recovery_authorizations=None,
-):
-    recovery_authorizations = recovery_authorizations or {}
-    required_capabilities = _required_runtime_capabilities(
-        run=run,
-        recovery_phase=recovery_phase,
-        expected_effect_actions=expected_effect_actions,
-    )
-    contract = {
-        "version": 1,
-        "role": run.role.value,
-        "recovery_phase": recovery_phase,
-        "operation_id": run.operation_id,
-        "conversation_contract_hash": "",
-        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
-        "developer_instructions_sha256": hashlib.sha256(
-            developer_instructions.encode()
-        ).hexdigest(),
-        "required_capabilities": sorted(required_capabilities),
-        "expected_actions_sha256": hashlib.sha256(
-            json.dumps(
-                expected_effect_actions,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest(),
-        "reviewed_skills": [],
-        "recovery_authorizations_sha256": hashlib.sha256(
-            json.dumps(
-                sorted(recovery_authorizations.items()),
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest(),
-    }
-    contract_digest = hashlib.sha256(
-        json.dumps(contract, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    return hashlib.sha256(
-        f"agent_turn_claude_result_v1\0{contract_digest}".encode()
-    ).hexdigest()
-
-
-def _unknown_audit_recovery_fixture(store, task, *, owner):
-    run = _claim_audit(store, task)
-    action = {
-        "capability": "mcp:write.send",
-        "reviewed_server": "write",
-        "reviewed_tool": "send",
-        "operation": "send",
-        "operation_digest": "operation-digest",
-        "arguments_digest": "arguments-digest",
-        "target_identifiers": {"id": "target-1"},
-    }
-    store.append_agent_run_event(
-        run.id,
-        _effect_event(**action),
-        owner="audit",
-    )
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "effect_completion_unknown", "retryable": True},
-        owner="audit",
-    )
-    claim = store.claim_unknown_agent_run(run.id, owner=owner)
-    assert claim.claimed
-    return claim.run, action
-
-
-@pytest.mark.parametrize(
-    ("recovery_phase", "rotate_authorization"),
-    (("reconcile", False), ("execute", False), ("execute", True)),
-)
-def test_completed_claude_audit_recovery_rebuilds_persisted_evidence_without_spawn(
-    tmp_path, recovery_phase, rotate_authorization
-):
+def test_failed_claude_audit_result_remains_an_ordinary_retryable_run(tmp_path):
     """Retired recovery modes are ordinary failed runs with retry metadata."""
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
@@ -1898,6 +1290,40 @@ def test_task_generation_can_store_consumer_and_multiple_audit_attempts(tmp_path
     ) == [a0.run, b0.run, b1.run]
 
 
+def test_new_retry_run_resumes_prior_session_without_overwriting_history(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    first = _claim_consumer(store, task, owner="consumer-0").run
+    first = store.set_agent_run_session(
+        first.id,
+        "consumer-session-1",
+        owner="consumer-0",
+    )
+    store.fail_agent_run(
+        first.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="consumer-0",
+    )
+
+    retry = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=1,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer-1",
+    )
+
+    assert retry.run.id != first.id
+    assert retry.run.codex_session_id == "consumer-session-1"
+    persisted_first = store.get_agent_run(first.id)
+    assert persisted_first is not None
+    assert persisted_first.status == "failed"
+    assert persisted_first.codex_session_id == "consumer-session-1"
+
+
 def test_same_turn_identity_is_idempotent(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
@@ -1939,8 +1365,7 @@ def test_role_runtime_capabilities_use_execution_surfaces_only(tmp_path):
 
     assert _required_runtime_capabilities(
         run=consumer,
-        recovery_phase="",
-        expected_effect_actions=(),
+        expected_actions=(),
     ) == frozenset(
         {
             "structured_output",
@@ -1949,8 +1374,7 @@ def test_role_runtime_capabilities_use_execution_surfaces_only(tmp_path):
     )
     assert _required_runtime_capabilities(
         run=audit,
-        recovery_phase="reconcile",
-        expected_effect_actions=({"capability": "agent_cli.dws"},),
+        expected_actions=({"capability": "agent_cli.dws"},),
     ) == frozenset(
         {
             "structured_output",
@@ -1959,8 +1383,7 @@ def test_role_runtime_capabilities_use_execution_surfaces_only(tmp_path):
     )
     assert "dingtalk_chat" not in _required_runtime_capabilities(
         run=audit,
-        recovery_phase="execute",
-        expected_effect_actions=({"capability": "dingtalk_chat"},),
+        expected_actions=({"capability": "dingtalk_chat"},),
     )
 
 
@@ -2015,12 +1438,27 @@ def test_consumer_turn_can_complete_typed_result_without_side_effect_state(tmp_p
     assert not hasattr(completed, "side_effect_state")
 
 
+def test_agent_run_terminal_apis_do_not_accept_side_effect_state():
+    assert "side_effect_state" not in inspect.signature(
+        AutoReplyStore.complete_agent_run
+    ).parameters
+    assert "side_effect_state" not in inspect.signature(
+        AutoReplyStore.fail_agent_run
+    ).parameters
+
+
+def test_store_exposes_no_legacy_agent_run_recovery_projection_apis():
+    assert not hasattr(AutoReplyStore, "update_agent_run_projection")
+    assert not hasattr(AutoReplyStore, "recover_failed_effect_free_consumer_tasks")
+    assert not hasattr(AutoReplyStore, "recover_failed_effect_free_audit_tasks")
+
+
 def test_consumer_turn_persists_provider_events_opaquely(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_consumer(store, task).run
 
-    persisted = store.append_agent_run_event(
+    store.append_agent_run_event(
         run.id,
         {
             "type": "item.started",
@@ -2041,417 +1479,25 @@ def test_consumer_turn_persists_provider_events_opaquely(tmp_path):
     assert not hasattr(refreshed, "side_effect_state")
 
 
-def test_unknown_reconciliation_event_limit_defers_the_next_read_only_window(tmp_path):
-    """Legacy unknown outcome is now represented as an ordinary failed run."""
+def test_retryable_process_failure_preserves_specific_code(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
+
     failed = store.fail_agent_run(
-        run.id, {"code": "codex_process_failed", "retryable": True}, owner="audit"
-    )
-    assert failed.status == "failed"
-    assert json.loads(failed.structured_error_json)["code"] == "codex_process_failed"
-
-
-def test_unknown_recovery_can_start_after_runtime_effect_boundary_without_tool_event(tmp_path):
-    """A runtime interruption follows the normal failed/retry path."""
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-    run = _claim_audit(store, task)
-    failed = store.fail_agent_run(
-        run.id, {"code": "runtime_failed", "retryable": True}, owner="audit"
-    )
-    assert failed.status == "failed"
-    assert failed.structured_error_json
-
-
-def test_event_limited_unknown_run_remains_due_for_read_only_recovery(tmp_path):
-    """Retry scheduling is driven by failed status, not reconciliation counters."""
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-    run = _claim_audit(store, task)
-    failed = store.fail_agent_run(
-        run.id, {"code": "codex_process_failed", "retryable": True}, owner="audit"
-    )
-    assert failed.status == "failed"
-    assert store.get_agent_run(run.id).status == "failed"
-
-
-def test_attempt_limited_unknown_run_can_start_the_next_read_only_window(tmp_path):
-    """Retry attempts remain ordinary failed run attempts."""
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-    run = _claim_audit(store, task)
-    failed = store.fail_agent_run(
-        run.id, {"code": "audit_read_failed", "retryable": True}, owner="audit"
-    )
-    assert failed.status == "failed"
-    assert json.loads(failed.structured_error_json)["retryable"] is True
-
-
-def test_suspended_unknown_run_is_reopened_for_read_only_reconciliation(tmp_path):
-    """Historical suspended rows are not reopened by the current application path."""
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-    run = _claim_audit(store, task)
-    failed = store.fail_agent_run(
-        run.id, {"code": "recovery_retired", "retryable": False}, owner="audit"
-    )
-    assert failed.status == "failed"
-    assert json.loads(failed.structured_error_json)["code"] == "recovery_retired"
-
-
-def _normalize_read_skill_event(store, task, payload):
-    return AgentTurnProcess(
-        store=store,
-        task=task,
-        workspace=Path("/workspace"),
-        owner="consumer",
-    )._normalized_effect_event(payload, read_only=True, operation_id="")
-
-
-def test_normal_audit_write_receipt_does_not_require_recovery_authorization(
-    tmp_path,
-):
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-    argv = [
-        "dws", "chat", "+messages-send", "--open-dingtalk-id", "recipient-1",
-        "--text", "done", "--yes", "--format", "json",
-    ]
-    descriptor = describe_native_command(
-        {"type": "command_execution", "argv": argv}
-    )
-    assert descriptor is not None
-    payload = {
-        "type": "item.completed",
-        "item": {
-            "id": "write-1",
-            "type": "mcp_tool_call",
-            "server": "agent_cli",
-            "tool": "execute_reviewed_write",
-            "arguments": {"argv": argv, "authorization_id": "not-a-recovery-id"},
-            "status": "completed",
-            "result": {
-                "structuredContent": {
-                    "cli": "dws",
-                    "operation": descriptor.command_path,
-                    "operation_digest": descriptor.command_digest,
-                    "target_identifiers": descriptor.target_identifiers,
-                    "result_digest": "result-digest",
-                    "stdout": "{}",
-                },
-                "isError": False,
-            },
-        },
-    }
-
-    event = AgentTurnProcess(
-        store=store,
-        task=task,
-        workspace=Path("/workspace"),
+        run.id,
+        {"code": "codex_process_failed", "retryable": True},
         owner="audit",
-    )._normalized_effect_event(
-        payload,
-        read_only=False,
-        operation_id="operation-1",
     )
 
-    assert event is not None
-    assert event["type"] == "item.completed"
-
-
-def test_completed_dingtalk_message_read_persists_content_proof_without_plaintext(
-    tmp_path,
-):
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-    argv = [
-        "dws",
-        "chat",
-        "+chat-messages",
-        "--group",
-        "cid-turns",
-        "--start",
-        "2026-08-06T09:55:00+08:00",
-        "--end",
-        "2026-08-06T10:05:00+08:00",
-        "--page-all",
-        "--format",
-        "json",
-    ]
-    descriptor = describe_native_command(
-        {"type": "command_execution", "argv": argv}
-    )
-    assert descriptor is not None
-    stdout = json.dumps(
-        {
-            "complete": True,
-            "hasMore": False,
-            "paginationKnown": True,
-            "failures": [],
-            "queryRange": {
-                "startTime": "2026-08-06T01:55:00Z",
-                "endTime": "2026-08-06T02:05:00Z",
-            },
-            "messages": [
-                {
-                    "conversationId": "cid-turns",
-                    "messageId": "message-1",
-                    "text": "exact reviewed reply",
-                }
-            ],
-        }
-    )
-    receipt = {
-        "cli": "dws",
-        "operation": descriptor.command_path,
-        "operation_digest": descriptor.command_digest,
-        "target_identifiers": descriptor.target_identifiers,
-        "result_digest": hashlib.sha256(stdout.encode()).hexdigest(),
-        "stdout": stdout,
-    }
-    payload = {
-        "type": "item.completed",
-        "item": {
-            "id": "read-1",
-            "type": "mcp_tool_call",
-            "server": "agent_cli",
-            "tool": "execute_reviewed_read",
-            "arguments": {"argv": argv},
-            "status": "completed",
-            "result": {"structuredContent": receipt, "isError": False},
-        },
-    }
-
-    event = AgentTurnProcess(
-        store=store,
-        task=task,
-        workspace=tmp_path,
-        owner="audit",
-    )._normalized_effect_event(
-        payload,
-        read_only=True,
-        operation_id="",
-    )
-
-    assert event is not None
-    # Provider read events are persisted opaquely; application Audit does not
-    # interpret message receipts or enforce read-back policy.
-    assert event["item"]["status"] == "completed"
-    assert "message_readback_complete" not in event["item"].get("metadata", {})
-
-
-def _read_skill_payload(
-    path: Path,
-    content: str,
-    sha256: str,
-    *,
-    wrapper: str = "both",
-    result_path: str | None = None,
-    result_name: str = "business-review",
-):
-    receipt = {
-        "content": content,
-        "sha256": sha256,
-        "path": result_path or str(path.resolve()),
-        "name": result_name,
-    }
-    result = {"isError": False}
-    if wrapper in {"both", "content"}:
-        result["content"] = [{"type": "text", "text": json.dumps(receipt)}]
-    if wrapper in {"both", "structured"}:
-        result["structuredContent"] = receipt
-    return {
-        "type": "item.completed",
-        "item": {
-            "id": "skill-1",
-            "type": "mcp_tool_call",
-            "server": "agent_cli",
-            "tool": "read_skill",
-            "arguments": {"path": str(path)},
-            "status": "completed",
-            "result": result,
-        },
+    assert failed.status == "failed"
+    assert json.loads(failed.structured_error_json) == {
+        "code": "codex_process_failed",
+        "retryable": True,
     }
 
 
-def test_completed_read_skill_persists_verified_metadata_without_content(
-    tmp_path, monkeypatch
-):
-    skill_path = tmp_path / "skills" / "business-review" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True)
-    content = "# Business review\n"
-    skill_path.write_text(content, encoding="utf-8")
-    monkeypatch.setattr(
-        "app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",)
-    )
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-
-    event = _normalize_read_skill_event(
-        store,
-        task,
-        _read_skill_payload(
-            skill_path,
-            content,
-            hashlib.sha256(content.encode()).hexdigest(),
-        ),
-    )
-
-    assert event is not None
-    assert event["type"] == "item.completed"
-    # Skill receipts are runtime-owned and remain opaque to the application.
-    assert event["item"]["status"] == "completed"
-
-
-def test_completed_read_skill_normalizes_alias_to_trusted_result_path(
-    tmp_path, monkeypatch
-):
-    root = tmp_path / "skills"
-    skill_path = root / "business-review" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True)
-    content = "# Business review\n"
-    skill_path.write_text(content, encoding="utf-8")
-    alias = tmp_path / "skill-alias.md"
-    alias.symlink_to(skill_path)
-    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (root,))
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-
-    event = _normalize_read_skill_event(
-        store,
-        _task(store),
-        _read_skill_payload(
-            alias,
-            content,
-            hashlib.sha256(content.encode()).hexdigest(),
-            result_path=str(skill_path.resolve()),
-        ),
-    )
-
-    assert event is not None
-    assert event["type"] == "item.completed"
-    assert event["item"]["status"] == "completed"
-
-
-def test_malformed_unicode_skill_content_becomes_failed_controlled_event(
-    tmp_path, monkeypatch
-):
-    skill_path = tmp_path / "skills" / "business-review" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True)
-    skill_path.write_text("valid", encoding="utf-8")
-    monkeypatch.setattr(
-        "app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",)
-    )
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-
-    event = _normalize_read_skill_event(
-        store,
-        _task(store),
-        _read_skill_payload(skill_path, "valid", "0" * 64),
-    )
-
-    assert event is not None
-    assert event["type"] == "item.completed"
-
-
-def test_skill_receipt_hash_resource_error_becomes_failed_controlled_event(
-    tmp_path, monkeypatch
-):
-    skill_path = tmp_path / "skills" / "business-review" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True)
-    content = "# Business review\n"
-    skill_path.write_text(content, encoding="utf-8")
-    digest = hashlib.sha256(content.encode()).hexdigest()
-    monkeypatch.setattr(
-        "app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",)
-    )
-
-    class FailingHashlib:
-        @staticmethod
-        def sha256(_content):
-            raise MemoryError("hash allocation failed")
-
-    monkeypatch.setattr("app.agent_skill_usage.hashlib", FailingHashlib())
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-
-    event = _normalize_read_skill_event(
-        store,
-        _task(store),
-        _read_skill_payload(skill_path, content, digest),
-    )
-
-    assert event is not None
-    assert event["type"] == "item.completed"
-
-
-@pytest.mark.parametrize("wrapper", ("structured", "content"))
-def test_completed_read_skill_accepts_current_mcp_result_wrappers(
-    tmp_path, monkeypatch, wrapper
-):
-    skill_path = tmp_path / "skills" / "business-review" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True)
-    content = "# Business review\n"
-    skill_path.write_text(content, encoding="utf-8")
-    monkeypatch.setattr(
-        "app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",)
-    )
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-
-    event = _normalize_read_skill_event(
-        store,
-        task,
-        _read_skill_payload(
-            skill_path,
-            content,
-            hashlib.sha256(content.encode()).hexdigest(),
-            wrapper=wrapper,
-        ),
-    )
-
-    assert event is not None
-    assert event["type"] == "item.completed"
-    assert event["item"]["metadata"].get("skill_path") in {None, str(skill_path)}
-
-
-@pytest.mark.parametrize("case", ("digest_mismatch", "path_mismatch"))
-def test_malformed_read_skill_receipt_is_normalized_as_failed(
-    tmp_path, monkeypatch, case
-):
-    skill_path = tmp_path / "skills" / "business-review" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True)
-    content = "# Business review\n"
-    skill_path.write_text(content, encoding="utf-8")
-    monkeypatch.setattr(
-        "app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",)
-    )
-    requested_path = skill_path
-    result_path = str(skill_path.resolve())
-    if case == "path_mismatch":
-        result_path = str(skill_path.parent / "different.md")
-    digest = hashlib.sha256(content.encode()).hexdigest()
-    if case == "digest_mismatch":
-        digest = "0" * 64
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-
-    event = _normalize_read_skill_event(
-        store,
-        task,
-        _read_skill_payload(
-            requested_path,
-            content,
-            digest,
-            result_path=result_path,
-        ),
-    )
-
-    assert event is not None
-    assert event["type"] == "item.completed"
-
-
-def test_effect_started_persists_minimal_identity_and_matching_completion_confirms(
+def test_provider_effect_events_are_append_only_execution_facts(
     tmp_path,
 ):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
@@ -2464,14 +1510,20 @@ def test_effect_started_persists_minimal_identity_and_matching_completion_confir
         arguments_digest="arguments-digest",
         target_identifiers={"group": "cid"},
     )
-    after_start = store.append_agent_run_event(run.id, started, owner="audit")
+    store.append_agent_run_event(run.id, started, owner="audit")
     persisted_start = store.get_agent_run(run.id)
     assert persisted_start is not None
     assert "arguments" not in persisted_start.tool_events[0]["item"]
     assert "result" not in persisted_start.tool_events[0]["item"]
 
     completed = {**started, "type": "item.completed"}
-    after_completed = store.append_agent_run_event(run.id, completed, owner="audit")
+    store.append_agent_run_event(run.id, completed, owner="audit")
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert [event["type"] for event in persisted.tool_events] == [
+        "item.started",
+        "item.completed",
+    ]
 
 
 def test_provider_event_identity_is_opaque_to_application(tmp_path):
@@ -2496,9 +1548,13 @@ def test_provider_event_identity_is_opaque_to_application(tmp_path):
         },
     }
 
-    persisted = store.append_agent_run_event(run.id, mismatched, owner="audit")
-    assert persisted.effect_started_count == 1
-    assert persisted.effect_completed_count == 1
+    store.append_agent_run_event(run.id, mismatched, owner="audit")
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert len(persisted.tool_events) == 2
+    assert persisted.tool_events[-1]["item"]["metadata"]["operation_digest"] == (
+        "different"
+    )
 
 
 
@@ -2507,7 +1563,7 @@ def test_provider_operation_id_is_persisted_without_application_rewrite(tmp_path
     task = _task(store)
     run = _claim_audit(store, task)
 
-    persisted = store.append_agent_run_event(
+    store.append_agent_run_event(
         run.id,
         {
             "type": "item.started",
@@ -2520,21 +1576,25 @@ def test_provider_operation_id_is_persisted_without_application_rewrite(tmp_path
     assert refreshed.tool_events[-1]["item"]["metadata"]["operation_id"] == "operation-other"
 
 
-def test_failed_effect_closes_started_identity_without_confirmation(tmp_path):
+def test_provider_failed_event_is_preserved_without_business_state(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
     started = _effect_event(operation_digest="same")
     store.append_agent_run_event(run.id, started, owner="audit")
     failed = {**started, "type": "item.failed"}
-    closed = store.append_agent_run_event(run.id, failed, owner="audit")
+    store.append_agent_run_event(run.id, failed, owner="audit")
+    closed = store.get_agent_run(run.id)
+    assert closed is not None
 
-    assert closed.effect_started_count == 1
-    assert closed.effect_failed_count == 1
+    assert [event["type"] for event in closed.tool_events] == [
+        "item.started",
+        "item.failed",
+    ]
     assert not hasattr(closed, "side_effect_state")
 
 
-def test_two_same_call_starts_with_one_completion_remains_unknown(tmp_path):
+def test_duplicate_provider_starts_remain_visible_in_append_only_events(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     run = _claim_audit(store, _task(store))
     started = _effect_event(
@@ -2545,18 +1605,23 @@ def test_two_same_call_starts_with_one_completion_remains_unknown(tmp_path):
 
     store.append_agent_run_event(run.id, started, owner="audit")
     store.append_agent_run_event(run.id, started, owner="audit")
-    persisted = store.append_agent_run_event(
+    store.append_agent_run_event(
         run.id,
         {**started, "type": "item.completed"},
         owner="audit",
     )
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
 
     assert persisted.status == "running"
-    assert persisted.effect_started_count == 2
-    assert persisted.effect_completed_count == 1
+    assert [event["type"] for event in persisted.tool_events] == [
+        "item.started",
+        "item.started",
+        "item.completed",
+    ]
 
 
-def test_agent_effect_state_uses_incremental_counters_not_history_scan(tmp_path):
+def test_provider_event_append_does_not_rescan_history(tmp_path):
     statements: list[str] = []
 
     class TracedStore(AutoReplyStore):
@@ -2569,14 +1634,16 @@ def test_agent_effect_state_uses_incremental_counters_not_history_scan(tmp_path)
     run = _claim_audit(store, _task(store))
     statements.clear()
 
-    persisted = store.append_agent_run_event(
+    store.append_agent_run_event(
         run.id,
         _effect_event(operation_digest="digest"),
         owner="audit",
     )
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
 
     normalized = [statement.casefold() for statement in statements]
-    assert persisted.effect_started_count == 1
+    assert len(persisted.tool_events) == 1
     assert not any("with call_state" in statement for statement in normalized)
     assert sum("from agent_run_events" in statement for statement in normalized) <= 4
 
@@ -2588,33 +1655,7 @@ def test_failed_run_preserves_effect_event_fact(tmp_path):
     store.fail_agent_run(run.id, {"code": "crash_after_write", "retryable": True}, owner="audit")
     persisted = store.get_agent_run(run.id)
     assert persisted is not None and persisted.status == "failed"
-    assert persisted.effect_started_count == 1
-
-
-def test_effect_counter_backfill_is_migration_safe(tmp_path):
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    run = _claim_audit(store, _task(store))
-    started = _effect_event(operation_digest="digest")
-    store.append_agent_run_event(run.id, started, owner="audit")
-    store.append_agent_run_event(
-        run.id,
-        {**started, "type": "item.completed"},
-        owner="audit",
-    )
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update agent_runs set effect_started_count=0, "
-            "effect_completed_count=0, effect_failed_count=0, "
-            "effect_receipt_count=0, effect_unreviewed_count=0 where id=?",
-            (run.id,),
-        )
-        db.row_factory = sqlite3.Row
-        AutoReplyStore._backfill_agent_run_effect_counters(db)
-
-    migrated = store.get_agent_run(run.id)
-    assert migrated is not None
-    assert migrated.effect_started_count == 1
-    assert migrated.effect_completed_count == 1
+    assert len(persisted.tool_events) == 1
 
 
 def _create_pre_role_database(path: Path) -> Path:
@@ -2744,20 +1785,54 @@ def test_agent_run_migration_preserves_events_and_receipts(tmp_path):
     assert run.parent_agent_run_id is None
     assert run.operation_id == ""
     assert run.tool_events == [{"type": "item.completed"}]
-    assert run.reconciliation_event_count == 1
-    assert store.list_agent_execution_receipts(7)[0].receipt_id == "receipt-1"
     assert store.foreign_key_violations() == []
     with sqlite3.connect(db_path) as db:
         event = db.execute(
             "select id, created_at from agent_run_events where agent_run_id=7"
         ).fetchone()
         receipt = db.execute(
-            "select id, created_at from agent_execution_receipts where agent_run_id=7"
+            "select id, created_at, effect_counted "
+            "from agent_execution_receipts where agent_run_id=7"
         ).fetchone()
     assert event == (8, "2026-08-06 15:00:00")
-    assert receipt == (9, "2026-08-06 15:01:00")
-    assert run.effect_started_count == 0
-    assert store.list_agent_execution_receipts(7)[0].effect_counted is False
+    assert receipt == (9, "2026-08-06 15:01:00", 0)
+    assert not hasattr(store, "list_agent_execution_receipts")
+    with sqlite3.connect(db_path) as db:
+        columns = {
+            row[1] for row in db.execute("pragma table_info(agent_runs)").fetchall()
+        }
+    assert "side_effect_state" not in columns
+    assert not any(column.startswith("reconciliation_") for column in columns)
+    assert not any(column.startswith("effect_") for column in columns)
+
+
+def test_agent_run_migration_converts_unknown_projection_and_preserves_history(
+    tmp_path,
+):
+    db_path = _create_pre_role_database(tmp_path / "legacy-unknown.sqlite3")
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "update agent_runs set status='unknown', structured_error_json='' where id=7"
+        )
+
+    store = AutoReplyStore(db_path)
+    run = store.get_agent_run(7)
+
+    assert run is not None
+    assert run.status == "failed"
+    assert json.loads(run.structured_error_json) == {
+        "code": "legacy_unknown",
+        "retryable": True,
+    }
+    with sqlite3.connect(db_path) as db:
+        event = db.execute(
+            "select phase, structured_error_json from agent_run_state_events "
+            "where agent_run_id=7 order by id desc limit 1"
+        ).fetchone()
+    assert event == (
+        "legacy_unknown_migrated",
+        '{"code":"legacy_unknown","retryable":true}',
+    )
 
 
 def test_agent_run_migration_preserves_existing_turn_identity(tmp_path):
@@ -2813,21 +1888,37 @@ def test_agent_run_migration_rolls_back_before_commit_on_foreign_key_failure(
 
 def test_failed_audit_keeps_consumer_projection(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store); consumer = _claim_consumer(store, task).run
-    audit = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.AUDIT,
-        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
-        operation_id="operation-0", owner="audit").run
-    store.fail_agent_run(audit.id, {"code": "outcome_unavailable", "retryable": True}, owner="audit")
+    task = _task(store)
+    consumer = _claim_consumer(store, task).run
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="operation-0",
+        owner="audit",
+    ).run
+    store.fail_agent_run(
+        audit.id,
+        {"code": "outcome_unavailable", "retryable": True},
+        owner="audit",
+    )
     assert store.get_agent_run(audit.id).status == "failed"
     assert store.get_agent_run(consumer.id).status == "running"
 
 
-def test_consumer_failed_rows_are_not_reconciliation_candidates(tmp_path):
+def test_consumer_failed_rows_are_terminal_failures(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store); consumer = _claim_consumer(store, task).run
-    store.fail_agent_run(consumer.id, {"code": "read_failed", "retryable": True}, owner="consumer")
+    task = _task(store)
+    consumer = _claim_consumer(store, task).run
+    store.fail_agent_run(
+        consumer.id,
+        {"code": "read_failed", "retryable": True},
+        owner="consumer",
+    )
     assert store.get_agent_run(consumer.id).status == "failed"
-    assert store.list_unknown_agent_runs() == []
 
 
 def test_single_chat_trigger_replacement_supersedes_running_turn(tmp_path):

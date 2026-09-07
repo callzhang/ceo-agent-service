@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 from pydantic import ValidationError
 
 from app.agent_runtime_router import (
-    ApprovedCodexCommandFactory,
-    READ_ONLY_BACKGROUND_AGENT_BOUNDARY,
+    CodexCommandFactory,
+    BACKGROUND_AGENT_RUNTIME_BOUNDARY,
     RoutedCodexExecution,
     RoutedCodexExecutionError,
     RoutedResultCodec,
@@ -57,7 +57,6 @@ TASK_RUNTIME_CAPABILITIES = frozenset(
     {
         "structured_output",
         "local_schema_validation",
-        "reviewed_read_tools",
     }
 )
 TASK_RESULT_CODEC = RoutedResultCodec.text(
@@ -191,11 +190,10 @@ class TaskAgentCodexRunner:
                 workload_kind="task",
                 workload_key=workload_key,
                 prompt=prompt,
-                command_factory=ApprovedCodexCommandFactory.read_only_task(
+                command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
-                        "Return exactly one TaskAgentDecision JSON object. "
-                        "Use only reviewed read tools.\n\n"
-                        + READ_ONLY_BACKGROUND_AGENT_BOUNDARY
+                        "Return exactly one TaskAgentDecision JSON object.\n\n"
+                        + BACKGROUND_AGENT_RUNTIME_BOUNDARY
                     ),
                 ),
                 parser=_encode_task_agent_result,
@@ -305,7 +303,7 @@ Required evidence sequence for every non-skip decision:
 - When memory_recall is available, call it with a focused query about the
   work item, project, prior commitments, and owner context before deciding.
   Set memory_recall_used=true only after that tool call is present in the
-  session receipt.
+  typed result.
 - Memory is stable background, not proof of the current external state. Use
   the applicable live DWS read for current people, ownership, task, meeting,
   or document state before creating, updating, or following up on work.
@@ -464,7 +462,7 @@ external message was created because: {validation_error}
 This repair is read-only. Call memory_recall now with a focused query about
 this work item, its project, prior commitments, and owner context. Do not
 reuse the previous decision's memory_recall_used flag unless the new session
-receipt contains the tool call. Return a complete replacement decision after
+Return a complete replacement decision after
 the tool call; do not send messages or perform writes.
 
 If the rejected decision used update_project but did not establish a stable
@@ -583,19 +581,9 @@ def process_work_item(
         )
         decision = _normalize_follow_up_change_times(decision)
         codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
-        audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
-        memory_recall_attempted = _audit_events_include_memory_recall(
-            audit_tool_events
-        )
-        memory_runtime_unavailable = (
-            _decision_reports_memory_runtime_unavailable(decision)
-        )
         try:
             _validate_task_agent_decision(
                 decision,
-                memory_issue=memory_issue,
-                memory_recall_attempted=memory_recall_attempted,
-                memory_runtime_unavailable=memory_runtime_unavailable,
                 now=now,
             )
         except ValueError as exc:
@@ -631,18 +619,8 @@ def process_work_item(
                 decision,
             )
             codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
-            audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
-            memory_recall_attempted = _audit_events_include_memory_recall(
-                audit_tool_events
-            )
-            memory_runtime_unavailable = (
-                _decision_reports_memory_runtime_unavailable(decision)
-            )
             _validate_task_agent_decision(
                 decision,
-                memory_issue=memory_issue,
-                memory_recall_attempted=memory_recall_attempted,
-                memory_runtime_unavailable=memory_runtime_unavailable,
                 now=now,
             )
         try:
@@ -669,23 +647,8 @@ def process_work_item(
             )
             decision = _normalize_follow_up_change_times(decision)
             codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
-            audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
-            memory_recall_attempted = (
-                memory_recall_attempted
-                or _audit_events_include_memory_recall(audit_tool_events)
-            )
-            memory_runtime_unavailable = (
-                memory_runtime_unavailable
-                or (
-                    _audit_events_include_memory_tool_discovery(audit_tool_events)
-                    and _decision_reports_memory_runtime_unavailable(decision)
-                )
-            )
             _validate_task_agent_decision(
                 decision,
-                memory_issue=memory_issue,
-                memory_recall_attempted=memory_recall_attempted,
-                memory_runtime_unavailable=memory_runtime_unavailable,
                 now=now,
             )
             _validate_owner_changes(store, decision)
@@ -696,9 +659,6 @@ def process_work_item(
                 work_item=work_item,
                 decision=decision,
                 codex_session_id=codex_session_id,
-                memory_issue=memory_issue,
-                memory_recall_attempted=memory_recall_attempted,
-                memory_runtime_unavailable=memory_runtime_unavailable,
                 record_run=False,
                 dws=dws,
                 now=now,
@@ -801,9 +761,6 @@ def apply_task_agent_decision(
     work_item: WorkItem,
     decision: TaskAgentDecision,
     codex_session_id: str = "",
-    memory_issue: str = "",
-    memory_recall_attempted: bool = False,
-    memory_runtime_unavailable: bool = False,
     record_run: bool = True,
     dws=None,
     now: str = "",
@@ -812,9 +769,6 @@ def apply_task_agent_decision(
     decision = _normalize_follow_up_change_times(decision)
     _validate_task_agent_decision(
         decision,
-        memory_issue=memory_issue,
-        memory_recall_attempted=memory_recall_attempted,
-        memory_runtime_unavailable=memory_runtime_unavailable,
         now=now,
     )
     _validate_owner_changes(store, decision)
@@ -929,9 +883,6 @@ def apply_task_agent_decision(
 def _validate_task_agent_decision(
     decision: TaskAgentDecision,
     *,
-    memory_issue: str = "",
-    memory_recall_attempted: bool = False,
-    memory_runtime_unavailable: bool = False,
     now: str = "",
 ) -> None:
     for todo_change in decision.todo_changes:
@@ -1275,50 +1226,6 @@ def _validate_owner_changes(store: AutoReplyStore, decision: TaskAgentDecision) 
             evidence=evidence,
             label="follow_up_change.owner_evidence",
         )
-
-
-def _audit_events_include_memory_recall(audit_tool_events: object) -> bool:
-    if not isinstance(audit_tool_events, list):
-        return False
-    for event in audit_tool_events:
-        if not isinstance(event, dict):
-            continue
-        tool = str(event.get("tool") or "")
-        if "memory_recall" in tool:
-            return True
-    return False
-
-
-def _audit_events_include_memory_tool_discovery(audit_tool_events: object) -> bool:
-    if not isinstance(audit_tool_events, list):
-        return False
-    discovery_tools = {
-        "tool_search_call",
-        "list_mcp_resources",
-        "list_mcp_resource_templates",
-    }
-    for event in audit_tool_events:
-        if not isinstance(event, dict):
-            continue
-        tool = str(event.get("tool") or "")
-        if tool in discovery_tools:
-            return True
-    return False
-
-
-def _decision_reports_memory_runtime_unavailable(
-    decision: TaskAgentDecision,
-) -> bool:
-    if decision.project is None:
-        return False
-    return any(
-        item.source
-        in {
-            "memory_connector_runtime_unavailable",
-            "memory_recall_runtime_failure",
-        }
-        for item in decision.project.memory_context.memories
-    )
 
 
 def _apply_project(

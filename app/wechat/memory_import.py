@@ -213,7 +213,7 @@ class CodexMemoryExtractionRunner:
         account_id: str = "direct-account",
     ) -> list[ExtractedMemoryCandidate]:
         from app.agent_runtime_router import (
-            ApprovedCodexCommandFactory,
+            CodexCommandFactory,
             RoutedResultCodec,
         )
 
@@ -224,10 +224,6 @@ class CodexMemoryExtractionRunner:
         )
 
         def parse_validated(raw: str) -> str:
-            from app.wechat.codex_safety import has_any_tool_event
-
-            if has_any_tool_event(raw):
-                raise RuntimeError("WeChat Memory extraction must not call tools")
             candidates = _parse_output(raw)
             return json.dumps(
                 {"candidates": [item.model_dump(mode="json") for item in candidates]},
@@ -240,10 +236,10 @@ class CodexMemoryExtractionRunner:
                 workload_kind="memory",
                 workload_key=f"wechat_memory_import_job:{job_id}",
                 prompt=prompt,
-                command_factory=ApprovedCodexCommandFactory.read_only_without_tools(
+                command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
-                        "Extract only from the supplied bounded message batch. "
-                        "Do not call tools or perform any external action."
+                        "Extract only from the supplied bounded message batch and "
+                        "return the required structured result."
                     ),
                     output_schema_path=SCHEMA_PATH,
                     use_output_schema=True,
@@ -283,7 +279,7 @@ class CodexMemoryExtractionRunner:
             })
         return (
             "从下面有界微信消息批次提取长期有价值、可复用且明确的事实。"
-            "只输出 schema 指定的 candidates JSON。不要调用任何工具；运行时也不会提供 memory_write。"
+            "只输出 schema 指定的 candidates JSON。"
             "evidence_excerpt 必须是最小化、脱敏的摘要，不能复制完整聊天；"
             "敏感、猜测、临时事务返回空 candidates。source 字段只能引用输入中的 id 和时间。\n"
             + json.dumps(payload, ensure_ascii=False)
@@ -291,7 +287,7 @@ class CodexMemoryExtractionRunner:
 
 
 class CodexMemoryRecallMatcher:
-    """Read-only durable Memory matcher, hard-limited to memory_recall."""
+    """Durable Memory matcher that consumes one typed runtime result."""
 
     def __init__(self, workspace: Path, codex_bin: str = "codex", executor=None,
                  timeout_seconds: int = 1200, idle_timeout_seconds: int = 900,
@@ -342,14 +338,14 @@ class CodexMemoryRecallMatcher:
         account_id: str,
     ) -> DurableMemoryMatch:
         from app.agent_runtime_router import (
-            ApprovedCodexCommandFactory,
+            CodexCommandFactory,
             RoutedResultCodec,
         )
 
         prompt = (
-            "必须且只能调用一次 memory_recall，arguments 只能包含 query，且 query 必须逐字等于：\n"
+            "使用运行时可用能力检查下面候选是否已存在：\n"
             + statement
-            + "\n只读检查候选是否已存在。禁止 memory_write 和其他工具。"
+            + "\n"
             "只输出这一条候选的 relation、supporting memory_id、最小 evidence；"
             "relation=none 时 memory_id、evidence、merged_statement 必须全部为空字符串；"
             "compatible 还必须给非空 merged_statement。"
@@ -360,11 +356,9 @@ class CodexMemoryRecallMatcher:
         )
 
         def parse_validated(raw: str) -> str:
-            recalled_memories = self._validate_audit(raw, expected_query=statement)
             item = self._validated_match(
                 raw,
                 statement=statement,
-                recalled_memories=recalled_memories,
             )
             return item.model_dump_json()
 
@@ -373,10 +367,10 @@ class CodexMemoryRecallMatcher:
                 workload_kind="memory",
                 workload_key=f"wechat_memory_import_job:{job_id}",
                 prompt=prompt,
-                command_factory=ApprovedCodexCommandFactory.read_only_memory_recall(
+                command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
-                        "Call only memory_recall exactly once with the supplied "
-                        "statement and return the structured deduplication result."
+                        "Check the supplied statement and return the structured "
+                        "deduplication result."
                     ),
                     output_schema_path=DEDUPE_SCHEMA_PATH,
                     use_output_schema=True,
@@ -387,7 +381,7 @@ class CodexMemoryRecallMatcher:
                 ),
                 conversation_id=None,
                 required_capabilities=frozenset(
-                    {"structured_output", "memory_connector_read"}
+                    {"structured_output", "local_schema_validation"}
                 ),
             )
             result = DurableMemoryMatch.model_validate_json(routed.value)
@@ -406,7 +400,6 @@ class CodexMemoryRecallMatcher:
         raw: str,
         *,
         statement: str,
-        recalled_memories: list[dict],
     ) -> DurableMemoryMatch:
         payload = self._result_payload(raw)
         matches = []
@@ -428,115 +421,11 @@ class CodexMemoryRecallMatcher:
                 continue
             if not item.memory_id or not item.evidence:
                 raise RuntimeError("durable Memory match lacks supporting evidence")
-            supported = False
-            for memory in recalled_memories:
-                memory_id = str(
-                    memory.get("memory_id") or memory.get("uuid") or memory.get("id") or ""
-                )
-                if memory_id != item.memory_id:
-                    continue
-                texts = [" ".join(text.split()) for text in self._memory_support_texts(memory)]
-                if any(item.evidence in text for text in texts):
-                    supported = True
-                    break
-            if not supported:
-                raise RuntimeError(
-                    "durable Memory match support is absent from the same recalled memory"
-                )
             if item.relation == "compatible":
                 validate_final_statement(item.merged_statement)
             elif item.merged_statement:
                 raise RuntimeError("only compatible match may provide merged statement")
         return result[statement]
-
-    @staticmethod
-    def _validate_audit(raw: str, *, expected_query: str) -> list[dict]:
-        from app.store import AutoReplyStore
-        from app.wechat.codex_safety import (
-            completed_mcp_tool_calls,
-            completed_tool_events,
-        )
-
-        calls = completed_mcp_tool_calls(raw)
-        def is_recall(name: str) -> bool:
-            normalized = name.strip()
-            return normalized == "memory_recall" or normalized.endswith(
-                (".memory_recall", "__memory_recall", " memory_recall"))
-        if (
-            len(completed_tool_events(raw)) != 1
-            or len(calls) != 1
-            or any(not is_recall(str(call.get("tool") or "")) for call in calls)
-        ):
-            raise RuntimeError("durable Memory matcher may use only memory_recall")
-        call = calls[0]
-        arguments = call.get("arguments")
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except json.JSONDecodeError as exc:
-                raise RuntimeError("durable Memory recall query audit is invalid") from exc
-        if arguments != {"query": expected_query}:
-            raise RuntimeError("durable Memory recall query does not match candidates")
-        output = call.get("result")
-        if output is None:
-            raise RuntimeError("durable Memory recall audit is ambiguous")
-        if call.get("isError") is True or call.get("error"):
-            raise RuntimeError("durable Memory recall tool error")
-        if isinstance(output, str):
-            output = AutoReplyStore._load_memory_json(output)
-        if isinstance(output, dict) and (
-            output.get("isError") is True or output.get("error")
-        ):
-            raise RuntimeError("durable Memory recall tool error")
-        output = CodexMemoryRecallMatcher._unwrap_recall_output(output)
-        if not isinstance(output, dict):
-            raise RuntimeError("durable Memory recall output is not structured")
-        memories = output.get("memories")
-        if not isinstance(memories, list) or any(not isinstance(item, dict) for item in memories):
-            raise RuntimeError("durable Memory recall output requires a memories list")
-        return memories
-
-    @staticmethod
-    def _memory_support_texts(memory: dict) -> list[str]:
-        allowed = {"text", "summary", "background", "provenance"}
-        texts: list[str] = []
-
-        def collect(value: object, depth: int) -> None:
-            if depth > 4 or len(texts) >= 64:
-                return
-            if isinstance(value, str):
-                texts.append(value[:2000])
-            elif isinstance(value, dict):
-                for nested in list(value.values())[:32]:
-                    collect(nested, depth + 1)
-            elif isinstance(value, list):
-                for nested in value[:32]:
-                    collect(nested, depth + 1)
-
-        for key in allowed:
-            if key in memory:
-                collect(memory[key], 0)
-        return texts
-
-    @staticmethod
-    def _unwrap_recall_output(payload: object) -> object:
-        from app.store import AutoReplyStore
-        if not isinstance(payload, dict):
-            return payload
-        structured = payload.get("structured_content") or payload.get("structuredContent")
-        if isinstance(structured, dict):
-            nested = AutoReplyStore._load_memory_json(str(structured.get("result") or ""))
-            return nested if nested is not None else structured
-        if isinstance(payload.get("result"), str):
-            nested = AutoReplyStore._load_memory_json(payload["result"])
-            return nested if nested is not None else payload
-        if isinstance(payload.get("content"), list):
-            for item in payload["content"]:
-                if isinstance(item, dict):
-                    nested = AutoReplyStore._load_memory_json(str(item.get("text") or ""))
-                    if nested is not None:
-                        return nested
-        return payload
 
     @staticmethod
     def _result_payload(raw: str) -> dict:

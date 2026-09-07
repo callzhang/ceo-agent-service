@@ -15,7 +15,6 @@ from app.agent_context import (
 )
 from app.email_classifier_contracts import EmailAttachmentMetadata
 from app.agent_contracts import ConsumerProposal
-from app.agent_skill_usage import LoadedSkillReceipt
 from app.consumer_agent import (
     AUDIT_DYNAMIC_SKILL_BODY,
     CONSUMER_DYNAMIC_SKILL_BODY,
@@ -412,7 +411,6 @@ def test_context_gives_each_agent_turn_an_explicit_execution_time():
                                 "现在出发吗？",
                             ]
                         },
-                        "expected_verification": "Read back the sent message.",
                     }
                 ],
                 "sourced_facts": [
@@ -431,56 +429,6 @@ def test_context_gives_each_agent_turn_an_explicit_execution_time():
     assert "2026-07-28 14:15:00 +0800" in consumer
     assert "2026-07-28 14:16:00 +0800" in audit
     assert '"create_time": "2026-07-28 12:00:00"' in audit
-
-
-def test_audit_context_renders_verified_consumer_skill_receipts_as_json():
-    receipt = LoadedSkillReceipt(
-        name="business-review",
-        path="/Users/derek/.agents/skills/business-review/SKILL.md",
-        sha256="a" * 64,
-    )
-    rendered = AuditTurnContext(
-        task=_context(),
-        proposal_revision=0,
-        operation_id="op-skill",
-        proposal=ConsumerProposal.model_validate(
-            {
-                "objective": "Review",
-                "actions": [
-                    {
-                        "description": "Send reviewed result.",
-                        "action_identity": "send-reviewed-result",
-                        "capability": "agent_cli.dws",
-                        "operation": "chat message send",
-                        "target": {"group": "cid"},
-                        "payload": {
-                            "argv": [
-                                "dws",
-                                "chat",
-                                "message",
-                                "send",
-                                "--group",
-                                "cid",
-                                "--text",
-                                "reviewed",
-                                "--yes",
-                            ]
-                        },
-                        "expected_verification": "Read back the message.",
-                    }
-                ],
-                "sourced_facts": [],
-                "authored_judgment": "Review using the applicable Skill.",
-            }
-        ),
-        audit_rules="",
-        consumer_skills=(receipt,),
-    ).render()
-
-    assert "Verified Skills read by Consumer A" in rendered
-    assert '"name": "business-review"' in rendered
-    assert f'"sha256": "{"a" * 64}"' in rendered
-    assert '"path": "/Users/derek/.agents/skills/business-review/SKILL.md"' in rendered
 
 
 def test_agent_rules_leave_time_sensitive_policy_to_business_skills():
@@ -716,7 +664,6 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
                     "operation": "oa approval comment",
                     "target": {"process_instance_id": "pid-1"},
                     "payload": {"remark": "请补充材料。"},
-                    "expected_verification": "Read the OA records",
                 }
             ],
             "sourced_facts": [

@@ -38,13 +38,13 @@ pending -> running -> done
 
 所有任务都禁止使用 `discard` 动作或写入 `discarded` 状态。无需动作的结果在 trace 记录 `no_action` 后进入 `done`；需要修正时由审核 Agent 写入 `audit_feedback`，执行 Agent 生成新 revision；处理失败使用 `failed`；无法自动解决使用 `needs_human`。
 
-`okr_review` 使用上述闭环生成逐 KR 评审；`weekly_okr` 使用上述闭环生成管理者 OKR 进度周报。周报只有在分析、文档发布、群摘要发送和外部回读全部完成后，才能推进成功日期。
+`okr_review` 使用上述闭环生成逐 KR 评审；`weekly_okr` 使用上述闭环生成管理者 OKR 进度周报。周报在分析、文档发布和群摘要获得 provider 成功结果后推进成功日期。
 
-OKR 评审的实时数据读取由服务提供固定的只读入口
+OKR 评审的实时数据读取由业务 Skill 选择当前可用的 provider 能力完成。服务提供的
 `app.cli read-dingteam-okr --user-id <owner-id> --period-label <period>`，该入口调用
 `CEO_OKR_LIVE_SOURCE_COMMAND`（当前为 Dingteam headless source），并返回包含
-`processed.objectives` 与 `processed.okrRows` 的实时载荷。Consumer 必须先通过 reviewed
-read 调用该入口，再形成通过/不通过判断；截图、仓库链接或重试终态不能替代实时读取，
+`processed.objectives` 与 `processed.okrRows` 的实时载荷，是一种可用实现而非应用层命令契约。
+Consumer 形成通过/不通过判断时应使用当前 OKR 数据；截图、仓库链接或重试终态不能替代实时读取，
 读取失败时必须保留底层认证、浏览器启动或源端错误码。
 
 完整状态和恢复说明见 [`docs/runtime-mechanism.md`](runtime-mechanism.md)。
@@ -313,7 +313,9 @@ launchd 和本地启动脚本都设置 `PYTHONDONTWRITEBYTECODE=1`。worker 与�
 ### Codex 会话隔离
 
 同一 `conversation_id` 的 Consumer A 先取得持久会话锁，再通过原子任务认领启动 Codex；
-不同会话可以在同一个 launchd 服务内并行执行。Audit B 的每个 revision 使用独立 session。
+不同会话可以在同一个 launchd 服务内并行执行。Consumer 与 Audit 的重试都优先继续各自兼容的
+原 Agent session；feedback 或 revision 只推进业务决策版本，不会自动清空 session。只有 runtime
+明确确认原 session 不存在、不可访问或契约不兼容时，才建立新的 session，并保留旧 session lineage。
 服务不再用全局进程锁串行化所有 Codex 调用，否则一个长会话会让无关会话已认领却无法运行。
 
 跨 worker、审计页面和服务重启的竞争由 SQLite 会话锁、Agent run lease 和结果回读处理；
@@ -358,7 +360,7 @@ trigger/context/material references
   -> Consumer A discovers and reads business Skill(s)
   -> A reads operation Skill(s) and proposes an exact action
   -> Consumer/Audit return a typed business result
-  -> B reviews, executes, and reads back
+  -> B reviews and executes through its normal runtime capabilities
   -> service persists the existing run/attempt/provider identifier
 ```
 
@@ -431,7 +433,7 @@ A 的身份是 Derek 本人，而不是旁观审核员。A 会：
 2. 动态发现并读取适用的业务 Skill，再读取完成任务所需的操作 Skill。
 3. 以读取和判断为目的使用安装用户已有的 CLI/MCP，按需读取原始消息和材料引用，不依赖
    service 预读或解释正文。
-4. 返回结构化候选，其中包含目标、动作、收件人/对象、正文或参数、事实引用和预期验证。
+4. 返回结构化候选，其中包含目标、动作、收件人/对象、正文或参数和必要的事实引用。
 5. 对不需要动作的触发返回 `no_action`。
 
 A 的角色协议禁止主动发送消息、评论、审批、修改文档或执行其他外部写操作；它只能提出候选。
@@ -452,18 +454,18 @@ B 不是 Derek 的第二个写作分身，而是独立审计与执行者。B 会
 1. 根据候选内容和当前上下文独立判断适用的业务规则。
 2. 重新读取执行前的实时事实和 Audit Rules。
 3. 检查 A 的候选是否有事实依据、目标准确、内容最小、权限合适且符合当前规则。
-4. 候选合格时按原样执行，并从外部系统读回结果。
+4. 候选合格时按原样执行，并返回 provider 的执行结果。
 5. 业务含义需要变化时返回具体反馈，由 A 生成新 revision；B 不自行改写候选。
 6. 外部动作中断时由下一次 Agent turn 按当前业务 Skill 读取目标状态并决定是否继续；服务不创建专门的恢复回合。
 
-每个候选 revision 使用一个新的 B session。后续失败重试沿用任务、generation 和 revision 关系。
+同一任务的 B session 在 provider session 存在且契约兼容时继续复用；revision 前进不会单独强制创建新 session。只有 session 不存在、认证上下文失效或契约不兼容时才创建新 session。
 
 ## 会话与反馈周期
 
 - 每个 `conversation_id` 对应一个长期 A session；同一业务对话的新消息通过
   `codex exec resume` 进入该 session。
 - 每个候选 revision 对应一个新的 B session。
-- B 的 `revision_required` 会通过持久化反馈消息送回 A。
+- B 的 `feedback_provided` 会通过持久化反馈消息送回 A；`revision_required` 只作为历史输入术语映射。
 - 一个任务最多允许两个内容反馈周期。基础设施重试不消耗内容反馈周期。
 - A session 缺失或损坏时才创建新的会话；服务不会为每条消息无条件创建新 A session。
 
@@ -611,9 +613,8 @@ Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的�
 - operation、target、provider result identifier（仅在 provider 返回时保存）；
 - run 状态、租约和下一次可用时间；
 - 结构化最终结果和精确去重键。
-- 当前业务 turn 的受审工具生命周期元数据，包括 capability、operation 和参数/结果摘要；
-  原始参数与工具结果仍只保留在 Codex session JSONL。若原生 MCP 事件只出现在 session
-  JSONL，运行器会在进程结束后按 turn ID 回放这些元数据，并排除随后执行的 hook turn。
+- provider 原始工具事件按执行顺序 append-only 保存；应用层不分类命令、读写模式或工具权限。
+  原始参数与工具结果仍以 Codex session JSONL 为详细来源。
 
 服务不在 SQLite 复制完整 Codex transcript，也不维护另一套业务审计日志。History 页面按
 session 指针读取 JSONL，并只向普通用户展示业务结果；内部角色、规划标签和原始敏感工具
@@ -623,9 +624,9 @@ session 指针读取 JSONL，并只向普通用户展示业务结果；内部角
 
 | 终态 | 含义 |
 | --- | --- |
-| `executed` | B 已执行并从外部系统确认结果。 |
+| `executed` | B 已执行，并返回 provider 结果或稳定外部动作标识。 |
 | `no_action` | A 确认当前触发无需外部动作。 |
-| `revision_required` | B 给出结构化反馈，等待 A 生成下一 revision。 |
+| `feedback_provided` | B 给出结构化反馈，等待 A 在原兼容 session 中生成下一 revision。 |
 | `needs_human` | 只能由 Derek 作出的不可约管理判断；不是普通材料不足。结果必须提供通用的 `risk` 和 `confidence`，且仅当风险为 `high`、置信度低于 `0.5` 时允许；同时提供 2 至 4 个互斥、可执行的选项，每项包含唯一稳定的 key、显示标签、执行指令和后果。 |
 | `failed` | 当前 run 失败；错误说明是否可重试。 |
 | `quarantined` | 历史数据中的旧投影标签，仅用于历史展示；新执行不得写入。 |
@@ -644,8 +645,8 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 | `app.agent_orchestrator.AgentOrchestrator` | 在 A、B、反馈和失败重试之间推进状态机。 |
 | `app.business_skills` / `app.managed_skills` | 提供七个仓库基线 Skill，并管理 SQLite 中不可变 revision、next-start config 和启动 load receipt；不参与业务路由。 |
 | `app.agent_skill_usage` | 提供 Agent 执行环境所需的 Skill 读取辅助；不参与普通业务结果审核。 |
-| `app.consumer_agent.ConsumerAgentRunner` | 复用对话 A session，按 read-oriented 角色协议读取、判断并提出候选。 |
-| `app.audit_agent.AuditAgentRunner` | 新建 B 审计 session，执行合格候选并处理失败重试。 |
+| `app.consumer_agent.ConsumerAgentRunner` | 复用兼容的 A session，读取、判断并提出候选；应用层不限制其具体工具。 |
+| `app.audit_agent.AuditAgentRunner` | 复用兼容的 B session，审核并执行候选；应用层不审核命令、工具或读取方式。 |
 | `app.agent_contracts` | 严格定义 A proposal 与 B audit result。 |
 | `app.audit_rules` | 保存、校验并分别渲染共享 Audit Rules。 |
 | `app.codex_runner.CodexRunner` | 以原生 `codex exec` 启动并继承安装用户的 Codex 配置。 |
@@ -692,14 +693,14 @@ Consumer 和 Audit 必须接受该陈述并从该事实继续审批；不得要�
 帮助理解申请，但不构成推翻申请人陈述或延迟审批的应用层证据门禁。
 
 审批实例和当前 task 仍为 `RUNNING` 且申请人尚未说明必填信息时，Agent 必须在原审批中
-评论具体缺失材料、读回评论、通知实际申请人并读回通知，保持审批待处理，不得让
+评论具体缺失材料并通知实际申请人，保持审批待处理，不得让
 Derek 选择。已有相同目的且已确认的评论或通知不得重复写入；新材料出现后基于最新
 OA 内容重新运行 Skill。已有后续终态时只读对账。
 
 重试复用同一个正式任务和审批实例，不创建替代审批事项。瞬态故障进入 exponential
 backoff；终态失败必须说明根因、已尝试动作、provider 标识（若有）、下一步和重试条件。
 DWS/OA 技术错误不得直接暴露给申请人，所有“已评论”“已通知”“已完成”都必须由 Agent
-根据外部系统结果确认。
+根据 provider 返回结果确认；应用层不额外要求发送 read-back 证据。
 
 Codex Agent 可以通过 `agent_cli.read_skill` 读取 Skill；Skill 读取属于 Agent 执行环境，
 不是应用层业务结果的前置 receipt。launchd 业务服务不是 Skill 可读性的前置条件。

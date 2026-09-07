@@ -46,7 +46,7 @@ Friday 或 Codex provider 返回的原始错误码会原样保留，并归入对
 | `runtime_session_conflict` | session 所有权冲突 | 等待租约释放后重试 |
 | `stale_agent_turn_recovery` | 发现过期 Agent turn，已进入普通重试 | 可重试 |
 | `stale_before_agent_start` | 任务在 Agent 启动前失去租约 | 可重试 |
-| `service_restart_before_effect` | 服务在本轮执行完成前重启 | 可重试 |
+| `service_restart_interrupted` | 服务在 Agent 本轮执行完成前重启；不按命令或 effect 类型分流 | 可继续原 session，并以新 agent run 重试同一业务 task |
 | `service_restart_after_completed_turn` | 服务重启发生在结果完成后、任务投影更新前 | 可重试；不得创建新的业务 attempt |
 | `reply_task_lease_exhausted` | 任务租约/接管尝试达到上限 | 终态失败 |
 
@@ -75,7 +75,7 @@ Friday 或 Codex provider 返回的原始错误码会原样保留，并归入对
 | `oa_skill_workflow_incomplete` | OA Skill 流程未完成 | 按当前业务能力重试或失败 |
 
 provider 还可能返回自身的 `server_error_code`、HTTP 错误或 DWS/Friday 原始码；这些值
-属于事实证据，不在应用层重新分类。查看具体 provider 的错误含义时，应同时查阅其
+属于 provider 诊断，不在应用层重新分类。查看具体 provider 的错误含义时，应同时查阅其
 Skill 或 provider 契约文档。
 
 ## 历史投影迁移
@@ -100,8 +100,9 @@ python scripts/migrate_error_projections.py --db <database> --apply
 ## 历史错误码
 
 历史数据库可能包含已经废弃的 `unknown`、`reconciled`、旧恢复状态或早期命令审核错误。
-它们只作为历史事实展示，不参与当前状态迁移。历史数据迁移到当前代码时，必须保留原始
-错误事件，并把当前投影归入 `failed`、`done` 或 `needs_human` 的现行语义。
+schema 升级会删除这些旧投影字段，把旧 `unknown` run 的当前状态迁移为 `failed`，并追加
+`legacy_unknown_migrated` state event。原始错误事件、session、runtime attempt、tool event 和
+provider 结果保持不变；当前业务投影归入 `failed`、`done` 或 `needs_human` 的现行语义。
 
 ## 相关文档
 

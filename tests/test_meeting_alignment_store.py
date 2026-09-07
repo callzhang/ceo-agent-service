@@ -498,7 +498,7 @@ def test_ready_reconciliation_retry_is_atomic_and_not_claimable_before_due(tmp_p
         limit=1, now="2026-07-14 02:11:00"
     )
 
-    scheduled = store.schedule_ready_to_send_meeting_alignment_reconciliation(
+    scheduled = store.schedule_ready_to_send_meeting_alignment_retry(
         claimed.id,
         error='{"kind":"meeting_send_reconcile"}',
         available_at="2026-07-14 02:12:00",

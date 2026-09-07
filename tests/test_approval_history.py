@@ -95,7 +95,6 @@ def _consumer(
                         else {"other": "target"}
                     ),
                     payload={},
-                    expected_verification="verification",
                 ),
             ),
             sourced_facts=(),
@@ -127,7 +126,6 @@ def _consumer_command(
                     operation=operation_label,
                     target={"process_instance_id": "misleading-target"},
                     payload={"argv": argv},
-                    expected_verification="verification",
                 ),
             ),
             sourced_facts=(),
@@ -152,7 +150,6 @@ def _confirmed_audit(
         feedback=None,
         external_result=AuditExternalResult(
             operation_id=operation_id,
-            verification_summary="verified",
             live_result_reference=(
                 {"process_instance_id": live_process} if live_process is not None else {}
             ),

@@ -1,4 +1,3 @@
-import hashlib
 import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -16,11 +15,9 @@ from app.agent_contracts import (
     ConsumerProposal,
     ProposedAction,
 )
-from app.agent_effects import McpToolEffectRegistry
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
-from app.agent_skill_usage import LoadedSkillReceipt
 from app import audit_agent
 from app.audit_agent import AuditAgentRunner
 from app.external_action_identity import expected_external_action
@@ -41,36 +38,15 @@ class CapturingExecutor:
         stdout: str,
         *,
         returncode: int = 0,
-        inject_skill_receipt: bool = True,
     ) -> None:
         self.stdout = stdout
         self.returncode = returncode
-        self.inject_skill_receipt = inject_skill_receipt
         self.commands: list[list[str]] = []
         self.prompts: list[str] = []
 
     def __call__(self, command, *, on_stdout_line, **kwargs):
         self.prompts.append(kwargs["prompt"])
         self.commands.append(command)
-        explicit_skill_read = '"tool": "read_skill"' in self.stdout
-        if self.inject_skill_receipt and not explicit_skill_read:
-            marker = "Verified Skills read by Consumer A\n"
-            if marker in kwargs["prompt"]:
-                receipt_text = (
-                    kwargs["prompt"]
-                    .split(marker, 1)[1]
-                    .split("\n\nCandidate revision\n", 1)[0]
-                )
-                receipts = json.loads(receipt_text)
-                if receipts:
-                    receipt = receipts[0]
-                    path = Path(receipt["path"])
-                    skill_line, digest = _skill_read_jsonl(
-                        path,
-                        path.read_text(encoding="utf-8"),
-                    )
-                    assert digest == receipt["sha256"]
-                    on_stdout_line(skill_line)
         for line in self.stdout.splitlines():
             on_stdout_line(line)
         return ProcessRunResult(self.returncode, self.stdout, "")
@@ -160,7 +136,6 @@ def test_expected_external_action_preserves_typed_identity_without_a_command():
             "operation": "send_direct_message",
             "payload": {"content": "请安排一轮面试。"},
             "target": {"open_dingtalk_id": "open-recipient"},
-            "expected_verification": "Provider returns a stable message id.",
         }
     )
     expected = expected_external_action(
@@ -189,7 +164,6 @@ def test_external_action_identity_is_stable_without_run_or_revision_state():
             "operation": "send_direct_message",
             "payload": {"content": "审批已完成。"},
             "target": {"open_dingtalk_id": "open-recipient"},
-            "expected_verification": "Provider returns a stable message id.",
         }
     )
     first = expected_external_action(
@@ -222,7 +196,6 @@ def test_audit_runner_adds_stable_action_identity_without_command_authorization(
                 "operation": "send_direct_message",
                 "target": {"open_dingtalk_id": "open-recipient"},
                 "payload": {"content": "请安排一轮面试。"},
-                "expected_verification": "Message accepted.",
             }],
             "sourced_facts": [],
             "authored_judgment": "Proceed with interview coordination.",
@@ -298,7 +271,6 @@ def _audit_jsonl(
         "feedback": None,
         "external_result": {
             "operation_id": operation_id,
-            "verification_summary": "Present.",
             "live_result_reference": {"id": "one"},
         },
         "error": {"code": "", "retryable": False, "authorization_required": False},
@@ -489,62 +461,6 @@ def _dry_run_suppressed_jsonl(*, proposal_revision: int = 0) -> str:
     )
 
 
-def _skill_read_jsonl(path: Path, content: str) -> tuple[str, str]:
-    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    receipt = {
-        "content": content,
-        "sha256": digest,
-        "path": str(path.resolve()),
-        "name": path.parent.name,
-    }
-    item = {
-        "type": "mcp_tool_call",
-        "id": "skill-read",
-        "server": "agent_cli",
-        "tool": "read_skill",
-        "arguments": {"path": str(path)},
-        "status": "completed",
-        "result": {
-            "content": [{"type": "text", "text": json.dumps(receipt)}],
-            "structuredContent": receipt,
-            "isError": False,
-        },
-    }
-    return json.dumps({"type": "item.completed", "item": item}), digest
-
-
-def _failed_skill_read_jsonl(path: Path) -> str:
-    item = {
-        "type": "mcp_tool_call",
-        "id": "skill-read-failed",
-        "server": "agent_cli",
-        "tool": "read_skill",
-        "arguments": {"path": str(path)},
-        "status": "failed",
-        "result": {
-            "content": [{"type": "text", "text": "Skill could not be read."}],
-            "isError": True,
-        },
-    }
-    return json.dumps({"type": "item.completed", "item": item})
-
-
-def _started_skill_read_jsonl(path: Path) -> str:
-    return json.dumps(
-        {
-            "type": "item.started",
-            "item": {
-                "type": "mcp_tool_call",
-                "id": "skill-read-started",
-                "server": "agent_cli",
-                "tool": "read_skill",
-                "arguments": {"path": str(path)},
-                "status": "in_progress",
-            },
-        }
-    )
-
-
 def _revision_required_jsonl(observation: str) -> str:
     result = {
         "outcome": "revision_required",
@@ -624,7 +540,6 @@ def setup(tmp_path, monkeypatch):
                             "--yes",
                         ]
                     },
-                    "expected_verification": "Message exists",
                 }
             ],
             "sourced_facts": [],
@@ -641,69 +556,14 @@ def setup(tmp_path, monkeypatch):
         operation_id="",
         owner="parent",
     ).run
-    skill_path = tmp_path / "installed-skills" / "business-review" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True)
-    skill_content = "# Business review\n"
-    skill_path.write_text(skill_content, encoding="utf-8")
-    monkeypatch.setattr(
-        "app.agent_skill_usage.AGENT_SKILL_ROOTS",
-        (tmp_path / "installed-skills",),
-    )
     audit_context = AuditTurnContext(
         task=context,
         proposal_revision=0,
         operation_id="operation-1",
         proposal=proposal,
         audit_rules="Check authority.",
-        consumer_skills=(
-            LoadedSkillReceipt(
-                "business-review",
-                str(skill_path),
-                hashlib.sha256(skill_content.encode("utf-8")).hexdigest(),
-            ),
-        ),
     )
     return store, task, audit_context, parent
-
-
-def _seed_crashed_audit_write(setup):
-    store, task, audit_context, parent = setup
-    initial_lines = _audit_jsonl(
-        "operation-1",
-        session="audit-session-recovery",
-        include_verification=False,
-    ).splitlines()
-    skill_path = Path(audit_context.consumer_skills[0].path)
-    skill_event, _digest = _skill_read_jsonl(
-        skill_path,
-        skill_path.read_text(encoding="utf-8"),
-    )
-    executor = CapturingExecutor(
-        "\n".join((initial_lines[0], skill_event, initial_lines[1])),
-        returncode=1,
-    )
-    with pytest.raises(RuntimeError, match="codex_process_failed"):
-        AuditAgentRunner(
-            store=store,
-            workspace=Path("/workspace"),
-            executor=executor,
-        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
-    run = store.get_agent_run_for_turn(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-    )
-    assert run is not None
-    assert run.status == "failed"
-    assert run.codex_session_id == "audit-session-recovery"
-    assert len(run.tool_events) == 2
-    persisted_item = run.tool_events[1]["item"]
-    assert "arguments" not in persisted_item and "result" not in persisted_item
-    assert persisted_item["metadata"]["operation_id"] == "operation-1"
-    assert persisted_item["metadata"]["target_identifiers"] == {"group": "cid-agent"}
-    return store, task, audit_context, run
 
 
 def _with_unresolved_image(context: AuditTurnContext) -> AuditTurnContext:
@@ -740,126 +600,6 @@ def _assert_image_recovery_deferred(store, task, run_id: int) -> None:
     assert current_task is not None and current_task.status == "processing"
 
 
-def _seed_crashed_xiaoqing_write(setup):
-    store, task, audit_context, parent = setup
-    registry = McpToolEffectRegistry.default()
-    action = ProposedAction.model_validate(
-        {
-            "description": "Upload interview result",
-            "capability": "xiaoqing_interview",
-            "operation": "upload_interview_result",
-            "target": {
-                "candidate_id": "candidate-1",
-                "interview_id": "interview-1",
-            },
-            "payload": {
-                "candidate_id": "candidate-1",
-                "interview_id": "interview-1",
-                "evaluation": "approved",
-            },
-            "expected_verification": "Read the same interview context",
-        }
-    )
-    context = replace(
-        audit_context,
-        proposal=audit_context.proposal.model_copy(update={"actions": (action,)}),
-    )
-    started = {
-        "type": "item.started",
-        "item": {
-            "type": "mcp_tool_call",
-            "id": "direct-write",
-            "server": "xiaoqing_interview",
-            "tool": "upload_interview_result",
-            "arguments": action.payload,
-            "status": "in_progress",
-        },
-    }
-    initial = CapturingExecutor(
-        "\n".join(
-            (
-                json.dumps({"type": "thread.started", "thread_id": "direct-session"}),
-                json.dumps(started),
-            )
-        ),
-        returncode=1,
-    )
-    with pytest.raises(RuntimeError, match="codex_process_failed"):
-        AuditAgentRunner(
-            store=store,
-            workspace=Path("/workspace"),
-            executor=initial,
-            mcp_effect_registry=registry,
-        ).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
-    run = store.get_agent_run_for_turn(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-    )
-    assert run is not None and run.status == "failed"
-    return store, task, context, run, registry
-
-
-
-
-def _seed_crashed_memory_write(setup):
-    store, task, audit_context, parent = setup
-    registry = McpToolEffectRegistry.default()
-    action = ProposedAction.model_validate(
-        {
-            "description": "Write durable memory",
-            "capability": "memory_connector",
-            "operation": "memory_write",
-            "target": {"scope": "current-user"},
-            "payload": {
-                "data": "durable fact",
-                "type": "text",
-                "created_at": "2026-08-07T00:00:00Z",
-            },
-            "expected_verification": "Read the returned memory identity",
-        }
-    )
-    context = replace(
-        audit_context,
-        proposal=audit_context.proposal.model_copy(update={"actions": (action,)}),
-    )
-    write = {
-        "type": "mcp_tool_call",
-        "id": "memory-write",
-        "server": "memory_connector",
-        "tool": "memory_write",
-        "arguments": action.payload,
-        "status": "in_progress",
-    }
-    initial = CapturingExecutor(
-        "\n".join(
-            (
-                json.dumps({"type": "thread.started", "thread_id": "memory-session"}),
-                json.dumps({"type": "item.started", "item": write}),
-            )
-        ),
-        returncode=1,
-    )
-    with pytest.raises(RuntimeError, match="codex_process_failed"):
-        AuditAgentRunner(
-            store=store,
-            workspace=Path("/workspace"),
-            executor=initial,
-            mcp_effect_registry=registry,
-        ).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
-    run = store.get_agent_run_for_turn(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-    )
-    assert run is not None and run.status == "failed"
-    return store, task, context, run, registry, write
-
-
 def test_audit_uses_typed_result_without_application_receipt_validation(setup):
     store, task, audit_context, parent = setup
     executor = CapturingExecutor(
@@ -877,7 +617,7 @@ def test_audit_uses_typed_result_without_application_receipt_validation(setup):
     assert "execute_audited_email_unsubscribe" not in json.dumps(executor.commands)
 
 
-def test_audited_email_turn_receives_bound_write_tool_and_prompt_identity(setup):
+def test_audited_email_turn_receives_task_bound_cli_and_prompt_identity(setup):
     store, task, audit_context, parent = setup
     store.complete_agent_run(
         parent.id,
@@ -920,8 +660,8 @@ def test_audited_email_turn_receives_bound_write_tool_and_prompt_identity(setup)
 
     rendered_command = json.dumps(executor.commands)
     rendered_prompt = "\n".join(executor.prompts)
-    assert "execute_audited_email_unsubscribe" in rendered_command
-    assert "execute_email_unsubscribe" not in rendered_command
+    assert "mcp_servers.agent_cli" in rendered_command
+    assert "allowed_tools" not in rendered_command
     assert f"task_id={task.id}" in rendered_prompt
     assert f"execution_generation={task.execution_generation}" in rendered_prompt
     assert f"audit_agent_run_id={result.run_id}" in rendered_prompt
@@ -941,7 +681,7 @@ def test_consumer_command_does_not_expose_audited_unsubscribe_write() -> None:
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
 
 
-def test_audit_command_can_expose_only_the_task_bound_unsubscribe_write() -> None:
+def test_audit_command_configures_runtime_reviewed_agent_cli_without_tool_allowlist() -> None:
     command = ["codex", "exec", "--json"]
 
     make_audit_agent_command(
@@ -951,12 +691,11 @@ def test_audit_command_can_expose_only_the_task_bound_unsubscribe_write() -> Non
             args=("-m", "app.agent_cli"),
             cwd="/workspace",
         ),
-        additional_agent_cli_tools=("execute_audited_email_unsubscribe",),
     )
 
     rendered = json.dumps(command)
-    assert "execute_audited_email_unsubscribe" in rendered
-    assert "execute_email_unsubscribe" not in rendered
+    assert "mcp_servers.agent_cli" in rendered
+    assert "allowed_tools" not in rendered
     assert "execute_reviewed_read" not in rendered
     assert "execute_reviewed_write" not in rendered
 

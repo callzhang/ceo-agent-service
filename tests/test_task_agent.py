@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.store import AutoReplyStore
-from app.agent_runtime_router import RoutedResultValidationError
+from app.agent_runtime_router import CodexCommandFactory, RoutedResultValidationError
 from app.task_agent import (
     TaskAgentCodexRunner,
     TaskAgentRunner,
@@ -1398,7 +1398,6 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
         summary_input_id=1,
         work_item=_work_item(project_name=""),
         decision=decision,
-        memory_recall_attempted=True,
     )
 
     todo = store.get_work_todo(todo_id)
@@ -1509,7 +1508,6 @@ def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_pat
         summary_input_id=1,
         work_item=work_item,
         decision=decision,
-        memory_recall_attempted=True,
     )
 
     todo = store.get_work_todo(todo_id)
@@ -1570,7 +1568,6 @@ def test_follow_up_close_skips_pending_follow_up_without_closing_todo(
         summary_input_id=1,
         work_item=_work_item(),
         decision=decision,
-        memory_recall_attempted=True,
     )
 
     due_drafts = store.list_follow_up_drafts(
@@ -1674,7 +1671,6 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
         summary_input_id=1,
         work_item=_work_item(project_name="会议治理"),
         decision=decision,
-        memory_recall_attempted=True,
         now="2026-07-16 01:00:00",
     )
 
@@ -1707,7 +1703,6 @@ def test_follow_up_change_rejects_missing_positive_follow_up_id(tmp_path):
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
         )
 
     assert store.list_work_updates(project_id=project_id) == []
@@ -1746,7 +1741,6 @@ def test_follow_up_change_reschedule_requires_next_due_at(tmp_path):
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
         )
 
     drafts = store.list_follow_up_drafts(statuses=("sent",))
@@ -1795,7 +1789,6 @@ def test_follow_up_keep_open_requires_future_work_hours_schedule(
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
             now=now,
         )
         draft = store.get_follow_up_draft(follow_up_id)
@@ -1808,8 +1801,7 @@ def test_follow_up_keep_open_requires_future_work_hours_schedule(
                 summary_input_id=1,
                 work_item=_work_item(),
                 decision=decision,
-                memory_recall_attempted=True,
-                now=now,
+                    now=now,
             )
 
 
@@ -1860,7 +1852,6 @@ def test_follow_up_change_reassign_requires_owner_identity(tmp_path):
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
         )
 
     drafts = store.list_follow_up_drafts(statuses=("sent",))
@@ -2592,7 +2583,6 @@ def test_project_owner_create_rejects_missing_evidence_before_persistence(tmp_pa
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
         )
 
     assert store.list_work_projects() == []
@@ -2619,7 +2609,6 @@ def test_project_owner_create_rejects_name_only_identity(tmp_path):
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
         )
     assert store.list_work_projects() == []
 
@@ -2646,7 +2635,6 @@ def test_project_owner_create_persists_coherent_evidence(tmp_path):
         summary_input_id=1,
         work_item=_work_item(),
         decision=decision,
-        memory_recall_attempted=True,
     )
 
     project = store.get_work_project(project_id)
@@ -2683,7 +2671,6 @@ def test_project_update_preserves_unchanged_legacy_owner_without_evidence(tmp_pa
         summary_input_id=1,
         work_item=_work_item(),
         decision=decision,
-        memory_recall_attempted=True,
     )
 
     project = store.get_work_project(project_id)
@@ -2732,7 +2719,6 @@ def test_todo_update_preserves_unchanged_legacy_owner_without_evidence(tmp_path)
         summary_input_id=1,
         work_item=_work_item(),
         decision=decision,
-        memory_recall_attempted=True,
     )
 
     todo = store.get_work_todo(todo_id)
@@ -2792,7 +2778,6 @@ def test_todo_owner_update_rejects_cross_record_evidence(tmp_path):
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
         )
 
     assert store.get_work_todo(todo_id).owner_user_id == "uid-old"
@@ -2825,7 +2810,6 @@ def test_todo_owner_create_rejects_name_only_identity(tmp_path):
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
         )
     assert store.list_work_todos() == []
 
@@ -2858,7 +2842,6 @@ def test_todo_create_rejects_open_item_without_stable_owner_id(tmp_path):
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
         )
 
     assert store.list_work_projects() == []
@@ -2901,7 +2884,6 @@ def test_todo_owner_update_persists_coherent_evidence(tmp_path):
         summary_input_id=1,
         work_item=_work_item(),
         decision=decision,
-        memory_recall_attempted=True,
     )
 
     todo = store.get_work_todo(todo_id)
@@ -2946,7 +2928,6 @@ def test_unchanged_todo_owner_does_not_require_reverification(tmp_path):
         summary_input_id=1,
         work_item=_work_item(),
         decision=decision,
-        memory_recall_attempted=True,
     )
 
     todo = store.get_work_todo(todo_id)
@@ -2995,7 +2976,6 @@ def test_unchanged_todo_owner_reuses_persisted_verified_evidence(tmp_path):
         summary_input_id=1,
         work_item=_work_item(),
         decision=decision,
-        memory_recall_attempted=True,
     )
 
     todo = store.get_work_todo(todo_id)
@@ -3027,7 +3007,6 @@ def test_follow_up_reassign_rejects_missing_evidence_before_update(tmp_path):
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
         )
 
     assert store.get_follow_up_draft(follow_up_id).owner_user_id == "uid-old"
@@ -3062,7 +3041,6 @@ def test_follow_up_reassign_cannot_clear_stable_owner_id(tmp_path):
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
         )
     unchanged = store.get_follow_up_draft(follow_up_id)
     assert unchanged is not None
@@ -3093,7 +3071,6 @@ def test_follow_up_reassign_accepts_coherent_evidence(tmp_path):
         summary_input_id=1,
         work_item=_work_item(),
         decision=decision,
-        memory_recall_attempted=True,
     )
 
     follow_up = store.get_follow_up_draft(follow_up_id)
@@ -3133,7 +3110,6 @@ def test_follow_up_reassign_reuses_canonical_current_owner_evidence(tmp_path):
         summary_input_id=1,
         work_item=_work_item(),
         decision=verified_reassign,
-        memory_recall_attempted=True,
     )
 
     unchanged_reassign = _decision_with_follow_up_change(
@@ -3148,7 +3124,6 @@ def test_follow_up_reassign_reuses_canonical_current_owner_evidence(tmp_path):
         summary_input_id=2,
         work_item=_work_item(),
         decision=unchanged_reassign,
-        memory_recall_attempted=True,
     )
 
     follow_up = store.get_follow_up_draft(follow_up_id)
@@ -3170,7 +3145,6 @@ def test_follow_up_reassign_reuses_canonical_current_owner_evidence(tmp_path):
             summary_input_id=3,
             work_item=_work_item(),
             decision=cross_identity,
-            memory_recall_attempted=True,
         )
     unchanged = store.get_follow_up_draft(follow_up_id)
     assert unchanged is not None
@@ -3277,7 +3251,6 @@ def test_follow_up_draft_rejects_name_only_owner(tmp_path):
             summary_input_id=1,
             work_item=_work_item(),
             decision=decision,
-            memory_recall_attempted=True,
         )
     assert store.list_follow_up_drafts(statuses=("draft",)) == []
 
@@ -3775,7 +3748,7 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
     assert "替代证据" not in memory_section
 
 
-def test_task_agent_codex_runner_uses_reviewed_read_only_factory():
+def test_task_agent_codex_runner_uses_standard_runtime_factory():
     routed = FakeRoutedTaskExecution(
         json.dumps(
             {
@@ -3797,13 +3770,7 @@ def test_task_agent_codex_runner_uses_reviewed_read_only_factory():
     runner.decide(prompt="{}", workload_key="1")
 
     assert routed.calls[0]["workload_kind"] == "task"
-    assert (
-        routed.calls[0]["command_factory"]._approved_policy.effect_mode
-        == "read_only"
-    )
-    assert "Use only reviewed read tools." in (
-        routed.calls[0]["command_factory"]._developer_instructions
-    )
+    assert isinstance(routed.calls[0]["command_factory"], CodexCommandFactory)
 
 
 def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
@@ -4937,7 +4904,6 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
         {
             "structured_output",
             "local_schema_validation",
-            "reviewed_read_tools",
         }
     )
 

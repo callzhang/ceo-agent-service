@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -17,7 +16,7 @@ from app.agent_runtime_contracts import (
 )
 from app.agent_runtime_router import (
     AgentRuntimeRouter,
-    ApprovedCodexCommandFactory,
+    CodexCommandFactory,
     RoutedCodexExecution,
     RoutedCodexExecutionError,
     RoutedResultCodec,
@@ -220,7 +219,7 @@ def test_runtime_falls_back_to_friday_in_same_agent_run(tmp_path, monkeypatch):
     )
     result = routed.execute(
         workload_kind="agent_run", workload_key=str(run_id), prompt="return 7",
-        command_factory=ApprovedCodexCommandFactory.effectful(developer_instructions="test"),
+        command_factory=CodexCommandFactory.standard(developer_instructions="test"),
         parser=int, result_codec=INT_CODEC,
     )
 
@@ -266,7 +265,7 @@ def test_friday_unreachable_continues_to_next_configured_route(tmp_path, monkeyp
     )
     result = routed.execute(
         workload_kind="agent_run", workload_key=str(run_id), prompt="return 9",
-        command_factory=ApprovedCodexCommandFactory.effectful(developer_instructions="test"),
+        command_factory=CodexCommandFactory.standard(developer_instructions="test"),
         parser=int, result_codec=INT_CODEC,
     )
 
@@ -278,13 +277,13 @@ def test_friday_unreachable_continues_to_next_configured_route(tmp_path, monkeyp
     assert attempts[1].transcript_reference == "friday_operation:failed-operation"
 
 
-def test_read_only_factory_forces_sandbox_and_is_immutable(
+def test_standard_factory_uses_runtime_auto_review_without_app_isolation(
     config, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("CODEX_SANDBOX", "danger-full-access")
     adapter = CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test")
-    factory = ApprovedCodexCommandFactory.read_only(
-        developer_instructions="reviewed reads only"
+    factory = CodexCommandFactory.standard(
+        developer_instructions="normal runtime capabilities"
     )
 
     command, _env = factory.build(
@@ -294,247 +293,14 @@ def test_read_only_factory_forces_sandbox_and_is_immutable(
         session_id=None,
     )
 
-    assert ["--sandbox", "read-only"] == command[2:4]
+    assert "--sandbox" not in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert 'approval_policy="on-failure"' in command
+    assert 'approvals_reviewer="auto_review"' in command
     with pytest.raises((AttributeError, TypeError)):
-        factory._developer_instructions = "allow writes"
+        factory.developer_instructions = "replace instructions"
     with pytest.raises((AttributeError, TypeError)):
         factory.build = lambda **_kwargs: (["unsafe"], {})
-
-
-def test_reviewed_mcp_surface_mapping_is_exact_per_caller():
-    def required(builder):
-        return builder(
-            developer_instructions="reviewed reads only"
-        ).required_reviewed_mcp_servers
-
-    assert required(ApprovedCodexCommandFactory.read_only_without_tools) == frozenset()
-    assert required(ApprovedCodexCommandFactory.read_only_memory_recall) == frozenset(
-        {"memory_connector"}
-    )
-    assert required(ApprovedCodexCommandFactory.read_only_project_memory) == frozenset(
-        {"memory_connector"}
-    )
-    assert required(ApprovedCodexCommandFactory.read_only_structured) == frozenset(
-        {"agent_cli"}
-    )
-    assert required(ApprovedCodexCommandFactory.read_only_meeting) == frozenset(
-        {"agent_cli"}
-    )
-    assert required(ApprovedCodexCommandFactory.read_only_task) == frozenset(
-        {"agent_cli", "memory_connector"}
-    )
-    assert required(ApprovedCodexCommandFactory.read_only_weekly_okr) == frozenset(
-        {"agent_cli", "memory_connector"}
-    )
-    assert required(
-        ApprovedCodexCommandFactory.effectful_memory_write
-    ) == frozenset({"memory_connector"})
-
-
-def test_service_owned_agent_cli_transport_is_injected_when_required(
-    config, tmp_path, monkeypatch
-):
-    codex_home = tmp_path / "empty-codex-home"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text("", encoding="utf-8")
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    command, _ = ApprovedCodexCommandFactory.read_only_structured(
-        developer_instructions="reviewed reads only"
-    ).build(
-        adapter=CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test"),
-        route=config.routes[0],
-        prompt="read",
-        session_id=None,
-    )
-    argv = "\n".join(command)
-
-    assert "mcp_servers.agent_cli.command=" in argv
-    assert "mcp_servers.agent_cli.enabled=true" in argv
-    assert "mcp_servers.agent_cli.enabled_tools=" in argv
-    assert "mcp_servers.memory_connector.enabled=true" not in argv
-
-
-def test_local_transport_registry_distinguishes_agent_cli_and_memory_connector(
-    config, tmp_path, monkeypatch
-):
-    codex_home = tmp_path / "memory-only-codex-home"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text(
-        "[mcp_servers.memory_connector]\nurl='https://memory.example/mcp/'\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    adapter = CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test")
-    route = config.routes[0]
-
-    agent_factory = ApprovedCodexCommandFactory.read_only_structured(
-        developer_instructions="reviewed reads only"
-    )
-    assert agent_factory.missing_reviewed_mcp_transports(
-        adapter=adapter, route=route
-    ) == frozenset()
-    memory_factory = ApprovedCodexCommandFactory.read_only_memory_recall(
-        developer_instructions="memory recall only"
-    )
-    assert (
-        memory_factory.missing_reviewed_mcp_transports(adapter=adapter, route=route)
-        == frozenset()
-    )
-    command, _ = agent_factory.build(
-        adapter=adapter,
-        route=route,
-        prompt="read",
-        session_id=None,
-    )
-    assert "mcp_servers.agent_cli.command=" in "\n".join(command)
-    assert "mcp_servers.agent_cli.enabled=true" in command
-
-    command, _ = memory_factory.build(
-        adapter=adapter,
-        route=route,
-        prompt="recall",
-        session_id=None,
-    )
-    assert "mcp_servers.memory_connector.enabled=true" in command
-    assert "mcp_servers.agent_cli.enabled=false" not in command
-
-
-def test_missing_non_service_reviewed_mcp_surface_stops_before_attempt_or_spawn(
-    store, config, tmp_path, monkeypatch
-):
-    key = seed_structured_parent(store, 221)
-    codex_home = tmp_path / "empty-codex-home"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text("", encoding="utf-8")
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    calls = 0
-
-    def executor(*_args, **_kwargs):
-        nonlocal calls
-        calls += 1
-        raise AssertionError("missing reviewed MCP transport must not spawn")
-
-    routed = RoutedCodexExecution(
-        store=store,
-        config=config,
-        router=make_router(store, config),
-        adapter=FakeAdapter(),
-        executor=executor,
-    )
-    with pytest.raises(
-        RoutedCodexExecutionError,
-        match="runtime_reviewed_mcp_surface_unavailable",
-    ) as caught:
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only_task(
-                developer_instructions="reviewed reads only"
-            ),
-            parser=lambda raw: raw,
-            result_codec=TEXT_CODEC,
-            required_capabilities=CAPABILITIES,
-        )
-
-    assert caught.value.failure_class is RuntimeFailureClass.CAPABILITY
-    assert caught.value.failure_code == "runtime_reviewed_mcp_surface_unavailable"
-    assert calls == 0
-    assert store.list_runtime_operation_attempts("structured", key) == []
-
-
-@pytest.mark.parametrize(
-    ("factory_builder", "agent_cli_allowed", "memory_connector_allowed"),
-    [
-        (ApprovedCodexCommandFactory.read_only_structured, True, False),
-        (ApprovedCodexCommandFactory.read_only_task, True, True),
-        (ApprovedCodexCommandFactory.read_only_meeting, True, False),
-        (ApprovedCodexCommandFactory.read_only_weekly_okr, True, True),
-    ],
-)
-def test_reviewed_read_factories_pre_spawn_allow_only_exact_reviewed_tools(
-    config,
-    tmp_path,
-    monkeypatch,
-    factory_builder,
-    agent_cli_allowed,
-    memory_connector_allowed,
-):
-    codex_home = tmp_path / "codex-home"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text(
-        "[mcp_servers.ambient_plugin]\ncommand='ambient'\n"
-        "[mcp_servers.agent_cli]\ncommand='agent'\n"
-        "[mcp_servers.memory_connector]\nurl='https://memory.example/mcp/'\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    command, _ = factory_builder(developer_instructions="reviewed reads only").build(
-        adapter=CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test"),
-        route=config.routes[0],
-        prompt="read",
-        session_id=None,
-    )
-    argv = "\n".join(command)
-
-    assert "mcp_servers.ambient_plugin.enabled=false" in argv
-    assert ("mcp_servers.agent_cli.enabled=true" in argv) is agent_cli_allowed
-    assert ("execute_reviewed_read" in argv) is agent_cli_allowed
-    assert ("execute_reviewed_write" in argv) is agent_cli_allowed
-    assert (
-        "mcp_servers.memory_connector.enabled=true" in argv
-    ) is memory_connector_allowed
-    assert ("memory_recall" in argv) is memory_connector_allowed
-    assert ("memory_write" in argv) is memory_connector_allowed
-    if not agent_cli_allowed:
-        assert "mcp_servers.agent_cli.enabled=false" in argv
-    if not memory_connector_allowed:
-        assert "mcp_servers.memory_connector.enabled=false" in argv
-    assert "tools.enabled_tools=[]" in argv
-    assert 'web_search="disabled"' in argv
-    for feature in (
-        "plugins",
-        "apps",
-        "chronicle",
-        "computer_use",
-        "browser_use",
-        "in_app_browser",
-        "memories",
-        "skill_search",
-    ):
-        assert ["--disable", feature] == command[
-            command.index(feature) - 1 : command.index(feature) + 1
-        ]
-
-
-def test_effectful_memory_write_factory_enables_only_memory_write(
-    config, tmp_path, monkeypatch
-):
-    codex_home = tmp_path / "codex-home"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text(
-        "[mcp_servers.agent_cli]\ncommand='agent'\n"
-        "[mcp_servers.memory_connector]\nurl='https://memory.example/mcp/'\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-
-    command, _ = ApprovedCodexCommandFactory.effectful_memory_write(
-        developer_instructions="one reviewed memory write"
-    ).build(
-        adapter=CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test"),
-        route=config.routes[0],
-        prompt="write",
-        session_id=None,
-    )
-    argv = "\n".join(command)
-
-    assert 'mcp_servers.memory_connector.enabled_tools=["memory_write"]' in argv
-    assert 'mcp_servers.memory_connector.disabled_tools=["memory_recall"]' in argv
-    assert 'enabled_tools=["memory_recall"]' not in argv
-    assert "mcp_servers.agent_cli.enabled=false" in argv
-    assert "mcp_servers.agent_cli.enabled=true" not in argv
 
 
 def test_result_codec_enforces_utf8_byte_limit_at_multibyte_boundary():
@@ -549,7 +315,7 @@ def test_result_codec_enforces_utf8_byte_limit_at_multibyte_boundary():
         TEXT_CODEC.encode(boundary_value + "界")
 
 
-def test_read_only_execution_fails_over_from_oauth_to_api(store, config):
+def test_standard_execution_fails_over_from_oauth_to_api(store, config):
     key = seed_structured_parent(store)
     adapter = FakeAdapter()
     calls = []
@@ -577,14 +343,13 @@ def test_read_only_execution_fails_over_from_oauth_to_api(store, config):
         adapter=adapter,
         executor=executor,
         session_line_counter=lambda session_id: 7,
-        session_effect_probe=lambda *_args: False,
     )
 
     result = routed.execute(
         workload_kind="structured",
         workload_key=key,
         prompt="analyze",
-        command_factory=ApprovedCodexCommandFactory.read_only(
+        command_factory=CodexCommandFactory.standard(
             developer_instructions="reviewed reads only"
         ),
         parser=lambda raw: json.loads(raw.splitlines()[-1])["value"],
@@ -597,8 +362,8 @@ def test_read_only_execution_fails_over_from_oauth_to_api(store, config):
     assert result.route_name == "codex_api"
     assert len(calls) == 2
     assert adapter.commands == [
-        ("codex_oauth", None, "never", False),
-        ("codex_api", None, "never", False),
+            ("codex_oauth", None, "on-failure", False),
+            ("codex_api", None, "on-failure", False),
     ]
     attempts = store.list_runtime_operation_attempts("structured", key)
     assert [attempt.status for attempt in attempts] == ["superseded", "completed"]
@@ -642,7 +407,7 @@ def test_pause_opened_after_selection_prevents_attempt_and_child(store, config):
             workload_kind="agent_run",
             workload_key=str(run_id),
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
@@ -654,49 +419,6 @@ def test_pause_opened_after_selection_prevents_attempt_and_child(store, config):
     assert store.list_agent_runtime_attempts(run_id) == []
 
 
-@pytest.mark.parametrize("returncode", [0, 1])
-@pytest.mark.skip(reason="obsolete application-level session evidence policy")
-def test_read_only_missing_session_evidence_is_terminal_without_failover(
-    store, config, returncode
-):
-    key = seed_structured_parent(store, 119 + returncode)
-    calls = []
-
-    def executor(command, **kwargs):
-        calls.append(kwargs["env"]["ROUTE"])
-        return ProcessRunResult(returncode, "42" if returncode == 0 else "", "failed")
-
-    routed = RoutedCodexExecution(
-        store=store,
-        config=config,
-        router=make_router(store, config),
-        adapter=FakeAdapter(),
-        executor=executor,
-        session_effect_probe=lambda *_args: False,
-    )
-
-    with pytest.raises(
-        RoutedCodexExecutionError, match="runtime_session_evidence_missing"
-    ) as caught:
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only_without_tools(
-                developer_instructions="reviewed reads only"
-            ),
-            parser=int,
-            result_codec=INT_CODEC,
-            required_capabilities=CAPABILITIES,
-        )
-
-    assert caught.value.failure_class is RuntimeFailureClass.SESSION
-    assert caught.value.failure_code == "runtime_session_evidence_missing"
-    assert calls == ["codex_oauth"]
-    attempts = store.list_runtime_operation_attempts("structured", key)
-    assert len(attempts) == 1
-    assert attempts[0].status == "failed"
-    assert attempts[0].failure_code == "runtime_session_evidence_missing"
 
 
 def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
@@ -716,7 +438,7 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
                     json.dumps(
                         {
                             "type": "thread.started",
-                            "thread_id": f"session-{len(prompts)}",
+                            "thread_id": "session-1",
                         }
                     ),
                     json.dumps({"type": "result", "value": value}),
@@ -738,13 +460,12 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
         adapter=adapter,
         executor=executor,
         session_line_counter=lambda _session_id: 2,
-        session_effect_probe=lambda *_args: False,
     )
     result = routed.execute(
         workload_kind="structured",
         workload_key=key,
         prompt="analyze all KRs",
-        command_factory=ApprovedCodexCommandFactory.read_only(
+        command_factory=CodexCommandFactory.standard(
             developer_instructions="reviewed reads only"
         ),
         parser=parse,
@@ -757,8 +478,8 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
 
     assert result.value == 42
     assert adapter.commands == [
-        ("codex_oauth", None, "never", False),
-        ("codex_oauth", None, "never", False),
+            ("codex_oauth", None, "on-failure", False),
+            ("codex_oauth", "session-1", "on-failure", False),
     ]
     assert prompts[0] == "analyze all KRs"
     assert "Return every KR" in prompts[1]
@@ -770,7 +491,7 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
         "codex_oauth",
     ]
     assert attempts[0].failure_code == "runtime_result_validation_failed"
-    assert [attempt.session_mode for attempt in attempts] == ["fresh", "fresh"]
+    assert [attempt.session_mode for attempt in attempts] == ["fresh", "resume"]
     assert [attempt.attempt_purpose for attempt in attempts] == [
         "normal",
         "result_validation_correction",
@@ -812,13 +533,12 @@ def test_result_validation_retry_can_resume_same_persisted_session_once(store, c
         adapter=adapter,
         executor=executor,
         session_line_counter=lambda _session_id: 2,
-        session_effect_probe=lambda *_args: False,
     )
     result = routed.execute(
         workload_kind="structured",
         workload_key=key,
         prompt="analyze",
-        command_factory=ApprovedCodexCommandFactory.read_only(
+        command_factory=CodexCommandFactory.standard(
             developer_instructions="reviewed reads only"
         ),
         parser=parse,
@@ -831,8 +551,8 @@ def test_result_validation_retry_can_resume_same_persisted_session_once(store, c
 
     assert result.value == 42
     assert adapter.commands == [
-        ("codex_oauth", None, "never", False),
-        ("codex_oauth", "session-171", "never", False),
+            ("codex_oauth", None, "on-failure", False),
+            ("codex_oauth", "session-171", "on-failure", False),
     ]
     assert prompts[1].startswith("repair exactly:")
     attempts = store.list_runtime_operation_attempts("structured", key)
@@ -886,8 +606,7 @@ def test_persisted_result_validation_failure_resumes_one_same_route_correction(
         router=make_router(store, config),
         adapter=adapter,
         executor=executor,
-        session_id_parser=lambda _raw: "validation-recovery-session",
-        session_effect_probe=lambda *_args: False,
+        session_id_parser=lambda _raw: "persisted-validation-session",
         owner=owner,
         now=lambda: NOW,
     )
@@ -895,7 +614,7 @@ def test_persisted_result_validation_failure_resumes_one_same_route_correction(
         workload_kind="structured",
         workload_key=key,
         prompt="analyze all KRs",
-        command_factory=ApprovedCodexCommandFactory.read_only(
+        command_factory=CodexCommandFactory.standard(
             developer_instructions="reviewed reads only"
         ),
         parser=lambda raw: json.loads(raw)["value"],
@@ -907,7 +626,9 @@ def test_persisted_result_validation_failure_resumes_one_same_route_correction(
     )
 
     assert result.value == 42
-    assert adapter.commands == [("codex_oauth", None, "never", False)]
+    assert adapter.commands == [
+        ("codex_oauth", "persisted-validation-session", "on-failure", False)
+    ]
     assert len(prompts) == 1
     assert "Return every KR" in prompts[0]
     attempts = store.list_runtime_operation_attempts("structured", key)
@@ -956,7 +677,6 @@ def test_same_session_validation_retry_recovers_after_persisted_failure(store, c
             0, json.dumps({"value": 42}), ""
         ),
         session_line_counter=lambda _session_id: 7,
-        session_effect_probe=lambda *_args: False,
         owner=owner,
         now=lambda: NOW,
     )
@@ -964,7 +684,7 @@ def test_same_session_validation_retry_recovers_after_persisted_failure(store, c
         workload_kind="structured",
         workload_key=key,
         prompt="analyze",
-        command_factory=ApprovedCodexCommandFactory.read_only(
+        command_factory=CodexCommandFactory.standard(
             developer_instructions="reviewed reads only"
         ),
         parser=lambda raw: json.loads(raw)["value"],
@@ -977,7 +697,7 @@ def test_same_session_validation_retry_recovers_after_persisted_failure(store, c
 
     assert result.value == 42
     assert adapter.commands == [
-        ("codex_oauth", "persisted-session-175", "never", False)
+        ("codex_oauth", "persisted-session-175", "on-failure", False)
     ]
     attempts = store.list_runtime_operation_attempts("structured", key)
     assert [attempt.session_mode for attempt in attempts] == ["fresh", "resume"]
@@ -999,7 +719,6 @@ def test_result_validation_retry_is_consumed_after_exactly_one_repeat(store, con
         adapter=FakeAdapter(),
         executor=executor,
         session_id_parser=lambda _raw: "validation-consumed-session",
-        session_effect_probe=lambda *_args: False,
     )
 
     with pytest.raises(
@@ -1009,7 +728,7 @@ def test_result_validation_retry_is_consumed_after_exactly_one_repeat(store, con
             workload_kind="structured",
             workload_key=key,
             prompt="analyze",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda _raw: (_ for _ in ()).throw(
@@ -1037,7 +756,7 @@ def test_result_validation_retry_is_consumed_after_exactly_one_repeat(store, con
             workload_kind="structured",
             workload_key=key,
             prompt="analyze",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda _raw: 42,
@@ -1121,7 +840,7 @@ def test_expired_persisted_correction_attempt_never_starts_third_prompt_or_failo
             workload_kind="structured",
             workload_key=key,
             prompt="original prompt must never execute again",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: json.loads(raw)["value"],
@@ -1139,53 +858,6 @@ def test_expired_persisted_correction_attempt_never_starts_third_prompt_or_failo
     assert attempts[-1].failure_code == "runtime_lease_expired"
 
 
-@pytest.mark.skip(reason="ordinary provider failure is retried by the route contract")
-def test_process_failure_after_result_validation_retry_does_not_fail_over(
-    store, config
-):
-    key = seed_structured_parent(store, 73)
-    adapter = FakeAdapter()
-    calls = 0
-
-    def executor(command, **kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return ProcessRunResult(0, json.dumps({"value": 0}), "")
-        return ProcessRunResult(1, "", "login failed")
-
-    routed = RoutedCodexExecution(
-        store=store,
-        config=config,
-        router=make_router(store, config),
-        adapter=adapter,
-        executor=executor,
-        session_id_parser=lambda _raw: "validation-process-session",
-        session_effect_probe=lambda *_args: False,
-    )
-
-    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="analyze",
-            command_factory=ApprovedCodexCommandFactory.read_only(
-                developer_instructions="reviewed reads only"
-            ),
-            parser=lambda _raw: (_ for _ in ()).throw(
-                RoutedResultValidationError("incomplete")
-            ),
-            result_codec=INT_CODEC,
-            required_capabilities=CAPABILITIES,
-            result_validation_retry=RoutedResultValidationRetry.exactly_once(
-                correction_instructions="Return the complete result."
-            ),
-        )
-
-    assert adapter.commands == [
-        ("codex_oauth", None, "never", False),
-        ("codex_oauth", None, "never", False),
-    ]
 
 
 def test_exhausted_transport_failure_exposes_structured_external_retry_metadata(
@@ -1210,7 +882,6 @@ def test_exhausted_transport_failure_exposes_structured_external_retry_metadata(
         adapter=TransportAdapter(),
         executor=lambda command, **kwargs: ProcessRunResult(1, "", "failed"),
         session_id_parser=lambda _raw: "transport-session",
-        session_effect_probe=lambda *_args: False,
     )
 
     with pytest.raises(RoutedCodexExecutionError) as raised:
@@ -1218,7 +889,7 @@ def test_exhausted_transport_failure_exposes_structured_external_retry_metadata(
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
@@ -1240,7 +911,6 @@ def test_exhausted_auth_failure_is_not_external_dependency_retryable(store, conf
         adapter=FakeAdapter(),
         executor=lambda command, **kwargs: ProcessRunResult(1, "", "failed"),
         session_id_parser=lambda _raw: "auth-session",
-        session_effect_probe=lambda *_args: False,
     )
 
     with pytest.raises(RoutedCodexExecutionError) as raised:
@@ -1248,7 +918,7 @@ def test_exhausted_auth_failure_is_not_external_dependency_retryable(store, conf
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
@@ -1261,115 +931,8 @@ def test_exhausted_auth_failure_is_not_external_dependency_retryable(store, conf
     assert raised.value.retryable_external_dependency is False
 
 
-@pytest.mark.skip(reason="result validation no longer probes provider effect state")
-def test_result_validation_retry_stops_when_session_effect_is_not_proven_absent(
-    store, config
-):
-    key = seed_structured_parent(store, 74)
-    calls = 0
-
-    def executor(command, **kwargs):
-        nonlocal calls
-        calls += 1
-        return ProcessRunResult(
-            0,
-            "\n".join(
-                [
-                    json.dumps({"type": "thread.started", "thread_id": "session-74"}),
-                    json.dumps({"value": 0}),
-                ]
-            ),
-            "",
-        )
-
-    routed = RoutedCodexExecution(
-        store=store,
-        config=config,
-        router=make_router(store, config),
-        adapter=FakeAdapter(),
-        executor=executor,
-        session_line_counter=lambda _session_id: 2,
-        session_effect_probe=lambda *_args: None,
-    )
-
-    with pytest.raises(
-        RoutedCodexExecutionError, match="runtime_effect_policy_violation"
-    ):
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="analyze",
-            command_factory=ApprovedCodexCommandFactory.read_only(
-                developer_instructions="reviewed reads only"
-            ),
-            parser=lambda _raw: (_ for _ in ()).throw(
-                RoutedResultValidationError("incomplete")
-            ),
-            result_codec=INT_CODEC,
-            required_capabilities=CAPABILITIES,
-            result_validation_retry=RoutedResultValidationRetry.exactly_once(
-                correction_instructions="Return the complete result."
-            ),
-        )
-
-    assert calls == 1
-    attempts = store.list_runtime_operation_attempts("structured", key)
-    assert attempts[0].failure_code == "runtime_effect_policy_violation"
-    assert attempts[0].first_effect_started_at
 
 
-@pytest.mark.skip(reason="effect markers are evidence only; retries are not blocked")
-def test_effectful_execution_records_start_and_never_fails_over(store, config):
-    key = seed_structured_parent(store)
-    adapter = FakeAdapter()
-    calls = []
-
-    def executor(command, **kwargs):
-        calls.append(command)
-        return ProcessRunResult(1, "", "provider unavailable")
-
-    routed = RoutedCodexExecution(
-        store=store,
-        config=config,
-        router=make_router(store, config),
-        adapter=adapter,
-        executor=executor,
-    )
-
-    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="write",
-            command_factory=ApprovedCodexCommandFactory.effectful(
-                developer_instructions="reviewed write"
-            ),
-            parser=lambda raw: raw,
-            result_codec=TEXT_CODEC,
-            required_capabilities=CAPABILITIES,
-        )
-
-    attempts = store.list_runtime_operation_attempts("structured", key)
-    assert len(calls) == 1
-    assert len(attempts) == 1
-    assert attempts[0].status == "failed"
-    assert attempts[0].first_effect_started_at
-
-    with pytest.raises(
-        RoutedCodexExecutionError, match="runtime_effectful_replay_blocked"
-    ):
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="write again",
-            command_factory=ApprovedCodexCommandFactory.effectful(
-                developer_instructions="reviewed write"
-            ),
-            parser=lambda raw: raw,
-            result_codec=TEXT_CODEC,
-            required_capabilities=CAPABILITIES,
-        )
-    assert len(calls) == 1
 
 
 def test_effectful_start_fence_atomically_records_no_replay_evidence(store, config):
@@ -1431,7 +994,7 @@ def test_active_attempt_start_fence_allows_only_one_process(store, config):
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
@@ -1441,111 +1004,8 @@ def test_active_attempt_start_fence_allows_only_one_process(store, config):
     assert called is False
 
 
-@pytest.mark.skip(reason="application-level read-only event policy was removed")
-def test_read_only_policy_detects_effect_event_and_blocks_failover(store, config):
-    key = seed_structured_parent(store)
-    calls = []
-
-    def executor(command, **kwargs):
-        calls.append(command)
-        kwargs["on_stdout_line"](
-            json.dumps(
-                {
-                    "type": "item.started",
-                    "item": {"metadata": {"effect": "effectful"}},
-                }
-            )
-        )
-        return ProcessRunResult(1, "", "provider unavailable")
-
-    routed = RoutedCodexExecution(
-        store=store,
-        config=config,
-        router=make_router(store, config),
-        adapter=FakeAdapter(),
-        executor=executor,
-    )
-
-    with pytest.raises(
-        RoutedCodexExecutionError, match="runtime_effect_policy_violation"
-    ):
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
-                developer_instructions="reviewed reads only"
-            ),
-            parser=lambda raw: raw,
-            result_codec=TEXT_CODEC,
-            required_capabilities=CAPABILITIES,
-        )
-
-    assert len(calls) == 1
-    attempts = store.list_runtime_operation_attempts("structured", key)
-    assert attempts[0].first_effect_started_at
-    assert attempts[0].status == "failed"
 
 
-@pytest.mark.skip(reason="application-level read-only event policy was removed")
-def test_read_only_policy_abort_terminates_child_before_rejected_work_runs(
-    store, config, tmp_path
-):
-    key = seed_structured_parent(store)
-    marker = tmp_path / "rejected-child-continued"
-
-    class ChildAdapter(FakeAdapter):
-        def build_command(self, **_kwargs):
-            event = json.dumps(
-                {
-                    "type": "item.started",
-                    "item": {"metadata": {"effect": "effectful"}},
-                }
-            )
-            session = json.dumps(
-                {"type": "thread.started", "thread_id": "policy-abort-session"}
-            )
-            code = (
-                "import pathlib,time; "
-                f"print({session!r}, flush=True); "
-                f"print({event!r}, flush=True); "
-                "time.sleep(2); "
-                f"pathlib.Path({str(marker)!r}).write_text('continued')"
-            )
-            return [sys.executable, "-c", code]
-
-        def build_env(self, route):
-            return os.environ.copy()
-
-    routed = RoutedCodexExecution(
-        store=store,
-        config=config,
-        router=make_router(store, config),
-        adapter=ChildAdapter(),
-        session_id_parser=lambda _raw: "policy-abort-session",
-        session_effect_probe=lambda *_args: True,
-    )
-
-    with pytest.raises(
-        RoutedCodexExecutionError, match="runtime_effect_policy_violation"
-    ):
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
-                developer_instructions="reviewed reads only"
-            ),
-            parser=lambda raw: raw,
-            result_codec=TEXT_CODEC,
-            required_capabilities=CAPABILITIES,
-        )
-
-    assert marker.exists() is False
-    attempt = store.list_runtime_operation_attempts("structured", key)[0]
-    assert attempt.status == "failed"
-    assert attempt.failure_code == "runtime_effect_policy_violation"
-    assert attempt.first_effect_started_at
 
 
 def test_thread_started_is_persisted_before_executor_failure(store, config):
@@ -1577,7 +1037,7 @@ def test_thread_started_is_persisted_before_executor_failure(store, config):
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
@@ -1618,7 +1078,7 @@ def test_conflicting_streamed_session_id_aborts_without_mixing_evidence(store, c
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
@@ -1659,7 +1119,7 @@ def test_conflicting_buffered_session_id_cannot_replace_streamed_session(store, 
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
@@ -1673,177 +1133,8 @@ def test_conflicting_buffered_session_id_cannot_replace_streamed_session(store, 
     assert attempt.session_id == "session-one"
 
 
-@pytest.mark.parametrize(
-    ("failure_stage", "expected_failure_code", "expected_error"),
-    [
-        ("build", "runtime_command_build_failed", "runtime_post_start_failed"),
-        (
-            "classifier",
-            "runtime_failure_classification_failed",
-            "runtime_post_start_failed",
-        ),
-        (
-            "counter",
-            "runtime_transcript_evidence_failed",
-            "runtime_post_start_failed",
-        ),
-        ("pause", "runtime_route_pause_failed", "runtime_post_start_failed"),
-        ("parser", "runtime_result_invalid", "runtime_result_invalid"),
-    ],
-)
-@pytest.mark.skip(reason="post-start failures use the normal retry contract")
-def test_post_start_exception_terminalizes_attempt_and_retry_stays_bounded(
-    store,
-    config,
-    monkeypatch,
-    failure_stage,
-    expected_failure_code,
-    expected_error,
-):
-    key = seed_structured_parent(store)
-    adapter = FakeAdapter()
-    process_calls = 0
-
-    def raise_stage_error(*_args, **_kwargs):
-        raise OSError(f"{failure_stage} unavailable")
-
-    if failure_stage == "build":
-        monkeypatch.setattr(adapter, "build_command", raise_stage_error)
-    elif failure_stage == "classifier":
-        monkeypatch.setattr(adapter, "classify_failure", raise_stage_error)
-    elif failure_stage == "pause":
-        monkeypatch.setattr(
-            adapter,
-            "classify_failure",
-            lambda *_args, **_kwargs: RuntimeFailure(
-                failure_class=RuntimeFailureClass.CAPACITY,
-                code="provider_paused",
-                detail="redacted",
-                failover_permitted=True,
-                route_pause_required=True,
-            ),
-        )
-        monkeypatch.setattr(store, "open_runtime_route_pause", raise_stage_error)
-
-    def executor(command, **kwargs):
-        nonlocal process_calls
-        process_calls += 1
-        if failure_stage == "counter":
-            kwargs["on_stdout_line"](
-                json.dumps({"type": "thread.started", "thread_id": "counter-session"})
-            )
-        if failure_stage == "parser":
-            return ProcessRunResult(0, json.dumps({"type": "result"}), "")
-        return ProcessRunResult(1, "", "provider unavailable")
-
-    routed = RoutedCodexExecution(
-        store=store,
-        config=config,
-        router=make_router(store, config),
-        adapter=adapter,
-        executor=executor,
-        session_id_parser=lambda _raw: "post-start-session",
-        session_effect_probe=lambda *_args: False,
-        session_line_counter=(
-            raise_stage_error if failure_stage == "counter" else lambda _session: 0
-        ),
-    )
-    parser = raise_stage_error if failure_stage == "parser" else lambda raw: raw
-    execution_args = {
-        "workload_kind": "structured",
-        "workload_key": key,
-        "prompt": "read",
-        "command_factory": ApprovedCodexCommandFactory.read_only(
-            developer_instructions="reviewed reads only"
-        ),
-        "parser": parser,
-        "result_codec": TEXT_CODEC,
-        "required_capabilities": CAPABILITIES,
-    }
-
-    with pytest.raises(RoutedCodexExecutionError, match=expected_error):
-        routed.execute(**execution_args)
-
-    attempt = store.list_runtime_operation_attempts("structured", key)[0]
-    assert attempt.status == "failed"
-    assert attempt.failure_code == expected_failure_code
-    assert attempt.failover_permitted is False
-    assert not any(
-        item.status in {"starting", "running"}
-        for item in store.list_runtime_operation_attempts("structured", key)
-    )
-
-    retry_error = (
-        "runtime_session_evidence_missing"
-        if failure_stage == "build"
-        else "runtime_execution_failed"
-    )
-    with pytest.raises(RoutedCodexExecutionError, match=retry_error):
-        routed.execute(**execution_args)
-    assert process_calls == (0 if failure_stage == "build" else 1)
 
 
-@pytest.mark.parametrize(
-    "session_probe", [lambda *_: True, lambda *_: None, failed_session_probe]
-)
-@pytest.mark.skip(reason="provider session probes are not application policy")
-def test_hidden_or_ambiguous_local_session_blocks_read_only_failover(
-    store, config, session_probe
-):
-    key = seed_structured_parent(store)
-    calls = []
-
-    def executor(command, **kwargs):
-        calls.append(command)
-        return ProcessRunResult(
-            1,
-            json.dumps({"type": "thread.started", "thread_id": "hidden-session"}),
-            "provider unavailable",
-        )
-
-    routed = RoutedCodexExecution(
-        store=store,
-        config=config,
-        router=make_router(store, config),
-        adapter=FakeAdapter(),
-        executor=executor,
-        session_line_counter=lambda session_id: 4,
-        session_effect_probe=session_probe,
-    )
-
-    with pytest.raises(
-        RoutedCodexExecutionError, match="runtime_effect_policy_violation"
-    ):
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
-                developer_instructions="reviewed reads only"
-            ),
-            parser=lambda raw: raw,
-            result_codec=TEXT_CODEC,
-            required_capabilities=CAPABILITIES,
-        )
-
-    assert len(calls) == 1
-    attempt = store.list_runtime_operation_attempts("structured", key)[0]
-    assert attempt.first_effect_started_at
-    assert attempt.session_id == "hidden-session"
-    assert attempt.transcript_end == 4
-    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="retry read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
-                developer_instructions="reviewed reads only"
-            ),
-            parser=lambda raw: raw,
-            result_codec=TEXT_CODEC,
-            required_capabilities=CAPABILITIES,
-        )
-    assert len(calls) == 1
 
 
 def test_no_eligible_route_or_terminal_parent_never_starts_process(store, config):
@@ -1860,7 +1151,7 @@ def test_no_eligible_route_or_terminal_parent_never_starts_process(store, config
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
@@ -1881,7 +1172,7 @@ def test_no_eligible_route_or_terminal_parent_never_starts_process(store, config
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
@@ -1917,13 +1208,12 @@ def test_completed_result_is_recovered_by_matching_codec_without_child(store, co
         adapter=FakeAdapter(),
         executor=executor,
         session_line_counter=lambda _session: 2,
-        session_effect_probe=lambda *_args: False,
     )
     arguments = {
         "workload_kind": "structured",
         "workload_key": key,
         "prompt": "read",
-        "command_factory": ApprovedCodexCommandFactory.read_only(
+        "command_factory": CodexCommandFactory.standard(
             developer_instructions="reviewed reads only"
         ),
         "parser": lambda raw: json.loads(raw.splitlines()[-1])["value"],
@@ -1979,7 +1269,7 @@ def test_completed_effectful_result_is_recovered_without_replay(store, config):
         "workload_kind": "structured",
         "workload_key": key,
         "prompt": "write once",
-        "command_factory": ApprovedCodexCommandFactory.effectful(
+        "command_factory": CodexCommandFactory.standard(
             developer_instructions="reviewed write"
         ),
         "parser": lambda raw: int(raw),
@@ -2019,13 +1309,12 @@ def test_agent_run_parent_routes_and_recovers_completed_result(store, config):
         adapter=FakeAdapter(),
         executor=executor,
         session_line_counter=lambda _session: 2,
-        session_effect_probe=lambda *_args: False,
     )
     arguments = {
         "workload_kind": "agent_run",
         "workload_key": str(run_id),
         "prompt": "decide",
-        "command_factory": ApprovedCodexCommandFactory.read_only_without_tools(
+        "command_factory": CodexCommandFactory.standard(
             developer_instructions="read-only decision"
         ),
         "parser": lambda raw: raw.splitlines()[-1],
@@ -2055,7 +1344,6 @@ def test_oversize_result_terminalizes_before_durable_completion(store, config):
             0, "界" * MAX_RUNTIME_RESULT_ENVELOPE_BYTES, ""
         ),
         session_id_parser=lambda _raw: "oversize-session",
-        session_effect_probe=lambda *_args: False,
     )
 
     with pytest.raises(RoutedCodexExecutionError, match="runtime_result_invalid"):
@@ -2063,7 +1351,7 @@ def test_oversize_result_terminalizes_before_durable_completion(store, config):
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
@@ -2094,13 +1382,12 @@ def test_oversize_persisted_result_is_rejected_without_child(store, config):
         adapter=FakeAdapter(),
         executor=executor,
         session_id_parser=lambda _raw: "persisted-oversize-session",
-        session_effect_probe=lambda *_args: False,
     )
     arguments = {
         "workload_kind": "structured",
         "workload_key": key,
         "prompt": "read",
-        "command_factory": ApprovedCodexCommandFactory.read_only(
+        "command_factory": CodexCommandFactory.standard(
             developer_instructions="reviewed reads only"
         ),
         "parser": lambda raw: raw,
@@ -2150,7 +1437,7 @@ def test_live_silent_process_cannot_be_reclaimed_after_nominal_lease(store, conf
                 workload_kind="structured",
                 workload_key=key,
                 prompt="read",
-                command_factory=ApprovedCodexCommandFactory.read_only(
+                command_factory=CodexCommandFactory.standard(
                     developer_instructions="reviewed reads only"
                 ),
                 parser=lambda raw: int(raw),
@@ -2166,7 +1453,6 @@ def test_live_silent_process_cannot_be_reclaimed_after_nominal_lease(store, conf
         adapter=FakeAdapter(),
         executor=executor,
         session_id_parser=lambda _raw: "live-silent-session",
-        session_effect_probe=lambda *_args: False,
         owner="live-owner",
         lease_seconds=1,
         total_timeout_seconds=30,
@@ -2178,7 +1464,7 @@ def test_live_silent_process_cannot_be_reclaimed_after_nominal_lease(store, conf
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: int(raw),
@@ -2211,13 +1497,12 @@ def test_concurrent_executors_start_exactly_one_child(store, config):
             adapter=FakeAdapter(),
             executor=executor,
             session_id_parser=lambda _raw: "concurrent-session",
-            session_effect_probe=lambda *_args: False,
             owner=owner,
         ).execute(
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: int(raw),
@@ -2263,7 +1548,7 @@ def test_route_pause_opened_during_selection_is_rechecked_before_start(
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
@@ -2271,104 +1556,3 @@ def test_route_pause_opened_during_selection_is_rechecked_before_start(
             required_capabilities=CAPABILITIES,
         )
     assert store.list_runtime_operation_attempts("structured", key) == []
-
-
-@pytest.mark.skip(reason="expired leases are retried as ordinary failed turns")
-def test_expired_read_only_crash_without_session_never_routes_again(store, config):
-    key = seed_structured_parent(store)
-    route = config.routes[0]
-    crashed = store.claim_runtime_operation_attempt(
-        "structured",
-        key,
-        route.name,
-        route.runtime_kind.value,
-        route.credential_mode.value,
-        route.model,
-        owner="dead-owner",
-        lease_seconds=5,
-        now=NOW,
-    )
-    store.mark_agent_runtime_attempt_running_once(
-        crashed.id, owner="dead-owner", lease_seconds=5, now=NOW
-    )
-    later = NOW + timedelta(seconds=6)
-    calls = []
-
-    routed = RoutedCodexExecution(
-        store=store,
-        config=config,
-        router=make_router(store, config),
-        adapter=FakeAdapter(),
-        executor=lambda command, **kwargs: (
-            calls.append(command) or ProcessRunResult(0, "42", "")
-        ),
-        session_id_parser=lambda _raw: "expired-recovery-session",
-        session_effect_probe=lambda *_args: False,
-        owner="replacement-owner",
-        now=lambda: later,
-    )
-
-    with pytest.raises(
-        RoutedCodexExecutionError, match="runtime_session_evidence_missing"
-    ):
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only(
-                developer_instructions="reviewed reads only"
-            ),
-            parser=lambda raw: int(raw),
-            result_codec=INT_CODEC,
-            required_capabilities=CAPABILITIES,
-        )
-
-    attempts = store.list_runtime_operation_attempts("structured", key)
-    assert [item.status for item in attempts] == ["failed"]
-    assert attempts[0].failure_code == "runtime_lease_expired"
-    assert calls == []
-
-
-@pytest.mark.skip(reason="effect fences are evidence only; retries are not blocked")
-def test_expired_effect_fence_is_never_reclaimed(store, config):
-    key = seed_structured_parent(store)
-    route = config.routes[0]
-    crashed = store.claim_runtime_operation_attempt(
-        "structured",
-        key,
-        route.name,
-        route.runtime_kind.value,
-        route.credential_mode.value,
-        route.model,
-        owner="dead-owner",
-        lease_seconds=5,
-        now=NOW,
-    )
-    store.mark_agent_runtime_attempt_running_once(
-        crashed.id, owner="dead-owner", lease_seconds=5, now=NOW
-    )
-    store.note_runtime_attempt_effect_started(crashed.id, owner="dead-owner", at=NOW)
-
-    routed = RoutedCodexExecution(
-        store=store,
-        config=config,
-        router=make_router(store, config),
-        adapter=FakeAdapter(),
-        executor=lambda *_args, **_kwargs: pytest.fail("must not replay"),
-        owner="replacement-owner",
-        now=lambda: NOW + timedelta(seconds=6),
-    )
-    with pytest.raises(
-        RoutedCodexExecutionError, match="runtime_effectful_replay_blocked"
-    ):
-        routed.execute(
-            workload_kind="structured",
-            workload_key=key,
-            prompt="write",
-            command_factory=ApprovedCodexCommandFactory.effectful(
-                developer_instructions="reviewed write"
-            ),
-            parser=lambda raw: raw,
-            result_codec=TEXT_CODEC,
-            required_capabilities=CAPABILITIES,
-        )

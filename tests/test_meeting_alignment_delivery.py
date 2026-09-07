@@ -1,4 +1,3 @@
-import subprocess
 from hashlib import sha256
 
 import pytest
@@ -10,7 +9,6 @@ from app.dws_client import DwsError, DwsUserProfile
 from app.service_message_sender import ServiceMessageSender
 from app.store import AutoReplyStore
 from app.meeting_alignment_delivery import (
-    MeetingDeliveryAmbiguous,
     MeetingDeliveryError,
     MeetingDeliveryRetry,
     deliver_meeting_alignment as _deliver_meeting_alignment,
@@ -515,9 +513,15 @@ def test_one_to_one_direct_delivery_uses_authoritative_open_id_without_search():
     assert dws.search_queries == []
 
 
-def test_direct_delivery_conversation_id_comes_from_verified_send_result():
+def test_direct_delivery_conversation_id_comes_from_provider_result():
     dws = FakeDws()
-    dws.send_result = {"success": True, "result": {"openTaskId": "task-1"}}
+    dws.send_result = {
+        "success": True,
+        "result": {
+            "openTaskId": "task-1",
+            "openConversationId": "cid-direct-claire",
+        },
+    }
     dws.send_status_result = {
         "success": True,
         "result": {
@@ -762,74 +766,23 @@ def test_recent_group_sender_disambiguates_same_name():
     ]
 
 
-def test_open_task_id_success_is_queried_without_second_send():
+def test_provider_success_is_terminal_without_status_readback():
     dws = FakeDws()
     dws.send_result = {"success": True, "result": {"openTaskId": "task-1"}}
 
     result = deliver_meeting_alignment(send_decision(), meeting_source(), dws)
 
     assert result.status == "sent"
-    assert dws.status_queries == ["task-1"]
+    assert result.send_result == dws.send_result
+    assert dws.status_queries == []
     assert len(dws.sent) == 1
 
 
-def test_confirmed_send_failure_retries_without_second_send():
+def test_send_transport_failure_is_an_explicit_retryable_failure():
     dws = FakeDws()
-    dws.send_result = {"success": True, "result": {"openTaskId": "task-1"}}
-    dws.send_status_result = {"success": True, "result": {"status": "FAILED"}}
+    dws.send_error = DwsError("connection reset")
 
-    with pytest.raises(MeetingDeliveryRetry, match="confirmed failed") as caught:
+    with pytest.raises(MeetingDeliveryRetry, match="send failed"):
         deliver_meeting_alignment(send_decision(), meeting_source(), dws)
 
-    assert caught.value.result.send_verification["open_task_id"] == "task-1"
-    assert len(dws.sent) == 1
-
-
-def test_send_without_verifiable_id_raises_ambiguous_outcome_once():
-    dws = FakeDws()
-    dws.send_result = {"success": True, "result": {}}
-
-    with pytest.raises(MeetingDeliveryAmbiguous, match="ambiguous") as caught:
-        deliver_meeting_alignment(send_decision(), meeting_source(), dws)
-
-    assert caught.value.result.status == "ambiguous"
-    assert caught.value.result.send_result == dws.send_result
-    assert len(dws.sent) == 1
-
-
-@pytest.mark.parametrize(
-    "send_error",
-    [
-        DwsError("connection reset"),
-        subprocess.TimeoutExpired(["dws", "chat", "message", "send"], 30),
-    ],
-)
-def test_send_transport_uncertainty_is_auditable_and_never_resent(send_error):
-    dws = FakeDws()
-    dws.send_error = send_error
-
-    with pytest.raises(MeetingDeliveryAmbiguous, match="ambiguous") as caught:
-        deliver_meeting_alignment(send_decision(), meeting_source(), dws)
-
-    assert caught.value.result.status == "ambiguous"
-    assert caught.value.result.send_result == {}
-    assert caught.value.result.send_verification["state"] == "ambiguous"
-    assert "connection reset" in caught.value.result.send_verification["send_error"] \
-        or "timed out" in caught.value.result.send_verification["send_error"]
-    assert len(dws.sent) == 1
-
-
-def test_status_query_uncertainty_preserves_original_task_and_never_resends():
-    dws = FakeDws()
-    dws.send_result = {"success": True, "result": {"openTaskId": "task-1"}}
-    dws.verify_error = DwsError("status query timed out")
-
-    with pytest.raises(MeetingDeliveryAmbiguous) as caught:
-        deliver_meeting_alignment(send_decision(), meeting_source(), dws)
-
-    assert caught.value.result.send_result == dws.send_result
-    assert caught.value.result.send_verification["open_task_id"] == "task-1"
-    assert caught.value.result.send_verification["status_error"] == (
-        "status query timed out"
-    )
     assert len(dws.sent) == 1

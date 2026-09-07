@@ -258,9 +258,6 @@ def _accepted_action() -> ProposedAction:
                     },
                 ]
             },
-            "expected_verification": (
-                "Read the terminal page or confirmation-mail receipt."
-            ),
         }
     )
 
@@ -442,7 +439,6 @@ def test_accepted_unsubscribe_effect_rejects_private_url_in_any_proposal_field()
             "description",
             "Open https://news.example.com/u/opaque-user-id?uid=42",
         ),
-        ("expected_verification", "Open /u/opaque-user-id/42"),
         ("description", "Open https%3A%2F%2Fnews.example.com%2Fu%2F42"),
         ("description", "Open https%253A%252F%252Fnews.example.com%252Fu%252F42"),
     ),

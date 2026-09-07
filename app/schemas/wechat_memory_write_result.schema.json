@@ -3,6 +3,12 @@
   "title": "WechatMemoryWriteResult",
   "type": "object",
   "additionalProperties": false,
-  "required": ["status"],
-  "properties": {"status": {"type": "string", "enum": ["attempted"]}}
+  "required": ["status", "memory_id", "retryable", "source_code", "detail"],
+  "properties": {
+    "status": {"type": "string", "enum": ["success", "failed"]},
+    "memory_id": {"type": "string"},
+    "retryable": {"type": "boolean"},
+    "source_code": {"type": "string"},
+    "detail": {"type": "string"}
+  }
 }

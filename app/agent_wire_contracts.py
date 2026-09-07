@@ -91,39 +91,6 @@ ConsumerWirePayload = Annotated[
 class ConsumerAgentWireResult(RootModel[ConsumerWirePayload]):
     """Strict discriminated transport contract for Consumer Agent A."""
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_proposal_layout(cls, value: object) -> object:
-        if not isinstance(value, dict) or value.get("outcome") != "proposal":
-            return value
-        proposal = value.get("proposal")
-        if not isinstance(proposal, dict):
-            return value
-        actions = proposal.get("actions")
-        expected = proposal.get("expected_verification")
-        sourced_facts = value.get("sourced_facts")
-        authored_judgment = value.get("authored_judgment")
-        if (
-            not isinstance(actions, list)
-            or len(actions) != 1
-            or not isinstance(expected, str)
-            or not isinstance(sourced_facts, list)
-            or not isinstance(authored_judgment, str)
-        ):
-            return value
-        normalized = dict(value)
-        normalized_proposal = dict(proposal)
-        normalized_proposal.pop("expected_verification", None)
-        normalized_proposal["actions"] = [
-            {**actions[0], "expected_verification": expected}
-        ]
-        normalized_proposal["sourced_facts"] = sourced_facts
-        normalized_proposal["authored_judgment"] = authored_judgment
-        normalized.pop("sourced_facts", None)
-        normalized.pop("authored_judgment", None)
-        normalized["proposal"] = normalized_proposal
-        return normalized
-
     @model_validator(mode="after")
     def validate_result_conversion(self) -> "ConsumerAgentWireResult":
         self.to_result()

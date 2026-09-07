@@ -93,7 +93,6 @@ from app.config import (
     message_recovery_interval,
     poll_interval_seconds,
     principal_name,
-    principal_display_name,
     producer_interval_seconds,
     read_env_file,
     single_chat_read_recovery_limit,
@@ -162,7 +161,6 @@ from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AgentRole,
     AgentRun,
-    AgentRunLeaseLostError,
     AutoReplyStore,
     FeedbackEvent,
     OperationLog,
@@ -181,7 +179,7 @@ from app.setup_wizard import (
     run_setup_action,
 )
 from app.setup_wizard_models import SetupStepStatus, SetupWizardEvent
-from app.task_models import ProjectPriority, ProjectStatus, RiskLevel, TodoStatus
+from app.task_models import ProjectPriority, RiskLevel
 from app.task_progress import (
     task_progress_summary,
     task_state as resolved_task_state,

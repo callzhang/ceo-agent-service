@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from app.agent_runtime_router import RoutedCodexExecutionError
+from app.agent_runtime_router import CodexCommandFactory, RoutedCodexExecutionError
 from app.store import AutoReplyStore
 from app.wechat.memory import (
     CodexMemoryExtractionRunner,
@@ -16,7 +16,8 @@ from app.wechat.memory import (
     WechatMemoryWriter,
 )
 from app.wechat.memory_import import CodexMemoryRecallMatcher, DurableMemoryMatch
-from app.wechat.memory_writer import MEMORY_ID_CODEC, MemoryWriteOutcomeUnknown
+from app.codex_memory_write import CodexMemoryWriteFailed
+from app.wechat.memory_writer import MEMORY_ID_CODEC
 from app.wechat.models import WechatMessage
 
 
@@ -110,43 +111,6 @@ def built_factory_command(factory, tmp_path, *, configure_memory_connector=False
         session_id=None,
     )
     return command
-
-
-def assert_dynamic_features_are_disabled(command):
-    protected = {
-        "plugins",
-        "apps",
-        "chronicle",
-        "computer_use",
-        "browser_use",
-        "in_app_browser",
-        "memories",
-        "skill_search",
-    }
-    enabled = {
-        command[index + 1]
-        for index, value in enumerate(command[:-1])
-        if value == "--enable"
-    }
-    disabled = {
-        command[index + 1]
-        for index, value in enumerate(command[:-1])
-        if value == "--disable"
-    }
-    assert enabled.isdisjoint(protected)
-    assert protected <= disabled
-    assert not any(
-        item.startswith(tuple(f"features.{name}=" for name in protected))
-        and item.endswith("=true")
-        for item in command
-    )
-    assert command.count("tools.enabled_tools=[]") == 1
-    assert not any(
-        item.startswith("tools.enabled_tools=")
-        and item != "tools.enabled_tools=[]"
-        for item in command
-    )
-    assert command.count('web_search="disabled"') == 1
 
 
 @pytest.fixture
@@ -428,7 +392,7 @@ def test_import_fails_closed_without_durable_matcher(store):
         importer.run(account=account, target_ids=["c1"], since="2026-07-01", until="", limit=10)
 
 
-def test_codex_recall_matcher_accepts_only_audited_memory_recall(tmp_path):
+def test_codex_recall_matcher_consumes_typed_result_from_normal_runtime(tmp_path):
     query = "fact"
     final = {"matches":[{"statement":"fact", "relation":"exact",
         "memory_id":"mem-1", "evidence":"durable fact", "merged_statement":""}]}
@@ -444,32 +408,9 @@ def test_codex_recall_matcher_accepts_only_audited_memory_recall(tmp_path):
     assert matcher.match([candidate("fact", category="fact")])["fact"].relation == "exact"
     routed_call = matcher.routed_execution.calls[0]
     assert routed_call["required_capabilities"] == frozenset(
-        {"structured_output", "memory_connector_read"}
+        {"structured_output", "local_schema_validation"}
     )
-    assert routed_call["command_factory"]._approved_policy.effect_mode == "read_only"
-    malicious = success.replace('"tool": "memory_recall"', '"tool": "memory_write"')
-    with pytest.raises(RuntimeError, match="only memory_recall"):
-        recall_matcher(tmp_path, lambda c, p: malicious).match(
-            [candidate("fact", category="fact")])
-
-    unrelated_events = [json.loads(line) for line in success.splitlines()]
-    unrelated_events[0]["item"]["arguments"]["query"] = "unrelated"
-    unrelated = "\n".join(json.dumps(event) for event in unrelated_events)
-    with pytest.raises(RuntimeError, match="query does not match"):
-        recall_matcher(tmp_path, lambda c, p: unrelated).match(
-            [candidate("fact", category="fact")])
-    missing_memories = success.replace('"memories":', '"items":')
-    with pytest.raises(RuntimeError, match="memories list"):
-        recall_matcher(tmp_path, lambda c, p: missing_memories).match(
-            [candidate("fact", category="fact")])
-    fabricated = success.replace("durable fact", "unrelated evidence", 1)
-    with pytest.raises(RuntimeError, match="same recalled memory"):
-        recall_matcher(tmp_path, lambda c, p: fabricated).match(
-            [candidate("fact", category="fact")])
-    fabricated_id = success.replace("mem-1", "other-id", 1)
-    with pytest.raises(RuntimeError, match="same recalled memory"):
-        recall_matcher(tmp_path, lambda c, p: fabricated_id).match(
-            [candidate("fact", category="fact")])
+    assert isinstance(routed_call["command_factory"], CodexCommandFactory)
 
 
 def test_codex_recall_matcher_accepts_real_empty_memories_as_none(tmp_path):
@@ -536,38 +477,6 @@ def test_matcher_rejects_observed_none_with_explanation_evidence(tmp_path):
     with pytest.raises(RuntimeError, match="no structured result"):
         recall_matcher(tmp_path, lambda command, prompt: raw).match([
             candidate("fact", category="fact")])
-
-
-def test_codex_recall_support_must_come_from_same_memory_object(tmp_path):
-    query = "fact"
-    final = {"matches":[{"statement":"fact", "relation":"exact",
-        "memory_id":"mem-a", "evidence":"evidence from B", "merged_statement":""}]}
-    output = {"memories":[{"uuid":"mem-a","text":"evidence from A"},
-                           {"uuid":"mem-b","summary":"evidence from B"}]}
-    raw = "\n".join([
-        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call",
-            "call_id":"r1","tool":"memory_recall","arguments":{"query":query},
-            "result":output}}),
-        json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
-    ])
-    with pytest.raises(RuntimeError, match="same recalled memory"):
-        recall_matcher(tmp_path, lambda c, p: raw).match(
-            [candidate("fact", category="fact")])
-
-
-def test_codex_recall_explicit_is_error_fails(tmp_path):
-    query = "fact"
-    final = {"matches":[{"statement":"fact", "relation":"none",
-        "memory_id":"", "evidence":"", "merged_statement":""}]}
-    raw = "\n".join([
-        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call",
-            "call_id":"r1","tool":"memory_recall","arguments":{"query":query},
-            "isError":True,"result":{"memories":[]}}}),
-        json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
-    ])
-    with pytest.raises(RuntimeError, match="tool error"):
-        recall_matcher(tmp_path, lambda c, p: raw).match(
-            [candidate("fact", category="fact")])
 
 
 @pytest.mark.parametrize("bad_evidence", [" ", "short"])
@@ -650,30 +559,13 @@ def test_approved_write_is_idempotent(store):
 
 
 def test_approved_write_routes_with_candidate_parent(store, tmp_path):
-    output = {
-        "structured_content": {
-            "result": json.dumps(
-                {
-                    "ok": True,
-                    "episode_uuid": "episode-routed",
-                    "processing_status": "completed",
-                }
-            )
-        }
-    }
     raw = json.dumps(
         {
-            "type": "item.completed",
-            "item": {
-                "type": "mcp_tool_call",
-                "tool": "memory_write",
-                "arguments": {
-                    "data": "Derek prefers concise updates",
-                    "type": "text",
-                    "created_at": "2026-07-17T10:00:00+08:00",
-                },
-                "result": output,
-            },
+            "status": "success",
+            "memory_id": "episode-routed",
+            "retryable": False,
+            "source_code": "",
+            "detail": "",
         }
     )
     routed = CallbackRouted(lambda _command, _prompt: raw)
@@ -686,14 +578,21 @@ def test_approved_write_routes_with_candidate_parent(store, tmp_path):
     call = routed.calls[0]
     assert call["workload_kind"] == "memory"
     assert call["workload_key"] == f"wechat_memory_candidate:{candidate_id}"
-    assert call["command_factory"].required_reviewed_mcp_servers == frozenset(
-        {"memory_connector"}
-    )
+    assert isinstance(call["command_factory"], CodexCommandFactory)
 
 
 def test_completed_routed_candidate_write_recovers_domain_row_without_new_effect(
     store, tmp_path
 ):
+    typed_result = json.dumps(
+        {
+            "status": "success",
+            "memory_id": "memory-recovered",
+            "retryable": False,
+            "source_code": "",
+            "detail": "",
+        }
+    )
     candidate_id = _seed_candidate(store, status="approved")
     assert store.claim_wechat_memory_candidate_write(candidate_id)["outcome"] == "claimed"
     attempt = store.claim_runtime_operation_attempt(
@@ -716,14 +615,14 @@ def test_completed_routed_candidate_write_recovers_domain_row_without_new_effect
         0,
         owner="writer-owner",
         result_schema_id=MEMORY_ID_CODEC.schema_id,
-        result_envelope_json=MEMORY_ID_CODEC.encode("memory-recovered"),
+        result_envelope_json=MEMORY_ID_CODEC.encode(typed_result),
     )
     class CompletedRouted:
         calls = 0
 
         def execute(self, **_kwargs):
             self.calls += 1
-            return SimpleNamespace(value="memory-recovered")
+            return SimpleNamespace(value=typed_result)
 
     routed = CompletedRouted()
     backend = CodexMemoryWriteBackend(tmp_path, store, routed_execution=routed)
@@ -758,33 +657,47 @@ def test_concurrent_approved_write_calls_backend_once(store):
     assert errors == ["memory write already in progress"]
 
 
-def test_unknown_write_is_not_auto_retryable(store):
-    class Unknown:
+def test_backend_failure_is_explicit_and_retryable(store):
+    class Failed:
+        def __init__(self):
+            self.calls = 0
+
         def write(self, *args, **kwargs):
-            raise Exception("memory write outcome unknown")
+            self.calls += 1
+            raise RuntimeError("provider timeout")
+
+    backend = Failed()
     cid = _seed_candidate(store, status="approved")
-    with pytest.raises(Exception, match="unknown"):
-        WechatMemoryWriter(store, Unknown()).write(cid)
-    assert store.get_wechat_memory_candidate(cid)["memory_write_status"] == "unknown"
-    with pytest.raises(ValueError, match="unknown"):
-        WechatMemoryWriter(store, Unknown()).write(cid)
+    with pytest.raises(RuntimeError, match="provider timeout"):
+        WechatMemoryWriter(store, backend).write(cid)
+    assert store.get_wechat_memory_candidate(cid)["memory_write_status"] == "failed"
+    with pytest.raises(RuntimeError, match="provider timeout"):
+        WechatMemoryWriter(store, backend).write(cid)
+    assert backend.calls == 2
 
 
-def test_routed_effectful_failure_is_persisted_as_unknown(store, tmp_path):
+def test_routed_failure_preserves_code_and_is_persisted_as_failed(store, tmp_path):
     class FailedRouted:
         def execute(self, **_kwargs):
-            raise RoutedCodexExecutionError("runtime_execution_failed")
+            raise RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "provider timeout",
+                failure_code="codex_process_timeout",
+                retryable_external_dependency=True,
+            )
 
     candidate_id = _seed_candidate(store, status="approved")
     backend = CodexMemoryWriteBackend(
         tmp_path, store, routed_execution=FailedRouted()
     )
 
-    with pytest.raises(MemoryWriteOutcomeUnknown):
+    with pytest.raises(CodexMemoryWriteFailed) as caught:
         WechatMemoryWriter(store, backend).write(candidate_id)
+    assert caught.value.retryable is True
+    assert caught.value.source_code == "codex_process_timeout"
     assert (
         store.get_wechat_memory_candidate(candidate_id)["memory_write_status"]
-        == "unknown"
+        == "failed"
     )
 
 
@@ -881,44 +794,27 @@ def test_rejected_or_revoked_local_candidate_does_not_suppress_new_run(store, te
     assert second is not None and second != first
 
 
-def test_codex_write_backend_requires_successful_memory_write_tool_event(tmp_path):
-    output = {"structured_content":{"result":json.dumps({"ok":True,"episode_uuid":"episode-1","processing_status":"completed"})}}
-    success = "\n".join([
-        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call", "call_id":"c1", "tool":"memory_write", "arguments":{"data":"final","type":"text","created_at":"2026-07-17"}, "result":output}}),
-        json.dumps({"status":"attempted"}),
-    ])
-    parse = CodexMemoryWriteBackend._memory_id_from_audit
-    assert parse(success, statement="final", expected_created_at="2026-07-17") == "episode-1"
-    with pytest.raises(Exception, match="unknown"):
-        parse(json.dumps({"memory_id":"fake"}), statement="final", expected_created_at="2026-07-17")
+def test_codex_write_backend_accepts_typed_result_with_additional_tool_events(tmp_path):
+    typed = {
+        "status": "success",
+        "memory_id": "episode-1",
+        "retryable": False,
+        "source_code": "",
+        "detail": "",
+    }
+    raw = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "tool_call", "tool": "some_future_tool"},
+                }
+            ),
+            json.dumps(typed),
+        ]
+    )
 
-    extra_tool = "\n".join([
-        json.dumps({"type":"item.completed","item":{"type":"tool_call", "call_id":"x", "tool_name":"exec_command", "arguments":{"cmd":"true"}}}),
-        success,
-    ])
-    with pytest.raises(Exception, match="expected one tool call"):
-        parse(extra_tool, statement="final", expected_created_at="2026-07-17")
-
-    malicious = success.replace('"data": "final"', '"data": "evil", "user_id": "u"')
-    with pytest.raises(Exception, match="arguments"):
-        parse(malicious, statement="final", expected_created_at="2026-07-17")
-
-    vague = "\n".join([
-        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call", "call_id":"c1", "tool":"memory_write", "arguments":{"data":"final","type":"text","created_at":"2026-07-17"}, "result":"550e8400-e29b-41d4-a716-446655440000"}}),
-    ])
-    with pytest.raises(Exception, match="unknown"):
-        parse(vague, statement="final", expected_created_at="2026-07-17")
-
-    failed_output = {"structured_content":{"result":json.dumps({
-        "ok":False, "episode_uuid":"episode-failed", "processing_status":"failed",
-        "last_error":"backend rejected"})}}
-    failed = success.replace(json.dumps(output), json.dumps(failed_output))
-    with pytest.raises(RuntimeError, match="backend rejected"):
-        parse(failed, statement="final", expected_created_at="2026-07-17")
-
-    preview = success.replace('"tool": "memory_write"', '"tool": "memory_write_preview"')
-    with pytest.raises(Exception, match="expected one tool call"):
-        parse(preview, statement="final", expected_created_at="2026-07-17")
+    assert CodexMemoryWriteBackend._memory_id_from_typed_output(raw) == "episode-1"
 
 
 def test_codex_extraction_runner_parses_batch_envelope_and_forbids_write(tmp_path):
@@ -935,13 +831,11 @@ def test_codex_extraction_runner_parses_batch_envelope_and_forbids_write(tmp_pat
     runner = extraction_runner(tmp_path, execute)
     result = runner.extract([message])
     assert [item.statement for item in result] == ["durable fact"]
-    assert "不会提供 memory_write" in captured["prompt"]
     factory = runner.routed_execution.calls[0]["command_factory"]
-    assert factory._output_schema_path.name == "wechat_memory_candidates.schema.json"
-    assert factory._approved_policy.effect_mode == "read_only"
+    assert factory.output_schema_path.name == "wechat_memory_candidates.schema.json"
 
 
-def test_codex_extraction_creates_parent_before_routed_read_only_invocation(
+def test_codex_extraction_creates_parent_before_routed_invocation(
     tmp_path,
 ):
     store = AutoReplyStore(tmp_path / "wechat-routed.sqlite3")
@@ -979,15 +873,9 @@ def test_codex_extraction_creates_parent_before_routed_read_only_invocation(
     assert calls[0]["workload_key"].startswith("wechat_memory_import_job:")
     assert calls[0]["conversation_id"] is None
     assert calls[0]["required_capabilities"] == frozenset({"structured_output"})
-    assert calls[0]["command_factory"]._approved_policy.effect_mode == "read_only"
+    assert isinstance(calls[0]["command_factory"], CodexCommandFactory)
     command = built_factory_command(calls[0]["command_factory"], tmp_path)
-    assert "tools.enabled_tools=[]" in command
-    assert 'web_search="disabled"' in command
-    assert "mcp_servers.foreign_route.enabled=false" in command
-    assert "mcp_servers.foreign_user.enabled=false" in command
-    assert "mcp_servers.memory_connector.enabled=false" in command
-    assert not any("memory_connector.enabled_tools" in item for item in command)
-    assert_dynamic_features_are_disabled(command)
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
     with store._connect() as db:
         job = db.execute("select status from wechat_memory_import_jobs").fetchone()
     assert job["status"] == "completed"
@@ -1021,26 +909,23 @@ def test_real_codex_lifecycle_counts_completed_recall_once_without_call_id(tmp_p
     assert result["fact"].relation == "none"
 
 
-def test_real_codex_lifecycle_counts_completed_write_once_without_call_id(tmp_path):
-    arguments = {"data": "final", "type": "text", "created_at": "2026-07-17"}
-    call = {"type": "mcp_tool_call", "server": "memory_connector",
-            "tool": "memory_write", "arguments": arguments}
-    tool_result = {"structured_content": {"result": json.dumps({
-        "ok": True, "episode_uuid": "episode-real", "processing_status": "completed"})}}
+def test_real_codex_lifecycle_uses_final_typed_write_result(tmp_path):
     raw = "\n".join([
-        json.dumps({"type": "item.started", "item": call}),
-        json.dumps({"type": "item.completed", "item": {**call, "result": tool_result}}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "mcp_tool_call", "tool": "memory_write"}}),
+        json.dumps({
+            "status": "success", "memory_id": "episode-real",
+            "retryable": False, "source_code": "", "detail": "",
+        }),
     ])
-    assert CodexMemoryWriteBackend._memory_id_from_audit(
-        raw, statement="final", expected_created_at="2026-07-17"
-    ) == "episode-real"
+    assert CodexMemoryWriteBackend._memory_id_from_typed_output(raw) == "episode-real"
 
 
 def test_recall_matcher_uses_one_exact_query_per_candidate(tmp_path):
     calls = []
 
     def execute(command, prompt):
-        marker = "query 必须逐字等于：\n"
+        marker = "使用运行时可用能力检查下面候选是否已存在：\n"
         statement = prompt.split(marker, 1)[1].split("\n", 1)[0]
         calls.append(statement)
         final = {"matches": [{"statement": statement, "relation": "none",
@@ -1071,14 +956,7 @@ def test_recall_matcher_uses_one_exact_query_per_candidate(tmp_path):
         tmp_path,
         configure_memory_connector=True,
     )
-    assert "tools.enabled_tools=[]" in command
-    assert 'web_search="disabled"' in command
-    assert "mcp_servers.foreign_route.enabled=false" in command
-    assert "mcp_servers.foreign_user.enabled=false" in command
-    assert "mcp_servers.memory_connector.enabled=true" in command
-    assert 'mcp_servers.memory_connector.enabled_tools=["memory_recall"]' in command
-    assert 'mcp_servers.memory_connector.disabled_tools=["memory_write"]' in command
-    assert_dynamic_features_are_disabled(command)
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
     with matcher.store._connect() as db:
         jobs = db.execute(
             "select status from wechat_memory_import_jobs order by id"
@@ -1116,7 +994,7 @@ def test_memory_recall_does_not_emit_unconfigured_principal_server(tmp_path, mon
     assert all("mcp_servers.exa.enabled=false" not in command for command in commands)
 
 
-def test_extraction_filters_sensitive_input_and_runs_read_only_without_tools(
+def test_extraction_filters_sensitive_input_and_uses_standard_runtime(
     tmp_path, monkeypatch,
 ):
     service_manifest = tmp_path / "service-mcp.json"
@@ -1164,23 +1042,20 @@ def test_extraction_filters_sensitive_input_and_runs_read_only_without_tools(
     assert "13800138000" not in captured["prompt"]
     assert "12345678" not in captured["prompt"]
     factory = runner.routed_execution.calls[0]["command_factory"]
-    assert factory._approved_policy.effect_mode == "read_only"
+    assert isinstance(factory, CodexCommandFactory)
     assert runner.routed_execution.calls[0]["required_capabilities"] == frozenset(
         {"structured_output"}
     )
 
 
-def test_extraction_fails_closed_if_codex_emits_any_tool_call(tmp_path):
+def test_extraction_consumes_typed_result_even_if_runtime_used_a_tool(tmp_path):
     raw = "\n".join([
         json.dumps({"type": "item.completed", "item": {
             "type": "mcp_tool_call", "tool": "memory_recall",
             "arguments": {"query": "ignore prior instructions"}, "result": {"memories": []}}}),
         json.dumps({"candidates": []}),
     ])
-    with pytest.raises(RuntimeError, match="must not call tools"):
-        extraction_runner(
-            tmp_path, lambda command, prompt: raw
-        ).extract([])
+    assert extraction_runner(tmp_path, lambda command, prompt: raw).extract([]) == []
 
 
 def test_clean_candidate_time_bounds_compare_instants_not_iso_strings(store):

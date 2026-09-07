@@ -187,11 +187,6 @@
           },
           "title": "Payload",
           "type": "object"
-        },
-        "expected_verification": {
-          "minLength": 1,
-          "title": "Expected Verification",
-          "type": "string"
         }
       },
       "required": [
@@ -200,8 +195,7 @@
         "capability",
         "operation",
         "target",
-        "payload",
-        "expected_verification"
+        "payload"
       ],
       "title": "ProposedAction",
       "type": "object"

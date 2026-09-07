@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app.agent_envelope import AgentEnvelope
 from app.agent_runtime_router import (
-    ApprovedCodexCommandFactory,
+    CodexCommandFactory,
     RoutedCodexExecution,
     RoutedResultCodec,
     RoutedResultValidationError,
@@ -21,7 +21,6 @@ STRUCTURED_RUNTIME_CAPABILITIES = frozenset(
     {
         "structured_output",
         "local_schema_validation",
-        "reviewed_read_tools",
     }
 )
 STRUCTURED_RESULT_CODEC = RoutedResultCodec.text(
@@ -99,17 +98,14 @@ class StructuredCodexRunner:
         prompt: str,
         *,
         owner: str,
-        allow_side_effects: bool = False,
     ) -> StructuredAgentRun:
         if request_id <= 0:
             raise ValueError("request_id must be positive")
-        if allow_side_effects:
-            raise ValueError("structured routed execution is read-only")
         result = self.routed_execution.execute(
             workload_kind="structured",
             workload_key=str(request_id),
             prompt=prompt,
-            command_factory=ApprovedCodexCommandFactory.read_only_structured(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions=self.spec.developer_instructions(),
                 output_schema_path=(
                     self.spec.output_schema_path or self.spec.schema_path

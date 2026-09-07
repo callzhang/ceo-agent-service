@@ -18,7 +18,7 @@ from app.config import read_env_file, repo_root
 from app.agent_runtime_probe import AgentRuntimeProbe
 from app.agent_runtime_router import (
     AgentRuntimeRouter,
-    ApprovedCodexCommandFactory,
+    CodexCommandFactory,
     RoutedCodexExecution,
     RoutedResultCodec,
     count_codex_session_lines,
@@ -210,7 +210,7 @@ def _seed_agent_run(store: AutoReplyStore) -> tuple[int, str, str]:
 def test_oauth_route_probe_from_service_environment(tmp_path):
     config = _live_config()
 
-    snapshot = _run_probe(config, "codex_oauth", tmp_path)
+    _run_probe(config, "codex_oauth", tmp_path)
 
 
 
@@ -294,7 +294,7 @@ def test_read_only_turn_fails_over_under_same_agent_run(tmp_path):
         workload_kind="agent_run",
         workload_key=str(run_id),
         prompt=_SYNTHETIC_PROMPT,
-        command_factory=ApprovedCodexCommandFactory.read_only_without_tools(
+        command_factory=CodexCommandFactory.standard(
             developer_instructions=_SYNTHETIC_INSTRUCTIONS,
             output_schema_path=schema_path,
             use_output_schema=True,

@@ -52,11 +52,6 @@
           "title": "Operation Id",
           "type": "string"
         },
-        "verification_summary": {
-          "minLength": 1,
-          "title": "Verification Summary",
-          "type": "string"
-        },
         "live_result_reference": {
           "additionalProperties": {
             "$ref": "#/$defs/JsonValue"
@@ -67,7 +62,6 @@
       },
       "required": [
         "operation_id",
-        "verification_summary",
         "live_result_reference"
       ],
       "title": "AuditExternalResult",

@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import RLock
 
-from app.agent_effects import McpToolEffectRegistry
-from app.agent_result import EffectKind
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import (
     PROBE_VERIFIED_RUNTIME_CAPABILITIES,
@@ -24,14 +21,13 @@ from app.agent_runtime_contracts import (
 )
 from app.agent_runtime_production import RuntimeCapabilityRegistry
 from app.agent_runtime_router import (
-    ApprovedCodexCommandFactory,
+    CodexCommandFactory,
     ProcessExecutor,
 )
 from app.claude_runtime_adapter import ClaudeCommandPolicy, ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
 from app.process_runner import run_process_with_idle_timeout
-from app.service_codex_config import ServiceMcpServer
 from app.store import AutoReplyStore
 
 PROBE_TOTAL_TIMEOUT_SECONDS = 60.0
@@ -144,7 +140,7 @@ class AgentRuntimeProbe:
                     self._config,
                     codex_bin=self._codex_bin,
                 )
-                factory = ApprovedCodexCommandFactory.read_only_without_tools(
+                factory = CodexCommandFactory.standard(
                     developer_instructions=_PROBE_DEVELOPER_INSTRUCTIONS,
                     output_schema_path=schema_path,
                     use_output_schema=True,
@@ -220,115 +216,26 @@ class AgentRuntimeProbe:
         checked_at: datetime,
         expires_at: datetime,
     ) -> RuntimeCapabilitySnapshot:
-        effects = McpToolEffectRegistry(
-            {("runtime_probe", "record_effect_start"): EffectKind.READ_ONLY}
-        )
         adapter = ClaudeRuntimeAdapter(
             workspace=workspace,
             config=self._config,
             claude_bin=self._claude_bin,
-            effect_registry=effects,
-            service_mcp_servers=(
-                ServiceMcpServer(
-                    name="runtime_probe",
-                    command=sys.executable,
-                    args=("-m", "app.claude_runtime_probe_tool"),
-                ),
-            ),
         )
         try:
-            baseline_failure, baseline_events = self._run_one_claude_probe(
+            failure, events = self._run_one_claude_probe(
                 adapter=adapter,
                 route=route,
                 prompt=_PROBE_PROMPT,
                 policy=ClaudeCommandPolicy.no_tools(),
             )
-            if baseline_failure is not None:
+            if failure is not None:
                 return _snapshot(
                     route=route,
                     checked_at=checked_at,
                     expires_at=expires_at,
-                    failure=baseline_failure,
+                    failure=failure,
                 )
-            if not _claude_probe_grammar_valid(baseline_events, effect=False):
-                return _snapshot(
-                    route=route,
-                    checked_at=checked_at,
-                    expires_at=expires_at,
-                    failure=_probe_failure(
-                        "runtime_probe_grammar_invalid",
-                        "Runtime probe normalized grammar is invalid.",
-                    ),
-                )
-            effect_failure, effect_events = self._run_one_claude_probe(
-                adapter=adapter,
-                route=route,
-                prompt=_CLAUDE_EFFECT_PROMPT,
-                policy=ClaudeCommandPolicy.reviewed(mcp_tools=(_CLAUDE_EFFECT_TOOL,)),
-            )
-            if effect_failure is not None:
-                return _snapshot(
-                    route=route,
-                    checked_at=checked_at,
-                    expires_at=expires_at,
-                    failure=effect_failure,
-                )
-            starts = [
-                event
-                for event in effect_events
-                if _matching_probe_tool_event(
-                    event, RuntimeEventType.ITEM_STARTED.value
-                )
-            ]
-            completions = [
-                event
-                for event in effect_events
-                if _matching_probe_tool_event(
-                    event, RuntimeEventType.ITEM_COMPLETED.value
-                )
-            ]
-            failed = any(
-                event.get("type") == RuntimeEventType.ITEM_FAILED.value
-                for event in effect_events
-            )
-            turn_completions = sum(
-                event.get("type") == RuntimeEventType.TURN_COMPLETED.value
-                for event in effect_events
-            )
-            turn_starts = [
-                event
-                for event in effect_events
-                if event.get("type") == RuntimeEventType.TURN_STARTED.value
-            ]
-            completed_turns = [
-                event
-                for event in effect_events
-                if event.get("type") == RuntimeEventType.TURN_COMPLETED.value
-            ]
-            all_item_starts = sum(
-                event.get("type") == RuntimeEventType.ITEM_STARTED.value
-                for event in effect_events
-            )
-            expected_call = effects.classify(
-                {
-                    "type": "mcp_tool_call",
-                    "server": "runtime_probe",
-                    "tool": "record_effect_start",
-                    "arguments": {"marker": "ceo-agent-runtime-probe-v1"},
-                }
-            )
-            assert expected_call is not None
-            if not starts:
-                return _snapshot(
-                    route=route,
-                    checked_at=checked_at,
-                    expires_at=expires_at,
-                    failure=_probe_failure(
-                        "runtime_probe_effect_visibility_missing",
-                        "Runtime probe effect-start evidence is missing.",
-                    ),
-                )
-            if not _claude_probe_grammar_valid(effect_events, effect=True):
+            if not _claude_probe_grammar_valid(events):
                 return _snapshot(
                     route=route,
                     checked_at=checked_at,
@@ -336,40 +243,13 @@ class AgentRuntimeProbe:
                     failure=_probe_failure(
                         "runtime_probe_grammar_invalid",
                         "Runtime probe normalized grammar is invalid.",
-                    ),
-                )
-            exact_evidence = (
-                len(starts) == 1
-                and len(completions) == 1
-                and not failed
-                and all_item_starts == 1
-                and len(turn_starts) == 1
-                and len(completed_turns) == 1
-                and turn_completions == 1
-                and starts[0]["item"]["id"] == completions[0]["item"]["id"]
-                and completions[0]["item"].get("status") == "completed"
-                and starts[0]["item"].get("metadata", {}).get("operation_digest")
-                == expected_call.operation_digest
-                and completions[0]["item"].get("metadata", {}).get("operation_digest")
-                == expected_call.operation_digest
-                and turn_starts[0].get("session_id")
-                == completed_turns[0].get("session_id")
-            )
-            if not exact_evidence:
-                return _snapshot(
-                    route=route,
-                    checked_at=checked_at,
-                    expires_at=expires_at,
-                    failure=_probe_failure(
-                        "runtime_probe_effect_visibility_missing",
-                        "Runtime probe effect-start evidence is missing.",
                     ),
                 )
         finally:
             adapter._mcp_proxy.close()
         return RuntimeCapabilitySnapshot(
             route_name=route.name,
-            capabilities=_BASE_CAPABILITIES | {"audit_effect_visibility"},
+            capabilities=_BASE_CAPABILITIES,
             healthy=True,
             checked_at=checked_at.isoformat(),
             expires_at=expires_at.isoformat(),
@@ -675,39 +555,17 @@ def _parse_probe_result(raw: str) -> dict[str, object]:
     return result
 
 
-def _matching_probe_tool_event(event: dict[str, object], event_type: str) -> bool:
-    item = event.get("item")
-    return (
-        event.get("type") == event_type
-        and isinstance(item, dict)
-        and item.get("server") == "runtime_probe"
-        and item.get("tool") == "record_effect_start"
-        and isinstance(item.get("id"), str)
-        and bool(item["id"])
-    )
-
-
 def _claude_probe_grammar_valid(
-    events: tuple[dict[str, object], ...], *, effect: bool
+    events: tuple[dict[str, object], ...]
 ) -> bool:
     expected_types = (
-        (
-            RuntimeEventType.TURN_STARTED.value,
-            RuntimeEventType.ITEM_STARTED.value,
-            RuntimeEventType.ITEM_COMPLETED.value,
-            RuntimeEventType.ITEM_COMPLETED.value,
-            RuntimeEventType.TURN_COMPLETED.value,
-        )
-        if effect
-        else (
-            RuntimeEventType.TURN_STARTED.value,
-            RuntimeEventType.ITEM_COMPLETED.value,
-            RuntimeEventType.TURN_COMPLETED.value,
-        )
+        RuntimeEventType.TURN_STARTED.value,
+        RuntimeEventType.ITEM_COMPLETED.value,
+        RuntimeEventType.TURN_COMPLETED.value,
     )
     if tuple(event.get("type") for event in events) != expected_types:
         return False
-    message = events[3 if effect else 1].get("item")
+    message = events[1].get("item")
     if not (
         isinstance(message, dict)
         and message.get("type") == "agent_message"

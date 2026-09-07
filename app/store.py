@@ -112,7 +112,7 @@ SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-07.3"
+STORE_SCHEMA_VERSION = "2026-09-07.4"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -471,10 +471,6 @@ FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR = (
 )
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RUNTIME_RESULT_ENVELOPE_BYTES = 64 * 1024
-MAX_RECONCILIATION_EVENTS = 256
-MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS = 16
-RECONCILIATION_EVENT_LIMIT_ERROR = "agent run reconciliation event limit exceeded"
-RECONCILIATION_ATTEMPT_LIMIT_ERROR = "agent run reconciliation attempt limit exceeded"
 RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
     {"structured", "meeting", "task", "weekly_okr", "memory"}
 )
@@ -945,17 +941,8 @@ class AgentRun(BaseModel):
     final_result_json: str = ""
     structured_error_json: str = ""
     tool_events: list[dict[str, object]] = Field(default_factory=list)
-    effect_started_count: int = 0
-    effect_completed_count: int = 0
-    effect_failed_count: int = 0
-    effect_receipt_count: int = 0
-    effect_unreviewed_count: int = 0
-    reconciliation_event_count: int = 0
     lease_owner: str = ""
     lease_expires_at: str = ""
-    reconciliation_attempts: int = 0
-    reconciliation_next_attempt_at: str = ""
-    reconciliation_suspended: bool = False
     started_at: str = ""
     completed_at: str = ""
     created_at: str
@@ -1008,20 +995,6 @@ class RuntimeRoutePause(BaseModel):
     updated_at: str
 
 
-class AgentExecutionReceipt(BaseModel):
-    id: int
-    agent_run_id: int
-    receipt_id: str
-    operation_id: str
-    cli: str
-    command_path: str
-    command_digest: str
-    exit_code: int
-    completed: bool
-    persisted: bool
-    safe_to_confirm: bool
-    effect_counted: bool = False
-    created_at: str
 
 
 @dataclass(frozen=True)
@@ -1036,18 +1009,6 @@ class AgentRuntimeAttemptStartClaim:
     start_acquired: bool
 
 
-@dataclass(frozen=True)
-class ClaudeEffectDispatchClaim:
-    dispatch_acquired: bool
-
-
-@dataclass(frozen=True)
-class ManualAgentRunResolution:
-    run_id: int
-    task_id: int
-    attempt_id: int
-    resolution: str
-    execution_generation: str
 
 
 class AgentRunLeaseLostError(RuntimeError):
@@ -1169,16 +1130,6 @@ def _agent_effect_identity(event: dict[str, object]) -> dict[str, object] | None
     return identity or None
 
 
-def _agent_effect_state_from_counts(row: sqlite3.Row) -> str:
-    starts = int(row["effect_started_count"])
-    completed = int(row["effect_completed_count"])
-    failed = int(row["effect_failed_count"])
-    receipts = int(row["effect_receipt_count"])
-    if int(row["effect_unreviewed_count"]) or starts > completed + failed + receipts:
-        return "unknown"
-    if completed + receipts:
-        return "confirmed"
-    return "none"
 
 
 class OkrReviewRequest(BaseModel):
@@ -2449,7 +2400,7 @@ class AutoReplyStore:
                     operation_id text not null default '',
                     status text not null default 'pending'
                         check(status in (
-                            'pending', 'running', 'completed', 'failed', 'unknown'
+                            'pending', 'running', 'completed', 'failed'
                         )),
                     codex_session_id text not null default '',
                     transcript_start_line integer not null default 0,
@@ -2457,19 +2408,8 @@ class AutoReplyStore:
                     final_result_json text not null default '',
                     structured_error_json text not null default '',
                     tool_events_json text not null default '[]',
-                    side_effect_state text not null default 'none'
-                        check(side_effect_state in ('none', 'confirmed', 'unknown')),
-                    effect_started_count integer not null default 0,
-                    effect_completed_count integer not null default 0,
-                    effect_failed_count integer not null default 0,
-                    effect_receipt_count integer not null default 0,
-                    effect_unreviewed_count integer not null default 0,
-                    reconciliation_event_count integer not null default 0,
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
-                    reconciliation_attempts integer not null default 0,
-                    reconciliation_next_attempt_at text not null default '',
-                    reconciliation_suspended integer not null default 0,
                     started_at text not null default '',
                     completed_at text not null default '',
                     created_at text not null default current_timestamp,
@@ -3597,43 +3537,9 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table reply_tasks add column {column} {definition}"
                     )
-            agent_run_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(agent_runs)").fetchall()
-            }
-            for column, definition in (
-                ("reconciliation_attempts", "integer not null default 0"),
-                ("reconciliation_next_attempt_at", "text not null default ''"),
-                ("reconciliation_suspended", "integer not null default 0"),
-            ):
-                if column not in agent_run_columns:
-                    db.execute(
-                        f"alter table agent_runs add column {column} {definition}"
-                    )
             self._migrate_runtime_attempt_session_evidence(db)
             self._migrate_runtime_attempt_execution_state(db)
             self._migrate_agent_run_turn_identity(db)
-            agent_run_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(agent_runs)").fetchall()
-            }
-            for column in (
-                "effect_started_count",
-                "effect_completed_count",
-                "effect_failed_count",
-                "effect_receipt_count",
-                "effect_unreviewed_count",
-                "reconciliation_event_count",
-            ):
-                if column not in agent_run_columns:
-                    db.execute(
-                        f"alter table agent_runs add column {column} "
-                        "integer not null default 0"
-                    )
-            db.execute(
-                "create index if not exists idx_agent_runs_reconciliation_due "
-                "on agent_runs(status, reconciliation_next_attempt_at, id)"
-            )
             agent_run_event_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(agent_run_events)").fetchall()
@@ -3642,13 +3548,6 @@ class AutoReplyStore:
                 db.execute(
                     "alter table agent_run_events add column "
                     "event_scope text not null default 'direct'"
-                )
-            if "reconciliation_event_count" not in agent_run_columns:
-                db.execute(
-                    "update agent_runs set reconciliation_event_count=("
-                    "select count(*) from agent_run_events "
-                    "where agent_run_id=agent_runs.id "
-                    "and event_scope='reconciliation')"
                 )
             db.execute(
                 "create index if not exists idx_agent_run_events_run_scope "
@@ -4311,7 +4210,6 @@ class AutoReplyStore:
                 )
             self._migrate_removed_runtime(db)
             self._migrate_agent_run_events(db)
-            self._backfill_agent_run_effect_counters(db)
             runtime_session_columns = {
                 row["name"]
                 for row in db.execute(
@@ -5429,7 +5327,29 @@ class AutoReplyStore:
             "parent_agent_run_id",
             "operation_id",
         }
-        if required_columns <= columns and desired_identity in unique_columns:
+        retired_columns = {
+            "side_effect_state",
+            "effect_started_count",
+            "effect_completed_count",
+            "effect_failed_count",
+            "effect_receipt_count",
+            "effect_unreviewed_count",
+            "reconciliation_event_count",
+            "reconciliation_attempts",
+            "reconciliation_next_attempt_at",
+            "reconciliation_suspended",
+        }
+        table_sql_row = db.execute(
+            "select sql from sqlite_master where type='table' and name='agent_runs'"
+        ).fetchone()
+        table_sql = str(table_sql_row["sql"] or "") if table_sql_row else ""
+        current_status_contract = "'failed', 'unknown'" not in table_sql
+        if (
+            required_columns <= columns
+            and desired_identity in unique_columns
+            and not retired_columns.intersection(columns)
+            and current_status_contract
+        ):
             return
         existing_turn_columns = required_columns & columns
         if existing_turn_columns and existing_turn_columns != required_columns:
@@ -5441,6 +5361,31 @@ class AutoReplyStore:
             if preserve_turn_identity
             else "'audit', 0, 0, null, ''"
         )
+
+        if "agent_run_state_events" in {
+            str(row["name"])
+            for row in db.execute(
+                "select name from sqlite_master where type='table'"
+            ).fetchall()
+        }:
+            db.execute(
+                """
+                insert into agent_run_state_events (
+                    agent_run_id, phase, structured_error_json, created_at
+                )
+                select id, 'legacy_unknown_migrated',
+                       case when structured_error_json<>'' then structured_error_json
+                            else '{"code":"legacy_unknown","retryable":true}' end,
+                       updated_at
+                from agent_runs
+                where status='unknown'
+                  and not exists (
+                      select 1 from agent_run_state_events as events
+                      where events.agent_run_id=agent_runs.id
+                        and events.phase='legacy_unknown_migrated'
+                  )
+                """
+            )
 
         with AutoReplyStore._foreign_key_rebuild(
             db,
@@ -5462,7 +5407,7 @@ class AutoReplyStore:
                     operation_id text not null default '',
                     status text not null default 'pending'
                         check(status in (
-                            'pending', 'running', 'completed', 'failed', 'unknown'
+                            'pending', 'running', 'completed', 'failed'
                         )),
                     codex_session_id text not null default '',
                     transcript_start_line integer not null default 0,
@@ -5470,13 +5415,8 @@ class AutoReplyStore:
                     final_result_json text not null default '',
                     structured_error_json text not null default '',
                     tool_events_json text not null default '[]',
-                    side_effect_state text not null default 'none'
-                        check(side_effect_state in ('none', 'confirmed', 'unknown')),
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
-                    reconciliation_attempts integer not null default 0,
-                    reconciliation_next_attempt_at text not null default '',
-                    reconciliation_suspended integer not null default 0,
                     started_at text not null default '',
                     completed_at text not null default '',
                     created_at text not null default current_timestamp,
@@ -5494,27 +5434,26 @@ class AutoReplyStore:
                     operation_id, status, codex_session_id,
                     transcript_start_line, transcript_end_line,
                     final_result_json, structured_error_json, tool_events_json,
-                    side_effect_state, lease_owner, lease_expires_at,
-                    reconciliation_attempts, reconciliation_next_attempt_at,
-                    reconciliation_suspended, started_at, completed_at,
+                    lease_owner, lease_expires_at, started_at, completed_at,
                     created_at, updated_at
                 )
                 select
                     id, reply_task_id, execution_generation, {identity_select},
-                    status, codex_session_id,
+                    case when status='unknown' then 'failed' else status end,
+                    codex_session_id,
                     transcript_start_line, transcript_end_line,
-                    final_result_json, structured_error_json, tool_events_json,
-                    side_effect_state, lease_owner, lease_expires_at,
-                    reconciliation_attempts, reconciliation_next_attempt_at,
-                    reconciliation_suspended, started_at, completed_at,
+                    final_result_json,
+                    case when status='unknown' and structured_error_json=''
+                         then '{{"code":"legacy_unknown","retryable":true}}'
+                         else structured_error_json end,
+                    tool_events_json,
+                    lease_owner, lease_expires_at, started_at, completed_at,
                     created_at, updated_at
                 from agent_runs;
                 drop table agent_runs;
                 alter table agent_runs_turn_migration rename to agent_runs;
                 create index idx_agent_runs_status
                     on agent_runs(status, updated_at);
-                create index idx_agent_runs_reconciliation_due
-                    on agent_runs(status, reconciliation_next_attempt_at, id);
                 """
             )
 
@@ -5798,90 +5737,6 @@ class AutoReplyStore:
             )
 
     @staticmethod
-    def _backfill_agent_run_effect_counters(db: sqlite3.Connection) -> None:
-        candidate_ids = [
-            row["id"]
-            for row in db.execute(
-                """
-                select id from agent_runs
-                where effect_started_count=0
-                  and effect_completed_count=0
-                  and effect_failed_count=0
-                  and effect_receipt_count=0
-                  and effect_unreviewed_count=0
-                  and exists (
-                      select 1 from agent_run_events
-                      where agent_run_id=agent_runs.id
-                  )
-                """
-            ).fetchall()
-        ]
-        if not candidate_ids:
-            return
-        db.execute(
-            """
-            update agent_runs
-            set effect_started_count=(
-                    select count(*) from agent_run_events
-                    where agent_run_id=agent_runs.id
-                      and effect_kind='effectful' and event_type='item.started'
-                ),
-                effect_completed_count=(
-                    select count(*) from agent_run_events
-                    where agent_run_id=agent_runs.id
-                      and effect_kind='effectful' and event_type='item.completed'
-                ),
-                effect_failed_count=(
-                    select count(*) from agent_run_events
-                    where agent_run_id=agent_runs.id
-                      and effect_kind='effectful' and event_type='item.failed'
-                ),
-                effect_receipt_count=min(
-                    (select count(*) from agent_run_events
-                     where agent_run_id=agent_runs.id
-                       and receipt_operation_id<>''),
-                    max(0,
-                        (select count(*) from agent_run_events
-                         where agent_run_id=agent_runs.id
-                           and effect_kind='effectful'
-                           and event_type='item.started')
-                        - (select count(*) from agent_run_events
-                           where agent_run_id=agent_runs.id
-                             and effect_kind='effectful'
-                             and event_type in ('item.completed', 'item.failed'))
-                    )
-                ),
-                effect_unreviewed_count=(
-                    select count(*) from agent_run_events
-                    where agent_run_id=agent_runs.id and effect_kind='unreviewed'
-                )
-            where effect_started_count=0
-              and effect_completed_count=0
-              and effect_failed_count=0
-              and effect_receipt_count=0
-              and effect_unreviewed_count=0
-              and exists (
-                  select 1 from agent_run_events
-                  where agent_run_id=agent_runs.id
-              )
-            """
-        )
-        for run_id in candidate_ids:
-            row = db.execute(
-                """
-                select id, effect_started_count, effect_completed_count,
-                       effect_failed_count, effect_receipt_count,
-                       effect_unreviewed_count
-                from agent_runs where id=?
-                """,
-                (run_id,),
-            ).fetchone()
-            db.execute(
-                "update agent_runs set side_effect_state=? where id=?",
-                (_agent_effect_state_from_counts(row), row["id"]),
-            )
-
-    @staticmethod
     def _migrate_reply_task_channel_identity(db: sqlite3.Connection) -> None:
         """Replace the legacy cross-channel UNIQUE constraint in place."""
         columns = {
@@ -6149,17 +6004,8 @@ class AutoReplyStore:
             final_result_json=row["final_result_json"],
             structured_error_json=row["structured_error_json"],
             tool_events=tool_events,
-            effect_started_count=row["effect_started_count"],
-            effect_completed_count=row["effect_completed_count"],
-            effect_failed_count=row["effect_failed_count"],
-            effect_receipt_count=row["effect_receipt_count"],
-            effect_unreviewed_count=row["effect_unreviewed_count"],
-            reconciliation_event_count=row["reconciliation_event_count"],
             lease_owner=row["lease_owner"],
             lease_expires_at=row["lease_expires_at"],
-            reconciliation_attempts=row["reconciliation_attempts"],
-            reconciliation_next_attempt_at=row["reconciliation_next_attempt_at"],
-            reconciliation_suspended=bool(row["reconciliation_suspended"]),
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             created_at=row["created_at"],
@@ -6892,599 +6738,6 @@ class AutoReplyStore:
         with self._connect() as db:
             return [tuple(row) for row in db.execute("pragma foreign_key_check")]
 
-    def record_agent_execution_receipt(
-        self,
-        run_id: int,
-        *,
-        receipt_id: str,
-        operation_id: str,
-        cli: str,
-        command_path: str,
-        command_digest: str,
-        exit_code: int,
-        owner: str,
-        expected_status: str = "running",
-        now: str | datetime | None = None,
-    ) -> AgentExecutionReceipt:
-        if not all(
-            value.strip()
-            for value in (
-                receipt_id,
-                operation_id,
-                cli,
-                command_path,
-                command_digest,
-            )
-        ):
-            raise ValueError("execution receipt identity must be non-empty")
-        if exit_code != 0:
-            raise ValueError("only successful executions can produce receipts")
-        if expected_status not in {"running", "unknown"}:
-            raise ValueError("invalid execution receipt run status")
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            run_row = self._require_current_agent_run_write_access(
-                db,
-                run_id,
-                owner=owner,
-                now_text=now_text,
-                expected_status=expected_status,
-            )
-            run_row = db.execute(
-                "select role from agent_runs where id=?", (run_id,)
-            ).fetchone()
-            if run_row is not None and run_row["role"] == AgentRole.CONSUMER.value:
-                raise ValueError("Consumer Agent cannot persist execution receipts")
-            db.execute(
-                """
-                insert or ignore into agent_execution_receipts (
-                    agent_run_id, receipt_id, operation_id, cli,
-                    command_path, command_digest, exit_code,
-                    completed, persisted, safe_to_confirm, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, 1, 1, 1, ?)
-                """,
-                (
-                    run_id,
-                    receipt_id,
-                    operation_id,
-                    cli,
-                    command_path,
-                    command_digest,
-                    exit_code,
-                    now_text,
-                ),
-            )
-            row = db.execute(
-                """
-                select * from agent_execution_receipts
-                where agent_run_id=? and operation_id=?
-                """,
-                (run_id, operation_id),
-            ).fetchone()
-            if row is None:
-                raise RuntimeError("execution receipt was not persisted")
-            if (
-                row["receipt_id"] != receipt_id
-                or row["cli"] != cli
-                or row["command_path"] != command_path
-                or row["command_digest"] != command_digest
-                or row["exit_code"] != exit_code
-            ):
-                raise ValueError("conflicting execution receipt")
-            return AgentExecutionReceipt.model_validate(dict(row))
-
-    @staticmethod
-    def _agent_effect_intent_identity(
-        authorization: dict[str, object],
-    ) -> tuple[str, int, str, str, str, str, str, str, str]:
-        values = (
-            authorization.get("authorization_id"),
-            authorization.get("action_index"),
-            authorization.get("receipt_operation_id"),
-            authorization.get("capability"),
-            authorization.get("operation"),
-            authorization.get("operation_digest"),
-            authorization.get("arguments_digest"),
-            authorization.get("external_action_key"),
-        )
-        target_identifiers = authorization.get("target_identifiers")
-        if (
-            not isinstance(values[0], str)
-            or not values[0].strip()
-            or isinstance(values[1], bool)
-            or not isinstance(values[1], int)
-            or values[1] < 0
-            or not all(
-                isinstance(value, str) and value.strip()
-                for value in values[2:]
-            )
-            or not isinstance(target_identifiers, dict)
-        ):
-            raise ValueError("effect intent identity is invalid")
-        return (
-            values[0],
-            values[1],
-            values[2],
-            values[3],
-            values[4],
-            values[5],
-            values[6],
-            _json_object_text(target_identifiers, field="target_identifiers"),
-            values[7],
-        )
-
-    @staticmethod
-    def _persisted_agent_effect_intent_identity(
-        row: sqlite3.Row,
-    ) -> tuple[str, int, str, str, str, str, str, str, str]:
-        return tuple(
-            row[key]
-            for key in (
-                "authorization_id",
-                "action_index",
-                "receipt_operation_id",
-                "capability",
-                "operation",
-                "operation_digest",
-                "arguments_digest",
-                "target_identifiers_json",
-                "external_action_key",
-            )
-        )
-
-    def prepare_agent_effect_intents(
-        self,
-        run_id: int,
-        authorizations: tuple[dict[str, object], ...],
-        *,
-        owner: str,
-        now: str | datetime | None = None,
-    ) -> None:
-        """Persist exact one-shot write intents before the model can dispatch them."""
-        identities = tuple(
-            self._agent_effect_intent_identity(authorization)
-            for authorization in authorizations
-        )
-        if len({identity[0] for identity in identities}) != len(identities):
-            raise ValueError("effect intent authorization IDs must be unique")
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            run_row = db.execute(
-                "select * from agent_runs where id=?", (run_id,)
-            ).fetchone()
-            if run_row is None or run_row["status"] != "running":
-                raise ValueError("effect intents require an active Audit run")
-            run_row = self._require_current_agent_run_write_access(
-                db,
-                run_id,
-                owner=owner,
-                now_text=now_text,
-                expected_status=run_row["status"],
-            )
-            if run_row["role"] != AgentRole.AUDIT.value:
-                raise ValueError("effect intents require an Audit run")
-            for identity in identities:
-                existing = db.execute(
-                    "select * from agent_effect_intents "
-                    "where agent_run_id=? and receipt_operation_id=?",
-                    (run_id, identity[2]),
-                ).fetchone()
-                if (
-                    existing is not None
-                    and self._persisted_agent_effect_intent_identity(existing)
-                    != identity
-                ):
-                    raise ValueError("conflicting logical effect intent")
-                db.execute(
-                    """
-                    insert or ignore into agent_effect_intents (
-                        agent_run_id, authorization_id, action_index,
-                        receipt_operation_id, capability, operation,
-                        operation_digest, arguments_digest,
-                        target_identifiers_json, external_action_key,
-                        state, prepared_at, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
-                    """,
-                    (run_id, *identity, now_text, now_text),
-                )
-                row = db.execute(
-                    "select * from agent_effect_intents "
-                    "where agent_run_id=? and authorization_id=?",
-                    (run_id, identity[0]),
-                ).fetchone()
-                if self._persisted_agent_effect_intent_identity(row) != identity:
-                    raise ValueError("conflicting effect intent")
-
-    def dispatch_agent_effect_intent(
-        self,
-        run_id: int,
-        authorization: dict[str, object],
-        *,
-        now: str | datetime | None = None,
-    ) -> None:
-        """Consume one prepared authorization immediately before target dispatch."""
-        identity = self._agent_effect_intent_identity(authorization)
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            run_row = db.execute(
-                "select status, lease_owner, lease_expires_at from agent_runs "
-                "where id=?", (run_id,)
-            ).fetchone()
-            if (
-                run_row is None
-                or run_row["status"] != "running"
-                or not run_row["lease_owner"]
-                or run_row["lease_expires_at"] <= now_text
-            ):
-                raise ValueError("effect intent run is not active")
-            row = db.execute(
-                "select * from agent_effect_intents "
-                "where agent_run_id=? and authorization_id=?",
-                (run_id, identity[0]),
-            ).fetchone()
-            if row is None:
-                raise ValueError("effect intent was not prepared")
-            if self._persisted_agent_effect_intent_identity(row) != identity:
-                raise ValueError("effect intent identity mismatch")
-            if row["state"] != "prepared":
-                raise ValueError("effect intent already dispatched")
-            incomplete_predecessor = db.execute(
-                "select action_index from agent_effect_intents "
-                "where agent_run_id=? and action_index<? and state<>'acknowledged' "
-                "order by action_index limit 1",
-                (run_id, row["action_index"]),
-            ).fetchone()
-            if incomplete_predecessor is not None:
-                raise ValueError("agent_action_dependency_incomplete")
-            cursor = db.execute(
-                "update agent_effect_intents set state='dispatched', "
-                "dispatched_at=?, updated_at=? where id=? and state='prepared'",
-                (now_text, now_text, row["id"]),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("effect intent already dispatched")
-            db.execute(
-                "update agent_runs set side_effect_state='unknown', updated_at=? "
-                "where id=? and status in ('running', 'unknown')",
-                (now_text, run_id),
-            )
-
-    def acknowledge_agent_effect_intent(
-        self,
-        run_id: int,
-        authorization: dict[str, object],
-        *,
-        result_digest: str,
-        exit_code: int,
-        provider_result: dict[str, object] | None = None,
-        now: str | datetime | None = None,
-    ) -> None:
-        """Persist a successful tool ack even if the service lease was lost."""
-        identity = self._agent_effect_intent_identity(authorization)
-        if not result_digest.strip() or exit_code != 0:
-            raise ValueError("only a successful durable ack can confirm an intent")
-        if provider_result is None:
-            provider_result = {
-                "result_digest": result_digest,
-                "legacy_receipt": True,
-            }
-        provider_result_json = _json_object_text(
-            provider_result, field="provider_result"
-        )
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            row = db.execute(
-                "select * from agent_effect_intents "
-                "where agent_run_id=? and authorization_id=?",
-                (run_id, identity[0]),
-            ).fetchone()
-            if row is None or row["state"] != "dispatched":
-                raise ValueError("effect intent is not awaiting acknowledgement")
-            if self._persisted_agent_effect_intent_identity(row) != identity:
-                raise ValueError("effect intent identity mismatch")
-            db.execute(
-                """
-                insert or ignore into agent_execution_receipts (
-                    agent_run_id, receipt_id, operation_id, cli,
-                    command_path, command_digest, exit_code,
-                    completed, persisted, safe_to_confirm, created_at
-                ) values (?, ?, ?, ?, ?, ?, 0, 1, 1, 1, ?)
-                """,
-                (
-                    run_id,
-                    identity[0],
-                    identity[2],
-                    identity[3].rsplit(".", 1)[-1],
-                    identity[4],
-                    identity[5],
-                    now_text,
-                ),
-            )
-            receipt = db.execute(
-                "select * from agent_execution_receipts "
-                "where agent_run_id=? and operation_id=?",
-                (run_id, identity[2]),
-            ).fetchone()
-            if (
-                receipt is None
-                or receipt["receipt_id"] != identity[0]
-                or receipt["cli"] != identity[3].rsplit(".", 1)[-1]
-                or receipt["command_path"] != identity[4]
-                or receipt["command_digest"] != identity[5]
-                or receipt["exit_code"] != exit_code
-            ):
-                raise ValueError("conflicting execution receipt")
-            db.execute(
-                "update agent_effect_intents set state='acknowledged', "
-                "result_digest=?, exit_code=?, acknowledged_at=?, updated_at=? "
-                "where id=? and state='dispatched'",
-                (result_digest, exit_code, now_text, now_text, row["id"]),
-            )
-            business_object_key = str(
-                authorization.get("business_object_key") or ""
-            ).strip()
-            action_identity = str(
-                authorization.get("action_identity") or ""
-            ).strip()
-            if business_object_key and action_identity:
-                db.execute(
-                    """
-                    insert or ignore into external_action_results (
-                        external_action_key, business_object_key, action_identity,
-                        operation, target_identifiers_json, provider_result_json,
-                        result_digest, first_agent_run_id, created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        identity[8], business_object_key, action_identity,
-                        identity[4], identity[7], provider_result_json,
-                        result_digest, run_id, now_text,
-                    ),
-                )
-                persisted = db.execute(
-                    "select * from external_action_results "
-                    "where external_action_key=?",
-                    (identity[8],),
-                ).fetchone()
-                if (
-                    persisted is None
-                    or persisted["business_object_key"] != business_object_key
-                    or persisted["action_identity"] != action_identity
-                    or persisted["operation"] != identity[4]
-                    or persisted["target_identifiers_json"] != identity[7]
-                    or persisted["provider_result_json"] != provider_result_json
-                    or persisted["result_digest"] != result_digest
-                ):
-                    raise ValueError("conflicting external action result")
-
-    def reuse_completed_external_action(
-        self,
-        run_id: int,
-        authorization: dict[str, object],
-        *,
-        now: str | datetime | None = None,
-    ) -> dict[str, object] | None:
-        """Acknowledge this run from a durable prior provider result."""
-        identity = self._agent_effect_intent_identity(authorization)
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            run_row = db.execute(
-                "select status, lease_owner, lease_expires_at from agent_runs "
-                "where id=?",
-                (run_id,),
-            ).fetchone()
-            if (
-                run_row is None
-                or run_row["status"] != "running"
-                or not run_row["lease_owner"]
-                or run_row["lease_expires_at"] <= now_text
-            ):
-                raise ValueError("effect intent run is not active")
-            row = db.execute(
-                "select * from agent_effect_intents "
-                "where agent_run_id=? and authorization_id=?",
-                (run_id, identity[0]),
-            ).fetchone()
-            if row is None or row["state"] != "prepared":
-                return None
-            if self._persisted_agent_effect_intent_identity(row) != identity:
-                raise ValueError("effect intent identity mismatch")
-            prior = db.execute(
-                "select * from external_action_results "
-                "where external_action_key=?",
-                (identity[8],),
-            ).fetchone()
-            if prior is None:
-                return None
-            if (
-                prior["operation"] != identity[4]
-                or prior["target_identifiers_json"] != identity[7]
-            ):
-                raise ValueError("conflicting external action result")
-            incomplete_predecessor = db.execute(
-                "select action_index from agent_effect_intents "
-                "where agent_run_id=? and action_index<? and state<>'acknowledged' "
-                "order by action_index limit 1",
-                (run_id, row["action_index"]),
-            ).fetchone()
-            if incomplete_predecessor is not None:
-                raise ValueError("agent_action_dependency_incomplete")
-            db.execute(
-                """
-                insert or ignore into agent_execution_receipts (
-                    agent_run_id, receipt_id, operation_id, cli,
-                    command_path, command_digest, exit_code,
-                    completed, persisted, safe_to_confirm, created_at
-                ) values (?, ?, ?, ?, ?, ?, 0, 1, 1, 1, ?)
-                """,
-                (
-                    run_id, identity[0], identity[2],
-                    identity[3].rsplit(".", 1)[-1], identity[4],
-                    identity[5], now_text,
-                ),
-            )
-            db.execute(
-                "update agent_effect_intents set state='acknowledged', "
-                "result_digest=?, exit_code=0, acknowledged_at=?, updated_at=? "
-                "where id=? and state='prepared'",
-                (prior["result_digest"], now_text, now_text, row["id"]),
-            )
-            result = json.loads(prior["provider_result_json"])
-            result["authorization_id"] = identity[0]
-            result["action_index"] = identity[1]
-            result["external_action_key"] = identity[8]
-            result["reused"] = True
-            return result
-
-    def confirm_agent_execution_receipt(
-        self,
-        run_id: int,
-        operation_id: str,
-        *,
-        owner: str,
-        expected_status: str = "unknown",
-        now: str | datetime | None = None,
-    ) -> None:
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            self._require_current_agent_run_write_access(
-                db,
-                run_id,
-                owner=owner,
-                now_text=now_text,
-                expected_status=expected_status,
-            )
-            receipt = db.execute(
-                """
-                select * from agent_execution_receipts
-                where agent_run_id=? and operation_id=?
-                  and completed=1 and persisted=1 and safe_to_confirm=1
-                """,
-                (run_id, operation_id),
-            ).fetchone()
-            if receipt is None:
-                raise ValueError("execution receipt is not confirmable")
-            if receipt["effect_counted"]:
-                return
-            action_index = int(json.loads(operation_id)["action_index"])
-            action_state = db.execute(
-                """
-                select
-                    sum(case when event_type='item.started' then 1 else 0 end) as starts,
-                    sum(case when event_type in ('item.completed', 'item.failed')
-                             then 1 else 0 end) as closures
-                from agent_run_events
-                where agent_run_id=? and effect_kind='effectful'
-                  and json_extract(event_json, '$.item.metadata.action_index')=?
-                """,
-                (run_id, action_index),
-            ).fetchone()
-            starts = int(action_state["starts"] or 0)
-            closures = int(action_state["closures"] or 0)
-            # Reconciliation may confirm a write that the Codex stream already
-            # marked completed, but for which no durable receipt was captured
-            # before the run became unknown.  A matching live read is validated
-            # by the caller before reaching this method, so that closed event is
-            # still an eligible effect to account for.  Reject only missing or
-            # inconsistent lifecycle evidence.
-            if starts == 0 or closures > starts:
-                raise ValueError("execution receipt has no matching effect")
-            db.execute(
-                "update agent_execution_receipts set effect_counted=1 where id=?",
-                (receipt["id"],),
-            )
-            db.execute(
-                "update agent_runs set effect_receipt_count=effect_receipt_count+1 "
-                "where id=?",
-                (run_id,),
-            )
-            counts = db.execute(
-                """
-                select effect_started_count, effect_completed_count,
-                       effect_failed_count, effect_receipt_count,
-                       effect_unreviewed_count
-                from agent_runs where id=?
-                """,
-                (run_id,),
-            ).fetchone()
-            db.execute(
-                "update agent_runs set side_effect_state=? where id=?",
-                (_agent_effect_state_from_counts(counts), run_id),
-            )
-
-    def bind_legacy_unknown_effect_action(
-        self,
-        run_id: int,
-        *,
-        action_index: int,
-        operation_id: str,
-        expected_identity: dict[str, object],
-        owner: str,
-        now: str | datetime | None = None,
-    ) -> bool:
-        """Bind one pre-action-index unknown start to an exact reviewed action."""
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            self._require_current_agent_run_write_access(
-                db,
-                run_id,
-                owner=owner,
-                now_text=now_text,
-                expected_status="unknown",
-            )
-            rows = db.execute(
-                """
-                select id, event_json from agent_run_events
-                where agent_run_id=? and event_type='item.started'
-                  and effect_kind='effectful'
-                  and json_type(event_json, '$.item.metadata.action_index') is null
-                  and json_extract(event_json, '$.item.metadata.operation_id')=?
-                  and json_extract(event_json, '$.item.metadata.capability')=?
-                  and json_extract(event_json, '$.item.metadata.operation')=?
-                  and json_extract(event_json, '$.item.metadata.operation_digest')=?
-                  and json_extract(event_json, '$.item.metadata.arguments_digest')=?
-                order by sequence
-                """,
-                (
-                    run_id,
-                    operation_id,
-                    expected_identity.get("capability"),
-                    expected_identity.get("operation"),
-                    expected_identity.get("operation_digest"),
-                    expected_identity.get("arguments_digest"),
-                ),
-            ).fetchall()
-            target = expected_identity.get("target_identifiers")
-            for row in rows:
-                event = json.loads(row["event_json"])
-                identity = _agent_effect_identity(event) or {}
-                if identity.get("target_identifiers") != target:
-                    continue
-                event["item"]["metadata"]["action_index"] = action_index
-                cursor = db.execute(
-                    """
-                    update agent_run_events set event_json=?
-                    where id=?
-                      and json_type(event_json, '$.item.metadata.action_index') is null
-                    """,
-                    (
-                        json.dumps(event, ensure_ascii=False, separators=(",", ":")),
-                        row["id"],
-                    ),
-                )
-                return cursor.rowcount == 1
-            return False
-
-    def list_agent_execution_receipts(
-        self,
-        run_id: int,
-    ) -> list[AgentExecutionReceipt]:
-        with self._connect() as db:
-            rows = db.execute(
-                """
-                select * from agent_execution_receipts
-                where agent_run_id=?
-                order by id
-                """,
-                (run_id,),
-            ).fetchall()
-            return [
-                AgentExecutionReceipt.model_validate(dict(row)) for row in rows
-            ]
-
     @contextmanager
     def _agent_run_write_transaction(
         self,
@@ -7727,7 +6980,6 @@ class AutoReplyStore:
         validation_result_schema_id: str = "",
         owner: str = "",
         lease_seconds: int = 0,
-        unknown_recovery_owner: str = "",
         now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         (
@@ -7765,84 +7017,20 @@ class AutoReplyStore:
             owner = self._require_runtime_attempt_text(owner, field="owner")
             if lease_seconds <= 0:
                 raise ValueError("lease_seconds must be positive")
-        elif unknown_recovery_owner:
-            unknown_recovery_owner = self._require_runtime_attempt_text(
-                unknown_recovery_owner, field="unknown_recovery_owner"
-            )
-            if session_mode != RuntimeAttemptSessionMode.FRESH.value:
-                raise ValueError("unknown recovery runtime attempt must be fresh")
-            if lease_seconds <= 0:
-                raise ValueError("unknown recovery lease_seconds must be positive")
         with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
             lease_expires_at = (
                 (now_value + timedelta(seconds=lease_seconds)).strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
-                if agent_run_id is None or unknown_recovery_owner
+                if agent_run_id is None
                 else ""
             )
-            active_recovery_conflict = None
-            if unknown_recovery_owner:
-                active_recovery_conflict = db.execute(
-                    "select * from agent_runtime_attempts "
-                    "where workload_kind=? and workload_key=? "
-                    "and status in ('starting', 'running') limit 1",
-                    (workload_kind, workload_key),
-                ).fetchone()
             if agent_run_id is not None:
                 run = db.execute(
-                    "select agent_runs.status, agent_runs.role, "
-                    "agent_runs.side_effect_state, "
-                    "agent_runs.effect_started_count, agent_runs.lease_owner, "
-                    "agent_runs.lease_expires_at, "
-                    "agent_runs.reconciliation_suspended, "
-                    "agent_runs.operation_id, reply_tasks.status as task_status, "
-                    "reply_tasks.execution_generation as task_execution_generation, "
-                    "agent_runs.execution_generation "
-                    "from agent_runs "
-                    "join reply_tasks on reply_tasks.id=agent_runs.reply_task_id "
-                    "where agent_runs.id=?",
+                    "select status from agent_runs where id=?",
                     (agent_run_id,),
                 ).fetchone()
-                if unknown_recovery_owner:
-                    runtime_effect_boundary = db.execute(
-                        "select 1 from agent_runtime_attempts "
-                        "where agent_run_id=? and workload_kind='agent_run' "
-                        "and workload_key=? and first_effect_started_at<>'' "
-                        "limit 1",
-                        (agent_run_id, str(agent_run_id)),
-                    ).fetchone()
-                    if (
-                        run is None
-                        or run["status"] != "unknown"
-                        or run["role"] != AgentRole.AUDIT.value
-                        or not run["operation_id"]
-                        or run["task_status"] != "processing"
-                        or run["execution_generation"]
-                        != run["task_execution_generation"]
-                        or run["side_effect_state"]
-                        not in {
-                            "unknown",
-                            "confirmed",
-                        }
-                        # A provider crash can happen after the runtime boundary
-                        # was durably crossed but before a normalized tool event
-                        # increments the per-effect counters.  That boundary is
-                        # sufficient to permit *only* fresh read-only
-                        # reconciliation; rejecting it creates an unrecoverable
-                        # `unknown` with no execution path.
-                        or (
-                            int(run["effect_started_count"]) <= 0
-                            and runtime_effect_boundary is None
-                        )
-                        or run["lease_owner"] != unknown_recovery_owner
-                        or run["lease_expires_at"] <= now_text
-                        or int(run["reconciliation_suspended"]) != 0
-                    ):
-                        raise ValueError(
-                            "unknown recovery agent run is not safely claimed"
-                        )
-                elif run is None or run["status"] != "running":
+                if run is None or run["status"] != "running":
                     raise ValueError("agent run does not exist or is not running")
             elif not self._runtime_operation_parent_exists(
                 db, workload_kind, workload_key
@@ -7850,36 +7038,6 @@ class AutoReplyStore:
                 raise ValueError(
                     "runtime operation parent does not exist or is not running"
                 )
-            if active_recovery_conflict is not None:
-                if (
-                    not active_recovery_conflict["lease_owner"]
-                    or not active_recovery_conflict["lease_expires_at"]
-                    or active_recovery_conflict["lease_expires_at"] > now_text
-                    or active_recovery_conflict["first_effect_started_at"]
-                ):
-                    raise AgentRuntimeAttemptStartConflictError(
-                        "unknown recovery runtime attempt start already claimed"
-                    )
-                cursor = db.execute(
-                    "update agent_runtime_attempts set status='failed', "
-                    "failure_class='process', "
-                    "failure_code='runtime_recovery_lease_expired', "
-                    "failover_permitted=0, lease_owner='', lease_expires_at='', "
-                    "finished_at=?, updated_at=? "
-                    "where id=? and status='running' and lease_owner=? "
-                    "and lease_expires_at<=? and first_effect_started_at=''",
-                    (
-                        now_text,
-                        now_text,
-                        active_recovery_conflict["id"],
-                        active_recovery_conflict["lease_owner"],
-                        now_text,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise AgentRuntimeAttemptStartConflictError(
-                        "unknown recovery runtime attempt start already claimed"
-                    )
             if db.execute(
                 """
                 select 1 from runtime_route_pauses
@@ -7960,8 +7118,8 @@ class AutoReplyStore:
                     attempt_purpose,
                     validation_retry_policy_id,
                     validation_result_schema_id,
-                    "running" if unknown_recovery_owner else "starting",
-                    unknown_recovery_owner or owner,
+                    "starting",
+                    owner,
                     lease_expires_at,
                     now_text,
                     now_text,
@@ -8218,14 +7376,6 @@ class AutoReplyStore:
             self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
             if row["status"] in {"failed", "superseded"}:
                 raise ValueError("cannot complete terminal runtime attempt")
-            if result_envelope_json and row["agent_run_id"] is not None:
-                evidence = envelope.get("evidence")
-                if isinstance(evidence, dict):
-                    self._validate_runtime_result_evidence_snapshot(
-                        db,
-                        int(row["agent_run_id"]),
-                        evidence,
-                    )
             if agent_run_final_result is not None:
                 if row["agent_run_id"] is None:
                     raise ValueError("agent run result reference requires agent run")
@@ -8313,55 +7463,6 @@ class AutoReplyStore:
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
             )
-
-    @staticmethod
-    def _validate_runtime_result_evidence_snapshot(
-        db: sqlite3.Connection,
-        run_id: int,
-        evidence: dict[str, object],
-    ) -> None:
-        event_start = evidence.get("event_start")
-        event_end = evidence.get("event_end")
-        if (
-            type(event_start) is not int
-            or type(event_end) is not int
-            or event_start < 0
-            or event_end < event_start
-        ):
-            raise ValueError("runtime result evidence bounds invalid")
-        event_rows = db.execute(
-            "select event_json from agent_run_events "
-            "where agent_run_id=? order by sequence",
-            (run_id,),
-        ).fetchall()
-        events = [json.loads(row["event_json"]) for row in event_rows]
-        receipt_rows = db.execute(
-            "select * from agent_execution_receipts "
-            "where agent_run_id=? order by id",
-            (run_id,),
-        ).fetchall()
-        receipts = [
-            {
-                "receipt_id": str(receipt["receipt_id"]),
-                "operation_id": str(receipt["operation_id"]),
-                "cli": str(receipt["cli"]),
-                "command_path": str(receipt["command_path"]),
-                "command_digest": str(receipt["command_digest"]),
-                "exit_code": int(receipt["exit_code"]),
-                "completed": bool(receipt["completed"]),
-                "persisted": bool(receipt["persisted"]),
-                "safe_to_confirm": bool(receipt["safe_to_confirm"]),
-                "effect_counted": bool(receipt["effect_counted"]),
-            }
-            for receipt in receipt_rows
-        ]
-        if (
-            event_end != len(events)
-            or evidence.get("events_sha256")
-            != _canonical_json_sha256(events[event_start:event_end])
-            or evidence.get("receipts_sha256") != _canonical_json_sha256(receipts)
-        ):
-            raise ValueError("runtime result evidence changed before completion")
 
     def renew_runtime_operation_attempt_lease(
         self,
@@ -8785,136 +7886,6 @@ class AutoReplyStore:
                 self._runtime_attempt_for_transition(db, attempt_id)
             )
 
-    def authorize_claude_effect_dispatch(
-        self,
-        *,
-        run_id: int,
-        attempt_id: int,
-        owner: str,
-        event: dict[str, object],
-        expected_action: dict[str, object],
-        required_skill_receipts: tuple[tuple[str, str, str], ...] = (),
-        now: str | datetime | None = None,
-    ) -> ClaudeEffectDispatchClaim:
-        """Persist one exact Claude effect start before allowing target dispatch."""
-        if not owner.strip():
-            raise ValueError("owner must be non-empty")
-        event_text = _json_object_text(event, field="event")
-        if len(event_text.encode("utf-8")) > MAX_AGENT_RUN_EVENT_BYTES:
-            raise ValueError("agent run event exceeds size limit")
-        normalized_event = json.loads(event_text)
-        event_type, call_id, effect_kind, receipt_operation_id = (
-            _agent_event_columns(normalized_event)
-        )
-        item = normalized_event.get("item")
-        metadata = item.get("metadata") if isinstance(item, dict) else None
-        if (
-            event_type != "item.started"
-            or effect_kind != "effectful"
-            or receipt_operation_id
-            or not call_id
-            or not isinstance(metadata, dict)
-            or any(metadata.get(key) != value for key, value in expected_action.items())
-        ):
-            raise ValueError("Claude effect dispatch identity mismatch")
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            run_row = self._require_current_agent_run_write_access(
-                db,
-                run_id,
-                owner=owner,
-                now_text=now_text,
-                status_error="Claude effect dispatch requires running Audit",
-            )
-            if run_row["role"] != AgentRole.AUDIT.value:
-                raise ValueError("Claude effect dispatch requires Audit")
-            if metadata.get("operation_id") != run_row["operation_id"]:
-                raise ValueError("effect operation identity mismatch")
-            attempt_row = self._runtime_attempt_for_transition(db, attempt_id)
-            if (
-                attempt_row["agent_run_id"] != run_id
-                or attempt_row["route_name"] != "claude_api"
-                or attempt_row["runtime_kind"] != "claude_cli"
-                or attempt_row["status"] != "running"
-            ):
-                raise ValueError("Claude effect dispatch attempt is not active")
-            if required_skill_receipts:
-                rows = db.execute(
-                    "select event_json from agent_run_events "
-                    "where agent_run_id=? and event_type='item.completed'",
-                    (run_id,),
-                ).fetchall()
-                observed: set[tuple[str, str, str]] = set()
-                for row in rows:
-                    try:
-                        persisted_event = json.loads(row["event_json"])
-                    except json.JSONDecodeError:
-                        continue
-                    persisted_item = persisted_event.get("item")
-                    persisted_metadata = (
-                        persisted_item.get("metadata")
-                        if isinstance(persisted_item, dict)
-                        else None
-                    )
-                    if isinstance(persisted_metadata, dict):
-                        identity = tuple(
-                            str(persisted_metadata.get(key) or "")
-                            for key in ("skill_name", "skill_path", "skill_sha256")
-                        )
-                        if all(identity):
-                            observed.add(identity)
-                if not set(required_skill_receipts).issubset(observed):
-                    raise ValueError("Claude effect dispatch skill receipt missing")
-            prior = db.execute(
-                "select event_json from agent_run_events "
-                "where agent_run_id=? and call_id=? and event_type='item.started' "
-                "order by sequence",
-                (run_id, call_id),
-            ).fetchall()
-            if prior:
-                if len(prior) == 1 and prior[0]["event_json"] == event_text:
-                    return ClaudeEffectDispatchClaim(dispatch_acquired=False)
-                raise ValueError("Claude effect dispatch call identity conflict")
-            sequence = db.execute(
-                "select coalesce(max(sequence), 0) + 1 from agent_run_events "
-                "where agent_run_id=?",
-                (run_id,),
-            ).fetchone()[0]
-            db.execute(
-                """
-                insert into agent_run_events (
-                    agent_run_id, sequence, event_json, event_type,
-                    call_id, effect_kind, receipt_operation_id, event_scope, created_at
-                ) values (?, ?, ?, 'item.started', ?, 'effectful', '', 'direct', ?)
-                """,
-                (run_id, sequence, event_text, call_id, now_text),
-            )
-            attempt_cursor = db.execute(
-                """
-                update agent_runtime_attempts
-                set first_effect_started_at=?, updated_at=?
-                where id=? and agent_run_id=? and status='running'
-                  and first_effect_started_at=''
-                """,
-                (now_text, now_text, attempt_id, run_id),
-            )
-            if attempt_cursor.rowcount != 1:
-                raise ValueError("Claude effect dispatch attempt conflict")
-            run_cursor = db.execute(
-                """
-                update agent_runs
-                set effect_started_count=effect_started_count+1,
-                    side_effect_state='unknown',
-                    transcript_end_line=transcript_end_line+1,
-                    updated_at=?
-                where id=? and status='running' and lease_owner=?
-                  and lease_expires_at>?
-                """,
-                (now_text, run_id, owner, now_text),
-            )
-            if run_cursor.rowcount != 1:
-                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
-            return ClaudeEffectDispatchClaim(dispatch_acquired=True)
-
     @staticmethod
     def _require_current_agent_run_write_access(
         db: sqlite3.Connection,
@@ -8966,10 +7937,6 @@ class AutoReplyStore:
                 completed_at=?,
                 updated_at=?
             where reply_task_id=? and execution_generation=? and status='running'
-              and not exists (
-                  select 1 from agent_effect_intents
-                  where agent_run_id=agent_runs.id and state='dispatched'
-              )
             """,
             (error_json, now_text, now_text, task_id, current_generation),
         )
@@ -9070,15 +8037,35 @@ class AutoReplyStore:
                     raise ValueError(
                         "Revised Consumer parent must be the previous Audit turn"
                     )
+            prior_session = db.execute(
+                """
+                select codex_session_id from agent_runs
+                where reply_task_id=? and execution_generation=? and role=?
+                  and proposal_revision=? and codex_session_id<>''
+                order by turn_attempt desc, id desc
+                limit 1
+                """,
+                (
+                    reply_task_id,
+                    execution_generation,
+                    role.value,
+                    proposal_revision,
+                ),
+            ).fetchone()
+            codex_session_id = (
+                str(prior_session["codex_session_id"])
+                if prior_session is not None
+                else ""
+            )
             cursor = db.execute(
                 """
                 insert or ignore into agent_runs (
                     reply_task_id, execution_generation, role,
                     proposal_revision, turn_attempt, parent_agent_run_id,
-                    operation_id, status,
+                    operation_id, status, codex_session_id,
                     lease_owner, lease_expires_at, started_at,
                     created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     reply_task_id,
@@ -9088,6 +8075,7 @@ class AutoReplyStore:
                     turn_attempt,
                     parent_agent_run_id,
                     operation_id,
+                    codex_session_id,
                     owner,
                     lease_expires_at,
                     now_text,
@@ -9130,38 +8118,6 @@ class AutoReplyStore:
                 )
                 claimed = reclaimed.rowcount == 1
                 row = db.execute("select * from agent_runs where id=?", (row["id"],)).fetchone()
-            if (
-                not claimed
-                and role is AgentRole.AUDIT
-                and row["status"] == "failed"
-            ):
-                try:
-                    structured_error = json.loads(row["structured_error_json"])
-                except json.JSONDecodeError:
-                    structured_error = {}
-                retryable = (
-                    isinstance(structured_error, dict)
-                    and structured_error.get("retryable") is True
-                    and row["side_effect_state"] == "none"
-                )
-                if retryable:
-                    reclaimed = db.execute(
-                        """
-                        update agent_runs
-                        set status='running', lease_owner=?, lease_expires_at=?,
-                            transcript_start_line=transcript_end_line,
-                            final_result_json='', structured_error_json='',
-                            completed_at='', updated_at=?
-                        where id=? and status='failed'
-                          and side_effect_state='none'
-                        """,
-                        (owner, lease_expires_at, now_text, row["id"]),
-                    )
-                    claimed = reclaimed.rowcount == 1
-                    row = db.execute(
-                        "select * from agent_runs where id=?",
-                        (row["id"],),
-                    ).fetchone()
             return AgentRunClaim(
                 run=self._agent_run_from_row(row, db=db),
                 claimed=claimed,
@@ -9173,15 +8129,12 @@ class AutoReplyStore:
         *,
         owner: str,
         lease_seconds: int = 1800,
-        expected_status: str = "running",
         now: str | datetime | None = None,
     ) -> AgentRun:
         if not owner.strip():
             raise ValueError("owner must be non-empty")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
-        if expected_status not in {"running", "unknown"}:
-            raise ValueError("invalid agent run lease status")
         with self._agent_run_write_transaction(now) as (
             db,
             (now_value, now_text),
@@ -9191,8 +8144,8 @@ class AutoReplyStore:
                 run_id,
                 owner=owner,
                 now_text=now_text,
-                expected_status=expected_status,
-                status_error=f"agent run lease requires {expected_status} status",
+                expected_status="running",
+                status_error="agent run lease requires running status",
             )
             lease_expires_at = (
                 now_value + timedelta(seconds=lease_seconds)
@@ -9201,14 +8154,13 @@ class AutoReplyStore:
                 """
                 update agent_runs
                 set lease_expires_at=?, updated_at=?
-                where id=? and status=? and lease_owner=?
+                where id=? and status='running' and lease_owner=?
                   and lease_expires_at>?
                 """,
                 (
                     lease_expires_at,
                     now_text,
                     run_id,
-                    expected_status,
                     owner,
                     now_text,
                 ),
@@ -9220,7 +8172,7 @@ class AutoReplyStore:
                 ).fetchone()
                 if row is None:
                     raise ValueError("agent run does not exist")
-                if row["status"] != expected_status:
+                if row["status"] != "running":
                     raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
             updated = db.execute(
@@ -9254,11 +8206,7 @@ class AutoReplyStore:
                 status_error="agent run session requires running status",
             )
             current = db.execute(
-                """
-                select role, codex_session_id, side_effect_state
-                from agent_runs
-                where id=?
-                """,
+                "select role, codex_session_id from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
             if current is None:
@@ -9267,18 +8215,8 @@ class AutoReplyStore:
             replace_session = (
                 allow_consumer_session_handoff
                 and current["role"] == AgentRole.CONSUMER.value
-                and current["side_effect_state"] == "none"
                 and bool(current_session_id)
                 and current_session_id != codex_session_id
-                and db.execute(
-                    """
-                    select 1 from agent_execution_receipts
-                    where agent_run_id=? and completed=1 and persisted=1
-                    limit 1
-                    """,
-                    (run_id,),
-                ).fetchone()
-                is None
             )
             cursor = db.execute(
                 """
@@ -9342,8 +8280,12 @@ class AutoReplyStore:
             raise ValueError("owner must be non-empty")
         event_text = _json_object_text(event, field="event")
         normalized_event = json.loads(event_text)
-        event_type, call_id, effect_kind, receipt_operation_id = (
-            _agent_event_columns(normalized_event)
+        event_type = str(normalized_event.get("type") or "")
+        item = normalized_event.get("item")
+        call_id = (
+            str(item.get("id") or item.get("call_id") or "")
+            if isinstance(item, dict)
+            else ""
         )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             status_row = db.execute(
@@ -9386,66 +8328,9 @@ class AutoReplyStore:
                     event_text,
                     event_type,
                     call_id,
-                    effect_kind,
-                    receipt_operation_id,
+                    "",
+                    "",
                     now_text,
-                ),
-            )
-            receipt_delta = 0
-            if receipt_operation_id:
-                call_state = db.execute(
-                    """
-                    select
-                        sum(case when effect_kind='effectful'
-                                  and event_type='item.started' then 1 else 0 end)
-                            as starts,
-                        sum(case when effect_kind='effectful'
-                                  and event_type in ('item.completed', 'item.failed')
-                                 then 1 else 0 end) as closures,
-                        sum(case when receipt_operation_id=? then 1 else 0 end)
-                            as receipts
-                    from agent_run_events
-                    where agent_run_id=?
-                      and (call_id=? or receipt_operation_id=?)
-                    """,
-                    (
-                        receipt_operation_id,
-                        run_id,
-                        receipt_operation_id,
-                        receipt_operation_id,
-                    ),
-                ).fetchone()
-                receipt_delta = int(
-                    (call_state["starts"] or 0)
-                    > (call_state["closures"] or 0) + (call_state["receipts"] or 0) - 1
-                )
-            started_delta = int(
-                effect_kind == "effectful" and event_type == "item.started"
-            )
-            completed_delta = int(
-                effect_kind == "effectful" and event_type == "item.completed"
-            )
-            failed_delta = int(
-                effect_kind == "effectful" and event_type == "item.failed"
-            )
-            unreviewed_delta = int(effect_kind == "unreviewed")
-            db.execute(
-                """
-                update agent_runs
-                set effect_started_count=effect_started_count+?,
-                    effect_completed_count=effect_completed_count+?,
-                    effect_failed_count=effect_failed_count+?,
-                    effect_receipt_count=effect_receipt_count+?,
-                    effect_unreviewed_count=effect_unreviewed_count+?
-                where id=?
-                """,
-                (
-                    started_delta,
-                    completed_delta,
-                    failed_delta,
-                    receipt_delta,
-                    unreviewed_delta,
-                    run_id,
                 ),
             )
             cursor = db.execute(
@@ -9466,60 +8351,21 @@ class AutoReplyStore:
             ).fetchone()
             return self._agent_run_from_row(updated, db=db, load_events=False)
 
-    @staticmethod
-    def _validate_agent_effect_event_identity(
-        db: sqlite3.Connection,
-        run_id: int,
-        event: dict[str, object],
-        *,
-        event_type: str,
-        call_id: str,
-        effect_kind: str,
-    ) -> None:
-        if (
-            effect_kind != "effectful"
-            or event_type not in {"item.completed", "item.failed"}
-            or not call_id
-        ):
-            return
-        row = db.execute(
-            """
-            select event_json from agent_run_events
-            where agent_run_id=? and call_id=? and effect_kind='effectful'
-              and event_type='item.started'
-            order by sequence desc limit 1
-            """,
-            (run_id, call_id),
-        ).fetchone()
-        if row is None:
-            raise ValueError("effect completion requires matching start")
-        try:
-            started = json.loads(row["event_json"])
-        except json.JSONDecodeError as exc:
-            raise ValueError("effect start identity is invalid") from exc
-        if _agent_effect_identity(started) != _agent_effect_identity(event):
-            raise ValueError("effect completion identity mismatch")
-
-
     def _transition_agent_run(
         self,
         run_id: int,
         *,
-        expected_status: str,
         owner: str | None,
         target_status: str,
         final_result_json: str,
         structured_error_json: str,
-        side_effect_state: str,
         transcript_end_line: int | None,
         now: str | datetime | None,
     ) -> AgentRun:
         if owner is None or not owner.strip():
             raise ValueError("owner must be non-empty")
-        if expected_status not in {"running", "unknown"}:
-            raise ValueError("invalid expected agent run status")
-        if side_effect_state not in {"none", "confirmed", "unknown"}:
-            raise ValueError("invalid side_effect_state")
+        if target_status not in {"completed", "failed"}:
+            raise ValueError("invalid terminal agent run status")
         if transcript_end_line is not None and transcript_end_line < 0:
             raise ValueError("transcript_end_line must not be negative")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
@@ -9537,32 +8383,6 @@ class AutoReplyStore:
                 raise ValueError("agent run does not exist")
             if row["execution_generation"] != row["task_execution_generation"]:
                 raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
-            if (
-                row["role"] == AgentRole.CONSUMER.value
-                and side_effect_state != "none"
-            ):
-                raise ValueError("Consumer Agent cannot persist side effects")
-            dispatched_intent = None
-            if row["role"] == AgentRole.AUDIT.value:
-                dispatched_intent = db.execute(
-                    "select 1 from agent_effect_intents "
-                    "where agent_run_id=? and state='dispatched' limit 1",
-                    (run_id,),
-                ).fetchone()
-            if dispatched_intent is not None and target_status in {
-                "completed",
-                "failed",
-            }:
-                target_status = "failed"
-                final_result_json = ""
-                side_effect_state = "none"
-                structured_error_json = json.dumps(
-                    {
-                        "code": "audit_external_action_result_missing",
-                        "retryable": False,
-                    },
-                    separators=(",", ":"),
-                )
             end_line = (
                 row["transcript_end_line"]
                 if transcript_end_line is None
@@ -9572,7 +8392,6 @@ class AutoReplyStore:
                 row["status"] == target_status
                 and row["final_result_json"] == final_result_json
                 and row["structured_error_json"] == structured_error_json
-                and row["side_effect_state"] == side_effect_state
                 and row["transcript_end_line"] == end_line
             )
             if exact_terminal_write:
@@ -9581,12 +8400,7 @@ class AutoReplyStore:
                 raise ValueError("conflicting terminal rewrite")
             if row["status"] == "completed":
                 raise ValueError("cannot transition from completed agent run")
-            allowed_targets = (
-                {"completed", "failed", "unknown"}
-                if expected_status == "running"
-                else {"completed", "failed"}
-            )
-            if row["status"] != expected_status or target_status not in allowed_targets:
+            if row["status"] != "running":
                 raise ValueError(
                     f"invalid agent run transition: {row['status']} -> {target_status}"
                 )
@@ -9595,89 +8409,36 @@ class AutoReplyStore:
                 run_id,
                 owner=owner,
                 now_text=now_text,
-                expected_status=expected_status,
+                expected_status="running",
             )
-            completed_at = now_text if target_status in {"completed", "failed"} else ""
+            completed_at = now_text
             values = (
                 target_status,
                 final_result_json,
                 structured_error_json,
-                side_effect_state,
                 end_line,
                 completed_at,
                 now_text,
                 run_id,
             )
-            if expected_status == "running":
-                cursor = db.execute(
-                    """
-                    update agent_runs
-                    set status=?, final_result_json=?, structured_error_json=?,
-                        side_effect_state=?, transcript_end_line=?,
-                        lease_owner='', lease_expires_at='', completed_at=?,
-                        updated_at=?
-                    where id=? and status='running' and lease_owner=?
-                      and lease_expires_at>?
-                    """,
-                    (*values, owner, now_text),
-                )
-                if cursor.rowcount != 1:
-                    raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
-            else:
-                cursor = db.execute(
-                    """
-                    update agent_runs
-                    set status=?, final_result_json=?, structured_error_json=?,
-                        side_effect_state=?, transcript_end_line=?,
-                        lease_owner='', lease_expires_at='', completed_at=?,
-                        updated_at=?
-                    where id=? and status='unknown' and lease_owner=?
-                      and lease_expires_at>?
-                    """,
-                    (*values, owner, now_text),
-                )
-                if cursor.rowcount != 1:
-                    raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            cursor = db.execute(
+                """
+                update agent_runs
+                set status=?, final_result_json=?, structured_error_json=?,
+                    transcript_end_line=?, lease_owner='', lease_expires_at='',
+                    completed_at=?, updated_at=?
+                where id=? and status='running' and lease_owner=?
+                  and lease_expires_at>?
+                """,
+                (*values, owner, now_text),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
             updated = db.execute(
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
             return self._agent_run_from_row(updated, db=db)
-
-    def update_agent_run_projection(
-        self,
-        run_id: int,
-        *,
-        status: str,
-        final_result_json: str = "",
-        structured_error_json: str = "",
-        side_effect_state: str = "none",
-        owner: str,
-        now: str | datetime | None = None,
-    ) -> AgentRun:
-        """Update the run's current projection while retaining append-only facts."""
-        if status not in {"completed", "failed", "unknown"}:
-            raise ValueError("invalid projection status")
-        if side_effect_state not in {"none", "confirmed", "unknown"}:
-            raise ValueError("invalid side_effect_state")
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            row = db.execute("select * from agent_runs where id=?", (run_id,)).fetchone()
-            if row is None:
-                raise ValueError("agent run does not exist")
-            self._require_current_agent_run_write_access(
-                db, run_id, owner=owner, now_text=now_text, expected_status=row["status"]
-            )
-            db.execute(
-                "update agent_runs set status=?, final_result_json=?, structured_error_json=?, side_effect_state=?, completed_at=?, updated_at=? where id=?",
-                (status, final_result_json, structured_error_json, side_effect_state, now_text if status != "unknown" else "", now_text, run_id),
-            )
-            db.execute(
-                "insert into agent_run_state_events(agent_run_id, phase, structured_error_json, created_at) values (?, 'projection_update', ?, ?)",
-                (run_id, structured_error_json, now_text),
-            )
-            updated = db.execute("select * from agent_runs where id=?", (run_id,)).fetchone()
-            projection = self._agent_run_from_row(updated, db=db, load_events=False)
-        return self.get_agent_run(projection.id) or projection
 
     def complete_agent_run(
         self,
@@ -9685,14 +8446,11 @@ class AutoReplyStore:
         final_result: dict[str, object],
         *,
         owner: str,
-        side_effect_state: str = "none",
         transcript_end_line: int | None = None,
-        expected_status: str = "running",
         now: str | datetime | None = None,
     ) -> AgentRun:
         return self._transition_agent_run(
             run_id,
-            expected_status=expected_status,
             owner=owner,
             target_status="completed",
             final_result_json=_json_object_text(
@@ -9700,7 +8458,6 @@ class AutoReplyStore:
                 field="final_result",
             ),
             structured_error_json="",
-            side_effect_state=side_effect_state,
             transcript_end_line=transcript_end_line,
             now=now,
         )
@@ -9712,12 +8469,10 @@ class AutoReplyStore:
         *,
         owner: str,
         transcript_end_line: int | None = None,
-        side_effect_state: str = "none",
         now: str | datetime | None = None,
     ) -> AgentRun:
         return self._transition_agent_run(
             run_id,
-            expected_status="running",
             owner=owner,
             target_status="failed",
             final_result_json="",
@@ -9725,185 +8480,12 @@ class AutoReplyStore:
                 structured_error,
                 field="structured_error",
             ),
-            side_effect_state=side_effect_state,
             transcript_end_line=transcript_end_line,
             now=now,
         )
 
 
-    def block_consumer_agent_run_for_completed_result_recovery(
-        self,
-        run_id: int,
-        *,
-        owner: str,
-        now: str | datetime | None = None,
-    ) -> AgentRun:
-        """Suspend a corrupt durable Consumer result for explicit recovery."""
-        code = "completed_runtime_result_invalid"
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            row = self._require_current_agent_run_write_access(
-                db,
-                run_id,
-                owner=owner,
-                now_text=now_text,
-                expected_status="running",
-            )
-            if (
-                row["role"] != AgentRole.CONSUMER.value
-                or int(row["effect_started_count"]) != 0
-                or row["side_effect_state"] != "none"
-            ):
-                raise ValueError("completed result block requires effect-free Consumer")
-            error_json = json.dumps(
-                {
-                    "authorization_required": False,
-                    "code": code,
-                    "retryable": False,
-                    "reason": (
-                        "The durable runtime result failed integrity validation; "
-                        "manual recovery is required."
-                    ),
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-            run_cursor = db.execute(
-                """
-                update agent_runs
-                set status='unknown', final_result_json='',
-                    structured_error_json=?, side_effect_state='none',
-                    reconciliation_suspended=1,
-                    reconciliation_next_attempt_at='',
-                    lease_owner='', lease_expires_at='', updated_at=?
-                where id=? and status='running' and lease_owner=?
-                  and lease_expires_at>?
-                """,
-                (error_json, now_text, run_id, owner, now_text),
-            )
-            task_cursor = db.execute(
-                """
-                update reply_tasks
-                set status='failed', locked_at=null, available_at='',
-                    error=?, recovery_code=?, updated_at=?
-                where id=? and status='processing'
-                  and execution_generation=?
-                """,
-                (
-                    code,
-                    code,
-                    now_text,
-                    row["reply_task_id"],
-                    row["execution_generation"],
-                ),
-            )
-            if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
-                raise AgentRunLeaseLostError(
-                    f"completed runtime result block is stale: {run_id}"
-                )
-            updated = db.execute(
-                "select * from agent_runs where id=?", (run_id,)
-            ).fetchone()
-            return self._agent_run_from_row(updated, db=db)
 
-    def finalize_closed_failed_audit_run(
-        self,
-        run_id: int,
-        *,
-        reason: str,
-        now: str | datetime | None = None,
-    ) -> AgentRun:
-        """Replace a false unknown with the exact closed write failure."""
-        if not reason.strip():
-            raise ValueError("reason must be non-empty")
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            row = db.execute(
-                "select * from agent_runs where id=?",
-                (run_id,),
-            ).fetchone()
-            if row is None:
-                raise ValueError("agent run does not exist")
-            if db.execute(
-                "select 1 from agent_effect_intents "
-                "where agent_run_id=? and state='dispatched' limit 1",
-                (run_id,),
-            ).fetchone() is not None:
-                raise ValueError(
-                    "agent run has a dispatched effect intent awaiting reconciliation"
-                )
-            if (
-                row["role"] != AgentRole.AUDIT.value
-                or row["status"] not in {"unknown", "completed"}
-                or row["side_effect_state"] != "unknown"
-                or int(row["effect_failed_count"]) <= 0
-                or int(row["effect_unreviewed_count"]) != 0
-                or int(row["effect_started_count"])
-                > int(row["effect_completed_count"])
-                + int(row["effect_failed_count"])
-                + int(row["effect_receipt_count"])
-            ):
-                raise ValueError("agent run does not have a closed failed effect")
-            failed_event = db.execute(
-                """
-                select event_json
-                from agent_run_events
-                where agent_run_id=? and event_type='item.failed'
-                  and effect_kind='effectful'
-                order by sequence desc
-                limit 1
-                """,
-                (run_id,),
-            ).fetchone()
-            if failed_event is None:
-                raise ValueError("agent run has no persisted failed effect event")
-            event = json.loads(str(failed_event["event_json"]))
-            item = event.get("item") if isinstance(event, dict) else None
-            metadata = item.get("metadata") if isinstance(item, dict) else None
-            failure_code = (
-                metadata.get("failure_code") if isinstance(metadata, dict) else None
-            )
-            if not isinstance(failure_code, str) or not failure_code:
-                failure_code = "audit_action_failed_before_completion"
-            side_effect_state = (
-                "confirmed"
-                if int(row["effect_completed_count"])
-                + int(row["effect_receipt_count"])
-                else "none"
-            )
-            structured_error = json.dumps(
-                {
-                    "authorization_required": False,
-                    "code": failure_code,
-                    "reason": reason.strip(),
-                    "retryable": False,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-            cursor = db.execute(
-                """
-                update agent_runs
-                set status='failed', final_result_json='', structured_error_json=?,
-                    side_effect_state=?, reconciliation_suspended=0,
-                    reconciliation_next_attempt_at='', lease_owner='',
-                    lease_expires_at='', completed_at=?, updated_at=?
-                where id=? and status=? and side_effect_state='unknown'
-                """,
-                (
-                    structured_error,
-                    side_effect_state,
-                    now_text,
-                    now_text,
-                    run_id,
-                    row["status"],
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise AgentRunLeaseLostError(f"agent run changed: {run_id}")
-            updated = db.execute(
-                "select * from agent_runs where id=?",
-                (run_id,),
-            ).fetchone()
-            return self._agent_run_from_row(updated, db=db)
 
 
 
@@ -9930,11 +8512,6 @@ class AutoReplyStore:
                     updated_at=?
                 where id=? and status='running'
                   and execution_generation=?
-                  and side_effect_state='none'
-                  and not exists (
-                      select 1 from agent_effect_intents
-                      where agent_run_id=agent_runs.id and state='dispatched'
-                  )
                   and lease_expires_at<=?
                   and exists (
                       select 1 from reply_tasks
@@ -9960,374 +8537,6 @@ class AutoReplyStore:
                 (run_id,),
             ).fetchone()
             return self._agent_run_from_row(row, db=db)
-
-
-
-
-
-
-
-    @staticmethod
-    def _insert_reconciliation_attempt_in_connection(
-        db: sqlite3.Connection,
-        *,
-        run_id: int,
-        task_id: int,
-        codex_reason: str,
-        audit_summary: str,
-        send_status: str,
-        send_error: str,
-    ) -> int:
-        row = db.execute(
-            """
-            select reply_tasks.channel, reply_tasks.conversation_id,
-                   reply_tasks.conversation_title, reply_tasks.trigger_message_id,
-                   reply_tasks.trigger_sender, reply_tasks.trigger_text,
-                   reply_tasks.oa_url,
-                   agent_runs.codex_session_id, agent_runs.transcript_start_line,
-                   agent_runs.transcript_end_line, agent_runs.tool_events_json
-            from reply_tasks
-            join agent_runs on agent_runs.reply_task_id=reply_tasks.id
-            where reply_tasks.id=? and agent_runs.id=?
-            """,
-            (task_id, run_id),
-        ).fetchone()
-        if row is None:
-            raise ValueError("reconciliation run and task were not found")
-        oa_url = str(row["oa_url"] or "")
-        oa_process_instance_id, oa_task_id = AutoReplyStore._oa_identifiers_from_url(
-            oa_url
-        )
-        cursor = db.execute(
-            """
-            insert into reply_attempts (
-                conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, action, sensitivity_kind,
-                agent_run_id, codex_reason, codex_session_id,
-                codex_transcript_start_line, codex_transcript_end_line,
-                audit_tool_events_json, audit_summary, send_status,
-                send_error, channel, oa_process_instance_id, oa_task_id,
-                oa_url, oa_action
-            ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                row["conversation_id"],
-                row["conversation_title"],
-                row["trigger_message_id"],
-                row["trigger_sender"],
-                row["trigger_text"],
-                run_id,
-                codex_reason,
-                row["codex_session_id"],
-                row["transcript_start_line"],
-                row["transcript_end_line"],
-                row["tool_events_json"],
-                audit_summary,
-                send_status,
-                send_error,
-                row["channel"],
-                oa_process_instance_id,
-                oa_task_id,
-                oa_url,
-                "review" if oa_process_instance_id else "",
-            ),
-        )
-        return int(cursor.lastrowid)
-
-
-
-
-
-    def resolve_agent_run_manually(
-        self,
-        run_id: int,
-        *,
-        expected_execution_generation: str,
-        resolution: str,
-        reason: str,
-        actor: str,
-        now: str | datetime | None = None,
-    ) -> ManualAgentRunResolution:
-        allowed = {
-            "confirmed_occurred",
-            "confirmed_not_occurred",
-            "terminate_unrecoverable",
-        }
-        if resolution not in allowed:
-            raise ValueError("invalid manual reconciliation resolution")
-        if not expected_execution_generation.strip():
-            raise ValueError("expected_execution_generation must be non-empty")
-        if not reason.strip():
-            raise ValueError("manual reconciliation reason must be non-empty")
-        if not actor.strip():
-            raise ValueError("manual reconciliation actor must be non-empty")
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            row = db.execute(
-                """
-                select agent_runs.*, reply_tasks.status as task_status,
-                       reply_tasks.execution_generation as task_generation
-                from agent_runs
-                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
-                where agent_runs.id=?
-                  and agent_runs.role='audit'
-                """,
-                (run_id,),
-            ).fetchone()
-            is_suspended_unknown = (
-                row is not None
-                and row["status"] == "unknown"
-                and bool(row["reconciliation_suspended"])
-                and row["task_status"] in {"pending", "processing", "failed"}
-            )
-            is_failed_with_confirmed_effect = (
-                row is not None
-                and row["status"] == "failed"
-                and row["task_status"] == "failed"
-                and resolution == "confirmed_occurred"
-            )
-            if (
-                not (is_suspended_unknown or is_failed_with_confirmed_effect)
-                or row["execution_generation"] != expected_execution_generation
-                or row["task_generation"] != expected_execution_generation
-            ):
-                raise AgentRunLeaseLostError(
-                    f"manual reconciliation target is stale: {run_id}"
-                )
-            task_id = int(row["reply_task_id"])
-            expected_run_status = str(row["status"])
-            expected_task_status = str(row["task_status"])
-            expected_suspended = int(bool(row["reconciliation_suspended"]))
-            code = f"manual_reconciliation_{resolution}"
-            audit_summary = f"{actor}: {reason}"
-            next_generation = expected_execution_generation
-            if resolution == "confirmed_occurred":
-                run_status = "completed"
-                side_effect_state = "confirmed"
-                task_status = "done"
-                send_status = "completed"
-                final_result_json = json.dumps(
-                    {
-                        "outcome": "completed",
-                        "summary": reason,
-                        "manual_resolution": resolution,
-                    },
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-            elif resolution == "confirmed_not_occurred":
-                run_status = "failed"
-                side_effect_state = "none"
-                task_status = "pending"
-                send_status = "failed"
-                final_result_json = ""
-                next_generation = uuid4().hex
-            else:
-                run_status = "failed"
-                side_effect_state = "unknown"
-                task_status = "failed"
-                send_status = "blocked"
-                final_result_json = ""
-            structured_error_json = json.dumps(
-                {
-                    "code": code,
-                    "retryable": False,
-                    "reason": reason,
-                    "actor": actor,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-            run_cursor = db.execute(
-                """
-                update agent_runs
-                set status=?, final_result_json=?, structured_error_json=?,
-                    side_effect_state=?, reconciliation_suspended=0,
-                    reconciliation_next_attempt_at='', lease_owner='',
-                    lease_expires_at='', completed_at=?, updated_at=?
-                where id=? and status=? and reconciliation_suspended=?
-                  and execution_generation=?
-                """,
-                (
-                    run_status,
-                    final_result_json,
-                    "" if resolution == "confirmed_occurred" else structured_error_json,
-                    side_effect_state,
-                    now_text,
-                    now_text,
-                    run_id,
-                    expected_run_status,
-                    expected_suspended,
-                    expected_execution_generation,
-                ),
-            )
-            if resolution == "confirmed_not_occurred":
-                self._supersede_running_agent_runs(
-                    db,
-                    task_id,
-                    expected_execution_generation,
-                    now_text=now_text,
-                )
-            task_cursor = db.execute(
-                """
-                update reply_tasks
-                set status=?, execution_generation=?, force_new_decision=?,
-                    locked_at=null, available_at='', error=?, updated_at=?
-                where id=? and status=? and execution_generation=?
-                """,
-                (
-                    task_status,
-                    next_generation,
-                    int(resolution == "confirmed_not_occurred"),
-                    "" if task_status == "done" else code,
-                    now_text,
-                    task_id,
-                    expected_task_status,
-                    expected_execution_generation,
-                ),
-            )
-            if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
-                raise AgentRunLeaseLostError(
-                    f"manual reconciliation target is stale: {run_id}"
-                )
-            attempt_id = self._insert_reconciliation_attempt_in_connection(
-                db,
-                run_id=run_id,
-                task_id=task_id,
-                codex_reason=reason,
-                audit_summary=audit_summary,
-                send_status=send_status,
-                send_error=code,
-            )
-            return ManualAgentRunResolution(
-                run_id=run_id,
-                task_id=task_id,
-                attempt_id=attempt_id,
-                resolution=resolution,
-                execution_generation=next_generation,
-            )
-
-    @staticmethod
-    def _claimed_unknown_run_end_line(
-        db: sqlite3.Connection,
-        run_id: int,
-        task_id: int,
-        owner: str,
-        now_text: str,
-        transcript_end_line: int | None,
-    ) -> tuple[int, str]:
-        row = db.execute(
-            """
-            select agent_runs.*
-            from agent_runs
-            join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
-            where agent_runs.id=? and agent_runs.reply_task_id=?
-              and agent_runs.role='audit'
-              and reply_tasks.execution_generation=agent_runs.execution_generation
-            """,
-            (run_id, task_id),
-        ).fetchone()
-        if (
-            row is None
-            or row["status"] != "unknown"
-            or row["lease_owner"] != owner
-            or row["lease_expires_at"] <= now_text
-        ):
-            raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
-        if transcript_end_line is not None and transcript_end_line < 0:
-            raise ValueError("transcript_end_line must not be negative")
-        end_line = (
-            row["transcript_end_line"]
-            if transcript_end_line is None
-            else transcript_end_line
-        )
-        return end_line, row["execution_generation"]
-
-    def list_unknown_agent_runs(
-        self,
-        *,
-        limit: int = 100,
-        now: str | datetime | None = None,
-    ) -> list[AgentRun]:
-        if limit <= 0:
-            return []
-        _, now_text = _utc_store_time(now)
-        with self._connect() as db:
-            rows = db.execute(
-                "select agent_runs.* from agent_runs "
-                "join reply_tasks on reply_tasks.id=agent_runs.reply_task_id "
-                "where agent_runs.status='unknown' "
-                "and agent_runs.role='audit' "
-                "and reply_tasks.status in ('pending', 'processing', 'failed') "
-                "and reply_tasks.execution_generation=agent_runs.execution_generation "
-                "and agent_runs.reconciliation_suspended=0 "
-                "and (agent_runs.reconciliation_next_attempt_at='' "
-                "or agent_runs.reconciliation_next_attempt_at<=?) "
-                "and (agent_runs.lease_owner='' or agent_runs.lease_expires_at<=?) "
-                "order by agent_runs.updated_at, agent_runs.id limit ?",
-                (now_text, now_text, limit),
-            ).fetchall()
-            return [self._agent_run_from_row(row, db=db) for row in rows]
-
-    def claim_unknown_agent_run(
-        self,
-        run_id: int,
-        *,
-        owner: str,
-        lease_seconds: int = 1800,
-        now: str | datetime | None = None,
-    ) -> AgentRunClaim:
-        if not owner.strip():
-            raise ValueError("owner must be non-empty")
-        if lease_seconds <= 0:
-            raise ValueError("lease_seconds must be positive")
-        with self._agent_run_write_transaction(now) as (
-            db,
-            (now_value, now_text),
-        ):
-            lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
-            cursor = db.execute(
-                """
-                update agent_runs
-                set lease_owner=?, lease_expires_at=?,
-                    reconciliation_attempts=reconciliation_attempts + 1,
-                    updated_at=?
-                where id=? and status='unknown'
-                  and role='audit'
-                  and reconciliation_suspended=0
-                  and (reconciliation_next_attempt_at=''
-                       or reconciliation_next_attempt_at<=?)
-                  and (lease_owner='' or lease_expires_at<=?)
-                  and exists (
-                      select 1 from reply_tasks
-                      where reply_tasks.id=agent_runs.reply_task_id
-                        and reply_tasks.status in ('pending', 'processing', 'failed')
-                        and reply_tasks.execution_generation=
-                            agent_runs.execution_generation
-                  )
-                """,
-                (
-                    owner,
-                    lease_expires_at,
-                    now_text,
-                    run_id,
-                    now_text,
-                    now_text,
-                ),
-            )
-            row = db.execute(
-                "select * from agent_runs where id=?",
-                (run_id,),
-            ).fetchone()
-            if row is None:
-                raise ValueError("agent run does not exist")
-            return AgentRunClaim(
-                run=self._agent_run_from_row(row, db=db),
-                claimed=cursor.rowcount == 1,
-            )
-
-
     def peek_reply_tasks(
         self,
         limit: int,
@@ -10344,14 +8553,6 @@ class AutoReplyStore:
             clauses = [
                 "status='pending'",
                 f"(available_at='' or available_at <= {now_expression})",
-                """not exists (
-                    select 1 from agent_runs as runs
-                    where runs.reply_task_id=reply_tasks.id
-                      and runs.execution_generation=reply_tasks.execution_generation
-                      and runs.role='audit'
-                      and runs.status='unknown'
-                      and runs.reconciliation_suspended=1
-                )""",
             ]
             args: list[str | int] = []
             if now is not None:
@@ -10378,50 +8579,6 @@ class AutoReplyStore:
             ).fetchall()
             return [self._reply_task_from_row(row) for row in rows]
 
-    def peek_pending_reconciliation_reply_tasks(
-        self,
-        limit: int,
-        now: str | None = None,
-        *,
-        channel: str | None = None,
-        max_id: int | None = None,
-    ) -> list[ReplyTask]:
-        """Return pending tasks whose current audit run has an unknown effect."""
-        if limit <= 0:
-            return []
-        with self._connect() as db:
-            now_expression = "current_timestamp" if now is None else "?"
-            clauses = [
-                "reply_tasks.status='pending'",
-                "agent_runs.role='audit'",
-                "agent_runs.status='unknown'",
-                "agent_runs.execution_generation=reply_tasks.execution_generation",
-                "agent_runs.reconciliation_suspended=0",
-                f"(agent_runs.reconciliation_next_attempt_at='' or agent_runs.reconciliation_next_attempt_at <= {now_expression})",
-                f"(agent_runs.lease_owner='' or agent_runs.lease_expires_at <= {now_expression})",
-            ]
-            args: list[str | int] = []
-            if now is not None:
-                args.extend((now, now))
-            if channel is not None:
-                clauses.append("reply_tasks.channel=?")
-                args.append(channel)
-            if max_id is not None:
-                clauses.append("reply_tasks.id<=?")
-                args.append(max_id)
-            args.append(limit)
-            rows = db.execute(
-                f"""
-                select distinct reply_tasks.*
-                from reply_tasks
-                left join agent_runs on agent_runs.reply_task_id=reply_tasks.id
-                where {' and '.join(clauses)}
-                order by reply_tasks.id
-                limit ?
-                """,
-                args,
-            ).fetchall()
-            return [self._reply_task_from_row(row) for row in rows]
 
     def max_pending_reply_task_id(
         self,
@@ -10433,30 +8590,11 @@ class AutoReplyStore:
             now_expression = "current_timestamp" if now is None else "?"
             clauses = [
                 "status='pending'",
-                f"""(
-                    available_at='' or available_at <= {now_expression}
-                    or exists (
-                        select 1 from agent_runs
-                        where agent_runs.reply_task_id=reply_tasks.id
-                          and agent_runs.role='audit'
-                          and agent_runs.status='unknown'
-                          and agent_runs.execution_generation=
-                              reply_tasks.execution_generation
-                          and agent_runs.reconciliation_suspended=0
-                          and (
-                              agent_runs.reconciliation_next_attempt_at=''
-                              or agent_runs.reconciliation_next_attempt_at <= {now_expression}
-                          )
-                          and (
-                              agent_runs.lease_owner=''
-                              or agent_runs.lease_expires_at <= {now_expression}
-                          )
-                    )
-                )""",
+                f"(available_at='' or available_at <= {now_expression})",
             ]
             args: list[str] = []
             if now is not None:
-                args.extend((now, now, now))
+                args.append(now)
             if channel is not None:
                 clauses.append("channel=?")
                 args.append(channel)
@@ -10485,7 +8623,7 @@ class AutoReplyStore:
             now_expression = "current_timestamp" if now is None else "?"
             args: list[str | int] = [task_id]
             if now is not None:
-                args.extend((now, now, now))
+                args.append(now)
             cursor = db.execute(
                 f"""
                 update reply_tasks
@@ -10497,26 +8635,7 @@ class AutoReplyStore:
                     updated_at=current_timestamp
                 where id=?
                   and status='pending'
-                  and (
-                      available_at='' or available_at <= {now_expression}
-                      or exists (
-                          select 1 from agent_runs
-                          where agent_runs.reply_task_id=reply_tasks.id
-                            and agent_runs.role='audit'
-                            and agent_runs.status='unknown'
-                            and agent_runs.execution_generation=
-                                reply_tasks.execution_generation
-                            and agent_runs.reconciliation_suspended=0
-                            and (
-                                agent_runs.reconciliation_next_attempt_at=''
-                                or agent_runs.reconciliation_next_attempt_at <= {now_expression}
-                            )
-                            and (
-                                agent_runs.lease_owner=''
-                                or agent_runs.lease_expires_at <= {now_expression}
-                            )
-                      )
-                  )
+                  and (available_at='' or available_at <= {now_expression})
                 """,
                 args,
             )
@@ -10684,182 +8803,29 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
-    def recover_no_effect_agent_runs_after_service_restart(
+    def recover_interrupted_agent_runs_after_service_restart(
         self,
         *,
         limit: int = 100,
     ) -> list[ReplyTask]:
-        """Release runs the stopped service can prove never started an effect."""
-        if limit <= 0:
-            return []
-        error_json = json.dumps(
-            {"code": "service_restart_before_effect", "retryable": True},
-            separators=(",", ":"),
-        )
-        with self._immediate_write_transaction() as db:
-            # A process may have died after its parent run was already marked
-            # failed.  It cannot be retried through the active-attempt path;
-            # close only entries whose parent proves no external effect began.
-            db.execute(
-                """
-                update agent_runtime_attempts
-                set status='failed', failure_class='process',
-                    failure_code='runtime_parent_terminal_no_effect',
-                    failover_permitted=1, lease_owner='', lease_expires_at='',
-                    finished_at=current_timestamp, updated_at=current_timestamp
-                where status in ('starting', 'running')
-                  and first_effect_started_at=''
-                  and agent_run_id in (
-                      select id from agent_runs
-                      where status='failed' and side_effect_state='none'
-                  )
-                """
-            )
-            rows = db.execute(
-                """
-                select tasks.*
-                from reply_tasks as tasks
-                where tasks.status='processing'
-                  and exists (
-                      select 1
-                      from agent_runs as runs
-                      where runs.reply_task_id=tasks.id
-                        and runs.execution_generation=tasks.execution_generation
-                      and runs.status in ('running', 'failed')
-                        and runs.side_effect_state='none'
-                  )
-                  and not exists (
-                      select 1
-                      from agent_runs as runs
-                      where runs.reply_task_id=tasks.id
-                        and runs.execution_generation=tasks.execution_generation
-                        and (
-                            runs.status='unknown'
-                            or (
-                                runs.status='running'
-                                and runs.side_effect_state<>'none'
-                            )
-                        )
-                  )
-                order by tasks.id
-                limit ?
-                """,
-                (limit,),
-            ).fetchall()
-            recovered: list[ReplyTask] = []
-            for row in rows:
-                task_id = int(row["id"])
-                generation = str(row["execution_generation"])
-                db.execute(
-                    """
-                    update agent_runs
-                    set status='failed', structured_error_json=case
-                            when status='running' then ?
-                            else structured_error_json
-                        end,
-                        lease_owner='', lease_expires_at='',
-                        completed_at=case
-                            when status='running' then current_timestamp
-                            else completed_at
-                        end,
-                        updated_at=current_timestamp
-                    where reply_task_id=? and execution_generation=?
-                      and status in ('running', 'failed') and side_effect_state='none'
-                    """,
-                    (error_json, task_id, generation),
-                )
-                db.execute(
-                    """
-                    update agent_runtime_attempts
-                    set status='failed', failure_class='process',
-                        failure_code='service_restart_before_effect',
-                        failover_permitted=1, lease_owner='', lease_expires_at='',
-                        finished_at=current_timestamp, updated_at=current_timestamp
-                    where status in ('starting', 'running')
-                      and first_effect_started_at=''
-                      and agent_run_id in (
-                          select id from agent_runs
-                          where reply_task_id=? and execution_generation=?
-                            and status='failed' and side_effect_state='none'
-                      )
-                    """,
-                    (task_id, generation),
-                )
-                cursor = db.execute(
-                    """
-                    update reply_tasks
-                    set force_new_decision=0, status='pending',
-                        locked_at=null, available_at='',
-                        error='service_restart_before_effect',
-                        updated_at=current_timestamp
-                    where id=? and status='processing' and execution_generation=?
-                    """,
-                    (task_id, generation),
-                )
-                if cursor.rowcount != 1:
-                    continue
-                db.execute(
-                    "delete from codex_session_locks where conversation_id=?",
-                    (row["conversation_id"],),
-                )
-                updated = db.execute(
-                    "select * from reply_tasks where id=?", (task_id,)
-                ).fetchone()
-                recovered.append(self._reply_task_from_row(updated))
-            return recovered
+        """Fail interrupted runs and requeue their business task.
 
-    def retry_failed_service_restart_tasks(self, *, limit: int = 100) -> list[ReplyTask]:
-        """Immediately reopen failed no-effect tasks caused by a service restart."""
+        Restart recovery does not classify provider commands or external effects.
+        Durable action identities and provider idempotency keys make the next
+        Agent run responsible for observing or continuing the same operation.
+        The interrupted run, runtime attempts, intents, and tool events remain
+        immutable history.
+        """
         if limit <= 0:
             return []
-        with self._connect() as db:
-            rows = db.execute(
-                """
-                select tasks.*
-                from reply_tasks tasks
-                where tasks.status='failed'
-                  and tasks.error like 'service_restart_before_effect%'
-                  and not exists (
-                    select 1 from agent_runs runs
-                    where runs.reply_task_id=tasks.id
-                      and runs.execution_generation=tasks.execution_generation
-                      and (runs.status in ('running','unknown')
-                           or runs.side_effect_state<>'none')
-                  )
-                order by tasks.id limit ?
-                """, (limit,),
-            ).fetchall()
-            recovered = []
-            for row in rows:
-                generation = str(row["execution_generation"])
-                cursor = db.execute(
-                    """update reply_tasks set status='pending', attempts=0,
-                       locked_at=null, available_at='',
-                       error='service_restart_immediate_retry', updated_at=current_timestamp
-                       where id=? and status='failed' and execution_generation=?""",
-                    (row["id"], generation),
-                )
-                if cursor.rowcount:
-                    recovered.append(self._reply_task_from_row(
-                        db.execute("select * from reply_tasks where id=?", (row["id"],)).fetchone()
-                    ))
-            return recovered
-
-    def recover_effectful_audit_runs_after_service_restart(
-        self,
-        *,
-        limit: int = 100,
-    ) -> list[ReplyTask]:
-        """Resume interrupted Audit effects through reconciliation, never replay."""
-        if limit <= 0:
-            return []
-        error_json = json.dumps(
-            {
-                "code": "service_restart_effect_failed",
-                "retryable": True,
-            },
-            separators=(",", ":"),
-        )
+        error = {
+            "code": "service_restart_interrupted",
+            "retryable": True,
+            "session_continuable": True,
+            "stage": "execution",
+            "source": "service",
+        }
+        error_json = json.dumps(error, separators=(",", ":"))
         with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
@@ -10867,11 +8833,9 @@ class AutoReplyStore:
                 from reply_tasks as tasks
                 where tasks.status='processing'
                   and exists (
-                      select 1
-                      from agent_runs as runs
+                      select 1 from agent_runs as runs
                       where runs.reply_task_id=tasks.id
                         and runs.execution_generation=tasks.execution_generation
-                        and runs.role='audit'
                         and runs.status='running'
                   )
                 order by tasks.id
@@ -10883,12 +8847,11 @@ class AutoReplyStore:
             for row in rows:
                 task_id = int(row["id"])
                 generation = str(row["execution_generation"])
-                transitioned_run_ids = [
+                run_ids = [
                     int(run["id"])
                     for run in db.execute(
-                        "select id from agent_runs "
-                        "where reply_task_id=? and execution_generation=? "
-                        "and role='audit' and status='running'",
+                        "select id from agent_runs where reply_task_id=? "
+                        "and execution_generation=? and status='running'",
                         (task_id, generation),
                     ).fetchall()
                 ]
@@ -10899,32 +8862,40 @@ class AutoReplyStore:
                         lease_owner='', lease_expires_at='',
                         completed_at=current_timestamp, updated_at=current_timestamp
                     where reply_task_id=? and execution_generation=?
-                      and role='audit' and status='running'
+                      and status='running'
                     """,
                     (error_json, task_id, generation),
                 )
                 db.executemany(
-                    "insert into agent_run_state_events ("
-                    "agent_run_id, phase, structured_error_json"
-                    ") values (?, 'terminal_failure', ?)",
-                    (
-                        (run_id, error_json)
-                        for run_id in transitioned_run_ids
-                    ),
+                    "insert into agent_run_state_events "
+                    "(agent_run_id, phase, structured_error_json) "
+                    "values (?, 'terminal_failure', ?)",
+                    ((run_id, error_json) for run_id in run_ids),
+                )
+                db.execute(
+                    """
+                    update agent_runtime_attempts
+                    set status='failed', failure_class='process',
+                        failure_code='service_restart_interrupted',
+                        failover_permitted=1, lease_owner='', lease_expires_at='',
+                        finished_at=current_timestamp, updated_at=current_timestamp
+                    where status in ('starting', 'running')
+                      and agent_run_id in (
+                          select id from agent_runs
+                          where reply_task_id=? and execution_generation=?
+                            and status='failed'
+                      )
+                    """,
+                    (task_id, generation),
                 )
                 cursor = db.execute(
                     """
                     update reply_tasks
-                    set status='pending', locked_at=null, available_at='',
-                        error='service_restart_effect_failed',
+                    set force_new_decision=0, status='pending',
+                        locked_at=null, available_at='',
+                        error='service_restart_interrupted',
                         updated_at=current_timestamp
                     where id=? and status='processing' and execution_generation=?
-                      and exists (
-                          select 1 from agent_runs
-                          where reply_task_id=reply_tasks.id
-                            and execution_generation=reply_tasks.execution_generation
-                            and role='audit' and status='failed'
-                      )
                     """,
                     (task_id, generation),
                 )
@@ -10986,22 +8957,6 @@ class AutoReplyStore:
                     raise ValueError("reply task is not an explicit service task")
                 if row["status"] not in {"pending", "processing", "failed"}:
                     raise ValueError("reply task is already terminal")
-                unsafe = db.execute(
-                    """
-                    select 1
-                    from agent_runs
-                    where reply_task_id=? and execution_generation=?
-                      and (
-                          side_effect_state<>'none'
-                          or effect_receipt_count>0
-                          or effect_unreviewed_count>0
-                      )
-                    limit 1
-                    """,
-                    (int(row["id"]), str(row["execution_generation"])),
-                ).fetchone()
-                if unsafe is not None:
-                    raise ValueError("service task has started or uncertain effects")
 
             error_json = json.dumps(
                 {
@@ -11023,9 +8978,7 @@ class AutoReplyStore:
                         lease_owner='', lease_expires_at='',
                         completed_at=?, updated_at=?
                     where reply_task_id=? and execution_generation=?
-                      and status='running' and side_effect_state='none'
-                      and effect_receipt_count=0
-                      and effect_unreviewed_count=0
+                      and status='running'
                     """,
                     (error_json, now_text, now_text, task_id, generation),
                 )
@@ -11049,50 +9002,6 @@ class AutoReplyStore:
             ).fetchall()
             return [self._reply_task_from_row(row) for row in updated_rows]
 
-    def release_unknown_audit_reconciliation_leases_after_service_restart(
-        self,
-        *,
-        limit: int = 100,
-    ) -> list[AgentRun]:
-        """Make interrupted Audit reconciliation eligible on the next worker pass."""
-        if limit <= 0:
-            return []
-        with self._immediate_write_transaction() as db:
-            rows = db.execute(
-                """
-                select runs.*
-                from agent_runs as runs
-                join reply_tasks as tasks on tasks.id=runs.reply_task_id
-                where runs.status='unknown'
-                  and runs.role='audit'
-                  and runs.reconciliation_suspended=0
-                  and runs.lease_owner<>''
-                  and tasks.status in ('processing', 'pending', 'failed')
-                  and tasks.execution_generation=runs.execution_generation
-                order by runs.updated_at, runs.id
-                limit ?
-                """,
-                (limit,),
-            ).fetchall()
-            released: list[AgentRun] = []
-            for row in rows:
-                cursor = db.execute(
-                    """
-                    update agent_runs
-                    set lease_owner='', lease_expires_at='',
-                        reconciliation_next_attempt_at='', updated_at=current_timestamp
-                    where id=? and status='unknown' and role='audit'
-                      and reconciliation_suspended=0 and lease_owner<>''
-                    """,
-                    (row["id"],),
-                )
-                if cursor.rowcount != 1:
-                    continue
-                updated = db.execute(
-                    "select * from agent_runs where id=?", (row["id"],)
-                ).fetchone()
-                released.append(self._agent_run_from_row(updated, db=db))
-            return released
 
     def resume_completed_agent_turns_after_service_restart(
         self,
@@ -11118,7 +9027,7 @@ class AutoReplyStore:
                       from agent_runs as runs
                       where runs.reply_task_id=tasks.id
                         and runs.execution_generation=tasks.execution_generation
-                        and runs.status in ('running', 'unknown')
+                        and runs.status='running'
                   )
                   and (
                       select latest.status
@@ -11147,7 +9056,7 @@ class AutoReplyStore:
                           from agent_runs as runs
                           where runs.reply_task_id=reply_tasks.id
                             and runs.execution_generation=reply_tasks.execution_generation
-                            and runs.status in ('running', 'unknown')
+                            and runs.status='running'
                       )
                     """,
                     (row["id"], row["execution_generation"]),
@@ -11222,184 +9131,7 @@ class AutoReplyStore:
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
-    def settle_failed_reply_task_without_replay(
-        self,
-        task_id: int,
-        *,
-        reason: str,
-        audit_summary: str,
-    ) -> int:
-        """Close a failed task when read-only reconciliation proves replay stale.
 
-        This is deliberately stricter than a manual status update: any active
-        run, persisted delivery, or recorded side effect keeps the task failed
-        until its external state can be reconciled through the normal path.
-        """
-        reason = reason.strip()
-        audit_summary = audit_summary.strip()
-        if not reason or not audit_summary:
-            raise ValueError("reason and audit_summary must be non-empty")
-        with self._immediate_write_transaction() as db:
-            task = db.execute(
-                "select * from reply_tasks where id=? and status='failed'",
-                (task_id,),
-            ).fetchone()
-            if task is None:
-                raise ValueError("failed reply task was not found")
-            unsafe = db.execute(
-                """
-                select 1
-                where exists (
-                    select 1 from agent_runs
-                    where reply_task_id=? and execution_generation=?
-                      and (status in ('running', 'unknown')
-                           or side_effect_state<>'none')
-                ) or exists (
-                    select 1 from sent_replies
-                    where channel=? and conversation_id=?
-                      and trigger_message_id=?
-                ) or exists (
-                    select 1
-                    from agent_execution_receipts as receipts
-                    join agent_runs as runs on runs.id=receipts.agent_run_id
-                    where runs.reply_task_id=?
-                      and receipts.completed=1 and receipts.persisted=1
-                ) or exists (
-                    select 1 from wechat_deliveries
-                    where reply_task_id=?
-                      and status not in ('failed', 'superseded')
-                )
-                """,
-                (
-                    task_id,
-                    task["execution_generation"],
-                    task["channel"],
-                    task["conversation_id"],
-                    task["trigger_message_id"],
-                    task_id,
-                    task_id,
-                ),
-            ).fetchone()
-            if unsafe is not None:
-                raise ValueError("failed reply task requires external reconciliation")
-            cursor = db.execute(
-                """
-                insert into reply_attempts (
-                    conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, audit_summary, send_status, send_error, channel
-                ) values (?, ?, ?, ?, ?, 'no_reply', 'general', ?, ?,
-                          'skipped', ?, ?)
-                """,
-                (
-                    task["conversation_id"],
-                    task["conversation_title"],
-                    task["trigger_message_id"],
-                    task["trigger_sender"],
-                    task["trigger_text"],
-                    reason,
-                    audit_summary,
-                    "settled_without_replay",
-                    task["channel"],
-                ),
-            )
-            db.execute(
-                """
-                update reply_tasks
-                set status='done', locked_at=null, available_at='', error='',
-                    recovery_code='settled_without_replay',
-                    updated_at=current_timestamp
-                where id=? and status='failed'
-                """,
-                (task_id,),
-            )
-            return int(cursor.lastrowid)
-
-    def handoff_failed_reply_task_without_replay(
-        self,
-        task_id: int,
-        *,
-        reason: str,
-        audit_summary: str,
-    ) -> int:
-        """Close an effect-free failure as a concrete human decision."""
-        reason = reason.strip()
-        audit_summary = audit_summary.strip()
-        if not reason or not audit_summary:
-            raise ValueError("reason and audit_summary must be non-empty")
-        with self._immediate_write_transaction() as db:
-            task = db.execute(
-                "select * from reply_tasks where id=? and status='failed'",
-                (task_id,),
-            ).fetchone()
-            if task is None:
-                raise ValueError("failed reply task was not found")
-            unsafe = db.execute(
-                """
-                select 1
-                where exists (
-                    select 1 from agent_runs
-                    where reply_task_id=? and execution_generation=?
-                      and (status in ('running', 'unknown')
-                           or side_effect_state<>'none')
-                ) or exists (
-                    select 1 from sent_replies
-                    where channel=? and conversation_id=?
-                      and trigger_message_id=?
-                ) or exists (
-                    select 1
-                    from agent_execution_receipts as receipts
-                    join agent_runs as runs on runs.id=receipts.agent_run_id
-                    where runs.reply_task_id=?
-                      and receipts.completed=1 and receipts.persisted=1
-                ) or exists (
-                    select 1 from wechat_deliveries
-                    where reply_task_id=? and status not in ('failed', 'superseded')
-                )
-                """,
-                (
-                    task_id,
-                    task["execution_generation"],
-                    task["channel"],
-                    task["conversation_id"],
-                    task["trigger_message_id"],
-                    task_id,
-                    task_id,
-                ),
-            ).fetchone()
-            if unsafe is not None:
-                raise ValueError("failed reply task requires external reconciliation")
-            cursor = db.execute(
-                """
-                insert into reply_attempts (
-                    conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, audit_summary, send_status, send_error, channel
-                ) values (?, ?, ?, ?, ?, 'needs_human', 'general', ?, ?,
-                          'needs_human', 'external_action_required', ?)
-                """,
-                (
-                    task["conversation_id"],
-                    task["conversation_title"],
-                    task["trigger_message_id"],
-                    task["trigger_sender"],
-                    task["trigger_text"],
-                    reason,
-                    audit_summary,
-                    task["channel"],
-                ),
-            )
-            db.execute(
-                """
-                update reply_tasks
-                set status='done', locked_at=null, available_at='', error='',
-                    recovery_code='needs_human_without_replay',
-                    updated_at=current_timestamp
-                where id=? and status='failed'
-                """,
-                (task_id,),
-            )
-            return int(cursor.lastrowid)
 
     def fail_reply_task(
         self,
@@ -11548,7 +9280,7 @@ class AutoReplyStore:
     ) -> None:
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
-        with self._connect() as db:
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             stale_run_error = json.dumps(
                 {
                     "authorization_required": False,
@@ -11557,39 +9289,58 @@ class AutoReplyStore:
                 },
                 separators=(",", ":"),
             )
+            stale_run_ids = [
+                int(row["id"])
+                for row in db.execute(
+                    """
+                    select id from agent_runs
+                    where reply_task_id=? and execution_generation=?
+                      and status='running'
+                      and (
+                        (lease_expires_at<>'' and lease_expires_at<=?)
+                        or datetime(updated_at)<=datetime(?, '-600 seconds')
+                      )
+                    """,
+                    (
+                        task_id,
+                        expected_execution_generation,
+                        now_text,
+                        now_text,
+                    ),
+                ).fetchall()
+            ]
             db.execute(
                 """
                 update agent_runs
                 set status='failed', structured_error_json=?,
                     lease_owner='', lease_expires_at='',
-                    completed_at=current_timestamp, updated_at=current_timestamp
+                    completed_at=?, updated_at=?
                 where reply_task_id=? and execution_generation=?
-                  and status='running' and side_effect_state='none'
+                  and status='running'
                   and (
-                    (lease_expires_at<>'' and lease_expires_at<=current_timestamp)
-                    or datetime(updated_at)<=datetime('now', '-600 seconds')
+                    (lease_expires_at<>'' and lease_expires_at<=?)
+                    or datetime(updated_at)<=datetime(?, '-600 seconds')
                   )
                 """,
-                (stale_run_error, task_id, expected_execution_generation),
+                (
+                    stale_run_error,
+                    now_text,
+                    now_text,
+                    task_id,
+                    expected_execution_generation,
+                    now_text,
+                    now_text,
+                ),
             )
-            unknown = db.execute(
-                """
-                select 1 from agent_runs
-                where reply_task_id=? and execution_generation=?
-                  and role='audit' and status='unknown'
-                  and effect_receipt_count=0
-                  and effect_unreviewed_count=0
-                  and reconciliation_suspended=0
-                  and exists (
-                      select 1 from reply_tasks
-                      where reply_tasks.id=agent_runs.reply_task_id
-                        and reply_tasks.status='pending'
-                  )
-                limit 1
-                """,
-                (task_id, expected_execution_generation),
-            ).fetchone()
-            next_generation = uuid4().hex if unknown is not None else expected_execution_generation
+            db.executemany(
+                "insert into agent_run_state_events "
+                "(agent_run_id, phase, structured_error_json, created_at) "
+                "values (?, 'terminal_failure', ?, ?)",
+                (
+                    (run_id, stale_run_error, now_text)
+                    for run_id in stale_run_ids
+                ),
+            )
             cursor = db.execute(
                 """
                 update reply_tasks
@@ -11598,15 +9349,14 @@ class AutoReplyStore:
                     available_at=?,
                     error=?,
                     force_new_decision=1,
-                    execution_generation=?,
-                    updated_at=current_timestamp
+                    updated_at=?
                 where id=? and status in ('processing', 'pending')
                   and execution_generation=?
                 """,
                 (
                     available_at,
                     error,
-                    next_generation,
+                    now_text,
                     task_id,
                     expected_execution_generation,
                 ),
@@ -11622,7 +9372,7 @@ class AutoReplyStore:
         reason: str,
         recovery_code: str = "",
     ) -> ReplyTask:
-        """Reopen a failed Consumer or Audit turn only when retry is effect-free."""
+        """Reopen the latest failed Consumer or Audit turn in the same generation."""
         reason = reason.strip()
         if not reason:
             raise ValueError("retry reason must be non-empty")
@@ -11630,8 +9380,7 @@ class AutoReplyStore:
             row = db.execute(
                 """
                 select tasks.execution_generation, tasks.status as task_status,
-                       runs.role as run_role, runs.status as run_status,
-                       runs.side_effect_state
+                       runs.role as run_role, runs.status as run_status
                 from reply_tasks as tasks
                 join agent_runs as runs on runs.reply_task_id=tasks.id
                 where tasks.id=? and runs.id=?
@@ -11652,49 +9401,9 @@ class AutoReplyStore:
                     and row["run_role"]
                     in {AgentRole.CONSUMER.value, AgentRole.AUDIT.value}
                     and row["run_status"] == "failed"
-                    and row["side_effect_state"] == "none"
                 )
-            unsafe_generation = None
-            if row is not None:
-                unsafe_generation = db.execute(
-                    """
-                    select 1
-                    from agent_runs as runs
-                    where runs.reply_task_id=? and runs.execution_generation=?
-                      and (
-                          runs.status in ('running', 'unknown')
-                          or runs.side_effect_state<>'none'
-                          or exists (
-                              select 1
-                              from agent_execution_receipts as receipts
-                              where receipts.agent_run_id=runs.id
-                                and receipts.completed=1 and receipts.persisted=1
-                          )
-                          or exists (
-                              select 1
-                              from reply_tasks as sent_tasks
-                              join sent_replies as replies
-                                on replies.channel=sent_tasks.channel
-                               and replies.conversation_id=
-                                   sent_tasks.conversation_id
-                               and replies.trigger_message_id=
-                                   sent_tasks.trigger_message_id
-                              where sent_tasks.id=runs.reply_task_id
-                                and json_valid(replies.send_result_json)=1
-                                and json_extract(
-                                    replies.send_result_json, '$.agent_run_id'
-                                )=runs.id
-                                and json_extract(
-                                    replies.send_result_json, '$.operation_id'
-                                )=runs.operation_id
-                          )
-                      )
-                    limit 1
-                    """,
-                    (task_id, row["execution_generation"]),
-                ).fetchone()
-            if not retryable or unsafe_generation is not None:
-                raise ValueError("failed reply task is not safely retryable")
+            if not retryable:
+                raise ValueError("failed reply task is not retryable")
             cursor = db.execute(
                 """
                 update reply_tasks
@@ -11713,275 +9422,6 @@ class AutoReplyStore:
             if updated is None:
                 raise RuntimeError("recovered reply task was not persisted")
             return self._reply_task_from_row(updated)
-
-    def recover_failed_effect_free_consumer_tasks(self, *, channel: str) -> list[int]:
-        """Retry each safely failed Consumer generation once, regardless of age."""
-        recovery_code = "automatic_effect_free_consumer_retry"
-        with self._connect() as db:
-            rows = db.execute(
-                """
-                select tasks.id, runs.id as run_id
-                from reply_tasks as tasks
-                join agent_runs as runs on runs.reply_task_id=tasks.id
-                where tasks.channel=?
-                  and tasks.status='failed'
-                  and tasks.recovery_code<>?
-                  and runs.execution_generation=tasks.execution_generation
-                  and runs.id=(
-                      select max(latest.id)
-                      from agent_runs as latest
-                      where latest.reply_task_id=tasks.id
-                        and latest.execution_generation=tasks.execution_generation
-                  )
-                  and runs.role='consumer'
-                  and runs.status='failed'
-                  and runs.side_effect_state='none'
-                  and not exists (
-                      select 1
-                      from agent_runs as generation_runs
-                      where generation_runs.reply_task_id=tasks.id
-                        and generation_runs.execution_generation=tasks.execution_generation
-                        and generation_runs.status in ('running', 'unknown')
-                  )
-                  and not exists (
-                      select 1 from sent_replies as sent
-                      where sent.channel=tasks.channel
-                        and sent.conversation_id=tasks.conversation_id
-                        and sent.trigger_message_id=tasks.trigger_message_id
-                  )
-                order by tasks.id
-                """,
-                (channel, recovery_code),
-            ).fetchall()
-        recovered: list[int] = []
-        for row in rows:
-            try:
-                self.retry_failed_reply_task(
-                    int(row["id"]),
-                    int(row["run_id"]),
-                    reason=recovery_code,
-                    recovery_code=recovery_code,
-                )
-            except (AgentRunLeaseLostError, ValueError):
-                continue
-            recovered.append(int(row["id"]))
-        return recovered
-
-    def recover_failed_effect_free_audit_tasks(self, *, channel: str) -> list[int]:
-        """Retry a failed Audit delivery once without regenerating Consumer's proposal.
-
-        This recovery is limited to a completed Consumer parent and an Audit turn
-        that recorded no effect.  Reopening the same generation lets the
-        orchestrator reuse the durable proposal, while Audit still applies the
-        current execution and verification gates before it can write anything.
-        """
-        recovery_code = "automatic_effect_free_audit_retry"
-        with self._connect() as db:
-            rows = db.execute(
-                """
-                select tasks.id, runs.id as run_id
-                from reply_tasks as tasks
-                join agent_runs as runs on runs.reply_task_id=tasks.id
-                join agent_runs as parents on parents.id=runs.parent_agent_run_id
-                where tasks.channel=?
-                  and tasks.status='failed'
-                  and tasks.recovery_code<>?
-                  and runs.execution_generation=tasks.execution_generation
-                  and runs.id=(
-                      select max(latest.id)
-                      from agent_runs as latest
-                      where latest.reply_task_id=tasks.id
-                        and latest.execution_generation=tasks.execution_generation
-                  )
-                  and runs.role='audit'
-                  and runs.status='failed'
-                  and runs.side_effect_state='none'
-                  and parents.reply_task_id=tasks.id
-                  and parents.execution_generation=tasks.execution_generation
-                  and parents.role='consumer'
-                  and parents.status='completed'
-                  and parents.proposal_revision=runs.proposal_revision
-                  and parents.final_result_json<>''
-                  and not exists (
-                      select 1
-                      from agent_runs as generation_runs
-                      where generation_runs.reply_task_id=tasks.id
-                        and generation_runs.execution_generation=tasks.execution_generation
-                        and (
-                            generation_runs.status in ('running', 'unknown')
-                            or generation_runs.side_effect_state<>'none'
-                        )
-                  )
-                  and not exists (
-                      select 1
-                      from agent_execution_receipts as receipts
-                      join agent_runs as receipt_runs on receipt_runs.id=receipts.agent_run_id
-                      where receipt_runs.reply_task_id=tasks.id
-                        and receipt_runs.execution_generation=tasks.execution_generation
-                        and receipts.completed=1 and receipts.persisted=1
-                  )
-                  and not exists (
-                      select 1 from sent_replies as sent
-                      where sent.channel=tasks.channel
-                        and sent.conversation_id=tasks.conversation_id
-                        and sent.trigger_message_id=tasks.trigger_message_id
-                  )
-                order by tasks.id
-                """,
-                (channel, recovery_code),
-            ).fetchall()
-        recovered: list[int] = []
-        for row in rows:
-            try:
-                self.retry_failed_reply_task(
-                    int(row["id"]),
-                    int(row["run_id"]),
-                    reason=recovery_code,
-                    recovery_code=recovery_code,
-                )
-            except (AgentRunLeaseLostError, ValueError):
-                continue
-            recovered.append(int(row["id"]))
-        return recovered
-
-    def recover_terminal_sessionless_audit_deliveries(
-        self,
-        *,
-        channel: str,
-        now: datetime | None = None,
-    ) -> list[int]:
-        """Replay legacy sessionless Audit deliveries with their saved decision.
-
-        Older releases terminalized a no-session unknown Audit as
-        ``audit_recovery_session_missing``.  The explicit replay policy reuses
-        the persisted Consumer decision for every affected action type.  A
-        delayed text delivery identifies its original message time so recipients
-        can distinguish the replay from a newly generated instruction.
-        """
-        recovery_code = "legacy_sessionless_audit_delivery_replay"
-        with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
-            rows = db.execute(
-                """
-                select tasks.id as task_id,
-                       tasks.execution_generation as task_generation,
-                       tasks.trigger_create_time,
-                       audits.id as audit_run_id,
-                       parents.proposal_revision,
-                       parents.final_result_json as consumer_result_json,
-                       parents.tool_events_json as consumer_tool_events_json
-                from reply_tasks as tasks
-                join agent_runs as audits on audits.reply_task_id=tasks.id
-                left join reply_attempts as attempts
-                  on attempts.agent_run_id=audits.id
-                 and attempts.send_error='audit_recovery_session_missing'
-                join agent_runs as parents on parents.id=audits.parent_agent_run_id
-                where tasks.channel=?
-                  and tasks.status='done'
-                  and not exists (
-                      select 1
-                      from sent_replies as sent
-                      where sent.conversation_id=tasks.conversation_id
-                        and sent.trigger_message_id=tasks.trigger_message_id
-                  )
-                  and not exists (
-                      select 1
-                      from agent_execution_receipts as receipts
-                      join agent_runs as receipt_runs
-                        on receipt_runs.id=receipts.agent_run_id
-                      where receipt_runs.reply_task_id=tasks.id
-                        and receipts.completed=1
-                        and receipts.persisted=1
-                        and receipts.safe_to_confirm=1
-                  )
-                  and (
-                      tasks.recovery_code<>?
-                      or not exists (
-                          select 1
-                          from agent_runs as replay_audits
-                          where replay_audits.reply_task_id=tasks.id
-                            and replay_audits.execution_generation=tasks.execution_generation
-                            and replay_audits.role='audit'
-                            and replay_audits.status='completed'
-                            and replay_audits.side_effect_state='confirmed'
-                      )
-                  )
-                  and audits.role='audit'
-                  and audits.status='completed'
-                  and (
-                      attempts.id is not null
-                      or (
-                          json_valid(audits.final_result_json)=1
-                          and json_extract(
-                              audits.final_result_json, '$.error.code'
-                          )='audit_recovery_session_missing'
-                      )
-                  )
-                  and parents.reply_task_id=tasks.id
-                  and parents.role='consumer'
-                  and parents.status='completed'
-                  and parents.proposal_revision=audits.proposal_revision
-                  and json_valid(parents.final_result_json)=1
-                  and json_extract(
-                      parents.final_result_json, '$.outcome'
-                  )='proposal'
-                order by audits.id, attempts.id
-                """,
-                (channel, recovery_code),
-            ).fetchall()
-            recovered: list[int] = []
-            for row in rows:
-                next_generation = uuid4().hex
-                consumer_result_json = self._sessionless_replay_result_json(
-                    str(row["consumer_result_json"]),
-                    trigger_create_time=str(row["trigger_create_time"]),
-                    replay_generation=next_generation,
-                    now=now_value,
-                )
-                cursor = db.execute(
-                    """
-                    update reply_tasks
-                    set status='pending', attempts=0, locked_at=null,
-                        available_at='', force_new_decision=0,
-                        execution_generation=?, error=?, recovery_code=?,
-                        updated_at=?
-                    where id=? and status='done' and execution_generation=?
-                    """,
-                    (
-                        next_generation,
-                        recovery_code,
-                        recovery_code,
-                        now_text,
-                        int(row["task_id"]),
-                        str(row["task_generation"]),
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    continue
-                db.execute(
-                    """
-                    insert into agent_runs (
-                        reply_task_id, execution_generation, role,
-                        proposal_revision, turn_attempt, parent_agent_run_id,
-                        operation_id, status, final_result_json,
-                        tool_events_json, side_effect_state, started_at,
-                        completed_at, created_at, updated_at
-                    ) values (?, ?, 'consumer', ?, 0, null, '', 'completed',
-                              ?, ?, 'none', ?, ?, ?, ?)
-                    """,
-                    (
-                        int(row["task_id"]),
-                        next_generation,
-                        int(row["proposal_revision"]),
-                        consumer_result_json,
-                        str(row["consumer_tool_events_json"]),
-                        now_text,
-                        now_text,
-                        now_text,
-                        now_text,
-                    ),
-                )
-                recovered.append(int(row["task_id"]))
-            return recovered
 
     @staticmethod
     def _sessionless_replay_result_json(
@@ -12162,15 +9602,7 @@ class AutoReplyStore:
                       select 1 from agent_runs as runs
                       where runs.reply_task_id=tasks.id
                         and runs.execution_generation=tasks.execution_generation
-                        and (
-                            runs.status in ('running', 'unknown')
-                            or runs.side_effect_state<>'none'
-                            or exists (
-                                select 1 from agent_execution_receipts as receipts
-                                where receipts.agent_run_id=runs.id
-                                  and receipts.completed=1 and receipts.persisted=1
-                            )
-                        )
+                        and runs.status='running'
                   )
                   and not exists (
                       select 1 from wechat_deliveries as deliveries
@@ -14125,7 +11557,7 @@ class AutoReplyStore:
             ).fetchone()
             return self._meeting_alignment_job_from_row(row) if row else None
 
-    def schedule_ready_to_send_meeting_alignment_reconciliation(
+    def schedule_ready_to_send_meeting_alignment_retry(
         self,
         job_id: int,
         *,
@@ -14150,7 +11582,7 @@ class AutoReplyStore:
             ).fetchone()
             if row is None:
                 raise ValueError(
-                    "ready meeting reconciliation requires an exclusive claim"
+                    "ready meeting retry requires an exclusive claim"
                 )
             return self._meeting_alignment_job_from_row(row)
 
@@ -19261,7 +16693,7 @@ class AutoReplyStore:
                 row is None
                 or row["run_generation"] != expected_execution_generation
                 or row["task_generation"] != expected_execution_generation
-                or row["run_status"] not in {"completed", "failed", "unknown"}
+                or row["run_status"] not in {"completed", "failed"}
             ):
                 raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
             persisted_oa_url = oa_url.strip() or str(row["task_oa_url"] or "").strip()
@@ -24394,10 +21826,8 @@ class AutoReplyStore:
         """Close a trigger error once its own task completed after the error.
 
         A completed task is durable evidence that the current generation
-        reached a terminal workflow state.  This is intentionally narrower
-        than a time-based observation: it does not infer message delivery or
-        an external write, and it keeps errors open while any linked agent run
-        still has an unknown side effect.
+        reached a terminal workflow state. This does not infer delivery or
+        rewrite any append-only execution fact.
         """
         with self._connect() as db:
             cursor = db.execute(
@@ -24415,15 +21845,6 @@ class AutoReplyStore:
                       and task.trigger_message_id=error_event.message_id
                       and lower(task.status)='done'
                       and datetime(task.updated_at) >= datetime(error_event.created_at)
-                      and not exists (
-                        select 1
-                        from agent_runs run
-                        where run.reply_task_id=task.id
-                          and (
-                            lower(run.status)='unknown'
-                            or lower(run.side_effect_state)='unknown'
-                          )
-                      )
                   )
                 """
             )
@@ -24453,7 +21874,7 @@ class AutoReplyStore:
             return cursor.rowcount
 
     def resolve_closed_blocked_reply_attempts(self) -> int:
-        """Close latest blocked attempts that have no remaining recovery work.
+        """Close latest blocked attempts whose current task is done.
 
         The task completion proves the workflow has reached a terminal state;
         it does not turn a skipped external action into a successful one.  The
@@ -24466,7 +21887,7 @@ class AutoReplyStore:
                 set send_status='skipped',
                     send_error='',
                     permission_action=?,
-                    permission_reason='关联任务已完成；没有待恢复或未知副作用。详见审计说明。',
+                    permission_reason='关联任务已完成；详见审计说明。',
                     updated_at=current_timestamp
                 where lower(attempt.send_status)='blocked'
                   and trim(coalesce(attempt.permission_action, ''))=''
@@ -24484,15 +21905,6 @@ class AutoReplyStore:
                       and task.conversation_id=attempt.conversation_id
                       and task.trigger_message_id=attempt.trigger_message_id
                       and lower(task.status)='done'
-                      and not exists (
-                        select 1
-                        from agent_runs run
-                        where run.reply_task_id=task.id
-                          and (
-                            lower(run.status)='unknown'
-                            or lower(run.side_effect_state)='unknown'
-                          )
-                      )
                   )
                 """,
                 (REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,),

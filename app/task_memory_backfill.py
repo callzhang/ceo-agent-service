@@ -61,7 +61,7 @@ class ProjectMemoryContextCodexRunner:
             updates=updates,
         )
         from app.agent_runtime_router import (
-            ApprovedCodexCommandFactory,
+            CodexCommandFactory,
             RoutedResultCodec,
         )
 
@@ -76,7 +76,7 @@ class ProjectMemoryContextCodexRunner:
             workload_kind="task",
             workload_key=f"{project.id}:memory_backfill",
             prompt=prompt,
-            command_factory=ApprovedCodexCommandFactory.read_only_project_memory(
+            command_factory=CodexCommandFactory.standard(
                 developer_instructions=(
                     "Only read reviewed Memory Connector evidence and return the "
                     "requested structured project-memory context. Do not write data."
