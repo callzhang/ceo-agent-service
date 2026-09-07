@@ -8,6 +8,8 @@ import json
 from types import MappingProxyType
 from typing import Any, Protocol
 
+from app.email_provider_folders import FolderRole
+
 
 EMAIL_FOLDER_BINDING_STATUSES = frozenset(
     {"active", "missing", "ambiguous", "error"}
@@ -200,7 +202,7 @@ FOLDER_BINDING_CHECKS = (
     "trim(account_id) != ''",
     "trim(category_key) != ''",
     "binding_status in ('active', 'missing', 'ambiguous', 'error')",
-    "trim(provider_folder_name) != ''",
+    "provider_folder_name != ''",
     "trim(last_verified_at) != ''",
 )
 STRUCTURED_CATEGORY_CONFIG_COLUMNS = frozenset(CATEGORY_CONFIG_COLUMN_CONTRACTS)
@@ -235,13 +237,13 @@ FOLDER_BINDING_TABLE_SQL = """
         account_id text not null check(trim(account_id) != ''),
         category_key text not null check(trim(category_key) != ''),
         provider_folder_id text not null,
-        provider_folder_name text not null check(trim(provider_folder_name) != ''),
+        provider_folder_name text not null check(provider_folder_name != ''),
         binding_status text not null check(binding_status in (
             'active', 'missing', 'ambiguous', 'error'
         )),
         last_verified_at text not null check(trim(last_verified_at) != ''),
         primary key(account_id, category_key),
-        check(binding_status != 'active' or trim(provider_folder_id) != ''),
+        check(binding_status != 'active' or provider_folder_id != ''),
         foreign key(account_id) references email_accounts(account_id)
             on delete cascade,
         foreign key(category_key) references email_category_configs(category_key)
@@ -268,24 +270,28 @@ class VerifiedEmailFolderBinding:
     provider_folder_name: str
     binding_status: str
     last_verified_at: str
+    provider_folder_role: FolderRole = FolderRole.UNBOUND
 
     def __post_init__(self) -> None:
         for field in (
             "account_id",
-            "provider_folder_id",
-            "provider_folder_name",
             "binding_status",
             "last_verified_at",
         ):
             value = getattr(self, field)
             if type(value) is not str or value != value.strip():
                 raise ValueError(f"{field} must be canonical text")
+        for field in ("provider_folder_id", "provider_folder_name"):
+            if type(getattr(self, field)) is not str:
+                raise ValueError(f"{field} must be text")
         if not self.account_id or not self.provider_folder_name or not self.last_verified_at:
             raise ValueError("verified folder binding fields must be non-empty")
         if self.binding_status not in EMAIL_FOLDER_BINDING_STATUSES:
             raise ValueError("binding_status is invalid")
         if self.binding_status == "active" and not self.provider_folder_id:
             raise ValueError("active folder binding requires provider_folder_id")
+        if type(self.provider_folder_role) is not FolderRole:
+            raise TypeError("provider_folder_role must be a FolderRole")
 
 
 class EmailFolderBindingCoordinator(Protocol):

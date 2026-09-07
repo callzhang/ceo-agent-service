@@ -22,6 +22,9 @@ from app.email_classifier_contracts import (
     build_versioned_email_action_plan,
 )
 from app.email_category_config import VerifiedEmailFolderBinding
+from app.email_provider_folders import FolderRole
+from app.email_provider_folders import ProviderFolder
+from app.email_worker import ProviderFolderBindingCoordinator
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_model_registry import (
     EmailModelMetadata,
@@ -1721,6 +1724,53 @@ class _CoordinatorFailure:
         raise self.failure
 
 
+class _NegativeJunkCoordinator:
+    def __init__(self, status: str):
+        self.status = status
+
+    def create_and_verify_bindings(self, **_kwargs):
+        return (
+            VerifiedEmailFolderBinding(
+                account_id="primary",
+                provider_folder_id="",
+                provider_folder_name="垃圾邮件",
+                binding_status=self.status,
+                last_verified_at="2026-09-08T11:05:00+00:00",
+            ),
+        )
+
+
+class _StaticFolderCoordinator:
+    def __init__(self, bindings: tuple[VerifiedEmailFolderBinding, ...]):
+        self.bindings = bindings
+
+    def create_and_verify_bindings(self, **_kwargs):
+        return self.bindings
+
+
+class _CreationInventoryProvider:
+    def __init__(self, status: str):
+        self.status = status
+        self.calls = 0
+
+    def list_folders(self):
+        self.calls += 1
+        if self.status == "error":
+            raise ConnectionError("inventory unavailable")
+        if self.status == "ambiguous":
+            return (
+                ProviderFolder("one", "合作伙伴", FolderRole.UNBOUND),
+                ProviderFolder("two", "合作伙伴", FolderRole.UNBOUND),
+            )
+        return ()
+
+    def create_folder_exact(self, _name: str) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
 class _IteratorFolderCoordinator(_VerifiedFolderCoordinator):
     def create_and_verify_bindings(self, **kwargs):
         return iter(super().create_and_verify_bindings(**kwargs))
@@ -1743,17 +1793,33 @@ def test_email_config_get_returns_structured_descriptions_and_bindings(tmp_path:
     assert "description" not in work
 
 
-def test_email_config_post_requires_injected_folder_binding_coordinator(
+def test_email_config_post_builds_real_folder_coordinator_by_default(
     tmp_path: Path,
+    monkeypatch,
 ):
-    with _client(tmp_path) as client:
-        response = client.post(
-            "/api/console/email/config",
-            json=_dynamic_category_payload(),
-        )
+    coordinator = _VerifiedFolderCoordinator()
+    built_with: list[object] = []
 
-    assert response.status_code == 503
-    assert response.json()["code"] == "email_folder_binding_unavailable"
+    def build(environment_factory):
+        built_with.append(environment_factory)
+        return coordinator
+
+    monkeypatch.setattr(
+        "app.email_worker.build_provider_folder_binding_coordinator", build
+    )
+    store = EmailStore(tmp_path / "default-folder-coordinator.sqlite3")
+    store.create_account(_task2_api_account())
+    app = FastAPI()
+    register_email_routes(app, lambda: store)
+
+    response = TestClient(app).post(
+        "/api/console/email/config",
+        json=_dynamic_category_payload(),
+    )
+
+    assert response.status_code == 201
+    assert len(built_with) == 1
+    assert coordinator.calls[0]["account_ids"] == ["primary"]
 
 
 def test_email_config_post_maps_coordinator_binding_conflict_to_409(tmp_path: Path):
@@ -1840,6 +1906,39 @@ def test_email_config_post_uses_coordinator_readback_and_rejects_client_bindings
     assert rejected.status_code == 400
     assert rejected.json()["code"] == "invalid_email_category"
     assert store.get_category_config("raw_claim") is None
+
+
+@pytest.mark.parametrize("provider_status", ("error", "missing", "ambiguous"))
+def test_email_config_post_rejects_nonactive_production_folder_materialization(
+    tmp_path: Path,
+    provider_status: str,
+) -> None:
+    store = EmailStore(tmp_path / f"create-{provider_status}-binding.sqlite3")
+    store.create_account(_task2_api_account())
+    providers: list[_CreationInventoryProvider] = []
+
+    def provider_factory(_account):
+        provider = _CreationInventoryProvider(provider_status)
+        providers.append(provider)
+        return provider
+
+    coordinator = ProviderFolderBindingCoordinator(provider_factory)
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=coordinator,
+    )
+
+    response = TestClient(app).post(
+        "/api/console/email/config",
+        json=_dynamic_category_payload(),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "email_folder_binding_unavailable"
+    assert store.get_category_config("partner_updates") is None
+    assert len(providers) == 1
 
 
 @pytest.mark.parametrize(
@@ -1932,3 +2031,182 @@ def test_email_config_put_updates_structured_descriptions_and_versions(tmp_path:
     assert item["description_version"] == "work-description-v2"
     assert item["config_version"] == "work-config-v2"
     assert item["bindings"] == []
+
+
+def test_email_config_put_refreshes_provider_folder_bindings(tmp_path: Path):
+    store = EmailStore(tmp_path / "update-folder-bindings.sqlite3")
+    store.create_account(_task2_api_account())
+    coordinator = _VerifiedFolderCoordinator(folder_id="work-folder")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=coordinator,
+    )
+
+    response = TestClient(app).put(
+        "/api/console/email/config/work",
+        json={
+            "core_description": "Material daily company operations.",
+            "include": ["customer delivery"],
+            "exclude": ["personal matters"],
+            "threshold": 0.93,
+            "enabled": True,
+            "description_version": "work-description-v2",
+            "config_version": "work-config-v2",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["item"]["enabled"] is True
+    assert response.json()["item"]["bindings"][0]["provider_folder_id"] == (
+        "work-folder"
+    )
+    assert coordinator.calls == [
+        {
+            "category_key": "work",
+            "provider_folder_name": "工作",
+            "account_ids": ["primary"],
+        }
+    ]
+
+
+@pytest.mark.parametrize("negative_status", ("missing", "error"))
+def test_email_config_put_pauses_junk_writes_after_negative_trash_readback(
+    tmp_path: Path,
+    negative_status: str,
+) -> None:
+    store = EmailStore(tmp_path / f"junk-{negative_status}-api.sqlite3")
+    store.create_account(_task2_api_account())
+    store.upsert_verified_folder_binding(
+        "junk",
+        VerifiedEmailFolderBinding(
+            account_id="primary",
+            provider_folder_id="provider-trash",
+            provider_folder_name="Deleted",
+            binding_status="active",
+            last_verified_at="2026-09-08T11:00:00+00:00",
+            provider_folder_role=FolderRole.TRASH,
+        ),
+    )
+    junk = store.get_category_config("junk")
+    enabled = store.update_category_descriptions(
+        "junk",
+        core_description=junk["core_description"],
+        include=junk["include"],
+        exclude=junk["exclude"],
+        threshold=junk["threshold"],
+        enabled=True,
+        description_version=junk["description_version"],
+        config_version="junk-enabled-before-negative-readback",
+    )
+    assert enabled is not None and enabled["enabled"] is True
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=_NegativeJunkCoordinator(negative_status),
+    )
+
+    response = TestClient(app).put(
+        "/api/console/email/config/junk",
+        json={
+            "core_description": junk["core_description"],
+            "include": junk["include"],
+            "exclude": junk["exclude"],
+            "threshold": junk["threshold"],
+            "enabled": True,
+            "description_version": junk["description_version"],
+            "config_version": f"junk-{negative_status}-readback",
+        },
+    )
+
+    assert response.status_code == 200
+    item = response.json()["item"]
+    assert item["enabled"] is False
+    assert item["bindings"][0]["provider_folder_id"] == ""
+    assert item["bindings"][0]["binding_status"] == negative_status
+
+
+def test_email_config_put_maps_second_account_binding_conflict_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "atomic-refresh-api.sqlite3")
+    store.create_account(_task2_api_account("primary"))
+    store.create_account(_task2_api_account("secondary"))
+    for account_id in ("primary", "secondary"):
+        store.upsert_verified_folder_binding(
+            "work",
+            VerifiedEmailFolderBinding(
+                account_id=account_id,
+                provider_folder_id=f"old-work-{account_id}",
+                provider_folder_name="工作",
+                binding_status="active",
+                last_verified_at="2026-09-08T12:00:00+00:00",
+            ),
+        )
+    work = store.get_category_config("work")
+    store.update_category_descriptions(
+        "work",
+        core_description=work["core_description"],
+        include=work["include"],
+        exclude=work["exclude"],
+        threshold=work["threshold"],
+        enabled=True,
+        description_version=work["description_version"],
+        config_version="work-before-api-conflict",
+    )
+    store.upsert_verified_folder_binding(
+        "legal",
+        VerifiedEmailFolderBinding(
+            account_id="secondary",
+            provider_folder_id="secondary-conflict",
+            provider_folder_name="法务",
+            binding_status="active",
+            last_verified_at="2026-09-08T12:00:00+00:00",
+        ),
+    )
+    before_config = store.get_category_config("work")
+    before_bindings = store.list_account_folder_bindings("work")
+    coordinator = _StaticFolderCoordinator(
+        (
+            VerifiedEmailFolderBinding(
+                account_id="primary",
+                provider_folder_id="new-work-primary",
+                provider_folder_name="工作",
+                binding_status="active",
+                last_verified_at="2026-09-08T12:05:00+00:00",
+            ),
+            VerifiedEmailFolderBinding(
+                account_id="secondary",
+                provider_folder_id="secondary-conflict",
+                provider_folder_name="工作",
+                binding_status="active",
+                last_verified_at="2026-09-08T12:05:00+00:00",
+            ),
+        )
+    )
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=coordinator,
+    )
+
+    response = TestClient(app, raise_server_exceptions=False).put(
+        "/api/console/email/config/work",
+        json={
+            "core_description": "Changed description must roll back.",
+            "include": ["changed include"],
+            "exclude": ["changed exclude"],
+            "threshold": 0.81,
+            "enabled": False,
+            "description_version": "work-description-conflict",
+            "config_version": "work-config-conflict",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "email_folder_binding_conflict"
+    assert store.get_category_config("work") == before_config
+    assert store.list_account_folder_bindings("work") == before_bindings

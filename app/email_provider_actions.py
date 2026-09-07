@@ -18,10 +18,15 @@ from app.email_classifier_contracts import (
 )
 from app.email_imap_mailbox import (
     ImapMailboxCodecError,
-    decode_imap_mailbox_token,
     encode_imap_mailbox_argument,
 )
+from app.email_imap_folders import (
+    ImapFolderListError,
+    ParsedImapFolder,
+    parse_imap_list_response,
+)
 from app.email_store import StoredEmailAction, StoredEmailLocator
+from app.email_provider_folders import ProviderFolder
 
 
 @dataclass(frozen=True)
@@ -92,6 +97,10 @@ def _provider_operation(action_type: EmailAction) -> str:
 
 
 class DeterministicEmailProvider(Protocol):
+    def list_folders(self) -> tuple[ProviderFolder, ...]: ...
+
+    def create_folder_exact(self, name: str) -> None: ...
+
     def read_state(self, locator: StoredEmailLocator) -> ProviderMessageState: ...
 
     def apply(
@@ -276,15 +285,6 @@ class ImapMessageUnavailable(ImapProviderError):
     """The stable message could not be located uniquely."""
 
 
-@dataclass(frozen=True)
-class _ImapMailbox:
-    name: str
-    flags: frozenset[str]
-
-
-_LIST_RESPONSE = re.compile(
-    rb'^\((?P<flags>[^)]*)\)\s+(?:NIL|"(?:\\.|[^"])*")\s+(?P<name>.+)$'
-)
 _UID_RESPONSE = re.compile(rb"\bUID\s+(?P<uid>[1-9][0-9]*)\b")
 _COPYUID_RESPONSE = re.compile(
     rb"^(?P<uidvalidity>[1-9][0-9]*)\s+"
@@ -309,7 +309,7 @@ class ImapDeterministicProvider:
         self.session = session
         self.account_id = account_id
         self._authenticated_capabilities = capabilities
-        self._mailbox_cache: tuple[_ImapMailbox, ...] | None = None
+        self._mailbox_cache: tuple[ParsedImapFolder, ...] | None = None
         self._moved_locators: dict[str, StoredEmailLocator] = {}
         self._closed = False
 
@@ -375,6 +375,16 @@ class ImapDeterministicProvider:
         if len(matches) != 1:
             raise ImapDestinationUnavailable("IMAP destination is unavailable")
         return matches[0]
+
+    def list_folders(self) -> tuple[ProviderFolder, ...]:
+        return tuple(mailbox.provider_folder() for mailbox in self._mailboxes())
+
+    def create_folder_exact(self, name: str) -> None:
+        try:
+            status, _ = self.session.create(_imap_mailbox_argument(name))
+            _require_ok(status, "IMAP folder creation failed")
+        finally:
+            self._mailbox_cache = None
 
     def read_state(self, locator: StoredEmailLocator) -> ProviderMessageState:
         self._validate_locator(locator)
@@ -617,17 +627,16 @@ class ImapDeterministicProvider:
             for item in raw
         )
 
-    def _mailboxes(self) -> tuple[_ImapMailbox, ...]:
+    def _mailboxes(self) -> tuple[ParsedImapFolder, ...]:
         if self._mailbox_cache is not None:
             return self._mailbox_cache
         status, data = self.session.list()
         _require_ok(status, "IMAP folder discovery failed")
-        mailboxes = tuple(_parse_mailbox(item) for item in data or ())
-        selectable = tuple(
-            mailbox
-            for mailbox in mailboxes
-            if "\\NOSELECT" not in {flag.upper() for flag in mailbox.flags}
-        )
+        try:
+            mailboxes = parse_imap_list_response(data)
+        except ImapFolderListError as exc:
+            raise ImapDestinationUnavailable("invalid IMAP folder list") from exc
+        selectable = tuple(mailbox for mailbox in mailboxes if mailbox.selectable)
         names = [mailbox.name for mailbox in selectable]
         if not selectable or len(names) != len(set(names)):
             raise ImapDestinationUnavailable("IMAP folder list is ambiguous")
@@ -647,27 +656,14 @@ class ImapDeterministicProvider:
             raise ImapPermanentProviderError("IMAP account locator mismatch")
 
 
-def _parse_mailbox(raw: object) -> _ImapMailbox:
-    if not isinstance(raw, bytes):
-        raise ImapDestinationUnavailable("unsupported IMAP folder response")
-    match = _LIST_RESPONSE.fullmatch(raw.strip())
-    if match is None:
-        raise ImapDestinationUnavailable("unsupported IMAP folder response")
+def _parse_mailbox(raw: object) -> ParsedImapFolder:
     try:
-        flags = frozenset(match.group("flags").decode("ascii").split())
-        name = _decode_imap_quoted(match.group("name"))
-    except UnicodeDecodeError as exc:
-        raise ImapDestinationUnavailable("non-ASCII IMAP folder is unsupported") from exc
-    if not name:
-        raise ImapDestinationUnavailable("blank IMAP folder is unsupported")
-    return _ImapMailbox(name=name, flags=flags)
-
-
-def _decode_imap_quoted(raw: bytes) -> str:
-    try:
-        return decode_imap_mailbox_token(raw)
-    except ImapMailboxCodecError as exc:
+        parsed = parse_imap_list_response((raw,))
+    except ImapFolderListError as exc:
         raise ImapDestinationUnavailable("malformed IMAP folder response") from exc
+    if len(parsed) != 1:
+        raise ImapDestinationUnavailable("malformed IMAP folder response")
+    return parsed[0]
 
 
 def _response_bytes(data: object) -> bytes:

@@ -151,6 +151,13 @@ def register_email_routes(
     def secret_environment() -> dict[str, str]:
         return app_config.effective_env_values(email_env_path)
 
+    if folder_binding_coordinator is None and availability.store is not None:
+        from app.email_worker import build_provider_folder_binding_coordinator
+
+        folder_binding_coordinator = build_provider_folder_binding_coordinator(
+            secret_environment
+        )
+
     def account_response(account: dict[str, Any]) -> dict[str, Any]:
         env = secret_environment()
         operational_fields = {
@@ -846,6 +853,21 @@ def register_email_routes(
                 "Email folder binding could not be verified",
                 503,
             )
+        if payload.enabled:
+            enabled_account_ids = {
+                str(account["account_id"]) for account in enabled_accounts
+            }
+            active_account_ids = {
+                binding.account_id
+                for binding in bindings
+                if binding.binding_status == "active"
+            }
+            if active_account_ids != enabled_account_ids:
+                return error_response(
+                    "email_folder_binding_unavailable",
+                    "Email folder binding could not be verified",
+                    503,
+                )
         try:
             row = email_store.create_category_with_bindings(
                 category_key=category_key,
@@ -901,7 +923,41 @@ def register_email_routes(
                 exclude=payload.exclude,
                 description_version=payload.description_version,
             )
-            row = email_store.update_category_descriptions(
+            existing = email_store.get_category_config(category_key)
+            if existing is None:
+                return error_response(
+                    "email_category_not_found",
+                    "Email category was not found",
+                    404,
+                )
+            enabled_accounts = [
+                account for account in email_store.list_accounts() if account["enabled"]
+            ]
+            existing_bindings = email_store.list_account_folder_bindings(category_key)
+            provider_folder_name = next(
+                (
+                    binding["provider_folder_name"]
+                    for binding in existing_bindings
+                    if binding["provider_folder_name"]
+                ),
+                existing["display_name"],
+            )
+            assert folder_binding_coordinator is not None
+            coordinator_bindings = folder_binding_coordinator.create_and_verify_bindings(
+                category_key=category_key,
+                provider_folder_name=provider_folder_name,
+                enabled_accounts=enabled_accounts,
+            )
+            if isinstance(coordinator_bindings, (str, bytes)) or not isinstance(
+                coordinator_bindings, Sequence
+            ):
+                raise TypeError("coordinator returned a non-sequence result")
+            if any(
+                type(binding) is not VerifiedEmailFolderBinding
+                for binding in coordinator_bindings
+            ):
+                raise TypeError("coordinator returned an unverified binding")
+            row = email_store.refresh_category_with_bindings(
                 category_key,
                 core_description=payload.core_description,
                 include=payload.include,
@@ -910,18 +966,19 @@ def register_email_routes(
                 enabled=payload.enabled,
                 description_version=payload.description_version,
                 config_version=payload.config_version,
+                bindings=tuple(coordinator_bindings),
+            )
+        except EmailFolderBindingConflict:
+            return error_response(
+                "email_folder_binding_conflict",
+                "Email category or folder binding conflicts with stored state",
+                409,
             )
         except (ValidationError, ValueError, TypeError):
             return error_response(
                 "invalid_email_category",
                 "Email category configuration is invalid",
                 400,
-            )
-        if row is None:
-            return error_response(
-                "email_category_not_found",
-                "Email category was not found",
-                404,
             )
         return {
             "ok": True,

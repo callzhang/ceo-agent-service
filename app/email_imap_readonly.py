@@ -21,7 +21,9 @@ from hashlib import sha256
 from typing import Any
 
 from app.email_classifier_contracts import EmailProviderLocator
+from app.email_imap_folders import ImapFolderListError, parse_imap_list_response
 from app.email_imap_mailbox import ImapMailboxCodecError, encode_imap_mailbox_argument
+from app.email_provider_folders import ProviderFolder
 from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 
 
@@ -245,6 +247,21 @@ class ImapReadonlyAdapter:
             messages=messages,
         )
 
+    def list_folders(self) -> tuple[ProviderFolder, ...]:
+        status, data = self.session.list()
+        _require_ok(status, "IMAP folder discovery failed")
+        try:
+            parsed = parse_imap_list_response(data)
+        except ImapFolderListError as exc:
+            raise ValueError("invalid IMAP folder inventory") from exc
+        folders = tuple(
+            mailbox.provider_folder() for mailbox in parsed if mailbox.selectable
+        )
+        identifiers = tuple(folder.provider_folder_id for folder in folders)
+        if not folders or len(identifiers) != len(set(identifiers)):
+            raise ValueError("IMAP folder inventory is missing or ambiguous")
+        return folders
+
     def fetch_recent(
         self, mailbox: str = "INBOX", *, limit: int = 50
     ) -> list[dict[str, object]]:
@@ -265,6 +282,16 @@ class ImapReadonlyAdapter:
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         self.logout()
+
+
+def parse_imap_list_folder(raw: object) -> ProviderFolder:
+    try:
+        parsed = parse_imap_list_response((raw,))
+    except ImapFolderListError as exc:
+        raise ValueError("invalid IMAP folder response") from exc
+    if len(parsed) != 1:
+        raise ValueError("invalid IMAP folder response")
+    return parsed[0].provider_folder()
 
 
 def _close_imap_session(session: Any) -> None:

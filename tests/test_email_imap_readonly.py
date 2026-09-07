@@ -25,6 +25,7 @@ from app.email_imap_readonly import (
     ephemeral_body_html,
     parse_rfc822_message,
 )
+from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_store import EmailStore
 
 
@@ -137,6 +138,103 @@ def _plain_session(
         section_payloads={"1": raw.split(b"\r\n\r\n", 1)[1]},
         search_result=search_result,
         uidvalidity=uidvalidity,
+    )
+
+
+class FolderListSession:
+    def __init__(self, responses: list[object]):
+        self.responses = responses
+
+    def list(self):
+        return "OK", self.responses
+
+
+def test_imap_folder_inventory_parses_special_use_modified_utf7_and_stable_ids() -> None:
+    adapter = ImapReadonlyAdapter(
+        FolderListSession(
+            [
+                b'(\\Inbox) "/" INBOX',
+                b'(\\Junk) "/" Spam',
+                b'(\\Trash) "/" Deleted',
+                b'(\\Sent) "/" "Sent Mail"',
+                b'(\\Drafts) "/" Drafts',
+                b'() "/" "&U,BTFw-"',
+            ]
+        ),
+        account_id="account-1",
+    )
+
+    assert adapter.list_folders() == (
+        ProviderFolder("INBOX", "INBOX", FolderRole.INBOX),
+        ProviderFolder("Spam", "Spam", FolderRole.JUNK),
+        ProviderFolder("Deleted", "Deleted", FolderRole.TRASH),
+        ProviderFolder("Sent Mail", "Sent Mail", FolderRole.SENT),
+        ProviderFolder("Drafts", "Drafts", FolderRole.DRAFT),
+        ProviderFolder("台北", "台北", FolderRole.UNBOUND),
+    )
+
+
+def test_imap_folder_inventory_uses_protocol_flags_not_localized_name_guessing() -> None:
+    adapter = ImapReadonlyAdapter(
+        FolderListSession([b'() "/" "&V4NXPpCuTvY-"']),
+        account_id="account-1",
+    )
+
+    assert adapter.list_folders() == (
+        ProviderFolder("垃圾邮件", "垃圾邮件", FolderRole.UNBOUND),
+    )
+
+
+def test_imap_folder_inventory_excludes_non_addressable_noselect_entries() -> None:
+    adapter = ImapReadonlyAdapter(
+        FolderListSession(
+            [
+                b'(\\Noselect) "/" Parent',
+                b'() "/" Parent/Child',
+            ]
+        ),
+        account_id="account-1",
+    )
+
+    assert adapter.list_folders() == (
+        ProviderFolder("Parent/Child", "Parent/Child", FolderRole.UNBOUND),
+    )
+
+
+def test_imap_folder_inventory_uses_safe_precedence_for_multiple_special_roles() -> None:
+    adapter = ImapReadonlyAdapter(
+        FolderListSession(
+            [
+                b'(\\Inbox \\Drafts) "/" DraftInbox',
+                b'(\\Sent \\Trash) "/" DeletedSent',
+                b'(\\Junk \\Trash) "/" DeletedSpam',
+            ]
+        ),
+        account_id="account-1",
+    )
+
+    assert adapter.list_folders() == (
+        ProviderFolder("DraftInbox", "DraftInbox", FolderRole.DRAFT),
+        ProviderFolder("DeletedSent", "DeletedSent", FolderRole.TRASH),
+        ProviderFolder("DeletedSpam", "DeletedSpam", FolderRole.TRASH),
+    )
+
+
+def test_readonly_folder_inventory_parses_literal_and_whitespace_mailbox_names() -> None:
+    adapter = ImapReadonlyAdapter(
+        FolderListSession(
+            [
+                (b'(\\Trash) "/" {9}', b" Deleted "),
+                b" (STATUS (MESSAGES 0))",
+                b'() "/" " Folder "',
+            ]
+        ),
+        account_id="account-1",
+    )
+
+    assert adapter.list_folders() == (
+        ProviderFolder(" Deleted ", " Deleted ", FolderRole.TRASH),
+        ProviderFolder(" Folder ", " Folder ", FolderRole.UNBOUND),
     )
 
 

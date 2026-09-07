@@ -36,10 +36,245 @@ from app.email_unsubscribe import (
 from app.email_unsubscribe_audit import EmailUnsubscribeAuditOperation
 from app.store import AgentRole, AutoReplyStore
 from app.email_store import EmailStore
+from app.email_provider_folders import FolderRole, ProviderFolder
 
 
 def _module():
     return import_module("app.email_worker")
+
+
+class _FolderProvider:
+    def __init__(self, inventories: list[tuple[ProviderFolder, ...]]):
+        self.inventories = list(inventories)
+        self.created: list[str] = []
+
+    def list_folders(self) -> tuple[ProviderFolder, ...]:
+        if len(self.inventories) > 1:
+            return self.inventories.pop(0)
+        return self.inventories[0]
+
+    def create_folder_exact(self, name: str) -> None:
+        self.created.append(name)
+
+    def close(self) -> None:
+        pass
+
+
+class _FailingFolderProvider(_FolderProvider):
+    def list_folders(self) -> tuple[ProviderFolder, ...]:
+        raise ConnectionError("provider inventory unavailable")
+
+
+class _ConcurrentCreateProvider(_FolderProvider):
+    def create_folder_exact(self, name: str) -> None:
+        self.created.append(name)
+        raise RuntimeError("another client created the folder")
+
+
+def _folder_coordinator(provider: _FolderProvider):
+    return _module().ProviderFolderBindingCoordinator(
+        lambda _account: provider,
+        now=lambda: "2026-09-08T10:00:00+00:00",
+    )
+
+
+def test_folder_materializer_binds_one_exact_existing_display_name() -> None:
+    provider = _FolderProvider(
+        [
+            (
+                ProviderFolder("work", "工作", FolderRole.UNBOUND),
+                ProviderFolder("work-2", "工作项目", FolderRole.UNBOUND),
+            )
+        ]
+    )
+
+    bindings = _folder_coordinator(provider).create_and_verify_bindings(
+        category_key="work",
+        provider_folder_name="工作",
+        enabled_accounts=({"account_id": "primary"},),
+    )
+
+    assert bindings[0].provider_folder_id == "work"
+    assert bindings[0].binding_status == "active"
+    assert provider.created == []
+
+
+def test_folder_materializer_marks_duplicate_exact_names_ambiguous() -> None:
+    provider = _FolderProvider(
+        [
+            (
+                ProviderFolder("work-a", "工作", FolderRole.UNBOUND),
+                ProviderFolder("work-b", "工作", FolderRole.UNBOUND),
+            )
+        ]
+    )
+
+    binding = _folder_coordinator(provider).create_and_verify_bindings(
+        category_key="work",
+        provider_folder_name="工作",
+        enabled_accounts=({"account_id": "primary"},),
+    )[0]
+
+    assert binding.binding_status == "ambiguous"
+    assert binding.provider_folder_id == ""
+    assert provider.created == []
+
+
+def test_folder_materializer_creates_exact_then_requires_one_exact_readback() -> None:
+    provider = _FolderProvider(
+        [
+            (),
+            (ProviderFolder("created-work", "工作", FolderRole.UNBOUND),),
+        ]
+    )
+
+    binding = _folder_coordinator(provider).create_and_verify_bindings(
+        category_key="work",
+        provider_folder_name="工作",
+        enabled_accounts=({"account_id": "primary"},),
+    )[0]
+
+    assert provider.created == ["工作"]
+    assert binding.provider_folder_id == "created-work"
+    assert binding.binding_status == "active"
+
+
+def test_folder_materializer_marks_missing_when_created_folder_is_not_read_back() -> None:
+    provider = _FolderProvider([(), ()])
+
+    binding = _folder_coordinator(provider).create_and_verify_bindings(
+        category_key="work",
+        provider_folder_name="工作",
+        enabled_accounts=({"account_id": "primary"},),
+    )[0]
+
+    assert provider.created == ["工作"]
+    assert binding.binding_status == "missing"
+
+
+def test_junk_materializer_binds_system_trash_and_never_creates_business_folder() -> None:
+    provider = _FolderProvider(
+        [
+            (
+                ProviderFolder("spam", "Spam", FolderRole.JUNK),
+                ProviderFolder("trash", "Deleted", FolderRole.TRASH),
+            )
+        ]
+    )
+
+    binding = _folder_coordinator(provider).create_and_verify_bindings(
+        category_key="junk",
+        provider_folder_name="垃圾邮件",
+        enabled_accounts=({"account_id": "primary"},),
+    )[0]
+
+    assert binding.provider_folder_id == "trash"
+    assert binding.provider_folder_name == "Deleted"
+    assert binding.provider_folder_role is FolderRole.TRASH
+    assert binding.binding_status == "active"
+    assert provider.created == []
+
+
+def test_junk_materializer_marks_missing_without_creating_when_trash_is_absent() -> None:
+    provider = _FolderProvider(
+        [(ProviderFolder("spam", "Spam", FolderRole.JUNK),)]
+    )
+
+    binding = _folder_coordinator(provider).create_and_verify_bindings(
+        category_key="junk",
+        provider_folder_name="垃圾邮件",
+        enabled_accounts=({"account_id": "primary"},),
+    )[0]
+
+    assert binding.binding_status == "missing"
+    assert provider.created == []
+
+
+def test_folder_materializer_records_provider_inventory_failure_as_error() -> None:
+    provider = _FailingFolderProvider([()])
+
+    binding = _folder_coordinator(provider).create_and_verify_bindings(
+        category_key="work",
+        provider_folder_name="工作",
+        enabled_accounts=({"account_id": "primary"},),
+    )[0]
+
+    assert binding.binding_status == "error"
+    assert binding.provider_folder_id == ""
+
+
+def test_folder_materializer_recovers_from_concurrent_exact_create() -> None:
+    provider = _ConcurrentCreateProvider(
+        [(), (ProviderFolder("created-work", "工作", FolderRole.UNBOUND),)]
+    )
+
+    binding = _folder_coordinator(provider).create_and_verify_bindings(
+        category_key="work",
+        provider_folder_name="工作",
+        enabled_accounts=({"account_id": "primary"},),
+    )[0]
+
+    assert provider.created == ["工作"]
+    assert binding.binding_status == "active"
+    assert binding.provider_folder_id == "created-work"
+
+
+def test_real_imap_materializer_relists_after_create_no_and_binds_concurrent_folder() -> None:
+    provider_module = import_module("app.email_provider_actions")
+
+    class ConcurrentCreateSession:
+        def __init__(self) -> None:
+            self.list_calls = 0
+
+        def list(self):
+            self.list_calls += 1
+            folders = [b'(\\Inbox) "/" "INBOX"']
+            if self.list_calls == 2:
+                folders.append(b'() "/" "Work"')
+            return "OK", folders
+
+        def create(self, mailbox: str):
+            assert mailbox == "Work"
+            return "NO", [b"already exists"]
+
+        def logout(self):
+            return "BYE", [b"logout"]
+
+    session = ConcurrentCreateSession()
+    provider = provider_module.ImapDeterministicProvider(
+        session, account_id="primary"
+    )
+    binding = _folder_coordinator(provider).create_and_verify_bindings(
+        category_key="work",
+        provider_folder_name="Work",
+        enabled_accounts=({"account_id": "primary"},),
+    )[0]
+
+    assert session.list_calls == 2
+    assert binding.binding_status == "active"
+    assert binding.provider_folder_id == "Work"
+
+
+@pytest.mark.parametrize(
+    "system_role",
+    (FolderRole.INBOX, FolderRole.JUNK, FolderRole.TRASH, FolderRole.SENT, FolderRole.DRAFT),
+)
+def test_business_folder_materializer_rejects_exact_system_folder_match(
+    system_role: FolderRole,
+) -> None:
+    provider = _FolderProvider(
+        [(ProviderFolder("system-folder", "工作", system_role),)]
+    )
+
+    binding = _folder_coordinator(provider).create_and_verify_bindings(
+        category_key="work",
+        provider_folder_name="工作",
+        enabled_accounts=({"account_id": "primary"},),
+    )[0]
+
+    assert binding.binding_status == "error"
+    assert binding.provider_folder_id == ""
+    assert provider.created == []
 
 
 def _dependencies(

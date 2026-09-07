@@ -55,10 +55,11 @@ from app.email_category_config import (
     legacy_config_row,
     validate_category_descriptions,
 )
+from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 20
+EMAIL_SCHEMA_VERSION = 21
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -995,6 +996,20 @@ class EmailAccountConflict(RuntimeError):
 
 class EmailFolderBindingConflict(RuntimeError):
     """A category or active provider folder conflicts with durable configuration."""
+
+
+def _validate_verified_folder_binding_role(
+    category_key: str,
+    binding: VerifiedEmailFolderBinding,
+) -> None:
+    if binding.binding_status != "active":
+        return
+    if category_key == "junk":
+        if binding.provider_folder_role is not FolderRole.TRASH:
+            raise ValueError("junk accepts only a verified system Trash binding")
+        return
+    if binding.provider_folder_role not in {FolderRole.UNBOUND, FolderRole.CATEGORY}:
+        raise ValueError("business category requires an ordinary provider folder")
 
 
 @dataclass(frozen=True)
@@ -2278,6 +2293,9 @@ class EmailStore:
                 latest_version = 19
             if latest_version == 19:
                 self._migrate_v19_to_v20(db, replace_version=is_prototype)
+                latest_version = 20
+            if latest_version == 20:
+                self._migrate_v20_to_v21(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -3147,6 +3165,45 @@ class EmailStore:
                 "insert into email_schema_migrations(version, applied_at) "
                 "values (20, ?)",
                 (now,),
+            )
+
+    def _migrate_v20_to_v21(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Preserve exact provider-owned mailbox identifiers and display names."""
+
+        db.execute(
+            "alter table email_category_folder_bindings "
+            "rename to email_category_folder_bindings_v20"
+        )
+        db.execute(FOLDER_BINDING_TABLE_SQL)
+        db.execute(
+            """
+            insert into email_category_folder_bindings (
+                account_id, category_key, provider_folder_id,
+                provider_folder_name, binding_status, last_verified_at
+            )
+            select account_id, category_key, provider_folder_id,
+                   provider_folder_name, binding_status, last_verified_at
+            from email_category_folder_bindings_v20
+            """
+        )
+        db.execute("drop table email_category_folder_bindings_v20")
+        db.execute(ACTIVE_BINDING_INDEX_SQL)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=21, applied_at=? "
+                "where version=20",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) "
+                "values (21, ?)",
+                (self._now(),),
             )
 
     @classmethod
@@ -10517,6 +10574,8 @@ class EmailStore:
             raise TypeError("bindings must contain coordinator-produced verified folder binding values")
         if category_key == "junk" and bindings:
             raise ValueError("junk does not accept a business-folder binding")
+        for binding in bindings:
+            _validate_verified_folder_binding_role(category_key, binding)
         account_ids = [binding.account_id for binding in bindings]
         if len(account_ids) != len(set(account_ids)):
             raise EmailFolderBindingConflict("duplicate category/account binding")
@@ -10688,6 +10747,122 @@ class EmailStore:
         assert row is not None
         return self._category_config_row(row)
 
+    def refresh_category_with_bindings(
+        self,
+        category_key: str,
+        *,
+        core_description: str,
+        include: Sequence[str],
+        exclude: Sequence[str],
+        threshold: float,
+        enabled: bool,
+        description_version: str,
+        config_version: str,
+        bindings: Sequence[VerifiedEmailFolderBinding],
+    ) -> dict[str, Any] | None:
+        """Atomically replace enabled-account bindings and category configuration."""
+
+        category_key = validate_email_category_key(category_key)
+        include_values, exclude_values = validate_category_descriptions(
+            display_name="unchanged",
+            core_description=core_description,
+            include=include,
+            exclude=exclude,
+            description_version=description_version,
+        )
+        if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+            raise ValueError("threshold must be numeric")
+        if not 0.0 <= float(threshold) <= 1.0:
+            raise ValueError("threshold must be between zero and one")
+        if type(config_version) is not str or not config_version.strip():
+            raise ValueError("config_version must be non-empty")
+        if isinstance(bindings, (str, bytes)) or not isinstance(bindings, Sequence):
+            raise TypeError("bindings must be a sequence")
+        if any(type(binding) is not VerifiedEmailFolderBinding for binding in bindings):
+            raise TypeError("bindings must contain verified folder binding values")
+        account_ids = tuple(binding.account_id for binding in bindings)
+        if len(account_ids) != len(set(account_ids)):
+            raise EmailFolderBindingConflict("duplicate category/account binding")
+        for binding in bindings:
+            _validate_verified_folder_binding_role(category_key, binding)
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            existing = db.execute(
+                "select 1 from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+            if existing is None:
+                return None
+            enabled_accounts = {
+                row["account_id"]
+                for row in db.execute(
+                    "select account_id from email_accounts where enabled=1"
+                )
+            }
+            if set(account_ids) != enabled_accounts:
+                raise EmailFolderBindingConflict(
+                    "folder bindings must cover exactly the enabled accounts"
+                )
+            try:
+                for binding in bindings:
+                    db.execute(
+                        """
+                        insert into email_category_folder_bindings (
+                            account_id, category_key, provider_folder_id,
+                            provider_folder_name, binding_status, last_verified_at
+                        ) values (?, ?, ?, ?, ?, ?)
+                        on conflict(account_id, category_key) do update set
+                            provider_folder_id=excluded.provider_folder_id,
+                            provider_folder_name=excluded.provider_folder_name,
+                            binding_status=excluded.binding_status,
+                            last_verified_at=excluded.last_verified_at
+                        """,
+                        (
+                            binding.account_id,
+                            category_key,
+                            binding.provider_folder_id,
+                            binding.provider_folder_name,
+                            binding.binding_status,
+                            binding.last_verified_at,
+                        ),
+                    )
+                final_enabled = bool(
+                    enabled
+                    and self._bindings_cover_enabled_accounts(db, category_key)
+                )
+                db.execute(
+                    """
+                    update email_category_configs set
+                        core_description=?, include_json=?, exclude_json=?,
+                        threshold=?, enabled=?, description_version=?,
+                        config_version=?, updated_at=?
+                    where category_key=?
+                    """,
+                    (
+                        core_description,
+                        _json_dump(list(include_values)),
+                        _json_dump(list(exclude_values)),
+                        float(threshold),
+                        int(final_enabled),
+                        description_version,
+                        config_version,
+                        now,
+                        category_key,
+                    ),
+                )
+                self._validate_category_binding_completeness(db)
+            except sqlite3.IntegrityError as exc:
+                raise EmailFolderBindingConflict(
+                    "email category or folder binding conflicts with stored state"
+                ) from exc
+            row = db.execute(
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+        assert row is not None
+        return self._category_config_row(row)
+
     def set_folder_binding_status(
         self,
         *,
@@ -10697,6 +10872,7 @@ class EmailStore:
         provider_folder_name: str,
         binding_status: str,
         last_verified_at: str,
+        provider_folder_role: FolderRole,
     ) -> dict[str, Any]:
         category_key = validate_email_category_key(category_key)
         binding = VerifiedEmailFolderBinding(
@@ -10705,9 +10881,9 @@ class EmailStore:
             provider_folder_name=provider_folder_name,
             binding_status=binding_status,
             last_verified_at=last_verified_at,
+            provider_folder_role=provider_folder_role,
         )
-        if category_key == "junk":
-            raise ValueError("junk does not accept a business-folder binding")
+        _validate_verified_folder_binding_role(category_key, binding)
         with self._connect() as db:
             db.execute("begin immediate")
             try:
@@ -10757,8 +10933,7 @@ class EmailStore:
         category_key = validate_email_category_key(category_key)
         if type(binding) is not VerifiedEmailFolderBinding:
             raise TypeError("binding must be a VerifiedEmailFolderBinding")
-        if category_key == "junk":
-            raise ValueError("junk does not accept a business-folder binding")
+        _validate_verified_folder_binding_role(category_key, binding)
         now = self._now()
         with self._connect() as db:
             db.execute("begin immediate")

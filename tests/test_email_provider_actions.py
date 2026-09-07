@@ -7,6 +7,7 @@ from typing import Mapping
 import pytest
 
 from app.email_classifier_contracts import EmailAction
+from app.email_provider_folders import FolderRole, ProviderFolder
 
 
 class StatefulFakeImapProvider:
@@ -332,6 +333,10 @@ class FakeWritableImapSession:
             flag_text = " ".join(sorted(flags | {"\\HasNoChildren"}))
             data.append(f'({flag_text}) "/" "{name}"'.encode("ascii"))
         return "OK", data
+
+    def create(self, mailbox: str):
+        self.calls.append(("create", mailbox))
+        return "OK", [b"created"]
 
     def select(self, mailbox: str, readonly: bool = False):
         self.calls.append(("select", mailbox, readonly))
@@ -881,6 +886,45 @@ def test_production_imap_quotes_discovered_special_use_folder_for_uid_move() -> 
     assert result.updated_locator is not None
     assert result.updated_locator.folder == "All Mail"
     assert ("uid", "MOVE", "7", '"All Mail"') in session.calls
+
+
+def test_production_imap_lists_folders_and_creates_exact_modified_utf7_name() -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(
+        mailboxes={"INBOX": ({"\\Inbox"}, 42), "&U,BTFw-": (set(), 84)}
+    )
+    provider = module.ImapDeterministicProvider(session, account_id="account-1")
+
+    assert provider.list_folders() == (
+        ProviderFolder("INBOX", "INBOX", FolderRole.INBOX),
+        ProviderFolder("台北", "台北", FolderRole.UNBOUND),
+    )
+
+    provider.create_folder_exact("项目")
+
+    assert ("create", "&mHl27g-") in session.calls
+
+
+def test_provider_action_folder_inventory_parses_literal_and_whitespace_names() -> None:
+    module = import_module("app.email_provider_actions")
+
+    class LiteralListSession(FakeWritableImapSession):
+        def list(self, reference_name: str = "", pattern: str = "*"):
+            self.calls.append(("list", reference_name, pattern))
+            return "OK", [
+                (b'(\\Trash \\Sent) "/" {9}', b" Deleted "),
+                b" (STATUS (MESSAGES 0))",
+                b'() "/" " Folder "',
+            ]
+
+    provider = module.ImapDeterministicProvider(
+        LiteralListSession(), account_id="account-1"
+    )
+
+    assert provider.list_folders() == (
+        ProviderFolder(" Deleted ", " Deleted ", FolderRole.TRASH),
+        ProviderFolder(" Folder ", " Folder ", FolderRole.UNBOUND),
+    )
 
 
 @pytest.mark.parametrize(

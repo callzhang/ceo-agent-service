@@ -14,6 +14,9 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any, TextIO
 
+from app.email_category_config import VerifiedEmailFolderBinding
+from app.email_provider_folders import FolderRole, ProviderFolder
+
 
 SCAN_INTERVAL_SECONDS = 60
 CONSUMER_POLL_INTERVAL_SECONDS = 10
@@ -25,6 +28,183 @@ DIRECT_ACTION_DRAIN_MAX_SECONDS = 2.0
 
 class EmailWorkerStartupError(RuntimeError):
     """The email worker could not construct its required runtime."""
+
+
+class ProviderFolderBindingCoordinator:
+    """Materialize and verify one exact provider folder per enabled account."""
+
+    def __init__(
+        self,
+        provider_factory: Callable[[Mapping[str, object]], object],
+        *,
+        now: Callable[[], str] | None = None,
+    ) -> None:
+        self._provider_factory = provider_factory
+        self._now = now or (
+            lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
+        )
+
+    def create_and_verify_bindings(
+        self,
+        *,
+        category_key: str,
+        provider_folder_name: str,
+        enabled_accounts: Sequence[Mapping[str, object]],
+    ) -> tuple[VerifiedEmailFolderBinding, ...]:
+        return tuple(
+            self._materialize_account(
+                account,
+                category_key=category_key,
+                provider_folder_name=provider_folder_name,
+            )
+            for account in enabled_accounts
+        )
+
+    def _materialize_account(
+        self,
+        account: Mapping[str, object],
+        *,
+        category_key: str,
+        provider_folder_name: str,
+    ) -> VerifiedEmailFolderBinding:
+        account_id = str(account.get("account_id") or "")
+        provider = None
+        try:
+            provider = self._provider_factory(account)
+            folders = tuple(provider.list_folders())
+            if category_key == "junk":
+                matches = tuple(
+                    folder for folder in folders if folder.role is FolderRole.TRASH
+                )
+                return self._binding_from_matches(
+                    account_id,
+                    category_key,
+                    provider_folder_name,
+                    matches,
+                )
+            matches = self._exact_matches(folders, provider_folder_name)
+            if matches:
+                return self._binding_from_matches(
+                    account_id,
+                    category_key,
+                    provider_folder_name,
+                    matches,
+                )
+            try:
+                provider.create_folder_exact(provider_folder_name)
+            except Exception:
+                readback = tuple(provider.list_folders())
+                readback_matches = self._exact_matches(
+                    readback, provider_folder_name
+                )
+                if not readback_matches:
+                    return self._unresolved_binding(
+                        account_id, provider_folder_name, binding_status="error"
+                    )
+                return self._binding_from_matches(
+                    account_id,
+                    category_key,
+                    provider_folder_name,
+                    readback_matches,
+                )
+            readback = tuple(provider.list_folders())
+            return self._binding_from_matches(
+                account_id,
+                category_key,
+                provider_folder_name,
+                self._exact_matches(readback, provider_folder_name),
+            )
+        except Exception:
+            return self._unresolved_binding(
+                account_id, provider_folder_name, binding_status="error"
+            )
+        finally:
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()
+
+    @staticmethod
+    def _exact_matches(
+        folders: Sequence[ProviderFolder], display_name: str
+    ) -> tuple[ProviderFolder, ...]:
+        return tuple(folder for folder in folders if folder.display_name == display_name)
+
+    def _binding_from_matches(
+        self,
+        account_id: str,
+        category_key: str,
+        requested_name: str,
+        matches: Sequence[ProviderFolder],
+    ) -> VerifiedEmailFolderBinding:
+        if len(matches) == 1:
+            folder = matches[0]
+            allowed_roles = (
+                {FolderRole.TRASH}
+                if category_key == "junk"
+                else {FolderRole.UNBOUND, FolderRole.CATEGORY}
+            )
+            if folder.role not in allowed_roles:
+                return self._unresolved_binding(
+                    account_id, requested_name, binding_status="error"
+                )
+            return VerifiedEmailFolderBinding(
+                account_id=account_id,
+                provider_folder_id=folder.provider_folder_id,
+                provider_folder_name=folder.display_name,
+                binding_status="active",
+                last_verified_at=self._now(),
+                provider_folder_role=folder.role,
+            )
+        return self._unresolved_binding(
+            account_id,
+            requested_name,
+            binding_status=(
+                "ambiguous" if len(matches) > 1 else "missing"
+            ),
+        )
+
+    def _unresolved_binding(
+        self,
+        account_id: str,
+        provider_folder_name: str,
+        *,
+        binding_status: str,
+    ) -> VerifiedEmailFolderBinding:
+        return VerifiedEmailFolderBinding(
+            account_id=account_id,
+            provider_folder_id="",
+            provider_folder_name=provider_folder_name,
+            binding_status=binding_status,
+            last_verified_at=self._now(),
+        )
+
+
+def build_provider_folder_binding_coordinator(
+    environment_factory: Callable[[], Mapping[str, str]],
+) -> ProviderFolderBindingCoordinator:
+    """Build the production IMAP-backed category folder coordinator."""
+
+    from app.email_connector_config import resolve_secret
+    from app.email_provider_actions import ImapDeterministicProvider
+
+    def provider_factory(account: Mapping[str, object]) -> object:
+        if not bool(account.get("imap_tls")):
+            raise ConnectionError("email IMAP TLS is required")
+        secret = resolve_secret(
+            str(account.get("imap_secret_reference") or ""),
+            environment_factory(),
+        )
+        if not secret:
+            raise ConnectionError("email IMAP credential is unavailable")
+        return ImapDeterministicProvider.connect(
+            str(account["imap_host"]),
+            str(account["imap_username"]),
+            secret,
+            port=int(account["imap_port"]),
+            account_id=str(account["account_id"]),
+        )
+
+    return ProviderFolderBindingCoordinator(provider_factory)
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import gc
 from hashlib import sha256
+from importlib import import_module
 import json
 from pathlib import Path
 import sqlite3
@@ -34,6 +35,7 @@ from app.email_store import (
     EmailStore,
     email_unsubscribe_effect_digest,
 )
+from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_task_adapter import email_action_identity
 from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
@@ -2725,8 +2727,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_20() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 20
+def test_email_schema_version_is_21() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 21
 
 
 def test_current_schema_initialization_preserves_delete_journal_mode(
@@ -3392,7 +3394,7 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == [16, 17, 18, 19, email_store_module.EMAIL_SCHEMA_VERSION]
+        ] == [16, 17, 18, 19, 20, email_store_module.EMAIL_SCHEMA_VERSION]
         assert {
             row[1]
             for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
@@ -3631,7 +3633,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 16, 17, 18, 19, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [2, 16, 17, 18, 19, 20, email_store_module.EMAIL_SCHEMA_VERSION]
 
     EmailStore(database)
 
@@ -3694,7 +3696,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [15, 16, 17, 18, 19, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [15, 16, 17, 18, 19, 20, email_store_module.EMAIL_SCHEMA_VERSION]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
     assert projected["action_plan"]["action_plan_id"] == historical_plan_id
@@ -4097,7 +4099,7 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [16, 17, 18, 19, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [16, 17, 18, 19, 20, email_store_module.EMAIL_SCHEMA_VERSION]
 
 
 @pytest.mark.parametrize("missing_table", ["email_messages", "email_actions"])
@@ -7221,6 +7223,7 @@ def _task2_verified_binding(
     folder_name: str = "合作伙伴",
     status: str = "active",
     verified_at: str = "2026-09-07T12:10:00+00:00",
+    folder_role: FolderRole = FolderRole.UNBOUND,
 ):
     binding_type = getattr(email_store_module, "VerifiedEmailFolderBinding")
     return binding_type(
@@ -7229,6 +7232,7 @@ def _task2_verified_binding(
         provider_folder_name=folder_name,
         binding_status=status,
         last_verified_at=verified_at,
+        provider_folder_role=folder_role,
     )
 
 
@@ -7393,7 +7397,7 @@ def test_v19_category_config_migration_maps_active_rows_and_preserves_history(
         ]
     assert history_after == history_before
     assert migrated.get_classification(persisted["id"])["category"] == "billing"
-    assert versions[-1] == 20
+    assert versions[-1] == email_store_module.EMAIL_SCHEMA_VERSION
 
 
 def test_fresh_category_configs_seed_structured_approved_boundaries(tmp_path: Path):
@@ -7583,6 +7587,7 @@ def test_update_descriptions_and_binding_status_round_trip(tmp_path: Path):
         provider_folder_name="合作伙伴",
         binding_status="missing",
         last_verified_at="2026-09-07T12:15:00+00:00",
+        provider_folder_role=FolderRole.UNBOUND,
     )
 
     assert updated is not None
@@ -7644,7 +7649,7 @@ def test_v19_migration_rejects_structured_legacy_hybrid_table(tmp_path: Path):
     EmailStore(database)
     with sqlite3.connect(database) as db:
         db.execute("alter table email_category_configs add column description text")
-        db.execute("delete from email_schema_migrations where version=20")
+        db.execute("delete from email_schema_migrations where version >= 20")
         db.execute(
             "insert into email_schema_migrations(version, applied_at) "
             "values (19, '2026-09-07T12:21:00+00:00')"
@@ -7799,6 +7804,305 @@ def test_seeded_category_requires_explicit_enable_after_bindings_complete(
 
     assert enabled is not None
     assert enabled["enabled"] is True
+
+
+def test_junk_upsert_accepts_only_verified_system_trash_binding(tmp_path: Path) -> None:
+    store = EmailStore(tmp_path / "junk-trash-binding.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    trash = _task2_verified_binding(
+        account_id="primary",
+        folder_id="provider-trash",
+        folder_name="Deleted",
+        folder_role=FolderRole.TRASH,
+    )
+
+    persisted = store.upsert_verified_folder_binding("junk", trash)
+
+    assert persisted["provider_folder_id"] == "provider-trash"
+    with pytest.raises(ValueError, match="system Trash"):
+        store.upsert_verified_folder_binding(
+            "junk",
+            _task2_verified_binding(
+                account_id="primary",
+                folder_id="provider-junk",
+                folder_name="垃圾邮件",
+            ),
+        )
+
+
+def test_junk_coordinator_persists_whitespace_provider_trash_exactly(
+    tmp_path: Path,
+) -> None:
+    class WhitespaceTrashProvider:
+        def list_folders(self):
+            return (
+                ProviderFolder(
+                    " Deleted ", " Deleted ", FolderRole.TRASH
+                ),
+            )
+
+        def create_folder_exact(self, name: str) -> None:
+            raise AssertionError(f"junk folder must not be created: {name}")
+
+        def close(self) -> None:
+            pass
+
+    coordinator = import_module(
+        "app.email_worker"
+    ).ProviderFolderBindingCoordinator(
+        lambda _account: WhitespaceTrashProvider(),
+        now=lambda: "2026-09-08T10:00:00+00:00",
+    )
+    binding = coordinator.create_and_verify_bindings(
+        category_key="junk",
+        provider_folder_name="垃圾邮件",
+        enabled_accounts=({"account_id": "primary"},),
+    )[0]
+    store = EmailStore(tmp_path / "whitespace-trash-binding.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+
+    persisted = store.upsert_verified_folder_binding("junk", binding)
+
+    assert binding.binding_status == "active"
+    assert binding.provider_folder_id == " Deleted "
+    assert binding.provider_folder_name == " Deleted "
+    assert persisted["provider_folder_id"] == " Deleted "
+    assert persisted["provider_folder_name"] == " Deleted "
+    assert store.list_account_folder_bindings("junk") == [persisted]
+
+
+def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v20-provider-folder-whitespace.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("primary"))
+    store.upsert_verified_folder_binding(
+        "junk",
+        _task2_verified_binding(
+            folder_id="Deleted",
+            folder_name="Deleted",
+            folder_role=FolderRole.TRASH,
+        ),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("drop index idx_email_category_folder_bindings_active_provider")
+        db.execute(
+            "alter table email_category_folder_bindings "
+            "rename to email_category_folder_bindings_v20"
+        )
+        db.execute(
+            """
+            create table email_category_folder_bindings (
+                account_id text not null check(trim(account_id) != ''),
+                category_key text not null check(trim(category_key) != ''),
+                provider_folder_id text not null,
+                provider_folder_name text not null
+                    check(trim(provider_folder_name) != ''),
+                binding_status text not null check(binding_status in (
+                    'active', 'missing', 'ambiguous', 'error'
+                )),
+                last_verified_at text not null check(trim(last_verified_at) != ''),
+                primary key(account_id, category_key),
+                check(binding_status != 'active' or trim(provider_folder_id) != ''),
+                foreign key(account_id) references email_accounts(account_id)
+                    on delete cascade,
+                foreign key(category_key) references email_category_configs(category_key)
+                    on delete cascade
+            )
+            """
+        )
+        db.execute(
+            "insert into email_category_folder_bindings "
+            "select * from email_category_folder_bindings_v20"
+        )
+        db.execute("drop table email_category_folder_bindings_v20")
+        db.execute(
+            "create unique index "
+            "idx_email_category_folder_bindings_active_provider "
+            "on email_category_folder_bindings(account_id, provider_folder_id) "
+            "where binding_status = 'active'"
+        )
+        db.execute("delete from email_schema_migrations")
+        db.execute(
+            "insert into email_schema_migrations(version, applied_at) values (20, ?)",
+            ("2026-09-08T09:00:00+00:00",),
+        )
+
+    migrated = EmailStore(database)
+
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 21
+    assert migrated.list_account_folder_bindings("junk")[0][
+        "provider_folder_id"
+    ] == "Deleted"
+    persisted = migrated.upsert_verified_folder_binding(
+        "junk",
+        _task2_verified_binding(
+            folder_id=" Deleted ",
+            folder_name=" Deleted ",
+            folder_role=FolderRole.TRASH,
+        ),
+    )
+    assert persisted["provider_folder_id"] == " Deleted "
+    assert persisted["provider_folder_name"] == " Deleted "
+
+
+@pytest.mark.parametrize("negative_status", ("missing", "ambiguous", "error"))
+def test_junk_negative_verification_invalidates_stale_trash_and_disables_writes(
+    tmp_path: Path,
+    negative_status: str,
+) -> None:
+    database = tmp_path / f"junk-{negative_status}-invalidation.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("primary"))
+    store.upsert_verified_folder_binding(
+        "junk",
+        _task2_verified_binding(
+            account_id="primary",
+            folder_id="provider-trash",
+            folder_name="Deleted",
+            folder_role=FolderRole.TRASH,
+        ),
+    )
+    junk = store.get_category_config("junk")
+    enabled = store.update_category_descriptions(
+        "junk",
+        core_description=junk["core_description"],
+        include=junk["include"],
+        exclude=junk["exclude"],
+        threshold=junk["threshold"],
+        enabled=True,
+        description_version=junk["description_version"],
+        config_version=f"junk-enabled-before-{negative_status}",
+    )
+    assert enabled is not None and enabled["enabled"] is True
+
+    observed = store.upsert_verified_folder_binding(
+        "junk",
+        _task2_verified_binding(
+            account_id="primary",
+            folder_id="",
+            folder_name="垃圾邮件",
+            status=negative_status,
+            verified_at="2026-09-08T11:00:00+00:00",
+        ),
+    )
+
+    assert observed["provider_folder_id"] == ""
+    assert observed["binding_status"] == negative_status
+    assert store.get_category_config("junk")["enabled"] is False
+    reopened = EmailStore(database)
+    assert reopened.list_account_folder_bindings("junk") == [observed]
+    assert reopened.get_category_config("junk")["enabled"] is False
+
+
+@pytest.mark.parametrize(
+    "system_role",
+    (FolderRole.INBOX, FolderRole.JUNK, FolderRole.TRASH, FolderRole.SENT, FolderRole.DRAFT),
+)
+def test_business_binding_rejects_active_provider_system_folder_role(
+    tmp_path: Path,
+    system_role: FolderRole,
+) -> None:
+    store = EmailStore(tmp_path / f"business-system-role-{system_role}.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+
+    with pytest.raises(ValueError, match="business category"):
+        store.upsert_verified_folder_binding(
+            "work",
+            _task2_verified_binding(
+                account_id="primary",
+                folder_id="system-folder",
+                folder_name="工作",
+                folder_role=system_role,
+            ),
+        )
+
+
+def test_scalar_binding_status_update_cannot_bypass_system_folder_role_invariant(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "scalar-system-role.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    store.upsert_verified_folder_binding(
+        "work", _task2_verified_binding(account_id="primary")
+    )
+
+    with pytest.raises(ValueError, match="business category"):
+        store.set_folder_binding_status(
+            account_id="primary",
+            category_key="work",
+            provider_folder_id="system-trash",
+            provider_folder_name="Trash",
+            binding_status="active",
+            last_verified_at="2026-09-08T12:30:00+00:00",
+            provider_folder_role=FolderRole.TRASH,
+        )
+
+
+def test_category_binding_refresh_rolls_back_all_accounts_and_descriptions_on_conflict(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "atomic-category-refresh.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    store.create_account(_task2_account_values("secondary"))
+    for account_id in ("primary", "secondary"):
+        store.upsert_verified_folder_binding(
+            "work",
+            _task2_verified_binding(
+                account_id=account_id,
+                folder_id=f"old-work-{account_id}",
+                folder_name="工作",
+            ),
+        )
+    work = store.get_category_config("work")
+    store.update_category_descriptions(
+        "work",
+        core_description=work["core_description"],
+        include=work["include"],
+        exclude=work["exclude"],
+        threshold=work["threshold"],
+        enabled=True,
+        description_version=work["description_version"],
+        config_version="work-before-atomic-refresh",
+    )
+    store.upsert_verified_folder_binding(
+        "legal",
+        _task2_verified_binding(
+            account_id="secondary",
+            folder_id="secondary-conflict",
+            folder_name="法务",
+        ),
+    )
+    before_config = store.get_category_config("work")
+    before_bindings = store.list_account_folder_bindings("work")
+
+    with pytest.raises(email_store_module.EmailFolderBindingConflict):
+        store.refresh_category_with_bindings(
+            "work",
+            core_description="Changed description must roll back.",
+            include=("changed include",),
+            exclude=("changed exclude",),
+            threshold=0.81,
+            enabled=False,
+            description_version="work-description-conflict",
+            config_version="work-config-conflict",
+            bindings=(
+                _task2_verified_binding(
+                    account_id="primary",
+                    folder_id="new-work-primary",
+                    folder_name="工作",
+                ),
+                _task2_verified_binding(
+                    account_id="secondary",
+                    folder_id="secondary-conflict",
+                    folder_name="工作",
+                ),
+            ),
+        )
+
+    assert store.get_category_config("work") == before_config
+    assert store.list_account_folder_bindings("work") == before_bindings
 
 
 def test_active_binding_upsert_preserves_explicitly_disabled_category(tmp_path: Path):
