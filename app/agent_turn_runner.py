@@ -34,9 +34,6 @@ from app.agent_runtime_contracts import (
     RuntimeRoute,
 )
 from app.agent_runtime_router import AgentRuntimeRouter
-from app.agent_skill_usage import (
-    LoadedSkillReceipt,
-)
 from app.claude_runtime_adapter import (
     ClaudeEventNormalizer,
     ClaudeRuntimeAdapter,
@@ -94,7 +91,6 @@ _AUDIT_RUNTIME_CAPABILITIES = frozenset(
     {"audit_effect_visibility", "reviewed_read_tools", "reviewed_write_tools"}
 )
 _RUNTIME_DOMAIN_RESULT_CODEC_VERSION = 1
-_RUNTIME_RESULT_EVIDENCE_VERSION = 1
 _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 32 * 1024
 _RUNTIME_RESULT_SUMMARY_MAX_CHARS = 2048
 _RUNTIME_RESULT_REFERENCE_KEYS = frozenset(
@@ -189,113 +185,6 @@ class CompletedRuntimeResultBlockedError(ValueError):
 @dataclass(frozen=True)
 class _DecodedRuntimeDomainResult:
     result: ConsumerAgentResult | AuditAgentResult
-    evidence: dict[str, object]
-
-
-def _runtime_evidence_digest(value: object) -> str:
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-
-
-def _runtime_authorizations_digest(
-    recovery_authorizations: dict[str, int],
-) -> str:
-    canonical: list[tuple[str, int]] = []
-    for authorization_id, action_index in recovery_authorizations.items():
-        if (
-            not isinstance(authorization_id, str)
-            or not authorization_id
-            or type(action_index) is not int
-            or action_index < 0
-        ):
-            raise ValueError("runtime_recovery_authorization_invalid")
-        canonical.append((authorization_id, action_index))
-    return _runtime_evidence_digest(sorted(canonical))
-
-
-def _runtime_result_evidence(
-    *,
-    run: AgentRun,
-    event_start: int,
-    receipts: list[object],
-    recovery_started_actions: set[int],
-    completed_before_recovery: set[int],
-    recovery_authorizations: dict[str, int] | None = None,
-) -> dict[str, object]:
-    recovery_authorizations = recovery_authorizations or {}
-    event_end = len(run.tool_events)
-    if event_start < 0 or event_start > event_end:
-        raise ValueError("runtime_result_evidence_event_bounds_invalid")
-    receipt_projection = [
-        {
-            "receipt_id": str(getattr(receipt, "receipt_id", "")),
-            "operation_id": str(getattr(receipt, "operation_id", "")),
-            "cli": str(getattr(receipt, "cli", "")),
-            "command_path": str(getattr(receipt, "command_path", "")),
-            "command_digest": str(getattr(receipt, "command_digest", "")),
-            "exit_code": int(getattr(receipt, "exit_code", -1)),
-            "completed": bool(getattr(receipt, "completed", False)),
-            "persisted": bool(getattr(receipt, "persisted", False)),
-            "safe_to_confirm": bool(getattr(receipt, "safe_to_confirm", False)),
-            "effect_counted": bool(getattr(receipt, "effect_counted", False)),
-        }
-        for receipt in receipts
-    ]
-    return {
-        "version": _RUNTIME_RESULT_EVIDENCE_VERSION,
-        "event_start": event_start,
-        "event_end": event_end,
-        "events_sha256": _runtime_evidence_digest(
-            run.tool_events[event_start:event_end]
-        ),
-        "receipts_sha256": _runtime_evidence_digest(receipt_projection),
-        "recovery_started_actions": sorted(recovery_started_actions),
-        "completed_before_recovery": sorted(completed_before_recovery),
-        "recovery_authorizations_sha256": _runtime_authorizations_digest(
-            recovery_authorizations
-        ),
-    }
-
-
-def _validate_runtime_result_evidence_shape(
-    evidence: object,
-) -> dict[str, object]:
-    if not isinstance(evidence, dict) or set(evidence) != {
-        "version",
-        "event_start",
-        "event_end",
-        "events_sha256",
-        "receipts_sha256",
-        "recovery_started_actions",
-        "completed_before_recovery",
-        "recovery_authorizations_sha256",
-    }:
-        raise ValueError("runtime_result_evidence_invalid")
-    if (
-        type(evidence.get("version")) is not int
-        or evidence["version"] != _RUNTIME_RESULT_EVIDENCE_VERSION
-        or type(evidence.get("event_start")) is not int
-        or type(evidence.get("event_end")) is not int
-        or evidence["event_start"] < 0
-        or evidence["event_end"] < evidence["event_start"]
-        or not isinstance(evidence.get("events_sha256"), str)
-        or len(evidence["events_sha256"]) != 64
-        or not isinstance(evidence.get("receipts_sha256"), str)
-        or len(evidence["receipts_sha256"]) != 64
-        or not isinstance(evidence.get("recovery_authorizations_sha256"), str)
-        or len(evidence["recovery_authorizations_sha256"]) != 64
-    ):
-        raise ValueError("runtime_result_evidence_invalid")
-    for key in ("recovery_started_actions", "completed_before_recovery"):
-        indexes = evidence.get(key)
-        if (
-            not isinstance(indexes, list)
-            or any(type(index) is not int or index < 0 for index in indexes)
-            or indexes != sorted(set(indexes))
-        ):
-            raise ValueError("runtime_result_evidence_invalid")
-    return evidence
 
 
 def _bounded_runtime_result_text(value: str, *, field: str, limit: int) -> str:
@@ -457,30 +346,13 @@ def _encode_runtime_domain_result(
     *,
     schema_id: str,
     role: AgentRole,
-    recovery_phase: str,
     result: ConsumerAgentResult | AuditAgentResult,
-    evidence: dict[str, object] | None = None,
     result_reference_run_id: int | None = None,
 ) -> str:
-    if evidence is None:
-        empty_digest = _runtime_evidence_digest([])
-        evidence = {
-            "version": _RUNTIME_RESULT_EVIDENCE_VERSION,
-            "event_start": 0,
-            "event_end": 0,
-            "events_sha256": empty_digest,
-            "receipts_sha256": empty_digest,
-            "recovery_started_actions": [],
-            "completed_before_recovery": [],
-            "recovery_authorizations_sha256": _runtime_authorizations_digest({}),
-        }
-    evidence = _validate_runtime_result_evidence_shape(evidence)
     envelope = {
         "schema_id": schema_id,
         "version": _RUNTIME_DOMAIN_RESULT_CODEC_VERSION,
         "role": role.value,
-        "recovery_phase": recovery_phase,
-        "evidence": evidence,
     }
     if result_reference_run_id is None:
         projected_result = _project_runtime_domain_result(result)
@@ -523,7 +395,6 @@ def _decode_runtime_domain_result(
     *,
     schema_id: str,
     role: AgentRole,
-    recovery_phase: str,
     referenced_agent_run_id: int | None = None,
     referenced_result_json: str = "",
 ) -> _DecodedRuntimeDomainResult:
@@ -537,9 +408,7 @@ def _decode_runtime_domain_result(
         "schema_id",
         "version",
         "role",
-        "recovery_phase",
         "result",
-        "evidence",
     }
     reference_keys = expected_keys - {"result"} | {"result_ref"}
     if (
@@ -550,7 +419,6 @@ def _decode_runtime_domain_result(
         or type(envelope.get("version")) is not int
         or envelope.get("version") != _RUNTIME_DOMAIN_RESULT_CODEC_VERSION
         or envelope.get("role") != role.value
-        or envelope.get("recovery_phase") != recovery_phase
         or _contains_sensitive_value(envelope)
         or contains_local_runtime_leak(encoded)
     ):
@@ -588,8 +456,7 @@ def _decode_runtime_domain_result(
                 raise ValueError("runtime_result_envelope_projection_mismatch")
         elif result.outcome is ConsumerOutcome.FAILED:
             raise ValueError("runtime_result_reference_invalid")
-        evidence = _validate_runtime_result_evidence_shape(envelope["evidence"])
-        return _DecodedRuntimeDomainResult(result=result, evidence=evidence)
+        return _DecodedRuntimeDomainResult(result=result)
     except (ValidationError, ValueError) as exc:
         raise ValueError("runtime_result_envelope_invalid") from exc
 
@@ -597,7 +464,6 @@ def _decode_runtime_domain_result(
 def _required_runtime_capabilities(
     *,
     run: AgentRun,
-    recovery_phase: str,
     expected_effect_actions: tuple[dict[str, object], ...],
     explicit_capabilities: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
@@ -606,20 +472,19 @@ def _required_runtime_capabilities(
     # structured result and local schema validation; it does not impose
     # Provider execution and state checks are runtime concerns, not application
     # Audit capabilities.
-    if recovery_phase != "reconcile":
-        for action in expected_effect_actions:
-            capability = action.get("capability")
-            # Consumer capabilities are descriptive business labels until the
-            # Audit layer canonicalizes a reviewed native command to an
-            # ``agent_cli.*`` or ``native_cli.*`` execution surface.  A raw
-            # label such as ``dingtalk_chat`` must not make route selection
-            # fail before Audit can reject or revise the proposal.
-            if (
-                isinstance(capability, str)
-                and capability.strip()
-                and capability.strip().startswith(("agent_cli.", "native_cli."))
-            ):
-                required.add(capability.strip())
+    for action in expected_effect_actions:
+        capability = action.get("capability")
+        # Consumer capabilities are descriptive business labels until the
+        # Audit layer canonicalizes a reviewed native command to an
+        # ``agent_cli.*`` or ``native_cli.*`` execution surface.  A raw
+        # label such as ``dingtalk_chat`` must not make route selection
+        # fail before Audit can reject or revise the proposal.
+        if (
+            isinstance(capability, str)
+            and capability.strip()
+            and capability.strip().startswith(("agent_cli.", "native_cli."))
+        ):
+            required.add(capability.strip())
     required.update(
         capability.strip()
         for capability in explicit_capabilities
@@ -766,24 +631,15 @@ class AgentTurnProcess(Generic[ResultT]):
         prepare_result: Callable[[ResultT], ResultT] | None = None,
         expected_effect_actions: tuple[dict[str, object], ...] = (),
         on_progress: Callable[[], None] | None = None,
-        recovery_phase: str = "",
-        authorized_recovery_actions: frozenset[int] = frozenset(),
-        recovery_authorizations: dict[str, int] | None = None,
-        allow_effectful_tools: bool = False,
         image_paths: list[Path] | None = None,
-        required_skill_receipts: tuple[LoadedSkillReceipt, ...] = (),
         required_capabilities: frozenset[str] = frozenset(),
         conversation_contract_hash: str = "",
         force_new_session: bool = False,
     ) -> AgentTurnRunResult[ResultT]:
-        if recovery_phase:
-            raise ValueError("recovery phases are not part of the application contract")
-        recovery_authorizations = {}
         line_count = 0
         saw_json = False
         primary_turn_started = False
         primary_turn_closed = False
-        recovery_started_actions: set[int] = set()
         observed_session_id = ""
         active_attempt: AgentRuntimeAttempt | None = None
         active_route: RuntimeRoute | None = None
@@ -791,8 +647,6 @@ class AgentTurnProcess(Generic[ResultT]):
         claude_normalizer: ClaudeEventNormalizer | None = None
         pending_claude_session_id = ""
         recovered_completed_attempt = False
-        turn_event_start = len(run.tool_events)
-        completed_before_recovery: set[int] = set()
         transcript_start = run.transcript_start_line
 
         def persist_effect_event(
@@ -935,14 +789,12 @@ class AgentTurnProcess(Generic[ResultT]):
 
         required_capabilities = _required_runtime_capabilities(
             run=run,
-            recovery_phase=recovery_phase,
             expected_effect_actions=expected_effect_actions,
             explicit_capabilities=required_capabilities,
         )
         execution_contract = {
             "version": 1,
             "role": run.role.value,
-            "recovery_phase": recovery_phase,
             "operation_id": run.operation_id,
             "conversation_contract_hash": conversation_contract_hash,
             "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
@@ -957,12 +809,6 @@ class AgentTurnProcess(Generic[ResultT]):
                     separators=(",", ":"),
                 ).encode("utf-8")
             ).hexdigest(),
-            "reviewed_skills": sorted(
-                (receipt.name, receipt.sha256) for receipt in required_skill_receipts
-            ),
-            "recovery_authorizations_sha256": _runtime_authorizations_digest(
-                recovery_authorizations
-            ),
         }
         execution_contract_digest = hashlib.sha256(
             json.dumps(
@@ -1018,34 +864,10 @@ class AgentTurnProcess(Generic[ResultT]):
                         completed_attempt.result_envelope_json,
                         schema_id=runtime_result_schema_id,
                         role=run.role,
-                        recovery_phase=recovery_phase,
                         referenced_agent_run_id=run.id,
                         referenced_result_json=run.final_result_json,
                     )
-                    evidence = decoded.evidence
-                    evidence_started = set(
-                        cast(list[int], evidence["recovery_started_actions"])
-                    )
-                    evidence_completed_before = set(
-                        cast(list[int], evidence["completed_before_recovery"])
-                    )
-                    persisted_for_evidence = self.store.get_agent_run(run.id)
-                    if persisted_for_evidence is None:
-                        raise ValueError("runtime_result_evidence_parent_missing")
-                    current_evidence = _runtime_result_evidence(
-                        run=persisted_for_evidence,
-                        event_start=cast(int, evidence["event_start"]),
-                        receipts=self.store.list_agent_execution_receipts(run.id),
-                        recovery_started_actions=evidence_started,
-                        completed_before_recovery=evidence_completed_before,
-                        recovery_authorizations=recovery_authorizations,
-                    )
-                    if current_evidence != evidence:
-                        raise ValueError("runtime_result_evidence_mismatch")
                     result = cast(ResultT, decoded.result)
-                    turn_event_start = cast(int, evidence["event_start"])
-                    recovery_started_actions = evidence_started
-                    completed_before_recovery = evidence_completed_before
                 except ValueError as exc:
                     raise CompletedRuntimeResultBlockedError(
                         "completed_runtime_result_invalid"
@@ -1074,7 +896,6 @@ class AgentTurnProcess(Generic[ResultT]):
                     - completed_attempt.transcript_start
                 )
                 session_transcript_end = completed_attempt.transcript_end
-                turn_event_start = 0
                 recovered_completed_attempt = True
                 raise _RecoveredCompletedRuntimeResult
             if self.refresh_runtime_capabilities is not None:
@@ -1109,14 +930,10 @@ class AgentTurnProcess(Generic[ResultT]):
                 unavailable = RuntimeRouteUnavailableError(decision.reason)
                 self._fail_running(run, unavailable.code, detail=decision.reason)
                 raise unavailable
-            self._validate_route_workload_boundary(
-                route, run=run, recovery_phase=recovery_phase
-            )
             route_session_id = self._session_for_route(
                 route,
                 role=run.role,
                 requested_session_id=session_id,
-                recovery_phase=recovery_phase,
                 conversation_contract_hash=conversation_contract_hash,
                 force_new_session=force_new_session,
             )
@@ -1144,7 +961,6 @@ class AgentTurnProcess(Generic[ResultT]):
                         run,
                         route,
                         route_session_id,
-                        recovery_phase=recovery_phase,
                     )
                 attempt_transcript_start = (
                     count_codex_session_lines(
@@ -1183,11 +999,9 @@ class AgentTurnProcess(Generic[ResultT]):
                         image_paths=image_paths,
                         output_schema_path=None,
                         use_output_schema=False,
-                        approval_policy=(
-                            "on-failure" if allow_effectful_tools else "never"
-                        ),
+                        approval_policy="on-failure",
                         developer_instructions=developer_instructions,
-                        use_approval_bypass=allow_effectful_tools,
+                        use_approval_bypass=True,
                     )
                     configure_command(command)
                     command_env = self.codex_adapter.build_env(route)
@@ -1340,22 +1154,18 @@ class AgentTurnProcess(Generic[ResultT]):
                     run.id,
                     owner=self.owner,
                     lease_seconds=LEASE_SECONDS,
-                    expected_status="running",
                 )
                 decision = self.runtime_router.next_route(
                     run=persisted,
                     failed_attempt=failed_attempt,
                     failure=failure,
                     required_capabilities=required_capabilities,
-                    recovery_phase=recovery_phase,
+                    recovery_phase="",
                 )
                 if decision.route is None:
                     self._raise_for_process_failure(process, run=run)
                     raise AssertionError("unreachable process failure")
                 route = decision.route
-                self._validate_route_workload_boundary(
-                    route, run=run, recovery_phase=recovery_phase
-                )
                 if decision.fresh_session:
                     self._clear_incompatible_route_session_for_fresh_retry(
                         run=run,
@@ -1369,7 +1179,6 @@ class AgentTurnProcess(Generic[ResultT]):
                         route,
                         role=run.role,
                         requested_session_id=session_id,
-                        recovery_phase=recovery_phase,
                         conversation_contract_hash=conversation_contract_hash,
                     )
                 )
@@ -1377,7 +1186,6 @@ class AgentTurnProcess(Generic[ResultT]):
                     run,
                     route,
                     route_session_id,
-                    recovery_phase=recovery_phase,
                 )
                 self.store.mark_agent_runtime_attempt_superseded(failed_attempt.id)
                 active_attempt = successor
@@ -1491,14 +1299,7 @@ class AgentTurnProcess(Generic[ResultT]):
         persisted = self.store.get_agent_run(run.id)
         assert persisted is not None
         if run.role is AgentRole.AUDIT:
-            self._validate_audit_result(
-                run,
-                result,
-                persisted,
-                expected_effect_actions=expected_effect_actions,
-                required_skill_receipts=required_skill_receipts,
-                turn_event_start=turn_event_start,
-            )
+            self._validate_audit_result(run, result)
         claude_business_failure = outcome in {
             ConsumerOutcome.FAILED,
             AuditOutcome.FAILED,
@@ -1550,21 +1351,9 @@ class AgentTurnProcess(Generic[ResultT]):
                 result_envelope_json=_encode_runtime_domain_result(
                     schema_id=runtime_result_schema_id,
                     role=run.role,
-                    recovery_phase=recovery_phase,
                     result=cast(ConsumerAgentResult | AuditAgentResult, result),
                     result_reference_run_id=(
                         run.id if durable_consumer_result else None
-                    ),
-                    evidence=_runtime_result_evidence(
-                        run=cast(
-                            AgentRun,
-                            self.store.get_agent_run(run.id),
-                        ),
-                        event_start=turn_event_start,
-                        receipts=self.store.list_agent_execution_receipts(run.id),
-                        recovery_started_actions=recovery_started_actions,
-                        completed_before_recovery=completed_before_recovery,
-                        recovery_authorizations=recovery_authorizations,
                     ),
                 ),
                 conversation_id=(
@@ -1608,11 +1397,9 @@ class AgentTurnProcess(Generic[ResultT]):
         *,
         role: AgentRole,
         requested_session_id: str | None,
-        recovery_phase: str = "",
         conversation_contract_hash: str = "",
         force_new_session: bool = False,
     ) -> str | None:
-        del recovery_phase
         if force_new_session and route.name != "codex_api":
             return None
         if role is AgentRole.AUDIT:
@@ -1641,15 +1428,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 native_cli_classifier=self.native_cli,
             )
         return self.claude_adapter
-
-    @staticmethod
-    def _validate_route_workload_boundary(
-        route: RuntimeRoute,
-        *,
-        run: AgentRun,
-        recovery_phase: str,
-    ) -> None:
-        del route, run, recovery_phase
 
     def _clear_incompatible_route_session_for_fresh_retry(
         self,
@@ -1683,10 +1461,7 @@ class AgentTurnProcess(Generic[ResultT]):
         run: AgentRun,
         route: RuntimeRoute,
         source_session_id: str | None,
-        *,
-        recovery_phase: str,
     ) -> AgentRuntimeAttempt:
-        del recovery_phase
         attempt = self.store.claim_agent_runtime_attempt(
             run.id,
             route.name,
@@ -1722,19 +1497,8 @@ class AgentTurnProcess(Generic[ResultT]):
         self,
         run: AgentRun,
         result: ResultT,
-        persisted: AgentRun,
-        *,
-        expected_effect_actions: tuple[dict[str, object], ...] = (),
-        required_skill_receipts: tuple[LoadedSkillReceipt, ...] = (),
-        turn_event_start: int = 0,
     ) -> None:
         """Validate the typed Audit result without command policy checks."""
-        del (
-            persisted,
-            expected_effect_actions,
-            required_skill_receipts,
-            turn_event_start,
-        )
         if getattr(result, "proposal_revision") != run.proposal_revision:
             self._fail_running(run, "audit_proposal_revision_mismatch")
             raise RuntimeError("audit_proposal_revision_mismatch")

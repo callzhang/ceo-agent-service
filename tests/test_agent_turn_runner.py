@@ -1,5 +1,14 @@
+import inspect
+import json
+
 import app.agent_turn_runner as agent_turn_runner
-from app.agent_turn_runner import AgentTurnProcess, _persist_provider_event
+from app.agent_contracts import ConsumerAgentResult
+from app.agent_turn_runner import (
+    AgentTurnProcess,
+    _decode_runtime_domain_result,
+    _encode_runtime_domain_result,
+    _persist_provider_event,
+)
 from app.store import AgentRole, AutoReplyStore
 
 
@@ -18,6 +27,45 @@ def test_runner_has_no_application_effect_recovery_policy_helpers():
     assert not hasattr(AgentTurnProcess, "_normalized_effect_event")
     assert not hasattr(AgentTurnProcess, "_require_direct_send_receipt")
     assert not hasattr(AgentTurnProcess, "_record_direct_send_receipt")
+
+
+def test_runner_wire_contract_has_no_application_recovery_evidence_fields():
+    execute_parameters = inspect.signature(AgentTurnProcess.execute).parameters
+    assert not {
+        "recovery_phase",
+        "authorized_recovery_actions",
+        "recovery_authorizations",
+        "allow_effectful_tools",
+        "required_skill_receipts",
+    }.intersection(execute_parameters)
+
+    result = ConsumerAgentResult.model_validate(
+        {
+            "outcome": "no_action",
+            "summary": "无需处理",
+            "proposal": None,
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+            "risk": "low",
+            "confidence": 1.0,
+        }
+    )
+    encoded = _encode_runtime_domain_result(
+        schema_id="schema-v1",
+        role=AgentRole.CONSUMER,
+        result=result,
+    )
+    assert set(json.loads(encoded)) == {"schema_id", "version", "role", "result"}
+    decoded = _decode_runtime_domain_result(
+        encoded,
+        schema_id="schema-v1",
+        role=AgentRole.CONSUMER,
+    )
+    assert decoded.result == result
 
 
 def test_provider_tool_event_does_not_create_application_delivery_receipt(tmp_path):

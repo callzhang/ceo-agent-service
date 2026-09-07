@@ -44,7 +44,6 @@ EFFECT_INTENT_CONTEXT_ENV = "CEO_AGENT_EFFECT_INTENT_CONTEXT"
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
 
-
 class AuditAgentRunner:
     """Execute one ordinary Audit turn.
 
@@ -250,7 +249,6 @@ class AuditAgentRunner:
             parse_result=parse_audit_agent_wire_result,
             persist_conversation_session=False,
             expected_effect_actions=expected_effect_actions,
-            allow_effectful_tools=not self.dry_run,
             image_paths=[Path(path) for path in context.task.image_paths],
             required_capabilities=self._required_capabilities(context),
         )
@@ -271,8 +269,7 @@ class AuditAgentRunner:
             or task.channel != "email"
             or payload.get("schema") != "email_agent_action.v1"
             or payload.get("action_type") != "unsubscribe"
-            or payload.get("lifecycle_version")
-            != "email_unsubscribe_audited_v2"
+            or payload.get("lifecycle_version") != "email_unsubscribe_audited_v2"
             or run.reply_task_id != task.id
             or run.execution_generation != task.execution_generation
             or run.role is not AgentRole.AUDIT
@@ -301,10 +298,14 @@ class AuditAgentRunner:
             and candidate.status == "completed"
             and candidate.proposal_revision == run.proposal_revision
         ]
-        if not completed_consumers or max(
-            completed_consumers,
-            key=lambda candidate: (candidate.turn_attempt, candidate.id),
-        ).id != parent.id:
+        if (
+            not completed_consumers
+            or max(
+                completed_consumers,
+                key=lambda candidate: (candidate.turn_attempt, candidate.id),
+            ).id
+            != parent.id
+        ):
             return ()
         return ("execute_audited_email_unsubscribe",)
 
@@ -318,7 +319,12 @@ def _audit_recovery_error_code(exc: Exception) -> str:
 def _json_digest(value: object) -> str:
     import hashlib
     import json
-    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    return hashlib.sha256(
+        json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
 
 
 def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, object]:
@@ -350,46 +356,104 @@ def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, objec
     elif capability == "dingtalk-chat" and isinstance(content, str) and content:
         conversation_id = str(target.get("conversation_id") or "").strip()
         message_id = str(
-            target.get("message_id")
-            or target.get("source_message_id")
-            or ""
+            target.get("message_id") or target.get("source_message_id") or ""
         ).strip()
         if operation in {"send_to_group", "messages-send-to-group"} and conversation_id:
-            argv = ["dws", "chat", "+send-to-group", "--group", conversation_id,
-                    "--content", content, "--yes", "--format", "json"]
-        elif operation in {"messages-reply", "message.reply"} and conversation_id and message_id:
-            argv = ["dws", "chat", "+messages-reply", "--conversation-id", conversation_id,
-                    "--message-id", message_id, "--content", content, "--yes", "--format", "json"]
+            argv = [
+                "dws",
+                "chat",
+                "+send-to-group",
+                "--group",
+                conversation_id,
+                "--content",
+                content,
+                "--yes",
+                "--format",
+                "json",
+            ]
+        elif (
+            operation in {"messages-reply", "message.reply"}
+            and conversation_id
+            and message_id
+        ):
+            argv = [
+                "dws",
+                "chat",
+                "+messages-reply",
+                "--conversation-id",
+                conversation_id,
+                "--message-id",
+                message_id,
+                "--content",
+                content,
+                "--yes",
+                "--format",
+                "json",
+            ]
         elif isinstance(recipient, str) and recipient:
-            argv = ["dws", "chat", "+messages-send", "--open-dingtalk-id", recipient,
-                    "--text", content, "--yes", "--format", "json"]
+            argv = [
+                "dws",
+                "chat",
+                "+messages-send",
+                "--open-dingtalk-id",
+                recipient,
+                "--text",
+                content,
+                "--yes",
+                "--format",
+                "json",
+            ]
     elif capability in {"dingtalk_oa", "dingtalk-oa"} and operation in {
-        "oa-comments", "approval.comment"
+        "oa-comments",
+        "approval.comment",
     }:
         process_id = str(target.get("process_instance_id") or "").strip()
         comment = payload.get("comment_text") or payload.get("content")
         if process_id and isinstance(comment, str) and comment:
-            argv = ["dws", "oa", "approval", "oa-comments", "--instance-id", process_id,
-                    "--content", comment, "--format", "json", "--yes"]
-    elif capability in {"dingtalk-misc", "dingtalk_oa", "dingtalk-oa"} and operation in {
-        "dws oa approval approve", "oa approval approve", "approval.approve"
+            argv = [
+                "dws",
+                "oa",
+                "approval",
+                "oa-comments",
+                "--instance-id",
+                process_id,
+                "--content",
+                comment,
+                "--format",
+                "json",
+                "--yes",
+            ]
+    elif capability in {
+        "dingtalk-misc",
+        "dingtalk_oa",
+        "dingtalk-oa",
+    } and operation in {
+        "dws oa approval approve",
+        "oa approval approve",
+        "approval.approve",
     }:
         process_id = str(target.get("process_instance_id") or "").strip()
         task_id = str(target.get("task_id") or "").strip()
         remark = payload.get("remark")
         if process_id and task_id and isinstance(remark, str):
             argv = [
-                "dws", "oa", "approval", "approve",
-                "--instance-id", process_id,
-                "--task-id", task_id,
-                "--remark", remark,
-                "--format", "json", "--yes",
+                "dws",
+                "oa",
+                "approval",
+                "approve",
+                "--instance-id",
+                process_id,
+                "--task-id",
+                task_id,
+                "--remark",
+                remark,
+                "--format",
+                "json",
+                "--yes",
             ]
     if argv is None:
         return {"action_index": action_index}
-    descriptor = describe_native_command(
-        {"type": "command_execution", "argv": argv}
-    )
+    descriptor = describe_native_command({"type": "command_execution", "argv": argv})
     if descriptor is None:
         return {"action_index": action_index}
     return {
@@ -438,7 +502,9 @@ def _initial_write_authorizations(
             "action": action,
         }
         authorization_id = hashlib.sha256(
-            json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            json.dumps(
+                identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode()
         ).hexdigest()
         receipt_operation_id = hashlib.sha256(
             f"{run.operation_id}:{action['action_index']}:{action['operation_digest']}".encode()
@@ -472,8 +538,7 @@ def _bind_stable_external_action(
     identity_target = {
         str(key): value
         for key, value in target.items()
-        if str(key).replace("_", "-").casefold()
-        not in {"uuid", "idempotency-key"}
+        if str(key).replace("_", "-").casefold() not in {"uuid", "idempotency-key"}
     }
     action_key = external_action_key(
         business_object_key=business_object_key,
@@ -531,7 +596,9 @@ def _write_authorization_prompt(
     )
 
 
-def _recovery_prompt(run: AgentRun, context: AuditTurnContext, actions=(), registry=None) -> str:
+def _recovery_prompt(
+    run: AgentRun, context: AuditTurnContext, actions=(), registry=None
+) -> str:
     del actions, registry
     return (
         "Run the normal typed Audit turn against the current task context and "
