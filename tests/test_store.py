@@ -4877,6 +4877,106 @@ def test_oa_triggers_share_one_current_reply_task_and_preserve_inputs(
     ]
 
 
+def test_oa_comment_without_task_id_reuses_the_known_approval_task(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    pending = store.ensure_reply_task(
+        channel="dingtalk",
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=False,
+        trigger_message_id="oa-pending:proc-1:first",
+        trigger_create_time="2026-09-07 10:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="首次扫描",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+
+    comment = store.ensure_reply_task(
+        channel="dingtalk",
+        conversation_id="work-notice",
+        conversation_title="工作通知",
+        single_chat=True,
+        trigger_message_id="message-2",
+        trigger_create_time="2026-09-07 10:05:00",
+        trigger_sender="OA审批",
+        trigger_text=(
+            "申请人补充了说明 "
+            "https://aflow.dingtalk.com/dingtalk/mobile/homepage.htm?"
+            "procInstId=proc-1&taskId=&swfrom=comment"
+        ),
+    )
+
+    assert comment.id == pending.id
+    assert comment.business_object_key == "oa:proc-1:task-1"
+    assert [item["trigger_message_id"] for item in store.list_reply_task_inputs(pending.id)] == [
+        "oa-pending:proc-1:first",
+        "message-2",
+    ]
+
+
+def test_schema_upgrade_aliases_historical_oa_comment_to_the_known_node(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    old_comment = store.ensure_reply_task(
+        channel="dingtalk",
+        conversation_id="work-notice",
+        conversation_title="工作通知",
+        single_chat=True,
+        trigger_message_id="message-1",
+        trigger_create_time="2026-09-07 10:00:00",
+        trigger_sender="OA审批",
+        trigger_text=(
+            "申请人补充了说明 "
+            "https://aflow.dingtalk.com/mobile?procInstId=proc-1&taskId="
+        ),
+        business_object_key="message:dingtalk:work-notice:message-1",
+    )
+    current = store.ensure_reply_task(
+        channel="dingtalk",
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=False,
+        trigger_message_id="oa-pending:proc-1:task-1",
+        trigger_create_time="2026-09-07 10:05:00",
+        trigger_sender="Derek OA",
+        trigger_text="待办扫描",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+    assert old_comment.id != current.id
+    with store._connect() as db:
+        db.execute(
+            "update service_state set value='2026-09-07.2' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+    migrated_old = upgraded.get_reply_task(old_comment.id)
+    migrated_current = upgraded.get_reply_task(current.id)
+    assert migrated_old is not None
+    assert migrated_current is not None
+    assert migrated_old.business_object_key == "oa:proc-1:task-1"
+    assert migrated_current.business_object_key == "oa:proc-1:task-1"
+
+    follow_up = upgraded.ensure_reply_task(
+        channel="dingtalk",
+        conversation_id="work-notice",
+        conversation_title="工作通知",
+        single_chat=True,
+        trigger_message_id="message-2",
+        trigger_create_time="2026-09-07 10:10:00",
+        trigger_sender="OA审批",
+        trigger_text="再次补充 https://aflow.dingtalk.com/mobile?procInstId=proc-1&taskId=",
+    )
+    assert follow_up.id == current.id
+    with upgraded._connect() as db:
+        assert db.execute("select count(*) from reply_tasks").fetchone()[0] == 2
+
+
 def test_different_oa_nodes_keep_separate_current_reply_tasks(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first = store.ensure_reply_task(
@@ -8702,7 +8802,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-07.2"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-07.3"
     assert {
         "lease_owner",
         "lease_expires_at",

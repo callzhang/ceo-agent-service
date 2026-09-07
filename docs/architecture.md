@@ -79,7 +79,7 @@ Consumer 在 invocation 开始时接收这个 immutable snapshot；同一次调�
 这三个对象分属调度、执行和展示三层，不能混为一个状态：
 
 ```text
-business_object（稳定业务对象，例如一条 OA task）
+business_object（稳定业务对象，例如一条 OA 审批节点）
   ├── reply_task_inputs（不同入口收到的不可变输入）
   └── reply_task（唯一当前队列投影）
         ├── agent_runs（多次真实 Agent 执行）
@@ -114,10 +114,19 @@ Provider 成功结果按 `external_action_key` 只保存一次。后续 run 再�
 中的动作严格按数组顺序执行：序号更小的动作尚未成功时，后续动作不得开始。这样审批失败时
 不会继续发送“已审批”的通知。
 
+OA 工作通知有时只有 `process_instance_id`，没有 `task_id`。服务会同时从原生字段和事件正文
+中的 OA URL 提取身份；当该审批实例只有一个已知节点时，把评论事件映射到这个节点，避免
+webhook、待办扫描和工作通知各自产生一个任务。同一实例存在多个节点且事件未给出节点身份时，
+服务不猜测节点。
+
 所有成功消息统一投影到 `sent_replies`。同一 `external_action_key` 只有一条消息记录，相关的
 agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显示真实已发送消息，也不会
 把一次复用展示成第二次发送。这些是执行幂等与展示事实，不是应用层命令审核、业务证据审核
 或 read-back 状态机。
+
+`sent_replies` 和 provider 成功结果的优先级高于后来失败的 attempt current projection。即使
+结构化结果解析、服务重启或后续 Agent turn 失败，下一轮也会收到真实的已发送记录，并把该
+动作视为已经完成；不能因为 attempt 当前显示 failed 就再次发送。
 
 ### 用户反馈处理投影与重新打开
 
@@ -545,6 +554,8 @@ OA pending 扫描会先读取当前审批记录。只有最新有效记录来自
 不会再创建第二个业务 attempt。页面可以在该 attempt 下切换查看多个底层 `agent_runs`；这些
 run、session、runtime attempt、tool event 和原始失败事件仍是 append-only 执行事实，不能被覆盖。
 历史中的原始失败仍可展开查看，但列表默认展示 current projection。
+模式升级可以规范化业务对象键并重建 `business_object_tasks` 当前映射，但不能删除或改写旧
+task、agent run、session、tool event、发送记录或 provider 回执。
 
 ### Agent 失败重试
 

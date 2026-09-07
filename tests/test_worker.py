@@ -9205,6 +9205,52 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     assert latest.send_status == "skipped"
 
 
+def test_failed_attempt_still_exposes_the_real_sent_reply_as_prior_receipt(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("请处理这件事", single_chat=True)
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        dry_run=False,
+    )
+    task = worker.store.ensure_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-09-07 10:00:00",
+        trigger_sender="吴柯欣",
+        trigger_text=trigger.content,
+    )
+    worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="吴柯欣",
+        trigger_text=trigger.content,
+        action="agent_run",
+        sensitivity_kind="none",
+        codex_reason="later parser failure",
+        send_status="failed",
+    )
+    worker.store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "已经向申请人说明当前处理结果。",
+        send_result_json='{"status":"SUCCESS"}',
+    )
+
+    receipts = worker._agent_prior_receipts(task)
+
+    assert len(receipts) == 1
+    assert receipts[0].operation == "message_delivery"
+    assert receipts[0].summary == "已经向申请人说明当前处理结果。"
+    assert receipts[0].completed is True
+
+
 def test_recovered_oa_attempt_inherits_identity_and_hides_old_failure(
     tmp_path: Path, monkeypatch
 ):

@@ -122,6 +122,9 @@ OA 的稳定身份是 `process_instance_id + task_id`。同一 OA 从 webhook、
 人工重试或服务恢复进入时追加 input 并复用同一 task；运行中收到新 input 时，在当前
 run 结束后提高 generation 并重新排队同一 task。
 
+评论通知只有 `process_instance_id` 时，运行时从事件正文提取该身份；若该实例只有一个已知
+节点，则归并到该节点。存在多个节点而事件没有 `task_id` 时不得猜测。
+
 `reply_attempt` 的 `agent_run_id` 指向当前投影对应的最新或终态 run；完整执行历史
 通过 run 的 task、generation 和关联事件查询。Attempt 页面可以切换多个 Consumer
 或 Audit run，但不能编辑或覆盖旧 run。原始失败、session、runtime attempt、tool
@@ -233,6 +236,8 @@ continuation；`awaiting_audit` 是 effect/claim 的领域状态，
   版本、revision lineage、session、runtime attempt 和 tool event 不得覆盖；attempt 页面可切换查看
   这些底层 run。`business_object_key`、`action_identity`、`operation`、`target` 和 provider
   成功结果是避免重放所需的最小持久化事实。
+- 已成功的消息发送或 provider 回执不会因为 attempt 后来失败而失效。下一轮上下文直接读取这些
+  append-only 执行事实，不能把解析失败、服务重启或 current projection 失败理解成“尚未发送”。
 - Audit 返回 `executed` 后任务即可进入 `done`；外部结果的读取与判断由 Agent 按业务 Skill 完成。
 
 如果任务确定无需执行，应进入 `done`，并在 trace 写入 `agent_output/no_action`；如果结果需要修改，写入 `audit_feedback` 并保持 `running`；如果处理失败，应进入 `failed`。

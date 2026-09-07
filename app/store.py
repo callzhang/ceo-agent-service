@@ -112,7 +112,7 @@ SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-07.2"
+STORE_SCHEMA_VERSION = "2026-09-07.3"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -6010,15 +6010,33 @@ class AutoReplyStore:
         )
         tasks = db.execute("select * from reply_tasks order by id").fetchall()
         task_keys: dict[int, str] = {}
+        discovered_oa_nodes: dict[str, set[str]] = {}
+        derived_keys: dict[int, str] = {}
+        for task in tasks:
+            derived = reply_business_object_key(
+                channel=str(task["channel"]),
+                conversation_id=str(task["conversation_id"]),
+                trigger_message_id=str(task["trigger_message_id"]),
+                oa_url=str(task["oa_url"] or ""),
+                trigger_text=str(task["trigger_text"] or ""),
+            )
+            derived_keys[int(task["id"])] = derived
+            if derived.startswith("oa:") and not derived.endswith(":"):
+                process_id, task_id = derived[3:].rsplit(":", 1)
+                discovered_oa_nodes.setdefault(process_id, set()).add(task_id)
         for task in tasks:
             key = str(task["business_object_key"] or "").strip()
-            if not key:
-                key = reply_business_object_key(
-                    channel=str(task["channel"]),
-                    conversation_id=str(task["conversation_id"]),
-                    trigger_message_id=str(task["trigger_message_id"]),
-                    oa_url=str(task["oa_url"] or ""),
-                )
+            derived = derived_keys[int(task["id"])]
+            if derived.startswith("oa:"):
+                key = derived
+                if key.endswith(":"):
+                    process_id = key[3:-1]
+                    nodes = discovered_oa_nodes.get(process_id, set())
+                    if len(nodes) == 1:
+                        key = f"oa:{process_id}:{next(iter(nodes))}"
+            elif not key:
+                key = derived
+            if key != str(task["business_object_key"] or "").strip():
                 db.execute(
                     "update reply_tasks set business_object_key=? where id=?",
                     (key, int(task["id"])),
@@ -6042,6 +6060,12 @@ class AutoReplyStore:
                     str(task["oa_url"] or ""), key,
                 ),
             )
+            db.execute(
+                "update reply_task_inputs set business_object_key=? "
+                "where reply_task_id=?",
+                (key, int(task["id"])),
+            )
+        db.execute("delete from business_object_tasks")
         for task in reversed(tasks):
             db.execute(
                 "insert or ignore into business_object_tasks "
@@ -6258,6 +6282,7 @@ class AutoReplyStore:
             trigger_message_id=spec.trigger_message_id,
             oa_url=spec.oa_url,
             explicit_key=spec.business_object_key,
+            trigger_text=spec.trigger_text,
         )
         existing_input = db.execute(
             """
@@ -6279,6 +6304,45 @@ class AutoReplyStore:
             "select reply_task_id from business_object_tasks where business_object_key=?",
             (key,),
         ).fetchone()
+        if mapping is None and key.startswith("oa:"):
+            if key.endswith(":"):
+                matches = db.execute(
+                    "select business_object_key, reply_task_id "
+                    "from business_object_tasks where business_object_key like ?",
+                    (f"{key}%",),
+                ).fetchall()
+                if len(matches) == 1:
+                    key = str(matches[0]["business_object_key"])
+                    mapping = matches[0]
+            else:
+                process_id, _ = key[3:].rsplit(":", 1)
+                provisional_key = f"oa:{process_id}:"
+                provisional = db.execute(
+                    "select reply_task_id from business_object_tasks "
+                    "where business_object_key=?",
+                    (provisional_key,),
+                ).fetchone()
+                if provisional is not None:
+                    task_id = int(provisional["reply_task_id"])
+                    db.execute(
+                        "update reply_tasks set business_object_key=? where id=?",
+                        (key, task_id),
+                    )
+                    db.execute(
+                        "update reply_task_inputs set business_object_key=? "
+                        "where reply_task_id=?",
+                        (key, task_id),
+                    )
+                    db.execute(
+                        "delete from business_object_tasks where business_object_key=?",
+                        (provisional_key,),
+                    )
+                    db.execute(
+                        "insert into business_object_tasks "
+                        "(business_object_key, reply_task_id) values (?, ?)",
+                        (key, task_id),
+                    )
+                    mapping = provisional
         if mapping is None:
             cursor = db.execute(
                 """

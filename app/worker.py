@@ -3055,6 +3055,8 @@ class DingTalkAutoReplyWorker:
 
     def _agent_prior_receipts(self, task: ReplyTask) -> tuple[PriorReceipt, ...]:
         process_instance_id = self._oa_process_instance_id_from_url(task.oa_url)
+        if not process_instance_id and task.business_object_key.startswith("oa:"):
+            process_instance_id = task.business_object_key[3:].rsplit(":", 1)[0]
         if process_instance_id:
             receipts = []
             for attempt in self.store.list_oa_attempt_history(
@@ -3077,6 +3079,19 @@ class DingTalkAutoReplyWorker:
                     )
                 )
             return tuple(receipts)
+        sent_reply = self.store.get_sent_reply(
+            task.conversation_id,
+            task.trigger_message_id,
+        )
+        if sent_reply is not None:
+            return (
+                PriorReceipt(
+                    receipt_id=f"sent-reply-{sent_reply.id}",
+                    operation="message_delivery",
+                    summary=sent_reply.reply_text,
+                    completed=True,
+                ),
+            )
         attempt = self.store.get_latest_reply_attempt_for_trigger(
             task.conversation_id,
             task.trigger_message_id,

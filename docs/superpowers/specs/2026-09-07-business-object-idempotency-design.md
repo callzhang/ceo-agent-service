@@ -96,9 +96,13 @@ edited manually. The migration:
 
 1. adds stable keys and input-version columns;
 2. backfills one append-only input row for every existing task;
-3. derives OA keys where exact process and task identifiers are available;
+3. derives OA keys from native fields and URLs embedded in event text; a
+   process-only comment aliases to its sole known task node but is not guessed
+   when several nodes exist;
 4. maps each business key to its most recent task as the current projection;
-5. leaves all existing tasks, runs, sessions, events, attempts, and sent replies
+5. treats durable sent replies as completed prior execution facts even when a
+   later attempt projection is failed;
+6. leaves all existing tasks, runs, sessions, events, attempts, and sent replies
    intact.
 
 Historical messages are not retroactively declared idempotent unless their

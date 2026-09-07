@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from urllib.parse import parse_qs, urlsplit
 
 
@@ -18,19 +19,30 @@ def oa_identifiers_from_url(url: str) -> tuple[str, str]:
     return process_id, task_id
 
 
+def oa_identifiers_from_text(text: str) -> tuple[str, str]:
+    for candidate in re.findall(r"https?://[^\s\]\)]+", text):
+        process_id, task_id = oa_identifiers_from_url(candidate)
+        if process_id:
+            return process_id, task_id
+    return "", ""
+
+
 def reply_business_object_key(
     *,
     channel: str,
     conversation_id: str,
     trigger_message_id: str,
     oa_url: str = "",
+    trigger_text: str = "",
     explicit_key: str = "",
 ) -> str:
     key = explicit_key.strip()
     if key:
         return key
     process_id, task_id = oa_identifiers_from_url(oa_url)
-    if process_id and task_id:
+    if not process_id:
+        process_id, task_id = oa_identifiers_from_text(trigger_text)
+    if process_id:
         return f"oa:{process_id}:{task_id}"
     return f"message:{channel.strip()}:{conversation_id.strip()}:{trigger_message_id.strip()}"
 
