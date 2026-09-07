@@ -1623,6 +1623,27 @@ def test_ready_delivery_source_failure_uses_counted_retry(tmp_path):
     assert runner.calls == 0
 
 
+def test_ready_delivery_normalizes_legacy_scope_before_sending(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    decision = consumer_send_decision().model_dump()
+    del decision["audience_scope"]
+    store.update_meeting_alignment_job(
+        job_id,
+        status="ready_to_send",
+        decision_json=json.dumps(decision),
+        final_message=decision["final_message"],
+    )
+
+    consume_meeting_alignment_jobs(store, dws, object(), now=NOW, limit=1)
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "sent"
+    assert json.loads(job.decision_json)["audience_scope"] == "business"
+    assert len(dws.send_calls) == 1
+
+
 def test_deleted_minutes_source_is_terminal_no_action(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()

@@ -9,6 +9,7 @@ from app.meeting_alignment_models import (
     MeetingAlignmentJob,
     MeetingAlignmentRun,
     MeetingSource,
+    load_persisted_meeting_alignment_decision,
 )
 
 
@@ -80,6 +81,32 @@ def valid_job():
         "created_at": "2026-07-14 02:00:00",
         "updated_at": "2026-07-14 02:00:00",
     }
+
+
+@pytest.mark.parametrize(
+    ("target_kind", "expected_scope"),
+    [("group", "business"), ("direct", "personal")],
+)
+def test_load_persisted_decision_backfills_scope_from_existing_target(
+    target_kind, expected_scope
+):
+    payload = valid_send_decision()
+    if target_kind == "direct":
+        payload["target"] = {
+            "kind": "direct",
+            "conversation_id": "",
+            "direct_user_id": "u-a",
+            "title": "A",
+            "candidates": [],
+        }
+    del payload["audience_scope"]
+
+    decision, canonical_json = load_persisted_meeting_alignment_decision(
+        json.dumps(payload)
+    )
+
+    assert decision.audience_scope == expected_scope
+    assert json.loads(canonical_json)["audience_scope"] == expected_scope
 
 
 def valid_derek_viewpoint():

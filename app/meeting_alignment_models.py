@@ -1,4 +1,5 @@
-from typing import Literal, Self
+import json
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -192,6 +193,31 @@ class MeetingAlignmentDecision(StrictModel):
             if not self.target.title.strip():
                 raise ValueError("direct target requires title")
         return self
+
+
+def load_persisted_meeting_alignment_decision(
+    raw: str,
+) -> tuple[MeetingAlignmentDecision, str]:
+    """Load a stored decision and canonicalize the one retired scope omission.
+
+    `audience_scope` is required for all current Agent output. Older stored send
+    decisions predate that field, but their target kind already determines the
+    same scope without re-analyzing the meeting: groups are business delivery
+    and direct targets are personal delivery.
+    """
+    payload: Any = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ValueError("persisted meeting decision must be a JSON object")
+    if "audience_scope" not in payload and payload.get("action") == "send":
+        target = payload.get("target")
+        if isinstance(target, dict):
+            target_kind = target.get("kind")
+            if target_kind == "group":
+                payload["audience_scope"] = "business"
+            elif target_kind == "direct":
+                payload["audience_scope"] = "personal"
+    decision = MeetingAlignmentDecision.model_validate(payload)
+    return decision, decision.model_dump_json()
 
 
 MeetingAlignmentQueueStatus = Literal[

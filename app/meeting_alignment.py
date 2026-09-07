@@ -30,6 +30,7 @@ from app.meeting_alignment_delivery import (
 from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
     MeetingParticipant,
+    load_persisted_meeting_alignment_decision,
 )
 from app.meeting_alignment_source import (
     CalendarMeetingEvidence,
@@ -1060,12 +1061,17 @@ def _deliver_meeting_job(
         return
 
     try:
-        decision = MeetingAlignmentDecision.model_validate_json(
-            job.decision_json
+        decision, canonical_decision_json = (
+            load_persisted_meeting_alignment_decision(job.decision_json)
         )
     except (ValidationError, ValueError) as exc:
         _fail_job(store, job.id, "meeting_target", exc)
         return
+    if canonical_decision_json != job.decision_json:
+        store.update_meeting_alignment_job(
+            job.id,
+            decision_json=canonical_decision_json,
+        )
     try:
         source_payload = json.loads(job.source_json)
         evidence = CalendarMeetingEvidence.model_validate(
