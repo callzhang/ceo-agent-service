@@ -7222,6 +7222,17 @@ def test_attention_hides_historical_failed_task_when_business_object_is_done(
             "update reply_tasks set status='done' where id=?",
             (current.id,),
         )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=historical.conversation_id,
+        conversation_title=historical.conversation_title,
+        trigger_message_id=historical.trigger_message_id,
+        trigger_sender=historical.trigger_sender,
+        trigger_text=historical.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="old failure",
+        send_status="failed",
+    )
 
     rows = audit_web_module._queue_attention_rows(store)
 
@@ -7229,6 +7240,11 @@ def test_attention_hides_historical_failed_task_when_business_object_is_done(
         row["category"] == "Reply task" and row["id"] == str(historical.id)
         for row in rows
     )
+    assert not any(
+        row["category"] == "Reply" and row["id"] == str(attempt_id)
+        for row in rows
+    )
+    assert store.count_current_unresolved_problem_attempts() == 0
 
 
 def test_attention_includes_recent_unresolved_service_errors(tmp_path: Path):

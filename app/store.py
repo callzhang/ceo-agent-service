@@ -20098,6 +20098,16 @@ class AutoReplyStore:
                 select *
                 from reply_attempts as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
+                  and not exists (
+                      select 1
+                      from reply_tasks as historical_task
+                      join business_object_tasks as current_business_object
+                        on current_business_object.business_object_key=historical_task.business_object_key
+                      where historical_task.channel=attempts.channel
+                        and historical_task.conversation_id=attempts.conversation_id
+                        and historical_task.trigger_message_id=attempts.trigger_message_id
+                        and current_business_object.reply_task_id<>historical_task.id
+                  )
                   and (
                       (
                           attempts.send_status = 'needs_human'
@@ -20151,6 +20161,16 @@ class AutoReplyStore:
                        attempts.updated_at, attempts.send_error
                 from reply_attempts as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
+                  and not exists (
+                      select 1
+                      from reply_tasks as historical_task
+                      join business_object_tasks as current_business_object
+                        on current_business_object.business_object_key=historical_task.business_object_key
+                      where historical_task.channel=attempts.channel
+                        and historical_task.conversation_id=attempts.conversation_id
+                        and historical_task.trigger_message_id=attempts.trigger_message_id
+                        and current_business_object.reply_task_id<>historical_task.id
+                  )
                   and (
                       (
                           attempts.send_status = 'needs_human'
@@ -20209,6 +20229,16 @@ class AutoReplyStore:
                 select count(*) as count
                 from reply_attempts as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
+                  and not exists (
+                      select 1
+                      from reply_tasks as historical_task
+                      join business_object_tasks as current_business_object
+                        on current_business_object.business_object_key=historical_task.business_object_key
+                      where historical_task.channel=attempts.channel
+                        and historical_task.conversation_id=attempts.conversation_id
+                        and historical_task.trigger_message_id=attempts.trigger_message_id
+                        and current_business_object.reply_task_id<>historical_task.id
+                  )
                   and (
                       (
                           attempts.send_status = 'needs_human'
