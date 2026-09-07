@@ -268,8 +268,8 @@ def test_recover_no_effect_dingtalk_run_after_service_restart(tmp_path: Path) ->
     updated = store.get_reply_task(task_id)
     assert updated is not None
     assert updated.status == "pending"
+    assert updated.execution_generation == task.execution_generation
     assert updated.error == "service_restart_before_effect"
-    assert updated.execution_generation != task.execution_generation
     assert updated.force_new_decision is False
     run = store.get_agent_run(claim.run.id)
     assert run is not None and run.status == "failed"
@@ -4478,7 +4478,7 @@ def test_dispatched_effect_result_is_terminal_failure_without_unknown_state(
     assert retry_claim.run.status == "failed"
 
 
-def test_restart_after_effect_terminalizes_run_and_requeues_new_generation(
+def test_restart_after_effect_terminalizes_run_and_requeues_same_generation(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -4505,7 +4505,7 @@ def test_restart_after_effect_terminalizes_run_and_requeues_new_generation(
 
     assert len(recovered) == 1
     assert recovered[0].status == "pending"
-    assert recovered[0].execution_generation != "initial"
+    assert recovered[0].execution_generation == "initial"
     failed = store.get_agent_run(run.id)
     assert failed is not None
     assert failed.status == "failed"

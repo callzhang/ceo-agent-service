@@ -10289,7 +10289,6 @@ class AutoReplyStore:
             for row in rows:
                 task_id = int(row["id"])
                 generation = str(row["execution_generation"])
-                next_generation = uuid4().hex
                 db.execute(
                     """
                     update agent_runs
@@ -10328,13 +10327,13 @@ class AutoReplyStore:
                 cursor = db.execute(
                     """
                     update reply_tasks
-                    set force_new_decision=0, execution_generation=?,
-                        status='pending', locked_at=null, available_at='',
+                    set force_new_decision=0, status='pending',
+                        locked_at=null, available_at='',
                         error='service_restart_before_effect',
                         updated_at=current_timestamp
                     where id=? and status='processing' and execution_generation=?
                     """,
-                    (next_generation, task_id, generation),
+                    (task_id, generation),
                 )
                 if cursor.rowcount != 1:
                     continue
@@ -10375,10 +10374,9 @@ class AutoReplyStore:
                 cursor = db.execute(
                     """update reply_tasks set status='pending', attempts=0,
                        locked_at=null, available_at='',
-                       error='service_restart_immediate_retry',
-                       execution_generation=?, updated_at=current_timestamp
+                       error='service_restart_immediate_retry', updated_at=current_timestamp
                        where id=? and status='failed' and execution_generation=?""",
-                    (uuid4().hex, row["id"], generation),
+                    (row["id"], generation),
                 )
                 if cursor.rowcount:
                     recovered.append(self._reply_task_from_row(
@@ -10456,8 +10454,7 @@ class AutoReplyStore:
                 cursor = db.execute(
                     """
                     update reply_tasks
-                    set status='pending', execution_generation=?,
-                        locked_at=null, available_at='',
+                    set status='pending', locked_at=null, available_at='',
                         error='service_restart_effect_failed',
                         updated_at=current_timestamp
                     where id=? and status='processing' and execution_generation=?
@@ -10468,7 +10465,7 @@ class AutoReplyStore:
                             and role='audit' and status='failed'
                       )
                     """,
-                    (uuid4().hex, task_id, generation),
+                    (task_id, generation),
                 )
                 if cursor.rowcount != 1:
                     continue
