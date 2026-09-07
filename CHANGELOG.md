@@ -3,8 +3,8 @@
 - 2026-09-06: require every meeting-alignment run to produce one delivered
   summary. The structured decision contract now permits only `send`; business
   group-discovery and delivery problems remain retryable or failed work rather
-  than terminal `no_action`, and deleted Minutes sources are recorded as a
-  visible source failure instead of silently skipped.
+  than terminal `no_action`; the sole exception is a confirmed deleted Minutes
+  source, which has no recoverable content and is terminal `no_action`.
 
 - 2026-09-06: split WeChat Sender readiness into two distinct operations:
   passive `check_readiness` for Tutorial and service checks, and

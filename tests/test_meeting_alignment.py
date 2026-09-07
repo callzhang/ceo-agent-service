@@ -1656,7 +1656,7 @@ def test_ready_delivery_normalizes_legacy_scope_before_sending(tmp_path):
     assert len(dws.send_calls) == 1
 
 
-def test_deleted_minutes_source_is_terminal_failure_not_no_action(tmp_path):
+def test_deleted_minutes_source_is_terminal_no_action(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     job_id = seed_consumer_job(store, dws)
@@ -1672,8 +1672,8 @@ def test_deleted_minutes_source_is_terminal_failure_not_no_action(tmp_path):
     consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
 
     job = store.get_meeting_alignment_job(job_id)
-    assert job.status == "failed"
-    assert json.loads(job.error)["kind"] == "meeting_source"
+    assert job.status == "no_action"
+    assert job.error == ""
     assert runner.calls == 0
     assert dws.send_calls == []
 

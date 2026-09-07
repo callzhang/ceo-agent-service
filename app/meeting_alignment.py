@@ -751,7 +751,13 @@ def _analyze_meeting_job(
         )
     except (MeetingSourceIncomplete, DwsError) as exc:
         if isinstance(exc, DwsError) and _is_deleted_minutes_error(exc):
-            _fail_job(store, job.id, "meeting_source", exc)
+            store.update_meeting_alignment_job(
+                job.id,
+                status="no_action",
+                locked_at=None,
+                available_at="",
+                error="",
+            )
             return
         _retry_or_fail(
             store,
