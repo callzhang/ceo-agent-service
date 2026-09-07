@@ -134,6 +134,9 @@ event 和 provider 结果仍然作为 append-only 事实保留。
 错误或调度错误不是执行回执，不能被放入“已完成事实”污染下一轮判断。普通聊天中的规则改进请求
 也不依赖 Feedback 页面记录；只有上下文明示 `feedback_key` / `batch_id` 时才进入反馈处理轮次。
 
+OA 判断以当前节点的实际表单为边界：不存在于当前表单的字段不能被判为必填，后续阶段字段也
+不能提前阻塞当前审批。该规则同时进入 Consumer 候选契约和 Audit 复核契约。
+
 ## 外部动作幂等与依赖
 
 每个 ProposedAction 必须包含稳定的 `action_identity`。服务使用

@@ -620,6 +620,13 @@ def test_consumer_does_not_require_feedback_queue_identity_for_chat_rule_request
     assert "absence of a feedback-processing record is not a task failure" in instructions
 
 
+def test_consumer_oa_contract_never_requires_fields_absent_from_current_stage():
+    instructions = consumer_developer_instructions("Verify supported facts.")
+
+    assert "A field absent from the current OA form cannot be treated as mandatory" in instructions
+    assert "Do not import fields from a later business stage" in instructions
+
+
 def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
@@ -673,6 +680,13 @@ def test_audit_instructions_accept_the_authorized_low_consequence_standard():
     instructions = audit_developer_instructions("Verify every supported fact.")
 
     assert "Provider command names, MCP tools, receipts, and readback procedures" in instructions
+
+
+def test_audit_rejects_requirements_that_are_absent_from_the_current_oa_stage():
+    instructions = audit_developer_instructions("Verify every supported fact.")
+
+    assert "Reject a candidate that requires a field absent from the current OA form" in instructions
+    assert "later business stage" in instructions
 
 
 def test_audit_instructions_allow_bounded_fact_finding_without_purchase_commitment():

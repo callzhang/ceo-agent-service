@@ -78,6 +78,9 @@ Consumer 在 invocation 开始时接收这个 immutable snapshot；同一次调�
 只有输入上下文明确携带 `feedback_key` / `batch_id` 时，才要求反馈处理轮次记录；普通消息直接按
 适用 Skill 形成规则修改候选。找不到反馈队列记录不能作为普通消息处理失败的理由。
 
+OA 每个审批节点只校验当前表单真实存在且明确必填的信息。后续业务阶段、其他表单或评审偏好
+中的字段不能反向成为当前节点的强制条件；Audit 发现这种候选必须退回 Consumer 重新生成。
+
 ### Business Object、Task、Agent Run 与 Reply Attempt 的关系
 
 这三个对象分属调度、执行和展示三层，不能混为一个状态：
