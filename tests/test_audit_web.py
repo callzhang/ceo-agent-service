@@ -5937,7 +5937,7 @@ def test_render_attempt_list_reuses_one_read_connection(tmp_path: Path, monkeypa
     assert connection_calls == 1
 
 
-def test_render_attempt_list_excludes_pending_reply_tasks(tmp_path: Path):
+def test_render_attempt_list_counts_pending_reply_tasks(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-1",
@@ -5951,12 +5951,12 @@ def test_render_attempt_list_excludes_pending_reply_tasks(tmp_path: Path):
 
     html = render_attempt_list(store)
 
-    assert "💬 Pending" not in html
-    assert "#task-1" not in html
-    assert "@Alex Chen(明哥) 这个候选人怎么看？" not in html
+    assert "💬 Pending" in html
+    assert "#task-1" in html
+    assert "@Alex Chen(明哥) 这个候选人怎么看？" in html
 
 
-def test_render_attempt_list_excludes_pending_backoff_tasks(
+def test_render_attempt_list_counts_pending_backoff_tasks(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -5974,11 +5974,11 @@ def test_render_attempt_list_excludes_pending_backoff_tasks(
 
     html = render_attempt_list(store)
 
-    assert "快路径已触发" not in html
-    assert "@Alex Chen(明哥) 这个候选人怎么看？" not in html
+    assert "快路径已触发" in html
+    assert "@Alex Chen(明哥) 这个候选人怎么看？" in html
 
 
-def test_render_attempt_list_excludes_processing_reply_tasks(tmp_path: Path):
+def test_render_attempt_list_counts_processing_reply_tasks(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-1",
@@ -5993,8 +5993,9 @@ def test_render_attempt_list_excludes_processing_reply_tasks(tmp_path: Path):
 
     html = render_attempt_list(store)
 
-    assert "#task-1" not in html
-    assert "@Alex Chen(明哥) 这个候选人怎么看？" not in html
+    assert "💬 Processing" in html
+    assert "#task-1" in html
+    assert "@Alex Chen(明哥) 这个候选人怎么看？" in html
 
 
 def test_render_attempt_list_does_not_pin_failed_reply_tasks(tmp_path: Path):

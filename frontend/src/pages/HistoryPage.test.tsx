@@ -65,6 +65,15 @@ describe("HistoryPage", () => {
     expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ status: "done" }), expect.anything());
   });
 
+  it("filters the live queue by its real processing status", async () => {
+    const user = (await import("@testing-library/user-event")).default.setup();
+    render(<MemoryRouter><HistoryPage /></MemoryRouter>);
+
+    await user.click(await screen.findByRole("button", { name: "执行中" }));
+
+    expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ status: "processing" }), expect.anything());
+  });
+
   it("gives immediate visual feedback while a status filter is loading", async () => {
     const user = (await import("@testing-library/user-event")).default.setup();
     let resolveRequest!: (value: unknown) => void;

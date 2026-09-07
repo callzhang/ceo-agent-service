@@ -790,6 +790,43 @@ def test_console_history_completed_filter_includes_sent_records(tmp_path: Path):
     assert response.json()["meta"]["total"] >= 1
 
 
+def test_console_history_counts_live_reply_queue_states(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="queue-conversation",
+        conversation_title="Queue history test",
+        single_chat=False,
+        trigger_message_id="queue-pending",
+        trigger_create_time="2026-09-06T10:00:00Z",
+        trigger_sender="Mina",
+        trigger_text="等待处理的消息",
+    )
+    store.enqueue_reply_task(
+        conversation_id="queue-conversation",
+        conversation_title="Queue history test",
+        single_chat=False,
+        trigger_message_id="queue-processing",
+        trigger_create_time="2026-09-06T10:01:00Z",
+        trigger_sender="Mina",
+        trigger_text="正在处理的消息",
+    )
+    store.claim_reply_tasks(limit=1)
+
+    with _client(tmp_path) as client:
+        pending = client.get("/api/console/history?status=pending")
+        processing = client.get("/api/console/history?status=processing")
+        queue_only = client.get("/api/console/history?object_type=queue")
+
+    assert pending.status_code == 200
+    assert pending.json()["meta"]["total"] == 1
+    assert pending.json()["items"][0]["status"] == "pending"
+    assert pending.json()["items"][0]["type"] == "queue"
+    assert processing.status_code == 200
+    assert processing.json()["meta"]["total"] == 1
+    assert processing.json()["items"][0]["status"] == "processing"
+    assert queue_only.json()["meta"]["total"] == 2
+
+
 def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = _project(store, "History project")

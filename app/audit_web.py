@@ -763,6 +763,8 @@ _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
 ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
 HISTORY_TYPE_FILTERS = (
+    "pending",
+    "processing",
     "sent",
     "reacted",
     "skipped",
@@ -5644,7 +5646,7 @@ def _render_attempt_list(
                 f"{pinned_rows}</div></section>"
             )
     send_status_filters = type_filters or None
-    total_count = (
+    history_total_count = (
         store.count_history_items(
             send_statuses=send_status_filters,
             query_text=query,
@@ -5653,11 +5655,20 @@ def _render_attempt_list(
         if search_history_items
         else 0
     )
+    queue_tasks = []
+    if not search_object_type:
+        queue_tasks = [
+            task
+            for task in store.list_reply_tasks(statuses=("pending", "processing"))
+            if (not type_filters or task.status in type_filters)
+            and _reply_task_matches_query(task, query)
+        ]
+    total_count = history_total_count + len(queue_tasks)
     page = _bounded_page(page, limit, total_count)
     offset = _page_offset(page, limit)
-    # History is an execution ledger. Queue lifecycle belongs to worker status,
-    # so pending and processing reply_tasks must never be rendered as history rows.
-    items = []
+    # Queue items are live task state, not an execution outcome. Keep their
+    # native status visible and never promote them into Attention.
+    items = [_reply_task_item(task) for task in queue_tasks]
     session_search_html = ""
     if query and page == 1 and search_codex_sessions:
         session_results = store.search_codex_sessions(
@@ -5668,8 +5679,8 @@ def _render_attempt_list(
         session_search_html = _history_session_search_html(session_results)
     history_items = (
         store.list_history_items(
-            limit=limit,
-            offset=offset,
+            limit=(page * limit if limit is not None else None),
+            offset=0,
             send_statuses=send_status_filters,
             query_text=query,
             object_types=object_types,
@@ -5847,6 +5858,8 @@ def _render_attempt_list(
             f"{foot_section}"
             "</article>"
         )
+    if limit is not None:
+        items = items[offset:offset + limit]
     if not items:
         chart_html = _render_history_chart(store) if include_chart else ""
         body = (

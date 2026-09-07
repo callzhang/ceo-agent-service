@@ -200,8 +200,8 @@ launchd 后验证新 PID、HTTP 健康与 Store 可读性。
 
 ## History 语义与无效入口边界
 
-History 是执行历史的单一展示入口，不把同一次执行拆成多行，也不把队列请求状态
-混入执行结果状态。筛选条件的业务含义固定如下：
+History 是任务和执行记录的单一展示入口。同一个任务不得被拆成多条当前队列记录；
+队列任务与执行记录都必须保留各自真实状态。筛选条件的业务含义固定如下：
 
 - `status` 只筛选执行状态；不再使用含糊的 `type` 名称。
 - `task_type` 只筛选任务类型；多选通过重复的 `task_type` 参数表达，不再使用
@@ -209,10 +209,10 @@ History 是执行历史的单一展示入口，不把同一次执行拆成多行
 - 任务类型包括 `replay`、`wechat`、`approval`、`task`、`meeting` 和
   `okr_review`。OKR 评审优先依据明确的 `action='okr_review'` 识别，其次依据与
   `okr_review_requests` 的会话和触发消息关联识别；同一执行记录只能归入一个类型。
-- `okr_review_requests` 的队列状态不能覆盖对应执行记录的 History 状态。若未来需要
-  展示队列生命周期，应设计独立视图，不能在 History 中制造第二行或混合两种状态。
-- 这项隔离同样适用于兼容的服务端渲染路径：`reply_tasks` 的 `pending` 与
-  `processing` 只在 Worker/Status 视图呈现，绝不插入 History 列表。
+- `reply_tasks` 的 `pending` 和 `processing` 是当前队列任务，必须在 History 中按真实
+  状态展示、筛选和计数；它们不属于 Attention。
+- `okr_review_requests` 的队列状态不能覆盖对应执行记录的 History 状态。若同一对象已有
+  当前队列记录，列表以这条队列记录承载 `pending` 或 `processing`，不再制造重复的当前状态行。
 
 History 不承诺旧查询参数或旧 URL 的兼容别名；接口和页面使用当前语义，历史数据只
 通过当前代码的分类规则重新解释。

@@ -157,6 +157,48 @@ def register_console_routes(
             "action": normalize_display_value(getattr(log, "action", "")),
         }
 
+    def queue_history_item(task: Any) -> dict[str, Any]:
+        """Render a live queue item without presenting it as an execution run."""
+        status = str(getattr(task, "status", "") or "").strip().lower()
+        progress = (
+            "正在由执行器处理。"
+            if status == "processing"
+            else "已入队，等待执行器领取。"
+        )
+        error = normalize_display_value(getattr(task, "error", ""))
+        if error:
+            progress = f"{progress} {error}"
+        return {
+            "id": f"task-{int(getattr(task, 'id', 0) or 0)}",
+            "occurred_at": str(getattr(task, "updated_at", "") or ""),
+            "title": normalize_display_value(getattr(task, "conversation_title", "")),
+            "type": "queue",
+            "status": status,
+            "summary": progress,
+            "actor": normalize_display_value(getattr(task, "trigger_sender", "")),
+            "detail_url": "/workers",
+            "kind": "queue",
+            "input": normalize_display_value(getattr(task, "trigger_text", "")),
+            "output": progress,
+            "action": "reply_task",
+        }
+
+    def queue_history_matches(task: Any, *, query: str, status: str) -> bool:
+        task_status = str(getattr(task, "status", "") or "").strip().lower()
+        if status and task_status != status:
+            return False
+        query_text = query.strip().casefold()
+        if not query_text:
+            return True
+        searchable = " ".join(
+            str(getattr(task, field, "") or "")
+            for field in (
+                "conversation_id", "conversation_title", "trigger_message_id",
+                "trigger_sender", "trigger_text", "status", "error",
+            )
+        ).casefold()
+        return query_text in searchable
+
     def stored_json(value: str, fallback: Any):
         try:
             return json.loads(value or "")
@@ -283,7 +325,12 @@ def register_console_routes(
         store = store_factory()
         status_key = status.strip().lower()
         statuses = ("done", "sent") if status_key == "done" else ((status_key,) if status_key else None)
-        history_types = (object_type,) if object_type.strip() else None
+        object_type_key = object_type.strip().lower()
+        history_types = (
+            (object_type_key,)
+            if object_type_key and object_type_key != "queue"
+            else None
+        )
         visible_source_tables = (
             "reply_attempts",
             "meeting_alignment_runs",
@@ -292,15 +339,32 @@ def register_console_routes(
             "follow_up_drafts",
             "work_todo_dingtalk_links",
         )
-        total, rows = store.list_operation_logs_with_count(
-            limit=page_size,
-            offset=(page - 1) * page_size,
+        queue_items = (
+            [
+                queue_history_item(task)
+                for task in store.list_reply_tasks(statuses=("pending", "processing"))
+                if queue_history_matches(task, query=q, status=status_key)
+            ]
+            if object_type_key in {"", "queue"}
+            else []
+        )
+        log_total, rows = store.list_operation_logs_with_count(
+            # Queue rows can only displace log rows from the requested page.
+            # Fetch through that page before merging both ordered sources.
+            limit=page * page_size,
+            offset=0,
             query=q,
             statuses=statuses,
             history_types=history_types,
             source_tables=visible_source_tables,
         )
-        items = [history_log_item(row) for row in rows]
+        all_items = [*queue_items, *(history_log_item(row) for row in rows)]
+        all_items.sort(
+            key=lambda item: str(item.get("occurred_at") or ""), reverse=True
+        )
+        total = log_total + len(queue_items)
+        start = (page - 1) * page_size
+        items = all_items[start:start + page_size]
         response = list_envelope(items, page=page, page_size=page_size, total=total)
         if include_chart and history_chart_factory is not None:
             chart_hours = {"24h": 24, "1w": 24 * 7, "1m": 24 * 30}.get(chart_range.strip().lower(), 24)
