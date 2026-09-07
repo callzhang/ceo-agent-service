@@ -2018,7 +2018,7 @@ def test_history_chart_keeps_failed_attempt_visible_after_later_attempt(tmp_path
     assert "💬 Failed" in series_names
 
 
-def test_history_chart_marks_failed_reply_processing_while_task_is_active(
+def test_history_chart_keeps_retry_event_distinct_from_current_processing(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2046,7 +2046,8 @@ def test_history_chart_marks_failed_reply_processing_while_task_is_active(
     payload = audit_web_module._history_chart_payload(store)
     series_names = {series["name"] for series in payload["series"]}
 
-    assert "💬 Processing" in series_names
+    assert "↻ Retrying" in series_names
+    assert "💬 Processing" not in series_names
     assert "💬 Failed" not in series_names
 
 

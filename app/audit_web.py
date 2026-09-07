@@ -795,7 +795,9 @@ HISTORY_CHART_COLORS = {
     "◌ Historical": "#a8a8aa",
     "⏳ Provider recovery": "#c37d0d",
     "💬 Blocked": "#c37d0d",
-    "💬 Processing": "#3772cf",
+    "↻ Retrying": "#3772cf",
+    "⚙️ Execution started": "#3772cf",
+    "⚙️ Task activity": "#3772cf",
     "💬 Commented": "#3772cf",
     "🙂 Reacted": "#6f8fdd",
     "💬 Failed": "#d45656",
@@ -4828,7 +4830,7 @@ def _history_event_label(attempt: ReplyAttempt) -> str:
         return "💬 Commented"
     if status == "calendar":
         return "📆 Calendar"
-    return "💬 Processing"
+    return "⚙️ Execution started"
 
 
 def _history_item_event_label(item) -> str:
@@ -4848,7 +4850,7 @@ def _history_item_event_label(item) -> str:
         "sent": "💬 Sent",
         "skipped": "💬 Skipped",
         "failed": "💬 Failed",
-    }.get(item.status, "💬 Processing")
+    }.get(item.status, "⚙️ Task activity")
 
 
 def _history_chart_payload(
@@ -4871,7 +4873,6 @@ def _history_chart_payload(
     attempts = store.list_reply_attempts_since(since_utc)
     bucket_values: dict[str, list[int]] = {}
     label_indexes = {label: index for index, label in enumerate(labels)}
-    task_cache: dict[tuple[str, str, str], object | None] = {}
     for attempt in attempts:
         created_at = _parse_utc_timestamp(attempt.created_at)
         if created_at is None:
@@ -4890,29 +4891,17 @@ def _history_chart_payload(
             if created_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW:
                 event_label = "◌ Historical"
         if attempt.send_status == "failed" and event_label == "💬 Failed":
-            task_key = (
-                attempt.channel,
+            task = store.get_reply_task_for_message(
                 attempt.conversation_id,
                 attempt.trigger_message_id,
+                channel=attempt.channel,
             )
-            task = task_cache.get(task_key)
-            if task_key not in task_cache:
-                task = store.get_reply_task_for_message(
-                    attempt.conversation_id,
-                    attempt.trigger_message_id,
-                    channel=attempt.channel,
-                )
-                task_cache[task_key] = task
-            if (
-                task is not None
-                and task.status == "pending"
-                and is_codex_provider_recovery_code(task.error)
-            ):
+            if task is not None and task.status == "pending" and is_codex_provider_recovery_code(task.error):
                 event_label = "⏳ Provider recovery"
             elif task is not None and task.status == "done":
                 event_label = "↻ Recovered"
             elif task is not None and task.status == "processing":
-                event_label = "💬 Processing"
+                event_label = "↻ Retrying"
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     recovered_meeting_run_ids = store.recovered_meeting_alignment_run_ids_since(
         since_utc
