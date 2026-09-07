@@ -7226,6 +7226,10 @@ def test_attention_hides_historical_failed_task_when_business_object_is_done(
     )
 
     rows = audit_web_module._queue_attention_rows(store)
+    payload = build_worker_status_payload(store)
+    reply_task_queue = next(
+        queue for queue in payload["queues"] if queue["name"] == "Reply tasks"
+    )
 
     assert not any(
         row["category"] == "Reply task" and row["id"] == str(historical.id)
@@ -7235,6 +7239,8 @@ def test_attention_hides_historical_failed_task_when_business_object_is_done(
         row["category"] == "Reply" and row["id"] == str(attempt_id)
         for row in rows
     )
+    assert reply_task_queue["failed"] == 0
+    assert reply_task_queue["counts"] == {"done": 1}
     assert store.count_current_unresolved_problem_attempts() == 0
 
 

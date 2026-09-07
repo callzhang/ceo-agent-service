@@ -2455,6 +2455,9 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
         for name, table, status_column, updated_column, error_column in specs:
             if not _sqlite_table_exists(db, table):
                 continue
+            if table == "reply_tasks":
+                snapshots.append(_reply_task_queue_snapshot(db))
+                continue
             if table == "reply_attempts":
                 snapshots.append(_reply_attempt_queue_snapshot(db))
                 continue
@@ -2484,6 +2487,64 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
         if _sqlite_table_exists(db, "reply_tasks"):
             snapshots.append(_email_unsubscribe_task_queue_snapshot(db))
     return snapshots
+
+
+def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
+    """Summarize only the current task projection for each business object."""
+
+    current_projection = """
+        from reply_tasks as tasks
+        left join business_object_tasks as current_business_object
+          on current_business_object.business_object_key=tasks.business_object_key
+        where (
+            trim(tasks.business_object_key)=''
+            or current_business_object.reply_task_id is null
+            or current_business_object.reply_task_id=tasks.id
+        )
+    """
+    rows = db.execute(
+        f"""
+        select lower(coalesce(tasks.status, '')) as status, count(*) as count
+        {current_projection}
+        group by lower(coalesce(tasks.status, ''))
+        order by status
+        """
+    ).fetchall()
+    counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
+    latest_row = db.execute(
+        f"""
+        select tasks.updated_at, tasks.error
+        {current_projection}
+        order by tasks.updated_at desc, tasks.id desc
+        limit 1
+        """
+    ).fetchone()
+    latest_error_row = db.execute(
+        f"""
+        select tasks.error
+        {current_projection}
+          and lower(tasks.status) in ('failed', 'error')
+        order by tasks.updated_at desc, tasks.id desc
+        limit 1
+        """
+    ).fetchone()
+    return {
+        "name": "Reply tasks",
+        "table": "reply_tasks (current business-object projection)",
+        "counts": counts,
+        "pending": _queue_count_for(counts, {"pending"}),
+        "processing": _queue_count_for(counts, {"processing"}),
+        "failed": _queue_count_for(counts, {"failed", "error"}),
+        "retryable": 0,
+        "latest_updated_at": (
+            "" if latest_row is None else str(latest_row["updated_at"] or "")
+        ),
+        "latest_error": (
+            ""
+            if latest_error_row is None
+            else str(latest_error_row["error"] or "")
+        ),
+    }
 
 
 def _email_action_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
