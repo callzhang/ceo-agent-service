@@ -22,15 +22,11 @@ from app.agent_effects import (
     LEASE_SECONDS,
     TOTAL_TIMEOUT_SECONDS,
     McpToolEffectRegistry,
-    _controlled_cli_receipt,
     _is_sensitive_key,
     _is_signed_url,
     _normalized_key,
 )
-from app.agent_result import (
-    EffectKind,
-    ResultParseError,
-)
+from app.agent_result import ResultParseError
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
     RuntimeFailureClass,
@@ -75,9 +71,6 @@ from app.leak_check import (
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
-    describe_native_command,
-    dingtalk_message_text,
-    native_command_argv,
 )
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import (
@@ -96,9 +89,7 @@ CLAUDE_INPUT_MAX_BYTES = 1024 * 1024
 _COMMON_RUNTIME_CAPABILITIES = frozenset(
     {"structured_output", "local_schema_validation"}
 )
-_CONSUMER_RUNTIME_CAPABILITIES = frozenset(
-    {"reviewed_read_tools"}
-)
+_CONSUMER_RUNTIME_CAPABILITIES = frozenset({"reviewed_read_tools"})
 _AUDIT_RUNTIME_CAPABILITIES = frozenset(
     {"audit_effect_visibility", "reviewed_read_tools", "reviewed_write_tools"}
 )
@@ -175,7 +166,10 @@ class RuntimeRouteUnavailableError(RuntimeError):
             self.code = "runtime_capability_missing"
         elif any(token in lowered for token in ("auth", "token", "credential")):
             self.code = "runtime_provider_auth_failed"
-        elif any(token in lowered for token in ("unreachable", "unavailable", "network", "connect", "timeout")):
+        elif any(
+            token in lowered
+            for token in ("unreachable", "unavailable", "network", "connect", "timeout")
+        ):
             self.code = "runtime_provider_unreachable"
         super().__init__(self.code)
 
@@ -719,6 +713,7 @@ class AgentTurnProcess(Generic[ResultT]):
     def _claude_provider_policy(self) -> ClaudeCommandPolicy:
         """Use the provider default; application Audit does not review tools."""
         return ClaudeCommandPolicy.no_tools()
+
     def __init__(
         self,
         *,
@@ -814,12 +809,6 @@ class AgentTurnProcess(Generic[ResultT]):
             event = _persist_provider_event(payload)
             if event is not None:
                 self.store.append_agent_run_event(run.id, event, owner=self.owner)
-                self._record_direct_send_receipt(
-                    event,
-                    payload,
-                    run=run,
-                    expected_effect_actions=expected_effect_actions,
-                )
 
         def persist_payload(
             payload: dict[str, object],
@@ -853,7 +842,11 @@ class AgentTurnProcess(Generic[ResultT]):
                         transcript_start_line=run.transcript_start_line,
                         allow_consumer_session_handoff=(run.role is AgentRole.CONSUMER),
                     )
-                if not is_claude and run.role is AgentRole.CONSUMER and active_route is not None:
+                if (
+                    not is_claude
+                    and run.role is AgentRole.CONSUMER
+                    and active_route is not None
+                ):
                     self.store.upsert_conversation_runtime_session(
                         self.task.conversation_id,
                         active_route.name,
@@ -896,7 +889,9 @@ class AgentTurnProcess(Generic[ResultT]):
             if not isinstance(payload, dict):
                 raise RuntimeError("codex_stream_invalid")
             line_count += 1
-            self.store.renew_agent_run_lease(run.id, owner=self.owner, lease_seconds=LEASE_SECONDS)
+            self.store.renew_agent_run_lease(
+                run.id, owner=self.owner, lease_seconds=LEASE_SECONDS
+            )
             if on_progress is not None:
                 on_progress()
             if (
@@ -1206,7 +1201,9 @@ class AgentTurnProcess(Generic[ResultT]):
                             timeout_seconds=TOTAL_TIMEOUT_SECONDS,
                         )
                         observed_session_id = f"friday_thread:{friday_result.thread_id}"
-                        attempt_transcript_reference = f"friday_operation:{friday_result.operation_id}"
+                        attempt_transcript_reference = (
+                            f"friday_operation:{friday_result.operation_id}"
+                        )
                         active_attempt = self.store.set_agent_runtime_attempt_session(
                             active_attempt.id,
                             observed_session_id,
@@ -1273,13 +1270,20 @@ class AgentTurnProcess(Generic[ResultT]):
                         try:
                             result = parse_result(process.stdout)
                         except ResultParseError:
-                            session_id_for_result = observed_session_id or route_session_id
-                            if not session_id_for_result or not route_uses_codex_history:
+                            session_id_for_result = (
+                                observed_session_id or route_session_id
+                            )
+                            if (
+                                not session_id_for_result
+                                or not route_uses_codex_history
+                            ):
                                 raise
-                            session_result = extract_codex_assistant_messages_from_session(
-                                session_id_for_result,
-                                codex_home=_codex_home(),
-                                start_line=attempt_transcript_start,
+                            session_result = (
+                                extract_codex_assistant_messages_from_session(
+                                    session_id_for_result,
+                                    codex_home=_codex_home(),
+                                    start_line=attempt_transcript_start,
+                                )
                             )
                             if not session_result:
                                 raise
@@ -1412,7 +1416,8 @@ class AgentTurnProcess(Generic[ResultT]):
             if (
                 persisted_attempt is not None
                 and persisted_attempt.status == "running"
-                and route.runtime_kind in {
+                and route.runtime_kind
+                in {
                     RuntimeKind.CODEX_CLI,
                     RuntimeKind.FRIDAY_RUNTIME,
                 }
@@ -1487,7 +1492,9 @@ class AgentTurnProcess(Generic[ResultT]):
         assert persisted is not None
         if run.role is AgentRole.AUDIT:
             self._validate_audit_result(
-                run, result, persisted,
+                run,
+                result,
+                persisted,
                 expected_effect_actions=expected_effect_actions,
                 required_skill_receipts=required_skill_receipts,
                 turn_event_start=turn_event_start,
@@ -1561,9 +1568,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     ),
                 ),
                 conversation_id=(
-                    self.task.conversation_id
-                    if run.role is AgentRole.CONSUMER
-                    else ""
+                    self.task.conversation_id if run.role is AgentRole.CONSUMER else ""
                 ),
                 route_name=route.name,
                 conversation_contract_hash=conversation_contract_hash,
@@ -1579,7 +1584,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 run.id,
                 getattr(result, "error").model_dump(mode="json"),
                 owner=self.owner,
-                
                 transcript_end_line=transcript_end,
             )
         else:
@@ -1587,7 +1591,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 run.id,
                 result.model_dump(mode="json"),
                 owner=self.owner,
-                
                 transcript_end_line=transcript_end,
             )
         completed = self.store.get_agent_run(run.id)
@@ -1715,214 +1718,6 @@ class AgentTurnProcess(Generic[ResultT]):
             False,
         )
 
-    def _normalized_effect_event(
-        self,
-        payload: dict[str, object],
-        *,
-        read_only: bool = False,
-        operation_id: str = "",
-        require_recovery_authorization: bool = False,
-    ) -> dict[str, object] | None:
-        """Normalize provider output into append-only runtime trace data.
-
-        Provider/runtime adapters, rather than the application Audit layer,
-        decide whether a command or tool may run. Unknown events remain useful
-        trace records and are never converted into an application recovery
-        state.
-        """
-        del read_only, require_recovery_authorization
-        event_type = payload.get("type")
-        if event_type not in {"item.started", "item.completed", "item.failed"}:
-            return None
-        item = payload.get("item")
-        if not isinstance(item, dict):
-            return None
-        item_type = str(item.get("type") or "provider_event")
-        call = self.effects.classify(item) if item_type == "mcp_tool_call" else None
-        native = self.native_cli.classify(item) if item_type == "command_execution" else None
-        if call is not None:
-            operation = call.operation
-            operation_digest = call.operation_digest
-            target_identifiers = call.target_identifiers
-            capability = call.server
-            tool = call.tool
-            effect = call.effect.value
-            arguments_digest = _json_digest(item.get("arguments"))
-        elif native is not None:
-            operation = native.command_path
-            operation_digest = native.command_digest
-            target_identifiers = native.target_identifiers
-            capability = f"native_cli.{native.cli}"
-            tool = native.command_path
-            effect = native.effect.value if native.effect is not None else ""
-            arguments_digest = _json_digest({"command": item.get("command")})
-        else:
-            operation = f"provider.{item_type}"
-            operation_digest = ""
-            target_identifiers = {}
-            capability = "provider"
-            tool = str(item.get("tool") or item.get("name") or "")
-            effect = ""
-            arguments_digest = _json_digest(item.get("arguments"))
-        metadata: dict[str, object] = {
-            "effect": effect,
-            "capability": capability,
-            "operation": operation,
-            "operation_digest": operation_digest,
-            "target_identifiers": target_identifiers,
-            "arguments_digest": arguments_digest,
-        }
-        if effect == EffectKind.EFFECTFUL.value and operation_id:
-            metadata["operation_id"] = operation_id
-        if event_type == "item.completed":
-            result = item.get("result")
-            result_digest = _json_digest(result)
-            if result_digest:
-                metadata["result_digest"] = result_digest
-            if call is not None:
-                identifiers = self.effects.result_identifiers(
-                    server=call.server, tool=call.tool, operation=operation, result=result
-                )
-                if identifiers:
-                    metadata["result_identifiers"] = identifiers
-        status = {
-            "item.started": "in_progress",
-            "item.completed": "completed",
-            "item.failed": "failed",
-        }[str(event_type)]
-        normalized: dict[str, object] = {
-            "type": item_type,
-            "id": str(item.get("id") or item.get("call_id") or ""),
-            "status": status,
-            "metadata": metadata,
-        }
-        if tool:
-            normalized["tool"] = tool
-        if call is not None:
-            normalized["server"] = call.server
-        return {"type": str(event_type), "item": normalized}
-
-    def _record_direct_send_receipt(
-        self,
-        event: dict[str, object],
-        payload: dict[str, object],
-        *,
-        run: AgentRun,
-        expected_effect_actions: tuple[dict[str, object], ...] = (),
-    ) -> None:
-        """Persist the service delivery fact for a completed reviewed chat send."""
-        if event.get("type") != "item.completed":
-            return
-        event_item = event.get("item")
-        metadata = event_item.get("metadata") if isinstance(event_item, dict) else None
-        raw_item = payload.get("item")
-        arguments = raw_item.get("arguments") if isinstance(raw_item, dict) else None
-        argv = native_command_argv(
-            {"type": "command_execution", "argv": arguments.get("argv")}
-            if isinstance(arguments, dict)
-            else {}
-        )
-        target_identifiers: dict[str, object] | None = None
-        if isinstance(metadata, dict) and self._is_recordable_dingtalk_chat_delivery(
-            metadata, argv
-        ):
-            candidate_target = metadata.get("target_identifiers")
-            if isinstance(candidate_target, dict):
-                target_identifiers = candidate_target
-        elif isinstance(raw_item, dict) and raw_item.get("type") == "mcp_tool_call":
-            call = self.effects.classify(raw_item)
-            descriptor = describe_native_command(
-                {"type": "command_execution", "argv": list(argv or ())}
-            )
-            if (
-                call is None
-                or call.effect is not EffectKind.EFFECTFUL
-                or call.server != "agent_cli"
-                or call.tool != "execute_reviewed_write"
-                or descriptor is None
-                or descriptor.cli != "dws"
-                or not descriptor.command_path.startswith("chat ")
-                or not _dingtalk_message_text(argv)
-            ):
-                return
-            target_identifiers = descriptor.target_identifiers
-            metadata = {
-                "operation_digest": descriptor.command_digest,
-                "result_digest": _json_digest(raw_item.get("result")),
-            }
-        if target_identifiers is None:
-            return
-        matching_actions = [
-            action
-            for action in expected_effect_actions
-            if action.get("argv") == list(argv)
-            and action.get("target_identifiers") == target_identifiers
-            and isinstance(action.get("delivery_key"), str)
-            and isinstance(action.get("external_action_key"), str)
-        ]
-        if len(matching_actions) != 1:
-            return
-        delivery_key = matching_actions[0]["delivery_key"]
-        external_key = matching_actions[0]["external_action_key"]
-        assert isinstance(delivery_key, str)
-        assert isinstance(external_key, str)
-        prepared = self.store.get_outbound_postfix("dingtalk", delivery_key)
-        if prepared is None:
-            return
-        raw_result = raw_item.get("result") if isinstance(raw_item, dict) else None
-        provider_result = (
-            dict(raw_result)
-            if isinstance(raw_result, dict)
-            else {"raw_result": raw_result}
-        )
-        provider_result.update(
-            {
-                "agent_run_id": run.id,
-                "operation_id": run.operation_id,
-                "operation_digest": metadata.get("operation_digest", ""),
-                "result_digest": metadata.get("result_digest", ""),
-                "external_action_key": external_key,
-            }
-        )
-        self.store.record_agent_message_delivery(
-            agent_run_id=run.id,
-            external_action_key=external_key,
-            conversation_id=self.task.conversation_id,
-            trigger_message_id=self.task.trigger_message_id,
-            reply_text=prepared.final_body,
-            provider_result=provider_result,
-        )
-
-    def _is_recordable_dingtalk_chat_delivery(
-        self,
-        metadata: dict[str, object],
-        argv: tuple[str, ...] | None,
-    ) -> bool:
-        if _is_dingtalk_chat_send_argv(metadata, argv):
-            return True
-        recipient = _command_option_value(argv, "--to")
-        return (
-            metadata.get("operation") == "chat +dm"
-            and bool(recipient)
-            and bool(_dingtalk_message_text(argv))
-        )
-
-    def _require_direct_send_receipt(
-        self,
-        run: AgentRun,
-        expected_effect_actions: tuple[dict[str, object], ...],
-    ) -> None:
-        if not any(
-            _is_expected_dingtalk_chat_send(action)
-            for action in expected_effect_actions
-        ):
-            return
-        if self.store.has_sent_reply_for_trigger(
-            self.task.conversation_id, self.task.trigger_message_id
-        ):
-            return
-        return
-
     def _validate_audit_result(
         self,
         run: AgentRun,
@@ -1934,7 +1729,12 @@ class AgentTurnProcess(Generic[ResultT]):
         turn_event_start: int = 0,
     ) -> None:
         """Validate the typed Audit result without command policy checks."""
-        del persisted, expected_effect_actions, required_skill_receipts, turn_event_start
+        del (
+            persisted,
+            expected_effect_actions,
+            required_skill_receipts,
+            turn_event_start,
+        )
         if getattr(result, "proposal_revision") != run.proposal_revision:
             self._fail_running(run, "audit_proposal_revision_mismatch")
             raise RuntimeError("audit_proposal_revision_mismatch")
@@ -1987,17 +1787,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 },
                 owner=self.owner,
             )
-
-
-def _has_unclosed_effects(run: AgentRun) -> bool:
-    """Derive incomplete effect evidence from append-only event counters."""
-    return bool(
-        int(run.effect_unreviewed_count)
-        or int(run.effect_started_count)
-        > int(run.effect_completed_count)
-        + int(run.effect_failed_count)
-        + int(run.effect_receipt_count)
-    )
 
 
 def _stream_has_no_agent_result(raw: str) -> bool:
@@ -2059,118 +1848,6 @@ def _persist_provider_event(payload: dict[str, object]) -> dict[str, object] | N
     return event
 
 
-def _is_dingtalk_chat_send(metadata: dict[str, object]) -> bool:
-    target = metadata.get("target_identifiers")
-    return (
-        metadata.get("effect") == EffectKind.EFFECTFUL.value
-        and metadata.get("capability") == "agent_cli.dws"
-        and isinstance(target, dict)
-        and any(
-            isinstance(target.get(key), str) and target[key]
-            for key in (
-                "group",
-                "user",
-                "open-dingtalk-id",
-                "conversation-id",
-                "conversation",
-            )
-        )
-    )
-
-
-def _is_dingtalk_chat_send_argv(
-    metadata: dict[str, object],
-    argv: tuple[str, ...] | None,
-) -> bool:
-    operation = metadata.get("operation")
-    return (
-        _is_dingtalk_chat_send(metadata)
-        and argv is not None
-        and len(argv) >= 3
-        and argv[0] == "dws"
-        and isinstance(operation, str)
-        and operation.startswith("chat ")
-        and bool(_dingtalk_message_text(argv))
-    )
-
-
-def _is_expected_dingtalk_chat_send(action: dict[str, object]) -> bool:
-    target = action.get("readback_target_identifiers")
-    if not isinstance(target, dict):
-        target = action.get("target_identifiers")
-    return (
-        action.get("capability") == "agent_cli.dws"
-        and str(action.get("operation") or "").startswith("chat ")
-        and isinstance(action.get("message_text_digest"), str)
-        and isinstance(target, dict)
-        and any(
-            isinstance(target.get(key), str) and target[key]
-            for key in (
-                "group",
-                "user",
-                "open-dingtalk-id",
-                "conversation-id",
-                "conversation",
-            )
-        )
-    )
-
-
-def _command_option_value(
-    argv: tuple[str, ...] | None,
-    option: str,
-) -> str:
-    if argv is None:
-        return ""
-    try:
-        index = argv.index(option)
-    except ValueError:
-        return ""
-    if index + 1 >= len(argv):
-        return ""
-    value = argv[index + 1]
-    return value if value and not value.startswith("--") else ""
-
-
-def _dingtalk_message_text(argv: tuple[str, ...] | None) -> str:
-    return dingtalk_message_text(argv)
-
-
-def _closed_effect_failure(
-    run: AgentRun,
-    *,
-    fallback_code: str,
-) -> dict[str, object] | None:
-    if (
-        run.effect_started_count <= 0
-        or run.effect_failed_count <= 0
-        or run.effect_unreviewed_count
-        or run.effect_started_count
-        > run.effect_completed_count
-        + run.effect_failed_count
-        + run.effect_receipt_count
-    ):
-        return None
-    for event in reversed(run.tool_events):
-        if event.get("type") != "item.failed":
-            continue
-        item = event.get("item")
-        metadata = item.get("metadata") if isinstance(item, dict) else None
-        if not isinstance(metadata, dict) or metadata.get("effect") != "effectful":
-            continue
-        failure_code = metadata.get("failure_code")
-        return {
-            "code": (
-                failure_code
-                if isinstance(failure_code, str) and failure_code
-                else fallback_code
-            ),
-            "retryable": bool(metadata.get("failure_retryable", False)),
-            "authorization_required": False,
-        }
-    return None
-
-
 def _session_id(payload: dict[str, object]) -> str:
     if payload.get("type") not in {"thread.started", "thread_started"}:
         return ""
@@ -2181,196 +1858,6 @@ def _session_id(payload: dict[str, object]) -> str:
     return ""
 
 
-def _agent_cli_receipt(
-    value: object, *, allow_error: bool = False
-) -> dict[str, object] | None:
-    if isinstance(value, str):
-        try:
-            encoded_size = len(value.encode("utf-8"))
-        except (UnicodeError, MemoryError):
-            return None
-        if encoded_size > 64 * 1024:
-            return None
-        encoded = value.strip()
-        if not encoded.startswith(("{", "[")):
-            marker = "\nOutput:\n"
-            if marker not in encoded:
-                return None
-            _timing, encoded = encoded.rsplit(marker, 1)
-            encoded = encoded.strip()
-        try:
-            decoded = json.loads(encoded)
-        except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
-            return None
-        return _agent_cli_receipt(decoded, allow_error=allow_error)
-    if isinstance(value, list):
-        for block in value:
-            if not isinstance(block, dict) or block.get("type") != "text":
-                continue
-            receipt = _agent_cli_receipt(block.get("text"), allow_error=allow_error)
-            if receipt is not None:
-                return receipt
-        return None
-    receipt = _controlled_cli_receipt(value)
-    if receipt is not None or not isinstance(value, dict):
-        return receipt
-    candidates: list[object] = [
-        value.get("structuredContent"),
-        value.get("structured_content"),
-    ]
-    content = value.get("content")
-    if isinstance(content, list):
-        for block in content:
-            if not isinstance(block, dict) or block.get("type") != "text":
-                continue
-            text = block.get("text")
-            if not isinstance(text, str) or len(text.encode("utf-8")) > 64 * 1024:
-                continue
-            try:
-                candidates.append(json.loads(text))
-            except json.JSONDecodeError:
-                continue
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
-        receipt = _controlled_cli_receipt(candidate)
-        if receipt is not None and (
-            allow_error or not isinstance(candidate.get("error"), dict)
-        ):
-            return receipt
-        if allow_error and all(
-            isinstance(candidate.get(key), expected)
-            for key, expected in (
-                ("result_digest", str),
-                ("operation_digest", str),
-                ("operation", str),
-                ("target_identifiers", dict),
-                ("error", dict),
-            )
-        ):
-            return candidate
-    return None
-
-
-def _agent_cli_tool_error(value: object) -> str:
-    if isinstance(value, str):
-        if len(value.encode("utf-8")) > 64 * 1024:
-            return ""
-        text = value.strip()
-        marker = "\nOutput:\n"
-        if not text.startswith(("{", "[")) and marker in text:
-            _timing, text = text.rsplit(marker, 1)
-            text = text.strip()
-        if text.startswith(("{", "[")):
-            try:
-                return _agent_cli_tool_error(json.loads(text))
-            except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
-                return ""
-        prefix = "Error executing tool "
-        if not text.startswith(prefix) or ": " not in text:
-            return ""
-        code = text.rsplit(": ", 1)[-1].strip()
-        return code if code.replace("_", "").isalnum() else ""
-    if isinstance(value, list):
-        for block in value:
-            if not isinstance(block, dict) or block.get("type") != "text":
-                continue
-            code = _agent_cli_tool_error(block.get("text"))
-            if code:
-                return code
-    if isinstance(value, dict):
-        for key in ("structuredContent", "structured_content"):
-            code = _agent_cli_tool_error(value.get(key))
-            if code:
-                return code
-        content = value.get("content")
-        if isinstance(content, list):
-            return _agent_cli_tool_error(content)
-    return ""
-
-
-def _failed_agent_cli_read_event(
-    item: dict[str, object], failure_code: str
-) -> dict[str, object]:
-    arguments = item.get("arguments")
-    argv = arguments.get("argv") if isinstance(arguments, dict) else None
-    return {
-        "type": "item.failed",
-        "item": {
-            "type": "mcp_tool_call",
-            "id": str(item.get("id") or item.get("call_id") or ""),
-            "server": "agent_cli",
-            "tool": "execute_reviewed_read",
-            "status": "failed",
-            "metadata": {
-                "effect": EffectKind.READ_ONLY.value,
-                "capability": "agent_cli",
-                "operation": "",
-                "reviewed_server": "agent_cli",
-                "reviewed_tool": "execute_reviewed_read",
-                "operation_digest": "",
-                "target_identifiers": {},
-                "arguments_digest": _json_digest({"argv": argv}),
-                "failure_code": failure_code,
-            },
-        },
-    }
-
-
-def _matching_effect_metadata(
-    events: list[dict[str, object]],
-    expected_action: dict[str, object],
-    *,
-    operation_id: str,
-    event_type: str,
-    action_index: int,
-) -> dict[str, object] | None:
-    for event in events:
-        if event.get("type") != event_type:
-            continue
-        item = event.get("item")
-        metadata = item.get("metadata") if isinstance(item, dict) else None
-        if not isinstance(metadata, dict):
-            continue
-        if (
-            metadata.get("effect") == EffectKind.EFFECTFUL.value
-            and metadata.get("operation_id") == operation_id
-            and metadata.get("action_index") in {None, action_index}
-            and _metadata_matches_action(metadata, expected_action)
-        ):
-            return metadata
-    return None
-
-
-def _event_metadata(event: dict[str, object]) -> dict[str, object] | None:
-    item = event.get("item")
-    metadata = item.get("metadata") if isinstance(item, dict) else None
-    return metadata if isinstance(metadata, dict) else None
-
-
-def _metadata_matches_action(
-    metadata: dict[str, object],
-    action: dict[str, object],
-) -> bool:
-    if action.get("operation_contract_valid") is False:
-        return False
-    identity_matches = all(
-        metadata.get(key) == action.get(key)
-        for key in (
-            "capability",
-            "arguments_digest",
-            "target_identifiers",
-        )
-    )
-    expected_command_digest = action.get("operation_digest")
-    if expected_command_digest is not None:
-        return (
-            identity_matches
-            and metadata.get("operation_digest") == expected_command_digest
-        )
-    return identity_matches and metadata.get("operation") == action.get("operation")
-
-
 def _json_digest(value: object) -> str:
     encoded = json.dumps(
         value,
@@ -2379,67 +1866,6 @@ def _json_digest(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def _trusted_claude_effect_event(
-    payload: dict[str, object], *, read_only: bool = False
-) -> dict[str, object] | None:
-    """Preserve Claude provider events without application authorization."""
-    del read_only
-    event_type = payload.get("type")
-    if event_type not in {"item.started", "item.completed", "item.failed"}:
-        return None
-    item = payload.get("item")
-    if not isinstance(item, dict):
-        return None
-    normalized = dict(item)
-    normalized["type"] = str(item.get("type") or "provider_event")
-    normalized["id"] = str(item.get("id") or item.get("call_id") or "")
-    normalized["status"] = {
-        "item.started": "in_progress",
-        "item.completed": "completed",
-        "item.failed": "failed",
-    }[str(event_type)]
-    metadata = item.get("metadata")
-    if isinstance(metadata, dict):
-        normalized["metadata"] = dict(metadata)
-    else:
-        normalized["metadata"] = {}
-    return {"type": str(event_type), "item": normalized}
-
-
-def _requested_skill_path(arguments: object) -> str:
-    if not isinstance(arguments, dict) or set(arguments) != {"path"}:
-        return ""
-    path = arguments.get("path")
-    if not isinstance(path, str) or not path or not Path(path).is_absolute():
-        return ""
-    try:
-        return str(Path(path).resolve(strict=False))
-    except (OSError, RuntimeError):
-        return ""
-
-
-def _attempted_skill_paths(
-    events: tuple[dict[str, object], ...] | list[dict[str, object]],
-) -> frozenset[str]:
-    paths: set[str] = set()
-    for event in events:
-        if event.get("type") != "item.failed":
-            continue
-        item = event.get("item")
-        metadata = item.get("metadata") if isinstance(item, dict) else None
-        if not isinstance(metadata, dict):
-            continue
-        if (
-            metadata.get("reviewed_server") != "agent_cli"
-            or metadata.get("reviewed_tool") != "read_skill"
-        ):
-            continue
-        path = metadata.get("requested_skill_path")
-        if isinstance(path, str) and path:
-            paths.add(path)
-    return frozenset(paths)
 
 
 def _contains_sensitive_value(value: object, *, depth: int = 0) -> bool:

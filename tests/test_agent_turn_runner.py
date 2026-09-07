@@ -1,9 +1,26 @@
+import app.agent_turn_runner as agent_turn_runner
 from app.agent_turn_runner import AgentTurnProcess, _persist_provider_event
-from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore
 
 
-def test_direct_send_receipt_records_prepared_final_body_not_provider_argv(tmp_path):
+def test_runner_has_no_application_effect_recovery_policy_helpers():
+    """Provider traces stay opaque; the runner has no effect recovery state machine."""
+
+    obsolete_module_helpers = {
+        "_has_unclosed_effects",
+        "_closed_effect_failure",
+        "_failed_agent_cli_read_event",
+        "_matching_effect_metadata",
+        "_trusted_claude_effect_event",
+        "_attempted_skill_paths",
+    }
+    assert not obsolete_module_helpers.intersection(vars(agent_turn_runner))
+    assert not hasattr(AgentTurnProcess, "_normalized_effect_event")
+    assert not hasattr(AgentTurnProcess, "_require_direct_send_receipt")
+    assert not hasattr(AgentTurnProcess, "_record_direct_send_receipt")
+
+
+def test_provider_tool_event_does_not_create_application_delivery_receipt(tmp_path):
     store = AutoReplyStore(tmp_path / "agent-turn.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-agent",
@@ -26,22 +43,17 @@ def test_direct_send_receipt_records_prepared_final_body_not_provider_argv(tmp_p
         operation_id="audit-1",
         owner="audit",
     ).run
-    delivery_key = agent_message_delivery_key(
-        business_object_key=task.business_object_key,
-        action_identity="send-result",
-    )
-    prepared = ServiceMessageSender(store=store).prepare(
-        channel="dingtalk",
-        delivery_key=delivery_key,
-        body="候选正文",
-        original_text=task.trigger_text,
-    )
     expected_argv = [
-        "dws", "chat", "message", "send", "--group", "cid-agent",
-        "--content", prepared.final_body, "--yes",
+        "dws",
+        "chat",
+        "message",
+        "send",
+        "--group",
+        "cid-agent",
+        "--content",
+        "候选正文",
+        "--yes",
     ]
-    process = AgentTurnProcess(store=store, task=task, workspace=tmp_path, owner="audit")
-
     payload = {
         "type": "item.completed",
         "item": {
@@ -56,20 +68,10 @@ def test_direct_send_receipt_records_prepared_final_body_not_provider_argv(tmp_p
     event = _persist_provider_event(payload)
     assert event is not None
 
-    process._record_direct_send_receipt(
-        event,
-        payload,
-        run=run,
-        expected_effect_actions=(
-            {
-                "argv": expected_argv,
-                "delivery_key": delivery_key,
-                "external_action_key": "external-send-result",
-                "target_identifiers": {"group": "cid-agent"},
-            },
-        ),
-    )
+    # Persisting a provider trace must not make the application infer that a
+    # business delivery happened. The provider result is projected only via
+    # its stable external action identity.
+    store.append_agent_run_event(run.id, event, owner="audit")
 
-    receipt = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
-    assert receipt is not None
-    assert receipt.reply_text == prepared.final_body
+    assert event["item"] == payload["item"]
+    assert store.get_sent_reply(task.conversation_id, task.trigger_message_id) is None
