@@ -82,7 +82,7 @@ RUNTIME_PLAN = build_versioned_email_action_plan(
     action_plan_version=1,
     classification_id=41,
     account_id="account-primary",
-    category=EmailCategory.SUBSCRIPTION,
+    category=EmailCategory.NOTIFICATION,
     classification_source="model",
     confidence=0.98,
     model_id="email-model:task11-test",
@@ -662,10 +662,10 @@ def _authorized_store(tmp_path: Path) -> EmailStore:
                     "rfc_message_id": "<mail-41@example.com>",
                     "thread_id": "thread-41",
                 },
-                "category": EmailCategory.SUBSCRIPTION,
+                "category": EmailCategory.NOTIFICATION,
                 "confidence": 0.98,
                 "margin": 0.4,
-                "probabilities": {"subscription": 0.98},
+                "probabilities": {"notification": 0.98},
                 "model_id": RUNTIME_PLAN.model_id,
                 "config_version": RUNTIME_PLAN.config_version,
                 "status": EmailClassificationStatus.PROCESSED,
@@ -1675,7 +1675,7 @@ def test_stale_plan_cannot_claim_a_persisted_continuation(tmp_path: Path) -> Non
         action_plan_version=2,
         classification_id=41,
         account_id="account-primary",
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.NOTIFICATION,
         classification_source="user",
         confidence=1.0,
         model_id=RUNTIME_PLAN.model_id,
@@ -1687,7 +1687,7 @@ def test_stale_plan_cannot_claim_a_persisted_continuation(tmp_path: Path) -> Non
     store.append_action_plan_version(
         41,
         corrected,
-        confirmed_category=EmailCategory.SUBSCRIPTION,
+        confirmed_category=EmailCategory.NOTIFICATION,
     )
     extension = _effect(
         initial.operations

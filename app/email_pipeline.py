@@ -10,9 +10,10 @@ from app.email_classifier_contracts import (
     EmailAction,
     EmailActionAuthorization,
     EmailActionPlan,
-    EmailCategory,
+    EmailCategoryKey,
     EmailClassificationStatus,
     build_email_action_plan,
+    validate_email_category_key,
 )
 from app.email_classifier_training import CategoryEligibility
 from app.email_store import EmailFeedbackApplication, EmailStore
@@ -20,13 +21,14 @@ from app.email_store import EmailFeedbackApplication, EmailStore
 
 @dataclass(frozen=True)
 class EmailModelPrediction:
-    category: EmailCategory
+    category: EmailCategoryKey
     confidence: float
     margin: float
-    probabilities: Mapping[str, float]
+    probabilities: Mapping[EmailCategoryKey, float]
     model_id: str
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "category", validate_email_category_key(self.category))
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between zero and one")
         if not 0.0 <= self.margin <= 1.0:
@@ -36,13 +38,16 @@ class EmailModelPrediction:
         object.__setattr__(
             self,
             "probabilities",
-            {str(label): float(value) for label, value in self.probabilities.items()},
+            {
+                validate_email_category_key(label): float(value)
+                for label, value in self.probabilities.items()
+            },
         )
 
 
 @dataclass(frozen=True)
 class EmailCategoryConfig:
-    category: EmailCategory
+    category: EmailCategoryKey
     description: str
     threshold: float
     actions: tuple[EmailAction, ...]
@@ -51,6 +56,7 @@ class EmailCategoryConfig:
     config_version: str
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "category", validate_email_category_key(self.category))
         if not 0.0 <= self.threshold <= 1.0:
             raise ValueError("threshold must be between zero and one")
         if not self.config_version.strip():
@@ -70,14 +76,25 @@ class EmailCategoryConfig:
 
 @dataclass(frozen=True)
 class EmailClassificationDecision:
-    category: EmailCategory
+    category: EmailCategoryKey
     confidence: float
     margin: float
-    probabilities: Mapping[str, float]
+    probabilities: Mapping[EmailCategoryKey, float]
     model_id: str
     config_version: str
     status: EmailClassificationStatus
     action_plan: EmailActionPlan | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "category", validate_email_category_key(self.category))
+        object.__setattr__(
+            self,
+            "probabilities",
+            {
+                validate_email_category_key(label): float(value)
+                for label, value in self.probabilities.items()
+            },
+        )
 
 
 def decide_classification(
@@ -89,11 +106,11 @@ def decide_classification(
     account_id: str,
     created_at: datetime,
 ) -> EmailClassificationDecision:
-    if prediction.category is not category_config.category:
+    if prediction.category != category_config.category:
         raise ValueError(
             "prediction and category config must identify the same category"
         )
-    if eligibility.category is not prediction.category:
+    if eligibility.category != prediction.category:
         raise ValueError("prediction and eligibility must identify the same category")
     if eligibility.configured_threshold != category_config.threshold:
         raise ValueError("eligibility threshold must match category configuration")
@@ -193,15 +210,16 @@ def decide_classification(
 def apply_human_confirmation(
     store: EmailStore,
     classification_id: int,
-    category: EmailCategory,
+    category: EmailCategoryKey,
     *,
     feedback_request_id: str,
     expected_current_action_plan_id: str | None,
     now: datetime,
 ) -> EmailFeedbackApplication | None:
+    validated_category = validate_email_category_key(category)
     return store.apply_human_classification(
         classification_id,
-        category,
+        validated_category,
         feedback_request_id=feedback_request_id,
         expected_current_action_plan_id=expected_current_action_plan_id,
         created_at=now,

@@ -18,7 +18,7 @@ def test_model_only_prediction_without_action_eligibility_stays_pending_feedback
         category=EmailCategory.WORK,
         confidence=0.99,
         margin=0.80,
-        probabilities={"work": 0.99, "important": 0.01},
+        probabilities={"work": 0.99, "legal": 0.01},
         model_id="email-model:candidate",
     )
     category_config = EmailCategoryConfig(

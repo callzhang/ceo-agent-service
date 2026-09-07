@@ -12,6 +12,7 @@ import pytest
 import app.email_store as email_store_module
 from app.email_classifier_contracts import (
     EmailAction,
+    EmailActionAuthorization,
     EmailActionPlan,
     EmailAttachmentMetadata,
     EmailCategory,
@@ -34,8 +35,269 @@ from app.email_store import (
     email_unsubscribe_effect_digest,
 )
 from app.email_task_adapter import email_action_identity
+from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
 from app.store import AutoReplyStore
+
+
+def _pending_category_classification(
+    category: str,
+    *,
+    classification_id: int,
+) -> EmailClassification:
+    message_id = f"<{category}-{classification_id}@example.com>"
+    return EmailClassification.model_validate(
+        {
+            "classification_id": classification_id,
+            "stable_message_identity": (
+                f"dingtalk-account:message-id:{message_id}"
+            ),
+            "provider_locator": {
+                "account_id": "dingtalk-account",
+                "folder": "INBOX",
+                "uidvalidity": 42,
+                "uid": classification_id,
+                "rfc_message_id": message_id,
+            },
+            "category": category,
+            "confidence": 0.79,
+            "margin": 0.31,
+            "probabilities": {category: 0.79, "legal": 0.21},
+            "model_id": "email/logistic/model-1",
+            "config_version": "email-v1",
+            "status": EmailClassificationStatus.PENDING_FEEDBACK,
+            "classification_source": "model",
+            "action_plan": None,
+        }
+    )
+
+
+def test_real_store_human_confirmation_persists_plain_string_category(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "plain-category.sqlite3")
+    classification = _pending_category_classification(
+        "work",
+        classification_id=101,
+    )
+    persisted = store.persist_scan_result(
+        classification,
+        model_text="__subject__plain category integration",
+    )
+
+    application = apply_human_confirmation(
+        store,
+        persisted["id"],
+        "work",
+        feedback_request_id="feedback-plain-category",
+        expected_current_action_plan_id=None,
+        now=datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert application is not None
+    assert type(application.confirmed["category"]) is str
+    assert type(application.confirmed["action_plan"]["category"]) is str
+    with sqlite3.connect(store.path) as db:
+        stored_category = db.execute(
+            "select category from email_action_plans where action_plan_id=?",
+            (application.resulting_action_plan_id,),
+        ).fetchone()[0]
+    assert type(stored_category) is str
+    assert stored_category == "work"
+
+
+def test_real_store_persists_and_reopens_custom_category(tmp_path: Path):
+    database = tmp_path / "custom-category.sqlite3"
+    store = EmailStore(database)
+    classification = _pending_category_classification(
+        "board_governance",
+        classification_id=102,
+    )
+
+    persisted = store.persist_scan_result(
+        classification,
+        model_text="__subject__board governance",
+    )
+    reopened = EmailStore(database)
+    restored = reopened.get_classification(persisted["id"])
+
+    assert restored is not None
+    assert type(restored["category"]) is str
+    assert restored["category"] == "board_governance"
+    assert set(restored["probabilities"]) == {"board_governance", "legal"}
+
+
+def _replace_feedback_requests_with_v18_table(database: Path) -> None:
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("drop table email_feedback_requests")
+        db.execute(
+            """
+            create table email_feedback_requests (
+                feedback_request_id text primary key
+                    check(trim(feedback_request_id) != ''),
+                classification_id integer not null,
+                category text not null check(category in (
+                    'important', 'work', 'personal', 'notification',
+                    'billing', 'shopping', 'subscription', 'junk'
+                )),
+                expected_current_action_plan_id text
+                    unique
+                    check(
+                        expected_current_action_plan_id is null
+                        or trim(expected_current_action_plan_id) != ''
+                    ),
+                resulting_action_plan_id text not null unique
+                    check(trim(resulting_action_plan_id) != ''),
+                applied_at text not null check(trim(applied_at) != ''),
+                check(
+                    expected_current_action_plan_id is null
+                    or expected_current_action_plan_id != resulting_action_plan_id
+                ),
+                foreign key(classification_id) references email_classifications(id)
+                    on delete restrict,
+                foreign key(expected_current_action_plan_id)
+                    references email_action_plans(action_plan_id)
+                    on delete restrict,
+                foreign key(resulting_action_plan_id)
+                    references email_action_plans(action_plan_id)
+                    on delete restrict
+            )
+            """
+        )
+        db.execute("delete from email_schema_migrations")
+        db.execute(
+            "insert into email_schema_migrations(version, applied_at) values (18, ?)",
+            (datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc).isoformat(),),
+        )
+
+
+def test_v18_feedback_table_migrates_and_accepts_custom_human_confirmation(
+    tmp_path: Path,
+):
+    database = tmp_path / "v18-custom-feedback.sqlite3"
+    EmailStore(database)
+    _replace_feedback_requests_with_v18_table(database)
+    store = EmailStore(database)
+    pending = store.persist_scan_result(
+        _pending_category_classification("work", classification_id=103),
+        model_text="__subject__custom confirmation",
+    )
+
+    application = apply_human_confirmation(
+        store,
+        pending["id"],
+        "board_governance",
+        feedback_request_id="feedback-board-governance",
+        expected_current_action_plan_id=None,
+        now=datetime(2026, 9, 7, 12, 1, tzinfo=timezone.utc),
+    )
+    reopened = EmailStore(database)
+    restored = reopened.get_classification(pending["id"])
+
+    assert application is not None
+    assert application.confirmed["category"] == "board_governance"
+    assert type(application.confirmed["action_plan"]["category"]) is str
+    assert restored is not None
+    assert restored["category"] == "board_governance"
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select max(version) from email_schema_migrations"
+        ).fetchone()[0] == 19
+        table_sql = db.execute(
+            "select sql from sqlite_master where name='email_feedback_requests'"
+        ).fetchone()[0]
+    assert "category in" not in table_sql.lower()
+
+
+@pytest.mark.parametrize("legacy_category", ("important", "billing", "subscription"))
+def test_reopen_rehydrates_legacy_reserved_classification_plan_and_feedback(
+    tmp_path: Path,
+    legacy_category: str,
+):
+    database = tmp_path / "legacy-category-history.sqlite3"
+    store = EmailStore(database)
+    pending = store.persist_scan_result(
+        _pending_category_classification("work", classification_id=104),
+        model_text="__subject__legacy history",
+    )
+    application = apply_human_confirmation(
+        store,
+        pending["id"],
+        "work",
+        feedback_request_id="feedback-legacy-history",
+        expected_current_action_plan_id=None,
+        now=datetime(2026, 9, 7, 12, 2, tzinfo=timezone.utc),
+    )
+    assert application is not None
+    plan_payload = dict(application.confirmed["action_plan"])
+    actions = tuple(EmailAction(action) for action in plan_payload["actions"])
+    action_parameters = {
+        EmailAction(action): parameters
+        for action, parameters in plan_payload["action_parameters"].items()
+    }
+    authorizations = tuple(
+        EmailActionAuthorization.model_validate(item)
+        for item in plan_payload["action_authorizations"]
+    )
+    legacy_plan_id = _action_plan_identity(
+        action_plan_version=plan_payload["action_plan_version"],
+        classification_id=plan_payload["classification_id"],
+        account_id=plan_payload["account_id"],
+        category=legacy_category,  # type: ignore[arg-type]
+        classification_source=plan_payload["classification_source"],
+        confidence=plan_payload["confidence"],
+        model_id=plan_payload["model_id"],
+        config_version=plan_payload["config_version"],
+        actions=actions,
+        action_parameters=action_parameters,
+        created_at=datetime.fromisoformat(plan_payload["created_at"]),
+        authorization_snapshot_format=plan_payload["authorization_snapshot_format"],
+        action_authorizations=authorizations,
+    )
+    plan_payload["action_plan_id"] = legacy_plan_id
+    plan_payload["category"] = legacy_category
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute(
+            "update email_action_plans set action_plan_id=?, category=? "
+            "where action_plan_id=?",
+            (legacy_plan_id, legacy_category, application.resulting_action_plan_id),
+        )
+        db.execute(
+            """
+            update email_classifications
+            set category=?, predicted_category=?, confirmed_category=?,
+                probabilities_json=?,
+                action_plan_json=?, current_action_plan_id=?
+            where id=?
+            """,
+            (
+                legacy_category,
+                legacy_category,
+                legacy_category,
+                json.dumps(
+                    {legacy_category: 0.79, "work": 0.21},
+                    separators=(",", ":"),
+                ),
+                json.dumps(plan_payload, separators=(",", ":")),
+                legacy_plan_id,
+                pending["id"],
+            ),
+        )
+        db.execute(
+            "update email_feedback_requests set category=?, "
+            "resulting_action_plan_id=? where feedback_request_id=?",
+            (legacy_category, legacy_plan_id, "feedback-legacy-history"),
+        )
+
+    reopened = EmailStore(database)
+    restored = reopened.get_classification(pending["id"])
+
+    assert restored is not None
+    assert restored["category"] == legacy_category
+    assert type(restored["action_plan"]["category"]) is str
+    assert restored["action_plan"]["category"] == legacy_category
 
 
 def _classification(
@@ -106,7 +368,7 @@ def _classification(
             "category": category,
             "confidence": confidence,
             "margin": 0.41,
-            "probabilities": {"work": 0.93, "important": 0.52},
+            "probabilities": {"work": 0.93, "legal": 0.52},
             "model_id": model_id,
             "config_version": config_version,
             "status": status,
@@ -1018,7 +1280,7 @@ def _create_prototype_database(
                 "Prototype preview",
                 "__subject__prototype",
                 now,
-                classification.category.value,
+                classification.category,
                 classification.confidence,
                 classification.margin,
                 json.dumps(classification.probabilities),
@@ -1374,13 +1636,13 @@ def test_feedback_moves_a_message_to_processed_and_records_user_source(tmp_path:
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK)
     )
 
-    confirmed = _confirm(store, row["id"], EmailCategory.IMPORTANT)
+    confirmed = _confirm(store, row["id"], EmailCategory.NOTIFICATION)
 
     assert confirmed is not None
-    assert confirmed["category"] == "important"
+    assert confirmed["category"] == "notification"
     assert confirmed["status"] == "processed"
     assert confirmed["classification_source"] == "user"
-    assert confirmed["action_plan"]["category"] == "important"
+    assert confirmed["action_plan"]["category"] == "notification"
     assert confirmed["action_plan"]["classification_source"] == "user"
     assert _confirm(store, 999, EmailCategory.WORK) is None
 
@@ -1388,7 +1650,7 @@ def test_feedback_moves_a_message_to_processed_and_records_user_source(tmp_path:
 def test_feedback_rebuilds_action_plan_for_confirmed_category(tmp_path: Path):
     store = EmailStore(tmp_path / "worker.sqlite3")
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         description="需要尽快处理",
         threshold=0.97,
         actions=(EmailAction.LABEL,),
@@ -1401,15 +1663,15 @@ def test_feedback_rebuilds_action_plan_for_confirmed_category(tmp_path: Path):
         model_text="__subject__合同确认",
     )
 
-    confirmed = _confirm(store, row["id"], EmailCategory.IMPORTANT)
+    confirmed = _confirm(store, row["id"], EmailCategory.NOTIFICATION)
 
     assert confirmed is not None
-    assert confirmed["category"] == "important"
+    assert confirmed["category"] == "notification"
     assert confirmed["config_version"] == "important-v2"
     assert confirmed["action_plan"]["action_plan_version"] == 1
     assert confirmed["action_plan"]["classification_id"] == confirmed["id"]
     assert confirmed["action_plan"]["account_id"] == "dingtalk-account"
-    assert confirmed["action_plan"]["category"] == "important"
+    assert confirmed["action_plan"]["category"] == "notification"
     assert confirmed["action_plan"]["classification_source"] == "user"
     assert confirmed["action_plan"]["model_id"] == "email/logistic/model-1"
     assert confirmed["action_plan"]["config_version"] == "important-v2"
@@ -1427,7 +1689,7 @@ def test_processed_email_cannot_be_confirmed_as_new_feedback(tmp_path: Path):
     )
 
     with pytest.raises(EmailClassificationConflict):
-        _confirm(store, row["id"], EmailCategory.IMPORTANT)
+        _confirm(store, row["id"], EmailCategory.NOTIFICATION)
 
 
 def test_concurrent_feedback_allows_one_confirmation_and_one_conflict(
@@ -1451,7 +1713,7 @@ def test_concurrent_feedback_allows_one_confirmation_and_one_conflict(
         results = list(
             executor.map(
                 confirm,
-                (EmailCategory.IMPORTANT, EmailCategory.PERSONAL),
+                (EmailCategory.NOTIFICATION, EmailCategory.PERSONAL),
             )
         )
 
@@ -1493,7 +1755,7 @@ def test_training_examples_exclude_pending_or_unconfirmed_user_rows_without_reop
     confirmed_row = _confirm(
         store,
         confirmed["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.NOTIFICATION,
     )
     assert confirmed_row is not None
     with sqlite3.connect(database) as db:
@@ -1510,7 +1772,7 @@ def test_training_examples_exclude_pending_or_unconfirmed_user_rows_without_reop
         {
             "message_id": confirmed_row["stable_message_identity"],
             "model_text": "__subject__need a decision",
-            "label": "important",
+            "label": "notification",
         }
     ]
 
@@ -1676,14 +1938,14 @@ def test_rescan_preserves_a_user_confirmed_category(tmp_path: Path):
     original = store.upsert_classification(
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK)
     )
-    _confirm(store, original["id"], EmailCategory.IMPORTANT)
+    _confirm(store, original["id"], EmailCategory.NOTIFICATION)
 
     rescanned = store.upsert_classification(
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK)
     )
 
     assert rescanned["id"] == original["id"]
-    assert rescanned["category"] == "important"
+    assert rescanned["category"] == "notification"
     assert rescanned["status"] == "processed"
     assert rescanned["classification_source"] == "user"
 
@@ -1697,7 +1959,7 @@ def test_rescan_preserves_all_user_confirmed_action_plan_fields(tmp_path: Path):
             model_id="email/logistic/model-v1",
         )
     )
-    confirmed = _confirm(store, original["id"], EmailCategory.IMPORTANT)
+    confirmed = _confirm(store, original["id"], EmailCategory.NOTIFICATION)
     assert confirmed is not None
 
     rescanned = store.upsert_classification(
@@ -1724,7 +1986,7 @@ def test_email_store_persists_category_configuration(tmp_path: Path):
     store = EmailStore(tmp_path / "worker.sqlite3")
 
     config = store.upsert_config(
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.EXTERNAL_BILLING,
         description="营销订阅和定期通讯",
         threshold=0.98,
         actions=(EmailAction.LABEL, EmailAction.UNSUBSCRIBE),
@@ -2181,7 +2443,7 @@ def test_reopen_rejects_feedback_request_linked_to_another_classification(
     )
     applied = store.apply_human_classification(
         first["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.NOTIFICATION,
         feedback_request_id="feedback-request-1",
         expected_current_action_plan_id=None,
     )
@@ -2277,7 +2539,7 @@ def test_migration_preserves_prototype_feedback_config_and_unrelated_state(
                 "prototype preview",
                 "__subject__prototype",
                 now,
-                EmailCategory.IMPORTANT.value,
+                "important",
                 confirmed.confidence,
                 confirmed.margin,
                 json.dumps(confirmed.probabilities),
@@ -2447,8 +2709,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_18() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 18
+def test_email_schema_version_is_19() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 19
 
 
 def test_current_schema_initialization_preserves_delete_journal_mode(
@@ -3098,7 +3360,7 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == [16, 17, 18]
+        ] == [16, 17, 18, 19]
         assert {
             row[1]
             for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
@@ -3335,7 +3597,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 16, 17, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [2, 16, 17, 18, email_store_module.EMAIL_SCHEMA_VERSION]
 
     EmailStore(database)
 
@@ -3398,7 +3660,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [15, 16, 17, 18]
+    ] == [15, 16, 17, 18, 19]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
     assert projected["action_plan"]["action_plan_id"] == historical_plan_id
@@ -3801,7 +4063,7 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [16, 17, 18]
+    ] == [16, 17, 18, 19]
 
 
 @pytest.mark.parametrize("missing_table", ["email_messages", "email_actions"])
@@ -4021,14 +4283,14 @@ def test_startup_rejects_current_action_plan_pointer_rollback(tmp_path: Path):
     second_plan = _versioned_plan(
         classification.action_plan,
         version=2,
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         actions=(EmailAction.ARCHIVE,),
         action_parameters={},
     )
     store.append_action_plan_version(
         classification.classification_id,
         second_plan,
-        confirmed_category=EmailCategory.IMPORTANT,
+        confirmed_category=EmailCategory.NOTIFICATION,
     )
     with sqlite3.connect(database) as db:
         db.execute(
@@ -4401,7 +4663,7 @@ def test_changed_plan_appends_next_version_and_preserves_history(tmp_path: Path)
     second_plan = _versioned_plan(
         classification.action_plan,
         version=2,
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         actions=(EmailAction.ARCHIVE, EmailAction.UNSUBSCRIBE),
         action_parameters={},
     )
@@ -4409,17 +4671,17 @@ def test_changed_plan_appends_next_version_and_preserves_history(tmp_path: Path)
     corrected = store.append_action_plan_version(
         classification.classification_id,
         second_plan,
-        confirmed_category=EmailCategory.IMPORTANT,
+        confirmed_category=EmailCategory.NOTIFICATION,
     )
     replayed = store.append_action_plan_version(
         classification.classification_id,
         second_plan,
-        confirmed_category=EmailCategory.IMPORTANT,
+        confirmed_category=EmailCategory.NOTIFICATION,
     )
 
     assert first["current_action_plan_id"] != corrected["current_action_plan_id"]
     assert replayed["current_action_plan_id"] == second_plan.action_plan_id
-    assert corrected["confirmed_category"] == "important"
+    assert corrected["confirmed_category"] == "notification"
     plans = _fetchall(
         database,
         "select action_plan_id, action_plan_version from email_action_plans order by action_plan_version",
@@ -4431,6 +4693,31 @@ def test_changed_plan_appends_next_version_and_preserves_history(tmp_path: Path)
     assert len(_fetchall(database, "select * from email_actions")) == 2
 
 
+@pytest.mark.parametrize("invalid_category", ("subscription", " Work", 123))
+def test_append_action_plan_version_rejects_invalid_correction_category(
+    tmp_path: Path,
+    invalid_category: object,
+):
+    store = EmailStore(tmp_path / "invalid-correction-category.sqlite3")
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(store, classification)
+    assert classification.action_plan is not None
+    corrected = _versioned_plan(
+        classification.action_plan,
+        version=2,
+        category=EmailCategory.NOTIFICATION,
+        actions=(EmailAction.ARCHIVE,),
+        action_parameters={},
+    )
+
+    with pytest.raises(ValueError):
+        store.append_action_plan_version(
+            classification.classification_id,
+            corrected,
+            confirmed_category=invalid_category,  # type: ignore[arg-type]
+        )
+
+
 def test_changed_snapshot_cannot_reuse_an_existing_plan_version(tmp_path: Path):
     database = tmp_path / "plan-conflict.sqlite3"
     store = EmailStore(database)
@@ -4440,7 +4727,7 @@ def test_changed_snapshot_cannot_reuse_an_existing_plan_version(tmp_path: Path):
     conflicting = _versioned_plan(
         classification.action_plan,
         version=1,
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         actions=(EmailAction.ARCHIVE,),
         action_parameters={},
     )
@@ -4449,7 +4736,7 @@ def test_changed_snapshot_cannot_reuse_an_existing_plan_version(tmp_path: Path):
         store.append_action_plan_version(
             classification.classification_id,
             conflicting,
-            confirmed_category=EmailCategory.IMPORTANT,
+            confirmed_category=EmailCategory.NOTIFICATION,
         )
 
 
@@ -4505,7 +4792,7 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
     database = tmp_path / "immutable-message-snapshot.sqlite3"
     store = EmailStore(database)
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         description="Requires attention",
         threshold=0.97,
         actions=(EmailAction.LABEL,),
@@ -4542,7 +4829,7 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
     confirmed = _confirm(
         store,
         original.classification_id,
-        EmailCategory.IMPORTANT,
+        EmailCategory.NOTIFICATION,
     )
     assert confirmed is not None
 
@@ -5013,7 +5300,7 @@ def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
     )
     _persist_scan(store, original)
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         description="Move important mail",
         threshold=0.9,
         actions=(EmailAction.MOVE,),
@@ -5026,7 +5313,7 @@ def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
     assert original.action_plan is not None
     application = store.apply_human_classification(
         original.classification_id,
-        EmailCategory.IMPORTANT,
+        EmailCategory.NOTIFICATION,
         feedback_request_id="feedback-current-plan",
         expected_current_action_plan_id=original.action_plan.action_plan_id,
         created_at=datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc),
@@ -5064,7 +5351,7 @@ def _correct_to_move_plan(
 ):
     assert original.action_plan is not None
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         description="Move important mail",
         threshold=0.9,
         actions=(EmailAction.MOVE,),
@@ -5076,7 +5363,7 @@ def _correct_to_move_plan(
     )
     application = store.apply_human_classification(
         original.classification_id,
-        EmailCategory.IMPORTANT,
+        EmailCategory.NOTIFICATION,
         feedback_request_id=request_id,
         expected_current_action_plan_id=original.action_plan.action_plan_id,
         created_at=datetime(2026, 8, 30, 12, 1, tzinfo=timezone.utc),
@@ -5900,14 +6187,14 @@ def test_corrupt_historical_action_plan_is_rejected_on_open(tmp_path: Path):
     second_plan = _versioned_plan(
         classification.action_plan,
         version=2,
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         actions=(EmailAction.ARCHIVE,),
         action_parameters={},
     )
     store.append_action_plan_version(
         classification.classification_id,
         second_plan,
-        confirmed_category=EmailCategory.IMPORTANT,
+        confirmed_category=EmailCategory.NOTIFICATION,
     )
     with sqlite3.connect(database) as db:
         db.execute(

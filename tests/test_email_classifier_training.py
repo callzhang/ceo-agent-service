@@ -13,8 +13,9 @@ from app.email_classifier_contracts import (
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
+    INITIAL_EMAIL_CATEGORY_KEYS,
 )
-from app.email_classifier_model import EmailModelPrediction
+from app.email_classifier_model import CpuTfidfLogisticClassifier, EmailModelPrediction
 from app.email_classifier_training import (
     CandidateAssessment,
     CategoryEligibility,
@@ -27,6 +28,7 @@ from app.email_classifier_training import (
     assess_feedback_readiness,
     evaluate_category_validation,
     train_and_promote,
+    _validation_predictions,
 )
 from app.email_model_registry import EmailModelRegistry
 from app.email_classifier_retrain import (
@@ -125,12 +127,13 @@ def _confirm(
 def _store_with_confirmed_feedback(tmp_path: Path) -> EmailStore:
     store = EmailStore(tmp_path / "email.sqlite3")
     category_terms = {
-        EmailCategory.IMPORTANT: ("紧急", "合同", "审批"),
         EmailCategory.WORK: ("项目", "会议", "计划"),
+        EmailCategory.HUMAN_RESOURCES: ("招聘", "面试", "候选人"),
+        EmailCategory.LEGAL: ("合同", "法务", "审批"),
+        EmailCategory.FINANCING: ("融资", "投资人", "股东"),
         EmailCategory.PERSONAL: ("家人", "朋友", "聚会"),
         EmailCategory.NOTIFICATION: ("提醒", "通知", "状态"),
-        EmailCategory.SUBSCRIPTION: ("订阅", "简报", "newsletter"),
-        EmailCategory.BILLING: ("账单", "发票", "付款"),
+        EmailCategory.EXTERNAL_BILLING: ("账单", "发票", "付款"),
         EmailCategory.SHOPPING: ("订单", "物流", "商品"),
         EmailCategory.JUNK: ("促销", "折扣", "广告"),
     }
@@ -155,6 +158,53 @@ def _store_with_confirmed_feedback(tmp_path: Path) -> EmailStore:
     return store
 
 
+def _record_enabled_fit_keys(monkeypatch):
+    original_fit = CpuTfidfLogisticClassifier.fit
+    calls: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+
+    def recording_fit(self, texts, labels, **kwargs):
+        assert "enabled_category_keys" in kwargs
+        calls.append((tuple(labels), tuple(kwargs["enabled_category_keys"])))
+        return original_fit(self, texts, labels, **kwargs)
+
+    monkeypatch.setattr(CpuTfidfLogisticClassifier, "fit", recording_fit)
+    return calls
+
+
+def test_validation_fit_callers_pass_the_full_actual_training_label_set(monkeypatch):
+    calls = _record_enabled_fit_keys(monkeypatch)
+    labels = ("junk", "legal", "work")
+    leave_one_out = [
+        {"label": label, "model_text": f"{label}-{index}"}
+        for label in labels
+        for index in range(2)
+    ]
+
+    _validation_predictions(
+        leave_one_out,
+        c=0.25,
+        enabled_category_keys=labels,
+    )
+
+    assert len(calls) == len(leave_one_out)
+    assert {enabled for _fold_labels, enabled in calls} == {labels}
+
+    calls.clear()
+    holdout = [
+        {"label": labels[index % len(labels)], "model_text": f"sample-{index}"}
+        for index in range(60)
+    ]
+
+    _validation_predictions(
+        holdout,
+        c=0.25,
+        enabled_category_keys=labels,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1] == labels
+
+
 def test_feedback_keeps_redacted_model_text_for_training(tmp_path: Path):
     store = EmailStore(tmp_path / "email.sqlite3")
     classification = _classification("message-1", EmailCategory.WORK)
@@ -163,13 +213,13 @@ def test_feedback_keeps_redacted_model_text_for_training(tmp_path: Path):
         model_text="__from_domain__example.test __subject__项目 工作",
     )
 
-    _confirm(store, row["id"], EmailCategory.IMPORTANT)
+    _confirm(store, row["id"], EmailCategory.LEGAL)
 
     assert store.list_training_examples() == [
         {
             "message_id": classification.stable_message_identity,
             "model_text": "__from_domain__example.test __subject__项目 工作",
-            "label": "important",
+            "label": "legal",
         }
     ]
 
@@ -199,15 +249,15 @@ def test_training_readiness_requires_every_email_category():
 
     assert readiness.ready is False
     reason = " ".join(readiness.reasons)
-    for category in EmailCategory:
-        if category.value not in {"work", "junk"}:
-            assert category.value in reason
+    for category in INITIAL_EMAIL_CATEGORY_KEYS:
+        if category not in {"work", "junk"}:
+            assert category in reason
 
 
 def test_training_readiness_enforces_two_example_floor_per_category():
     examples = [
-        {"label": category.value, "model_text": f"sample-{category.value}"}
-        for category in EmailCategory
+        {"label": category, "model_text": f"sample-{category}"}
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
     ]
 
     readiness = assess_examples_readiness(
@@ -620,7 +670,10 @@ def test_candidate_assessment_defensively_copies_and_freezes_categories():
         assessment.categories = {}  # type: ignore[misc]
 
 
-def test_train_and_promote_round_trips_candidate_and_previous_model(tmp_path: Path):
+def test_train_and_promote_round_trips_candidate_and_previous_model(
+    tmp_path: Path, monkeypatch
+):
+    fit_calls = _record_enabled_fit_keys(monkeypatch)
     store = _store_with_confirmed_feedback(tmp_path)
     active = tmp_path / "models" / "model.active.pkl"
     previous = tmp_path / "models" / "model.previous.pkl"
@@ -633,13 +686,18 @@ def test_train_and_promote_round_trips_candidate_and_previous_model(tmp_path: Pa
     )
 
     assert result.promoted is True
-    assert result.example_count == 24
+    assert result.example_count == 27
     assert result.category_counts == {
-        category.value: 3 for category in EmailCategory
+        category: 3 for category in INITIAL_EMAIL_CATEGORY_KEYS
+    }
+    assert len(fit_calls) == result.example_count + 1
+    assert {enabled for _labels, enabled in fit_calls} == {
+        tuple(sorted(INITIAL_EMAIL_CATEGORY_KEYS))
     }
     assert active.exists()
     assert not previous.exists()
 
+    fit_calls.clear()
     second = train_and_promote(
         store,
         active,
@@ -648,12 +706,17 @@ def test_train_and_promote_round_trips_candidate_and_previous_model(tmp_path: Pa
     )
 
     assert second.promoted is True
+    assert len(fit_calls) == second.example_count + 1
+    assert {enabled for _labels, enabled in fit_calls} == {
+        tuple(sorted(INITIAL_EMAIL_CATEGORY_KEYS))
+    }
     assert previous.exists()
 
 
 def test_registry_promotion_marks_only_authoritative_samples_after_success(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ):
+    fit_calls = _record_enabled_fit_keys(monkeypatch)
     store = _store_with_confirmed_feedback(tmp_path)
     registry = EmailModelRegistry(tmp_path / "registry")
 
@@ -666,6 +729,10 @@ def test_registry_promotion_marks_only_authoritative_samples_after_success(
     assert result.promoted is True
     assert result.model_id.startswith("email-tfidf-lr-20260829T214530Z-")
     assert result.prediction_latency_p95_ms < 100
+    assert len(fit_calls) == result.example_count + 1
+    assert {enabled for _labels, enabled in fit_calls} == {
+        tuple(sorted(INITIAL_EMAIL_CATEGORY_KEYS))
+    }
     assert registry.active_manifest().model_id == result.model_id  # type: ignore[union-attr]
     for example in store.list_training_examples(include_inclusion=True):
         assert example["included_in_model_id"] == result.model_id
@@ -786,7 +853,7 @@ def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
 
     assert rejected.promoted is False
     assert registry.get_model(rejected.model_id).status == "rejected"
-    assert len(store.list_unincluded_training_examples()) == 24
+    assert len(store.list_unincluded_training_examples()) == 27
 
     failed_store = _store_with_confirmed_feedback(tmp_path / "failed")
     failed_registry = EmailModelRegistry(tmp_path / "failed-registry")
@@ -801,7 +868,7 @@ def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
             failed_registry,
             trained_at=datetime(2026, 8, 29, 21, 45, 32, tzinfo=timezone.utc),
         )
-    assert len(failed_store.list_unincluded_training_examples()) == 24
+    assert len(failed_store.list_unincluded_training_examples()) == 27
 
 
 def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_pending(
@@ -817,7 +884,7 @@ def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_p
             db.execute(
                 """
                 update email_classifications
-                set confirmed_category='important', category='important'
+                set confirmed_category='board_governance', category='board_governance'
                 where id=(select min(id) from email_classifications)
                 """
             )
@@ -836,7 +903,7 @@ def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_p
         )
 
     latest = store.list_unincluded_training_examples()
-    assert any(example["label"] == "important" for example in latest)
+    assert any(example["label"] == "board_governance" for example in latest)
 
 
 def test_inclusion_failure_after_promotion_restores_exact_prior_manifests(
@@ -945,7 +1012,7 @@ def test_retrain_if_due_advances_state_only_after_promotion(tmp_path: Path):
 
     assert result.decision.reason == "idle_debounce"
     assert result.training_result is not None
-    assert result.state.last_trained_feedback_count == 24
+    assert result.state.last_trained_feedback_count == 27
     assert active.exists()
 
 

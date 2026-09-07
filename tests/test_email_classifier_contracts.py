@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
+import app.email_classifier_contracts as email_contracts
 from app.email_classifier_contracts import (
     AGENT_ACTIONS,
     DIRECT_ACTIONS,
@@ -10,16 +11,130 @@ from app.email_classifier_contracts import (
     EmailActionAuthorization,
     EmailActionPlan,
     EmailAttachmentMetadata,
-    EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
     build_email_action_plan,
+    build_user_confirmation_authorizations,
     build_versioned_email_action_plan,
 )
 
 
 CREATED_AT = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
+
+
+def test_initial_email_category_keys_are_the_approved_initial_set():
+    assert hasattr(email_contracts, "INITIAL_EMAIL_CATEGORY_KEYS")
+    assert email_contracts.INITIAL_EMAIL_CATEGORY_KEYS == (
+        "work",
+        "human_resources",
+        "legal",
+        "financing",
+        "personal",
+        "notification",
+        "external_billing",
+        "shopping",
+        "junk",
+    )
+
+
+def test_email_category_retains_complete_legacy_import_namespace():
+    assert email_contracts.EmailCategory.IMPORTANT.value == "important"
+    assert email_contracts.EmailCategory.BILLING.value == "billing"
+    assert email_contracts.EmailCategory.SUBSCRIPTION.value == "subscription"
+
+
+def test_email_category_key_accepts_initial_and_custom_keys_without_normalizing():
+    assert hasattr(email_contracts, "validate_email_category_key")
+    validate = email_contracts.validate_email_category_key
+
+    assert [validate(key) for key in email_contracts.INITIAL_EMAIL_CATEGORY_KEYS] == list(
+        email_contracts.INITIAL_EMAIL_CATEGORY_KEYS
+    )
+    assert validate("board_governance") == "board_governance"
+
+
+@pytest.mark.parametrize("category", ("work", "board_governance"))
+def test_email_category_key_validator_returns_an_exact_plain_string(category: str):
+    assert type(email_contracts.validate_email_category_key(category)) is str
+
+
+@pytest.mark.parametrize("category", ("work", "board_governance"))
+def test_action_plan_stores_an_exact_plain_category_string(category: str):
+    plan = _plan(category=category)
+
+    assert type(plan.category) is str
+
+
+@pytest.mark.parametrize("category", ("work", "board_governance"))
+def test_classification_stores_exact_plain_category_and_probability_strings(
+    category: str,
+):
+    classification = _classification(
+        category=category,
+        probabilities={category: 1.0},
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        action_plan=None,
+    )
+
+    assert type(classification.category) is str
+    assert all(type(key) is str for key in classification.probabilities)
+
+
+@pytest.mark.parametrize("category", ("important", "subscription", "other", "billing"))
+def test_email_category_key_rejects_reserved_keys(category: str):
+    assert hasattr(email_contracts, "RESERVED_EMAIL_CATEGORY_KEYS")
+    assert email_contracts.RESERVED_EMAIL_CATEGORY_KEYS == frozenset(
+        {"important", "subscription", "other", "billing"}
+    )
+
+    with pytest.raises(ValueError, match="reserved"):
+        email_contracts.validate_email_category_key(category)
+
+
+@pytest.mark.parametrize(
+    "category",
+    (
+        " work",
+        "work ",
+        "Work",
+        "WORK",
+        "team/work",
+        r"team\work",
+        "a" * 65,
+        123,
+        None,
+    ),
+)
+def test_email_category_key_rejects_noncanonical_values(category: object):
+    assert hasattr(email_contracts, "validate_email_category_key")
+
+    with pytest.raises(ValueError):
+        email_contracts.validate_email_category_key(category)
+
+
+def test_user_confirmation_authorizations_reject_a_reserved_category_key():
+    with pytest.raises(ValueError, match="reserved"):
+        build_user_confirmation_authorizations(
+            category="important",  # type: ignore[arg-type]
+            actions=(),
+            action_parameters={},
+            model_id="email/logistic/model-1",
+            config_version="email-v1",
+        )
+
+
+@pytest.mark.parametrize("category", ("important", "billing", "subscription"))
+def test_new_contracts_reject_legacy_reserved_categories(category: str):
+    with pytest.raises(ValidationError, match="reserved"):
+        _plan(category=category)
+    with pytest.raises(ValidationError, match="reserved"):
+        _classification(
+            category=category,
+            probabilities={category: 1.0},
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            action_plan=None,
+        )
 
 
 def _locator(
@@ -41,7 +156,7 @@ def _plan(**overrides: object) -> EmailActionPlan:
     values: dict[str, object] = {
         "classification_id": 11,
         "account_id": "account-1",
-        "category": EmailCategory.WORK,
+        "category": "work",
         "classification_source": "model",
         "confidence": 0.93,
         "model_id": "email/logistic/model-1",
@@ -68,10 +183,10 @@ def _classification(**overrides: object) -> EmailClassification:
         "classification_id": 11,
         "stable_message_identity": "account-1:message-id:<Msg-1@example.com>",
         "provider_locator": _locator(),
-        "category": EmailCategory.WORK,
+        "category": "work",
         "confidence": 0.93,
         "margin": 0.41,
-        "probabilities": {"work": 0.93, "important": 0.07},
+        "probabilities": {"work": 0.93, "legal": 0.07},
         "model_id": "email/logistic/model-1",
         "config_version": "email-v1",
         "status": EmailClassificationStatus.PROCESSED,
@@ -101,7 +216,7 @@ def test_action_plan_identity_covers_authorization_evidence():
     base = {
         "classification_id": 12,
         "account_id": "account-1",
-        "category": EmailCategory.WORK,
+        "category": "work",
         "classification_source": "model",
         "confidence": 0.99,
         "model_id": "email/logistic/model-1",
@@ -182,7 +297,7 @@ def test_builder_revalidates_instantiated_authorization_without_aliasing():
     plan = build_email_action_plan(
         classification_id=12,
         account_id="account-1",
-        category=EmailCategory.WORK,
+        category="work",
         classification_source="model",
         confidence=0.99,
         model_id="email/logistic/model-1",
@@ -244,9 +359,18 @@ def test_pending_feedback_contains_model_suggestion_but_no_action_plan():
         action_plan=None,
     )
 
-    assert classification.category is EmailCategory.WORK
+    assert classification.category == "work"
     assert classification.confidence == 0.93
     assert classification.action_plan is None
+
+
+def test_classification_rejects_a_reserved_probability_category_key():
+    with pytest.raises(ValidationError, match="reserved"):
+        _classification(
+            probabilities={"work": 0.93, "important": 0.07},
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            action_plan=None,
+        )
 
 
 def test_processed_classification_requires_an_action_plan():
@@ -519,7 +643,7 @@ def test_public_action_plan_builder_supports_explicit_next_version():
         action_plan_version=2,
         classification_id=11,
         account_id="account-1",
-        category=EmailCategory.IMPORTANT,
+        category="legal",
         classification_source="user",
         confidence=0.93,
         model_id="email/logistic/model-1",
@@ -530,7 +654,7 @@ def test_public_action_plan_builder_supports_explicit_next_version():
     )
 
     assert plan.action_plan_version == 2
-    assert plan.category is EmailCategory.IMPORTANT
+    assert plan.category == "legal"
     assert plan.classification_source == "user"
     assert plan.model_id == "email/logistic/model-1"
     assert plan.config_version == "email-v2"
@@ -541,7 +665,7 @@ def test_public_action_plan_builder_supports_explicit_next_version():
     (
         ({"classification_id": 12}, {}, "classification ids"),
         ({}, {"account_id": "account-2"}, "accounts"),
-        ({"category": EmailCategory.IMPORTANT}, {}, "categories"),
+        ({"category": "legal"}, {}, "categories"),
         ({"classification_source": "user"}, {}, "sources"),
         ({"confidence": 0.5}, {}, "confidence"),
         ({"model_id": "different/model"}, {}, "model ids"),

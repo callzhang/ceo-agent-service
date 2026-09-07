@@ -401,7 +401,11 @@ def email_worker_components(
 
 
 def _scan_config(email_store: object, model_record: object | None):
-    from app.email_classifier_contracts import EmailAction, EmailCategory
+    from app.email_classifier_contracts import (
+        EmailAction,
+        INITIAL_EMAIL_CATEGORY_KEYS,
+        validate_email_category_key,
+    )
     from app.email_classifier_scan import EmailScanConfig
     from app.email_classifier_training import (
         CategoryEligibility,
@@ -409,16 +413,20 @@ def _scan_config(email_store: object, model_record: object | None):
     )
 
     rows = email_store.list_configs()
-    if len(rows) != len(EmailCategory):
+    if len(rows) != len(INITIAL_EMAIL_CATEGORY_KEYS):
         return EmailScanConfig.cold_start(config_version="email-config-missing-v1")
     versions = {str(row["config_version"]) for row in rows}
     if len(versions) != 1:
         raise EmailWorkerStartupError("email category config versions are inconsistent")
     config_version = next(iter(versions))
-    by_category = {EmailCategory(str(row["category"])): row for row in rows}
+    by_category = {
+        validate_email_category_key(row["category"]): row for row in rows
+    }
+    if set(by_category) != set(INITIAL_EMAIL_CATEGORY_KEYS):
+        return EmailScanConfig.cold_start(config_version="email-config-missing-v1")
     thresholds = {
         category: float(by_category[category]["threshold"])
-        for category in EmailCategory
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
     }
     metadata = getattr(model_record, "metadata", None)
     raw_source_model_id = getattr(metadata, "model_id", None)
@@ -435,11 +443,11 @@ def _scan_config(email_store: object, model_record: object | None):
         category: tuple(
             EmailAction(value) for value in by_category[category]["actions"]
         )
-        for category in EmailCategory
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
     }
-    eligibility: dict[EmailCategory, CategoryEligibility] = {}
-    for category in EmailCategory:
-        metric_value = metrics.get(category.value)
+    eligibility: dict[str, CategoryEligibility] = {}
+    for category in INITIAL_EMAIL_CATEGORY_KEYS:
+        metric_value = metrics.get(category)
         metric = metric_value if isinstance(metric_value, Mapping) else None
         if metric is None:
             action_eligibility = assess_email_action_eligibility(
@@ -543,11 +551,11 @@ def _scan_config(email_store: object, model_record: object | None):
                     "action_parameters"
                 ].items()
             }
-            for category in EmailCategory
+            for category in INITIAL_EMAIL_CATEGORY_KEYS
         },
         category_enabled={
             category: bool(by_category[category]["enabled"])
-            for category in EmailCategory
+            for category in INITIAL_EMAIL_CATEGORY_KEYS
         },
     )
 

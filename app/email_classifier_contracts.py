@@ -10,24 +10,96 @@ import math
 import re
 from collections.abc import Mapping as MappingABC, Sequence
 from types import MappingProxyType
-from typing import Literal, Mapping
+from typing import Annotated, Callable, Literal, Mapping
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
+    StringConstraints,
+    TypeAdapter,
+    ValidationInfo,
+    WrapValidator,
     field_serializer,
     field_validator,
     model_validator,
 )
 
 
+INITIAL_EMAIL_CATEGORY_KEYS = (
+    "work",
+    "human_resources",
+    "legal",
+    "financing",
+    "personal",
+    "notification",
+    "external_billing",
+    "shopping",
+    "junk",
+)
+RESERVED_EMAIL_CATEGORY_KEYS = frozenset(
+    {"important", "subscription", "other", "billing"}
+)
+LEGACY_EMAIL_CATEGORY_KEYS = frozenset({"important", "subscription", "billing"})
+_LEGACY_CATEGORY_CONTEXT_KEY = "allow_legacy_email_category_keys"
+
+
+def _reject_reserved_email_category_key(value: str) -> str:
+    if value in RESERVED_EMAIL_CATEGORY_KEYS:
+        raise ValueError(f"reserved email category key: {value}")
+    return value
+
+
+def _validate_email_category_key_with_context(
+    value: object,
+    handler: Callable[[object], str],
+    info: ValidationInfo,
+) -> str:
+    if (
+        info.context
+        and info.context.get(_LEGACY_CATEGORY_CONTEXT_KEY) is True
+        and type(value) is str
+        and value in LEGACY_EMAIL_CATEGORY_KEYS
+    ):
+        return value
+    return handler(value)
+
+
+EmailCategoryKey = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=r"^[a-z][a-z0-9_]{1,63}$"),
+    AfterValidator(_reject_reserved_email_category_key),
+    WrapValidator(_validate_email_category_key_with_context),
+]
+_EMAIL_CATEGORY_KEY_ADAPTER = TypeAdapter(EmailCategoryKey)
+
+
+def validate_email_category_key(value: object) -> EmailCategoryKey:
+    """Return one canonical category key without coercion or normalization."""
+
+    return _EMAIL_CATEGORY_KEY_ADAPTER.validate_python(value)
+
+
+def rehydrate_legacy_email_category_key(value: object) -> str:
+    """Validate persisted category history, including the three retired keys."""
+
+    return _EMAIL_CATEGORY_KEY_ADAPTER.validate_python(
+        value,
+        context={_LEGACY_CATEGORY_CONTEXT_KEY: True},
+    )
+
+
 class EmailCategory(StrEnum):
     IMPORTANT = "important"
     WORK = "work"
+    HUMAN_RESOURCES = "human_resources"
+    LEGAL = "legal"
+    FINANCING = "financing"
     PERSONAL = "personal"
     NOTIFICATION = "notification"
     BILLING = "billing"
+    EXTERNAL_BILLING = "external_billing"
     SHOPPING = "shopping"
     SUBSCRIPTION = "subscription"
     JUNK = "junk"
@@ -224,7 +296,7 @@ def _action_plan_identity(
     action_plan_version: int,
     classification_id: int,
     account_id: str,
-    category: EmailCategory,
+    category: EmailCategoryKey,
     classification_source: Literal["model", "user"],
     confidence: float,
     model_id: str,
@@ -243,7 +315,7 @@ def _action_plan_identity(
         "action_plan_version": action_plan_version,
         "classification_id": classification_id,
         "account_id": account_id,
-        "category": category.value,
+        "category": category,
         "classification_source": classification_source,
         "confidence": confidence,
         "model_id": model_id,
@@ -283,7 +355,7 @@ class EmailActionPlan(BaseModel):
     action_plan_version: int = Field(gt=0)
     classification_id: int = Field(gt=0)
     account_id: str = Field(min_length=1)
-    category: EmailCategory
+    category: EmailCategoryKey
     classification_source: Literal["model", "user"]
     confidence: float = Field(ge=0.0, le=1.0)
     model_id: str = Field(min_length=1)
@@ -463,12 +535,21 @@ class EmailActionPlan(BaseModel):
         return tuple(action for action in self.actions if action in AGENT_ACTIONS)
 
 
+def rehydrate_legacy_email_action_plan_json(value: str) -> EmailActionPlan:
+    """Rehydrate immutable plans written before retired categories were reserved."""
+
+    return EmailActionPlan.model_validate_json(
+        value,
+        context={_LEGACY_CATEGORY_CONTEXT_KEY: True},
+    )
+
+
 def build_versioned_email_action_plan(
     *,
     action_plan_version: int,
     classification_id: int,
     account_id: str,
-    category: EmailCategory,
+    category: EmailCategoryKey,
     classification_source: Literal["model", "user"],
     confidence: float,
     model_id: str,
@@ -481,6 +562,7 @@ def build_versioned_email_action_plan(
 ) -> EmailActionPlan:
     """Build an immutable plan whose identity covers its explicit history version."""
 
+    category = validate_email_category_key(category)
     copied_parameters = {
         action: dict(parameters) for action, parameters in action_parameters.items()
     }
@@ -537,7 +619,7 @@ def build_email_action_plan(
     *,
     classification_id: int,
     account_id: str,
-    category: EmailCategory,
+    category: EmailCategoryKey,
     classification_source: Literal["model", "user"],
     confidence: float,
     model_id: str,
@@ -568,7 +650,7 @@ def build_email_action_plan(
 
 def build_user_confirmation_authorizations(
     *,
-    category: EmailCategory,
+    category: EmailCategoryKey,
     actions: Sequence[EmailAction],
     action_parameters: Mapping[EmailAction, Mapping[str, object]],
     model_id: str,
@@ -576,13 +658,14 @@ def build_user_confirmation_authorizations(
 ) -> tuple[EmailActionAuthorization, ...]:
     """Freeze user-confirmed configured actions without model eligibility claims."""
 
+    category = validate_email_category_key(category)
     records: list[EmailActionAuthorization] = []
     for action in actions:
         parameters = dict(action_parameters.get(action, {}))
         evidence = json.dumps(
             {
                 "authorization_source": "user_confirmation",
-                "category": category.value,
+                "category": category,
                 "action_type": action.value,
                 "parameters": parameters,
                 "model_id": model_id,
@@ -618,10 +701,10 @@ class EmailClassification(BaseModel):
     classification_id: int = Field(gt=0)
     stable_message_identity: str = Field(min_length=1)
     provider_locator: EmailProviderLocator
-    category: EmailCategory
+    category: EmailCategoryKey
     confidence: float = Field(ge=0.0, le=1.0)
     margin: float = Field(ge=0.0, le=1.0)
-    probabilities: dict[str, float] = Field(min_length=1)
+    probabilities: dict[EmailCategoryKey, float] = Field(min_length=1)
     model_id: str = Field(min_length=1)
     config_version: str = Field(min_length=1)
     status: EmailClassificationStatus

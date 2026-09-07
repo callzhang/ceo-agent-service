@@ -14,10 +14,12 @@ from typing import Callable, Mapping, Protocol, Sequence
 from app.email_classifier_contracts import (
     EmailAction,
     EmailAttachmentMetadata,
-    EmailCategory,
+    EmailCategoryKey,
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
+    INITIAL_EMAIL_CATEGORY_KEYS,
+    validate_email_category_key,
 )
 from app.email_classifier_model import email_message_to_text
 from app.email_classifier_training import CategoryEligibility
@@ -51,15 +53,15 @@ class MessageClassifier(Protocol):
 @dataclass(frozen=True)
 class EmailScanConfig:
     config_version: str
-    thresholds: Mapping[EmailCategory, float]
-    actions: Mapping[EmailCategory, tuple[EmailAction, ...]]
-    category_eligibility: Mapping[EmailCategory, CategoryEligibility] = field(
+    thresholds: Mapping[EmailCategoryKey, float]
+    actions: Mapping[EmailCategoryKey, tuple[EmailAction, ...]]
+    category_eligibility: Mapping[EmailCategoryKey, CategoryEligibility] = field(
         default_factory=dict
     )
     action_parameters: Mapping[
-        EmailCategory, Mapping[EmailAction, Mapping[str, object]]
+        EmailCategoryKey, Mapping[EmailAction, Mapping[str, object]]
     ] = field(default_factory=dict)
-    category_enabled: Mapping[EmailCategory, bool] = field(default_factory=dict)
+    category_enabled: Mapping[EmailCategoryKey, bool] = field(default_factory=dict)
 
     @classmethod
     def cold_start(
@@ -68,7 +70,7 @@ class EmailScanConfig:
         """Conservative defaults for the review-only validation phase."""
         return cls(
             config_version=config_version,
-            thresholds={category: 0.95 for category in EmailCategory},
+            thresholds={category: 0.95 for category in INITIAL_EMAIL_CATEGORY_KEYS},
             actions={},
             category_eligibility={
                 category: CategoryEligibility(
@@ -79,54 +81,85 @@ class EmailScanConfig:
                     auto_action_eligible=False,
                     reason="cold_start",
                 )
-                for category in EmailCategory
+                for category in INITIAL_EMAIL_CATEGORY_KEYS
             },
             action_parameters={},
-            category_enabled={category: True for category in EmailCategory},
+            category_enabled={
+                category: True for category in INITIAL_EMAIL_CATEGORY_KEYS
+            },
         )
 
     def __post_init__(self) -> None:
         if not self.config_version.strip():
             raise ValueError("config_version must be non-empty")
-        for category in EmailCategory:
-            threshold = self.thresholds.get(category)
+        current_categories = set(INITIAL_EMAIL_CATEGORY_KEYS)
+        thresholds = {
+            validate_email_category_key(category): threshold
+            for category, threshold in self.thresholds.items()
+        }
+        if set(thresholds) != current_categories:
+            raise ValueError("thresholds must cover every current email category")
+        for category in INITIAL_EMAIL_CATEGORY_KEYS:
+            threshold = thresholds.get(category)
             if threshold is None or not 0 <= threshold <= 1:
-                raise ValueError(f"missing or invalid threshold for {category.value}")
-        eligibility = dict(self.category_eligibility)
+                raise ValueError(f"missing or invalid threshold for {category}")
+        actions = {
+            validate_email_category_key(category): tuple(category_actions)
+            for category, category_actions in self.actions.items()
+        }
+        if not set(actions) <= current_categories:
+            raise ValueError("actions contain a non-current email category")
+        eligibility = {
+            validate_email_category_key(category): value
+            for category, value in self.category_eligibility.items()
+        }
         if not eligibility:
             eligibility = {
                 category: CategoryEligibility(
                     category=category,
-                    configured_threshold=self.thresholds[category],
+                    configured_threshold=thresholds[category],
                     validated_precision=None,
                     validation_sample_count=0,
                     auto_action_eligible=False,
                     reason="eligibility_not_provided",
                 )
-                for category in EmailCategory
+                for category in INITIAL_EMAIL_CATEGORY_KEYS
             }
-        if set(eligibility) != set(EmailCategory):
+        if set(eligibility) != current_categories:
             raise ValueError("category_eligibility must cover every email category")
         for category, category_eligibility in eligibility.items():
-            if category_eligibility.category is not category:
+            if category_eligibility.category != category:
                 raise ValueError("category_eligibility category keys must match values")
-            if category_eligibility.configured_threshold != self.thresholds[category]:
+            if category_eligibility.configured_threshold != thresholds[category]:
                 raise ValueError(
                     "category eligibility threshold must match scan threshold"
                 )
-        unexpected_categories = set(self.action_parameters) - set(self.actions)
+        action_parameters = {
+            validate_email_category_key(category): parameters
+            for category, parameters in self.action_parameters.items()
+        }
+        if not set(action_parameters) <= current_categories:
+            raise ValueError("action parameters contain a non-current email category")
+        unexpected_categories = set(action_parameters) - set(actions)
         if unexpected_categories:
             raise ValueError("action parameters contain a category with no actions")
         if any(
             EmailAction.AUTO_REPLY in category_actions
-            for category_actions in self.actions.values()
+            for category_actions in actions.values()
         ):
             raise ValueError("auto_reply is disabled for email scanning")
-        category_enabled = dict(self.category_enabled)
+        category_enabled = {
+            validate_email_category_key(category): enabled
+            for category, enabled in self.category_enabled.items()
+        }
         if not category_enabled:
-            category_enabled = {category: True for category in EmailCategory}
-        if set(category_enabled) != set(EmailCategory):
+            category_enabled = {
+                category: True for category in INITIAL_EMAIL_CATEGORY_KEYS
+            }
+        if set(category_enabled) != current_categories:
             raise ValueError("category_enabled must cover every email category")
+        object.__setattr__(self, "thresholds", MappingProxyType(thresholds))
+        object.__setattr__(self, "actions", MappingProxyType(actions))
         object.__setattr__(
             self,
             "category_eligibility",
@@ -136,6 +169,11 @@ class EmailScanConfig:
             self,
             "category_enabled",
             MappingProxyType(category_enabled),
+        )
+        object.__setattr__(
+            self,
+            "action_parameters",
+            MappingProxyType(action_parameters),
         )
 
 
@@ -254,7 +292,9 @@ def scan_readonly_batch(
     )
     for message in messages:
         prediction = classifier.predict_message(message)
-        category = EmailCategory(str(prediction.label))
+        category = validate_email_category_key(prediction.label)
+        if category not in INITIAL_EMAIL_CATEGORY_KEYS:
+            raise ValueError(f"category is not enabled for live scanning: {category}")
         threshold = config.thresholds[category]
         actions = config.actions.get(category, ())
         action_parameters = config.action_parameters.get(category, {})

@@ -15,11 +15,10 @@ from typing import Any
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 
-from app.email_classifier_contracts import EmailCategory
+from app.email_classifier_contracts import EmailCategoryKey, validate_email_category_key
 from app.jieba_loader import jieba_lcut
 
 
-EMAIL_CATEGORIES = tuple(category.value for category in EmailCategory)
 _SECRET_TOKEN = re.compile(
     r"\b(?:sub|ch|pi|sk|tok|token|sess|session|order|invoice|qrp)"
     r"[_.-]?[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]{6,})*\b",
@@ -94,10 +93,21 @@ class CpuTfidfLogisticClassifier:
         self._vectorizer: TfidfVectorizer | None = None
         self._classifier: LogisticRegression | None = None
 
-    def fit(self, texts: Sequence[str], labels: Sequence[str]) -> "CpuTfidfLogisticClassifier":
+    def fit(
+        self,
+        texts: Sequence[str],
+        labels: Sequence[str],
+        *,
+        enabled_category_keys: Sequence[EmailCategoryKey],
+    ) -> "CpuTfidfLogisticClassifier":
         if len(texts) != len(labels) or not texts:
             raise ValueError("texts and labels must be non-empty and have equal length")
-        unknown = sorted(set(labels) - set(EMAIL_CATEGORIES))
+        enabled_categories = tuple(
+            validate_email_category_key(category) for category in enabled_category_keys
+        )
+        if len(enabled_categories) != len(set(enabled_categories)):
+            raise ValueError("enabled category keys must be unique")
+        unknown = sorted(set(labels) - set(enabled_categories))
         if unknown:
             raise ValueError(f"unknown category: {unknown[0]}")
         if len(set(labels)) < 2:
@@ -117,9 +127,17 @@ class CpuTfidfLogisticClassifier:
         return self
 
     def fit_messages(
-        self, messages: Sequence[Mapping[str, object]], labels: Sequence[str]
+        self,
+        messages: Sequence[Mapping[str, object]],
+        labels: Sequence[str],
+        *,
+        enabled_category_keys: Sequence[EmailCategoryKey],
     ) -> "CpuTfidfLogisticClassifier":
-        return self.fit([email_message_to_text(message) for message in messages], labels)
+        return self.fit(
+            [email_message_to_text(message) for message in messages],
+            labels,
+            enabled_category_keys=enabled_category_keys,
+        )
 
     def predict(self, text: str) -> EmailModelPrediction:
         if self._vectorizer is None or self._classifier is None:

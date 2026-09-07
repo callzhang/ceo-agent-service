@@ -8,6 +8,7 @@ from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
     EmailClassificationStatus,
+    INITIAL_EMAIL_CATEGORY_KEYS,
 )
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_scan import (
@@ -77,7 +78,7 @@ def _category_eligibility(
     eligible: tuple[EmailCategory, ...] = (),
     threshold: float = 0.8,
     model_id: str = "static-model-v1",
-) -> dict[EmailCategory, CategoryEligibility]:
+) -> dict[str, CategoryEligibility]:
     return {
         category: CategoryEligibility(
             category=category,
@@ -109,7 +110,7 @@ def _category_eligibility(
                 if action is not EmailAction.AUTO_REPLY
             },
         )
-        for category in EmailCategory
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
     }
 
 
@@ -160,14 +161,18 @@ def _training_messages() -> tuple[list[dict[str, object]], list[str]]:
                 "textBody": "promotion offer",
             },
         ],
-        ["billing", "work", "junk", "billing", "work", "junk"],
+        ["external_billing", "work", "junk", "external_billing", "work", "junk"],
     )
 
 
 def test_cpu_model_feeds_readonly_scan_and_persists_only_classification(tmp_path: Path):
     training_messages, labels = _training_messages()
     classifier = CpuTfidfLogisticClassifier(model_version="model-integration-test")
-    classifier.fit_messages(training_messages, labels)
+    classifier.fit_messages(
+        training_messages,
+        labels,
+        enabled_category_keys=tuple(sorted(set(labels))),
+    )
 
     messages = [
         {
@@ -195,10 +200,10 @@ def test_cpu_model_feeds_readonly_scan_and_persists_only_classification(tmp_path
     store = EmailStore(tmp_path / "email.sqlite3")
     config = EmailScanConfig(
         config_version="scan-model-test-v1",
-        thresholds={category: 0.0 for category in EmailCategory},
+        thresholds={category: 0.0 for category in INITIAL_EMAIL_CATEGORY_KEYS},
         actions={},
         category_eligibility=_category_eligibility(
-            eligible=tuple(EmailCategory),
+            eligible=tuple(EmailCategory(category) for category in INITIAL_EMAIL_CATEGORY_KEYS),
             threshold=0.0,
             model_id="model-integration-test",
         ),
@@ -235,10 +240,10 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
     store = EmailStore(tmp_path / "email.sqlite3")
     config = EmailScanConfig(
         config_version="scan-task-production-v1",
-        thresholds={category: 0.0 for category in EmailCategory},
-        actions={EmailCategory.SUBSCRIPTION: (EmailAction.UNSUBSCRIBE,)},
+        thresholds={category: 0.0 for category in INITIAL_EMAIL_CATEGORY_KEYS},
+        actions={EmailCategory.NOTIFICATION: (EmailAction.UNSUBSCRIBE,)},
         category_eligibility=_category_eligibility(
-            eligible=(EmailCategory.SUBSCRIPTION,),
+            eligible=(EmailCategory.NOTIFICATION,),
             threshold=0.0,
         ),
     )
@@ -246,7 +251,7 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
 
     result = scan_readonly_batch(
         source,
-        StaticClassifier(StaticPrediction("subscription", 0.99)),
+        StaticClassifier(StaticPrediction("notification", 0.99)),
         store,
         config,
         task_producer=lambda classification, raw_message: callbacks.append(
@@ -275,10 +280,10 @@ def test_task_producer_failure_does_not_advance_cursor_and_retries_idempotently(
     store = EmailStore(tmp_path / "email.sqlite3")
     config = EmailScanConfig(
         config_version="scan-task-retry-v1",
-        thresholds={category: 0.0 for category in EmailCategory},
-        actions={EmailCategory.SUBSCRIPTION: (EmailAction.UNSUBSCRIBE,)},
+        thresholds={category: 0.0 for category in INITIAL_EMAIL_CATEGORY_KEYS},
+        actions={EmailCategory.NOTIFICATION: (EmailAction.UNSUBSCRIBE,)},
         category_eligibility=_category_eligibility(
-            eligible=(EmailCategory.SUBSCRIPTION,),
+            eligible=(EmailCategory.NOTIFICATION,),
             threshold=0.0,
         ),
     )
@@ -296,7 +301,7 @@ def test_task_producer_failure_does_not_advance_cursor_and_retries_idempotently(
     with pytest.raises(RuntimeError, match="injected task producer failure"):
         scan_readonly_batch(
             source,
-            StaticClassifier(StaticPrediction("subscription", 0.99)),
+            StaticClassifier(StaticPrediction("notification", 0.99)),
             store,
             config,
             task_producer=produce,
@@ -312,7 +317,7 @@ def test_task_producer_failure_does_not_advance_cursor_and_retries_idempotently(
 
     result = scan_readonly_batch(
         source,
-        StaticClassifier(StaticPrediction("subscription", 0.99)),
+        StaticClassifier(StaticPrediction("notification", 0.99)),
         store,
         config,
         task_producer=produce,
@@ -329,7 +334,7 @@ def test_scan_config_rejects_auto_reply_when_outbound_reply_is_disabled():
     with pytest.raises(ValueError, match="auto_reply is disabled"):
         EmailScanConfig(
             config_version="scan-no-reply-v1",
-            thresholds={category: 0.95 for category in EmailCategory},
+            thresholds={category: 0.95 for category in INITIAL_EMAIL_CATEGORY_KEYS},
             actions={EmailCategory.WORK: (EmailAction.AUTO_REPLY,)},
             action_parameters={
                 EmailCategory.WORK: {
@@ -342,7 +347,11 @@ def test_scan_config_rejects_auto_reply_when_outbound_reply_is_disabled():
 def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: Path):
     training_messages, labels = _training_messages()
     classifier = CpuTfidfLogisticClassifier(model_version="model-idempotence-test")
-    classifier.fit_messages(training_messages, labels)
+    classifier.fit_messages(
+        training_messages,
+        labels,
+        enabled_category_keys=tuple(sorted(set(labels))),
+    )
     messages = [
         {
             "messageId": "message-1",
@@ -377,7 +386,7 @@ def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: P
     assert pending_total == 2
     confirmed = store.confirm_classification(
         pending[0]["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.LEGAL,
         feedback_request_id="scan-reset-feedback",
         expected_current_action_plan_id=None,
     )
@@ -397,7 +406,7 @@ def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: P
     assert second.persisted_count == 2
     assert processed_total == 1
     assert pending_after_total == 1
-    assert processed[0]["category"] == "important"
+    assert processed[0]["category"] == "legal"
     assert processed[0]["classification_source"] == "user"
     assert (
         pending_after[0]["stable_message_identity"]
@@ -538,7 +547,7 @@ def test_high_confidence_is_pending_when_category_lacks_validation_samples(
     )
     config = EmailScanConfig(
         config_version="eligibility-samples-v1",
-        thresholds={category: 0.8 for category in EmailCategory},
+        thresholds={category: 0.8 for category in INITIAL_EMAIL_CATEGORY_KEYS},
         actions={EmailCategory.WORK: (EmailAction.LABEL,)},
         category_eligibility=eligibility,
         action_parameters={
@@ -570,7 +579,7 @@ def test_high_confidence_is_pending_when_category_lacks_validation_samples(
 def test_high_confidence_is_pending_when_category_is_disabled(tmp_path: Path):
     config = EmailScanConfig(
         config_version="disabled-category-v1",
-        thresholds={category: 0.8 for category in EmailCategory},
+        thresholds={category: 0.8 for category in INITIAL_EMAIL_CATEGORY_KEYS},
         actions={EmailCategory.WORK: (EmailAction.LABEL,)},
         category_eligibility=_category_eligibility(eligible=(EmailCategory.WORK,)),
         action_parameters={
@@ -579,7 +588,8 @@ def test_high_confidence_is_pending_when_category_is_disabled(tmp_path: Path):
             }
         },
         category_enabled={
-            category: category is not EmailCategory.WORK for category in EmailCategory
+            category: category != EmailCategory.WORK.value
+            for category in INITIAL_EMAIL_CATEGORY_KEYS
         },
     )
     store = EmailStore(tmp_path / "email.sqlite3")
@@ -605,7 +615,7 @@ def test_high_confidence_is_pending_when_category_is_disabled(tmp_path: Path):
 def test_high_confidence_eligible_category_creates_action_plan(tmp_path: Path):
     config = EmailScanConfig(
         config_version="eligibility-approved-v1",
-        thresholds={category: 0.8 for category in EmailCategory},
+        thresholds={category: 0.8 for category in INITIAL_EMAIL_CATEGORY_KEYS},
         actions={EmailCategory.WORK: (EmailAction.LABEL,)},
         category_eligibility=_category_eligibility(eligible=(EmailCategory.WORK,)),
         action_parameters={
@@ -639,23 +649,23 @@ def test_model_action_plan_contains_only_independently_eligible_actions(
 ):
     rows = [
         {
-            "category": category.value,
-            "description": category.value,
+            "category": category,
+            "description": category,
             "enabled": True,
             "threshold": 0.85,
             "actions": (
                 [EmailAction.LABEL.value, EmailAction.TRASH.value]
-                if category is EmailCategory.WORK
+                if category == EmailCategory.WORK.value
                 else []
             ),
             "action_parameters": (
                 {EmailAction.LABEL.value: {"labels": ["Work"]}}
-                if category is EmailCategory.WORK
+                if category == EmailCategory.WORK.value
                 else {}
             ),
             "config_version": "per-action-v1",
         }
-        for category in EmailCategory
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
     ]
     record = type(
         "ActiveModelRecord",
@@ -713,7 +723,7 @@ def test_processed_model_rescan_preserves_original_authorization_snapshot(
     store = EmailStore(tmp_path / "email.sqlite3")
     config = EmailScanConfig(
         config_version="plan-identity-v1",
-        thresholds={category: 0.8 for category in EmailCategory},
+        thresholds={category: 0.8 for category in INITIAL_EMAIL_CATEGORY_KEYS},
         actions={EmailCategory.WORK: (EmailAction.LABEL,)},
         category_eligibility=_category_eligibility(eligible=(EmailCategory.WORK,)),
         action_parameters={

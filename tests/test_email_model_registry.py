@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import pickle
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
 
 from app.email_classifier_model import CpuTfidfLogisticClassifier
-from app.email_classifier_contracts import EmailCategory
+from app.email_classifier_contracts import INITIAL_EMAIL_CATEGORY_KEYS
 from app.email_model_registry import (
     EmailModelMetadata,
     EmailModelRegistry,
@@ -24,6 +27,7 @@ def _classifier(version: str = "candidate") -> CpuTfidfLogisticClassifier:
     return CpuTfidfLogisticClassifier(model_version=version).fit(
         ["work project", "work meeting", "junk offer", "junk promotion"],
         ["work", "work", "junk", "junk"],
+        enabled_category_keys=("junk", "work"),
     )
 
 
@@ -112,15 +116,19 @@ def _stage(
 def _full_classifier(version: str = "candidate") -> CpuTfidfLogisticClassifier:
     texts = []
     labels = []
-    for category in EmailCategory:
+    for category in INITIAL_EMAIL_CATEGORY_KEYS:
         texts.extend(
             (
-                f"{category.value} primary message",
-                f"{category.value} secondary message",
+                f"{category} primary message",
+                f"{category} secondary message",
             )
         )
-        labels.extend((category.value, category.value))
-    return CpuTfidfLogisticClassifier(model_version=version).fit(texts, labels)
+        labels.extend((category, category))
+    return CpuTfidfLogisticClassifier(model_version=version).fit(
+        texts,
+        labels,
+        enabled_category_keys=INITIAL_EMAIL_CATEGORY_KEYS,
+    )
 
 
 def _full_metadata(
@@ -136,12 +144,12 @@ def _full_metadata(
         {
             **base.to_dict(),
             "parent_model_id": parent_model_id,
-            "sample_count": 16,
-            "new_sample_count": 16,
-            "category_counts": {category.value: 2 for category in EmailCategory},
-            "account_counts": {"account-a": 16},
+            "sample_count": 2 * len(INITIAL_EMAIL_CATEGORY_KEYS),
+            "new_sample_count": 2 * len(INITIAL_EMAIL_CATEGORY_KEYS),
+            "category_counts": {category: 2 for category in INITIAL_EMAIL_CATEGORY_KEYS},
+            "account_counts": {"account-a": 2 * len(INITIAL_EMAIL_CATEGORY_KEYS)},
             "per_category_metrics": {
-                category.value: dict(metric) for category in EmailCategory
+                category: dict(metric) for category in INITIAL_EMAIL_CATEGORY_KEYS
             },
         }
     )
@@ -160,7 +168,9 @@ def _stage_full(
     classifier.save(source)
     digest = sha256(source.read_bytes()).hexdigest()
     model_id = build_model_id(trained_at=trained_at, artifact_sha256=digest)
-    parity_texts = tuple(f"{category.value} primary message" for category in EmailCategory)
+    parity_texts = tuple(
+        f"{category} primary message" for category in INITIAL_EMAIL_CATEGORY_KEYS
+    )
     registry.stage_candidate(
         source,
         _full_metadata(
@@ -175,6 +185,47 @@ def _stage_full(
         ),
     )
     return model_id
+
+
+def test_registry_rejects_deserializable_artifact_with_reserved_legacy_classes(
+    tmp_path: Path,
+):
+    texts = ["urgent approval", "urgent contract", "project plan", "team meeting"]
+    labels = ["important", "important", "work", "work"]
+    vectorizer = TfidfVectorizer(token_pattern=r"\S+")
+    classifier = LogisticRegression(random_state=42).fit(
+        vectorizer.fit_transform(texts), labels
+    )
+    artifact = tmp_path / "legacy-reserved.pkl"
+    artifact.write_bytes(
+        pickle.dumps(
+            {
+                "format_version": CpuTfidfLogisticClassifier.FORMAT_VERSION,
+                "feature_version": CpuTfidfLogisticClassifier.FEATURE_VERSION,
+                "c": 0.25,
+                "model_version": "legacy-reserved-v1",
+                "vectorizer": vectorizer,
+                "classifier": classifier,
+            }
+        )
+    )
+    digest = sha256(artifact.read_bytes()).hexdigest()
+    model_id = build_model_id(trained_at=TRAINED_AT, artifact_sha256=digest)
+    metadata = _metadata(digest=digest, model_id=model_id)
+    mapping = metadata.to_dict()
+    mapping["category_counts"] = {"important": 2, "work": 2}
+    mapping["per_category_metrics"] = {
+        "important": dict(metadata.per_category_metrics["junk"]),
+        "work": dict(metadata.per_category_metrics["work"]),
+    }
+
+    with pytest.raises(ModelRegistryError, match="category protocol mismatch"):
+        EmailModelRegistry(tmp_path / "registry").stage_candidate(
+            artifact,
+            EmailModelMetadata.from_mapping(mapping),
+            parity_texts=("urgent approval", "project plan"),
+            expected_labels=("important", "work"),
+        )
 
 
 def test_list_models_returns_every_validated_record_newest_first(tmp_path: Path):
@@ -390,7 +441,9 @@ def test_promote_switches_small_manifests_and_preserves_previous_artifacts(
         trained_at=later,
         parent_model_id=first,
     )
-    parity_texts = tuple(f"{category.value} primary message" for category in EmailCategory)
+    parity_texts = tuple(
+        f"{category} primary message" for category in INITIAL_EMAIL_CATEGORY_KEYS
+    )
     registry.stage_candidate(
         source,
         metadata,
@@ -486,7 +539,9 @@ def test_rejected_candidate_and_runtime_fallback_leave_history_durable(tmp_path:
             ).to_dict(),
         }
     )
-    parity_texts = tuple(f"{category.value} primary message" for category in EmailCategory)
+    parity_texts = tuple(
+        f"{category} primary message" for category in INITIAL_EMAIL_CATEGORY_KEYS
+    )
     registry.stage_candidate(
         source,
         metadata,

@@ -10,6 +10,7 @@ from app.email_classifier_contracts import (
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
+    INITIAL_EMAIL_CATEGORY_KEYS,
 )
 from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_classifier_retrain import (
@@ -21,6 +22,11 @@ from app.email_classifier_retrain import (
 )
 from app.email_model_registry import EmailModelRegistry
 from app.email_store import EmailStore
+
+
+CURRENT_EMAIL_CATEGORIES = tuple(
+    EmailCategory(category) for category in INITIAL_EMAIL_CATEGORY_KEYS
+)
 
 
 def _classification(message_id: str, category: EmailCategory) -> EmailClassification:
@@ -145,7 +151,7 @@ def test_feedback_api_service_confirms_first_and_records_state_without_retrainin
 
     result = service.confirm_and_maybe_retrain(
         rows[0]["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.LEGAL,
         feedback_request_id="learning-first-confirmation",
         expected_current_action_plan_id=None,
         now=now,
@@ -157,7 +163,7 @@ def test_feedback_api_service_confirms_first_and_records_state_without_retrainin
     assert result.retrain.decision.due is False
     assert result.error is None
     assert load_retrain_state(tmp_path / "models" / "retrain-state.json").last_feedback_at
-    assert store.list_training_examples()[0]["label"] == "important"
+    assert store.list_training_examples()[0]["label"] == "legal"
 
 
 def test_learning_service_corrects_processed_classification_through_pipeline(
@@ -175,8 +181,8 @@ def test_learning_service_corrects_processed_classification_through_pipeline(
     assert first is not None
     first_plan_id = first.confirmed["current_action_plan_id"]
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
-        description="important",
+        category=EmailCategory.LEGAL,
+        description="legal",
         threshold=0.97,
         actions=(EmailAction.ARCHIVE,),
         action_parameters={},
@@ -186,7 +192,7 @@ def test_learning_service_corrects_processed_classification_through_pipeline(
 
     corrected = service.confirm_and_maybe_retrain(
         rows[0]["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.LEGAL,
         feedback_request_id="learning-correction-second",
         expected_current_action_plan_id=first_plan_id,
         now=now + timedelta(seconds=1),
@@ -194,10 +200,10 @@ def test_learning_service_corrects_processed_classification_through_pipeline(
 
     assert corrected is not None
     assert corrected.error is None
-    assert corrected.confirmed["confirmed_category"] == "important"
+    assert corrected.confirmed["confirmed_category"] == "legal"
     assert corrected.confirmed["current_action_plan_id"] != first_plan_id
     assert corrected.confirmed["action_plan"]["action_plan_version"] == 2
-    assert store.list_training_examples()[0]["label"] == "important"
+    assert store.list_training_examples()[0]["label"] == "legal"
 
 
 def test_learning_service_exact_replay_does_not_record_or_request_retraining(
@@ -207,7 +213,7 @@ def test_learning_service_exact_replay_does_not_record_or_request_retraining(
     first_at = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     first = service.confirm_and_maybe_retrain(
         rows[0]["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.LEGAL,
         feedback_request_id="learning-feedback-1",
         expected_current_action_plan_id=None,
         now=first_at,
@@ -217,7 +223,7 @@ def test_learning_service_exact_replay_does_not_record_or_request_retraining(
 
     replay = service.confirm_and_maybe_retrain(
         rows[0]["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.LEGAL,
         feedback_request_id="learning-feedback-1",
         expected_current_action_plan_id=None,
         now=first_at + timedelta(hours=1),
@@ -234,8 +240,8 @@ def test_learning_service_exact_replay_does_not_record_or_request_retraining(
 def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
     service, store, rows, registry = _service_with_pending(
         tmp_path,
-        count=16,
-        categories=tuple(EmailCategory),
+        count=18,
+        categories=CURRENT_EMAIL_CATEGORIES,
     )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
 
@@ -254,7 +260,7 @@ def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
     polled = service.poll_retrain(now=now + timedelta(seconds=31))
     assert polled.training_run is not None
     assert polled.training_run.status in {"queued", "running"}
-    assert len(polled.training_run.sample_snapshots) == 16
+    assert len(polled.training_run.sample_snapshots) == 18
     assert all(
         len(sample["sample_digest"]) == 64
         for sample in polled.training_run.sample_snapshots
@@ -278,7 +284,12 @@ def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
     assert promoted_result.training_run.status == "succeeded"
     assert registry.active_manifest() is not None
     assert store.list_unincluded_training_examples() == []
-    assert load_retrain_state(tmp_path / "models" / "retrain-state.json").last_trained_feedback_count == 16
+    assert (
+        load_retrain_state(
+            tmp_path / "models" / "retrain-state.json"
+        ).last_trained_feedback_count
+        == 18
+    )
 
 
 def test_feedback_service_keeps_confirmation_when_training_is_not_ready(tmp_path: Path):
@@ -354,8 +365,8 @@ def test_partial_taxonomy_feedback_waits_without_repeated_training_launch(
 def test_manual_training_uses_same_readiness_path_with_only_trigger_override(tmp_path: Path):
     service, _store, rows, _registry = _service_with_pending(
         tmp_path,
-        count=16,
-        categories=tuple(EmailCategory),
+        count=18,
+        categories=CURRENT_EMAIL_CATEGORIES,
     )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     for row in rows:
@@ -377,8 +388,8 @@ def test_manual_training_uses_same_readiness_path_with_only_trigger_override(tmp
 def test_concurrent_manual_requests_launch_only_one_training_child(tmp_path: Path):
     service, store, rows, registry = _service_with_pending(
         tmp_path,
-        count=16,
-        categories=tuple(EmailCategory),
+        count=18,
+        categories=CURRENT_EMAIL_CATEGORIES,
     )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     _confirm_all(service, rows, now=now)
@@ -409,8 +420,8 @@ def test_concurrent_manual_requests_launch_only_one_training_child(tmp_path: Pat
 def test_concurrent_manual_and_poll_launch_only_one_training_child(tmp_path: Path):
     service, store, rows, registry = _service_with_pending(
         tmp_path,
-        count=16,
-        categories=tuple(EmailCategory),
+        count=18,
+        categories=CURRENT_EMAIL_CATEGORIES,
     )
     feedback_at = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     _confirm_all(service, rows, now=feedback_at)
@@ -442,8 +453,8 @@ def test_concurrent_manual_and_poll_launch_only_one_training_child(tmp_path: Pat
 def test_learning_poll_clears_orphan_and_next_tick_can_retry(tmp_path: Path):
     service, store, rows, registry = _service_with_pending(
         tmp_path,
-        count=16,
-        categories=tuple(EmailCategory),
+        count=18,
+        categories=CURRENT_EMAIL_CATEGORIES,
     )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     for row in rows:

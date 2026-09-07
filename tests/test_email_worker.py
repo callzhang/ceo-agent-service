@@ -326,7 +326,7 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
         action_plan_version=1,
         classification_id=41,
         account_id=account_id,
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.NOTIFICATION,
         classification_source="user",
         confidence=1.0,
         model_id="email-model:production-path",
@@ -402,10 +402,10 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
                 rfc_message_id="<mail-41@example.com>",
                 thread_id=thread_identity,
             ),
-            category=EmailCategory.SUBSCRIPTION,
+            category=EmailCategory.NOTIFICATION,
             confidence=1.0,
             margin=1.0,
-            probabilities={EmailCategory.SUBSCRIPTION: 1.0},
+            probabilities={EmailCategory.NOTIFICATION: 1.0},
             model_id=plan.model_id,
             config_version=plan.config_version,
             status=EmailClassificationStatus.PROCESSED,
@@ -2997,15 +2997,15 @@ def test_direct_action_drain_stops_at_time_bound():
 def test_scan_config_uses_active_model_category_eligibility():
     module = _module()
     contracts = import_module("app.email_classifier_contracts")
-    categories = tuple(contracts.EmailCategory)
+    categories = contracts.INITIAL_EMAIL_CATEGORY_KEYS
     rows = [
         {
-            "category": category.value,
-            "description": category.value,
+            "category": category,
+            "description": category,
             "enabled": True,
             "threshold": 0.8,
             "actions": ["mark_read"]
-            if category is contracts.EmailCategory.WORK
+            if category == contracts.EmailCategory.WORK.value
             else [],
             "action_parameters": {},
             "config_version": "config-v3",
@@ -3018,16 +3018,16 @@ def test_scan_config_uses_active_model_category_eligibility():
             model_id="email-model:worker-test",
             validation_method="time-ordered-holdout",
             per_category_metrics={
-                category.value: {
+                category: {
                     "precision": 0.99,
                     "validation_sample_count": 35,
                     "validation_positive_support": 35,
                     "configured_threshold": 0.8,
                     "evaluated_threshold": 0.8,
-                    "auto_action_eligible": category is contracts.EmailCategory.WORK,
+                    "auto_action_eligible": category == contracts.EmailCategory.WORK.value,
                     "eligibility_reason": (
                         "precision_and_sample_gate_met"
-                        if category is contracts.EmailCategory.WORK
+                        if category == contracts.EmailCategory.WORK.value
                         else "precision_gate_not_met"
                     ),
                 }
@@ -3051,25 +3051,63 @@ def test_scan_config_uses_active_model_category_eligibility():
     assert work.validation_sample_count == 35
 
 
+def test_scan_config_accepts_exact_current_nine_category_rows():
+    module = _module()
+    contracts = import_module("app.email_classifier_contracts")
+    rows = [
+        {
+            "category": category,
+            "description": category,
+            "enabled": True,
+            "threshold": 0.8,
+            "actions": [],
+            "action_parameters": {},
+            "config_version": "config-current-nine-v1",
+        }
+        for category in contracts.INITIAL_EMAIL_CATEGORY_KEYS
+    ]
+
+    config = module._scan_config(SimpleNamespace(list_configs=lambda: rows), None)
+
+    assert config.config_version == "config-current-nine-v1"
+    assert config.config_version != "email-config-missing-v1"
+    assert tuple(config.thresholds) == contracts.INITIAL_EMAIL_CATEGORY_KEYS
+    assert tuple(config.actions) == contracts.INITIAL_EMAIL_CATEGORY_KEYS
+    assert tuple(config.category_eligibility) == contracts.INITIAL_EMAIL_CATEGORY_KEYS
+    assert tuple(config.action_parameters) == contracts.INITIAL_EMAIL_CATEGORY_KEYS
+    assert tuple(config.category_enabled) == contracts.INITIAL_EMAIL_CATEGORY_KEYS
+    assert all(
+        type(category) is str
+        for mapping in (
+            config.thresholds,
+            config.actions,
+            config.category_eligibility,
+            config.action_parameters,
+            config.category_enabled,
+        )
+        for category in mapping
+    )
+
+
 @pytest.mark.parametrize("status", ["candidate", "rejected", "failed", "previous"])
 def test_scan_config_non_active_model_record_is_never_action_eligible(status: str):
     module = _module()
     contracts = import_module("app.email_classifier_contracts")
     rows = [
         {
-            "category": category.value,
-            "description": category.value,
+            "category": category,
+            "description": category,
             "enabled": True,
             "threshold": 0.85,
-            "actions": ["label"] if category is contracts.EmailCategory.WORK else [],
+            "actions": ["label"] if category == contracts.EmailCategory.WORK.value else [],
             "action_parameters": (
                 {"label": {"labels": ["Work"]}}
-                if category is contracts.EmailCategory.WORK
+                if category == contracts.EmailCategory.WORK.value
                 else {}
             ),
             "config_version": "config-status-v1",
         }
-        for category in contracts.EmailCategory
+        for category in contracts.INITIAL_EMAIL_CATEGORY_KEYS
     ]
     record = SimpleNamespace(
         status=status,
@@ -3109,15 +3147,15 @@ def test_scan_config_without_model_eligibility_stays_pending_feedback():
     contracts = import_module("app.email_classifier_contracts")
     rows = [
         {
-            "category": category.value,
-            "description": category.value,
+            "category": category,
+            "description": category,
             "enabled": True,
             "threshold": 0.8,
             "actions": ["mark_read"],
             "action_parameters": {},
             "config_version": "config-v4",
         }
-        for category in contracts.EmailCategory
+        for category in contracts.INITIAL_EMAIL_CATEGORY_KEYS
     ]
 
     config = module._scan_config(

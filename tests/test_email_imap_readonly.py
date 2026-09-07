@@ -11,6 +11,7 @@ from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
     EmailClassificationStatus,
+    INITIAL_EMAIL_CATEGORY_KEYS,
 )
 from app.email_classifier_scan import (
     EmailScanConfig,
@@ -741,28 +742,32 @@ def test_multi_account_folder_scan_isolates_auth_failure_and_sanitizes_result(
 def _scan_config() -> EmailScanConfig:
     return EmailScanConfig(
         config_version="email-scan-v1",
-        thresholds={category: 0.8 for category in EmailCategory},
+        thresholds={category: 0.8 for category in INITIAL_EMAIL_CATEGORY_KEYS},
         actions={EmailCategory.WORK: (EmailAction.LABEL,)},
         category_eligibility={
             category: CategoryEligibility(
                 category=category,
                 configured_threshold=0.8,
-                validated_precision=(0.99 if category is EmailCategory.WORK else None),
-                validation_sample_count=(30 if category is EmailCategory.WORK else 0),
-                auto_action_eligible=category is EmailCategory.WORK,
+                validated_precision=(
+                    0.99 if category == EmailCategory.WORK.value else None
+                ),
+                validation_sample_count=(
+                    30 if category == EmailCategory.WORK.value else 0
+                ),
+                auto_action_eligible=category == EmailCategory.WORK.value,
                 reason=(
                     "precision_and_sample_gate_met"
-                    if category is EmailCategory.WORK
+                    if category == EmailCategory.WORK.value
                     else "insufficient_validation_samples"
                 ),
                 source_model_id="model-test",
                 action_eligibility={
                     EmailAction.LABEL: EmailActionEligibility(
                         action=EmailAction.LABEL,
-                        auto_action_eligible=category is EmailCategory.WORK,
+                        auto_action_eligible=category == EmailCategory.WORK.value,
                         reason=(
                             "action_precision_and_support_gate_met"
-                            if category is EmailCategory.WORK
+                            if category == EmailCategory.WORK.value
                             else "action_precision_and_support_gate_not_met"
                         ),
                         source_model_id="model-test",
@@ -770,7 +775,7 @@ def _scan_config() -> EmailScanConfig:
                     )
                 },
             )
-            for category in EmailCategory
+            for category in INITIAL_EMAIL_CATEGORY_KEYS
         },
         action_parameters={
             EmailCategory.WORK: {
@@ -817,7 +822,7 @@ def test_scan_persists_processed_or_pending_without_mailbox_actions(tmp_path: Pa
         {
             "message-1": FakePrediction("work", 0.95, 0.4, {"work": 0.95}),
             "message-2": FakePrediction(
-                "subscription", 0.61, 0.03, {"subscription": 0.61}
+                "notification", 0.61, 0.03, {"notification": 0.61}
             ),
         }
     )

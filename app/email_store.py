@@ -25,17 +25,21 @@ from app.email_classifier_contracts import (
     EmailActionPlan,
     EmailAttachmentMetadata,
     EmailCategory,
+    EmailCategoryKey,
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
     build_email_action_plan,
     build_user_confirmation_authorizations,
     build_versioned_email_action_plan,
+    rehydrate_legacy_email_action_plan_json,
+    rehydrate_legacy_email_category_key,
+    validate_email_category_key,
 )
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 18
+EMAIL_SCHEMA_VERSION = 19
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -406,7 +410,6 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
     ),
     "email_feedback_requests": (
         "trim(feedback_request_id) != ''",
-        "category in ('important', 'work', 'personal', 'notification', 'billing', 'shopping', 'subscription', 'junk')",
         "expected_current_action_plan_id is null or trim(expected_current_action_plan_id) != ''",
         "trim(resulting_action_plan_id) != ''",
         "trim(applied_at) != ''",
@@ -2220,6 +2223,9 @@ class EmailStore:
                     latest_version = 17
             if latest_version == 17:
                 self._migrate_v17_to_v18(db)
+                latest_version = 18
+            if latest_version == 18:
+                self._migrate_v18_to_v19(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -2874,6 +2880,77 @@ class EmailStore:
             (self._now(),),
         )
 
+    def _migrate_v18_to_v19(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Allow strictly validated category-key text in feedback history."""
+
+        db.execute(
+            "alter table email_feedback_requests "
+            "rename to email_feedback_requests_v18"
+        )
+        db.execute(
+            """
+                create table email_feedback_requests (
+                    feedback_request_id text primary key
+                        check(trim(feedback_request_id) != ''),
+                    classification_id integer not null,
+                    category text not null,
+                    expected_current_action_plan_id text
+                        unique
+                        check(
+                            expected_current_action_plan_id is null
+                            or trim(expected_current_action_plan_id) != ''
+                        ),
+                    resulting_action_plan_id text not null unique
+                        check(trim(resulting_action_plan_id) != ''),
+                    applied_at text not null check(trim(applied_at) != ''),
+                    check(
+                        expected_current_action_plan_id is null
+                        or expected_current_action_plan_id
+                            != resulting_action_plan_id
+                    ),
+                    foreign key(classification_id)
+                        references email_classifications(id) on delete restrict,
+                    foreign key(expected_current_action_plan_id)
+                        references email_action_plans(action_plan_id)
+                        on delete restrict,
+                    foreign key(resulting_action_plan_id)
+                        references email_action_plans(action_plan_id)
+                        on delete restrict
+                )
+            """
+        )
+        db.execute(
+            """
+                insert into email_feedback_requests (
+                    feedback_request_id, classification_id, category,
+                    expected_current_action_plan_id, resulting_action_plan_id,
+                    applied_at
+                )
+                select feedback_request_id, classification_id, category,
+                       expected_current_action_plan_id, resulting_action_plan_id,
+                       applied_at
+                from email_feedback_requests_v18
+            """
+        )
+        db.execute("drop table email_feedback_requests_v18")
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=19, applied_at=? "
+                "where version=18",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) "
+                "values (19, ?)",
+                (self._now(),),
+            )
+
     @classmethod
     def _ensure_unsubscribe_claim_columns(cls, db: sqlite3.Connection) -> None:
         had_phase = "phase" in cls._table_columns(db, "email_unsubscribe_claims")
@@ -3112,10 +3189,7 @@ class EmailStore:
                 feedback_request_id text primary key
                     check(trim(feedback_request_id) != ''),
                 classification_id integer not null,
-                category text not null check(category in (
-                    'important', 'work', 'personal', 'notification',
-                    'billing', 'shopping', 'subscription', 'junk'
-                )),
+                category text not null,
                 expected_current_action_plan_id text
                     unique
                     check(
@@ -3592,7 +3666,9 @@ class EmailStore:
         ).fetchall()
         for row in rows:
             try:
-                plan = EmailActionPlan.model_validate_json(row["action_plan_json"])
+                plan = rehydrate_legacy_email_action_plan_json(
+                    row["action_plan_json"]
+                )
             except ValueError as exc:
                 raise EmailPersistenceCorruption(
                     f"invalid action_plan_json for classification {row['id']}"
@@ -3918,10 +3994,10 @@ class EmailStore:
             ).append(row)
         for row in classifications.values():
             try:
-                EmailCategory(row["category"])
-                EmailCategory(row["predicted_category"])
+                rehydrate_legacy_email_category_key(row["category"])
+                rehydrate_legacy_email_category_key(row["predicted_category"])
                 if row["confirmed_category"]:
-                    EmailCategory(row["confirmed_category"])
+                    rehydrate_legacy_email_category_key(row["confirmed_category"])
             except ValueError as exc:
                 raise EmailPersistenceCorruption(
                     f"invalid classification category for {row['id']}"
@@ -3934,11 +4010,20 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     f"invalid classification source for {row['id']}"
                 )
-            _json_load(
+            probabilities = _json_load(
                 row["probabilities_json"],
                 field="probabilities_json",
                 expected_type=dict,
             )
+            try:
+                tuple(
+                    rehydrate_legacy_email_category_key(category)
+                    for category in probabilities
+                )
+            except ValueError as exc:
+                raise EmailPersistenceCorruption(
+                    f"invalid classification probabilities for {row['id']}"
+                ) from exc
             message = messages.get(row["stable_message_identity"])
             if (
                 message is None
@@ -4067,7 +4152,7 @@ class EmailStore:
             )
             plan_fields = (
                 current_plan.account_id,
-                current_plan.category.value,
+                current_plan.category,
                 current_plan.classification_source,
                 current_plan.confidence,
                 current_plan.model_id,
@@ -4139,7 +4224,7 @@ class EmailStore:
                 expected_plan_id = _validate_expected_action_plan_id(
                     row["expected_current_action_plan_id"]
                 )
-                category = EmailCategory(row["category"])
+                category = rehydrate_legacy_email_category_key(row["category"])
             except (TypeError, ValueError) as exc:
                 raise EmailPersistenceCorruption(
                     "invalid durable email feedback request"
@@ -4153,7 +4238,7 @@ class EmailStore:
                 classification is not None
                 and resulting_plan is not None
                 and resulting_plan.classification_id == row["classification_id"]
-                and resulting_plan.category is category
+                and resulting_plan.category == category
                 and resulting_plan.classification_source == "user"
             )
             if not valid_result:
@@ -4563,7 +4648,7 @@ class EmailStore:
             "from email_category_configs"
         ):
             try:
-                EmailCategory(row["category"])
+                rehydrate_legacy_email_category_key(row["category"])
             except ValueError as exc:
                 raise EmailPersistenceCorruption(
                     "invalid configured email category"
@@ -4715,7 +4800,9 @@ class EmailStore:
             action_plan = None
         else:
             try:
-                plan = EmailActionPlan.model_validate_json(row["action_plan_json"])
+                plan = rehydrate_legacy_email_action_plan_json(
+                    row["action_plan_json"]
+                )
             except ValueError as exc:
                 raise EmailPersistenceCorruption("invalid action_plan_json") from exc
             action_plan = plan.model_dump(mode="json")
@@ -4810,7 +4897,7 @@ class EmailStore:
                 }
             )
         try:
-            return EmailActionPlan.model_validate_json(_json_dump(payload))
+            return rehydrate_legacy_email_action_plan_json(_json_dump(payload))
         except ValueError as exc:
             raise EmailPersistenceCorruption(
                 f"invalid immutable ActionPlan {row['action_plan_id']}"
@@ -4839,8 +4926,8 @@ class EmailStore:
         confirmed = self._classification_row(classification)
         confirmed.update(
             {
-                "category": action_plan.category.value,
-                "confirmed_category": action_plan.category.value,
+                "category": action_plan.category,
+                "confirmed_category": action_plan.category,
                 "confidence": action_plan.confidence,
                 "model_id": action_plan.model_id,
                 "config_version": action_plan.config_version,
@@ -4989,7 +5076,7 @@ class EmailStore:
             plan.action_plan_version,
             plan.classification_id,
             plan.account_id,
-            plan.category.value,
+            plan.category,
             plan.classification_source,
             plan.confidence,
             plan.model_id,
@@ -5056,7 +5143,7 @@ class EmailStore:
                 plan.action_plan_version,
                 plan.classification_id,
                 plan.account_id,
-                plan.category.value,
+                plan.category,
                 plan.classification_source,
                 plan.confidence,
                 plan.model_id,
@@ -5263,7 +5350,7 @@ class EmailStore:
             )
             if existing is None:
                 confirmed_category = (
-                    classification.category.value
+                    classification.category
                     if classification.status is EmailClassificationStatus.PROCESSED
                     else None
                 )
@@ -5292,8 +5379,8 @@ class EmailStore:
                         preview,
                         model_text,
                         received_at,
-                        classification.category.value,
-                        classification.category.value,
+                        classification.category,
+                        classification.category,
                         confirmed_category,
                         classification.confidence,
                         classification.margin,
@@ -9064,7 +9151,7 @@ class EmailStore:
     def confirm_classification(
         self,
         row_id: int,
-        category: EmailCategory,
+        category: EmailCategoryKey,
         *,
         feedback_request_id: str,
         expected_current_action_plan_id: str | None,
@@ -9082,7 +9169,7 @@ class EmailStore:
     def apply_human_classification(
         self,
         row_id: int,
-        category: EmailCategory,
+        category: EmailCategoryKey,
         *,
         feedback_request_id: str,
         expected_current_action_plan_id: str | None,
@@ -9102,7 +9189,7 @@ class EmailStore:
     def _apply_human_classification(
         self,
         row_id: int,
-        category: EmailCategory,
+        category: EmailCategoryKey,
         *,
         feedback_request_id: str,
         expected_current_action_plan_id: str | None,
@@ -9113,7 +9200,7 @@ class EmailStore:
         expected_current_action_plan_id = _validate_expected_action_plan_id(
             expected_current_action_plan_id
         )
-        category = EmailCategory(category)
+        category = validate_email_category_key(category)
         with self._connect() as db:
             db.execute("begin immediate")
             request = db.execute(
@@ -9123,7 +9210,7 @@ class EmailStore:
             if request is not None:
                 same_intent = (
                     request["classification_id"] == row_id
-                    and request["category"] == category.value
+                    and request["category"] == category
                     and request["expected_current_action_plan_id"]
                     == expected_current_action_plan_id
                 )
@@ -9214,8 +9301,8 @@ class EmailStore:
                   and current_action_plan_id is ?
                 """,
                 (
-                    category.value,
-                    category.value,
+                    category,
+                    category,
                     EmailClassificationStatus.PROCESSED.value,
                     config_version,
                     action_plan.model_dump_json(),
@@ -9242,7 +9329,7 @@ class EmailStore:
                 (
                     feedback_request_id,
                     row_id,
-                    category.value,
+                    category,
                     expected_current_action_plan_id,
                     action_plan.action_plan_id,
                     applied_at,
@@ -9259,7 +9346,7 @@ class EmailStore:
     def _category_action_snapshot(
         db: sqlite3.Connection,
         *,
-        category: EmailCategory,
+        category: EmailCategoryKey,
         fallback_config_version: str,
     ) -> tuple[
         tuple[EmailAction, ...],
@@ -9271,7 +9358,7 @@ class EmailStore:
             select actions_json, action_parameters_json, enabled, config_version
             from email_category_configs where category=?
             """,
-            (category.value,),
+            (category,),
         ).fetchone()
         if selected_config is None:
             return (), {}, fallback_config_version
@@ -9301,13 +9388,14 @@ class EmailStore:
         classification_id: int,
         action_plan: EmailActionPlan,
         *,
-        confirmed_category: EmailCategory,
+        confirmed_category: EmailCategoryKey,
     ) -> dict[str, Any]:
         """Append a correction plan and atomically make it current."""
 
+        confirmed_category_value = validate_email_category_key(confirmed_category)
         if action_plan.classification_id != classification_id:
             raise EmailActionPlanConflict("ActionPlan classification does not match")
-        if action_plan.category != confirmed_category:
+        if action_plan.category != confirmed_category_value:
             raise EmailActionPlanConflict(
                 "ActionPlan category does not match correction"
             )
@@ -9348,8 +9436,8 @@ class EmailStore:
                     where id=?
                     """,
                     (
-                        action_plan.category.value,
-                        confirmed_category.value,
+                        action_plan.category,
+                        confirmed_category_value,
                         action_plan.classification_source,
                         action_plan.confidence,
                         action_plan.model_id,

@@ -13,13 +13,16 @@ from pydantic import ValidationError
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
+    EmailCategoryKey,
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
+    validate_email_category_key,
 )
 from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
 from app.email_pipeline import (
     EmailCategoryConfig,
+    EmailClassificationDecision,
     EmailModelPrediction,
     apply_human_confirmation,
     decide_classification,
@@ -31,26 +34,149 @@ NOW = datetime(2026, 8, 30, 16, 0, tzinfo=timezone.utc)
 MODEL_ID = "email-tfidf-lr-20260830T160000Z-1234567890abcdef"
 
 
+def _legacy_store_category(category: str) -> EmailCategory:
+    return EmailCategory(validate_email_category_key(category))
+
+
+@pytest.mark.parametrize("category", ("work", "board_governance"))
+def test_pipeline_category_contracts_store_exact_plain_strings(category: str):
+    prediction = EmailModelPrediction(
+        category=category,  # type: ignore[arg-type]
+        confidence=0.9,
+        margin=0.5,
+        probabilities={category: 1.0},
+        model_id=MODEL_ID,
+    )
+    config = EmailCategoryConfig(
+        category=category,  # type: ignore[arg-type]
+        description=category,
+        threshold=0.8,
+        actions=(),
+        action_parameters={},
+        enabled=True,
+        config_version="email-config-v1",
+    )
+    decision = EmailClassificationDecision(
+        category=category,  # type: ignore[arg-type]
+        confidence=0.9,
+        margin=0.5,
+        probabilities={category: 1.0},
+        model_id=MODEL_ID,
+        config_version="email-config-v1",
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        action_plan=None,
+    )
+
+    assert type(prediction.category) is str
+    assert all(type(key) is str for key in prediction.probabilities)
+    assert type(config.category) is str
+    assert type(decision.category) is str
+    assert all(type(key) is str for key in decision.probabilities)
+
+
+def test_human_confirmation_forwards_a_valid_custom_category_key():
+    calls = []
+
+    class RecordingStore:
+        def apply_human_classification(self, classification_id, category, **kwargs):
+            calls.append((classification_id, category, kwargs))
+            return "recorded"
+
+    result = apply_human_confirmation(
+        RecordingStore(),  # type: ignore[arg-type]
+        17,
+        "board_governance",
+        feedback_request_id="feedback-custom-category",
+        expected_current_action_plan_id=None,
+        now=NOW,
+    )
+
+    assert result == "recorded"
+    assert calls[0][0:2] == (17, "board_governance")
+    assert type(calls[0][1]) is str
+
+
+def test_human_confirmation_forwards_initial_category_as_plain_string():
+    calls = []
+
+    class RecordingStore:
+        def apply_human_classification(self, classification_id, category, **kwargs):
+            calls.append((classification_id, category, kwargs))
+            return "recorded"
+
+    result = apply_human_confirmation(
+        RecordingStore(),  # type: ignore[arg-type]
+        18,
+        "work",
+        feedback_request_id="feedback-initial-string",
+        expected_current_action_plan_id=None,
+        now=NOW,
+    )
+
+    assert result == "recorded"
+    assert calls[0][0:2] == (18, "work")
+    assert type(calls[0][1]) is str
+
+
+def test_classification_decision_rejects_an_invalid_category_key():
+    with pytest.raises(ValueError):
+        EmailClassificationDecision(
+            category="Work",  # type: ignore[arg-type]
+            confidence=0.9,
+            margin=0.5,
+            probabilities={"work": 0.9},
+            model_id=MODEL_ID,
+            config_version="email-config-v1",
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            action_plan=None,
+        )
+
+
+def test_model_prediction_rejects_an_invalid_probability_category_key():
+    with pytest.raises(ValueError):
+        EmailModelPrediction(
+            category="work",
+            confidence=0.9,
+            margin=0.5,
+            probabilities={"Work": 0.9},
+            model_id=MODEL_ID,
+        )
+
+
+def test_classification_decision_rejects_an_invalid_probability_category_key():
+    with pytest.raises(ValueError):
+        EmailClassificationDecision(
+            category="work",
+            confidence=0.9,
+            margin=0.5,
+            probabilities={"Work": 0.9},
+            model_id=MODEL_ID,
+            config_version="email-config-v1",
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            action_plan=None,
+        )
+
+
 def _prediction(*, confidence: float = 0.93) -> EmailModelPrediction:
     return EmailModelPrediction(
-        category=EmailCategory.WORK,
+        category="work",
         confidence=confidence,
         margin=0.41,
-        probabilities={"work": confidence, "important": 1.0 - confidence},
+        probabilities={"work": confidence, "legal": 1.0 - confidence},
         model_id=MODEL_ID,
     )
 
 
 def _config(
     *,
-    category: EmailCategory = EmailCategory.WORK,
+    category: EmailCategoryKey = "work",
     enabled: bool = True,
     threshold: float = 0.8,
     config_version: str = "email-config-v1",
     actions: tuple[EmailAction, ...] = (EmailAction.LABEL,),
 ) -> EmailCategoryConfig:
     parameters = (
-        {EmailAction.LABEL: {"labels": [category.value]}}
+        {EmailAction.LABEL: {"labels": [category]}}
         if EmailAction.LABEL in actions
         else {}
     )
@@ -67,7 +193,7 @@ def _config(
 
 def _eligibility(*, eligible: bool = True) -> CategoryEligibility:
     return CategoryEligibility(
-        category=EmailCategory.WORK,
+        category="work",
         configured_threshold=0.8,
         validated_precision=0.99 if eligible else 0.70,
         validation_sample_count=30,
@@ -138,7 +264,7 @@ def test_high_confidence_enabled_and_eligible_is_processed_with_immutable_plan()
     assert decision.status is EmailClassificationStatus.PROCESSED
     assert decision.action_plan is not None
     assert decision.action_plan.action_plan_version == 1
-    assert decision.action_plan.category is EmailCategory.WORK
+    assert decision.action_plan.category == "work"
     assert decision.action_plan.actions == (EmailAction.LABEL,)
     assert decision.action_plan.model_id == MODEL_ID
     assert decision.action_plan.config_version == "email-config-v1"
@@ -171,7 +297,7 @@ def test_model_action_plan_freezes_authorized_and_ineligible_action_evidence(
     tmp_path: Path,
 ):
     config = EmailCategoryConfig(
-        category=EmailCategory.WORK,
+        category="work",
         description="work",
         threshold=0.8,
         actions=(EmailAction.LABEL, EmailAction.TRASH),
@@ -180,7 +306,7 @@ def test_model_action_plan_freezes_authorized_and_ineligible_action_evidence(
         config_version="email-config:authorization-v1",
     )
     eligibility = CategoryEligibility(
-        category=EmailCategory.WORK,
+        category="work",
         configured_threshold=0.8,
         validated_precision=0.96,
         validation_sample_count=30,
@@ -247,7 +373,7 @@ def test_model_action_plan_freezes_authorized_and_ineligible_action_evidence(
 def test_prediction_and_eligibility_model_mismatch_fails_closed():
     eligibility = _eligibility()
     prediction = EmailModelPrediction(
-        category=EmailCategory.WORK,
+        category="work",
         confidence=0.99,
         margin=0.90,
         probabilities={"work": 0.99},
@@ -273,19 +399,19 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
     store = EmailStore(tmp_path / "email.sqlite3")
     pending = _persist_decision(store, _decision(confidence=0.79))
     store.upsert_config(
-        category=EmailCategory.SUBSCRIPTION,
-        description="subscription",
+        category=_legacy_store_category("notification"),
+        description="notification",
         threshold=0.97,
         actions=(EmailAction.UNSUBSCRIBE,),
         action_parameters={},
         enabled=True,
-        config_version="subscription-v3",
+        config_version="notification-v3",
     )
 
     application = apply_human_confirmation(
         store,
         pending["id"],
-        EmailCategory.SUBSCRIPTION,
+        "notification",
         feedback_request_id="feedback-pending-confirmation",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -295,8 +421,8 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
     confirmed = application.confirmed
     assert confirmed["status"] == "processed"
     assert confirmed["classification_source"] == "user"
-    assert confirmed["action_plan"]["category"] == "subscription"
-    assert confirmed["action_plan"]["config_version"] == "subscription-v3"
+    assert confirmed["action_plan"]["category"] == "notification"
+    assert confirmed["action_plan"]["config_version"] == "notification-v3"
     assert confirmed["action_plan"]["model_id"] == MODEL_ID
     assert confirmed["action_plan"]["actions"] == ["unsubscribe"]
     assert EmailAction.AUTO_REPLY.value not in confirmed["action_plan"]["actions"]
@@ -305,8 +431,8 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
     assert authorization["authorized"] is True
     assert authorization["authorization_source"] == "user_confirmation"
     assert authorization["source_model_id"] == MODEL_ID
-    assert authorization["config_version"] == "subscription-v3"
-    assert store.list_training_examples()[0]["label"] == "subscription"
+    assert authorization["config_version"] == "notification-v3"
+    assert store.list_training_examples()[0]["label"] == "notification"
     with sqlite3.connect(store.path) as db:
         table_names = {
             row[0]
@@ -336,19 +462,19 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
         finished_at=NOW.isoformat(),
     )
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
-        description="important",
+        category=_legacy_store_category("personal"),
+        description="personal",
         threshold=0.97,
         actions=(EmailAction.ARCHIVE, EmailAction.UNSUBSCRIBE),
         action_parameters={},
         enabled=True,
-        config_version="important-v4",
+        config_version="personal-v4",
     )
 
     application = apply_human_confirmation(
         store,
         processed["id"],
-        EmailCategory.IMPORTANT,
+        "personal",
         feedback_request_id="feedback-processed-correction",
         expected_current_action_plan_id=processed["current_action_plan_id"],
         now=NOW,
@@ -357,12 +483,12 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
     assert application is not None
     corrected = application.confirmed
     assert corrected["classification_source"] == "user"
-    assert corrected["confirmed_category"] == "important"
+    assert corrected["confirmed_category"] == "personal"
     assert corrected["current_action_plan_id"] != processed["current_action_plan_id"]
     assert corrected["action_plan"]["action_plan_version"] == 2
     assert corrected["action_plan"]["model_id"] == MODEL_ID
-    assert corrected["action_plan"]["config_version"] == "important-v4"
-    assert store.list_training_examples()[0]["label"] == "important"
+    assert corrected["action_plan"]["config_version"] == "personal-v4"
+    assert store.list_training_examples()[0]["label"] == "personal"
 
     with sqlite3.connect(store.path) as db:
         db.row_factory = sqlite3.Row
@@ -381,7 +507,7 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
         for row in plans
     ] == [
         (1, MODEL_ID, "email-config-v1"),
-        (2, MODEL_ID, "important-v4"),
+        (2, MODEL_ID, "personal-v4"),
     ]
     assert {row["action_type"] for row in actions} == {"label", "archive"}
     assert (
@@ -392,7 +518,7 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
         (old_action, "provider-receipt-1")
     ]
     assert all(
-        row["config_version"] in {"email-config-v1", "important-v4"} for row in actions
+        row["config_version"] in {"email-config-v1", "personal-v4"} for row in actions
     )
 
 
@@ -411,7 +537,7 @@ def test_human_confirmation_uses_primary_key_lookup_not_classification_paging(
     application = apply_human_confirmation(
         store,
         pending["id"],
-        EmailCategory.WORK,
+        "work",
         feedback_request_id="feedback-primary-key-lookup",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -429,13 +555,13 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
     setup_store = EmailStore(database)
     processed = _persist_decision(setup_store, _decision())
     setup_store.upsert_config(
-        category=EmailCategory.IMPORTANT,
-        description="important",
+        category=_legacy_store_category("personal"),
+        description="personal",
         threshold=0.97,
         actions=(EmailAction.ARCHIVE,),
         action_parameters={},
         enabled=True,
-        config_version="important-v1",
+        config_version="personal-v1",
     )
 
     correction_begin_attempted = Event()
@@ -467,8 +593,8 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
         update email_category_configs
         set actions_json='["move"]',
             action_parameters_json='{"move":{"target_folder":"Important"}}',
-            config_version='important-v2'
-        where category='important'
+            config_version='personal-v2'
+        where category='personal'
         """
     )
     results = []
@@ -480,7 +606,7 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
                 apply_human_confirmation(
                     correction_store,
                     processed["id"],
-                    EmailCategory.IMPORTANT,
+                    "personal",
                     feedback_request_id="feedback-config-lease",
                     expected_current_action_plan_id=processed["current_action_plan_id"],
                     now=NOW,
@@ -502,15 +628,15 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
     application = results[0]
     assert application is not None
     corrected = application.confirmed
-    assert corrected["config_version"] == "important-v2"
-    assert corrected["action_plan"]["config_version"] == "important-v2"
+    assert corrected["config_version"] == "personal-v2"
+    assert corrected["action_plan"]["config_version"] == "personal-v2"
     assert corrected["action_plan"]["actions"] == ["move"]
     assert corrected["action_plan"]["action_parameters"] == {
         "move": {"target_folder": "Important"}
     }
     with sqlite3.connect(database) as db:
         committed_config_version = db.execute(
-            "select config_version from email_category_configs where category='important'"
+            "select config_version from email_category_configs where category='personal'"
         ).fetchone()[0]
         current_plan_and_action = db.execute(
             """
@@ -522,8 +648,8 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
             """,
             (processed["id"],),
         ).fetchone()
-    assert committed_config_version == "important-v2"
-    assert current_plan_and_action == ("important-v2", "important-v2")
+    assert committed_config_version == "personal-v2"
+    assert current_plan_and_action == ("personal-v2", "personal-v2")
 
 
 def test_exact_feedback_replay_returns_original_result_without_new_history(
@@ -535,7 +661,7 @@ def test_exact_feedback_replay_returns_original_result_without_new_history(
     first = apply_human_confirmation(
         store,
         pending["id"],
-        EmailCategory.IMPORTANT,
+        "personal",
         feedback_request_id="feedback-first-1",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -543,7 +669,7 @@ def test_exact_feedback_replay_returns_original_result_without_new_history(
     replay = apply_human_confirmation(
         store,
         pending["id"],
-        EmailCategory.IMPORTANT,
+        "personal",
         feedback_request_id="feedback-first-1",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -574,7 +700,7 @@ def test_feedback_replay_after_later_correction_returns_original_result(
     first = apply_human_confirmation(
         store,
         pending["id"],
-        EmailCategory.WORK,
+        "work",
         feedback_request_id="feedback-original",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -583,7 +709,7 @@ def test_feedback_replay_after_later_correction_returns_original_result(
     corrected = apply_human_confirmation(
         store,
         pending["id"],
-        EmailCategory.IMPORTANT,
+        "personal",
         feedback_request_id="feedback-correction",
         expected_current_action_plan_id=first.resulting_action_plan_id,
         now=NOW,
@@ -593,7 +719,7 @@ def test_feedback_replay_after_later_correction_returns_original_result(
     replay = apply_human_confirmation(
         store,
         pending["id"],
-        EmailCategory.WORK,
+        "work",
         feedback_request_id="feedback-original",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -608,15 +734,15 @@ def test_feedback_replay_after_later_correction_returns_original_result(
 @pytest.mark.parametrize(
     ("classification_offset", "category", "expected_pointer"),
     (
-        (0, EmailCategory.PERSONAL, None),
-        (0, EmailCategory.IMPORTANT, "unexpected-plan"),
-        (1, EmailCategory.IMPORTANT, None),
+        (0, "personal", None),
+        (0, "notification", "unexpected-plan"),
+        (1, "notification", None),
     ),
 )
 def test_feedback_request_id_reuse_with_different_intent_conflicts(
     tmp_path: Path,
     classification_offset: int,
-    category: EmailCategory,
+    category: EmailCategoryKey,
     expected_pointer: str | None,
 ):
     store = EmailStore(tmp_path / "email.sqlite3")
@@ -629,7 +755,7 @@ def test_feedback_request_id_reuse_with_different_intent_conflicts(
     first = apply_human_confirmation(
         store,
         first_row["id"],
-        EmailCategory.IMPORTANT,
+        "notification",
         feedback_request_id="feedback-stable-id",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -656,7 +782,7 @@ def test_unknown_request_against_processed_row_requires_current_pointer(
     first = apply_human_confirmation(
         store,
         pending["id"],
-        EmailCategory.WORK,
+        "work",
         feedback_request_id="feedback-first",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -667,7 +793,7 @@ def test_unknown_request_against_processed_row_requires_current_pointer(
         apply_human_confirmation(
             store,
             pending["id"],
-            EmailCategory.WORK,
+            "work",
             feedback_request_id="feedback-unknown",
             expected_current_action_plan_id=None,
             now=NOW,
@@ -682,7 +808,7 @@ def test_concurrent_different_requests_from_same_plan_pointer_allow_one_correcti
     first = apply_human_confirmation(
         store,
         pending["id"],
-        EmailCategory.WORK,
+        "work",
         feedback_request_id="feedback-first",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -692,7 +818,7 @@ def test_concurrent_different_requests_from_same_plan_pointer_allow_one_correcti
     ready = Barrier(2)
     results = []
 
-    def correct(request_id: str, category: EmailCategory):
+    def correct(request_id: str, category: EmailCategoryKey):
         ready.wait()
         try:
             return apply_human_confirmation(
@@ -711,8 +837,8 @@ def test_concurrent_different_requests_from_same_plan_pointer_allow_one_correcti
             executor.map(
                 lambda args: correct(*args),
                 (
-                    ("feedback-correction-a", EmailCategory.IMPORTANT),
-                    ("feedback-correction-b", EmailCategory.PERSONAL),
+                    ("feedback-correction-a", "personal"),
+                    ("feedback-correction-b", "notification"),
                 ),
             )
         )

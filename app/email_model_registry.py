@@ -17,7 +17,10 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal, get_args
 
-from app.email_classifier_contracts import EmailCategory
+from app.email_classifier_contracts import (
+    INITIAL_EMAIL_CATEGORY_KEYS,
+    validate_email_category_key,
+)
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 
 
@@ -995,14 +998,19 @@ def _status(value: object) -> ModelStatus:
 def _validate_category_protocol(
     metadata: EmailModelMetadata, artifact_labels: set[str]
 ) -> None:
-    allowed = {category.value for category in EmailCategory}
     category_labels = set(metadata.category_counts)
     metric_labels = set(metadata.per_category_metrics)
+    try:
+        validated_artifact_labels = {
+            validate_email_category_key(label) for label in artifact_labels
+        }
+    except (TypeError, ValueError) as exc:
+        raise ModelRegistryError("candidate category protocol mismatch") from exc
     if (
         not artifact_labels
         or artifact_labels != category_labels
         or artifact_labels != metric_labels
-        or not artifact_labels <= allowed
+        or validated_artifact_labels != artifact_labels
     ):
         raise ModelRegistryError("candidate category protocol mismatch")
     for label, metric in metadata.per_category_metrics.items():
@@ -1091,7 +1099,7 @@ def _validate_active_category_protocol(
     metadata: EmailModelMetadata,
     artifact_labels: set[str],
 ) -> None:
-    required = {category.value for category in EmailCategory}
+    required = set(INITIAL_EMAIL_CATEGORY_KEYS)
     if (
         artifact_labels != required
         or set(metadata.category_counts) != required

@@ -1096,7 +1096,7 @@ class EmailAgentTaskAdapter:
             "action_plan_id": action_plan.action_plan_id,
             "action_plan_version": action_plan.action_plan_version,
             "classification_id": action_plan.classification_id,
-            "category": action_plan.category.value,
+            "category": action_plan.category,
             "classification_source": action_plan.classification_source,
             "confidence": action_plan.confidence,
             "model_id": action_plan.model_id,

@@ -19,7 +19,13 @@ from types import MappingProxyType
 
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
-from app.email_classifier_contracts import EmailAction, EmailCategory
+from app.email_classifier_contracts import (
+    EmailAction,
+    EmailCategory,
+    EmailCategoryKey,
+    INITIAL_EMAIL_CATEGORY_KEYS,
+    validate_email_category_key,
+)
 from app.email_classifier_model import CpuTfidfLogisticClassifier, EmailModelPrediction
 from app.email_model_registry import (
     MODEL_FAMILY,
@@ -108,7 +114,7 @@ class EmailActionEligibility:
 
 @dataclass(frozen=True)
 class CategoryEligibility:
-    category: EmailCategory
+    category: EmailCategoryKey
     configured_threshold: float
     validated_precision: float | None
     validation_sample_count: int
@@ -155,7 +161,7 @@ _ACTION_REQUIREMENTS: Mapping[EmailAction, tuple[float, int]] = MappingProxyType
 
 def assess_email_action_eligibility(
     *,
-    category: EmailCategory,
+    category: EmailCategoryKey,
     actions: Sequence[EmailAction],
     model_status: str,
     validation_method: str,
@@ -191,7 +197,7 @@ def assess_email_action_eligibility(
             reason = "auto_reply_disabled"
         elif (
             action is EmailAction.UNSUBSCRIBE
-            and category is not EmailCategory.SUBSCRIPTION
+            and category != EmailCategory.SUBSCRIPTION.value
         ):
             eligible = False
             reason = "subscription_category_required"
@@ -219,7 +225,7 @@ def assess_email_action_eligibility(
         evidence_snapshot = json.dumps(
             {
                 "action_type": action.value,
-                "category": category.value,
+                "category": category,
                 "config_version": config_version,
                 "configured_threshold": configured_threshold,
                 "evaluated_threshold": evaluated_threshold,
@@ -424,7 +430,7 @@ def assess_examples_readiness(
         reasons.append(f"minimum {minimum_examples} feedback examples required")
     if len(counts) < 2:
         reasons.append("at least two categories are required")
-    required_labels = {category.value for category in EmailCategory}
+    required_labels = set(INITIAL_EMAIL_CATEGORY_KEYS)
     unknown_labels = sorted(set(counts) - required_labels)
     if unknown_labels:
         reasons.append("unknown email categories: " + ", ".join(unknown_labels))
@@ -482,6 +488,7 @@ def train_and_promote(
     )
     if not readiness.ready:
         raise TrainingNotReady("; ".join(readiness.reasons))
+    enabled_category_keys = _validated_training_category_keys(examples)
     validation_snapshots = tuple(dict(example) for example in examples)
     inclusion_snapshots = tuple(
         example
@@ -492,7 +499,9 @@ def train_and_promote(
         raise TrainingNotReady("no unincluded authoritative feedback")
 
     validation_method, expected, validation_predictions = _validation_predictions(
-        examples, c=c
+        examples,
+        c=c,
+        enabled_category_keys=enabled_category_keys,
     )
     predicted = [prediction.label for prediction in validation_predictions]
     labels = sorted(readiness.category_counts)
@@ -520,6 +529,7 @@ def train_and_promote(
     classifier.fit(
         [example["model_text"] for example in examples],
         [example["label"] for example in examples],
+        enabled_category_keys=enabled_category_keys,
     )
     p50, p95 = _prediction_latency(
         classifier, [example["model_text"] for example in examples]
@@ -661,11 +671,17 @@ def _train_and_promote_paths(
     if not readiness.ready:
         raise TrainingNotReady("; ".join(readiness.reasons))
     examples = store.list_training_examples()
-    method, expected, predictions = _validation_predictions(examples, c=c)
+    enabled_category_keys = _validated_training_category_keys(examples)
+    method, expected, predictions = _validation_predictions(
+        examples,
+        c=c,
+        enabled_category_keys=enabled_category_keys,
+    )
     accuracy = float(accuracy_score(expected, [item.label for item in predictions]))
     classifier = CpuTfidfLogisticClassifier(c=c, model_version=model_version).fit(
         [item["model_text"] for item in examples],
         [item["label"] for item in examples],
+        enabled_category_keys=enabled_category_keys,
     )
     p50, p95 = _prediction_latency(
         classifier, [item["model_text"] for item in examples]
@@ -705,7 +721,10 @@ def _train_and_promote_paths(
 
 
 def _validation_predictions(
-    examples: Sequence[Mapping[str, str]], *, c: float
+    examples: Sequence[Mapping[str, str]],
+    *,
+    c: float,
+    enabled_category_keys: Sequence[EmailCategoryKey],
 ) -> tuple[str, list[str], list[EmailModelPrediction]]:
     if len(examples) >= 50:
         split = max(1, int(len(examples) * 0.8))
@@ -716,6 +735,7 @@ def _validation_predictions(
             classifier.fit(
                 [item["model_text"] for item in training],
                 [item["label"] for item in training],
+                enabled_category_keys=enabled_category_keys,
             )
             return (
                 "time-ordered-holdout",
@@ -732,10 +752,20 @@ def _validation_predictions(
         classifier.fit(
             [item["model_text"] for item in training],
             [item["label"] for item in training],
+            enabled_category_keys=enabled_category_keys,
         )
         expected.append(example["label"])
         predicted.append(classifier.predict(example["model_text"]))
     return "leave-one-out", expected, predicted
+
+
+def _validated_training_category_keys(
+    examples: Sequence[Mapping[str, object]],
+) -> tuple[EmailCategoryKey, ...]:
+    validated = {
+        validate_email_category_key(example["label"]) for example in examples
+    }
+    return tuple(sorted(validated))
 
 
 def _prediction_latency(

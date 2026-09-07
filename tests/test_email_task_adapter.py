@@ -183,7 +183,7 @@ def _persist_authorization(
                 "category": plan.category,
                 "confidence": plan.confidence,
                 "margin": 0.42,
-                "probabilities": {plan.category.value: plan.confidence},
+                "probabilities": {plan.category: plan.confidence},
                 "model_id": plan.model_id,
                 "config_version": plan.config_version,
                 "status": EmailClassificationStatus.PROCESSED,
@@ -701,12 +701,12 @@ def test_accepted_unsubscribe_rejects_opening_mailto_entry(tmp_path: Path) -> No
         accepted_email_unsubscribe_effect(persisted_task, accepted)
 
 
-def test_authorized_unsubscribe_is_bound_to_audited_v2_lifecycle(
+def test_new_non_subscription_unsubscribe_does_not_claim_legacy_audit_contract(
     tmp_path: Path,
 ) -> None:
     plan = _plan(
         (EmailAction.UNSUBSCRIBE,),
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.NOTIFICATION,
     )
     private_url = "https://news.example.com/unsubscribe?token=private-token"
     task_input = replace(
@@ -765,7 +765,7 @@ def test_authorized_unsubscribe_is_bound_to_audited_v2_lifecycle(
     assert (
         select_task_lifecycle(route.task, route.context) is TaskLifecycle.CONSUMER_AUDIT
     )
-    assert validate_audited_email_task(route.task, route.context) is True
+    assert validate_audited_email_task(route.task, route.context) is False
 
 
 @pytest.mark.parametrize(
@@ -875,7 +875,7 @@ def test_refreshed_email_context_contains_one_opaque_continuation_receipt(
     plan = _plan(
         (EmailAction.UNSUBSCRIBE,),
         classification_source="user",
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.NOTIFICATION,
     )
     task_input = _task_input()
     email_store = _email_store(tmp_path)
@@ -985,7 +985,7 @@ def test_refreshed_email_context_rejects_private_continuation_evidence(
     plan = _plan(
         (EmailAction.UNSUBSCRIBE,),
         classification_source="user",
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.NOTIFICATION,
     )
     task_input = _task_input()
     email_store = _email_store(tmp_path)
@@ -1051,7 +1051,7 @@ def test_terminal_unsubscribe_claim_without_continuation_adds_no_receipt(
     plan = _plan(
         (EmailAction.UNSUBSCRIBE,),
         classification_source="user",
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.NOTIFICATION,
     )
     task_input = _task_input()
     email_store = _email_store(tmp_path)

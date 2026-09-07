@@ -9,6 +9,7 @@ from pickle import UnpicklingError
 import threading
 from collections.abc import Callable
 
+from app.email_classifier_contracts import validate_email_category_key
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_scan import EmailScanConfig, EmailScanResult, scan_readonly_batch
 from app.email_store import EmailStore
@@ -202,6 +203,8 @@ def load_active_classifier(
     for path, used_previous in candidates:
         try:
             classifier = CpuTfidfLogisticClassifier.load(path)
+            for label in classifier.class_labels():
+                validate_email_category_key(label)
         except (OSError, KeyError, TypeError, ValueError, UnpicklingError) as exc:
             errors.append(f"{path}: {type(exc).__name__}")
             continue

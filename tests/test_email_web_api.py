@@ -16,6 +16,7 @@ from app.email_classifier_contracts import (
     EmailAction,
     EmailAttachmentMetadata,
     EmailCategory,
+    INITIAL_EMAIL_CATEGORY_KEYS,
     EmailClassification,
     EmailClassificationStatus,
     build_versioned_email_action_plan,
@@ -240,18 +241,19 @@ def _stage_learning_evidence_model(
 ) -> str:
     source = tmp_path / f"learning-{suffix}.pkl"
     texts = [
-        f"{category.value} {variant}"
-        for category in EmailCategory
+        f"{category} {variant}"
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
         for variant in ("primary", "secondary")
     ]
     labels = [
-        category.value
-        for category in EmailCategory
+        category
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
         for _variant in ("primary", "secondary")
     ]
     classifier = CpuTfidfLogisticClassifier(model_version="candidate").fit(
         texts,
         labels,
+        enabled_category_keys=INITIAL_EMAIL_CATEGORY_KEYS,
     )
     classifier.save(source)
     digest = sha256(source.read_bytes()).hexdigest()
@@ -271,7 +273,7 @@ def _stage_learning_evidence_model(
             "auto_action_eligible": True,
             "eligibility_reason": "eligible",
         }
-        for category in (item.value for item in EmailCategory)
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
     }
     metadata = EmailModelMetadata(
         model_id=model_id,
@@ -283,10 +285,10 @@ def _stage_learning_evidence_model(
         trained_at=trained_at.isoformat(),
         training_started_at=(trained_at - timedelta(seconds=2)).isoformat(),
         training_finished_at=trained_at.isoformat(),
-        sample_count=160,
-        new_sample_count=16,
-        category_counts={category.value: 20 for category in EmailCategory},
-        account_counts={"account-a": 160},
+        sample_count=180,
+        new_sample_count=18,
+        category_counts={category: 20 for category in INITIAL_EMAIL_CATEGORY_KEYS},
+        account_counts={"account-a": 180},
         validation_method="time-ordered-holdout",
         accuracy=0.96,
         macro_f1=0.955,
@@ -556,7 +558,7 @@ def test_email_classification_list_and_detail_expose_only_attachment_metadata(
             "category": EmailCategory.WORK,
             "confidence": 0.7,
             "margin": 0.2,
-            "probabilities": {"work": 0.7, "important": 0.3},
+                "probabilities": {"work": 0.7, "legal": 0.3},
             "model_id": "email-model-v73",
             "config_version": "email-config-v3",
             "status": EmailClassificationStatus.PENDING_FEEDBACK,
@@ -679,7 +681,7 @@ def _audited_email_detail_fixture(
         action_plan_version=1,
         classification_id=classification_id,
         account_id=account_id,
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.NOTIFICATION,
         classification_source="user",
         confidence=1.0,
         model_id="email-model:observability-v1",
@@ -721,10 +723,10 @@ def _audited_email_detail_fixture(
                     "rfc_message_id": "<newsletter-41@example.com>",
                     "thread_id": thread_identity,
                 },
-                "category": EmailCategory.SUBSCRIPTION,
+                "category": EmailCategory.NOTIFICATION,
                 "confidence": 1.0,
                 "margin": 1.0,
-                "probabilities": {"subscription": 1.0},
+                "probabilities": {"notification": 1.0},
                 "model_id": plan.model_id,
                 "config_version": plan.config_version,
                 "status": EmailClassificationStatus.PROCESSED,
@@ -1451,7 +1453,7 @@ def test_paginated_get_does_not_compete_with_scanner_write_transaction(
     (
         ("work", ["label"], {"label": {"labels": ["work"]}}),
         (
-            "billing",
+            "external_billing",
             ["move"],
             {"move": {"target_folder": "Archive/Billing"}},
         ),
@@ -1504,7 +1506,7 @@ def test_email_config_api_rejects_auto_reply_even_with_valid_instruction(
     )
 
 
-def test_email_config_api_allows_unsubscribe_only_for_subscription(tmp_path: Path):
+def test_email_config_api_rejects_reserved_unsubscribe_categories(tmp_path: Path):
     payload = {
         "description": "Wrong unsubscribe category",
         "threshold": 0.95,
@@ -1514,13 +1516,13 @@ def test_email_config_api_allows_unsubscribe_only_for_subscription(tmp_path: Pat
     }
     with _client(tmp_path) as client:
         rejected = client.put("/api/console/email/config/important", json=payload)
-        accepted = client.put("/api/console/email/config/subscription", json=payload)
+        reserved = client.put("/api/console/email/config/subscription", json=payload)
 
     assert rejected.status_code == 400
     assert rejected.json()["detail"] == (
         "unsubscribe can only be configured for subscription"
     )
-    assert accepted.status_code == 200
+    assert reserved.status_code == 400
 
 
 def test_email_account_api_accepts_nontechnical_payload_without_secret_reference(
@@ -1602,9 +1604,9 @@ def test_email_config_api_returns_controlled_4xx_for_invalid_action_parameters(
 def test_email_config_api_retains_no_parameter_archive_behavior(tmp_path: Path):
     with _client(tmp_path) as client:
         response = client.put(
-            "/api/console/email/config/subscription",
+            "/api/console/email/config/notification",
             json={
-                "description": "Archive subscription",
+                "description": "Archive notification",
                 "threshold": 0.98,
                 "actions": ["archive"],
                 "enabled": True,

@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.email_classifier_contracts import EmailCategory
+from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_shadow import stage_snapshot_shadow_candidate
 from app.email_classifier_training import EligibilityRequirement
 from app.email_experiment_snapshot import build_snapshot, save_snapshot
@@ -34,7 +35,18 @@ def _snapshot(
     return path
 
 
-def test_snapshot_shadow_candidate_is_versioned_but_never_activated(tmp_path: Path):
+def test_snapshot_shadow_candidate_is_versioned_but_never_activated(
+    tmp_path: Path, monkeypatch
+):
+    original_fit = CpuTfidfLogisticClassifier.fit
+    enabled_fit_keys: list[tuple[str, ...]] = []
+
+    def recording_fit(self, texts, labels, **kwargs):
+        assert "enabled_category_keys" in kwargs
+        enabled_fit_keys.append(tuple(kwargs["enabled_category_keys"]))
+        return original_fit(self, texts, labels, **kwargs)
+
+    monkeypatch.setattr(CpuTfidfLogisticClassifier, "fit", recording_fit)
     training = _snapshot(
         tmp_path / "training.json",
         [
@@ -102,3 +114,4 @@ def test_snapshot_shadow_candidate_is_versioned_but_never_activated(tmp_path: Pa
     assert notification["auto_action_eligible"] is False
     assert notification["eligibility_reason"] == "non_authoritative_validation_labels"
     assert registry.load_classifier(result.model_id).model_version == result.model_id
+    assert enabled_fit_keys == [("junk", "notification")]

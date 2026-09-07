@@ -1,8 +1,11 @@
 from datetime import datetime, timezone
 from pathlib import Path
+import pickle
 from types import SimpleNamespace
 
 import pytest
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
 
 from app.email_classifier_model import (
     CpuTfidfLogisticClassifier,
@@ -12,6 +15,7 @@ from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
     EmailClassificationStatus,
+    INITIAL_EMAIL_CATEGORY_KEYS,
 )
 from app.email_classifier_scan import EmailScanConfig, scan_readonly_batch
 from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
@@ -32,7 +36,37 @@ def _model() -> CpuTfidfLogisticClassifier:
     return CpuTfidfLogisticClassifier(model_version="runtime-test").fit(
         ["work project", "work meeting", "junk promotion", "junk offer"],
         ["work", "work", "junk", "junk"],
+        enabled_category_keys=("junk", "work"),
     )
+
+
+def _legacy_reserved_model(path: Path) -> None:
+    texts = ["urgent approval", "urgent contract", "project plan", "team meeting"]
+    labels = ["important", "important", "work", "work"]
+    vectorizer = TfidfVectorizer(token_pattern=r"\S+")
+    classifier = LogisticRegression(random_state=42).fit(
+        vectorizer.fit_transform(texts), labels
+    )
+    path.write_bytes(
+        pickle.dumps(
+            {
+                "format_version": CpuTfidfLogisticClassifier.FORMAT_VERSION,
+                "feature_version": CpuTfidfLogisticClassifier.FEATURE_VERSION,
+                "c": 0.25,
+                "model_version": "legacy-reserved-v1",
+                "vectorizer": vectorizer,
+                "classifier": classifier,
+            }
+        )
+    )
+
+
+def test_runtime_rejects_reserved_legacy_artifact_before_scan_adoption(tmp_path: Path):
+    active = tmp_path / "legacy-reserved.pkl"
+    _legacy_reserved_model(active)
+
+    with pytest.raises(EmailClassifierUnavailable, match="no valid"):
+        load_active_classifier(active, tmp_path / "missing-previous.pkl")
 
 
 def test_runtime_prefers_active_model(tmp_path: Path):
@@ -107,7 +141,7 @@ def test_runtime_loads_model_and_runs_only_readonly_scan(tmp_path: Path):
     registry = FakeRegistry()
     config = EmailScanConfig(
         config_version="runtime-scan-v1",
-        thresholds={category: 0.0 for category in EmailCategory},
+        thresholds={category: 0.0 for category in INITIAL_EMAIL_CATEGORY_KEYS},
         actions={},
         category_eligibility={
             category: CategoryEligibility(
@@ -118,7 +152,7 @@ def test_runtime_loads_model_and_runs_only_readonly_scan(tmp_path: Path):
                 auto_action_eligible=True,
                 reason="precision_and_sample_gate_met",
             )
-            for category in EmailCategory
+            for category in INITIAL_EMAIL_CATEGORY_KEYS
         },
     )
 
@@ -393,12 +427,12 @@ def test_runtime_fallback_prediction_cannot_reuse_previous_source_eligibility(
         category: CategoryEligibility(
             category=category,
             configured_threshold=0.95,
-            validated_precision=0.99 if category is EmailCategory.WORK else None,
-            validation_sample_count=30 if category is EmailCategory.WORK else 0,
-            auto_action_eligible=category is EmailCategory.WORK,
+            validated_precision=0.99 if category == EmailCategory.WORK.value else None,
+            validation_sample_count=30 if category == EmailCategory.WORK.value else 0,
+            auto_action_eligible=category == EmailCategory.WORK.value,
             reason=(
                 "precision_and_sample_gate_met"
-                if category is EmailCategory.WORK
+                if category == EmailCategory.WORK.value
                 else "model_eligibility_missing"
             ),
             source_model_id=model_a,
@@ -412,15 +446,15 @@ def test_runtime_fallback_prediction_cannot_reuse_previous_source_eligibility(
                         evidence_reference="email-model-eligibility:model-a:label",
                     )
                 }
-                if category is EmailCategory.WORK
+                if category == EmailCategory.WORK.value
                 else {}
             ),
         )
-        for category in EmailCategory
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
     }
     config = EmailScanConfig(
         config_version="email-config:fallback-boundary-v1",
-        thresholds={category: 0.95 for category in EmailCategory},
+        thresholds={category: 0.95 for category in INITIAL_EMAIL_CATEGORY_KEYS},
         actions={EmailCategory.WORK: (EmailAction.LABEL,)},
         category_eligibility=eligibility,
         action_parameters={

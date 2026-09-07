@@ -14,7 +14,7 @@ from pathlib import Path
 
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
-from app.email_classifier_contracts import EmailCategory
+from app.email_classifier_contracts import EmailCategory, validate_email_category_key
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_training import (
     EligibilityRequirement,
@@ -69,6 +69,7 @@ def stage_snapshot_shadow_candidate(
     if not validation:
         raise ValueError("shadow validation must contain unseen examples")
     labels = sorted({row["label"] for row in training})
+    enabled_category_keys = tuple(validate_email_category_key(label) for label in labels)
     validation_labels = {row["label"] for row in validation}
     if not validation_labels <= set(labels):
         raise ValueError("shadow validation contains an untrained category")
@@ -84,6 +85,7 @@ def stage_snapshot_shadow_candidate(
     classifier.fit(
         [row["model_text"] for row in training],
         [row["label"] for row in training],
+        enabled_category_keys=enabled_category_keys,
     )
     predictions = [classifier.predict(row["model_text"]) for row in validation]
     expected = [row["label"] for row in validation]
