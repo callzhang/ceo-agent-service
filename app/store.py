@@ -13686,7 +13686,7 @@ class AutoReplyStore:
             return sorted(jobs, key=lambda job: job.id)
 
     def rerun_meeting_alignment_jobs(self, job_ids: list[int]) -> list[int]:
-        """Reset selected failed meeting jobs for a fresh analysis turn.
+        """Reset selected unsent terminal meeting jobs for fresh analysis.
 
         Existing meeting alignment runs remain immutable. Only the queue
         projection and retry counter are reset; delivery must be reached again
@@ -13704,7 +13704,7 @@ class AutoReplyStore:
                         target_kind='', target_id='', target_title='',
                         mentions_json='[]', final_message='',
                         send_result_json='{{}}', updated_at=current_timestamp
-                    where id in ({placeholders}) and status='failed'
+                    where id in ({placeholders}) and status in ('failed', 'no_action')
                     returning id""",
                 ids,
             ).fetchall()

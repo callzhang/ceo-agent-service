@@ -91,13 +91,14 @@ class DeliveryTarget(StrictModel):
 
 
 class MeetingAlignmentDecision(StrictModel):
-    action: Literal["no_action", "send"]
+    action: Literal["send"]
     audience_scope: Literal["business", "personal"]
     trigger_reasons: list[
         Literal[
             "aligned_disagreement",
             "unresolved_disagreement",
             "derek_viewpoint",
+            "meeting_summary",
         ]
     ]
     topics: list[AlignmentTopic]
@@ -148,20 +149,6 @@ class MeetingAlignmentDecision(StrictModel):
                 "derek_viewpoint trigger and payload must appear together"
             )
 
-        if self.action == "no_action":
-            if (
-                self.trigger_reasons
-                or self.topics
-                or self.derek_viewpoint is not None
-                or self.key_questions
-                or self.mention_names
-                or self.target is not None
-                or self.final_message.strip()
-            ):
-                raise ValueError(
-                    "no_action requires empty analysis and delivery output"
-                )
-            return self
         if not self.final_message.strip():
             raise ValueError("send requires final_message")
         if not self.trigger_reasons:

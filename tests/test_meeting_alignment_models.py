@@ -167,7 +167,7 @@ def test_send_requires_trigger_reasons_and_first_ranked_group_target():
         MeetingAlignmentDecision.model_validate(payload)
 
 
-def test_no_action_without_delivery_output_is_valid():
+def test_meeting_summary_rejects_no_action():
     payload = valid_send_decision()
     payload.update(
         action="no_action",
@@ -179,8 +179,8 @@ def test_no_action_without_delivery_output_is_valid():
         target=None,
         final_message="",
     )
-    decision = MeetingAlignmentDecision.model_validate(payload)
-    assert decision.action == "no_action"
+    with pytest.raises(ValidationError):
+        MeetingAlignmentDecision.model_validate(payload)
 
 
 def test_no_action_requires_empty_trigger_reasons():

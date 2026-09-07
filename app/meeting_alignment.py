@@ -751,13 +751,7 @@ def _analyze_meeting_job(
         )
     except (MeetingSourceIncomplete, DwsError) as exc:
         if isinstance(exc, DwsError) and _is_deleted_minutes_error(exc):
-            store.update_meeting_alignment_job(
-                job.id,
-                status="no_action",
-                locked_at=None,
-                available_at="",
-                error="",
-            )
+            _fail_job(store, job.id, "meeting_source", exc)
             return
         _retry_or_fail(
             store,
@@ -967,33 +961,6 @@ def _analyze_meeting_job(
 
     store.clear_codex_capacity_pause()
     decision_json = decision.model_dump_json()
-    if decision.action == "no_action":
-        run_id = _record_agent_run(
-            store,
-            runner,
-            run_id,
-            job_id=job.id,
-            decision=decision,
-            status="no_action",
-            error="",
-        )
-        _index_meeting_codex_session(
-            store,
-            runner,
-            job,
-            source,
-            decision,
-            source_id=run_id,
-            embedding_client=embedding_client,
-        )
-        store.update_meeting_alignment_job(
-            job.id,
-            status="no_action",
-            decision_json=decision_json,
-            error="",
-        )
-        return
-
     target = decision.target
     target_id = ""
     if target is not None:

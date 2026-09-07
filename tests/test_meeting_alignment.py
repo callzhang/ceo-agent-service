@@ -332,19 +332,31 @@ class FakeMeetingRunner:
         return self.decision
 
 
-def no_action_decision() -> MeetingAlignmentDecision:
+def summary_decision() -> MeetingAlignmentDecision:
     return MeetingAlignmentDecision.model_validate(
             {
-                "action": "no_action",
+                "action": "send",
                 "audience_scope": "business",
-            "trigger_reasons": [],
+            "trigger_reasons": ["meeting_summary"],
             "topics": [],
             "derek_viewpoint": None,
             "key_questions": [],
             "mention_names": [],
-            "target": None,
-            "final_message": "",
-            "audit_summary": "没有需要发布的观点分歧。",
+            "target": {
+                "kind": "group",
+                "conversation_id": "cid-summary",
+                "direct_user_id": "",
+                "title": "业务群",
+                "candidates": [
+                    {
+                        "conversation_id": "cid-summary",
+                        "title": "业务群",
+                        "evidence": ["承接本次会议主题"],
+                    }
+                ],
+            },
+            "final_message": "会议总结｜已确认事项与下一步请以本次会议结论执行。",
+            "audit_summary": "会议没有实质分歧，仍发送简短总结。",
             "confidence": 0.9,
         }
     )
@@ -896,21 +908,21 @@ def test_replay_offset_selects_nonoverlapping_recent_window(tmp_path):
     assert dws.minutes_calls == [{"limit": 3}]
 
 
-def test_consumer_records_no_action_run_and_terminal_job(tmp_path):
+def test_consumer_delivers_summary_when_there_is_no_disagreement(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     job_id = seed_consumer_job(store, dws)
-    runner = FakeMeetingRunner(no_action_decision())
+    runner = FakeMeetingRunner(summary_decision())
 
     assert consume_meeting_alignment_jobs(
         store, dws, runner, now=NOW, limit=1
     ) == 1
 
     job = store.get_meeting_alignment_job(job_id)
-    assert job.status == "no_action"
+    assert job.status == "sent"
     assert job.locked_at is None
     [run] = store.list_meeting_alignment_runs(job_id)
-    assert run.status == "no_action"
+    assert run.status == "ready_to_send"
     assert run.codex_session_id == "meeting-session-1"
     assert run.codex_transcript_start_line == 4
     assert run.codex_transcript_end_line == 19
@@ -930,7 +942,7 @@ def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path):
     )
     dws = ConsumerDws()
     seed_consumer_job(store, dws)
-    runner = FakeMeetingRunner(no_action_decision())
+    runner = FakeMeetingRunner(summary_decision())
 
     assert consume_meeting_alignment_jobs(
         store,
@@ -1644,7 +1656,7 @@ def test_ready_delivery_normalizes_legacy_scope_before_sending(tmp_path):
     assert len(dws.send_calls) == 1
 
 
-def test_deleted_minutes_source_is_terminal_no_action(tmp_path):
+def test_deleted_minutes_source_is_terminal_failure_not_no_action(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     job_id = seed_consumer_job(store, dws)
@@ -1660,8 +1672,8 @@ def test_deleted_minutes_source_is_terminal_no_action(tmp_path):
     consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
 
     job = store.get_meeting_alignment_job(job_id)
-    assert job.status == "no_action"
-    assert job.error == ""
+    assert job.status == "failed"
+    assert json.loads(job.error)["kind"] == "meeting_source"
     assert runner.calls == 0
     assert dws.send_calls == []
 

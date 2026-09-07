@@ -6,7 +6,7 @@
       ["Alex", "我觉得叫灰度发布更准确。"],
       ["Mina", "我习惯叫分批发布，实际范围和你的方案一样。"]
     ],
-    "expected_action": "no_action"
+    "expected_action": "send_summary"
   },
   {
     "id": "host-announces-no-confirmation",
@@ -62,7 +62,7 @@
       ["Alex", "我猜 Derek 过去偏向小步灰度。"],
       ["Mina", "也许，但他今天没有表达意见，我们先不替他下结论。"]
     ],
-    "expected_action": "no_action",
+    "expected_action": "send_summary",
     "forbidden_trigger": "derek_viewpoint"
   },
   {
@@ -85,7 +85,7 @@
       ["Alex", "我是本次候选人，之前负责需求访谈和方案汇报，最终签约由销售负责人推进。"],
       ["Mina", "这个案例里哪些结果可以量化，哪些工作是你独立完成的？"]
     ],
-    "expected_action": "no_action"
+    "expected_action": "send_summary"
   },
   {
     "id": "recruiting-strategy-is-not-interview",
@@ -105,7 +105,7 @@
       ["Alex", "本周必须全量才能验证收入。"],
       ["Mina", "我只接受 10% 灰度，否则故障面不可控。"]
     ],
-    "expected_action": "no_action",
+    "expected_action": "send_summary",
     "live": false
   }
 ]

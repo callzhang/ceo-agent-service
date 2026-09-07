@@ -386,6 +386,23 @@ def test_replay_reopens_only_unsent_terminal_job(tmp_path, replay_status):
     assert store.get_meeting_alignment_job(sent_id).status == "sent"
 
 
+def test_explicit_rerun_reopens_legacy_no_action_meeting(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = seed_job(store, meeting_id="legacy-no-action")
+    store.update_meeting_alignment_job(
+        job_id,
+        status="no_action",
+        decision_json='{"action":"no_action"}',
+    )
+
+    assert store.rerun_meeting_alignment_jobs([job_id]) == [job_id]
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.attempts == 0
+    assert job.decision_json == "{}"
+
+
 def test_ready_to_send_transition_releases_processing_lock(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = seed_job(store)

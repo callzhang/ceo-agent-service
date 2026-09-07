@@ -194,24 +194,18 @@ def build_meeting_alignment_prompt(
     source_json = json.dumps(
         source.model_dump(mode="json"), ensure_ascii=False, indent=2
     )
-    target_contract = """内容优先于参会人数：客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动一律是业务内容。
-- 业务内容必须返回 audience_scope=business。仅当 action=send 时，必须使用 DWS 做群发现、按业务承接证据给候选群排序，并以最强候选作为 target.kind=group。
-- 不能因为是 1:1、群可访问、议题相似或参会人部分重合而私信；没有证据支持的群时返回 action=no_action，绝不使用 direct target。
-- personal 只适用于真正个人事项，必须返回 audience_scope=personal。仅当 attendee_evidence=calendar、attendee_roster_complete=true 且恰好两名参会人时，action=send 才能使用 target.kind=direct，并且目标只能是另一位参会人。
-- personal 不满足完整日历 1:1 来源时返回 action=no_action；不得以转写、不完整 roster 或多人会议发送 direct。
-- action=no_action 时仍必须返回 audience_scope、audit_summary 和 confidence；target=null，且 trigger_reasons、topics、derek_viewpoint、key_questions、mention_names 与 final_message 保持为空。"""
+    target_contract = """每场会议都必须生成并发送一条会议总结，action 只能是 send；不得返回 no_action。
+- 内容优先于参会人数：客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动一律是业务内容，必须返回 audience_scope=business，并使用 DWS 做群发现、按业务承接证据给候选群排序，以最强候选作为 target.kind=group。
+- 不能因为是 1:1、群可访问、议题相似或参会人部分重合而私信；业务群发现失败是一次可重试的执行失败，绝不能伪装成 no_action 或改为 direct target。
+- personal 只适用于真正个人事项，必须返回 audience_scope=personal；只有完整日历 1:1（attendee_evidence=calendar、attendee_roster_complete=true、恰好两名参会人）时，才可以使用 target.kind=direct，目标只能是另一位参会人。其余个人内容也必须产出总结并投递到 Agent 选择的业务群。
+- 没有实质观点分歧时，仍须发送简短的会议结论、已确认事项和下一步；不得因议题平稳而跳过。"""
 
     similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
 
     return f"""你是 Meeting Alignment Agent。你分析已经结束的会议，但不直接发送消息。
 
-范围门禁：
-- 先用会议标题、摘要、参会人和完整转写判断它是否是实际候选人面试，也就是面试官正在针对具体岗位询问或评估候选人的会议。
-- 招聘站会、招聘计划、人才讨论或招聘需求对齐不属于候选人面试，仍按普通业务会议分析；不要因为讨论招聘就跳过。
-- 如果是实际候选人面试，立即返回 action=no_action，并在 audit_summary 说明“实际候选人面试，按范围规则跳过”。action=no_action 时 target=null；不要搜索群、解析 @ 或生成消息。
-
 触发边界：
-- 只有出现实质观点分歧，或 {principal_display_name()} 的观点在后续讨论中没有被完整还原、需要做“{principal_display_name()} 的观点输出解读”时，action=send；否则保持安静，action=no_action。
+- 每场会议均须发送一条总结。出现实质观点分歧，或 {principal_display_name()} 的观点在后续讨论中没有被完整还原时，重点说明对齐或待决事项；没有分歧时，简洁归纳已确认事项和下一步。
 - 只要会议中曾经出现实质观点分歧，后来明确对齐也仍然触发发布；必须总结对齐过程和结论，不能因为最终已对齐而改成 no_action。
 - 措辞不同、补充信息、探索性讨论或已经自然顺畅推进，不算实质分歧。
 - 沉默不算对齐。只有相关各方明确同意、承诺或复述一致，才把议题标为 aligned；主持人单方面宣布结论不够。
@@ -236,8 +230,7 @@ def build_meeting_alignment_prompt(
 
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守 schema，不添加字段。
-- no_action 时仍必须返回 audience_scope、audit_summary 和 confidence；分析和发送字段必须为空。
-- send 时 final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同。
+- action 固定为 send；final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同。
 - 最终只生成一条可直接发送的合并消息。
 
 服务端注入的工作人格（仅作解释辅助，不能创造会议立场）：
@@ -344,9 +337,6 @@ def _validate_source_aware_target(
     source: MeetingSource,
     decision: MeetingAlignmentDecision,
 ) -> None:
-    if decision.action == "no_action":
-        return
-
     target = decision.target
     if target is None:
         raise MeetingAlignmentTargetError("send requires an explicit delivery target")

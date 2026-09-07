@@ -140,27 +140,37 @@ def source_with_unresolved_one_to_one_counterpart() -> MeetingSource:
     return MeetingSource.model_validate(payload)
 
 
-def no_action_payload() -> dict:
+def summary_payload() -> dict:
     return {
-        "action": "no_action",
+        "action": "send",
         "audience_scope": "business",
-        "trigger_reasons": [],
+        "trigger_reasons": ["meeting_summary"],
         "topics": [],
         "derek_viewpoint": None,
         "key_questions": [],
         "mention_names": [],
-        "target": None,
-        "final_message": "",
-        "audit_summary": (
-            "没有实质观点分歧或 Derek 观点输出解读需求。"
-        ),
+        "target": {
+            "kind": "group",
+            "conversation_id": "cid-summary",
+            "direct_user_id": "",
+            "title": "业务群",
+            "candidates": [
+                {
+                    "conversation_id": "cid-summary",
+                    "title": "业务群",
+                    "evidence": ["承接本次会议主题"],
+                }
+            ],
+        },
+        "final_message": "会议总结｜已确认事项与下一步请以本次会议结论执行。",
+        "audit_summary": "会议没有实质分歧，仍发送简短总结。",
         "confidence": 0.9,
     }
 
 
 def test_meeting_runner_routes_persisted_run_fresh_with_exact_capabilities(tmp_path):
     routed = FakeRoutedMeetingExecution(
-        json.dumps(no_action_payload(), ensure_ascii=False)
+        json.dumps(summary_payload(), ensure_ascii=False)
     )
     runner = MeetingAlignmentCodexRunner(
         routed_execution=routed,
@@ -183,7 +193,7 @@ def test_meeting_runner_routes_persisted_run_fresh_with_exact_capabilities(tmp_p
     assert "Use only reviewed read tools." in (
         call["command_factory"]._developer_instructions
     )
-    assert decision.action == "no_action"
+    assert decision.action == "send"
     assert runner.last_session_id == "meeting-session"
 
 
@@ -258,9 +268,8 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     )
 
     assert "我建议全量上线以验证收入" in prompt
-    assert "实际候选人面试" in prompt
-    assert "招聘站会、招聘计划、人才讨论或招聘需求对齐不属于候选人面试" in prompt
-    assert "不要搜索群、解析 @ 或生成消息" in prompt
+    assert "每场会议均须发送一条总结" in prompt
+    assert "不得返回 no_action" in prompt
     assert "后来明确对齐也仍然触发发布" in prompt
     assert "沉默不算对齐" in prompt
     assert "明确同意、承诺或复述一致" in prompt
@@ -282,8 +291,7 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "target.kind=group" in prompt
     assert "audience_scope=personal" in prompt
     assert "完整日历 1:1" in prompt
-    assert "target=null" in prompt
-    assert "仍必须返回 audience_scope、audit_summary 和 confidence" in prompt
+    assert "业务群发现失败是一次可重试的执行失败" in prompt
     assert "只保留 audit_summary 与 confidence" not in prompt
     assert "真实 @" in prompt
     assert "放在对应的任务、问题或信息所在句子中" in prompt
@@ -308,18 +316,16 @@ def test_prompt_makes_business_content_group_first_even_for_one_to_one():
     assert "audience_scope=business" in prompt
     assert "DWS 做群发现" in prompt
     assert "target.kind=group" in prompt
-    assert "没有证据支持的群时返回 action=no_action" in prompt
+    assert "业务群发现失败是一次可重试的执行失败" in prompt
 
 
-def test_candidate_interview_no_action_overrides_one_to_one_delivery_target():
+def test_prompt_requires_a_summary_even_for_candidate_interviews():
     prompt = build_meeting_alignment_prompt(
         source(participant_count=2), work_profile="", work_profile_source="profile"
     )
 
-    assert "仅当 action=send 时" in prompt
-    assert "实际候选人面试" in prompt
-    assert "action=no_action 时 target=null" in prompt
-    assert "仍必须返回 audience_scope、audit_summary 和 confidence" in prompt
+    assert "每场会议都必须生成并发送一条会议总结" in prompt
+    assert "action 只能是 send" in prompt
 
 
 def test_prompt_allows_personal_direct_only_for_complete_calendar_one_to_one():
@@ -426,14 +432,15 @@ def test_agent_rejects_null_target_for_multi_party_meeting():
 
 
 def test_parser_rejects_extra_fields():
-    payload = no_action_payload()
+    payload = summary_payload()
     payload["unexpected"] = True
     with pytest.raises(ValueError, match="No MeetingAlignmentDecision"):
         parse_meeting_alignment_decision(json.dumps(payload))
 
 
 def test_parser_rejects_no_action_without_required_audience_scope():
-    payload = no_action_payload()
+    payload = summary_payload()
+    payload["action"] = "no_action"
     del payload["audience_scope"]
 
     with pytest.raises(ValueError, match="No MeetingAlignmentDecision"):
@@ -442,12 +449,12 @@ def test_parser_rejects_no_action_without_required_audience_scope():
 
 def test_runner_always_starts_fresh_and_uses_schema(tmp_path: Path):
     routed = FakeRoutedMeetingExecution(
-        json.dumps(no_action_payload(), ensure_ascii=False)
+        json.dumps(summary_payload(), ensure_ascii=False)
     )
     runner = MeetingAlignmentCodexRunner(routed_execution=routed)
     decision = runner.decide(prompt="decide", run_id=8)
 
-    assert decision.action == "no_action"
+    assert decision.action == "send"
     assert routed.calls[0]["conversation_id"] is None
     assert routed.calls[0]["workload_key"] == "8"
     assert routed.calls[0]["command_factory"]._output_schema_path.name == (
@@ -502,7 +509,7 @@ def test_runner_clears_prior_audit_metadata_before_executor_failure(tmp_path: Pa
                             },
                         }
                     ),
-                    json.dumps(no_action_payload(), ensure_ascii=False),
+                    json.dumps(summary_payload(), ensure_ascii=False),
                 ]
             )
         raise RuntimeError("executor failed")
@@ -605,8 +612,8 @@ def _source_for_case(case: dict) -> MeetingSource:
 
 
 def _deterministic_payload(case: dict) -> dict:
-    if case["expected_action"] == "no_action":
-        return no_action_payload()
+    if case["expected_action"] == "send_summary":
+        return summary_payload()
     state = case.get("expected_state", "unresolved")
     triggers = [
         "aligned_disagreement" if state == "aligned" else "unresolved_disagreement"
@@ -692,7 +699,10 @@ def test_semantic_fixtures_with_deterministic_executor(tmp_path: Path, case: dic
     )
 
     fixture_id = case["id"]
-    assert decision.action == case["expected_action"], fixture_id
+    expected_action = (
+        "send" if case["expected_action"] == "send_summary" else case["expected_action"]
+    )
+    assert decision.action == expected_action, fixture_id
     if expected_state := case.get("expected_state"):
         assert any(
             topic.state == expected_state for topic in decision.topics
