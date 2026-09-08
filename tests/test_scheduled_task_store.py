@@ -92,6 +92,7 @@ def test_schema_manifest_creates_scheduled_task_tables_and_indexes(
         "idx_scheduled_task_skill_refs_position",
         "idx_scheduled_task_runs_scheduled_instant",
         "idx_scheduled_task_runs_dispatch",
+        "idx_scheduled_task_runs_claim",
     } <= indexes
     assert store._schema_is_current() is True
 
@@ -280,6 +281,38 @@ def test_enable_disable_and_soft_delete_use_version_checks(tmp_path: Path) -> No
     assert store.list_scheduled_tasks(include_deleted=True) == (deleted,)
 
 
+@pytest.mark.parametrize("invalid_version", (True, False, 1.5, 0, -1))
+@pytest.mark.parametrize("operation", ("update", "set_enabled", "delete"))
+def test_task_mutations_reject_non_positive_exact_integer_versions(
+    tmp_path: Path,
+    operation: str,
+    invalid_version: object,
+) -> None:
+    store = AutoReplyStore(tmp_path / f"version-{operation}-{invalid_version}.sqlite3")
+    task = _create_task(store)
+
+    with pytest.raises(ValueError, match="version must be a positive integer"):
+        if operation == "update":
+            store.update_scheduled_task(
+                task.id,
+                expected_version=invalid_version,  # type: ignore[arg-type]
+                name="invalid",
+            )
+        elif operation == "set_enabled":
+            store.set_scheduled_task_enabled(
+                task.id,
+                enabled=False,
+                expected_version=invalid_version,  # type: ignore[arg-type]
+            )
+        else:
+            store.delete_scheduled_task(
+                task.id,
+                expected_version=invalid_version,  # type: ignore[arg-type]
+            )
+
+    assert store.get_scheduled_task(task.id) == task
+
+
 def test_scheduled_run_is_unique_per_planned_instant_and_snapshot_round_trips(
     tmp_path: Path,
 ) -> None:
@@ -380,6 +413,7 @@ def test_claim_link_and_finish_are_owner_guarded_atomic_transitions(
             owner="dispatcher-2",
             execution_kind="scheduled_agent",
             execution_id="exec-1",
+            now=NOW + timedelta(seconds=1),
         )
 
     linked = store.link_scheduled_task_run_execution(
@@ -387,6 +421,7 @@ def test_claim_link_and_finish_are_owner_guarded_atomic_transitions(
         owner="dispatcher-1",
         execution_kind="scheduled_agent",
         execution_id="exec-1",
+        now=NOW + timedelta(seconds=1),
     )
     assert linked.execution_kind == "scheduled_agent"
     assert linked.execution_id == "exec-1"
@@ -408,6 +443,105 @@ def test_claim_link_and_finish_are_owner_guarded_atomic_transitions(
     ) is None
 
 
+def test_expired_owner_cannot_link_or_finish_and_reclaimer_owns_writes(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "expired-lease.sqlite3")
+    task = _create_task(store)
+    run = store.create_scheduled_task_run(
+        task.id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+    assert store.claim_scheduled_task_run(
+        run.id,
+        owner="old-owner",
+        lease_seconds=30,
+        now=NOW,
+    ) is not None
+
+    with pytest.raises(ValueError, match="lease"):
+        store.link_scheduled_task_run_execution(
+            run.id,
+            owner="old-owner",
+            execution_kind="scheduled_agent",
+            execution_id="exec-1",
+            now=NOW + timedelta(seconds=31),
+        )
+    reclaimed = store.claim_scheduled_task_run(
+        run.id,
+        owner="new-owner",
+        lease_seconds=30,
+        now=NOW + timedelta(seconds=31),
+    )
+    assert reclaimed is not None
+    assert reclaimed.lease_owner == "new-owner"
+    with pytest.raises(ValueError, match="lease"):
+        store.link_scheduled_task_run_execution(
+            run.id,
+            owner="old-owner",
+            execution_kind="scheduled_agent",
+            execution_id="exec-old",
+            now=NOW + timedelta(seconds=32),
+        )
+    store.link_scheduled_task_run_execution(
+        run.id,
+        owner="new-owner",
+        execution_kind="scheduled_agent",
+        execution_id="exec-new",
+        now=NOW + timedelta(seconds=32),
+    )
+    with pytest.raises(ValueError, match="lease"):
+        store.finish_scheduled_task_dispatch(
+            run.id,
+            owner="old-owner",
+            status="dispatched",
+            now=NOW + timedelta(seconds=33),
+        )
+    finished = store.finish_scheduled_task_dispatch(
+        run.id,
+        owner="new-owner",
+        status="dispatched",
+        now=NOW + timedelta(seconds=33),
+    )
+    assert finished.execution_id == "exec-new"
+
+
+def test_expired_owner_cannot_finish_even_before_another_owner_reclaims(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "expired-finish.sqlite3")
+    task = _create_task(store)
+    run = store.create_scheduled_task_run(
+        task.id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+    store.claim_scheduled_task_run(
+        run.id,
+        owner="old-owner",
+        lease_seconds=30,
+        now=NOW,
+    )
+    store.link_scheduled_task_run_execution(
+        run.id,
+        owner="old-owner",
+        execution_kind="scheduled_agent",
+        execution_id="exec-1",
+        now=NOW + timedelta(seconds=1),
+    )
+
+    with pytest.raises(ValueError, match="lease"):
+        store.finish_scheduled_task_dispatch(
+            run.id,
+            owner="old-owner",
+            status="dispatched",
+            now=NOW + timedelta(seconds=31),
+        )
+
+
 def test_run_snapshot_rejects_corrupt_persisted_json(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "cron.sqlite3")
     task = _create_task(store)
@@ -425,6 +559,37 @@ def test_run_snapshot_rejects_corrupt_persisted_json(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="snapshot"):
         store.list_scheduled_task_runs(task.id)
+
+
+def test_run_reader_rejects_snapshot_bound_to_another_persisted_task(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "cross-task-snapshot.sqlite3")
+    first = _create_task(store)
+    second = _create_task(
+        store,
+        skill_refs=(
+            ScheduledTaskSkillRef(
+                skill_source="operation",
+                skill_name="dingtalk-minutes",
+                position=0,
+            ),
+        ),
+    )
+    run = store.create_scheduled_task_run(
+        first.id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update scheduled_task_runs set scheduled_task_id=? where id=?",
+            (second.id, run.id),
+        )
+
+    with pytest.raises(ValueError, match="snapshot"):
+        store.list_scheduled_task_runs(second.id)
 
 
 @pytest.mark.parametrize(
@@ -523,5 +688,34 @@ def test_previous_schema_additively_creates_cron_tables_and_preserves_data(
         "idx_scheduled_task_skill_refs_position",
         "idx_scheduled_task_runs_scheduled_instant",
         "idx_scheduled_task_runs_dispatch",
+        "idx_scheduled_task_runs_claim",
     } <= indexes
     assert migrated._schema_is_current() is True
+
+
+def test_claim_query_index_starts_with_status_schedule_and_id(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "claim-index.sqlite3")
+
+    with store._connect() as db:
+        columns = tuple(
+            str(row["name"])
+            for row in db.execute("pragma index_info(idx_scheduled_task_runs_claim)")
+        )
+        plan = tuple(
+            str(row["detail"])
+            for row in db.execute(
+                """
+                explain query plan
+                select id from scheduled_task_runs
+                 where dispatch_status='pending'
+                   and scheduled_for <= ?
+                   and (lease_owner='' or lease_expires_at <= ?)
+                 order by scheduled_for, id
+                 limit 1
+                """,
+                (NOW.isoformat(), NOW.isoformat()),
+            )
+        )
+
+    assert columns == ("dispatch_status", "scheduled_for", "id")
+    assert any("idx_scheduled_task_runs_claim" in detail for detail in plan)

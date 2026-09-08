@@ -124,7 +124,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-08.1"
+STORE_SCHEMA_VERSION = "2026-09-08.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -206,6 +206,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_scheduled_task_skill_refs_position",
     "idx_scheduled_task_runs_scheduled_instant",
     "idx_scheduled_task_runs_dispatch",
+    "idx_scheduled_task_runs_claim",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
     "idx_feedback_iteration_decisions_batch",
@@ -2120,6 +2121,8 @@ class AutoReplyStore:
                     on scheduled_task_runs(
                         dispatch_status, lease_expires_at, scheduled_for, id
                     );
+                create index if not exists idx_scheduled_task_runs_claim
+                    on scheduled_task_runs(dispatch_status, scheduled_for, id);
                 create table if not exists runtime_skill_configs (
                     id integer primary key autoincrement,
                     parent_id integer,
@@ -4742,6 +4745,14 @@ class AutoReplyStore:
         return value.strip()
 
     @staticmethod
+    def _require_scheduled_task_version(value: object) -> int:
+        if type(value) is not int or value <= 0:
+            raise ValueError(
+                "expected scheduled task version must be a positive integer"
+            )
+        return value
+
+    @staticmethod
     def _normalize_scheduled_task_skill_refs(
         skill_refs: Sequence[ScheduledTaskSkillRef],
     ) -> tuple[ScheduledTaskSkillRef, ...]:
@@ -5060,8 +5071,7 @@ class AutoReplyStore:
         skill_refs: Sequence[ScheduledTaskSkillRef] | None = None,
         now: datetime | None = None,
     ) -> ScheduledTask:
-        if not isinstance(expected_version, int) or expected_version < 1:
-            raise ValueError("expected scheduled task version must be positive")
+        expected_version = self._require_scheduled_task_version(expected_version)
         now_text = self._scheduled_task_time_text(
             now or datetime.now(timezone.utc),
             field="scheduled task now",
@@ -5181,6 +5191,7 @@ class AutoReplyStore:
     ) -> ScheduledTask:
         if not isinstance(enabled, bool):
             raise ValueError("scheduled task enabled must be a boolean")
+        expected_version = self._require_scheduled_task_version(expected_version)
         now_text = self._scheduled_task_time_text(
             now or datetime.now(timezone.utc),
             field="scheduled task now",
@@ -5219,6 +5230,7 @@ class AutoReplyStore:
         expected_version: int,
         now: datetime | None = None,
     ) -> ScheduledTask:
+        expected_version = self._require_scheduled_task_version(expected_version)
         now_text = self._scheduled_task_time_text(
             now or datetime.now(timezone.utc),
             field="scheduled task now",
@@ -5267,10 +5279,13 @@ class AutoReplyStore:
             snapshot = ScheduledTaskSnapshot.from_json(str(row["snapshot_json"]))
         except ValueError as exc:
             raise ValueError("scheduled task run snapshot is invalid") from exc
+        scheduled_task_id = int(row["scheduled_task_id"])
+        if snapshot.task_id != scheduled_task_id:
+            raise ValueError("scheduled task run snapshot task identity is invalid")
         return ScheduledTaskRun(
             id=int(row["id"]),
             event_id=str(row["event_id"]),
-            scheduled_task_id=int(row["scheduled_task_id"]),
+            scheduled_task_id=scheduled_task_id,
             trigger_kind=str(row["trigger_kind"]),
             scheduled_for=parse_utc_datetime(
                 row["scheduled_for"], field="scheduled task run scheduled_for"
@@ -5440,6 +5455,7 @@ class AutoReplyStore:
         owner: str,
         execution_kind: str,
         execution_id: str,
+        now: datetime | None = None,
     ) -> ScheduledTaskRun:
         owner = self._require_scheduled_task_text(
             owner, field="scheduled task run lease owner"
@@ -5450,18 +5466,25 @@ class AutoReplyStore:
         execution_id = self._require_scheduled_task_text(
             execution_id, field="scheduled task run execution id"
         )
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc),
+            field="scheduled task run execution link time",
+        )
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
                 """
                 update scheduled_task_runs
                    set execution_kind=?, execution_id=?
                  where id=? and dispatch_status='pending' and lease_owner=?
+                   and lease_expires_at > ?
                    and execution_kind='' and execution_id=''
                 """,
-                (execution_kind, execution_id, run_id, owner),
+                (execution_kind, execution_id, run_id, owner, now_text),
             )
             if cursor.rowcount != 1:
-                raise ValueError("scheduled task run lease owner or state changed")
+                raise ValueError(
+                    "scheduled task run lease owner, expiry, or state changed"
+                )
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
                 "from scheduled_task_runs where id=?",
@@ -5496,13 +5519,16 @@ class AutoReplyStore:
             row = db.execute(
                 """
                 select execution_kind, execution_id
-                  from scheduled_task_runs
+                 from scheduled_task_runs
                  where id=? and dispatch_status='pending' and lease_owner=?
+                   and lease_expires_at > ?
                 """,
-                (run_id, owner),
+                (run_id, owner, now_text),
             ).fetchone()
             if row is None:
-                raise ValueError("scheduled task run lease owner or state changed")
+                raise ValueError(
+                    "scheduled task run lease owner, expiry, or state changed"
+                )
             if status == "dispatched" and (
                 not str(row["execution_kind"]) or not str(row["execution_id"])
             ):
@@ -5513,8 +5539,9 @@ class AutoReplyStore:
                    set dispatch_status=?, skip_or_error_reason=?,
                        lease_owner='', lease_expires_at=null, dispatched_at=?
                  where id=? and dispatch_status='pending' and lease_owner=?
+                   and lease_expires_at > ?
                 """,
-                (status, reason.strip(), now_text, run_id, owner),
+                (status, reason.strip(), now_text, run_id, owner, now_text),
             )
             finished = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
