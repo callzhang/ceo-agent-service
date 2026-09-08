@@ -162,6 +162,7 @@ def _screen_is_locked(session_state) -> bool:
 def _open_target(
     target_label, *, first, click, type_fn, settle, sleep, search_query=None,
     find_all=None, subtree_has_text=None, expected_recent_text=None,
+    scroll_session_list=None, max_session_scrolls=12,
 ):
     """Open a chat: prefer the sidebar row (session_item_<name>, present for recent
     conversations incl. groups — no typing, reliable, and opens named groups whose
@@ -190,6 +191,19 @@ def _open_target(
             return matching[0] if len(matching) == 1 else None
 
         row = _poll_value(unique_matching_row, sleep=sleep)
+        if row is None and scroll_session_list is not None:
+            for _ in range(max(0, max_session_scrolls)):
+                if not scroll_session_list():
+                    break
+                row = _poll_value(
+                    unique_matching_row,
+                    sleep=sleep,
+                    attempts=3,
+                )
+                if row is None:
+                    row = unique_sidebar_row()
+                if row is not None:
+                    break
         if row is None:
             # A verified chat can show a locally unsent draft instead of the
             # latest inbound preview. A unique recent-session row plus the
@@ -683,6 +697,35 @@ class MacWechatAccessibility:
                     Quartz.CGEventPost(Quartz.kCGHIDEventTap, e)
                 time.sleep(0.04)
 
+        def scroll_session_list():
+            from ApplicationServices import (
+                AXValueGetValue,
+                kAXValueCGPointType,
+                kAXValueCGSizeType,
+            )
+            session_list = first(id_eq="session_list")
+            c = center(session_list) if session_list is not None else None
+            if c is None:
+                return False
+            Quartz.CGEventPost(
+                Quartz.kCGHIDEventTap,
+                Quartz.CGEventCreateMouseEvent(
+                    None,
+                    Quartz.kCGEventMouseMoved,
+                    c,
+                    Quartz.kCGMouseButtonLeft,
+                ),
+            )
+            event = Quartz.CGEventCreateScrollWheelEvent(
+                None,
+                Quartz.kCGScrollEventUnitLine,
+                1,
+                -6,
+            )
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+            time.sleep(0.2)
+            return True
+
         def type_to_wechat(s):
             # deliver keystrokes to WeChat's pid (not the frontmost app)
             for ch in s:
@@ -723,6 +766,7 @@ class MacWechatAccessibility:
                 find_all=find_all,
                 subtree_has_text=subtree_has_text,
                 expected_recent_text=expected_recent_text,
+                scroll_session_list=scroll_session_list,
             )
             if composer is None:
                 return AccessibilityResult(
@@ -846,6 +890,41 @@ class MacWechatAccessibility:
                                        Quartz.CGEventCreateMouseEvent(None, ev, c, Quartz.kCGMouseButtonLeft))
                 time.sleep(0.04)
 
+        def scroll_session_list():
+            from ApplicationServices import (
+                AXValueGetValue,
+                kAXValueCGPointType,
+                kAXValueCGSizeType,
+            )
+            session_list = first(id_eq="session_list")
+            pos, size = (
+                g(session_list, "AXPosition"),
+                g(session_list, "AXSize"),
+            ) if session_list is not None else (None, None)
+            okp, p = AXValueGetValue(pos, kAXValueCGPointType, None) if pos else (False, None)
+            oks, s = AXValueGetValue(size, kAXValueCGSizeType, None) if size else (False, None)
+            if not (okp and oks):
+                return False
+            c = (p.x + s.width / 2, p.y + s.height / 2)
+            Quartz.CGEventPost(
+                Quartz.kCGHIDEventTap,
+                Quartz.CGEventCreateMouseEvent(
+                    None,
+                    Quartz.kCGEventMouseMoved,
+                    c,
+                    Quartz.kCGMouseButtonLeft,
+                ),
+            )
+            event = Quartz.CGEventCreateScrollWheelEvent(
+                None,
+                Quartz.kCGScrollEventUnitLine,
+                1,
+                -6,
+            )
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+            time.sleep(0.2)
+            return True
+
         def type_to_wechat(text):
             for ch in text:
                 for down in (True, False):
@@ -869,6 +948,7 @@ class MacWechatAccessibility:
                 find_all=find_all,
                 subtree_has_text=subtree_has_text,
                 expected_recent_text=expected_recent_text,
+                scroll_session_list=scroll_session_list,
             )
             if composer is None:
                 return ""

@@ -513,6 +513,40 @@ def test_open_target_waits_for_delayed_matching_sidebar_row():
     assert clicked == [(expected_row, 1)]
 
 
+def test_open_target_scrolls_recent_sessions_for_exact_direct_chat():
+    expected_row = object()
+    composer = object()
+    scrolls = []
+
+    def first(*, role=None, id_eq=None, title_contains=None):
+        if id_eq == "chat_input_field":
+            return composer
+        return None
+
+    def find_all(*, role=None, id_eq=None, title_contains=None):
+        if id_eq == "session_item_Melody":
+            return [expected_row] if scrolls else []
+        return []
+
+    opened = _open_target(
+        "Melody",
+        first=first,
+        find_all=find_all,
+        subtree_has_text=lambda row, text: (
+            row is expected_row and text == "latest inbound"
+        ),
+        click=lambda _element, n=1: None,
+        type_fn=lambda _text: None,
+        settle=0,
+        sleep=lambda _seconds: None,
+        expected_recent_text="latest inbound",
+        scroll_session_list=lambda: scrolls.append(True) or True,
+    )
+
+    assert opened is composer
+    assert scrolls == [True]
+
+
 def test_open_target_retries_same_verified_row_when_first_click_is_ignored():
     expected_row = object()
     composer = object()

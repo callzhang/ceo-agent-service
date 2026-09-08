@@ -396,6 +396,13 @@ pending.
   record has usable text, the delivery remains `ready_to_send` for a later polling
   pass and WeChat is not touched. The composer title must still match, so this
   does not fall back to display-name-only navigation.
+- **Older direct chats use a bounded recent-list scan, never name search.** If
+  the exact `session_item_<display name>` is not initially visible, the Sender
+  scrolls the WeChat session list down at most twelve small steps and rechecks
+  the exact row after each step. It then requires the same current-message
+  evidence (or one unambiguous row with a stale draft preview) and the exact
+  composer title. A group containing the same display name is not a match; an
+  exhausted scan remains `target_open_failed` before any text is entered.
 - **Wrong-target detection is layered, not instant.** Immediate check = the AX
   binding (`chat_input_field.AXTitle == target`, twice); duplicates it cannot tell
   apart, so those rely on `binding_status=="verified"` (fail-closed). A **DB check
