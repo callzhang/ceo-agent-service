@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+from app.agent_context import AgentTaskContext
+from app.agent_cron.models import ScheduledTaskRun
+from app.agent_runtime_contracts import RuntimeRoute
+from app.managed_skills import ManagedSkillRevision
+from app.skill_files import SkillDocument
+
+
+class ScheduledContextOptions(Protocol):
+    def resolve_runtime_route(self, route_name: str) -> RuntimeRoute: ...
+
+    def resolve_managed_skill_revision(
+        self, *, skill_id: int, revision_id: int, skill_name: str
+    ) -> ManagedSkillRevision: ...
+
+    def resolve_operation_skill(self, name: str) -> SkillDocument: ...
+
+
+@dataclass(frozen=True)
+class ScheduledAgentContext:
+    context: AgentTaskContext
+    route: RuntimeRoute
+    workspace: Path
+    reasoning_effort: str
+    skill_protocol: str
+
+
+class ScheduledAgentContextBuilder:
+    """Materialize only the immutable run snapshot's structured references."""
+
+    def __init__(self, options: ScheduledContextOptions) -> None:
+        self._options = options
+
+    def build(
+        self, run: ScheduledTaskRun, *, reply_task_id: int
+    ) -> ScheduledAgentContext:
+        snapshot = run.snapshot
+        route = self._options.resolve_runtime_route(snapshot.runtime_id)
+        runtime_options = snapshot.runtime_options
+        model = runtime_options.get("model")
+        if model is not None:
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError("scheduled task runtime model must be nonempty")
+            route = route.model_copy(update={"model": model.strip()})
+        effort = runtime_options.get(
+            "reasoning_effort", runtime_options.get("thinking", "")
+        )
+        if not isinstance(effort, str):
+            raise ValueError("scheduled task reasoning effort must be text")
+        unknown = set(runtime_options) - {"model", "reasoning_effort", "thinking"}
+        if unknown:
+            raise ValueError(
+                "scheduled task runtime options are unsupported: "
+                + ", ".join(sorted(unknown))
+            )
+        workspace = Path(snapshot.working_directory).expanduser().resolve()
+        if not workspace.is_dir():
+            raise ValueError("scheduled task working directory is unavailable")
+
+        protocols: list[str] = []
+        skill_facts: list[dict[str, object]] = []
+        for ref in snapshot.skill_refs:
+            if ref.skill_source == "managed":
+                assert ref.managed_skill_id is not None
+                assert ref.managed_revision_id is not None
+                revision = self._options.resolve_managed_skill_revision(
+                    skill_id=ref.managed_skill_id,
+                    revision_id=ref.managed_revision_id,
+                    skill_name=ref.skill_name,
+                )
+                protocols.append(
+                    f"## Managed Skill: {ref.skill_name}\n"
+                    f"revision_id: {revision.id}\nsha256: {revision.sha256}\n\n"
+                    f"{revision.content}"
+                )
+                skill_facts.append(
+                    {
+                        "source": "managed",
+                        "name": ref.skill_name,
+                        "revision_id": revision.id,
+                        "sha256": revision.sha256,
+                    }
+                )
+            else:
+                document = self._options.resolve_operation_skill(ref.skill_name)
+                source = str(document.path.resolve())
+                protocols.append(
+                    f"## Operation Skill: {ref.skill_name}\n"
+                    f"source: {source}\nsha256: {document.sha256}\n\n"
+                    f"{document.content}"
+                )
+                skill_facts.append(
+                    {
+                        "source": "operation",
+                        "name": ref.skill_name,
+                        "path": source,
+                        "sha256": document.sha256,
+                    }
+                )
+
+        context = AgentTaskContext(
+            task_id=reply_task_id,
+            channel="scheduled",
+            conversation_id=f"scheduled-task-run:{run.id}",
+            conversation_title=snapshot.name,
+            single_chat=False,
+            trigger_message_id=run.event_id,
+            trigger_sender="Agent Cron",
+            trigger_text=snapshot.prompt,
+            trigger_create_time=run.scheduled_for.isoformat(),
+            messages=(),
+            materials=(),
+            prior_receipts=(),
+            trigger_raw_payload={
+                "schema": "scheduled_agent_trigger.v1",
+                "scheduled_task_id": snapshot.task_id,
+                "scheduled_task_version": snapshot.task_version,
+                "scheduled_task_run_id": run.id,
+                "trigger_kind": run.trigger_kind,
+                "scheduled_for": run.scheduled_for.isoformat(),
+                "skills": skill_facts,
+            },
+        )
+        return ScheduledAgentContext(
+            context=context,
+            route=route,
+            workspace=workspace,
+            reasoning_effort=effort.strip(),
+            skill_protocol="\n\n".join(protocols),
+        )

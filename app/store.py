@@ -5695,6 +5695,61 @@ class AutoReplyStore:
             assert row is not None
             return self._scheduled_task_run_from_row(row)
 
+    def ensure_scheduled_task_reply_execution(
+        self, run_id: int, *, owner: str, claim_generation: int,
+        now: datetime | None = None,
+    ) -> tuple[ScheduledTaskRun, ReplyTask]:
+        """Atomically create/link one execution under the current dispatch claim."""
+        owner = self._require_scheduled_task_text(owner, field="scheduled task run lease owner")
+        if type(claim_generation) is not int or claim_generation <= 0:
+            raise ValueError("scheduled dispatcher claim generation must be positive")
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc), field="scheduled task run execution link time"
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} from scheduled_task_runs "
+                "where id=? and dispatch_status='pending' and lease_owner=? and lease_expires_at>?",
+                (run_id, owner, now_text),
+            ).fetchone()
+            claim = db.execute(
+                "select 1 from dispatcher_claim_leases where adapter_name='scheduled' "
+                "and source_id=? and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
+                (str(run_id), owner, claim_generation, now_text),
+            ).fetchone()
+            if row is None or claim is None:
+                raise ValueError("scheduled dispatch claim is no longer current")
+            run = self._scheduled_task_run_from_row(row)
+            if run.execution_kind or run.execution_id:
+                if run.execution_kind != "reply_task" or not run.execution_id:
+                    raise ValueError("scheduled task execution link is invalid")
+                task_row = db.execute("select * from reply_tasks where id=?", (int(run.execution_id),)).fetchone()
+                if task_row is None:
+                    raise ValueError("scheduled task execution source is missing")
+                return run, self._reply_task_from_row(task_row)
+            spec = ReplyTaskSpec(
+                channel="scheduled", conversation_id=f"scheduled-task-run:{run.id}",
+                conversation_title=run.snapshot.name, single_chat=False,
+                trigger_message_id=run.event_id, trigger_create_time=run.scheduled_for.isoformat(),
+                trigger_sender="Agent Cron", trigger_text=run.snapshot.prompt,
+                trigger_message_json=run.snapshot.to_json(),
+                execution_generation=f"scheduled-run-{run.id}",
+                business_object_key=f"scheduled-task-run:{run.id}",
+            )
+            task, _created = self._ensure_business_reply_task(db, spec)
+            cursor = db.execute(
+                "update scheduled_task_runs set execution_kind='reply_task', execution_id=? "
+                "where id=? and execution_kind='' and execution_id=''", (str(task.id), run.id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("scheduled task execution link changed")
+            linked = db.execute(
+                f"select {self._scheduled_task_run_columns()} from scheduled_task_runs where id=?",
+                (run.id,),
+            ).fetchone()
+            assert linked is not None
+            return self._scheduled_task_run_from_row(linked), task
+
     def finish_scheduled_task_dispatch(
         self,
         run_id: int,
@@ -5764,6 +5819,16 @@ class AutoReplyStore:
                 (task_id,),
             ).fetchall()
         return tuple(self._scheduled_task_run_from_row(row) for row in rows)
+
+    def get_scheduled_task_run(self, run_id: int) -> ScheduledTaskRun | None:
+        if type(run_id) is not int or run_id <= 0:
+            raise ValueError("scheduled task run id must be positive")
+        with self._connect() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where id=?", (run_id,),
+            ).fetchone()
+        return self._scheduled_task_run_from_row(row) if row is not None else None
 
     def latest_scheduled_task_overlap_candidate(
         self,

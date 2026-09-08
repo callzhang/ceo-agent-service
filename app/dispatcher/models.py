@@ -104,11 +104,17 @@ class ClaimGuard:
             generation=envelope.generation,
         )
         self._lost = False
+        self._resolved = False
         self._lock = Lock()
 
     def mark_lost(self) -> None:
         with self._lock:
             self._lost = True
+
+    @property
+    def resolved(self) -> bool:
+        with self._lock:
+            return self._resolved
 
     def assert_current(self, now: datetime) -> None:
         with self._lock:
@@ -119,4 +125,24 @@ class ClaimGuard:
     def complete(self, now: datetime) -> None:
         self.assert_current(now)
         self.adapter.complete(self.envelope, owner=self.token.owner, now=now)
-        self.mark_lost()
+        with self._lock:
+            self._lost = True
+            self._resolved = True
+
+    def finish_source(self, now: datetime, *, status: str, reason: str = "") -> None:
+        """Terminalize a source whose result is owned by its adapter."""
+        self.assert_current(now)
+        finish = getattr(self.adapter, "finish", None)
+        if finish is None:
+            raise TypeError("dispatcher adapter does not support source terminalization")
+        finish(self.envelope, owner=self.token.owner, now=now, status=status, reason=reason)
+        with self._lock:
+            self._lost = True
+            self._resolved = True
+
+    def release(self, now: datetime) -> None:
+        self.assert_current(now)
+        self.adapter.release(self.envelope, owner=self.token.owner, now=now)
+        with self._lock:
+            self._lost = True
+            self._resolved = True

@@ -6774,15 +6774,24 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     monkeypatch.setattr(
         cli,
         "run_agent_cron_scheduler_loop",
-        lambda settings, runtime_skill_snapshot, *, wake_event: calls.append(
+        lambda settings, runtime_skill_snapshot, *, wake_event, dispatcher_wake_event: calls.append(
             (
                 "agent-cron-scheduler",
                 settings.db_path,
                 runtime_skill_snapshot is not None,
                 isinstance(wake_event, threading.Event),
+                isinstance(dispatcher_wake_event, threading.Event),
             )
         )
         or stop("agent-cron-scheduler"),
+    )
+    monkeypatch.setattr(
+        cli, "run_agent_cron_dispatcher_loop",
+        lambda settings, runtime_skill_snapshot, *, wake_event, runtime_refresher: calls.append(
+            ("agent-cron-dispatcher", settings.db_path,
+             runtime_skill_snapshot is not None,
+             isinstance(wake_event, threading.Event), runtime_refresher is None)
+        ) or stop("agent-cron-dispatcher"),
     )
     monkeypatch.setattr(
         cli,
@@ -6874,7 +6883,10 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
             tmp_path / "worker.sqlite3",
             True,
             True,
+            True,
         ),
+        ("start", "ceo-agent-service-agent-cron-dispatcher", True),
+        ("agent-cron-dispatcher", tmp_path / "worker.sqlite3", True, True, True),
         ("start", "ceo-agent-service-producer", True),
         ("producer", 60, 4, True),
         ("start", "ceo-agent-service-consumer-1", True),
@@ -6896,6 +6908,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     assert failures == [
         ("database-backup", "stop database-backup"),
         ("agent-cron-scheduler", "stop agent-cron-scheduler"),
+        ("agent-cron-dispatcher", "stop agent-cron-dispatcher"),
         ("producer", "stop producer"),
         ("consumer-1", "stop consumer"),
         ("consumer-2", "stop consumer"),
@@ -6905,7 +6918,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("follow-up-delivery", "stop follow-up-delivery"),
         ("oa-pending-scan", "stop oa-pending-scan"),
     ]
-    assert exits == [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):

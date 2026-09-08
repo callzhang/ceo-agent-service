@@ -59,6 +59,9 @@ class AuditAgentRunner:
         owner: str | None = None,
         dry_run: bool = False,
         refresh_runtime_capabilities: Callable[[], object] | None = None,
+        forced_runtime_route=None,
+        reasoning_effort: str = "",
+        skill_protocol_override: str = "",
     ) -> None:
         self.store = store
         self.workspace = workspace
@@ -72,6 +75,9 @@ class AuditAgentRunner:
         self.owner = owner or f"audit-agent-{uuid4().hex}"
         self.dry_run = dry_run
         self.refresh_runtime_capabilities = refresh_runtime_capabilities
+        self.forced_runtime_route = forced_runtime_route
+        self.reasoning_effort = reasoning_effort
+        self.skill_protocol_override = skill_protocol_override
 
     @staticmethod
     def _required_capabilities(
@@ -153,6 +159,8 @@ class AuditAgentRunner:
             claude_adapter=self.claude_adapter,
             friday_adapter=self.friday_adapter,
             refresh_runtime_capabilities=self.refresh_runtime_capabilities,
+            forced_runtime_route=self.forced_runtime_route,
+            reasoning_effort=self.reasoning_effort,
         )
         email_unsubscribe_tools = self._email_unsubscribe_tools(task, run)
         if email_unsubscribe_tools:
@@ -186,7 +194,12 @@ class AuditAgentRunner:
             run=run,
             prompt=prompt,
             session_id=run.codex_session_id or None,
-            developer_instructions=audit_developer_instructions(rendered_rules),
+            developer_instructions="\n\n".join(
+                part for part in (
+                    audit_developer_instructions(rendered_rules),
+                    self.skill_protocol_override,
+                ) if part
+            ),
             configure_command=lambda command: make_audit_agent_command(
                 command,
                 controlled_cli=ControlledCliConfig(

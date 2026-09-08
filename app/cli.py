@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -972,6 +973,7 @@ def run_agent_cron_scheduler_loop(
     runtime_skill_snapshot,
     *,
     wake_event: threading.Event,
+    dispatcher_wake_event: threading.Event | None = None,
 ) -> None:
     """Run the Cron trigger producer with the service's immutable capabilities."""
     from app.agent_cron.options import ScheduledTaskOptionService
@@ -993,12 +995,61 @@ def run_agent_cron_scheduler_loop(
     scheduler = AgentCronScheduler(
         store=store,
         option_service=option_service,
-        # Task 7 registers the scheduled execution fact resolver. Until then,
-        # an unknown linked source is conservatively treated as still active.
-        terminal_resolver=ExecutionTerminalResolverRegistry({}),
-        dispatcher_wake=wake_event.set,
+        terminal_resolver=ExecutionTerminalResolverRegistry({
+            "reply_task": lambda execution_id: (
+                (task := store.get_reply_task(int(execution_id))) is not None
+                and task.status in {"done", "failed"}
+            )
+        }),
+        dispatcher_wake=(dispatcher_wake_event or wake_event).set,
     )
     scheduler.run_forever(wake_event=wake_event)
+
+
+def run_agent_cron_dispatcher_loop(
+    settings: WorkerSettings, runtime_skill_snapshot, *, wake_event: threading.Event,
+    runtime_refresher=None,
+) -> None:
+    """Dispatch only scheduled sources; legacy adapters remain on old loops."""
+    from app.agent_cron.consumer import ScheduledAgentConsumer, build_scheduled_orchestrator
+    from app.agent_cron.options import ScheduledTaskOptionService
+    from app.agent_runtime_production import PRODUCTION_RUNTIME_CAPABILITIES, build_production_agent_runtime
+    from app.dispatcher.adapters import ScheduledTaskQueueAdapter
+    from app.skill_files import SkillFileService
+
+    store = AutoReplyStore(settings.db_path)
+    runtime = build_production_agent_runtime(
+        store=store, workspace=settings.workspace,
+        refresh_runtime_capabilities=(runtime_refresher.refresh_expired if runtime_refresher else None),
+    )
+    options = ScheduledTaskOptionService(
+        store=store, environment=os.environ,
+        runtime_snapshots=PRODUCTION_RUNTIME_CAPABILITIES,
+        operation_skill_files=SkillFileService(),
+        runtime_skill_snapshot=runtime_skill_snapshot,
+    )
+    consumer = ScheduledAgentConsumer(
+        store=store, option_service=options,
+        orchestrator_factory=lambda built: build_scheduled_orchestrator(
+            store=store, built=built, runtime_config=runtime.config,
+            dry_run=settings.dry_run,
+            refresh_runtime_capabilities=runtime.refresh_runtime_capabilities,
+        ),
+    )
+    executor = ThreadPoolExecutor(
+        max_workers=max(1, settings.consumer_workers), thread_name_prefix="scheduled-agent"
+    )
+    dispatcher = ConsumerDispatcher(
+        adapters=(ScheduledTaskQueueAdapter(store),), consumers={"scheduled": consumer},
+        executors={"scheduled": executor},
+        max_in_flight={"scheduled": max(1, settings.consumer_workers)},
+        owner=f"scheduled-dispatcher:{os.getpid()}", lease=timedelta(minutes=5),
+        wake_event=wake_event,
+    )
+    try:
+        dispatcher.run(stop_event=threading.Event())
+    finally:
+        executor.shutdown(wait=False, cancel_futures=False)
 
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()
@@ -3149,6 +3200,7 @@ def run_service(
 ) -> None:
     runtime_skill_snapshot = _resolve_service_runtime_skills(settings)
     scheduled_task_wake_event = threading.Event()
+    scheduled_dispatcher_wake_event = threading.Event()
     if runtime_refresher is not None:
         try:
             runtime_refresher.refresh_expired(force=True)
@@ -3183,6 +3235,15 @@ def run_service(
                 settings,
                 runtime_skill_snapshot,
                 wake_event=scheduled_task_wake_event,
+                dispatcher_wake_event=scheduled_dispatcher_wake_event,
+            ),
+        ),
+        (
+            "agent-cron-dispatcher",
+            lambda: run_agent_cron_dispatcher_loop(
+                settings, runtime_skill_snapshot,
+                wake_event=scheduled_dispatcher_wake_event,
+                runtime_refresher=runtime_refresher,
             ),
         ),
         (
@@ -3242,7 +3303,7 @@ def run_service(
         )
         for index in range(settings.consumer_workers)
     )
-    components = components[:3] + consumer_components + components[3:]
+    components = components[:4] + consumer_components + components[4:]
     if runtime_refresher is not None:
         components = (
             (

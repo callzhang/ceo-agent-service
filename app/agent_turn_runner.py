@@ -471,6 +471,8 @@ class AgentTurnProcess(Generic[ResultT]):
         claude_adapter: ClaudeRuntimeAdapter | None = None,
         friday_adapter: FridayRuntimeAdapter | None = None,
         refresh_runtime_capabilities: Callable[[], object] | None = None,
+        forced_runtime_route: RuntimeRoute | None = None,
+        reasoning_effort: str = "",
     ) -> None:
         self.store = store
         self.task = task
@@ -490,6 +492,8 @@ class AgentTurnProcess(Generic[ResultT]):
         )
         self.executor = executor or run_process_with_idle_timeout
         self.refresh_runtime_capabilities = refresh_runtime_capabilities
+        self.forced_runtime_route = forced_runtime_route
+        self.reasoning_effort = reasoning_effort
 
     def execute(
         self,
@@ -771,7 +775,9 @@ class AgentTurnProcess(Generic[ResultT]):
                 session_transcript_end = completed_attempt.transcript_end
                 recovered_completed_attempt = True
                 raise _RecoveredCompletedRuntimeResult
-            if self.refresh_runtime_capabilities is not None:
+            if self.forced_runtime_route is not None:
+                route = self.forced_runtime_route
+            elif self.refresh_runtime_capabilities is not None:
                 self.refresh_runtime_capabilities(force=False)
             attempted_routes = frozenset()
             configured_route_names = frozenset(
@@ -782,13 +788,16 @@ class AgentTurnProcess(Generic[ResultT]):
                 if attempted_routes and configured_route_names - attempted_routes
                 else frozenset()
             )
-            decision = self.runtime_router.first_route_decision(
-                required_capabilities=required_capabilities,
-                allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,
-                excluded_routes=excluded_routes,
-            )
-            route = decision.route
-            if route is None:
+            if self.forced_runtime_route is None:
+                decision = self.runtime_router.first_route_decision(
+                    required_capabilities=required_capabilities,
+                    allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,
+                    excluded_routes=excluded_routes,
+                )
+                route = decision.route
+            else:
+                decision = None
+            if route is None and self.forced_runtime_route is None:
                 if self.refresh_runtime_capabilities is not None:
                     self.refresh_runtime_capabilities(force=True)
                     decision = self.runtime_router.first_route_decision(
@@ -800,6 +809,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     )
                     route = decision.route
             if route is None:
+                assert decision is not None
                 unavailable = RuntimeRouteUnavailableError(decision.reason)
                 self._fail_running(run, unavailable.code, detail=decision.reason)
                 raise unavailable
@@ -875,6 +885,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         approval_policy="on-failure",
                         developer_instructions=developer_instructions,
                         use_approval_bypass=True,
+                        reasoning_effort=self.reasoning_effort or None,
                     )
                     configure_command(command)
                     command_env = self.codex_adapter.build_env(route)
@@ -1028,6 +1039,9 @@ class AgentTurnProcess(Generic[ResultT]):
                     owner=self.owner,
                     lease_seconds=LEASE_SECONDS,
                 )
+                if self.forced_runtime_route is not None:
+                    self._raise_for_process_failure(process, run=run)
+                    raise AssertionError("unreachable forced runtime failure")
                 decision = self.runtime_router.next_route(
                     run=persisted,
                     failed_attempt=failed_attempt,

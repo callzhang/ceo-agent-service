@@ -283,6 +283,30 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
         if row is None:
             raise ValueError("scheduled dispatch claim is no longer owned")
 
+    def finish(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        status: str,
+        reason: str = "",
+    ) -> None:
+        self.assert_current(envelope, owner=owner, now=now)
+        self.store.finish_scheduled_task_dispatch(
+            int(envelope.source_id),
+            owner=owner,
+            status=status,
+            reason=reason,
+            now=now,
+        )
+        _complete_ledger(
+            self.store,
+            envelope=envelope,
+            owner=owner,
+            now=now,
+        )
+
 
 class ReplyQueueAdapter(_LedgerClaimLifecycle):
     name = "reply"

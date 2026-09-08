@@ -182,6 +182,9 @@ class ConsumerDispatcher:
             self._in_flight[adapter_name] -= 1
         _envelope, guard, _renew_at = removed
         now = datetime.now(UTC)
+        if guard.resolved:
+            self.wake_event.set()
+            return
         if future.exception() is None:
             try:
                 guard.complete(now)
