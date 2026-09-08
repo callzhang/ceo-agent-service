@@ -216,7 +216,8 @@ Feedback API 是现有本地后端边界内的操作接口，供 Workbench 和�
 
 ### Email task 的运行边界
 
-> **实现与部署状态：** Email audited-v2 lifecycle 已在本分支实现并通过开发/loopback 验证；实际 launchd 仍运行 main checkout，因此尚未部署，也未在生产启用。
+> **实现与部署状态：** Email folder classifier 与 audited-v2 lifecycle 已合入 `main`；本机
+> launchd 的独立 Email worker 已启用，并通过真实 IMAP 可逆验证。SMTP 与自动回复仍禁用。
 
 Email 的分类确认不是 Agent 运行，也不会创建通用 `reply_task`。邮箱服务器中的当前文件夹是
 类别的唯一事实来源：业务文件夹映射为相应类别，Inbox 表示未分类，Spam/Trash 映射为内部
@@ -272,6 +273,10 @@ precision/support/group 门槛后，只获得显式历史批次的资格；全�
 一次 Agent。两个连续候选必须分别绑定不同且时间递增的冻结 snapshot；snapshot digest 必须不同，
 folder/important 累计标签水位以及至少一项独立评估样本或组证据必须前进。同一 snapshot 的重复训练
 不能满足晋升。
+
+Provider 训练观察按有界批次运行。观察缓存与请求队列使用各自独立的进程锁和文件锁；长时间 IMAP
+扫描不得阻塞实时扫描、分类结果落库或确定性邮箱动作。Email worker 只有在扫描/动作、Agent
+consumer、训练三个组件都至少成功完成一轮后才发布 `ready`。
 
 业务类别移动完成后在变更后的 locator 上执行 flag/read 动作并回读；用户在 provider 中再次移动
 邮件时，下一份 snapshot 立即以该文件夹作为训练标签。历史任务按小批次、显式触发并保存游标，
