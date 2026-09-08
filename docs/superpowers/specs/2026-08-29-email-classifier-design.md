@@ -6,13 +6,14 @@
 修正后的真实邮箱实验更新。本文只定义 MVP 的分类、反馈学习和固定
 动作边界，不包含 CEO Agent 运行时实现计划。已确认：`label`、`mark_read`、
 `archive`、`move`、`trash` 是直接动作，不创建 Agent/Audit 任务；
-当前分支的配置和 runtime 禁用 `auto_reply`：它不能从配置、分类结果或人工确认生成 task，
-也不连接 SMTP；Email 页面和只读分类已在本地 runtime 启用，本分支新增的外部写动作尚未部署。
+当前配置和 runtime 禁用 `auto_reply`：它不能从配置、分类结果或人工确认生成 task，
+也不连接 SMTP；Email 页面、分类和已授权的确定性 IMAP 动作已在本机 launchd runtime 启用。
 旧的 Consumer-direct 退订方案已经废弃，
 当前和后续实施权威已由获批设计
 [`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md)
 取代，`unsubscribe` 目标生命周期为 `email_unsubscribe_audited_v2`：Consumer A 提案、
-Audit Agent B 审核执行和外部 readback；这项指向不表示已经部署或在生产启用。
+Audit Agent B 审核执行和外部 readback；该 audited-v2 生命周期现已合入 `main` 并由独立
+Email worker 承载，SMTP 与自动回复仍保持禁用。
 
 ## 背景与目标
 

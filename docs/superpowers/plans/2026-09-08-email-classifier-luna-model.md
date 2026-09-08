@@ -72,6 +72,6 @@ CEO_EMAIL_CLASSIFIER_MODEL=gpt-5.6-luna
 
 Run focused tests, `pytest -q tests/test_email*.py`, and Ruff for changed Python files. Commit only task-owned source, tests, documentation, and `.env.example`; `.env` remains local configuration.
 
-- [ ] **Step 5: Restart and prove the live model**
+- [x] **Step 5: Restart and prove the live model**
 
 Before restart, confirm active Email operations are resumable and have no external effect in progress. Restart `com.ceo-agent-service.main`, verify a new PID and `/healthz`, then wait for a newly created `email_classification` runtime attempt and query SQLite for `route_name=codex_oauth` and `model=gpt-5.6-luna`. Confirm no failed/stuck Email classifications or provider actions and no Email reply task.

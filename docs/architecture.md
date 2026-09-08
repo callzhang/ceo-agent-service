@@ -209,7 +209,8 @@ Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 A
 
 ### Email Agent task 映射
 
-> **实现与部署状态：** Email audited-v2 lifecycle 已在本分支实现并通过开发/loopback 验证；实际 launchd 仍运行 main checkout，因此尚未部署，也未在生产启用。
+> **实现与部署状态：** Email folder classifier 与 audited-v2 lifecycle 已合入 `main`；本机
+> launchd 的独立 Email worker 已启用，并通过真实 IMAP 可逆验证。SMTP 与自动回复仍禁用。
 
 邮箱服务器中的当前文件夹是类别的唯一事实来源。服务维护“业务类别 → 每个账号的精确
 provider 文件夹”绑定并单向创建/校验目标文件夹；分类结果本身不能覆盖文件夹事实。Inbox

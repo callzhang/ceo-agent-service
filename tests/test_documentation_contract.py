@@ -163,11 +163,13 @@ def test_current_email_docs_describe_audited_v2_boundary() -> None:
     for section in email_sections:
         semantic_section = "".join(section.split())
 
-        assert "Email audited-v2 lifecycle 已在本分支实现" in section
-        assert "通过开发/loopback 验证" in section
-        assert "实际 launchd 仍运行 main checkout" in section
-        assert "尚未部署" in section
-        assert "未在生产启用" in section
+        assert "Email folder classifier 与 audited-v2 lifecycle 已合入 `main`" in section
+        assert "独立 Email worker 已启用" in section
+        assert "通过真实 IMAP 可逆验证" in section
+        assert "SMTP 与自动回复仍禁用" in section
+        assert "实际 launchd 仍运行 main checkout" not in section
+        assert "尚未部署" not in section
+        assert "未在生产启用" not in section
         assert "email_unsubscribe_consumer_direct_v1" not in section
         assert "Consumer-direct" not in section
 
@@ -197,9 +199,9 @@ def test_current_email_docs_describe_audited_v2_boundary() -> None:
 
         assert "`email_unsubscribe_consumer_direct_v1` 是目标生命周期" not in section
 
-    assert "当前分支的配置和 runtime 禁用 `auto_reply`" in classifier
-    assert "Email 页面和只读分类已在本地 runtime 启用" in classifier
-    assert "本分支新增的外部写动作尚未部署" in classifier
+    assert "当前配置和 runtime 禁用 `auto_reply`" in classifier
+    assert "Email 页面、分类和已授权的确定性 IMAP 动作已在本机 launchd runtime 启用" in classifier
+    assert "audited-v2 生命周期现已合入 `main`" in classifier
     assert "旧的 Consumer-direct 退订方案已经废弃" in classifier
 
 
