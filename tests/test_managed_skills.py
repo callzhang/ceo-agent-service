@@ -114,6 +114,9 @@ def test_initial_import_creates_revisions_and_initial_config_for_service_owned_s
         binding for binding in store.list_runtime_skill_bindings(config.id)
         if binding.skill_id == feedback_skill.id
     ).purpose == "feedback_iteration"
+    wechat_skill = store.get_managed_skill_by_name("ceo-wechat")
+    assert wechat_skill is not None
+    assert "# CEO WeChat" in store.list_managed_skill_revisions(wechat_skill.id)[0].content
 
 
 def test_repository_import_is_idempotent_and_preserves_user_owned_name(

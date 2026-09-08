@@ -119,9 +119,11 @@ class RuntimeSkillSnapshot:
 
 REPOSITORY_IMPORT_SOURCE = "repository:skills"
 FEEDBACK_ITERATION_SKILL_NAME = "ceo-feedback-iteration"
+WECHAT_SKILL_NAME = "ceo-wechat"
 REPOSITORY_MANAGED_SKILL_NAMES = (
     *BUNDLED_BUSINESS_SKILL_NAMES,
     FEEDBACK_ITERATION_SKILL_NAME,
+    WECHAT_SKILL_NAME,
 )
 
 
@@ -133,15 +135,24 @@ def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
     must receive the same immutable import treatment as the business Skills.
     """
     business = tuple((skill.name, skill.content) for skill in load_bundled_business_skills())
-    source_path = Path(__file__).resolve().parents[1] / "skills" / FEEDBACK_ITERATION_SKILL_NAME / "SKILL.md"
-    try:
-        feedback_content = source_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ManagedSkillValidationError(
-            f"unable to read managed feedback iteration Skill: {source_path}: {exc}"
-        ) from exc
-    validate_managed_skill_content(FEEDBACK_ITERATION_SKILL_NAME, feedback_content)
-    return (*business, (FEEDBACK_ITERATION_SKILL_NAME, feedback_content))
+    repository_skills_root = Path(__file__).resolve().parents[1] / "skills"
+
+    def load_runtime_skill(name: str) -> str:
+        source_path = repository_skills_root / name / "SKILL.md"
+        try:
+            content = source_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ManagedSkillValidationError(
+                f"unable to read managed Skill: {source_path}: {exc}"
+            ) from exc
+        validate_managed_skill_content(name, content)
+        return content
+
+    return (
+        *business,
+        (FEEDBACK_ITERATION_SKILL_NAME, load_runtime_skill(FEEDBACK_ITERATION_SKILL_NAME)),
+        (WECHAT_SKILL_NAME, load_runtime_skill(WECHAT_SKILL_NAME)),
+    )
 
 
 @dataclass(frozen=True)
@@ -214,7 +225,7 @@ def _import_repository_managed_skills_locked(
                         else "repository_import"
                     ),
                 }
-                for index, (_name, revision) in enumerate(baseline)
+                for index, (name, revision) in enumerate(baseline)
             ],
             expected_parent_id=None,
         )
