@@ -576,10 +576,15 @@ class ImapReadonlyAdapter:
         requested = frozenset(uids)
         existing = frozenset(int(uid) for uid in _search_uids(data)) & requested
         important_signals_by_uid: dict[int, ImportantSignals] = {}
-        for uid in sorted(existing):
-            status, flag_data = self.session.uid("FETCH", str(uid), "(FLAGS)")
+        if existing:
+            existing_sequence_set = ",".join(str(uid) for uid in sorted(existing))
+            status, flag_data = self.session.uid(
+                "FETCH", existing_sequence_set, "(FLAGS)"
+            )
             _require_ok(status, "IMAP FLAGS fetch failed")
-            important_signals_by_uid[uid] = _imap_important_signals(flag_data)
+            important_signals_by_uid = _imap_important_signals_by_uid(flag_data)
+            if frozenset(important_signals_by_uid) != existing:
+                raise ConnectionError("IMAP FLAGS fetch returned incomplete UIDs")
         return ImapUidMembership(uidvalidity, existing, important_signals_by_uid)
 
     def fetch_folder_fingerprint(self, mailbox: str) -> ProviderFolderFingerprint:
@@ -800,6 +805,28 @@ def _imap_important_signals(data: object) -> ImportantSignals:
         provider="imap",
         raw_signal_names=signal_names,
     )
+
+
+def _imap_important_signals_by_uid(data: object) -> dict[int, ImportantSignals]:
+    if not isinstance(data, (list, tuple)):
+        raise ConnectionError("IMAP FLAGS fetch returned invalid data")
+    result: dict[int, ImportantSignals] = {}
+    for item in data:
+        metadata = (
+            item[0]
+            if isinstance(item, tuple) and item and isinstance(item[0], bytes)
+            else item
+        )
+        if not isinstance(metadata, bytes):
+            continue
+        match = re.search(rb"\bUID\s+(\d+)\b", metadata, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        uid = int(match.group(1))
+        if uid in result:
+            raise ConnectionError("IMAP FLAGS fetch returned duplicate UID")
+        result[uid] = _imap_important_signals([metadata])
+    return result
 
 
 def _parse_bodystructure(data: object) -> _BodyPart:

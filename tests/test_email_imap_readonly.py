@@ -71,6 +71,15 @@ class FakeImapSession:
             raise AssertionError(f"mailbox write attempted: {command}")
         uid, query = args
         if query == "(FLAGS)":
+            if "," in str(uid):
+                return "OK", [
+                    b"1 (UID "
+                    + item.encode("ascii")
+                    + b" FLAGS ("
+                    + " ".join(self.flags).encode("ascii")
+                    + b"))"
+                    for item in str(uid).split(",")
+                ]
             return "OK", [
                 b"1 (UID "
                 + str(uid).encode("ascii")
@@ -494,9 +503,36 @@ def test_uid_membership_is_one_bounded_search_without_body_fetch() -> None:
     }
     assert ("uid", "SEARCH", None, "UID 1,2,7") in session.calls
     assert [call for call in session.calls if call[:2] == ("uid", "FETCH")] == [
-        ("uid", "FETCH", "2", "(FLAGS)"),
-        ("uid", "FETCH", "7", "(FLAGS)"),
+        ("uid", "FETCH", "2,7", "(FLAGS)"),
     ]
+
+
+def test_uid_membership_keeps_important_flags_scoped_to_each_uid() -> None:
+    class Session(FakeImapSession):
+        def uid(self, command, *args):
+            if command == "FETCH" and args == ("2,7", "(FLAGS)"):
+                self.calls.append(("uid", command, *args))
+                return "OK", [
+                    b"1 (UID 2 FLAGS (\\Flagged))",
+                    b"2 (UID 7 FLAGS ())",
+                ]
+            return super().uid(command, *args)
+
+    base = _plain_session(search_result=b"2 7", uidvalidity=42)
+    session = Session(
+        headers=base.headers,
+        bodystructure=base.bodystructure,
+        section_payloads=base.section_payloads,
+        search_result=b"2 7",
+        uidvalidity=42,
+    )
+
+    membership = ImapReadonlyAdapter(
+        session, account_id="account-1"
+    ).fetch_uid_membership("INBOX", cursor_uidvalidity=42, uids=(2, 7))
+
+    assert membership.important_signals_by_uid[2].provider_important is True
+    assert membership.important_signals_by_uid[7].provider_important is False
 
 
 def test_folder_fingerprint_uses_status_without_message_fetch() -> None:
