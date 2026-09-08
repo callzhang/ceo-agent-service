@@ -14,7 +14,7 @@ from app.dispatcher.adapters import (
     ScheduledTaskQueueAdapter,
     WorkSummaryQueueAdapter,
 )
-from app.dispatcher.models import DispatchEnvelope, QueueMetrics
+from app.dispatcher.models import ClaimGuard, DispatchEnvelope, QueueMetrics
 from app.dispatcher.service import ConsumerDispatcher
 from app.meeting_alignment import consume_claimed_meeting_alignment_job
 from app.store import AutoReplyStore
@@ -75,6 +75,46 @@ def _meeting(store: AutoReplyStore) -> int:
 
 def _work_summary(store: AutoReplyStore) -> int:
     return store.enqueue_work_summary_input("reply_attempt", "task-1", "{}")
+
+
+def _two_due_sources(store: AutoReplyStore, adapter_name: str):
+    if adapter_name == "scheduled":
+        first = _scheduled_run(store)
+        second = store.create_scheduled_task_run(
+            first.scheduled_task_id,
+            trigger_kind="manual",
+            scheduled_for=NOW,
+            now=NOW,
+        )
+        return ScheduledTaskQueueAdapter, (str(first.id), str(second.id))
+    if adapter_name == "reply":
+        _reply(store)
+        assert store.enqueue_reply_task(
+            conversation_id="cid-2",
+            conversation_title="Conversation 2",
+            single_chat=False,
+            trigger_message_id="msg-2",
+            trigger_create_time=NOW.isoformat(),
+            trigger_sender="Derek",
+            trigger_text="Please check this too.",
+            execution_generation="generation-8",
+        )
+        return ReplyQueueAdapter, ("1", "2")
+    if adapter_name == "meeting":
+        first = _meeting(store)
+        second = store.upsert_meeting_alignment_job(
+            meeting_id="meeting-2",
+            title="Second review",
+            source_json="{}",
+            participants_json="[]",
+            ended_at=(NOW - timedelta(minutes=20)).isoformat(),
+            eligible_at=(NOW - timedelta(minutes=10)).isoformat(),
+            status="pending",
+        )
+        return MeetingQueueAdapter, (str(first), str(second))
+    first = _work_summary(store)
+    second = store.enqueue_work_summary_input("reply_attempt", "task-2", "{}")
+    return WorkSummaryQueueAdapter, (str(first), str(second))
 
 
 def test_dispatcher_lease_ledger_stores_only_claim_ownership(tmp_path: Path):
@@ -258,6 +298,63 @@ def test_legacy_source_leases_recover_with_fencing_and_monotonic_generation(
         )
         assert third is not None
         assert third.generation > second.generation
+
+
+@pytest.mark.parametrize(
+    "adapter_name", ("scheduled", "reply", "meeting", "work_summary")
+)
+def test_claim_skips_expired_head_owned_by_live_process(
+    tmp_path: Path, adapter_name: str
+):
+    store = _store(tmp_path)
+    adapter_type, source_ids = _two_due_sources(store, adapter_name)
+    adapter = adapter_type(store, owner_alive=lambda pid: pid == 101)
+
+    first = adapter.claim(
+        NOW,
+        owner="owner-a",
+        owner_pid=101,
+        lease=timedelta(seconds=1),
+    )
+    assert first is not None
+    assert first.source_id == source_ids[0]
+
+    second = adapter.claim(
+        NOW + timedelta(seconds=2),
+        owner="owner-b",
+        owner_pid=202,
+        lease=timedelta(seconds=5),
+    )
+
+    assert second is not None
+    assert second.source_id == source_ids[1]
+
+
+def test_claim_guard_rejects_assertion_and_completion_after_reclaim(tmp_path: Path):
+    store = _store(tmp_path)
+    _reply(store)
+    adapter = ReplyQueueAdapter(store, owner_alive=lambda _pid: False)
+    first = adapter.claim(
+        NOW,
+        owner="owner-a",
+        owner_pid=101,
+        lease=timedelta(seconds=1),
+    )
+    assert first is not None
+    guard = ClaimGuard(adapter=adapter, envelope=first, owner="owner-a")
+
+    second = adapter.claim(
+        NOW + timedelta(seconds=2),
+        owner="owner-b",
+        owner_pid=202,
+        lease=timedelta(seconds=5),
+    )
+    assert second is not None
+
+    with pytest.raises(ValueError, match="no longer owned"):
+        guard.assert_current(NOW + timedelta(seconds=2))
+    with pytest.raises(ValueError, match="no longer owned"):
+        guard.complete(NOW + timedelta(seconds=2))
 
 
 def test_reply_source_cannot_be_claimed_twice_concurrently(tmp_path: Path):
@@ -446,6 +543,100 @@ def test_dispatcher_releases_claim_when_worker_pool_rejects_submission():
 
     assert dispatcher.dispatch_available(NOW, limit=1) == 0
     assert [item.source_id for item in adapter.released] == ["reply-1"]
+
+
+def test_renew_failure_keeps_dispatching_other_adapter_and_reports_error(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    _reply(store)
+    _scheduled_run(store)
+    reply = ReplyQueueAdapter(store, owner_alive=lambda _pid: False)
+    scheduled = ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: False)
+    executor = _RecordingExecutor()
+    dispatcher = ConsumerDispatcher(
+        adapters=(reply, scheduled),
+        consumers={
+            "reply": lambda _item, _guard: None,
+            "scheduled": lambda _item, _guard: None,
+        },
+        executors={"reply": executor, "scheduled": executor},
+        max_in_flight={"reply": 1, "scheduled": 1},
+        owner="owner-a",
+        owner_pid=101,
+        lease=timedelta(seconds=2),
+    )
+
+    assert dispatcher.dispatch_available(NOW, limit=1) == 1
+    reply_envelope = executor.submissions[0][1]
+    with store._connect() as db:
+        db.execute(
+            "update dispatcher_claim_leases set owner='owner-b', owner_pid=202, "
+            "generation=generation+1, lease_expires_at=? "
+            "where adapter_name='reply' and source_id=?",
+            (
+                (NOW + timedelta(seconds=10)).strftime("%Y-%m-%d %H:%M:%S"),
+                reply_envelope.source_id,
+            ),
+        )
+
+    assert dispatcher.dispatch_available(NOW + timedelta(seconds=1), limit=1) == 1
+    assert [item.adapter_name for _, item in executor.submissions] == [
+        "reply",
+        "scheduled",
+    ]
+    assert "no longer owned" in reply.metrics(NOW + timedelta(seconds=1)).latest_error
+
+
+def test_completion_prunes_terminal_ledger_without_removing_active_generation(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    _reply(store)
+    adapter = ReplyQueueAdapter(store)
+    envelope = adapter.claim(
+        NOW,
+        owner="owner-a",
+        owner_pid=101,
+        lease=timedelta(minutes=5),
+    )
+    assert envelope is not None
+    now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
+    with store._connect() as db:
+        db.executemany(
+            "insert into dispatcher_claim_leases "
+            "(adapter_name, source_id, owner, owner_pid, generation, "
+            "lease_expires_at, terminal_at, last_error, created_at, updated_at) "
+            "values ('meeting', ?, '', 0, ?, '', ?, '', ?, ?)",
+            (
+                (f"terminal-{index}", index + 1, now_text, now_text, now_text)
+                for index in range(10005)
+            ),
+        )
+        db.execute(
+            "insert into dispatcher_claim_leases "
+            "(adapter_name, source_id, owner, owner_pid, generation, "
+            "lease_expires_at, terminal_at, last_error, created_at, updated_at) "
+            "values ('work_summary', 'active', 'owner-b', 202, 77, ?, '', '', ?, ?)",
+            (
+                (NOW + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S"),
+                now_text,
+                now_text,
+            ),
+        )
+
+    ClaimGuard(adapter=adapter, envelope=envelope, owner="owner-a").complete(NOW)
+
+    with store._connect() as db:
+        terminal_count = db.execute(
+            "select count(*) from dispatcher_claim_leases where terminal_at<>''"
+        ).fetchone()[0]
+        active = db.execute(
+            "select owner, generation, terminal_at from dispatcher_claim_leases "
+            "where adapter_name='work_summary' and source_id='active'"
+        ).fetchone()
+    assert terminal_count == 10000
+    assert tuple(active) == ("owner-b", 77, "")
 
 
 def test_event_wakes_dispatcher_before_bounded_fallback_wait():

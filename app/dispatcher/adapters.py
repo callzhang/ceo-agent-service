@@ -130,42 +130,58 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
         lease: timedelta,
     ) -> DispatchEnvelope | None:
         owner_pid = os.getpid() if owner_pid is None else owner_pid
+        _validate_claim(owner, lease)
         now_value = ensure_utc_datetime(now, field="scheduled dispatcher claim time")
         now_text = now_value.isoformat(timespec="seconds")
-        with self.store._connect() as db:
-            prior = db.execute(
-                "select owner, owner_pid, lease_expires_at from dispatcher_claim_leases "
-                "where adapter_name=? and source_id=(select cast(id as text) "
-                "from scheduled_task_runs where dispatch_status='pending' "
-                "and scheduled_for<=? order by scheduled_for,id limit 1)",
-                (self.name, now_text),
-            ).fetchone()
-        if (
-            prior is not None
-            and str(prior["owner"])
-            and str(prior["lease_expires_at"]) <= now_text
-            and self.owner_alive(int(prior["owner_pid"]))
-        ):
-            return None
-        run = self.store.claim_scheduled_task_run(
-            owner=owner,
-            lease_seconds=_lease_seconds(lease),
-            now=now,
-        )
-        if run is None:
-            return None
+        lease_text = ensure_utc_datetime(
+            now + lease, field="scheduled dispatcher claim expiry"
+        ).isoformat(timespec="seconds")
         with self.store._immediate_write_transaction() as db:
+            candidates = db.execute(
+                "select run.*, claim.owner as claim_owner, "
+                "claim.owner_pid as claim_owner_pid, "
+                "claim.lease_expires_at as claim_expires_at "
+                "from scheduled_task_runs run left join dispatcher_claim_leases claim "
+                "on claim.adapter_name=? and claim.source_id=cast(run.id as text) "
+                "where run.dispatch_status='pending' and run.scheduled_for<=? "
+                "and (run.lease_owner='' or run.lease_expires_at<=?) "
+                "and (claim.owner is null or claim.owner='' "
+                "or claim.lease_expires_at<=?) "
+                "order by run.scheduled_for,run.id limit 32",
+                (self.name, now_text, now_text, now_text),
+            ).fetchall()
+            candidate = next(
+                (
+                    row
+                    for row in candidates
+                    if not _live_expired_owner(row, now_text, self.owner_alive)
+                ),
+                None,
+            )
+            if candidate is None:
+                return None
+            cursor = db.execute(
+                "update scheduled_task_runs set lease_owner=?, lease_expires_at=? "
+                "where id=? and dispatch_status='pending' and scheduled_for<=? "
+                "and (lease_owner='' or lease_expires_at<=?)",
+                (owner, lease_text, candidate["id"], now_text, now_text),
+            )
+            if cursor.rowcount != 1:
+                return None
             generation = _acquire_lease(
                 db,
                 adapter_name=self.name,
-                source_id=str(run.id),
+                source_id=str(candidate["id"]),
                 owner=owner,
                 owner_pid=owner_pid,
-                lease_expires_at=ensure_utc_datetime(
-                    now + lease, field="scheduled dispatcher claim expiry"
-                ).isoformat(timespec="seconds"),
+                lease_expires_at=lease_text,
                 now=now_text,
             )
+            claimed = db.execute(
+                "select * from scheduled_task_runs where id=?", (candidate["id"],)
+            ).fetchone()
+            assert claimed is not None
+            run = self.store._scheduled_task_run_from_row(claimed)
         return DispatchEnvelope(
             adapter_name=self.name,
             source_id=str(run.id),
@@ -335,12 +351,18 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
                 "and (claim.owner is null or claim.owner='' "
                 "or claim.lease_expires_at<=?)) "
                 "or (task.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?) order by task.id limit 1",
+                "and claim.lease_expires_at<=?) order by task.id limit 32",
                 (self.name, now_text, now_text, now_text),
-            ).fetchone()
+            ).fetchall()
+            row = next(
+                (
+                    candidate
+                    for candidate in row
+                    if not _live_expired_owner(candidate, now_text, self.owner_alive)
+                ),
+                None,
+            )
             if row is None:
-                return None
-            if _live_expired_owner(row, now_text, self.owner_alive):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
@@ -499,12 +521,18 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 "or claim.lease_expires_at<=?)) "
                 "or (job.status='processing' and claim.owner<>'' "
                 "and claim.lease_expires_at<=?) "
-                "order by datetime(job.eligible_at), job.id limit 1",
+                "order by datetime(job.eligible_at), job.id limit 32",
                 (self.name, now_text, now_text, now_text, now_text),
-            ).fetchone()
+            ).fetchall()
+            row = next(
+                (
+                    candidate
+                    for candidate in row
+                    if not _live_expired_owner(candidate, now_text, self.owner_alive)
+                ),
+                None,
+            )
             if row is None:
-                return None
-            if _live_expired_owner(row, now_text, self.owner_alive):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
@@ -657,12 +685,18 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
                 "and (claim.owner is null or claim.owner='' "
                 "or claim.lease_expires_at<=?)) "
                 "or (item.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?) order by item.id limit 1",
+                "and claim.lease_expires_at<=?) order by item.id limit 32",
                 (self.name, now_text, now_text, now_text),
-            ).fetchone()
+            ).fetchall()
+            row = next(
+                (
+                    candidate
+                    for candidate in row
+                    if not _live_expired_owner(candidate, now_text, self.owner_alive)
+                ),
+                None,
+            )
             if row is None:
-                return None
-            if _live_expired_owner(row, now_text, self.owner_alive):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
@@ -916,14 +950,12 @@ def _record_ledger_error(
     with store._immediate_write_transaction() as db:
         db.execute(
             "update dispatcher_claim_leases set last_error=?, updated_at=? "
-            "where adapter_name=? and source_id=? and owner=? and generation=?",
+            "where adapter_name=? and source_id=?",
             (
                 error,
                 _sqlite_time(now),
                 envelope.adapter_name,
                 envelope.source_id,
-                owner,
-                envelope.generation,
             ),
         )
 
