@@ -21,7 +21,8 @@ from app.email_training_snapshot import unsubscribe_training_features
 
 
 _STATE_VERSION = 2
-_PROCESS_LOCK = threading.RLock()
+_PROCESS_LOCKS_GUARD = threading.Lock()
+_PROCESS_LOCKS: dict[str, threading.RLock] = {}
 
 
 def provider_training_folder_is_relevant(
@@ -897,7 +898,10 @@ def _write_state_atomic(path: Path, value: Mapping[str, object]) -> None:
 def _state_lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(f".{path.name}.lock")
-    with _PROCESS_LOCK:
+    lock_key = os.path.abspath(lock_path)
+    with _PROCESS_LOCKS_GUARD:
+        process_lock = _PROCESS_LOCKS.setdefault(lock_key, threading.RLock())
+    with process_lock:
         descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             if os.name == "nt":

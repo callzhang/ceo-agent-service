@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -357,6 +358,35 @@ def test_observation_coordinator_request_never_runs_provider_inline(tmp_path):
         ("provider", ({"account_id": "account-1"},)),
         ("publish", ({"id": 1},)),
     ]
+
+
+def test_independent_observation_state_files_do_not_block_each_other(tmp_path):
+    from app.email_training_observer import _state_lock
+
+    first_locked = threading.Event()
+    release_first = threading.Event()
+    second_finished = threading.Event()
+
+    def hold_first_state():
+        with _state_lock(tmp_path / "observations.json"):
+            first_locked.set()
+            assert release_first.wait(timeout=2)
+
+    def write_second_state():
+        assert first_locked.wait(timeout=2)
+        with _state_lock(tmp_path / "requests.json"):
+            second_finished.set()
+
+    first = threading.Thread(target=hold_first_state)
+    second = threading.Thread(target=write_second_state)
+    first.start()
+    second.start()
+    try:
+        assert second_finished.wait(timeout=0.5)
+    finally:
+        release_first.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
 
 
 def test_coordinator_replays_request_when_publish_crashes(tmp_path):
