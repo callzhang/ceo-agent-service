@@ -278,9 +278,10 @@ def _open_target(
 
 
 class WechatSender:
-    def __init__(self, store, runner):
+    def __init__(self, store, runner, *, user_initiated: bool = False):
         self.store = store
         self.runner = runner
+        self.user_initiated = user_initiated
 
     def send(self, delivery, scope) -> SendOutcome:
         # Fail-closed: never send to an unverified/conflicting target.
@@ -312,15 +313,18 @@ class WechatSender:
         try:
             from app.service_message_sender import ServiceMessageSender
 
-            receipt = ServiceMessageSender(
-                store=self.store,
-                wechat=self.runner,
-            ).send_wechat_prepared(
-                prepared,
-                target_label=scope.display_name,
-                search_query=scope.binding_evidence.get("navigation_query") or None,
-                expected_recent_text=expected_recent_text,
-            )
+            sender = ServiceMessageSender(store=self.store, wechat=self.runner)
+            send_kwargs = {
+                "target_label": scope.display_name,
+                "search_query": scope.binding_evidence.get("navigation_query") or None,
+                "expected_recent_text": expected_recent_text,
+            }
+            if self.user_initiated:
+                receipt = sender.send_wechat_prepared(
+                    prepared, skip_idle_wait=True, **send_kwargs,
+                )
+            else:
+                receipt = sender.send_wechat_prepared(prepared, **send_kwargs)
             result = receipt.provider_result
         except SenderExecutionError as exc:
             if not exc.action_may_have_started:
@@ -621,7 +625,7 @@ class MacWechatAccessibility:
 
     def send(
         self, target_label: str, reply_text: str, *, search_query: str | None = None,
-        expected_recent_text: str | None = None,
+        expected_recent_text: str | None = None, skip_idle_wait: bool = False,
     ) -> AccessibilityResult:
         """Compose via pure AX (AXValue), send via a key posted to WeChat's pid.
 
@@ -758,7 +762,8 @@ class MacWechatAccessibility:
         prev_app = self._frontmost_app()
         try:
             # --- navigation (needs a real click; briefly foreground WeChat) ---
-            self._wait_until_idle()   # don't interrupt the user mid-typing
+            if not skip_idle_wait:
+                self._wait_until_idle()   # don't interrupt the user mid-typing
             self._wait_for_interaction_slot(
                 sleep=time.sleep,
                 monotonic=system_time.monotonic,

@@ -210,17 +210,24 @@ class ServiceMessageSender:
         target_label: str,
         search_query: str | None = None,
         expected_recent_text: str | None = None,
+        skip_idle_wait: bool = False,
     ) -> SendReceipt:
         """Dispatch a prepared WeChat message through the IPC/accessibility runner."""
         self._require_persisted_message(message, channel="wechat")
         if self.wechat is None:
             raise RuntimeError("WeChat adapter is required")
-        provider_result = self.wechat.send(
-            target_label,
-            message.final_body,
-            search_query=search_query,
-            expected_recent_text=expected_recent_text,
-        )
+        send_kwargs = {
+            "search_query": search_query,
+            "expected_recent_text": expected_recent_text,
+        }
+        if skip_idle_wait:
+            provider_result = self.wechat.send(
+                target_label, message.final_body, skip_idle_wait=True, **send_kwargs,
+            )
+        else:
+            provider_result = self.wechat.send(
+                target_label, message.final_body, **send_kwargs,
+            )
         return SendReceipt(message=message, provider_result=provider_result)
 
     def _require_persisted_message(

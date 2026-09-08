@@ -68,11 +68,11 @@ class FakeAccessibility:
 
     def send(
         self, target_label, reply_text, *, search_query=None,
-        expected_recent_text=None,
+        expected_recent_text=None, skip_idle_wait=False,
     ):
         self.calls.append((
             "send", target_label, reply_text, search_query,
-            expected_recent_text,
+            expected_recent_text, skip_idle_wait,
         ))
         return AccessibilityResult(True, True, "fp-1")
 
@@ -106,6 +106,10 @@ def test_sender_rpc_exposes_only_bounded_accessibility_operations():
         "target_fingerprint": "fp-1",
         "failure_reason": "",
     }
+    assert service.dispatch("send", {
+        "target_label": "Melody", "reply_text": "现在发", "skip_idle_wait": True,
+    })["action_performed"] is True
+    assert runner.calls[-1][-1] is True
     assert service.dispatch("recall_last_outbound", {"text": "收到"}) is True
     with pytest.raises(module.SenderIpcError, match="unsupported method"):
         service.dispatch("run_applescript", {"script": "arbitrary"})

@@ -1741,7 +1741,7 @@ def register_console_routes(
         try:
             from app.wechat.accessibility import WechatSender
             store = store_factory()
-            sender = WechatSender(store, service.build_sender())
+            sender = WechatSender(store, service.build_sender(), user_initiated=True)
             result = service.approve_wechat_delivery(store, sender, delivery_id)
         except Exception as exc:
             return JSONResponse({"ok": False, "code": "delivery_failed", "message": "发送失败", "details": {"reason": normalize_display_value(exc)}}, status_code=409)
@@ -1754,7 +1754,7 @@ def register_console_routes(
         try:
             from app.wechat.accessibility import WechatSender
             store = store_factory()
-            sender = WechatSender(store, service.build_sender())
+            sender = WechatSender(store, service.build_sender(), user_initiated=True)
             result = service.retry_expired_wechat_delivery(store, sender, delivery_id)
         except Exception as exc:
             return JSONResponse({"ok": False, "code": "delivery_failed", "message": "无法重试这条微信消息", "details": {"reason": normalize_display_value(exc)}}, status_code=409)

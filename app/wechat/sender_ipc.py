@@ -83,17 +83,18 @@ class WechatSenderRpcService:
                 restore_focus=not _optional_bool(params, "keep_foreground"),
             )
         if method == "send":
+            send_kwargs = {
+                "search_query": _bounded_text(params, "search_query", maximum=512) or None,
+                "expected_recent_text": (
+                    _bounded_text(params, "expected_recent_text", maximum=10_000) or None
+                ),
+            }
+            if _optional_bool(params, "skip_idle_wait"):
+                send_kwargs["skip_idle_wait"] = True
             result = self.runner.send(
                 _bounded_text(params, "target_label", maximum=512, required=True),
                 _bounded_text(params, "reply_text", maximum=10_000, required=True),
-                search_query=(
-                    _bounded_text(params, "search_query", maximum=512) or None
-                ),
-                expected_recent_text=(
-                    _bounded_text(
-                        params, "expected_recent_text", maximum=10_000,
-                    ) or None
-                ),
+                **send_kwargs,
             )
             return asdict(result)
         if method == "recall_last_outbound":
@@ -259,14 +260,17 @@ class WechatSenderClient:
 
     def send(
         self, target_label: str, reply_text: str, *, search_query: str | None = None,
-        expected_recent_text: str | None = None,
+        expected_recent_text: str | None = None, skip_idle_wait: bool = False,
     ) -> AccessibilityResult:
-        return AccessibilityResult(**self._request("send", {
+        params = {
             "target_label": target_label,
             "reply_text": reply_text,
             "search_query": search_query or "",
             "expected_recent_text": expected_recent_text or "",
-        }))
+        }
+        if skip_idle_wait:
+            params["skip_idle_wait"] = True
+        return AccessibilityResult(**self._request("send", params))
 
     def recall_last_outbound(self, text: str) -> bool:
         return bool(self._request("recall_last_outbound", {"text": text}))
