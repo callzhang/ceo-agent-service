@@ -24,6 +24,7 @@ EXPECTED_NAMES = (
     "ceo-mail-review",
     "ceo-personnel-communication",
     "ceo-work-tracking",
+    "ceo-sales-weekly-report",
 )
 
 

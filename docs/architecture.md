@@ -437,7 +437,7 @@ Producer 只根据消息来源、会话类型、明确的 @、稳定卡片类型
 Skill。Consumer A 根据完整上下文使用 Codex 原生 Skill discovery，按需读取业务 Skill 和操作
 Skill。
 
-每个 Consumer 回合的 developer instructions 都携带七个已安装业务 Skill 的精确名称和路径，并把
+每个 Consumer 回合的 developer instructions 都携带八个已安装业务 Skill 的精确名称和路径，并把
 至少一次业务 Skill 读取定义为返回任何业务结论之前的协议前置条件。目录只声明可用能力，不替 Agent
 选择领域；选择仍由 A 根据完整上下文完成。目录或 wire contract 变化时会轮换旧的对话 session。
 
@@ -452,7 +452,7 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 
 ### 动态 Skill 分层
 
-七个 CEO 业务 Skill 安装到 `~/.agents/skills`，按任务动态加载：
+八个 CEO 业务 Skill 安装到 `~/.agents/skills`，按任务动态加载：
 
 | 业务 Skill | 负责的业务判断 | 常见操作 Skill |
 | --- | --- | --- |
@@ -463,6 +463,9 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 | `ceo-mail-review` | 完整邮件线程审阅和回复 | `dingtalk-mail` |
 | `ceo-personnel-communication` | 人事信息的受众、可见性和最小披露 | 候选人/通讯录操作 Skill |
 | `ceo-work-tracking` | 任务提取、项目/TODO、跟进和关闭 | `dingtalk-todo`、`dingtalk-chat` |
+| `ceo-sales-weekly-report` | 按需核对销售目标、CRM 实际、公司及业务线进度评分并生成 workspace 周报 | `ceo-weekly-report`、`fxiaoke-crm-cli` |
+
+`ceo-sales-weekly-report` 没有独立 producer 或功能开关。它由 Consumer 根据明确的销售周报请求动态选择，直接使用安装用户已有的 `sharecrm` 登录态；CRM 只读限制由 Skill 和 Codex automatic review 约束，不表示 service 建立了 `sharecrm` 命令白名单。
 
 业务 Skill 说明“如何判断”，操作 Skill 说明“如何读取或执行”。OA、面试和 OKR 已有成熟的专业
 Skill，CEO Skill 只负责识别需要委派的场景，不复制专业规则：分别加载
@@ -711,7 +714,7 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 | --- | --- |
 | `app.worker.DingTalkAutoReplyWorker` | 领取任务、构造上下文、调用编排器并映射终态。 |
 | `app.agent_orchestrator.AgentOrchestrator` | 在 A、B、反馈和失败重试之间推进状态机。 |
-| `app.business_skills` / `app.managed_skills` | 提供七个仓库基线 Skill，并管理 SQLite 中不可变 revision、next-start config 和启动 load receipt；不参与业务路由。 |
+| `app.business_skills` / `app.managed_skills` | 提供八个仓库基线 Skill，并管理 SQLite 中不可变 revision、next-start config 和启动 load receipt；不参与业务路由。 |
 | `app.agent_skill_usage` | 提供 Agent 执行环境所需的 Skill 读取辅助；不参与普通业务结果审核。 |
 | `app.consumer_agent.ConsumerAgentRunner` | 复用兼容的 A session，读取、判断并提出候选；应用层不限制其具体工具。 |
 | `app.audit_agent.AuditAgentRunner` | 复用兼容的 B session，审核并执行候选；应用层不审核命令、工具或读取方式。 |
