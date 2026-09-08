@@ -8,13 +8,19 @@ import hashlib
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
     CredentialMode,
+    PROBE_VERIFIED_RUNTIME_CAPABILITIES,
     RuntimeCapabilitySnapshot,
     RuntimeKind,
     RuntimeRoute,
 )
 from app.agent_runtime_router import AgentRuntimeRouter
-from app.managed_skills import ManagedSkillRevision, RuntimeSkillBinding
-from app.skill_files import SkillDocument, SkillFileError, SkillFileService
+from app.managed_skills import ManagedSkillRevision, RuntimeSkillSnapshot
+from app.skill_files import (
+    SkillDocument,
+    SkillFileError,
+    SkillFileOwnershipError,
+    SkillFileService,
+)
 from app.store import AutoReplyStore
 
 
@@ -75,12 +81,14 @@ class ScheduledTaskOptionService:
         environment: Mapping[str, str],
         runtime_snapshots: Mapping[str, RuntimeCapabilitySnapshot],
         operation_skill_files: SkillFileService,
+        runtime_skill_snapshot: RuntimeSkillSnapshot | None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
         self._runtime_config = load_runtime_config(environment)
         self._runtime_snapshots = runtime_snapshots
         self._operation_skill_files = operation_skill_files
+        self._runtime_skill_snapshot = runtime_skill_snapshot
         self._now = now or (lambda: datetime.now(UTC))
 
     @property
@@ -113,22 +121,13 @@ class ScheduledTaskOptionService:
         return route
 
     def list_managed_skill_options(self) -> tuple[ManagedSkillOption, ...]:
-        active = self._store.get_active_runtime_skill_config()
-        bindings = (
-            {
-                binding.skill_id: binding
-                for binding in self._store.list_runtime_skill_bindings(active.id)
-            }
-            if active is not None
-            else {}
-        )
         return tuple(
             ManagedSkillOption(
                 skill_id=skill.id,
                 name=skill.name,
                 display_name=skill.display_name,
                 revisions=tuple(
-                    self._managed_revision_option(revision, bindings.get(skill.id))
+                    self._managed_revision_option(revision)
                     for revision in self._store.list_managed_skill_revisions(skill.id)
                 ),
             )
@@ -149,20 +148,7 @@ class ScheduledTaskOptionService:
             raise ScheduledTaskOptionUnavailableError(
                 f"managed revision {revision_id}: managed_revision_missing"
             )
-        active = self._store.get_active_runtime_skill_config()
-        binding = (
-            next(
-                (
-                    item
-                    for item in self._store.list_runtime_skill_bindings(active.id)
-                    if item.skill_id == skill_id
-                ),
-                None,
-            )
-            if active is not None
-            else None
-        )
-        option = self._managed_revision_option(revision, binding)
+        option = self._managed_revision_option(revision)
         if not option.available:
             raise ScheduledTaskOptionUnavailableError(
                 f"managed revision {revision_id}: {option.unavailable_reason}"
@@ -176,6 +162,8 @@ class ScheduledTaskOptionService:
                 document = self._operation_skill_files.get_operation_skill(
                     project_skill.name
                 )
+            except SkillFileOwnershipError:
+                continue
             except SkillFileError:
                 try:
                     digest = hashlib.sha256(project_skill.path.read_bytes()).hexdigest()
@@ -209,7 +197,9 @@ class ScheduledTaskOptionService:
             store=self._store,
             snapshots=self._runtime_snapshots,
             now=self._now,
-        ).first_route_decision(required_capabilities=frozenset())
+        ).first_route_decision(
+            required_capabilities=PROBE_VERIFIED_RUNTIME_CAPABILITIES
+        )
         available = decision.route is not None
         reason = (
             None if available else _single_route_reason(decision.reason, route.name)
@@ -223,16 +213,23 @@ class ScheduledTaskOptionService:
             unavailable_reason=reason,
         )
 
-    @staticmethod
     def _managed_revision_option(
-        revision: ManagedSkillRevision, binding: RuntimeSkillBinding | None
+        self, revision: ManagedSkillRevision
     ) -> ManagedSkillRevisionOption:
-        if binding is None or binding.revision_id != revision.id:
-            reason = "managed_revision_not_loaded"
-        elif not binding.enabled:
+        snapshot = self._runtime_skill_snapshot
+        if snapshot is None:
+            reason = "runtime_skill_snapshot_missing"
+        elif any(
+            loaded.id == revision.id
+            and loaded.skill_id == revision.skill_id
+            and loaded.sha256 == revision.sha256
+            for loaded in snapshot.revisions
+        ):
+            reason = None
+        elif self._snapshot_binding_is_disabled(revision):
             reason = "managed_skill_disabled"
         else:
-            reason = None
+            reason = "managed_revision_not_loaded"
         return ManagedSkillRevisionOption(
             revision_id=revision.id,
             revision_number=revision.revision_number,
@@ -240,6 +237,17 @@ class ScheduledTaskOptionService:
             source=revision.source,
             available=reason is None,
             unavailable_reason=reason,
+        )
+
+    def _snapshot_binding_is_disabled(self, revision: ManagedSkillRevision) -> bool:
+        snapshot = self._runtime_skill_snapshot
+        if snapshot is None or snapshot.config_id <= 0:
+            return False
+        return any(
+            binding.skill_id == revision.skill_id
+            and binding.revision_id == revision.id
+            and not binding.enabled
+            for binding in self._store.list_runtime_skill_bindings(snapshot.config_id)
         )
 
     @staticmethod

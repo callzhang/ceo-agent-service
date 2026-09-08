@@ -11,10 +11,12 @@ from app.agent_cron.options import (
     ScheduledTaskOptionUnavailableError,
 )
 from app.agent_runtime_contracts import (
+    PROBE_VERIFIED_RUNTIME_CAPABILITIES,
     RuntimeCapabilitySnapshot,
     RuntimeFailure,
     RuntimeFailureClass,
 )
+from app.managed_skills import RuntimeSkillSnapshot
 from app.skill_files import SkillFileService
 from app.store import AutoReplyStore
 
@@ -39,13 +41,16 @@ def _snapshot(
     *,
     healthy: bool,
     failure: RuntimeFailure | None = None,
+    capabilities: frozenset[str] = PROBE_VERIFIED_RUNTIME_CAPABILITIES,
+    checked_at: datetime = NOW,
+    expires_at: datetime | None = None,
 ) -> RuntimeCapabilitySnapshot:
     return RuntimeCapabilitySnapshot(
         route_name=route_name,
-        capabilities=frozenset(),
+        capabilities=capabilities,
         healthy=healthy,
-        checked_at=NOW.isoformat(),
-        expires_at=(NOW + timedelta(minutes=5)).isoformat(),
+        checked_at=checked_at.isoformat(),
+        expires_at=(expires_at or NOW + timedelta(minutes=5)).isoformat(),
         failure=failure,
     )
 
@@ -64,14 +69,17 @@ def _service(
     *,
     snapshots: dict[str, RuntimeCapabilitySnapshot] | None = None,
     operation_root: Path | None = None,
+    runtime_skill_snapshot: RuntimeSkillSnapshot | None = None,
+    store: AutoReplyStore | None = None,
 ) -> ScheduledTaskOptionService:
     return ScheduledTaskOptionService(
-        store=AutoReplyStore(tmp_path / "options.sqlite3"),
+        store=store or AutoReplyStore(tmp_path / "options.sqlite3"),
         environment=_runtime_environment(),
         runtime_snapshots=snapshots or {},
         operation_skill_files=SkillFileService(
             operation_root or tmp_path / "operation-skills"
         ),
+        runtime_skill_snapshot=runtime_skill_snapshot,
         now=lambda: NOW,
     )
 
@@ -131,6 +139,63 @@ def test_runtime_resolution_uses_saved_route_name_without_fallback(
         service.resolve_runtime_route("friday_runtime")
 
 
+@pytest.mark.parametrize(
+    ("snapshot", "reason"),
+    [
+        (
+            _snapshot(
+                "codex_oauth",
+                healthy=True,
+                capabilities=frozenset({"structured_output"}),
+            ),
+            "missing_capabilities:local_schema_validation",
+        ),
+        (
+            _snapshot(
+                "codex_oauth",
+                healthy=True,
+                expires_at=NOW,
+            ),
+            "snapshot_expired",
+        ),
+        (
+            _snapshot(
+                "codex_oauth",
+                healthy=True,
+                checked_at=NOW + timedelta(seconds=1),
+            ),
+            "snapshot_invalid",
+        ),
+    ],
+)
+def test_runtime_options_require_scheduled_agent_capabilities_and_current_health(
+    tmp_path: Path,
+    snapshot: RuntimeCapabilitySnapshot,
+    reason: str,
+) -> None:
+    service = _service(tmp_path, snapshots={"codex_oauth": snapshot})
+
+    option = service.list_runtime_options()[0]
+
+    assert option.available is False
+    assert option.unavailable_reason == reason
+
+
+def test_runtime_options_preserve_route_pause_reason(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "options.sqlite3")
+    store.open_runtime_route_pause("codex_oauth", "capacity_exhausted", "2099-01-01T00:00:00Z")
+    service = _service(
+        tmp_path,
+        store=store,
+        snapshots={"codex_oauth": _snapshot("codex_oauth", healthy=True)},
+    )
+
+    option = service.list_runtime_options()[0]
+
+    assert option.available is False
+    assert option.unavailable_reason == "paused:capacity_exhausted"
+
+
 def test_managed_options_list_every_immutable_revision_and_exact_load_state(
     tmp_path: Path,
 ) -> None:
@@ -177,6 +242,10 @@ def test_managed_options_list_every_immutable_revision_and_exact_load_state(
         environment=_runtime_environment(),
         runtime_snapshots={},
         operation_skill_files=SkillFileService(tmp_path / "operation-skills"),
+        runtime_skill_snapshot=RuntimeSkillSnapshot(
+            config_id=config.id,
+            revisions=(first,),
+        ),
         now=lambda: NOW,
     )
 
@@ -216,6 +285,69 @@ def test_managed_options_list_every_immutable_revision_and_exact_load_state(
         )
 
 
+def test_managed_availability_uses_injected_process_snapshot_not_database_active(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "options.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "CEO Test")
+    first = store.create_managed_skill_revision(skill.id, MANAGED_V1, source="settings")
+    second = store.create_managed_skill_revision(skill.id, MANAGED_V2, source="settings")
+    first_config = store.create_runtime_skill_config(
+        {skill.id: first.id}, expected_parent_id=None
+    )
+    store.record_runtime_skill_load(
+        first_config.id, pid=123, loaded={skill.id: first.sha256}
+    )
+    process_snapshot = RuntimeSkillSnapshot(first_config.id, (first,))
+    second_config = store.create_runtime_skill_config(
+        {skill.id: second.id}, expected_parent_id=first_config.id
+    )
+    store.record_runtime_skill_load(
+        second_config.id, pid=456, loaded={skill.id: second.sha256}
+    )
+    service = _service(
+        tmp_path,
+        store=store,
+        runtime_skill_snapshot=process_snapshot,
+    )
+
+    revisions = service.list_managed_skill_options()[0].revisions
+
+    assert revisions[0].available is True
+    assert revisions[1].available is False
+    assert revisions[1].unavailable_reason == "managed_revision_not_loaded"
+    assert service.resolve_managed_skill_revision(
+        skill_id=skill.id,
+        revision_id=first.id,
+        skill_name=skill.name,
+    ) == first
+
+
+def test_managed_revision_is_unavailable_without_current_process_snapshot(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "options.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "CEO Test")
+    revision = store.create_managed_skill_revision(skill.id, MANAGED_V1, source="settings")
+    config = store.create_runtime_skill_config({skill.id: revision.id}, expected_parent_id=None)
+    store.record_runtime_skill_load(config.id, pid=123, loaded={skill.id: revision.sha256})
+    service = _service(tmp_path, store=store, runtime_skill_snapshot=None)
+
+    option = service.list_managed_skill_options()[0].revisions[0]
+
+    assert option.available is False
+    assert option.unavailable_reason == "runtime_skill_snapshot_missing"
+    with pytest.raises(
+        ScheduledTaskOptionUnavailableError,
+        match=f"managed revision {revision.id}: runtime_skill_snapshot_missing",
+    ):
+        service.resolve_managed_skill_revision(
+            skill_id=skill.id,
+            revision_id=revision.id,
+            skill_name=skill.name,
+        )
+
+
 def test_managed_revision_resolution_rejects_missing_or_disabled_exact_revision(
     tmp_path: Path,
 ) -> None:
@@ -240,9 +372,14 @@ def test_operation_options_report_source_summary_hash_and_invalid_availability(
     valid.parent.mkdir(parents=True)
     content = """---
 name: dingtalk-chat
-description: Read and send DingTalk messages
+description: >-
+  Read and send
+  DingTalk messages
 metadata:
   category: product
+  requires:
+    bins:
+      - dws
 ---
 
 # DingTalk Chat
@@ -251,11 +388,28 @@ metadata:
     invalid = root / "broken" / "SKILL.md"
     invalid.parent.mkdir(parents=True)
     invalid.write_text("not frontmatter", encoding="utf-8")
+    lark = root / "lark-im" / "SKILL.md"
+    lark.parent.mkdir(parents=True)
+    lark.write_text(
+        """---
+name: lark-im
+description: |
+  Read Lark messages.
+  Send a reply.
+metadata:
+  requires:
+    apps:
+      - lark
+---
+# Lark IM
+""",
+        encoding="utf-8",
+    )
     service = _service(tmp_path, operation_root=root)
 
     options = service.list_operation_skill_options()
 
-    assert [option.name for option in options] == ["broken", "dingtalk-chat"]
+    assert [option.name for option in options] == ["broken", "dingtalk-chat", "lark-im"]
     assert options[0].available is False
     assert options[0].unavailable_reason == "operation_skill_invalid"
     assert options[1].available is True
@@ -264,3 +418,58 @@ metadata:
     assert options[1].source == str(valid)
     assert options[1].sha256 == hashlib.sha256(content.encode("utf-8")).hexdigest()
     assert service.resolve_operation_skill("dingtalk-chat").sha256 == options[1].sha256
+    assert options[2].content_summary == "Read Lark messages.\nSend a reply."
+
+
+def test_operation_catalog_excludes_service_managed_skill_files(tmp_path: Path) -> None:
+    root = tmp_path / "operation-skills"
+    managed = root / "ceo-test" / "SKILL.md"
+    managed.parent.mkdir(parents=True)
+    managed.write_text(MANAGED_V1, encoding="utf-8")
+    operation = root / "dingtalk-minutes" / "SKILL.md"
+    operation.parent.mkdir(parents=True)
+    operation.write_text(
+        """---
+name: dingtalk-minutes
+description: Read meeting minutes
+metadata:
+  category: product
+---
+# Minutes
+""",
+        encoding="utf-8",
+    )
+    service = _service(tmp_path, operation_root=root)
+
+    options = service.list_operation_skill_options()
+
+    assert [option.name for option in options] == ["dingtalk-minutes"]
+    with pytest.raises(
+        ScheduledTaskOptionUnavailableError,
+        match="operation_skill_unavailable",
+    ):
+        service.resolve_operation_skill("ceo-test")
+
+
+@pytest.mark.parametrize(
+    "frontmatter",
+    (
+        "- name\n- description\n",
+        "name: broken\ndescription: Broken\nmetadata: scalar\n",
+        "name: true\ndescription: Broken\nmetadata: {}\n",
+        "name: broken\ndescription: 42\nmetadata: {}\n",
+    ),
+)
+def test_operation_skill_requires_typed_standard_frontmatter(
+    tmp_path: Path, frontmatter: str
+) -> None:
+    root = tmp_path / "operation-skills"
+    path = root / "broken" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(f"---\n{frontmatter}---\n# Broken\n", encoding="utf-8")
+
+    option = _service(tmp_path, operation_root=root).list_operation_skill_options()[0]
+
+    assert option.name == "broken"
+    assert option.available is False
+    assert option.unavailable_reason == "operation_skill_invalid"
