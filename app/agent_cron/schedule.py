@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from croniter import CroniterBadCronError, croniter
+from croniter import CroniterBadCronError, CroniterBadDateError, croniter
 
 
 @dataclass(frozen=True)
@@ -19,12 +19,14 @@ class CronSchedule:
             raise ValueError("Cron expression must contain exactly six fields")
 
         try:
-            croniter(
+            validator = croniter(
                 normalized_expression,
                 datetime.now(timezone.utc),
+                ret_type=datetime,
                 second_at_beginning=True,
             )
-        except (CroniterBadCronError, KeyError, ValueError) as exc:
+            validator.get_next(datetime)
+        except (CroniterBadCronError, CroniterBadDateError, KeyError, ValueError) as exc:
             raise ValueError(f"Invalid Cron expression: {expression}") from exc
 
         try:

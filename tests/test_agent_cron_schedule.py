@@ -70,6 +70,28 @@ def test_parse_rejects_unknown_timezone() -> None:
         CronSchedule.parse("0 * * * * *", "Mars/Olympus_Mons")
 
 
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "0 0 0 31 2 *",
+        "0 0 0 30 2 *",
+        "0 0 0 31 4 *",
+    ],
+)
+def test_parse_rejects_schedules_that_can_never_run(expression: str) -> None:
+    with pytest.raises(ValueError, match="^Invalid Cron expression"):
+        CronSchedule.parse(expression, "UTC")
+
+
+def test_parse_accepts_leap_day_schedule() -> None:
+    assert CronSchedule.parse("0 0 0 29 2 *", "UTC").expression == "0 0 0 29 2 *"
+
+
+def test_parse_maps_invalid_field_values_to_public_error() -> None:
+    with pytest.raises(ValueError, match="^Invalid Cron expression"):
+        CronSchedule.parse("61 * * * * *", "UTC")
+
+
 def test_next_after_rejects_naive_datetime() -> None:
     schedule = CronSchedule.parse("*/15 * * * * *", "UTC")
 
