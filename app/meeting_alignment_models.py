@@ -90,6 +90,29 @@ class DeliveryTarget(StrictModel):
     candidates: list[TargetCandidate]
 
 
+class SensitivePrivateMessage(StrictModel):
+    target: DeliveryTarget
+    message: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    recipient_evidence: list[str]
+
+    @model_validator(mode="after")
+    def validate_private_target(self) -> Self:
+        if self.target.kind != "direct":
+            raise ValueError("sensitive private message requires a direct target")
+        if not self.target.direct_user_id.strip():
+            raise ValueError(
+                "sensitive private message requires a stable direct user id"
+            )
+        if not self.recipient_evidence or any(
+            not evidence.strip() for evidence in self.recipient_evidence
+        ):
+            raise ValueError(
+                "sensitive private message requires non-empty recipient evidence"
+            )
+        return self
+
+
 class MeetingAlignmentDecision(StrictModel):
     action: Literal["send"]
     audience_scope: Literal["business", "personal"]
@@ -107,6 +130,7 @@ class MeetingAlignmentDecision(StrictModel):
     mention_names: list[str]
     target: DeliveryTarget | None
     final_message: str
+    sensitive_private_message: SensitivePrivateMessage | None = None
     audit_summary: str = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
 
@@ -179,6 +203,13 @@ class MeetingAlignmentDecision(StrictModel):
                 )
             if not self.target.title.strip():
                 raise ValueError("direct target requires title")
+        if (
+            self.sensitive_private_message is not None
+            and self.audience_scope != "business"
+        ):
+            raise ValueError(
+                "sensitive private message is only valid beside a business summary"
+            )
         return self
 
 

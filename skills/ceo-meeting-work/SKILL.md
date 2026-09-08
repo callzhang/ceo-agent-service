@@ -56,6 +56,16 @@ requested information found in the meeting evidence.
 - Produce only the decision, context, actions, and open questions needed by the
   current audience. A meeting summary is not a substitute for acting on clear
   tasks.
+- For a business meeting that mixes ordinary work with personnel-sensitive
+  discussion, split the output by audience. Send the business conclusions,
+  schedule, and actions to the most relevant business group without personnel
+  evaluations, performance, compensation, promotion, departure, candidate,
+  health, or leave details. Send only the sensitive excerpt by direct message
+  to a meeting participant whose HR or personnel responsibility is verified
+  from current organization evidence; if no such participant is verified,
+  direct it to the current principal. Do not infer authorization from a name.
+- Ordinary ownership, delivery progress, project risk, and business results
+  remain business content even when a person is named.
 - Place every participant mention adjacent to that person's concrete task,
   question, decision, or information. Never put a wall of participant mentions
   at the start.

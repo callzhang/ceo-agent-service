@@ -127,6 +127,41 @@ def test_send_decision_requires_message_and_explicit_target():
     with pytest.raises(ValidationError):
         MeetingAlignmentDecision.model_validate(payload)
 
+
+def test_business_summary_can_split_personnel_evaluation_into_private_message():
+    payload = valid_send_decision()
+    payload["sensitive_private_message"] = {
+        "target": {
+            "kind": "direct",
+            "conversation_id": "",
+            "direct_user_id": "u-mina",
+            "title": "Mina",
+            "candidates": [],
+        },
+        "message": "人员评价仅私下同步给本次招聘事项的 HR 负责人。",
+        "reason": "包含对候选人与人事工作的评价，不应进入招聘业务群。",
+        "recipient_evidence": ["Mina 是本次招聘事项的 HR 负责人"],
+    }
+
+    decision = MeetingAlignmentDecision.model_validate(payload)
+
+    assert decision.target.kind == "group"
+    assert decision.sensitive_private_message is not None
+    assert decision.sensitive_private_message.target.direct_user_id == "u-mina"
+
+
+def test_sensitive_private_message_requires_direct_stable_recipient_and_evidence():
+    payload = valid_send_decision()
+    payload["sensitive_private_message"] = {
+        "target": payload["target"],
+        "message": "敏感人员评价。",
+        "reason": "不能群发。",
+        "recipient_evidence": [],
+    }
+
+    with pytest.raises(ValidationError, match="sensitive private message"):
+        MeetingAlignmentDecision.model_validate(payload)
+
     payload = valid_send_decision()
     payload["target"] = None
     with pytest.raises(ValidationError, match="explicit delivery target"):

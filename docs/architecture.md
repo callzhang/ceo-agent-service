@@ -38,7 +38,7 @@ pending -> running -> done
 
 所有任务都禁止使用 `discard` 动作或写入 `discarded` 状态。无需动作的结果在 trace 记录 `no_action` 后进入 `done`；需要修正时由审核 Agent 写入 `audit_feedback`，执行 Agent 生成新 revision；处理失败使用 `failed`；无法自动解决使用 `needs_human`。
 
-`okr_review` 使用上述闭环生成逐 KR 评审；`weekly_okr` 使用上述闭环生成管理者 OKR 进度周报。周报在分析、文档发布和群摘要获得 provider 成功结果后推进成功日期。
+`okr_review` 使用上述闭环生成逐 KR 评审；`weekly_okr` 使用上述闭环生成管理者 OKR 进度周报。周报在分析、文档发布和群摘要获得 provider 成功结果后推进成功日期。周报调度的 `last_attempt_at` 只控制失败后的重试间隔，不代表仍在运行的实例；完整周报流程另用 SQLite 原子领取、周期续租的全局 run lease 保证单实例执行，正常结束释放，进程崩溃后由租约超时允许恢复。
 
 OKR 评审的实时数据读取由业务 Skill 选择当前可用的 provider 能力完成。服务提供的
 `app.cli read-dingteam-okr --user-id <owner-id> --period-label <period>`，该入口调用
@@ -166,6 +166,12 @@ agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显�
 群发与组织者单聊使用同一个稳定业务投递键，因此重试或新 run 不会重复投递。服务启动后
 会从 append-only Consumer/Audit typed results 修复缺失的 `external_action_results`、`sent_replies`
 与 observer；该修复不重放 provider 动作，也不改写历史 run/event。
+
+会议总结按受众拆分内容。业务会议的普通结论、安排和行动发送到 Agent 根据实时业务承接证据
+选择的群；人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假内容不得进入该群消息，
+而是作为可选的独立私聊消息发送给经实时身份与职责确认的参会 HR/人员负责人，无法确认时发给
+当前负责人本人。群消息与敏感私聊使用不同的稳定投递键，任一发送重试都会复用已成功的另一条，
+日历描述只写群消息版本。
 
 钉钉消息在交给 Audit 前生成带服务后缀的最终候选正文。这个准备记录按
 `execution_generation + proposal_revision` 区分：同一 revision 的进程重试复用同一正文，Audit

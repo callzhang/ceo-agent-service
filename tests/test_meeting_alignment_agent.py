@@ -279,7 +279,11 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "能只靠会议证据解释时，historical_sources 必须为空数组" in prompt
     assert "必须逐字填写 `/configured/work_profile.md`" in prompt
     assert "不得改写、加标题或写成说明性文字" in prompt
-    assert "每场会议最多生成一条合并消息" in prompt
+    assert "业务群消息与敏感私聊消息" in prompt
+    assert "人员评价、绩效、薪酬、晋升、去留、候选人结论" in prompt
+    assert "不得出现在 final_message" in prompt
+    assert "sensitive_private_message" in prompt
+    assert "每场会议最多生成一条合并消息" not in prompt
     assert "群内所有人员都必须属于本次会议参会人" not in prompt
     assert "业务承接证据" in prompt
     assert "内容优先于参会人数" in prompt
@@ -323,6 +327,8 @@ def test_prompt_requires_a_summary_even_for_candidate_interviews():
 
     assert "每场会议都必须生成并发送一条会议总结" in prompt
     assert "action 只能是 send" in prompt
+    assert "候选人结论" in prompt
+    assert "敏感私聊" in prompt
 
 
 def test_prompt_allows_personal_direct_only_for_complete_calendar_one_to_one():
@@ -375,6 +381,40 @@ def test_agent_accepts_business_group_target_for_incomplete_transcript_roster():
     ).decide(transcript_source)
     assert decision.target is not None
     assert decision.target.kind == "group"
+
+
+def test_agent_rejects_sensitive_private_target_outside_meeting_roster():
+    target = {
+        "kind": "group",
+        "conversation_id": "cid-1",
+        "direct_user_id": "",
+        "title": "产品招聘群",
+        "candidates": [
+            {
+                "conversation_id": "cid-1",
+                "title": "产品招聘群",
+                "evidence": ["承接招聘安排的业务群"],
+            }
+        ],
+    }
+    payload = send_payload_with_target(target)
+    payload["sensitive_private_message"] = {
+        "target": {
+            "kind": "direct",
+            "conversation_id": "",
+            "direct_user_id": "not-a-participant",
+            "title": "非参会人员",
+            "candidates": [],
+        },
+        "message": "人员评价仅私下同步。",
+        "reason": "不得发送到招聘业务群。",
+        "recipient_evidence": ["未经会议参会证据确认"],
+    }
+
+    with pytest.raises(
+        MeetingAlignmentTargetError, match="one meeting participant"
+    ):
+        MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(source())
 
 
 @pytest.mark.parametrize(

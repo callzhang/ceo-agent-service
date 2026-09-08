@@ -1,5 +1,4 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
     "AlignmentTopic": {
       "additionalProperties": false,
@@ -179,6 +178,39 @@
       "title": "KeyQuestion",
       "type": "object"
     },
+    "SensitivePrivateMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/DeliveryTarget"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "recipient_evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Recipient Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "target",
+        "message",
+        "reason",
+        "recipient_evidence"
+      ],
+      "title": "SensitivePrivateMessage",
+      "type": "object"
+    },
     "TargetCandidate": {
       "additionalProperties": false,
       "properties": {
@@ -225,10 +257,10 @@
     "trigger_reasons": {
       "items": {
         "enum": [
-            "aligned_disagreement",
-            "unresolved_disagreement",
-            "derek_viewpoint",
-            "meeting_summary"
+          "aligned_disagreement",
+          "unresolved_disagreement",
+          "derek_viewpoint",
+          "meeting_summary"
         ],
         "type": "string"
       },
@@ -280,6 +312,17 @@
       "title": "Final Message",
       "type": "string"
     },
+    "sensitive_private_message": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SensitivePrivateMessage"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "audit_summary": {
       "minLength": 1,
       "title": "Audit Summary",
@@ -306,5 +349,6 @@
     "confidence"
   ],
   "title": "MeetingAlignmentDecision",
-  "type": "object"
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
 }

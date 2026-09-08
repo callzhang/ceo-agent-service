@@ -11,12 +11,22 @@ from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
     MeetingParticipant,
     MeetingSource,
+    SensitivePrivateMessage,
 )
 from app.service_message_sender import ServiceMessageSender
 
 
 class MeetingDeliveryError(RuntimeError):
     """The delivery target contradicts the authoritative meeting source."""
+
+
+class SensitivePrivateDeliveryResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_id: str
+    target_title: str
+    send_result: dict[str, Any]
+    message_text: str
 
 
 class MeetingDeliveryResult(BaseModel):
@@ -30,6 +40,7 @@ class MeetingDeliveryResult(BaseModel):
     unresolved_mention_names: list[str]
     send_result: dict[str, Any]
     message_text: str = ""
+    sensitive_private_delivery: SensitivePrivateDeliveryResult | None = None
 
 
 class MeetingDeliveryRetry(RuntimeError):
@@ -222,6 +233,13 @@ def deliver_meeting_alignment(
             ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         raise MeetingDeliveryRetry("meeting send failed") from exc
+    sensitive_delivery = _deliver_sensitive_private_message(
+        decision.sensitive_private_message,
+        decision,
+        source,
+        message_sender=message_sender,
+        delivery_key=f"{delivery_key}:sensitive",
+    )
     return MeetingDeliveryResult(
         target_kind=target_kind,
         target_id=target_id,
@@ -230,6 +248,56 @@ def deliver_meeting_alignment(
         unresolved_mention_names=unresolved_names,
         send_result=send_result,
         message_text=message_text,
+        sensitive_private_delivery=sensitive_delivery,
+    )
+
+
+def _deliver_sensitive_private_message(
+    private_message: SensitivePrivateMessage | None,
+    decision: MeetingAlignmentDecision,
+    source: MeetingSource,
+    *,
+    message_sender: ServiceMessageSender,
+    delivery_key: str,
+) -> SensitivePrivateDeliveryResult | None:
+    if private_message is None:
+        return None
+    target = private_message.target
+    matches = [
+        participant
+        for participant in source.participants
+        if participant.user_id == target.direct_user_id
+    ]
+    if len(matches) != 1:
+        raise MeetingDeliveryError(
+            "sensitive private target must be one stable meeting participant"
+        )
+    recipient = matches[0]
+    message_text = meeting_followup_message(
+        decision,
+        source,
+        final_message=private_message.message,
+    )
+    prepared = message_sender.prepare(
+        channel="dingtalk",
+        delivery_key=delivery_key,
+        body=message_text,
+        original_text=source.summary,
+    )
+    try:
+        send_result = message_sender.send_dingtalk_prepared(
+            prepared,
+            conversation_id=None,
+            user_id=recipient.user_id,
+            title=recipient.name,
+        ).provider_result
+    except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
+        raise MeetingDeliveryRetry("sensitive meeting message send failed") from exc
+    return SensitivePrivateDeliveryResult(
+        target_id=recipient.user_id,
+        target_title=recipient.name,
+        send_result=send_result,
+        message_text=prepared.final_body,
     )
 
 

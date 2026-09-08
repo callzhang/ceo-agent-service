@@ -278,6 +278,116 @@ def test_group_delivery_uses_first_candidate_and_real_mentions(tmp_path):
     assert len(dws.sent) == 1
 
 
+def test_mixed_recruiting_summary_sends_sanitized_group_message_and_private_hr_note(
+    tmp_path,
+):
+    dws = FakeDws()
+    sender = ServiceMessageSender(
+        store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws
+    )
+    payload = send_decision(mention_names=[]).model_dump()
+    payload["final_message"] = "招聘站会｜确认下周面试安排和材料负责人。"
+    payload["sensitive_private_message"] = {
+        "target": {
+            "kind": "direct",
+            "conversation_id": "",
+            "direct_user_id": "u-a",
+            "title": "A",
+            "candidates": [],
+        },
+        "message": "人员评价：候选人的管理成熟度仍需进一步验证。",
+        "reason": "人员评价不应发送到产品招聘群。",
+        "recipient_evidence": ["A 是本次会议中负责招聘事项的 HR"],
+    }
+    decision = MeetingAlignmentDecision.model_validate(payload)
+
+    result = deliver_meeting_alignment(
+        decision,
+        meeting_source(),
+        dws,
+        message_sender=sender,
+        delivery_key="meeting-alignment:recruiting:job-1",
+    )
+    replay = deliver_meeting_alignment(
+        decision,
+        meeting_source(),
+        dws,
+        message_sender=sender,
+        delivery_key="meeting-alignment:recruiting:job-1",
+    )
+
+    assert result.sensitive_private_delivery is not None
+    assert result.sensitive_private_delivery.target_id == "u-a"
+    assert dws.sent[0]["conversation_id"] == "cid-first"
+    assert "管理成熟度" not in dws.sent[0]["text"]
+    assert dws.sent[1]["conversation_id"] is None
+    assert dws.sent[1]["user_id"] == "u-a"
+    assert "管理成熟度" in dws.sent[1]["text"]
+    assert replay.send_result == result.send_result
+    assert len(dws.sent) == 2
+
+
+def test_private_retry_reuses_successful_group_delivery(tmp_path):
+    class PrivateFailsOnceDws(FakeDws):
+        def __init__(self):
+            super().__init__()
+            self.private_failures = 0
+
+        def send_message(self, conversation_id, text, **kwargs):
+            self.sent.append(
+                {"conversation_id": conversation_id, "text": text, **kwargs}
+            )
+            if conversation_id is None and self.private_failures == 0:
+                self.private_failures += 1
+                raise DwsError("temporary private delivery failure")
+            return self.send_result
+
+    dws = PrivateFailsOnceDws()
+    sender = ServiceMessageSender(
+        store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws
+    )
+    payload = send_decision(mention_names=[]).model_dump()
+    payload["final_message"] = "招聘站会｜确认下周面试安排。"
+    payload["sensitive_private_message"] = {
+        "target": {
+            "kind": "direct",
+            "conversation_id": "",
+            "direct_user_id": "u-a",
+            "title": "A",
+            "candidates": [],
+        },
+        "message": "人员评价仅私下同步。",
+        "reason": "不得发送到招聘业务群。",
+        "recipient_evidence": ["A 是本次会议中负责招聘事项的 HR"],
+    }
+    decision = MeetingAlignmentDecision.model_validate(payload)
+    delivery_key = "meeting-alignment:recruiting:retry-private"
+
+    with pytest.raises(MeetingDeliveryRetry, match="sensitive meeting"):
+        deliver_meeting_alignment(
+            decision,
+            meeting_source(),
+            dws,
+            message_sender=sender,
+            delivery_key=delivery_key,
+        )
+
+    result = deliver_meeting_alignment(
+        decision,
+        meeting_source(),
+        dws,
+        message_sender=sender,
+        delivery_key=delivery_key,
+    )
+
+    assert result.sensitive_private_delivery is not None
+    assert [item["conversation_id"] for item in dws.sent] == [
+        "cid-first",
+        None,
+        None,
+    ]
+
+
 def test_group_delivery_uses_provider_mentions_without_rewriting_message():
     dws = FakeDws()
     decision = send_decision()

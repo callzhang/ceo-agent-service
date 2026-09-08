@@ -188,7 +188,10 @@ def build_meeting_alignment_prompt(
     target_contract = """每场会议都必须生成并发送一条会议总结，action 只能是 send；不得返回 no_action。
 - 内容优先于参会人数：客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动一律是业务内容，必须返回 audience_scope=business，并使用 DWS 做群发现、按业务承接证据给候选群排序，以最强候选作为 target.kind=group。
 - 不能因为是 1:1、群可访问、议题相似或参会人部分重合而随意私信；业务群发现失败时，使用日历中已确认的会议组织者作为 direct fallback，不得伪装成 no_action，也不得按姓名模糊搜索目标。
-- personal 只适用于真正个人事项，必须返回 audience_scope=personal；只有完整日历 1:1（attendee_evidence=calendar、attendee_roster_complete=true、恰好两名参会人）时，才可以使用 target.kind=direct，目标只能是另一位参会人。其余个人内容也必须产出总结并投递到 Agent 选择的业务群。
+- personal 只适用于整场会议均为个人事项，必须返回 audience_scope=personal；只有完整日历 1:1（attendee_evidence=calendar、attendee_roster_complete=true、恰好两名参会人）时，才可以使用 target.kind=direct，目标只能是另一位参会人。
+- 业务会议中出现人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，必须拆分业务群消息与敏感私聊消息：人员敏感内容不得出现在 final_message；final_message 只保留可公开给业务承接群的结论、安排和行动，敏感部分写入 sensitive_private_message。
+- sensitive_private_message.target 必须是 direct，并使用参会人中经 DWS 实时身份和职责确认的 HR/人员负责人稳定 user_id；没有可确认的 HR/人员负责人时发给当前用户本人。recipient_evidence 写清实时身份或职责依据。不得按姓名猜测接收人，也不得发给被评价人或无关参会人。
+- 普通的工作分工、交付进展、项目风险和业务结果不是人员敏感内容，不得因为出现姓名就从群消息中删除。
 - 没有实质观点分歧时，仍须发送简短的会议结论、已确认事项和下一步；不得因议题平稳而跳过。"""
 
     similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
@@ -201,7 +204,7 @@ def build_meeting_alignment_prompt(
 - 措辞不同、补充信息、探索性讨论或已经自然顺畅推进，不算实质分歧。
 - 沉默不算对齐。只有相关各方明确同意、承诺或复述一致，才把议题标为 aligned；主持人单方面宣布结论不够。
 - topics 中有 aligned 时，trigger_reasons 必须包含 aligned_disagreement；topics 中有 unresolved 时，trigger_reasons 必须包含 unresolved_disagreement。两类议题同时存在时两个 trigger 都必须包含。
-- 每场会议最多生成一条合并消息；多个议题或同时存在分歧和观点解读时必须合并，不得拆成多条。
+- 每场会议最多生成一条业务群消息与一条敏感私聊消息；同一受众的多个议题必须合并，不得按议题拆成多条。
 
 内容合同：
 - aligned 议题：简述各方观点，并总结最终结论及对齐原因。
@@ -214,7 +217,7 @@ def build_meeting_alignment_prompt(
 - 使用历史内容时，historical_sources 必须逐项记录来源。未经 memory_recall 核验时，唯一允许的历史来源是服务端注入的工作人格来源 `{work_profile_source}`；不使用历史内容则返回空列表。
 - 能只靠会议证据解释时，historical_sources 必须为空数组。只有实际引用了工作人格中的具体判断或案例时才记录工作人格来源。
 - 记录注入的工作人格来源时，historical_sources 的数组元素必须逐字填写 `{work_profile_source}`，不得改写、加标题或写成说明性文字。
-- final_message 不要暴露工具、审计过程、本地路径或置信度。
+- final_message 和 sensitive_private_message.message 都不要暴露工具、审计过程、本地路径或置信度。
 
 目标合同：
 {target_contract}
@@ -222,7 +225,7 @@ def build_meeting_alignment_prompt(
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守 schema，不添加字段。
 - action 固定为 send；final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同。
-- 最终只生成一条可直接发送的合并消息。
+- 没有人员敏感内容时 sensitive_private_message 必须为 null；存在混合内容时同时生成脱敏后的 final_message 和独立 sensitive_private_message。
 
 服务端注入的工作人格（仅作解释辅助，不能创造会议立场）：
 {work_profile or "（无可用工作人格）"}
@@ -313,6 +316,18 @@ def _validate_source_aware_target(
             raise MeetingAlignmentTargetError(
                 "business send requires a group target"
             )
+        private_message = decision.sensitive_private_message
+        if private_message is not None:
+            matches = [
+                participant
+                for participant in source.participants
+                if participant.user_id
+                == private_message.target.direct_user_id
+            ]
+            if len(matches) != 1:
+                raise MeetingAlignmentTargetError(
+                    "sensitive private target must identify one meeting participant"
+                )
         return
     if (
         source.attendee_evidence != "calendar"
