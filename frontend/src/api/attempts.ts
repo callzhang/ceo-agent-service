@@ -44,6 +44,7 @@ export interface AttemptDetail {
   trigger: { title: string; text: string };
   audit_explanation: { title: string; text: string };
   generated_reply: { title: string; text: string };
+  references: Array<{ title: string; source: string; relevance: string }>;
   feedback: { reviewer_feedback: string; corrected_reply: string; feedback_url: string; events: AttemptFeedbackEvent[] };
   decision_options: Array<{ label: string; instruction: string; consequence: string; url: string }>;
   audit_summary: string;
@@ -67,6 +68,7 @@ export interface AttemptDetail {
     feedback_url: string;
     consumer_url: string;
     audit_url: string;
+    agent_url: string;
     dingtalk_url: string;
     wechat_open_url?: string;
     delivery_action_label?: string;

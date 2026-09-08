@@ -900,6 +900,12 @@ h1, h2, h3, p { margin-top: 0; }
 .feedback-iteration-input { min-height: 38px; max-height: 240px; resize: vertical; field-sizing: content; }
 .attempt-feedback-card button { justify-self: start; min-height: 38px; padding: 0 13px; border: 1px solid var(--accent); border-radius: 9px; color: white; background: var(--accent); cursor: pointer; font-weight: 680; }
 .attempt-feedback-card button:disabled { cursor: wait; opacity: .55; }
+.attempt-references-card { display: grid; gap: 10px; }
+.attempt-references-card h2 { margin: 0; }
+.attempt-references-card ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.attempt-references-card li { display: grid; gap: 3px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
+.attempt-references-card li span, .attempt-references-card li small { color: var(--ink-soft); }
+.attempt-references-card li small { font-size: .78rem; }
 .attempt-decision-card { display: grid; gap: 10px; }
 .attempt-decision-card > p { margin-bottom: 2px; color: var(--ink-soft); }
 .attempt-decision-option { display: grid; gap: 4px; width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: var(--surface); text-align: left; cursor: pointer; }

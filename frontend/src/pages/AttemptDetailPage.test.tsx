@@ -41,7 +41,7 @@ const detail = {
   action_pills: [{ label: "💬 Completed", status: "completed" }],
   quality_warnings: [],
   context_only_info: "",
-  tool_uses: [],
+  references: [{ title: "岗位画像", source: "面试/岗位画像.md · document", relevance: "判断岗位要求" }],
   agent_execution_record: true,
   revision_count: 0,
   oa: { process_instance_id: "", task_id: "", url: "", action: "", remark: "", result: {} },
@@ -55,6 +55,7 @@ const detail = {
     feedback_url: "/api/console/history/8448/feedback",
     consumer_url: "/attempts/8448/execution/consumer",
     audit_url: "/attempts/8448/execution/audit",
+    agent_url: "/codex/session-8448",
     dingtalk_url: "",
     terminal: true,
     action_label: "无需操作",
@@ -98,6 +99,11 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("对方反馈内容")).toBeInTheDocument();
     expect(screen.getByText("回复已经解决问题")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Audit summary" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "参考资料" })).toBeInTheDocument();
+    expect(screen.getByText("岗位画像")).toBeInTheDocument();
+    expect(screen.getByText("判断岗位要求")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Tool uses" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看 Agent session" })).toHaveAttribute("href", "/codex/session-8448");
     expect(screen.queryByRole("heading", { name: "Draft reply (raw Codex reply)" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Runtime attempts" })).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-grid")).toBeInTheDocument();

@@ -436,11 +436,17 @@ def test_attempt_detail_api_preserves_legacy_business_sections(tmp_path: Path):
     }
     assert item["audit_summary"] == "查看岗位画像后建议先按A方案走。"
     assert item["draft_reply"] == "先按A方案走"
+    assert item["references"] == [{
+        "title": "面试/岗位画像.md",
+        "source": "面试/岗位画像.md",
+        "relevance": "判断岗位要求",
+    }]
     assert item["feedback"]["feedback_url"].endswith(f"/{attempt_id}/feedback")
     assert item["actions"]["can_submit_feedback"] is True
     assert item["actions"]["can_rerun"] is False
     assert item["actions"]["terminal"] is True
     assert item["actions"]["dingtalk_url"].startswith("/open-dingtalk-popup?")
+    assert item["actions"]["agent_url"] == "/codex/session-1"
 
 
 def test_feedback_direct_resolve_requires_batch(tmp_path: Path):

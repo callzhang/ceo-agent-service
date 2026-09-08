@@ -63,6 +63,20 @@ def _runtime_payload(attempts: list[Any]) -> list[dict[str, Any]]:
     return result
 
 
+def _references_payload(attempt: Any) -> list[dict[str, str]]:
+    """Return human-readable materials, never raw tool calls, for an Attempt."""
+    from app.audit_web import _audit_document_uses_for_attempt
+
+    references = []
+    for document in _audit_document_uses_for_attempt(attempt):
+        title = normalize_display_value(document.get("title"))
+        source = normalize_display_value(document.get("source"))
+        relevance = normalize_display_value(document.get("relevance"))
+        if title or source or relevance:
+            references.append({"title": title, "source": source, "relevance": relevance})
+    return references
+
+
 def _feedback_payload(events: list[Any]) -> list[dict[str, str]]:
     from app.audit_web import _feedback_rating_stars_for_rating
 
@@ -116,6 +130,9 @@ def _action_links(
         (run for run in reversed(agent_runs) if str(getattr(getattr(run, "role", None), "value", getattr(run, "role", ""))) == "audit" and getattr(run, "codex_session_id", "")),
         None,
     )
+    session_id = str(getattr(attempt, "codex_session_id", "") or "").strip()
+    if not session_id:
+        session_id = str(getattr(audit or consumer, "codex_session_id", "") or "").strip()
     delivery_action_label = ""
     delivery_action_url = ""
     if wechat_delivery is not None:
@@ -141,6 +158,7 @@ def _action_links(
         "feedback_url": f"/api/console/history/{int(attempt.id)}/feedback",
         "consumer_url": f"/attempts/{int(attempt.id)}/execution/consumer" if consumer else "",
         "audit_url": f"/attempts/{int(attempt.id)}/execution/audit" if audit else "",
+        "agent_url": f"/codex/{quote(session_id, safe='')}" if session_id else "",
         "dingtalk_url": dingtalk_url,
         "wechat_open_url": (
             f"/api/console/history/{int(attempt.id)}/open-wechat-message"
@@ -274,6 +292,7 @@ def build_attempt_detail(store: Any, attempt_id: int) -> tuple[int, dict[str, An
         },
         "audit_explanation": {"title": "审计说明", "text": normalize_display_value(audit_explanation)},
         "generated_reply": {"title": "生成回复", "text": normalize_display_value(_attempt_detail_reply_text(attempt, sent_reply))},
+        "references": _references_payload(attempt),
         "feedback": {
             "reviewer_feedback": normalize_display_value(attempt.reviewer_feedback),
             "corrected_reply": normalize_display_value(attempt.corrected_reply_text),
