@@ -1009,9 +1009,6 @@ def register_email_routes(
         item = email_store.get_classification(classification_id)
         if item is None:
             return error_response("not_found", "Email classification not found", 404)
-        safe_item = {
-            key: value for key, value in item.items() if key != "message_text"
-        }
         provider_state_reader = getattr(
             email_store, "get_provider_classification_state", None
         )
@@ -1022,7 +1019,7 @@ def register_email_routes(
         )
         return {
             "ok": True,
-            "item": {**safe_item, "id": str(item["id"])},
+            "item": {**item, "id": str(item["id"])},
             "observability": email_store.list_email_classification_observability(
                 classification_id
             ),

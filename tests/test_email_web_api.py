@@ -679,7 +679,7 @@ def test_email_learning_registry_issues_never_echo_corrupt_model_id(
     ]
 
 
-def test_email_classification_list_and_detail_expose_only_attachment_metadata(
+def test_email_classification_list_excludes_body_and_detail_exposes_persisted_text(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "classification-attachment-metadata.sqlite3"
@@ -745,7 +745,9 @@ def test_email_classification_list_and_detail_expose_only_attachment_metadata(
     assert detailed.status_code == 200
     assert listed.json()["items"][0]["attachment_metadata"] == expected_metadata
     assert detailed.json()["item"]["attachment_metadata"] == expected_metadata
-    assert "message_text" not in detailed.json()["item"]
+    assert detailed.json()["item"]["message_text"] == (
+        "正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容"
+    )
     assert detailed.json()["item"]["cc"] == "copy@example.com"
     assert detailed.json()["item"]["recipients"] == ["recipient@example.com"]
     assert "message_text" not in listed.json()["items"][0]

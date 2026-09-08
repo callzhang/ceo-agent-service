@@ -287,8 +287,9 @@ consumer、训练三个组件都至少成功完成一轮后才发布 `ready`。
 
 只读 Console API 提供当前 provider-derived category 或 unavailable、文件夹绑定、描述/训练 snapshot
 版本、样本与组数量、逐类别历史资格、连续晋升证据、active mode/model、时延与 fallback、动作回读
-和退订 continuation。API 不暴露完整退订 URL、OTP、secret、raw embedding、完整正文、附件字节或
-浏览器 session 私密数据。外部配置的 embedding model/revision 不原样投影，也不返回可被离线枚举的
+和退订 continuation。分类列表不暴露完整正文；用户打开单封邮件时，详情接口返回已持久化的文本
+正文及收件人信息。API 不暴露完整退订 URL、OTP、secret、raw embedding、附件字节或浏览器 session
+私密数据。外部配置的 embedding model/revision 不原样投影，也不返回可被离线枚举的
 摘要；API 仅返回固定受控占位符。canonical model/snapshot ID 则按生产构造格式校验。当前 category
 来自扫描进程持续写入的 latest-provider-observation 投影，
 不读取冻结 snapshot，API 也不会额外连接邮箱；冻结数据只以 training snapshot 字段展示。SMTP、
