@@ -31,4 +31,9 @@ describe("workbench dark color contract", () => {
     const scheduledStyles = workbenchStyles.slice(workbenchStyles.indexOf(".scheduled-tasks-page"));
     expect(scheduledStyles).not.toMatch(/(?:background|color|border-color):\s*(?:white|#[0-9a-f]{3,8})\b/i);
   });
+
+  it("lets only the scheduled-task route grow beyond the viewport on long forms", () => {
+    expect(workbenchStyles).toMatch(/\.console-root\.scheduled-tasks-route\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*100vh;[^}]*\}/);
+    expect(workbenchStyles).toMatch(/\.console-root\s*\{[^}]*height:\s*100vh;[^}]*min-height:\s*0;/);
+  });
 });

@@ -134,6 +134,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   background: var(--canvas);
 }
 
+.console-root.scheduled-tasks-route {
+  height: auto;
+  min-height: 100vh;
+}
+
 .console-page {
   min-height: calc(100vh - 52px);
   padding: 28px;

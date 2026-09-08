@@ -17,6 +17,10 @@ not restarted.
   Protocol. It verifies the complete wrapped heading copy, the new-task
   button's right rounded edge, both workspace borders, and the list-then-editor
   single column without hiding overflow.
+- `scheduled-tasks-dark-390-bottom.png`: the same 390 px browser after opening
+  the long new-task editor and scrolling to the document bottom. It verifies
+  that the form controls, disabled/error state, and canvas below the form stay
+  dark for the full scrollable document.
 
 ## Repeatable 390 px check
 
@@ -27,7 +31,8 @@ cd frontend
 npm run verify:scheduled-tasks-viewport -- \
   --url http://127.0.0.1:62371/scheduled-tasks \
   --width 390 --height 844 \
-  --screenshot ../docs/evidence/agent-cron-task9/scheduled-tasks-dark-390.png
+  --screenshot ../docs/evidence/agent-cron-task9/scheduled-tasks-dark-390.png \
+  --bottom-screenshot ../docs/evidence/agent-cron-task9/scheduled-tasks-dark-390-bottom.png
 ```
 
 The real-browser check fails unless the document scroll width is at most the
@@ -37,6 +42,14 @@ overflow clipping, so a passing result proves fit rather than masked content.
 The same check asserts that the Scheduled Tasks route computed the scoped dark
 color scheme. Other routes retain the existing light tokens even when the
 operating system is dark.
+
+For the bottom check, the script opens the new-task editor, confirms that the
+page is taller than the viewport, scrolls to the actual document bottom, and
+requires the Scheduled Tasks route to cover that full document height. The
+bottom pixel must resolve to a dark background and the expanded editor must
+still have no horizontal document overflow. The captured run measured a
+1423 px document, `scrollY` 579 px, route bottom 1422.95 px, and bottom canvas
+`rgb(17, 20, 17)`.
 
 The screenshot is first held in memory, then written to a temporary file in
 the evidence directory and atomically renamed only after every assertion

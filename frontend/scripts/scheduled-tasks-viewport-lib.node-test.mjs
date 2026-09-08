@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  assertBottomCoverage,
   cleanupBrowserSession,
   commitScreenshotAfterValidation,
   preservePrimaryError,
@@ -106,4 +107,21 @@ test("cleanup failures never replace the original assertion error", () => {
   const cleanupError = new Error("profile cleanup failed");
   assert.equal(preservePrimaryError(assertionError, cleanupError), assertionError);
   assert.equal(preservePrimaryError(null, cleanupError), cleanupError);
+});
+
+test("long editor must keep the dark route canvas under the bottom viewport", () => {
+  assert.doesNotThrow(() => assertBottomCoverage({
+    innerHeight: 844,
+    documentScrollHeight: 1420,
+    scrollY: 576,
+    routeDocumentBottom: 1420,
+    bottomBackground: "rgb(17, 20, 17)",
+  }));
+  assert.throws(() => assertBottomCoverage({
+    innerHeight: 844,
+    documentScrollHeight: 1420,
+    scrollY: 576,
+    routeDocumentBottom: 844,
+    bottomBackground: "rgb(246, 246, 243)",
+  }), /does not cover the document bottom/);
 });

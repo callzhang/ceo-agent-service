@@ -67,6 +67,31 @@ export function assertScheduledTasksGeometry(geometry, viewportWidth) {
   assertInsideViewport("Workspace", geometry.workspace, viewportWidth, 12);
 }
 
+function isDarkRgb(color) {
+  const channels = color.match(/[\d.]+/g)?.slice(0, 3).map(Number);
+  if (!channels || channels.length !== 3) return false;
+  const perceivedLightness = (channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722) / 255;
+  return perceivedLightness < 0.35;
+}
+
+export function assertBottomCoverage(geometry) {
+  if (geometry.documentScrollHeight <= geometry.innerHeight) {
+    throw new Error(`New-task editor did not produce a long page: ${JSON.stringify(geometry)}`);
+  }
+  if (geometry.routeDocumentBottom < geometry.documentScrollHeight - 1) {
+    throw new Error(`Scheduled Tasks route does not cover the document bottom: ${JSON.stringify(geometry)}`);
+  }
+  if (geometry.scrollY + geometry.innerHeight < geometry.documentScrollHeight - 1) {
+    throw new Error(`Browser did not reach the document bottom: ${JSON.stringify(geometry)}`);
+  }
+  if (geometry.documentScrollWidth > geometry.innerWidth || geometry.bodyScrollWidth > geometry.innerWidth) {
+    throw new Error(`Long editor scrolls horizontally: ${JSON.stringify(geometry)}`);
+  }
+  if (!isDarkRgb(geometry.bottomBackground)) {
+    throw new Error(`Bottom viewport exposed a non-dark canvas: ${JSON.stringify(geometry)}`);
+  }
+}
+
 export function commitScreenshotAfterValidation({
   geometry,
   screenshotData,
@@ -76,6 +101,10 @@ export function commitScreenshotAfterValidation({
   assertScheduledTasksGeometry(geometry, viewportWidth);
   if (!screenshotPath) return;
 
+  writeScreenshotAtomically(screenshotPath, screenshotData);
+}
+
+export function writeScreenshotAtomically(screenshotPath, screenshotData) {
   const target = resolve(screenshotPath);
   const temporary = join(dirname(target), `.${basename(target)}.${process.pid}.${randomUUID()}.tmp`);
   try {

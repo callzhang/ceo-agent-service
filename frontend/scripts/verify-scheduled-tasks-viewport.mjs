@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  assertBottomCoverage,
   assertScheduledTasksGeometry,
   cleanupBrowserSession,
   commitScreenshotAfterValidation,
   preservePrimaryError,
+  writeScreenshotAtomically,
 } from "./scheduled-tasks-viewport-lib.mjs";
 
 const args = process.argv.slice(2);
@@ -19,12 +21,14 @@ function option(name, fallback = "") {
 
 const url = option("--url");
 const screenshotPath = option("--screenshot");
+const bottomScreenshotPath = option("--bottom-screenshot");
+const checkBottom = args.includes("--check-bottom") || Boolean(bottomScreenshotPath);
 const viewport = {
   width: Number(option("--width", "390")),
   height: Number(option("--height", "844")),
 };
 if (!url) {
-  throw new Error("Usage: node scripts/verify-scheduled-tasks-viewport.mjs --url <url> [--width 390] [--height 844] [--screenshot <path>]");
+  throw new Error("Usage: node scripts/verify-scheduled-tasks-viewport.mjs --url <url> [--width 390] [--height 844] [--screenshot <path>] [--check-bottom] [--bottom-screenshot <path>]");
 }
 if (!Number.isInteger(viewport.width) || !Number.isInteger(viewport.height) || viewport.width <= 0 || viewport.height <= 0) {
   throw new Error("Viewport width and height must be positive integers.");
@@ -183,23 +187,82 @@ try {
   });
   const geometry = result.result.value;
   let screenshotData = null;
+  let bottomScreenshotData = null;
 
   if (screenshotPath) {
     const screenshot = await client.call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
     screenshotData = Buffer.from(screenshot.data, "base64");
   }
 
-  if (screenshotPath) {
-    commitScreenshotAfterValidation({
-      geometry,
-      screenshotData,
-      screenshotPath,
-      viewportWidth: viewport.width,
+  assertScheduledTasksGeometry(geometry, viewport.width);
+
+  let bottomGeometry = null;
+  if (checkBottom) {
+    const clicked = await client.call("Runtime.evaluate", {
+      expression: `(() => {
+        const button = [...document.querySelectorAll('button')]
+          .find((candidate) => candidate.textContent.trim() === '新建任务');
+        button?.click();
+        return Boolean(button);
+      })()`,
+      returnByValue: true,
     });
-  } else {
-    assertScheduledTasksGeometry(geometry, viewport.width);
+    if (!clicked.result.value) throw new Error("New-task button was not found.");
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const ready = await client.call("Runtime.evaluate", {
+        expression: "Boolean(document.querySelector('.scheduled-task-form'))",
+        returnByValue: true,
+      });
+      if (ready.result.value) break;
+      if (attempt === 49) throw new Error("New-task editor did not open.");
+      await pause(100);
+    }
+    await client.call("Runtime.evaluate", {
+      expression: "window.scrollTo(0, document.documentElement.scrollHeight)",
+    });
+    await pause(150);
+    const bottomResult = await client.call("Runtime.evaluate", {
+      expression: `(() => {
+        const route = document.querySelector('.scheduled-tasks-route');
+        const bottomElement = document.elementFromPoint(innerWidth / 2, innerHeight - 1);
+        const effectiveBackground = (element) => {
+          let candidate = element;
+          while (candidate) {
+            const background = getComputedStyle(candidate).backgroundColor;
+            if (background !== 'rgba(0, 0, 0, 0)' && background !== 'transparent') return background;
+            candidate = candidate.parentElement;
+          }
+          return getComputedStyle(document.documentElement).backgroundColor;
+        };
+        return {
+          innerWidth,
+          innerHeight,
+          documentScrollWidth: document.documentElement.scrollWidth,
+          bodyScrollWidth: document.body.scrollWidth,
+          documentScrollHeight: document.documentElement.scrollHeight,
+          scrollY,
+          routeDocumentBottom: route.getBoundingClientRect().bottom + scrollY,
+          bottomBackground: effectiveBackground(bottomElement),
+          bottomElement: bottomElement?.tagName.toLowerCase() + (bottomElement?.className ? '.' + String(bottomElement.className).trim().replace(/\\s+/g, '.') : ''),
+        };
+      })()`,
+      returnByValue: true,
+    });
+    bottomGeometry = bottomResult.result.value;
+    assertBottomCoverage(bottomGeometry);
+    if (bottomScreenshotPath) {
+      const screenshot = await client.call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+      bottomScreenshotData = Buffer.from(screenshot.data, "base64");
+    }
   }
-  process.stdout.write(`${JSON.stringify(geometry, null, 2)}\n`);
+
+  if (screenshotPath) {
+    commitScreenshotAfterValidation({ geometry, screenshotData, screenshotPath, viewportWidth: viewport.width });
+  }
+  if (bottomScreenshotPath) {
+    writeScreenshotAtomically(bottomScreenshotPath, bottomScreenshotData);
+  }
+  process.stdout.write(`${JSON.stringify({ top: geometry, bottom: bottomGeometry }, null, 2)}\n`);
 } catch (error) {
   primaryError = error;
 } finally {
