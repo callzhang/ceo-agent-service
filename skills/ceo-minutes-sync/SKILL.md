@@ -19,9 +19,9 @@ In `<working-directory>/data/ai-minutes-sync/`, keep per-`taskUuid` directories,
 
 ## One run
 
-1. Load the cursor. Discover with `--page-all` until `data.complete=true`, following `meta.pagination.next_token`. Retry saved `permission_pending` IDs even if absent from the list.
-2. Fresh-read every relevant item needing content: basic and summary reads succeed, and transcript pagination reaches `data.complete=true`. Partial, failed, missing, repeated-cursor, or incomplete results are `failed` with `freshness_unknown`; retain the prior item cursor.
-3. Archive `detail.data.basic`, `detail.data.summary`, and `transcript.data.paragraphs` as UTF-8 JSON with sorted keys, compact `,`/`:` separators, unescaped Unicode, and no trailing newline; hash those exact archived bytes. Store hashes and `fetched_at` in the manifest. This proves only what was fetched then; it does not establish a remote revision or continued currency after that fetch.
+1. Load the cursor. Discover with `--page-all`; the list is complete only when items come from `data.minutes`, `data.complete=true`, and `meta.pagination.endpoint_exhausted=true`. Follow `meta.pagination.next_token` while present. Retry saved `permission_pending` IDs even if absent from the list.
+2. Fresh-read every relevant item needing content. The detail is the top-level envelope: permission failures enter the restricted-item decision first; otherwise require `complete=true`, `failureCount=0`, and successful `basic.result` plus `summary.result`. The transcript outer envelope must be successful and its pagination must reach both `data.complete=true` and `meta.pagination.endpoint_exhausted=true`. Other partial, failed, missing, repeated-cursor, or incomplete results are `failed` with `freshness_unknown`; retain the prior item cursor.
+3. Archive `basic.result`, `summary.result`, and transcript `data.paragraphList` as UTF-8 JSON with sorted keys, compact `,`/`:` separators, unescaped Unicode, and no trailing newline; hash those exact archived bytes. Store hashes and `fetched_at` in the manifest. This proves only what was fetched then; it does not establish a remote revision or continued currency after that fetch.
 4. New/different complete bytes are `synced`/`fresh_fetch`; complete bytes matching the verified manifest are `skipped`/`unchanged_fetched`. Both may advance the item cursor after the complete fetch.
 5. Clear `permission_pending` only after recovery completes that sequence.
 
@@ -34,21 +34,6 @@ Use trusted visible title, owner, participants, time, and source context:
 - Relevance unknown: no request; `permission_pending`/`needs_review`, blocking success.
 
 A submitted access request remains `permission_pending`; submission is not synchronized content.
-
-## Recorded-envelope acceptance
-
-Cases correspond to the recorded DWS fixture. “Advance” means item cursor movement.
-
-| Case | Outcome | Advance | Request | Evidence |
-| --- | --- | --- | --- | --- |
-| `complete_new` | `synced` | yes | no | `fresh_fetch` |
-| `complete_unchanged` | `skipped` | yes | no | `unchanged_fetched` |
-| `transcript_incomplete` | `failed` | no | no | `freshness_unknown` |
-| `complete_without_remote_version` | `synced` | yes | no | `fresh_fetch` |
-| `permission_recovered` | `synced` | yes | no | `permission_recovered` |
-| `restricted_relevant_authorized` | `permission_pending` | no | yes | `request_pending` |
-| `restricted_out_of_scope` | `skipped` | yes | no | `out_of_scope_metadata` |
-| `restricted_relevance_unknown` | `permission_pending` | no | no | `needs_review` |
 
 ## Result ledger
 

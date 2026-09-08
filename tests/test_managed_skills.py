@@ -220,6 +220,13 @@ def test_concurrent_changed_repository_import_appends_only_one_revision(
     path = tmp_path / "concurrent-changed-import.sqlite3"
     store = AutoReplyStore(path)
     import_repository_managed_skills(store)
+    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
+    assert skill is not None
+    settings_revision = store.create_managed_skill_revision(
+        skill.id,
+        SKILL_V1.replace("ceo-test", "ceo-minutes-sync"),
+        source="settings",
+    )
     current_content = dict(managed_skills_module._repository_managed_skills())[
         "ceo-minutes-sync"
     ]
@@ -253,10 +260,63 @@ def test_concurrent_changed_repository_import_appends_only_one_revision(
 
     assert errors == []
     assert all(not thread.is_alive() for thread in threads)
-    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
-    assert skill is not None
     revisions = store.list_managed_skill_revisions(skill.id)
     assert sum(revision.content == changed_content for revision in revisions) == 1
+    repository_revision = next(
+        revision for revision in revisions if revision.content == changed_content
+    )
+    assert repository_revision.parent_revision_id == settings_revision.id
+    assert settings_revision in revisions
+
+
+def test_repository_import_appends_changed_bytes_after_settings_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = AutoReplyStore(tmp_path / "repository-settings-repository.sqlite3")
+    first_content = dict(managed_skills_module._repository_managed_skills())[
+        "ceo-minutes-sync"
+    ]
+    monkeypatch.setattr(
+        managed_skills_module,
+        "_repository_managed_skills",
+        lambda: (("ceo-minutes-sync", first_content),),
+    )
+    first = import_repository_managed_skills(store)[0]
+    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
+    assert skill is not None
+    settings_revision = store.create_managed_skill_revision(
+        skill.id,
+        first_content.replace("# CEO Minutes Sync", "# Settings variant", 1),
+        source="settings",
+    )
+    config_before = store.get_pending_or_active_runtime_skill_config()
+    assert config_before is not None
+    bindings_before = store.list_runtime_skill_bindings(config_before.id)
+    changed_content = first_content.replace(
+        "# CEO Minutes Sync", "# CEO Minutes Sync\n\nRepository revision after settings", 1
+    )
+    monkeypatch.setattr(
+        managed_skills_module,
+        "_repository_managed_skills",
+        lambda: (("ceo-minutes-sync", changed_content),),
+    )
+
+    changed = import_repository_managed_skills(store)
+    unchanged = import_repository_managed_skills(store)
+
+    assert len(changed) == 1
+    repository_revision = store.get_managed_skill_revision(changed[0].revision_id)
+    assert repository_revision is not None
+    assert repository_revision.content == changed_content
+    assert repository_revision.parent_revision_id == settings_revision.id
+    assert store.list_managed_skill_revisions(skill.id) == (
+        store.get_managed_skill_revision(first.revision_id),
+        settings_revision,
+        repository_revision,
+    )
+    assert unchanged == ()
+    assert store.get_pending_or_active_runtime_skill_config() == config_before
+    assert store.list_runtime_skill_bindings(config_before.id) == bindings_before
 
 
 def test_repository_import_reconciles_partial_service_owned_records_into_initial_config(

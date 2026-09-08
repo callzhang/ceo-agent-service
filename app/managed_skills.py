@@ -196,10 +196,11 @@ def import_repository_managed_skills(
 ) -> tuple[RepositoryManagedSkillImport, ...]:
     """Import only this service's bundled repository Skills once.
 
-    A pre-existing managed name is deliberately left alone.  It may be a local
-    user-created Skill, and importing over it would turn an import into an
-    overwrite.  Repository import never scans global agent, plugin, or runtime
-    directories.
+    A pre-existing name with no repository revision is deliberately left alone
+    because it is user-owned. Once repository ownership exists, changed checked-in
+    bytes append a repository revision without replacing Settings revisions or
+    runtime bindings. Repository import never scans global agent, plugin, or
+    runtime directories.
     """
     with store.managed_skill_baseline_initialization_lock():
         return _import_repository_managed_skills_locked(store)
@@ -222,9 +223,8 @@ def _import_repository_managed_skills_locked(
             )
             if not repository_revisions:
                 continue
-            if len(repository_revisions) != len(revisions):
-                baseline.append((name, revisions[-1]))
-                continue
+            latest_revision = revisions[-1]
+            has_settings_revisions = len(repository_revisions) != len(revisions)
             digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
             current = next(
                 (
@@ -241,7 +241,7 @@ def _import_repository_managed_skills_locked(
                     source=REPOSITORY_IMPORT_SOURCE,
                 )
                 imported.append((name, current))
-            baseline.append((name, current))
+            baseline.append((name, latest_revision if has_settings_revisions else current))
             continue
         skill = store.create_managed_skill(name, name)
         revision = store.create_managed_skill_revision(

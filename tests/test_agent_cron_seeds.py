@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import hashlib
 from pathlib import Path
 
+import pytest
+
+import app.managed_skills as managed_skills_module
 from app.agent_cron.options import ScheduledTaskOptionService
 from app.agent_cron.seeds import seed_scheduled_tasks
 from app.agent_runtime_contracts import (
@@ -118,6 +122,96 @@ def test_seed_is_idempotent_and_preserves_user_edits(tmp_path: Path) -> None:
 
     assert repeated == (edited,)
     assert store.list_scheduled_tasks() == (edited,)
+
+
+def test_existing_migration_task_is_not_rebound_after_repository_revision_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = AutoReplyStore(tmp_path / "existing-migration-revision.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    original = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path, now=NOW
+    )[0]
+    original_ref = original.skill_refs[0]
+    original_config = store.get_pending_or_active_runtime_skill_config()
+    assert original_config is not None
+    bindings_before = store.list_runtime_skill_bindings(original_config.id)
+    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
+    assert skill is not None
+    store.create_managed_skill_revision(
+        skill.id,
+        "---\nname: ceo-minutes-sync\ndescription: Use when testing settings.\n"
+        "metadata:\n  managed_by: ceo-agent-service\n---\n\n# Settings\n",
+        source="settings",
+    )
+    original_repository = managed_skills_module._repository_managed_skills
+    changed_content = managed_skills_module.repository_managed_skill_content(
+        "ceo-minutes-sync"
+    ).replace("# CEO Minutes Sync", "# CEO Minutes Sync\n\nNew repository bytes", 1)
+    monkeypatch.setattr(
+        managed_skills_module,
+        "_repository_managed_skills",
+        lambda: tuple(
+            (name, changed_content if name == "ceo-minutes-sync" else content)
+            for name, content in original_repository()
+        ),
+    )
+    import_repository_managed_skills(store)
+
+    repeated = seed_scheduled_tasks(
+        store=store,
+        options=options,
+        working_directory=tmp_path / "different",
+        now=NOW + timedelta(minutes=1),
+    )
+
+    assert repeated == (original,)
+    assert repeated[0].skill_refs == (original_ref,)
+    assert store.get_pending_or_active_runtime_skill_config() == original_config
+    assert store.list_runtime_skill_bindings(original_config.id) == bindings_before
+
+
+def test_new_seed_binds_changed_repository_sha_after_settings_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = AutoReplyStore(tmp_path / "new-seed-current-repository.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
+    assert skill is not None
+    store.create_managed_skill_revision(
+        skill.id,
+        "---\nname: ceo-minutes-sync\ndescription: Use when testing settings.\n"
+        "metadata:\n  managed_by: ceo-agent-service\n---\n\n# Settings\n",
+        source="settings",
+    )
+    original_repository = managed_skills_module._repository_managed_skills
+    changed_content = managed_skills_module.repository_managed_skill_content(
+        "ceo-minutes-sync"
+    ).replace("# CEO Minutes Sync", "# CEO Minutes Sync\n\nCurrent repository bytes", 1)
+    changed_sha = hashlib.sha256(changed_content.encode("utf-8")).hexdigest()
+    monkeypatch.setattr(
+        managed_skills_module,
+        "_repository_managed_skills",
+        lambda: tuple(
+            (name, changed_content if name == "ceo-minutes-sync" else content)
+            for name, content in original_repository()
+        ),
+    )
+    import_repository_managed_skills(store)
+
+    task = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path, now=NOW
+    )[0]
+
+    revision = store.get_managed_skill_revision(
+        task.skill_refs[0].managed_revision_id
+    )
+    assert revision is not None
+    assert revision.sha256 == changed_sha
+    assert revision.content == changed_content
+    assert revision.source == REPOSITORY_IMPORT_SOURCE
+    assert task.enabled is False
+    assert "managed_revision_not_loaded" in task.prompt
 
 
 def test_seed_without_healthy_runtime_is_disabled_with_visible_reason(
