@@ -250,8 +250,9 @@ class ScheduledTaskSnapshot:
         }
         if not isinstance(payload, dict) or set(payload) != expected_keys:
             raise ValueError("scheduled task snapshot has invalid fields")
-        if not isinstance(payload["task_id"], int) or not isinstance(
-            payload["task_version"], int
+        if (
+            type(payload["task_id"]) is not int
+            or type(payload["task_version"]) is not int
         ):
             raise ValueError("scheduled task snapshot identity is invalid")
         if payload["task_id"] <= 0 or payload["task_version"] <= 0:

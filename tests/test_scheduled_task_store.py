@@ -435,6 +435,8 @@ def test_run_snapshot_rejects_corrupt_persisted_json(tmp_path: Path) -> None:
         "task_mismatch",
         "position_gap",
         "unknown_source",
+        "task_id_bool",
+        "task_version_bool",
     ),
 )
 def test_run_snapshot_rejects_semantically_tampered_skill_refs(
@@ -459,8 +461,12 @@ def test_run_snapshot_rejects_semantically_tampered_skill_refs(
         ref["scheduled_task_id"] = task.id + 1
     elif tampering == "position_gap":
         ref["position"] = 2
-    else:
+    elif tampering == "unknown_source":
         ref["skill_source"] = "unknown"
+    elif tampering == "task_id_bool":
+        payload["task_id"] = True
+    else:
+        payload["task_version"] = True
     tampered_json = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     with sqlite3.connect(store.path) as db:
         db.execute(
