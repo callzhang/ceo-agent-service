@@ -108,12 +108,27 @@ def run_consume_once(store, runner, reader, account) -> int:
     return WechatReplyConsumer(store, runner, reader, account).run_once()
 
 
-def recover_before_sender(store, reader, account=None) -> list:
+def recover_before_sender(store, reader, account=None, sender=None) -> list:
     """Recover safe pre-action failures and reconcile uncertain sends."""
     from app.wechat.accessibility import reconcile_incomplete_deliveries
 
     store.supersede_failed_wechat_deliveries_with_newer_sent()
     store.requeue_unperformed_wechat_deliveries()
+    # Do not probe WeChat while idle. This passive check is only made when a
+    # previously unsent delivery is specifically blocked on the macOS grant.
+    # Once the dedicated Sender confirms that the grant changed, it gets one
+    # new dispatch; unrelated failures retain their bounded retry history.
+    permission_blocked = any(
+        delivery.error == "accessibility_not_trusted"
+        for delivery in store.list_wechat_deliveries_by_status("failed")
+    )
+    if permission_blocked and sender is not None:
+        try:
+            readiness = sender.check_readiness()
+        except Exception:
+            readiness = "unknown"
+        if readiness != "accessibility_not_trusted":
+            store.requeue_wechat_deliveries_after_accessibility_recovery()
     return reconcile_incomplete_deliveries(store, reader, account=account)
 
 
@@ -175,7 +190,12 @@ def process_ready_wechat_deliveries(
     """Auto mode + sender enabled: send every ready_to_send delivery. Confirm mode
     (or sender disabled): send nothing — hold them for explicit approval. Returns
     the number sent."""
-    recover_before_sender(store, reader, account=account)
+    recover_before_sender(
+        store,
+        reader,
+        account=account,
+        sender=getattr(sender, "runner", None),
+    )
     if not sender_enabled or mode != "auto":
         return 0
     deliveries = pending_wechat_deliveries(store)

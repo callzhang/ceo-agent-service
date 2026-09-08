@@ -460,6 +460,44 @@ def test_unperformed_wechat_delivery_is_requeued_at_most_twice(tmp_path):
     assert store.get_reply_attempt(attempt_id).retry_count == 2
 
 
+def test_accessibility_permission_recovery_restores_exhausted_pre_action_delivery(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery, attempt_id = _seed_with_attempt(store)
+
+    for _ in range(3):
+        store.mark_wechat_delivery_sending(delivery.id)
+        store.set_wechat_delivery_status(
+            delivery.id,
+            "failed",
+            error="accessibility_not_trusted",
+            pre_action_failure=True,
+        )
+        store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0)
+
+    assert store.get_wechat_delivery_by_id(delivery.id).status == "failed"
+    assert store.get_reply_attempt(attempt_id).retry_count == 2
+
+    assert store.requeue_wechat_deliveries_after_accessibility_recovery() == 1
+    restored = store.get_wechat_delivery_by_id(delivery.id)
+    assert restored.status == "ready_to_send"
+    assert restored.error == ""
+    assert store.get_reply_attempt(attempt_id).retry_count == 2
+
+
+def test_sender_checks_accessibility_only_for_permission_blocked_delivery(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    calls = []
+
+    class Runner:
+        @staticmethod
+        def check_readiness():
+            calls.append("check")
+            return "ready"
+
+    service.recover_before_sender(store, None, sender=Runner())
+    assert calls == []
+
+
 def test_pre_action_failure_requeues_using_persisted_state_not_error_text(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery, _attempt_id = _seed_with_attempt(store)

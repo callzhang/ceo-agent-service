@@ -10604,6 +10604,58 @@ class AutoReplyStore:
                 requeued += 1
             return requeued
 
+    def requeue_wechat_deliveries_after_accessibility_recovery(self) -> int:
+        """Restore only permission-blocked, pre-action deliveries.
+
+        A missing macOS Accessibility grant is an external dependency, not a
+        failed send attempt. Once the dedicated Sender has confirmed that the
+        grant is available again, let the same unsent delivery have one fresh
+        dispatch without reopening any ambiguous or target-related failure.
+        """
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                """
+                select deliveries.id as delivery_id
+                from wechat_deliveries as deliveries
+                join reply_tasks as tasks on tasks.id=deliveries.reply_task_id
+                where deliveries.status='failed'
+                  and deliveries.error='accessibility_not_trusted'
+                  and deliveries.pre_action_failure=1
+                  and deliveries.action_started_at<>''
+                  and deliveries.execution_generation=tasks.execution_generation
+                """
+            ).fetchall()
+            requeued = 0
+            for row in rows:
+                delivery_id = int(row["delivery_id"])
+                cursor = db.execute(
+                    """
+                    update wechat_deliveries
+                    set status='ready_to_send', error='', pre_action_failure=0,
+                        updated_at=current_timestamp
+                    where id=? and status='failed'
+                      and error='accessibility_not_trusted'
+                      and pre_action_failure=1
+                      and exists (
+                          select 1 from reply_tasks
+                          where reply_tasks.id=wechat_deliveries.reply_task_id
+                            and reply_tasks.execution_generation=
+                                wechat_deliveries.execution_generation
+                      )
+                    """,
+                    (delivery_id,),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                self._sync_wechat_delivery_reply_attempt(
+                    db,
+                    delivery_id=delivery_id,
+                    delivery_status="ready_to_send",
+                    error="",
+                )
+                requeued += 1
+            return requeued
+
     def claim_wechat_delivery(
         self,
         delivery_id: int,

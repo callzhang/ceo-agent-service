@@ -212,9 +212,14 @@ ambiguous send. Every pre-action failure records the exact available UI stage;
 if an outdated helper omits that stage, the delivery records
 `sender_result_missing_failure_reason` rather than a misleading generic
 `action_not_performed`. Confirmed pre-action failures may return to
-`ready_to_send` at most twice from the same delivery record. `send_unknown`,
-sent, manually rejected, and target-binding failures remain outside this retry
-path, so an uncertain or disallowed send is never repeated automatically.
+`ready_to_send` at most twice from the same delivery record. A distinct
+`accessibility_not_trusted` failure is a missing local macOS permission, not a
+message-send failure: after the dedicated Sender later confirms that its
+Accessibility grant is available, that same pre-action delivery receives one
+fresh dispatch without resetting or reopening any other failed delivery.
+`send_unknown`, sent, manually rejected, target-binding failures, and target
+opening failures remain outside this permission-recovery path, so an uncertain,
+disallowed, or unverified-target send is never repeated automatically.
 
 When a read-only reconciliation scan completes but finds no exact outbound
 record, the delivery stays `send_unknown` with
