@@ -144,6 +144,40 @@ describe("AttemptDetailPage", () => {
     vi.restoreAllMocks();
   });
 
+  it("refreshes the Attempt after submitting a custom human decision", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const decisionDetail = {
+      ...detail,
+      status: { ...detail.status, raw: "needs_human", requires_decision: true },
+      decision_options: [{
+        label: "授权通知申请人",
+        instruction: "向申请人发送审核结论。",
+        consequence: "会向实际申请人发送一条钉钉消息。",
+        url: "/api/console/history/8448/human-decision",
+      }],
+    };
+    getAttemptDetail.mockResolvedValueOnce({ item: decisionDetail, meta: { snapshot_at: "2026-09-08T10:01:00Z" } });
+    getAttemptDetail.mockResolvedValueOnce({ item: detail, meta: { snapshot_at: "2026-09-08T10:02:00Z" } });
+    command.mockResolvedValueOnce({ ok: true, message: "人工决策已提交", meta: { updated_at: "" } });
+    renderPage();
+
+    const instruction = await screen.findByLabelText("其他处理指令（默认仅本次）");
+    expect(screen.getByText("请填写其他处理指令后提交；下方“反馈迭代”只保存反馈，不会执行处理。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交处理指令" })).toBeDisabled();
+    await user.type(instruction, "保留审批已执行事实，不向申请人发送额外通知。");
+    await user.click(screen.getByRole("button", { name: "提交处理指令" }));
+
+    expect(command).toHaveBeenCalledWith(
+      "/api/console/history/8448/human-decision",
+      { instruction: "保留审批已执行事实，不向申请人发送额外通知。", feedback_scope: "one_time", skill_update_requested: false },
+    );
+    expect(await screen.findByText("人工决策已提交")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "需要你的判断" })).not.toBeInTheDocument();
+    expect(getAttemptDetail).toHaveBeenCalledTimes(2);
+    vi.restoreAllMocks();
+  });
+
   it("shows a dedicated retry action for an expired WeChat delivery", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "confirm").mockReturnValue(true);
