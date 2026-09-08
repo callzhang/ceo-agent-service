@@ -142,6 +142,23 @@ def _email_store(tmp_path: Path) -> EmailStore:
     return EmailStore(tmp_path / "email-agent.sqlite3")
 
 
+def _downgrade_email_database_to_v25(database: Path) -> None:
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys=off")
+        for table in (
+            "email_historical_classification_history",
+            "email_historical_candidates",
+            "email_historical_operations",
+            "email_historical_traversals",
+        ):
+            db.execute(f"drop table {table}")
+        db.execute("delete from email_schema_migrations where version > 25")
+        db.execute(
+            "insert or ignore into email_schema_migrations(version, applied_at) "
+            "values (25, '2026-09-08T00:00:00+00:00')"
+        )
+
+
 def _classification_input(*, uid: int) -> EmailClassificationTaskInput:
     return EmailClassificationTaskInput.from_message(
         {
@@ -269,7 +286,7 @@ def test_v25_classifier_queue_migration_preserves_task_and_scrubs_private_url(
             "update email_agent_classification_tasks set input_json=? where task_id=?",
             (json.dumps(payload), task.task_id),
         )
-        db.execute("update email_schema_migrations set version=25 where version=26")
+    _downgrade_email_database_to_v25(database)
 
     migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
         task.task_id
@@ -308,7 +325,7 @@ def test_v25_completed_null_unsubscribe_result_migrates_nullable_projection(
             """,
             (json.dumps(legacy_result), task.task_id),
         )
-        db.execute("update email_schema_migrations set version=25 where version=26")
+    _downgrade_email_database_to_v25(database)
 
     migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
         task.task_id
@@ -422,7 +439,7 @@ def test_v25_completed_selected_result_preserves_schema_keys_and_replays(
             "update email_classifications set agent_result_json=? where id=?",
             (json.dumps(legacy_agent_result), classification_id),
         )
-        db.execute("update email_schema_migrations set version=25 where version=26")
+    _downgrade_email_database_to_v25(database)
 
     EmailStore(database)
     with sqlite3.connect(database) as db:
@@ -530,7 +547,7 @@ def test_v25_migration_redacts_only_sensitive_query_and_fragment_values(
             """,
             (json.dumps(payload), json.dumps(legacy_result), task.task_id),
         )
-        db.execute("update email_schema_migrations set version=25 where version=26")
+    _downgrade_email_database_to_v25(database)
 
     migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
         task.task_id
@@ -679,7 +696,7 @@ def test_v25_migration_classifies_shared_sensitive_parameter_families(
             """,
             (json.dumps(payload), json.dumps(legacy_result), task.task_id),
         )
-        db.execute("update email_schema_migrations set version=25 where version=26")
+    _downgrade_email_database_to_v25(database)
 
     migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
         task.task_id
@@ -807,7 +824,7 @@ def test_v25_migration_structurally_redacts_unicode_url_and_token_everywhere(
             "update email_classifications set agent_result_json=? where id=?",
             (json.dumps(canonical_legacy_result), classification_id),
         )
-        db.execute("update email_schema_migrations set version=25 where version=26")
+    _downgrade_email_database_to_v25(database)
 
     EmailStore(database)
     with sqlite3.connect(database) as db:
@@ -1827,6 +1844,7 @@ def test_refreshed_email_context_contains_one_opaque_continuation_receipt(
             "operation from the listed opaque controls."
         ),
         "previous_effect_digest": effect_digest,
+        "requires_human": False,
     }
     assert "private-token" not in continuation_receipts[0].summary
     assert "https://" not in continuation_receipts[0].summary

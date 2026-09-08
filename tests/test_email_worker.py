@@ -38,6 +38,8 @@ from app.email_task_adapter import (
 from app.email_task_producer import EmailActionTaskProducer
 from app.email_unsubscribe import (
     BrowserNetworkPolicy,
+    ConnectedMailboxOtp,
+    EmailOtpChallenge,
     UnsubscribeAuthenticationEvidence,
     extract_unsubscribe_entries,
 )
@@ -67,6 +69,103 @@ from app.email_store import StoredEmailLocator
 def _module():
     return import_module("app.email_worker")
 
+
+def test_connected_mailbox_otp_resolver_reads_only_the_bound_account_and_closes():
+    opened_at = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+    challenge = EmailOtpChallenge(
+        recipient="derek@stardust.ai",
+        site_domain="accounts.example.com",
+        context_reference="otp-context:unsubscribe",
+        opened_at=opened_at,
+        expires_at=opened_at.replace(minute=10),
+    )
+    candidate = ConnectedMailboxOtp(
+        recipient="derek@stardust.ai",
+        sender_domain="accounts.example.com",
+        context_reference="otp-context:unsubscribe",
+        authenticated_sender_domain="accounts.example.com",
+        authentication_reference="otp-auth:" + "a" * 64,
+        received_at=opened_at.replace(minute=1),
+        value="847201",
+    )
+    events = []
+
+    class Source:
+        def fetch_email_otp_candidates(self, supplied, *, limit):
+            events.append(("fetch", supplied, limit))
+            return (candidate,)
+
+        def logout(self):
+            events.append("logout")
+
+    account = {
+        "account_id": "account-primary",
+        "email_address": "derek@stardust.ai",
+    }
+    resolver = _module()._build_connected_mailbox_otp_resolver(
+        account,
+        lambda supplied: events.append(("connect", supplied)) or Source(),
+    )
+
+    assert resolver(challenge) is candidate
+    assert events == [
+        ("connect", account),
+        ("fetch", challenge, 8),
+        "logout",
+    ]
+    wrong_mailbox = EmailOtpChallenge(
+        recipient="other@stardust.ai",
+        site_domain="accounts.example.com",
+        context_reference="otp-context:unsubscribe",
+        opened_at=opened_at,
+        expires_at=opened_at.replace(minute=10),
+    )
+    assert resolver(wrong_mailbox) is None
+    assert len(events) == 3
+
+
+def test_production_email_source_factory_binds_the_configured_recipient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+    sentinel = object()
+
+    monkeypatch.setattr(
+        "app.email_connector_config.resolve_secret",
+        lambda reference, environment: "secret",
+    )
+    monkeypatch.setattr(
+        "app.email_imap_readonly.ImapReadonlyAdapter.connect",
+        lambda host, username, password, **kwargs: calls.append(
+            (host, username, password, kwargs)
+        )
+        or sentinel,
+    )
+    account = {
+        "account_id": "account-primary",
+        "email_address": "derek@stardust.ai",
+        "imap_host": "imap.example.com",
+        "imap_port": 993,
+        "imap_username": "derek@stardust.ai",
+        "imap_secret_reference": "env:MAIL_SECRET",
+        "imap_tls": True,
+    }
+
+    source = _module()._build_email_source_factory(object())(account)
+
+    assert source is sentinel
+    assert calls == [
+        (
+            "imap.example.com",
+            "derek@stardust.ai",
+            "secret",
+            {
+                "port": 993,
+                "account_id": "account-primary",
+                "mailbox_address": "derek@stardust.ai",
+            },
+        )
+    ]
 
 def _accepted_model_prediction(category="work", important=True):
     return EmbeddingModelPrediction(
@@ -3966,7 +4065,10 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
     monkeypatch.setattr(
         operation.email_store,
         "get_account",
-        lambda account_id: {"account_id": account_id},
+        lambda account_id: {
+            "account_id": account_id,
+            "email_address": "derek@stardust.ai",
+        },
     )
     locator = EmailProviderLocator(
         account_id="account-1",
@@ -3994,6 +4096,7 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
     assert execution_calls == []
 
     effect = SimpleNamespace(
+        account_id="account-1",
         entry_reference=entry.reference,
         network_policy_reference=policy.reference,
         network_policy_origin_references=policy.origin_references,
@@ -4011,6 +4114,10 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
     assert execution_calls[0][0:2] == (effect, (entry,))
     assert execution_calls[0][2]["store"] is operation.email_store
     assert execution_calls[0][2]["owner"] is owner
+    assert execution_calls[0][2]["connected_recipient"] == "derek@stardust.ai"
+    assert callable(execution_calls[0][2]["email_otp_resolver"])
+    assert execution_calls[0][2]["session_manager"] is operation.browser_session_manager
+    assert callable(operation.open_user_handoff)
     assert "automatic" not in execution_calls[0][2]
     assert execution_calls[0][2]["executed_prefix_length"] == 0
 
@@ -4099,7 +4206,10 @@ def test_execution_resolves_selected_candidate_before_verifying_network_policy(
     monkeypatch.setattr(
         operation.email_store,
         "get_account",
-        lambda account_id: {"account_id": account_id},
+        lambda account_id: {
+            "account_id": account_id,
+            "email_address": "derek@stardust.ai",
+        },
     )
     locator = EmailProviderLocator(
         account_id="account-1",
@@ -4118,6 +4228,7 @@ def test_execution_resolves_selected_candidate_before_verifying_network_policy(
     )
     assert resolved == (selected,)
     effect = SimpleNamespace(
+        account_id="account-1",
         entry_reference=selected.reference,
         network_policy_reference=selected_policy.reference,
         network_policy_origin_references=selected_policy.origin_references,

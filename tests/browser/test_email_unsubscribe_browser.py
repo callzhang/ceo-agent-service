@@ -15,7 +15,10 @@ from urllib.parse import urlsplit
 import pytest
 
 from app.agent_contracts import ProposedAction
-from app.email_browser_profile import EmailBrowserProfile
+from app.email_browser_profile import (
+    EmailBrowserProfile,
+    email_browser_session_manager,
+)
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -582,7 +585,7 @@ def _loopback_server_pair():
 
 
 @pytest.mark.parametrize("remove_accepted_control", (False, True))
-def test_dedicated_profile_restores_page_across_audit_invocations_without_reopen(
+def test_dedicated_profile_resumes_live_page_across_audit_invocations_without_reopen(
     tmp_path: Path,
     remove_accepted_control: bool,
 ) -> None:
@@ -622,11 +625,24 @@ def test_dedicated_profile_restores_page_across_audit_invocations_without_reopen
             ("GET", "/mutable-form?opaque=private-fixture-token")
         ]
         if remove_accepted_control:
-            session = profile.load_audit_session(effect.action_identity)
-            assert session is not None
-            session["html"] = "<!doctype html><html><body>Preferences</body></html>"
-            session["html_digest"] = sha256(str(session["html"]).encode()).hexdigest()
-            profile.save_audit_session(effect.action_identity, session)
+            handoff_errors: list[BaseException] = []
+
+            def handoff_from_api_thread() -> None:
+                try:
+                    email_browser_session_manager(profile).handoff_action(
+                        effect.action_identity,
+                        lambda page: page.locator("form").evaluate(
+                            "node => node.remove()"
+                        ),
+                    )
+                except BaseException as exc:
+                    handoff_errors.append(exc)
+
+            handoff_thread = Thread(target=handoff_from_api_thread)
+            handoff_thread.start()
+            handoff_thread.join(timeout=5)
+            assert not handoff_thread.is_alive()
+            assert handoff_errors == []
         extension = replace(
             effect,
             operations=effect.operations
@@ -688,7 +704,7 @@ def test_dedicated_profile_restores_page_across_audit_invocations_without_reopen
         "/auth-control-compound",
     ),
 )
-def test_dedicated_profile_blocks_authentication_controls_before_snapshot(
+def test_dedicated_profile_projects_authentication_controls_without_secret_snapshot(
     tmp_path: Path,
     path: str,
 ) -> None:
@@ -721,22 +737,24 @@ def test_dedicated_profile_blocks_authentication_controls_before_snapshot(
             executed_prefix_length=0,
         )
 
-        assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
-        assert result.error_code == (
-            "email_unsubscribe_authentication_controls_blocked"
-        )
-        assert not isinstance(result, UnsubscribeContinuationResult)
+        assert isinstance(result, UnsubscribeContinuationResult)
+        assert result.continuation.controls[0].kind in {
+            "captcha_handoff",
+            "credential_handoff",
+        }
         assert _FixtureHandler.requests == [
             ("GET", f"{path}?opaque=private-fixture-token")
         ]
-        assert not tuple(profile.profile_dir.glob("audit-sessions/*.json"))
+        session = profile.load_audit_session(effect.action_identity)
+        assert session is not None
+        assert "html" not in session
+        assert "cookies" not in session
         assert secret not in store.path.read_bytes()
         assert secret.decode() not in repr(result)
         assert secret.decode() not in json.dumps(result.redacted, sort_keys=True)
-        assert secret.decode() not in result.error_code
-        for candidate in profile.profile_dir.rglob("*"):
-            if candidate.is_file():
-                assert secret not in candidate.read_bytes()
+        assert secret.decode() not in json.dumps(session, sort_keys=True)
+        email_browser_session_manager(profile).close_action(effect.action_identity)
+        profile.clear_audit_session(effect.action_identity)
 
 
 @pytest.mark.parametrize(
@@ -747,7 +765,7 @@ def test_dedicated_profile_blocks_authentication_controls_before_snapshot(
         "/hostile-auth-value-mutation",
     ),
 )
-def test_dedicated_profile_blocks_hostile_authentication_pages_in_isolated_world(
+def test_dedicated_profile_projects_hostile_authentication_pages_in_isolated_world(
     tmp_path: Path,
     path: str,
 ) -> None:
@@ -780,22 +798,21 @@ def test_dedicated_profile_blocks_hostile_authentication_pages_in_isolated_world
             executed_prefix_length=0,
         )
 
-        assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
-        assert result.error_code == (
-            "email_unsubscribe_authentication_controls_blocked"
-        )
-        assert not isinstance(result, UnsubscribeContinuationResult)
+        assert isinstance(result, UnsubscribeContinuationResult)
+        assert result.continuation.controls[0].kind == "credential_handoff"
         assert _FixtureHandler.requests == [
             ("GET", f"{path}?opaque=private-fixture-token")
         ]
-        assert not tuple(profile.profile_dir.glob("audit-sessions/*.json"))
+        session = profile.load_audit_session(effect.action_identity)
+        assert session is not None
+        assert "html" not in session
+        assert "cookies" not in session
         assert secret not in store.path.read_bytes()
         assert secret.decode() not in repr(result)
         assert secret.decode() not in json.dumps(result.redacted, sort_keys=True)
-        assert secret.decode() not in result.error_code
-        for candidate in profile.profile_dir.rglob("*"):
-            if candidate.is_file():
-                assert secret not in candidate.read_bytes()
+        assert secret.decode() not in json.dumps(session, sort_keys=True)
+        email_browser_session_manager(profile).close_action(effect.action_identity)
+        profile.clear_audit_session(effect.action_identity)
 
 
 @pytest.fixture(scope="module")
@@ -1546,16 +1563,17 @@ def test_snapshot_sanitizer_rechecks_authentication_before_any_state_read(
             assert sanitized["blocked"] is True
             assert secret not in sanitized["html"]
             assert f'value="{secret}"' not in sanitized["html"]
-            with pytest.raises(
-                UnsubscribeAuthenticationControlsError,
-                match="authentication controls are not permitted",
-            ) as error:
-                browser.capture_audit_session(effect)
+            captured = browser.capture_audit_session(
+                effect,
+                session_reference="email-browser-session:" + "7" * 64,
+            )
+            assert "html" not in captured
+            assert "cookies" not in captured
+            assert secret not in repr(captured)
         finally:
             context.close()
 
-    assert secret not in str(error.value)
-    assert secret not in repr(error.value)
+    assert secret not in repr(captured)
 
 
 @pytest.mark.parametrize(
@@ -1591,6 +1609,49 @@ def test_authentication_predicate_parses_credential_autocomplete_token_lists(
         )
         with pytest.raises(UnsubscribeAuthenticationControlsError):
             browser._assert_no_authentication_controls()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "const old = document.querySelector('#code'); old.replaceWith(old.cloneNode(true))",
+        "document.querySelector('#code').setAttribute('onclick', 'window.evil = true')",
+        "document.querySelector('form').setAttribute('target', '_blank')",
+        "document.querySelector('input[type=hidden]').value = 'challenge-2'",
+    ),
+)
+def test_authentication_control_binding_rejects_same_selector_and_request_mutations(
+    chrome_browser,
+    mutation: str,
+) -> None:
+    context = chrome_browser.new_context()
+    page = context.new_page()
+    browser = PlaywrightUnsubscribeBrowser(
+        page,
+        restored_document_url="https://accounts.example.com/verify",
+        connected_recipient="derek@stardust.ai",
+        timeout_ms=2_000,
+        network_policy=BrowserNetworkPolicy(
+            allowed_origins=frozenset({"https://accounts.example.com"}),
+            resolver=lambda _host, _port: ("93.184.216.34",),
+        ),
+    )
+    try:
+        page.set_content(
+            "Email verification code sent to derek@stardust.ai for "
+            "accounts.example.com"
+            '<form method="post" action="/verify">'
+            '<input type="hidden" name="challenge_id" value="challenge-1">'
+            '<input id="code" name="code" autocomplete="one-time-code">'
+            '<button id="verify" type="submit" name="decision" value="verify">'
+            "Verify</button></form>"
+        )
+        first = browser._ordinary_controls()[0]
+        page.evaluate(mutation)
+        second = browser._ordinary_controls()[0]
+        assert second.control.reference != first.control.reference
     finally:
         context.close()
 

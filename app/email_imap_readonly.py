@@ -16,7 +16,7 @@ import re
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any
 
@@ -29,7 +29,12 @@ from app.email_imap_mailbox import (
 )
 from app.email_important import ImportantSignals, normalize_important_signals
 from app.email_provider_folders import ProviderFolder
-from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
+from app.email_unsubscribe import (
+    ConnectedMailboxOtp,
+    EmailOtpChallenge,
+    UnsubscribeAuthenticationEvidence,
+    email_otp_context_reference,
+)
 
 
 _HEADER_FETCH = (
@@ -126,6 +131,148 @@ def ephemeral_unsubscribe_authentication(
     )
 
 
+def _domains_share_identity(sender_domain: str, site_domain: str) -> bool:
+    sender = sender_domain.casefold().rstrip(".")
+    site = site_domain.casefold().rstrip(".")
+    return bool(sender and site) and (
+        sender == site
+        or sender.endswith("." + site)
+        or site.endswith("." + sender)
+    )
+
+
+def _provider_domains_share_identity(left_domain: str, right_domain: str) -> bool:
+    """Match sibling provider hosts without accepting broad public suffixes."""
+
+    if _domains_share_identity(left_domain, right_domain):
+        return True
+    left = left_domain.casefold().rstrip(".").split(".")
+    right = right_domain.casefold().rstrip(".").split(".")
+    if len(left) < 3 or len(right) < 3:
+        return False
+    blocked_suffixes = {
+        "co.uk",
+        "com.cn",
+        "com.au",
+        "co.jp",
+        "co.kr",
+        "co.nz",
+    }
+    common = ".".join(left[-2:])
+    return common == ".".join(right[-2:]) and common not in blocked_suffixes
+
+
+def _single_bounded_numeric_token(value: str) -> str | None:
+    tokens: list[str] = []
+    current: list[str] = []
+    for character in value:
+        if "0" <= character <= "9":
+            current.append(character)
+            continue
+        if 4 <= len(current) <= 10:
+            tokens.append("".join(current))
+        current = []
+    if 4 <= len(current) <= 10:
+        tokens.append("".join(current))
+    unique = tuple(dict.fromkeys(tokens))
+    return unique[0] if len(unique) == 1 else None
+
+
+def _authenticated_sender_domain(
+    headers: email.message.Message,
+    *,
+    trusted_authserv_domain: str,
+    sender_domain: str,
+    site_domain: str,
+) -> tuple[str, str] | None:
+    """Accept only provider-issued aligned pass evidence from Authentication-Results."""
+
+    if not trusted_authserv_domain:
+        return None
+    values = headers.get_all("authentication-results", [])
+    if not values:
+        return None
+    value = " ".join(str(values[0]).split())
+    authserv_id = value.split(";", 1)[0].strip().casefold().rstrip(".")
+    if not _provider_domains_share_identity(authserv_id, trusted_authserv_domain):
+        return None
+    result_text = value.split(";", 1)[1] if ";" in value else ""
+    result_starts = tuple(
+        re.finditer(
+            r"(?:^|;)\s*([a-z][a-z0-9_-]*)\s*=\s*([a-z][a-z0-9_-]*)\b",
+            result_text,
+            re.I,
+        )
+    )
+    clauses: dict[str, list[tuple[str, str]]] = {}
+    for index, match in enumerate(result_starts):
+        end = (
+            result_starts[index + 1].start()
+            if index + 1 < len(result_starts)
+            else len(result_text)
+        )
+        mechanism = match.group(1).casefold()
+        clauses.setdefault(mechanism, []).append(
+            (match.group(2).casefold(), result_text[match.end() : end])
+        )
+    accepted: list[tuple[str, str]] = []
+    for mechanism, property_name in (
+        ("dkim", "header.d"),
+        ("spf", "smtp.mailfrom"),
+    ):
+        method_results = clauses.get(mechanism, [])
+        if len(method_results) > 1:
+            return None
+        if not method_results:
+            continue
+        result, clause = method_results[0]
+        if result != "pass":
+            continue
+        properties = re.findall(
+            rf"\b{re.escape(property_name)}\s*=\s*([^;\s]+)",
+            clause,
+            re.I,
+        )
+        if len(properties) != 1:
+            return None
+        authenticated = properties[0].strip("<>@\"'").casefold().rstrip(".")
+        if "@" in authenticated:
+            authenticated = authenticated.rsplit("@", 1)[-1]
+        if not (
+            _domains_share_identity(authenticated, sender_domain)
+            and _domains_share_identity(authenticated, site_domain)
+        ):
+            return None
+        accepted.append((mechanism, authenticated))
+    if not accepted or len({domain for _, domain in accepted}) != 1:
+        return None
+    mechanism, authenticated = accepted[0]
+    reference = "otp-auth:" + sha256(
+        f"{authserv_id}\n{mechanism}\n{authenticated}\n{value}".encode()
+    ).hexdigest()
+    return authenticated, reference
+
+
+def _imap_internaldate(data: object) -> datetime:
+    raw = b" ".join(
+        item[0] if isinstance(item, tuple) and isinstance(item[0], bytes) else item
+        for item in (data if isinstance(data, list) else ())
+        if isinstance(item, (bytes, tuple))
+    )
+    marker = b'INTERNALDATE "'
+    start = raw.find(marker)
+    if start < 0:
+        raise ValueError("IMAP OTP INTERNALDATE is unavailable")
+    start += len(marker)
+    end = raw.find(b'"', start)
+    if end < 0:
+        raise ValueError("IMAP OTP INTERNALDATE is invalid")
+    parsed = email.utils.parsedate_to_datetime(raw[start:end].decode("ascii"))
+    if parsed is None or parsed.tzinfo is None:
+        raise ValueError("IMAP OTP INTERNALDATE is invalid")
+    return parsed.astimezone(timezone.utc)
+
+
 @dataclass(frozen=True)
 class _BodyPart:
     section: str
@@ -141,12 +288,21 @@ class _BodyPart:
 class ImapReadonlyAdapter:
     """Fetch normalized messages using only readonly IMAP operations."""
 
-    def __init__(self, session: Any, *, account_id: str):
+    def __init__(
+        self,
+        session: Any,
+        *,
+        account_id: str,
+        mailbox_address: str = "",
+        trusted_authserv_domain: str = "",
+    ):
         account_id = account_id.strip()
         if not account_id:
             raise ValueError("account_id must be non-empty")
         self.session = session
         self.account_id = account_id
+        self.mailbox_address = mailbox_address.strip()
+        self.trusted_authserv_domain = trusted_authserv_domain.strip().casefold()
 
     @classmethod
     def connect(
@@ -158,6 +314,8 @@ class ImapReadonlyAdapter:
         port: int = 993,
         timeout: float | None = 20.0,
         account_id: str,
+        mailbox_address: str = "",
+        trusted_authserv_domain: str = "",
     ) -> "ImapReadonlyAdapter":
         session = imaplib.IMAP4_SSL(host, port, timeout=timeout)
         try:
@@ -168,7 +326,113 @@ class ImapReadonlyAdapter:
         if status != "OK":
             _close_imap_session(session)
             raise ConnectionError("IMAP login failed")
-        return cls(session, account_id=account_id)
+        return cls(
+            session,
+            account_id=account_id,
+            mailbox_address=mailbox_address,
+            trusted_authserv_domain=trusted_authserv_domain or host,
+        )
+
+    def fetch_email_otp_candidates(
+        self,
+        challenge: EmailOtpChallenge,
+        *,
+        limit: int = 8,
+    ) -> tuple[ConnectedMailboxOtp, ...]:
+        """Read bounded post-challenge OTP candidates without changing mailbox state."""
+
+        if not isinstance(challenge, EmailOtpChallenge):
+            raise TypeError("challenge must be EmailOtpChallenge")
+        if limit <= 0 or limit > 32:
+            raise ValueError("OTP candidate limit is invalid")
+        if (
+            not self.mailbox_address
+            or challenge.recipient.casefold() != self.mailbox_address.casefold()
+        ):
+            return ()
+        status, _ = self.session.select("INBOX", readonly=True)
+        _require_ok(status, "IMAP readonly select failed")
+        since = challenge.opened_at.astimezone(timezone.utc).strftime("%d-%b-%Y")
+        status, data = self.session.uid(
+            "SEARCH",
+            None,
+            "SINCE",
+            since,
+            "TO",
+            self.mailbox_address,
+        )
+        _require_ok(status, "IMAP OTP search failed")
+        uids = list(reversed(_search_uids(data)[-min(limit * 4, 32) :]))
+        candidates: list[ConnectedMailboxOtp] = []
+        for uid in uids:
+            status, header_data = self.session.uid(
+                "FETCH",
+                uid,
+                "(INTERNALDATE BODY.PEEK[HEADER.FIELDS "
+                "(FROM TO SUBJECT AUTHENTICATION-RESULTS)])",
+            )
+            _require_ok(status, "IMAP OTP header fetch failed")
+            received_at = _imap_internaldate(header_data)
+            if not (challenge.opened_at <= received_at <= challenge.expires_at):
+                continue
+            headers = email.message_from_bytes(
+                _fetch_payload(header_data), policy=email.policy.default
+            )
+            recipients = {
+                address.casefold()
+                for _, address in email.utils.getaddresses(headers.get_all("to", []))
+            }
+            sender_addresses = email.utils.getaddresses(headers.get_all("from", []))
+            sender_domain = (
+                sender_addresses[0][1].rsplit("@", 1)[-1].casefold().rstrip(".")
+                if sender_addresses and "@" in sender_addresses[0][1]
+                else ""
+            )
+            if (
+                challenge.recipient.casefold() not in recipients
+                or not _domains_share_identity(sender_domain, challenge.site_domain)
+            ):
+                continue
+            authenticated = _authenticated_sender_domain(
+                headers,
+                trusted_authserv_domain=self.trusted_authserv_domain,
+                sender_domain=sender_domain,
+                site_domain=challenge.site_domain,
+            )
+            if authenticated is None:
+                continue
+            status, body_data = self.session.uid(
+                "FETCH", uid, "(BODY.PEEK[TEXT]<0.8192>)"
+            )
+            _require_ok(status, "IMAP OTP text fetch failed")
+            body = _fetch_payload(body_data)[:8192].decode("utf-8", "replace")
+            subject = str(headers.get("subject") or "")
+            evidence = f"{subject}\n{body}".casefold()
+            if challenge.site_domain not in evidence:
+                continue
+            context_reference = email_otp_context_reference(
+                challenge.recipient,
+                challenge.site_domain,
+            )
+            if context_reference != challenge.context_reference:
+                continue
+            value = _single_bounded_numeric_token(body)
+            if value is None:
+                continue
+            candidates.append(
+                ConnectedMailboxOtp(
+                    recipient=challenge.recipient,
+                    sender_domain=sender_domain,
+                    context_reference=context_reference,
+                    authenticated_sender_domain=authenticated[0],
+                    authentication_reference=authenticated[1],
+                    received_at=received_at,
+                    value=value,
+                )
+            )
+            if len(candidates) >= limit:
+                break
+        return tuple(candidates)
 
     def fetch_uid_batch(
         self,

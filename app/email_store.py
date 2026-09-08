@@ -2107,6 +2107,7 @@ def _validate_unsubscribe_operations(
         "submit_form",
         "click_confirmation",
         "confirm_email",
+        "reconcile_handoff",
     }
     validated: list[dict[str, str]] = []
     for operation in operations:
@@ -2203,7 +2204,15 @@ def _validate_unsubscribe_controls(
             "intent",
         }:
             raise ValueError("unsubscribe control has invalid fields")
-        if control["kind"] not in {"form", "link", "button", "confirmation_email"}:
+        if control["kind"] not in {
+            "form",
+            "link",
+            "button",
+            "confirmation_email",
+            "email_otp",
+            "captcha_handoff",
+            "credential_handoff",
+        }:
             raise ValueError("unsubscribe control kind is invalid")
         if control["intent"] not in {"continue", "unsubscribe", "confirm"}:
             raise ValueError("unsubscribe control intent is invalid")
@@ -8408,6 +8417,12 @@ class EmailStore:
                         "link": {"click_confirmation"},
                         "button": {"click_confirmation"},
                         "confirmation_email": {"confirm_email"},
+                        "email_otp": {"submit_form"},
+                        "captcha_handoff": {
+                            "click_confirmation",
+                            "reconcile_handoff",
+                        },
+                        "credential_handoff": {"reconcile_handoff"},
                     }
                     if control is None:
                         raise EmailUnsubscribeClaimConflict(
@@ -8418,6 +8433,24 @@ class EmailStore:
                     ):
                         raise EmailUnsubscribeClaimConflict(
                             "unsubscribe continuation control kind is invalid"
+                        )
+                    captcha_attempted = any(
+                        item["kind"] == "click_confirmation"
+                        and item["target_reference"] == control.get("reference")
+                        for item in validated_operations[:-1]
+                    )
+                    if control.get("kind") == "captcha_handoff" and (
+                        (
+                            next_operation["kind"] == "click_confirmation"
+                            and captcha_attempted
+                        )
+                        or (
+                            next_operation["kind"] == "reconcile_handoff"
+                            and not captcha_attempted
+                        )
+                    ):
+                        raise EmailUnsubscribeClaimConflict(
+                            "unsubscribe CAPTCHA continuation stage is invalid"
                         )
                     if any(
                         persisted[key] != binding[key]

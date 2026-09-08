@@ -18,6 +18,10 @@ def _skill_prose() -> str:
     return " ".join(_skill_text().split())
 
 
+def test_mail_review_skill_auth_continuation_revision_is_versioned():
+    assert "version: 2" in _skill_text()
+
+
 @pytest.mark.parametrize(
     ("source", "operation_skill"),
     [
@@ -81,6 +85,31 @@ def test_mail_review_skill_disables_email_replies():
     assert "Automatic `auto_reply` is disabled for the current Email subsystem" in text
     assert "Never propose or send an email reply from a classifier result or Email task" in text
     assert "The current deployment permits only its exact `unsubscribe` action" in text
+
+
+def test_mail_review_skill_defines_bounded_authentication_continuation():
+    text = _skill_prose()
+
+    for required in (
+        "isolated persistent Email browser profile",
+        "never the main Chrome profile or its cookies",
+        "`email_otp`",
+        "same configured recipient mailbox",
+        "current site, recipient, context, and bounded challenge time window",
+        "OTP is ephemeral",
+        "never place it in logs, durable steps, receipts, training text, History, status, or errors",
+        "`captcha_handoff`",
+        "ordinary interaction with the rendered challenge",
+        "no solver service, evasion, fingerprint spoofing, or principal impersonation",
+        "`credential_handoff`",
+        "SMS, TOTP, QR, or password",
+        "return `needs_human`",
+        "resumable opaque browser/profile reference",
+        "resume only the unexecuted suffix and never replay the audited prefix",
+    ):
+        assert required in text
+
+    assert "Login, CAPTCHA, and payment requirements are skipped business outcomes" not in text
 
 
 def test_mail_review_skill_defines_exact_email_operation_boundaries():

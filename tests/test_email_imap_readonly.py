@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import email.message
 import imaplib
 import json
@@ -28,6 +29,7 @@ from app.email_imap_readonly import (
 )
 from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_store import EmailStore
+from app.email_unsubscribe import EmailOtpChallenge, email_otp_context_reference
 
 
 _HEADER_FETCH = (
@@ -157,6 +159,286 @@ def _plain_session(
         search_result=search_result,
         uidvalidity=uidvalidity,
     )
+
+
+def test_connected_mailbox_otp_fetch_is_readonly_bounded_and_challenge_scoped() -> None:
+    opened_at = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+    challenge = EmailOtpChallenge(
+        recipient="derek@stardust.ai",
+        site_domain="accounts.example.com",
+        context_reference=email_otp_context_reference(
+            "derek@stardust.ai", "accounts.example.com"
+        ),
+        opened_at=opened_at,
+        expires_at=opened_at + timedelta(minutes=10),
+    )
+
+    class OtpSession:
+        def __init__(self):
+            self.calls: list[tuple[object, ...]] = []
+
+        def select(self, mailbox, readonly=False):
+            self.calls.append(("select", mailbox, readonly))
+            return "OK", [b"2"]
+
+        def uid(self, command, *args):
+            self.calls.append(("uid", command, *args))
+            if command == "SEARCH":
+                return "OK", [b"40 41"]
+            uid, query = args
+            received = (
+                "08-Sep-2026 12:01:00 +0000"
+                if uid == b"41"
+                else "08-Sep-2026 11:59:00 +0000"
+            )
+            if query == (
+                "(INTERNALDATE BODY.PEEK[HEADER.FIELDS "
+                "(FROM TO SUBJECT AUTHENTICATION-RESULTS)])"
+            ):
+                headers = (
+                    b"From: Verify <no-reply@accounts.example.com>\r\n"
+                    b"To: Derek <derek@stardust.ai>\r\n"
+                    b"Subject: accounts.example.com verification\r\n"
+                    b"Authentication-Results: mx.aliyun.com; "
+                    b"dkim=pass header.d=accounts.example.com\r\n\r\n"
+                )
+                return "OK", [
+                    (
+                        f'1 (UID {uid.decode()} INTERNALDATE "{received}" '
+                        f'BODY[HEADER.FIELDS (FROM TO SUBJECT)] {{{len(headers)}}}'.encode(),
+                        headers,
+                    ),
+                    b")",
+                ]
+            if query == "(BODY.PEEK[TEXT]<0.8192>)":
+                return "OK", [(b"body", b"Your code is 847201\r\n"), b")"]
+            raise AssertionError(f"unexpected OTP fetch: {query}")
+
+    session = OtpSession()
+    adapter = ImapReadonlyAdapter(
+        session,
+        account_id="account-1",
+        mailbox_address="derek@stardust.ai",
+        trusted_authserv_domain="imap.qiye.aliyun.com",
+    )
+
+    candidates = adapter.fetch_email_otp_candidates(challenge, limit=8)
+
+    assert len(candidates) == 1
+    assert candidates[0].received_at == opened_at + timedelta(minutes=1)
+    assert candidates[0].consume() == "847201"
+    assert session.calls[0] == ("select", "INBOX", True)
+    assert session.calls[1] == (
+        "uid",
+        "SEARCH",
+        None,
+        "SINCE",
+        "08-Sep-2026",
+        "TO",
+        "derek@stardust.ai",
+    )
+    assert all(call[1] in {"SEARCH", "FETCH"} for call in session.calls[1:])
+
+
+def test_connected_mailbox_otp_fetch_rejects_a_different_recipient() -> None:
+    class NoIoSession:
+        def select(self, *_args, **_kwargs):
+            raise AssertionError("another mailbox must not be queried")
+
+    opened_at = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+    adapter = ImapReadonlyAdapter(
+        NoIoSession(),
+        account_id="account-1",
+        mailbox_address="derek@stardust.ai",
+    )
+    challenge = EmailOtpChallenge(
+        recipient="other@stardust.ai",
+        site_domain="accounts.example.com",
+        context_reference=email_otp_context_reference(
+            "other@stardust.ai", "accounts.example.com"
+        ),
+        opened_at=opened_at,
+        expires_at=opened_at + timedelta(minutes=10),
+    )
+
+    assert adapter.fetch_email_otp_candidates(challenge, limit=8) == ()
+
+
+@pytest.mark.parametrize(
+    ("from_domain", "authentication_results", "subject", "expected"),
+    (
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; spf=pass smtp.mailfrom=accounts.example.com",
+            "accounts.example.com verification",
+            1,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; dkim=fail header.d=accounts.example.com",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.attacker.test; dkim=pass header.d=accounts.example.com",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "attacker.test",
+            "mx.aliyun.com; dkim=pass header.d=attacker.test",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; dkim=pass header.d=accounts.example.com",
+            "unrelated verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; dkim=fail header.d=accounts.example.com; "
+            "dkim=pass header.d=attacker.test",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; dkim=pass header.d=attacker.test; "
+            "dkim=fail header.d=accounts.example.com",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; spf=fail smtp.mailfrom=accounts.example.com; "
+            "spf=pass smtp.mailfrom=attacker.test",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; spf=pass smtp.mailfrom=attacker.test; "
+            "spf=fail smtp.mailfrom=accounts.example.com",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; dkim=pass header.d=accounts.example.com; "
+            "dkim=pass header.d=attacker.test",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; spf=pass smtp.mailfrom=accounts.example.com; "
+            "spf=pass smtp.mailfrom=attacker.test",
+            "accounts.example.com verification",
+            0,
+        ),
+    ),
+)
+def test_connected_mailbox_otp_rejects_spoofed_or_unbound_provider_evidence(
+    from_domain: str,
+    authentication_results: str,
+    subject: str,
+    expected: int,
+) -> None:
+    opened_at = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+    challenge = EmailOtpChallenge(
+        recipient="derek@stardust.ai",
+        site_domain="accounts.example.com",
+        context_reference=email_otp_context_reference(
+            "derek@stardust.ai", "accounts.example.com"
+        ),
+        opened_at=opened_at,
+        expires_at=opened_at + timedelta(minutes=10),
+    )
+
+    class OtpSession:
+        def select(self, mailbox, readonly=False):
+            return "OK", [b"1"]
+
+        def uid(self, command, *args):
+            if command == "SEARCH":
+                return "OK", [b"41"]
+            uid, query = args
+            if "HEADER.FIELDS" in query:
+                headers = (
+                    f"From: Verify <no-reply@{from_domain}>\r\n"
+                    "To: Derek <derek@stardust.ai>\r\n"
+                    f"Subject: {subject}\r\n"
+                    f"Authentication-Results: {authentication_results}\r\n\r\n"
+                ).encode()
+                return "OK", [
+                    (
+                        b'1 (UID 41 INTERNALDATE "08-Sep-2026 12:01:00 +0000" '
+                        + f"BODY[HEADER.FIELDS] {{{len(headers)}}}".encode(),
+                        headers,
+                    ),
+                    b")",
+                ]
+            return "OK", [(b"body", b"Your code is 847201\r\n"), b")"]
+
+    adapter = ImapReadonlyAdapter(
+        OtpSession(),
+        account_id="account-1",
+        mailbox_address="derek@stardust.ai",
+        trusted_authserv_domain="imap.qiye.aliyun.com",
+    )
+    assert len(adapter.fetch_email_otp_candidates(challenge)) == expected
+
+
+def test_connected_mailbox_otp_does_not_accept_forged_authentication_results_after_provider_fail() -> None:
+    opened_at = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+    challenge = EmailOtpChallenge(
+        recipient="derek@stardust.ai",
+        site_domain="accounts.example.com",
+        context_reference=email_otp_context_reference(
+            "derek@stardust.ai", "accounts.example.com"
+        ),
+        opened_at=opened_at,
+        expires_at=opened_at + timedelta(minutes=10),
+    )
+
+    class Session:
+        def select(self, *_args, **_kwargs):
+            return "OK", [b"1"]
+
+        def uid(self, command, *args):
+            if command == "SEARCH":
+                return "OK", [b"41"]
+            _uid, query = args
+            if "HEADER.FIELDS" in query:
+                headers = (
+                    b"From: Verify <no-reply@accounts.example.com>\r\n"
+                    b"To: derek@stardust.ai\r\n"
+                    b"Subject: accounts.example.com verification\r\n"
+                    b"Authentication-Results: mx.aliyun.com; dkim=fail "
+                    b"header.d=accounts.example.com\r\n"
+                    b"Authentication-Results: mx.aliyun.com; dkim=pass "
+                    b"header.d=accounts.example.com\r\n\r\n"
+                )
+                return "OK", [
+                    (
+                        b'1 (UID 41 INTERNALDATE "08-Sep-2026 12:01:00 +0000" '
+                        + f"BODY[HEADER.FIELDS] {{{len(headers)}}}".encode(),
+                        headers,
+                    ),
+                    b")",
+                ]
+            return "OK", [(b"body", b"Your code is 847201\r\n"), b")"]
+
+    adapter = ImapReadonlyAdapter(
+        Session(),
+        account_id="account-1",
+        mailbox_address="derek@stardust.ai",
+        trusted_authserv_domain="imap.qiye.aliyun.com",
+    )
+    assert adapter.fetch_email_otp_candidates(challenge) == ()
 
 
 class FolderListSession:

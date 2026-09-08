@@ -1888,6 +1888,43 @@ def _close_email_source(source: object) -> None:
         close()
 
 
+def _build_connected_mailbox_otp_resolver(
+    account: Mapping[str, object],
+    source_factory: Callable[[Mapping[str, object]], object],
+):
+    """Build an ephemeral OTP reader confined to one configured account."""
+
+    from app.email_unsubscribe import (
+        EmailOtpChallenge,
+        select_connected_mailbox_otp,
+    )
+
+    recipient = str(account.get("email_address") or "").strip()
+
+    def resolve(challenge: EmailOtpChallenge):
+        if (
+            not recipient
+            or not isinstance(challenge, EmailOtpChallenge)
+            or challenge.recipient.casefold() != recipient.casefold()
+        ):
+            return None
+        source = source_factory(account)
+        try:
+            fetch = getattr(source, "fetch_email_otp_candidates", None)
+            if not callable(fetch):
+                return None
+            candidates = fetch(challenge, limit=8)
+            if not isinstance(candidates, Sequence) or isinstance(
+                candidates, (str, bytes, bytearray)
+            ):
+                return None
+            return select_connected_mailbox_otp(challenge, candidates)
+        finally:
+            _close_email_source(source)
+
+    return resolve
+
+
 def _missing_historical_state(folder_name: str):
     from app.email_historical_classifier import HistoricalClassificationState
 
@@ -2914,6 +2951,7 @@ def _build_email_source_factory(settings: object):
             secret,
             port=int(account["imap_port"]),
             account_id=str(account["account_id"]),
+            mailbox_address=str(account.get("email_address") or ""),
         )
 
     return source_factory
@@ -2922,7 +2960,10 @@ def _build_email_source_factory(settings: object):
 def build_audited_email_unsubscribe_operation(settings: object) -> object:
     """Build the only executable Email unsubscribe operation."""
 
-    from app.email_browser_profile import EmailBrowserProfile
+    from app.email_browser_profile import (
+        EmailBrowserProfile,
+        email_browser_session_manager,
+    )
     from app.email_classifier_contracts import EmailProviderLocator
     from app.email_store import EmailStore
     from app.email_unsubscribe import (
@@ -2940,6 +2981,10 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
     email_store = EmailStore(Path(settings.db_path))
     task_store = AutoReplyStore(Path(settings.db_path))
     source_factory = _build_email_source_factory(settings)
+    browser_profile = EmailBrowserProfile(
+        Path(settings.db_path).parent / "email-browser-runtime"
+    )
+    browser_session_manager = email_browser_session_manager(browser_profile)
 
     def resolve_entries(
         locator: EmailProviderLocator,
@@ -3015,9 +3060,12 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
             for entry in entries
         ):
             raise ValueError("email unsubscribe entry changed")
-        profile = EmailBrowserProfile(
-            Path(settings.db_path).parent / "email-browser-runtime"
-        )
+        account = email_store.get_account(effect.account_id)
+        if not isinstance(account, Mapping):
+            raise ValueError("email unsubscribe account is unavailable")
+        connected_recipient = str(account.get("email_address") or "").strip()
+        if not connected_recipient:
+            raise ValueError("email unsubscribe recipient is unavailable")
         policy = browser_network_policy_for_entries(entries)
         if (
             policy.reference != effect.network_policy_reference
@@ -3028,18 +3076,27 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
             effect,
             entries,
             store=email_store,
-            profile=profile,
+            profile=browser_profile,
             network_policy=policy,
             owner=owner,
             executed_prefix_length=executed_prefix_length,
+            connected_recipient=connected_recipient,
+            email_otp_resolver=_build_connected_mailbox_otp_resolver(
+                account,
+                source_factory,
+            ),
+            session_manager=browser_session_manager,
         )
 
-    return EmailUnsubscribeAuditOperation(
+    operation = EmailUnsubscribeAuditOperation(
         task_store=task_store,
         email_store=email_store,
         resolve_entries=resolve_entries,
         execute_effect=execute_effect,
     )
+    operation.browser_session_manager = browser_session_manager
+    operation.open_user_handoff = browser_session_manager.handoff_action
+    return operation
 
 
 def run_audited_email_unsubscribe(

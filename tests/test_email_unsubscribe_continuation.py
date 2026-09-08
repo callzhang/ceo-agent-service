@@ -785,6 +785,48 @@ def test_receipt_projection_revalidates_typed_control_values():
         email_unsubscribe_continuation_receipt(poisoned)
 
 
+@pytest.mark.parametrize(
+    "kind",
+    ("email_otp", "captcha_handoff", "credential_handoff"),
+)
+def test_driver_projects_typed_auth_continuation_without_secret(kind):
+    module = _module()
+    store = FakeEmailStore()
+    store.continuation["controls"] = [
+        {
+            "reference": "auth-control:" + sha256(kind.encode()).hexdigest(),
+            "kind": kind,
+            "intent": "confirm",
+        }
+    ]
+
+    decision = module.EmailUnsubscribeContinuationDriver(store).continuation_state(
+        _task(),
+        audit_run=_audit_run(),
+        audit_result=_audit_result(),
+    )
+
+    assert decision.state is module.DomainContinuationState.CONTINUE
+    assert decision.required_receipt_id == (
+        "email-unsubscribe-continuation:" + EFFECT_DIGEST
+    )
+    assert "847201" not in decision.required_receipt_binding
+
+    from app.email_task_adapter import (
+        email_unsubscribe_continuation_receipt,
+        validated_email_unsubscribe_continuation,
+    )
+
+    typed = validated_email_unsubscribe_continuation(
+        _payload(),
+        _claim(),
+        store.continuation,
+    )
+    summary = json.loads(email_unsubscribe_continuation_receipt(typed).summary)
+    assert summary["requires_human"] is (kind == "credential_handoff")
+    assert "847201" not in json.dumps(summary, sort_keys=True)
+
+
 def test_driver_accepts_only_current_executed_audit_with_matching_durable_continuation() -> (
     None
 ):

@@ -63,7 +63,17 @@ _ACTION_LIFECYCLE_VERSIONS = {
 _MAX_METADATA_TEXT_LENGTH = 64 * 1024
 _MAX_METADATA_JSON_LENGTH = 256 * 1024
 _MAX_METADATA_DECODE_ROUNDS = 8
-_UNSUBSCRIBE_CONTROL_KINDS = frozenset({"form", "link", "button", "confirmation_email"})
+_UNSUBSCRIBE_CONTROL_KINDS = frozenset(
+    {
+        "form",
+        "link",
+        "button",
+        "confirmation_email",
+        "email_otp",
+        "captcha_handoff",
+        "credential_handoff",
+    }
+)
 _UNSUBSCRIBE_CONTROL_INTENTS = frozenset({"continue", "unsubscribe", "confirm"})
 _UNSUBSCRIBE_ENTRY_PRIORITIES = {
     "header_one_click_https": 0,
@@ -1114,12 +1124,32 @@ def accepted_email_unsubscribe_effect(
                 "link": {"click_confirmation"},
                 "button": {"click_confirmation"},
                 "confirmation_email": {"confirm_email"},
+                "email_otp": {"submit_form"},
+                "captcha_handoff": {"click_confirmation", "reconcile_handoff"},
+                "credential_handoff": {"reconcile_handoff"},
             }
+            prior_operations = continuation.executed_operations
             if (
                 control is None
                 or next_operation.kind.value not in allowed[control.kind]
             ):
                 raise ValueError("unsubscribe continuation control is invalid")
+            captcha_attempted = any(
+                item.kind.value == "click_confirmation"
+                and item.target_reference == control.reference
+                for item in prior_operations
+            )
+            if control.kind == "captcha_handoff" and (
+                (
+                    next_operation.kind.value == "click_confirmation"
+                    and captcha_attempted
+                )
+                or (
+                    next_operation.kind.value == "reconcile_handoff"
+                    and not captcha_attempted
+                )
+            ):
+                raise ValueError("unsubscribe CAPTCHA continuation stage is invalid")
             previous_effect_digest = continuation.effect_digest
         return EmailUnsubscribeEffect(
             action_identity=required_text(metadata, "action_identity"),
@@ -1304,8 +1334,12 @@ def email_unsubscribe_continuation_receipt(
                 }
                 for item in controls
             ],
+            "requires_human": continuation.requires_human,
             "instruction": (
-                "Audit accepted the durable prefix; propose exactly one next "
+                "The supported authentication attempt is exhausted; return "
+                "needs_human with the opaque continuation reference."
+                if continuation.requires_human
+                else "Audit accepted the durable prefix; propose exactly one next "
                 "operation from the listed opaque controls."
             ),
             "previous_effect_digest": continuation.effect_digest,
