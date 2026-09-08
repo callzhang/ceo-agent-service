@@ -97,7 +97,7 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("★★★★☆ · 4/5")).toBeInTheDocument();
     expect(screen.getByText("对方反馈内容")).toBeInTheDocument();
     expect(screen.getByText("回复已经解决问题")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Audit summary" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Audit summary" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Draft reply (raw Codex reply)" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Runtime attempts" })).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-grid")).toBeInTheDocument();

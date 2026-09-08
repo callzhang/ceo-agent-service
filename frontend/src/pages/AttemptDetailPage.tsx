@@ -119,7 +119,6 @@ export function AttemptDetailPage() {
       {(detail.calendar.event_id || detail.calendar.response_status) && <DetailSection title="日历信息" value={[detail.calendar.event_id, detail.calendar.response_status, displayValue(detail.calendar.result)].filter(Boolean).join("\n")} />}
       {detail.quality_warnings.length > 0 && <section className="console-card attempt-quality-warning"><h2>Audit quality warnings</h2><ul>{detail.quality_warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section>}
       {detail.context_only_info && <DetailSection title="Audit context" value={detail.context_only_info} />}
-      <DetailSection title="Audit summary" value={detail.audit_summary} />
       {!detail.agent_execution_record && <DetailSection title="Tool uses" value={detail.tool_uses} />}
       {detail.runtime_attempts.length > 0 && <details className="console-card attempt-runtime-card"><summary><h2>Runtime attempts</h2><span>{detail.runtime_attempts.length} 条执行记录</span></summary><div className="attempt-runtime-list">{detail.runtime_attempts.map((entry, index) => <RuntimeEntry entry={entry} key={`${entry.route}-${index}`} />)}</div></details>}
       {message && <p className="attempt-action-message" role="status" aria-live="polite">{message}</p>}
