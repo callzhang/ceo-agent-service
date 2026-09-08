@@ -11150,6 +11150,75 @@ class AutoReplyStore:
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
+    def skip_scheduled_reply_task(
+        self,
+        task_id: int,
+        reason: str,
+        *,
+        expected_execution_generation: str,
+        dispatcher_owner: str,
+        dispatcher_generation: int,
+        now: datetime,
+    ) -> int:
+        """Persist a pre-Agent scheduled skip without manufacturing an Agent run."""
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("scheduled reply skip reason must be non-empty")
+        if not dispatcher_owner.strip() or dispatcher_generation <= 0:
+            raise ValueError("scheduled execution dispatcher claim is invalid")
+        now_text = now.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        with self._immediate_write_transaction() as db:
+            current_claim = db.execute(
+                "select 1 from dispatcher_claim_leases "
+                "where adapter_name='scheduled_execution' and source_id=? "
+                "and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
+                (str(task_id), dispatcher_owner, dispatcher_generation, now_text),
+            ).fetchone()
+            if current_claim is None:
+                raise ValueError("scheduled execution claim is no longer current")
+            task = db.execute(
+                "select * from reply_tasks where id=? and channel='scheduled' "
+                "and status='processing' and execution_generation=?",
+                (task_id, expected_execution_generation),
+            ).fetchone()
+            if task is None:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            cursor = db.execute(
+                """
+                insert into reply_attempts (
+                    conversation_id, conversation_title, trigger_message_id,
+                    trigger_sender, trigger_text, action, sensitivity_kind,
+                    codex_reason, audit_summary, send_status, send_error, channel
+                ) values (?, ?, ?, ?, ?, 'scheduled_preflight', 'general',
+                          'scheduled_execution_unavailable', ?, 'skipped', ?, 'scheduled')
+                """,
+                (
+                    task["conversation_id"], task["conversation_title"],
+                    task["trigger_message_id"], task["trigger_sender"],
+                    task["trigger_text"], reason.strip(), reason.strip(),
+                ),
+            )
+            db.execute(
+                "update reply_tasks set status='done', locked_at=null, error='', "
+                "updated_at=current_timestamp where id=? and status='processing' "
+                "and execution_generation=?",
+                (task_id, expected_execution_generation),
+            )
+            ledger = db.execute(
+                "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+                "terminal_at=?, last_error='', updated_at=? "
+                "where adapter_name='scheduled_execution' and source_id=? "
+                "and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
+                (
+                    now_text, now_text, str(task_id), dispatcher_owner,
+                    dispatcher_generation, now_text,
+                ),
+            )
+            if ledger.rowcount != 1:
+                raise ValueError("scheduled execution claim is no longer current")
+            return int(cursor.lastrowid)
+
     def defer_reply_task_for_authorization(
         self,
         task_id: int,

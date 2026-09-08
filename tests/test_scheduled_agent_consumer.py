@@ -4,6 +4,7 @@ from collections import deque
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -30,6 +31,8 @@ class Options:
     def __init__(self, managed, operation, kind=RuntimeKind.CODEX_CLI):
         self.managed, self.operation, self.kind = managed, operation, kind
         self.available = True
+        self.managed_available = True
+        self.operation_available = True
 
     def resolve_runtime_route(self, name):
         if not self.available:
@@ -39,8 +42,15 @@ class Options:
             credential_mode=CredentialMode.LOCAL_OAUTH, model="configured",
         )
 
-    def resolve_managed_skill_revision(self, **_kwargs): return self.managed
-    def resolve_operation_skill(self, _name): return self.operation
+    def resolve_managed_skill_revision(self, **_kwargs):
+        if not self.managed_available:
+            raise ValueError("managed revision unavailable")
+        return self.managed
+
+    def resolve_operation_skill(self, _name):
+        if not self.operation_available:
+            raise ValueError("operation Skill unavailable")
+        return self.operation
 
 
 def fixture(tmp_path, *, kind=RuntimeKind.CODEX_CLI, runtime_options=None):
@@ -60,11 +70,13 @@ def fixture(tmp_path, *, kind=RuntimeKind.CODEX_CLI, runtime_options=None):
         path=path, content=raw.decode(), sha256=hashlib.sha256(raw).hexdigest(),
         raw_bytes=raw,
     )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     task = store.create_scheduled_task(
         name="Check", prompt="Only snapshot", cron_expression="0 * * * * *",
         timezone_name="UTC", runtime_id="runtime",
         runtime_options=runtime_options or {"model": "saved", "reasoning_effort": "high"},
-        working_directory=str(tmp_path), enabled=True,
+        working_directory=str(workspace), enabled=True,
         skill_refs=(
             ScheduledTaskSkillRef(
                 skill_source="managed", skill_name="managed-check",
@@ -253,7 +265,6 @@ def test_execution_uses_persisted_preflight_context_after_current_options_change
     store, run, options = fixture(tmp_path)
     persisted = dispatch(store, run, options)
     task_id = int(persisted.execution_id)
-    options.available = False
     options.operation.path.write_text("CHANGED AFTER DISPATCH")
     observed = []
 
@@ -275,7 +286,7 @@ def test_execution_uses_persisted_preflight_context_after_current_options_change
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
     consumer = ScheduledAgentConsumer(
-        store=store,
+        store=store, option_service=options,
         orchestrator_factory=lambda built: (
             observed.append(built.skill_protocol) or Orchestrator()
         ), now=lambda: NOW,
@@ -284,6 +295,57 @@ def test_execution_uses_persisted_preflight_context_after_current_options_change
     assert "EXACT OPERATION BODY" in observed[0]
     assert "CHANGED AFTER DISPATCH" not in observed[0]
     assert observed[1] == ("Only snapshot", "Only snapshot")
+
+
+@pytest.mark.parametrize(
+    "loss_kind",
+    [
+        "runtime_unhealthy",
+        "managed_missing",
+        "managed_disabled",
+        "workspace_deleted",
+        "operation_uninstalled",
+    ],
+)
+def test_execution_availability_loss_is_skipped_without_agent_run(tmp_path, loss_kind):
+    store, run, options = fixture(tmp_path)
+    task_id = int(dispatch(store, run, options).execution_id)
+    if loss_kind == "runtime_unhealthy":
+        options.available = False
+    elif loss_kind in {"managed_missing", "managed_disabled"}:
+        options.managed_available = False
+    elif loss_kind == "workspace_deleted":
+        Path(store.get_scheduled_task_run(run.id).snapshot.working_directory).rmdir()
+    else:
+        options.operation_available = False
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, guard = claim(adapter, task_id, "execution")
+
+    ScheduledAgentConsumer(
+        store=store, option_service=options,
+        orchestrator_factory=lambda _built: (_ for _ in ()).throw(
+            AssertionError("Agent must not start")
+        ), now=lambda: NOW,
+    )(envelope, guard)
+
+    task = store.get_reply_task(task_id)
+    attempt = store.get_latest_reply_attempt_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    )
+    assert task.status == "done"
+    assert attempt is not None and attempt.send_status == "skipped"
+    assert store.list_agent_runs_for_task_generation(
+        task_id, task.execution_generation
+    ) == []
+    assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
+    assert store.list_errors()
+    with store._connect() as db:
+        ledger = db.execute(
+            "select terminal_at from dispatcher_claim_leases "
+            "where adapter_name='scheduled_execution' and source_id=?",
+            (str(task_id),),
+        ).fetchone()
+    assert ledger is not None and ledger["terminal_at"]
 
 
 def test_provider_failure_only_fails_execution_fact(tmp_path):
@@ -304,13 +366,30 @@ def test_provider_failure_only_fails_execution_fact(tmp_path):
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
     ScheduledAgentConsumer(
-        store=store,
+        store=store, option_service=options,
         orchestrator_factory=lambda _built: SimpleNamespace(
             process=lambda *_args, **_kwargs: result
         ), now=lambda: NOW,
     )(envelope, guard)
     assert store.get_reply_task(task_id).status == "failed"
     assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
+
+
+def test_scheduled_skip_rejects_stale_execution_claim(tmp_path):
+    store, run, options = fixture(tmp_path)
+    task_id = int(dispatch(store, run, options).execution_id)
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, _guard = claim(adapter, task_id, "execution")
+    task = store.get_reply_task(task_id)
+    with pytest.raises(ValueError, match="claim is no longer current"):
+        store.skip_scheduled_reply_task(
+            task_id, "unavailable",
+            expected_execution_generation=task.execution_generation,
+            dispatcher_owner="execution",
+            dispatcher_generation=envelope.generation + 1,
+            now=NOW,
+        )
+    assert store.get_reply_task(task_id).status == "processing"
 
 
 def test_retry_reclaims_same_execution_source(tmp_path):
@@ -337,7 +416,7 @@ def test_retry_reclaims_same_execution_source(tmp_path):
             return SimpleNamespace(status="executed", final_run_id=run_claim.id,
                 summary="done", error=AgentError(code="", retryable=False), audit_result=result)
     consumer = ScheduledAgentConsumer(
-        store=store,
+        store=store, option_service=options,
         orchestrator_factory=lambda _built: Orchestrator(), now=lambda: NOW,
     )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
@@ -360,7 +439,7 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, execution_id, "execution")
     ScheduledAgentConsumer(
-        store=store,
+        store=store, option_service=options,
         orchestrator_factory=lambda _built: orchestrator, now=lambda: NOW,
     )(envelope, guard)
     task = store.get_reply_task(execution_id)

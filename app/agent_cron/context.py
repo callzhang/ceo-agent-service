@@ -22,6 +22,40 @@ class ScheduledContextOptions(Protocol):
     def resolve_operation_skill(self, name: str) -> SkillDocument: ...
 
 
+def validate_scheduled_execution_availability(
+    options: ScheduledContextOptions, built: ScheduledAgentContext
+) -> None:
+    """Validate saved identities without rebuilding any saved execution content."""
+    current_route = options.resolve_runtime_route(built.route.name)
+    if (
+        current_route.runtime_kind != built.route.runtime_kind
+        or current_route.credential_mode != built.route.credential_mode
+    ):
+        raise ValueError("scheduled runtime route identity changed")
+    if not built.workspace.is_dir():
+        raise ValueError("scheduled task working directory is unavailable")
+    skills = built.context.trigger_raw_payload.get("skills")
+    if not isinstance(skills, list):
+        raise ValueError("scheduled execution skill identities are invalid")
+    for fact in skills:
+        if not isinstance(fact, dict):
+            raise ValueError("scheduled execution skill identity is invalid")
+        if fact.get("source") == "managed":
+            revision = options.resolve_managed_skill_revision(
+                skill_id=int(fact["skill_id"]),
+                revision_id=int(fact["revision_id"]),
+                skill_name=str(fact["name"]),
+            )
+            if revision.sha256 != fact.get("sha256"):
+                raise ValueError("scheduled managed revision identity changed")
+        elif fact.get("source") == "operation":
+            # Public operation Skill content is immutable in this execution fact;
+            # only its installed name remains an execution availability condition.
+            options.resolve_operation_skill(str(fact["name"]))
+        else:
+            raise ValueError("scheduled execution skill source is invalid")
+
+
 @dataclass(frozen=True)
 class ScheduledAgentContext:
     context: AgentTaskContext
@@ -140,6 +174,7 @@ class ScheduledAgentContextBuilder:
                     {
                         "source": "managed",
                         "name": ref.skill_name,
+                        "skill_id": revision.skill_id,
                         "revision_id": revision.id,
                         "sha256": revision.sha256,
                     }

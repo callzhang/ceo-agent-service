@@ -5,7 +5,11 @@ from datetime import UTC, datetime
 import json
 from typing import Protocol
 
-from app.agent_cron.context import ScheduledAgentContext, ScheduledAgentContextBuilder
+from app.agent_cron.context import (
+    ScheduledAgentContext,
+    ScheduledAgentContextBuilder,
+    validate_scheduled_execution_availability,
+)
 from app.dispatcher.models import ClaimGuard, DispatchEnvelope
 from app.store import AutoReplyStore, ReplyTask
 
@@ -50,11 +54,12 @@ class ScheduledAgentConsumer:
     """Run a claimed scheduled execution through the ordinary Audit lifecycle."""
 
     def __init__(
-        self, *, store: AutoReplyStore,
+        self, *, store: AutoReplyStore, option_service,
         orchestrator_factory: Callable[[ScheduledAgentContext], ScheduledOrchestrator],
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
+        self._option_service = option_service
         self._orchestrator_factory = orchestrator_factory
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -70,6 +75,24 @@ class ScheduledAgentConsumer:
         built = ScheduledAgentContext.from_execution_json(
             task.trigger_message_json, reply_task_id=task.id
         )
+        try:
+            validate_scheduled_execution_availability(self._option_service, built)
+        except ValueError as exc:
+            reason = f"scheduled_task_execution_unavailable: {exc}"
+            guard.assert_current(self._now().astimezone(UTC))
+            self._store.skip_scheduled_reply_task(
+                task.id, reason,
+                expected_execution_generation=task.execution_generation,
+                dispatcher_owner=guard.token.owner,
+                dispatcher_generation=guard.token.generation,
+                now=self._now().astimezone(UTC),
+            )
+            self._store.record_error(
+                f"scheduled-task:{run.scheduled_task_id}", run.event_id,
+                "scheduled_task_execution_unavailable", reason,
+            )
+            guard.accept_atomic_source_completion()
+            return
         result = self._orchestrator_factory(built).process(
             task, built.context, refresh_context=lambda: built.context,
         )
