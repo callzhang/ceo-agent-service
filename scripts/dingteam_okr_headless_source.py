@@ -17,8 +17,32 @@ from playwright.sync_api import sync_playwright
 
 
 SCRIPT_DIR = Path("/Users/derek/.agents/skills/dingtang-okr-review/scripts")
+LOCAL_SSO_CONFIRM_SCRIPT = Path(__file__).with_name("dingtalk_local_sso_confirm.py")
 HEADLESS_REFRESH_SECONDS = 40
 HEADLESS_LOCK_TIMEOUT_SECONDS = 130
+LOCAL_SSO_TIMEOUT_MS = 10_000
+LOCAL_SSO_DIALOG_DELAY_MS = 1_500
+LOCAL_SSO_CONFIRM_PROCESS_SECONDS = 40
+LOCAL_SSO_CURRENT_PAGE = ".app-page.app-page-curr"
+LOCAL_SSO_DIRECT_BUTTON = (
+    f"{LOCAL_SSO_CURRENT_PAGE} "
+    ".module-confirm-button.base-comp-button-type-primary"
+    ":not(.base-comp-button-disabled)"
+)
+LOCAL_SSO_ACCOUNT_AVATAR = f"{LOCAL_SSO_CURRENT_PAGE} .module-qrcode-user-avatar"
+LOCAL_SSO_CORP_ITEM = f"{LOCAL_SSO_CURRENT_PAGE} .module-corp-sel-listitem"
+LOCAL_SSO_CORP_NAME = "北京星尘纪元智能科技有限公司"
+OKR_REQUEST_NUDGE = """() => { try {
+    if (location.hash.indexOf('okr') < 0) { location.hash = '#/okr/personal'; }
+    if (window.webpackChunkallinone) {
+        window.webpackChunkallinone.push([
+            ['__ceo_okr_' + Date.now()], {},
+            function(require) { window.__ceoOkrRequire = require; }
+        ]);
+        var api = window.__ceoOkrRequire(37615).Z;
+        api.person.period.list({userId: '__noop__'}).catch(function() {});
+    }
+} catch (error) {} }"""
 _browser_spec = importlib.util.spec_from_file_location(
     "dingteam_okr_browser_source", SCRIPT_DIR / "dingteam_okr_browser_source.py"
 )
@@ -68,6 +92,74 @@ def _unmounted_page_error(
     return None
 
 
+def _is_dingtalk_login_url(page_url: str) -> bool:
+    normalized_url = page_url.casefold()
+    return "login.dingtalk.com/" in normalized_url and "/oauth2/" in normalized_url
+
+
+def _confirm_local_dingtalk_login() -> None:
+    subprocess.run(
+        ["/usr/bin/python3", str(LOCAL_SSO_CONFIRM_SCRIPT)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=LOCAL_SSO_CONFIRM_PROCESS_SECONDS,
+    )
+
+
+def _submit_local_dingtalk_account(page) -> None:
+    direct_login = page.locator(LOCAL_SSO_DIRECT_BUTTON).first
+    direct_login.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+    direct_login.click(timeout=LOCAL_SSO_TIMEOUT_MS)
+
+    try:
+        corp = page.locator(LOCAL_SSO_CORP_ITEM).filter(
+            has_text=LOCAL_SSO_CORP_NAME
+        ).first
+        corp.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+        corp.click(timeout=LOCAL_SSO_TIMEOUT_MS)
+    except Exception:
+        # A single-organization account navigates directly to Dingteam.
+        pass
+
+
+def _attempt_local_dingtalk_sso(page) -> bool:
+    """Use the logged-in desktop DingTalk account to recover the web session."""
+    if not _is_dingtalk_login_url(getattr(page, "url", "")):
+        return False
+    try:
+        _submit_local_dingtalk_account(page)
+        return True
+    except Exception:
+        pass
+    try:
+        page.get_by_text("QR Code", exact=True).click(timeout=LOCAL_SSO_TIMEOUT_MS)
+        avatar = page.locator(LOCAL_SSO_ACCOUNT_AVATAR).first
+        avatar.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+        avatar.click(timeout=LOCAL_SSO_TIMEOUT_MS)
+        page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
+        _confirm_local_dingtalk_login()
+        _submit_local_dingtalk_account(page)
+        return True
+    except Exception:
+        return False
+
+
+def _maybe_attempt_local_dingtalk_sso(page, *, attempted: bool) -> bool:
+    if attempted or not _is_dingtalk_login_url(getattr(page, "url", "")):
+        return attempted
+    return _attempt_local_dingtalk_sso(page)
+
+
+def _nudge_dingteam_pages(context) -> None:
+    for page in list(context.pages):
+        try:
+            if page.url.startswith("https://dingokr.dingteam.com/"):
+                page.evaluate(OKR_REQUEST_NUDGE)
+        except Exception:
+            continue
+
+
 def _headless_cdp_command(playwright, *, port: int, profile_dir: str) -> list[str]:
     """Launch an isolated Chrome process that Playwright connects to over loopback."""
     return [
@@ -75,6 +167,7 @@ def _headless_cdp_command(playwright, *, port: int, profile_dir: str) -> list[st
         "--headless=new",
         "--no-first-run",
         "--no-default-browser-check",
+        "--disable-features=LocalNetworkAccessChecks",
         "--remote-debugging-address=127.0.0.1",
         f"--remote-debugging-port={port}",
         f"--user-data-dir={profile_dir}",
@@ -169,6 +262,9 @@ def _capture_stable_headless_headers() -> dict[str, str]:
                 page = context.new_page()
                 page.goto(browser.ENTRY_URL, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_timeout(2500)
+                local_sso_attempted = _maybe_attempt_local_dingtalk_sso(
+                    page, attempted=False
+                )
                 for _ in range(3):
                     try:
                         page.evaluate("() => document.readyState")
@@ -181,6 +277,10 @@ def _capture_stable_headless_headers() -> dict[str, str]:
                 while time.monotonic() < deadline and "Authorization" not in captured:
                     try:
                         page.wait_for_timeout(800)
+                        _nudge_dingteam_pages(context)
+                        local_sso_attempted = _maybe_attempt_local_dingtalk_sso(
+                            page, attempted=local_sso_attempted
+                        )
                         page.evaluate("() => document.readyState")
                     except Exception as exc:
                         if "execution context was destroyed" not in str(exc).lower():

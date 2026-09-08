@@ -110,11 +110,223 @@ def test_headless_cdp_launch_uses_playwright_browser_binary_and_loopback_only():
         "--headless=new",
         "--no-first-run",
         "--no-default-browser-check",
+        "--disable-features=LocalNetworkAccessChecks",
         "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=9222",
         "--user-data-dir=/tmp/ceo-okr-profile",
         "about:blank",
     ]
+
+
+def test_login_redirect_uses_local_dingtalk_sso_before_expiring(monkeypatch):
+    module = load_module()
+    calls = []
+    submit_calls = 0
+
+    class Locator:
+        @property
+        def first(self):
+            return self
+
+        def wait_for(self, **kwargs):
+            calls.append(("wait_for", kwargs))
+
+        def click(self, **kwargs):
+            calls.append(("click_avatar", kwargs))
+
+    class Page:
+        url = "https://login.dingtalk.com/oauth2/challenge.htm"
+
+        def get_by_text(self, text, *, exact):
+            calls.append(("get_by_text", text, exact))
+            return self
+
+        def click(self, **kwargs):
+            calls.append(("click_qr", kwargs))
+
+        def locator(self, selector):
+            calls.append(("locator", selector))
+            return Locator()
+
+        def wait_for_timeout(self, milliseconds):
+            calls.append(("wait", milliseconds))
+
+    def submit(_page):
+        nonlocal submit_calls
+        submit_calls += 1
+        calls.append(("submit", submit_calls))
+        if submit_calls == 1:
+            raise RuntimeError("local account is not shown yet")
+
+    monkeypatch.setattr(module, "_submit_local_dingtalk_account", submit)
+    monkeypatch.setattr(module, "_confirm_local_dingtalk_login", lambda: calls.append("confirm"))
+
+    assert module._attempt_local_dingtalk_sso(Page()) is True
+    assert calls == [
+        ("submit", 1),
+        ("get_by_text", "QR Code", True),
+        ("click_qr", {"timeout": module.LOCAL_SSO_TIMEOUT_MS}),
+        ("locator", module.LOCAL_SSO_ACCOUNT_AVATAR),
+        ("wait_for", {"state": "visible", "timeout": module.LOCAL_SSO_TIMEOUT_MS}),
+        ("click_avatar", {"timeout": module.LOCAL_SSO_TIMEOUT_MS}),
+        ("wait", module.LOCAL_SSO_DIALOG_DELAY_MS),
+        "confirm",
+        ("submit", 2),
+    ]
+
+
+def test_existing_local_account_is_submitted_without_qr(monkeypatch):
+    module = load_module()
+    calls = []
+
+    class Page:
+        url = "https://login.dingtalk.com/oauth2/challenge.htm"
+
+    monkeypatch.setattr(
+        module,
+        "_submit_local_dingtalk_account",
+        lambda page: calls.append(("submit", page.url)),
+    )
+    monkeypatch.setattr(
+        module,
+        "_confirm_local_dingtalk_login",
+        lambda: (_ for _ in ()).throw(AssertionError("QR fallback is not needed")),
+    )
+
+    assert module._attempt_local_dingtalk_sso(Page()) is True
+    assert calls == [("submit", Page.url)]
+
+
+def test_local_account_submission_selects_target_organization():
+    module = load_module()
+    calls = []
+
+    class Locator:
+        @property
+        def first(self):
+            return self
+
+        def filter(self, **kwargs):
+            calls.append(("filter", kwargs))
+            return self
+
+        def wait_for(self, **kwargs):
+            calls.append(("wait_for", kwargs))
+
+        def click(self, **kwargs):
+            calls.append(("click", kwargs))
+
+    class Page:
+        def locator(self, selector):
+            calls.append(("locator", selector))
+            return Locator()
+
+    module._submit_local_dingtalk_account(Page())
+
+    assert calls == [
+        ("locator", module.LOCAL_SSO_DIRECT_BUTTON),
+        ("wait_for", {"state": "visible", "timeout": module.LOCAL_SSO_TIMEOUT_MS}),
+        ("click", {"timeout": module.LOCAL_SSO_TIMEOUT_MS}),
+        ("locator", module.LOCAL_SSO_CORP_ITEM),
+        ("filter", {"has_text": module.LOCAL_SSO_CORP_NAME}),
+        ("wait_for", {"state": "visible", "timeout": module.LOCAL_SSO_TIMEOUT_MS}),
+        ("click", {"timeout": module.LOCAL_SSO_TIMEOUT_MS}),
+    ]
+
+
+def test_local_sso_selectors_are_scoped_to_the_current_login_page():
+    module = load_module()
+
+    assert module.LOCAL_SSO_DIRECT_BUTTON.startswith(".app-page.app-page-curr ")
+    assert module.LOCAL_SSO_ACCOUNT_AVATAR.startswith(".app-page.app-page-curr ")
+    assert module.LOCAL_SSO_CORP_ITEM.startswith(".app-page.app-page-curr ")
+
+
+def test_native_dingtalk_confirmation_allows_slow_local_sso(monkeypatch):
+    module = load_module()
+    calls = []
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    module._confirm_local_dingtalk_login()
+
+    assert calls[0][1]["timeout"] == module.LOCAL_SSO_CONFIRM_PROCESS_SECONDS
+    assert module.LOCAL_SSO_CONFIRM_PROCESS_SECONDS > 30
+
+
+def test_delayed_login_redirect_starts_local_sso_once(monkeypatch):
+    module = load_module()
+    page = type("Page", (), {"url": "https://dingokr.dingteam.com/web/okr"})()
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "_attempt_local_dingtalk_sso",
+        lambda current_page: calls.append(current_page.url) or True,
+    )
+
+    attempted = module._maybe_attempt_local_dingtalk_sso(page, attempted=False)
+    assert attempted is False
+
+    page.url = "https://login.dingtalk.com/oauth2/challenge.htm"
+    attempted = module._maybe_attempt_local_dingtalk_sso(page, attempted=attempted)
+    assert attempted is True
+    assert module._maybe_attempt_local_dingtalk_sso(page, attempted=attempted) is True
+    assert calls == ["https://login.dingtalk.com/oauth2/challenge.htm"]
+
+
+def test_failed_local_sso_is_retried_until_it_starts(monkeypatch):
+    module = load_module()
+    page = type(
+        "Page", (), {"url": "https://login.dingtalk.com/oauth2/challenge.htm"}
+    )()
+    outcomes = iter([False, True])
+    calls = []
+
+    monkeypatch.setattr(
+        module,
+        "_attempt_local_dingtalk_sso",
+        lambda current_page: calls.append(current_page.url) or next(outcomes),
+    )
+
+    attempted = module._maybe_attempt_local_dingtalk_sso(page, attempted=False)
+    assert attempted is False
+    attempted = module._maybe_attempt_local_dingtalk_sso(page, attempted=attempted)
+    assert attempted is True
+    assert calls == [page.url, page.url]
+
+
+def test_header_wait_nudges_only_dingteam_pages():
+    module = load_module()
+    calls = []
+
+    class Page:
+        def __init__(self, url):
+            self.url = url
+
+        def evaluate(self, script):
+            calls.append((self.url, script))
+
+    context = type(
+        "Context",
+        (),
+        {
+            "pages": [
+                Page("about:blank"),
+                Page("https://login.dingtalk.com/oauth2/challenge.htm"),
+                Page("https://dingokr.dingteam.com/web/okr/pc/index.html"),
+            ]
+        },
+    )()
+
+    module._nudge_dingteam_pages(context)
+
+    assert len(calls) == 1
+    assert calls[0][0].startswith("https://dingokr.dingteam.com/")
+    assert "person.period.list" in calls[0][1]
 
 
 def test_header_refresh_reuses_the_authenticated_persistent_context(monkeypatch, tmp_path):
