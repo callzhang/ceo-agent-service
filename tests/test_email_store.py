@@ -420,6 +420,12 @@ def test_later_snapshot_does_not_mutate_earlier_observation(tmp_path: Path):
         ]
         == "legal"
     )
+    state = store.latest_training_snapshot_state()
+    assert state is not None
+    assert state["snapshot_id"] == "snapshot-after-move"
+    assert state["folder_label_watermark"] == 2
+    assert state["important_label_watermark"] == 2
+    assert state["minimum_ready"] is False
 
 
 @pytest.mark.parametrize(

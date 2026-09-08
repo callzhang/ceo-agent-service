@@ -1423,6 +1423,7 @@ def _dependencies(
         load_task_context=lambda task: None,
         finalize_task=lambda task, result: None,
         training_tick=lambda: None,
+        publish_provider_observation_change=lambda: None,
         record_health=lambda scope, payload: None,
     )
 
@@ -2291,6 +2292,107 @@ def test_email_worker_components_use_exact_independent_loop_functions():
         module.run_email_agent_task_loop,
         module.run_training_scheduler_loop,
     )
+    assert components[0][1].keywords["provider_observation_complete"] is (
+        dependencies.publish_provider_observation_change
+    )
+
+
+def test_successful_provider_scan_completion_publishes_training_observation_event():
+    module = _module()
+    events = []
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 1},
+        run_direct_actions_once=lambda: None,
+        provider_observation_complete=lambda: events.append("published"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert events == ["published"]
+
+
+def test_idle_scan_without_provider_or_action_change_does_not_request_observation():
+    module = _module()
+    events = []
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 0},
+        run_direct_actions_once=lambda: None,
+        provider_observation_complete=lambda: events.append("requested"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert events == []
+
+
+def test_production_folder_result_tuple_without_changes_does_not_request_observation():
+    module = _module()
+    from app.email_classifier_scan import EmailScanResult
+
+    events = []
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: (
+            EmailScanResult(3, 0, 0, 0),
+            EmailScanResult(2, 0, 0, 0),
+        ),
+        run_direct_actions_once=lambda: None,
+        provider_observation_complete=lambda: events.append("requested"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert events == []
+
+
+def test_production_folder_result_tuple_requests_once_when_any_folder_changes():
+    module = _module()
+    from app.email_classifier_scan import EmailScanResult
+
+    events = []
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: (
+            EmailScanResult(3, 0, 0, 0),
+            EmailScanResult(2, 1, 0, 0),
+        ),
+        run_direct_actions_once=lambda: None,
+        provider_observation_complete=lambda: events.append("requested"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert events == ["requested"]
+
+
+def test_explicit_provider_folder_or_important_change_requests_observation():
+    module = _module()
+    events = []
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {
+            "persisted_count": 0,
+            "provider_changed": True,
+        },
+        run_direct_actions_once=lambda: None,
+        provider_observation_complete=lambda: events.append("requested"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert events == ["requested"]
 
 
 def test_scan_failure_isolated_per_account_and_health_is_bounded_and_sanitized():
@@ -2559,6 +2661,15 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
 ):
     module = _module()
     sentinel = object()
+    training_events = []
+
+    class SnapshotJob:
+        def __init__(self, **kwargs):
+            training_events.append(("created", kwargs))
+
+        def publish_observations(self, observations):
+            training_events.append(("published", tuple(observations)))
+            return "snapshot-published"
 
     def direct_factory(_account_id):
         return None
@@ -2594,13 +2705,69 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
             category_enabled={},
         ),
     )
+    provider_observations = ({"stable_message_identity": "provider-message-1"},)
+    observation_events = []
+
+    class ObservationJob:
+        def __init__(self, **kwargs):
+            observation_events.append(("job-created", kwargs))
+
+        def cached_observations(self):
+            return provider_observations
+
+        def initialized(self):
+            return False
+
+    class ObservationCoordinator:
+        def __init__(self, *, job, accounts_loader, publish, **kwargs):
+            observation_events.append(("coordinator-created", kwargs))
+            self.accounts_loader = accounts_loader
+            self.publish = publish
+
+        def request(self, _key=None):
+            observation_events.append(("requested",))
+
+        def request_initialization(self):
+            observation_events.append(("initialization-requested",))
+
+        def tick(self):
+            observation_events.append(("provider-read", tuple(self.accounts_loader())))
+            return self.publish(provider_observations)
+
+    class ChangeDetector:
+        def __init__(self, *, job, accounts_loader, request):
+            observation_events.append(("detector-created", job))
+            self.accounts_loader = accounts_loader
+            self.request = request
+
+        def tick(self):
+            observation_events.append(
+                ("fingerprint-read", tuple(self.accounts_loader()))
+            )
+            self.request("provider-change:test")
+            return True
+
+    monkeypatch.setattr(
+        "app.email_training_observer.ProviderTrainingObservationJob",
+        ObservationJob,
+    )
+    monkeypatch.setattr(
+        "app.email_training_observer.TrainingObservationCoordinator",
+        ObservationCoordinator,
+    )
+    monkeypatch.setattr(
+        "app.email_training_observer.ProviderTrainingChangeDetector",
+        ChangeDetector,
+    )
 
     settings = SimpleNamespace(
         db_path=tmp_path / "worker.sqlite3",
         workspace=tmp_path,
         dry_run=False,
     )
-    bootstrap = module.build_email_worker_dependencies(settings)
+    bootstrap = module.build_email_worker_dependencies(
+        settings, training_snapshot_job_factory=SnapshotJob
+    )
     dependencies = bootstrap.build_dependencies(
         ({"account_id": "account-1", "enabled": True},),
         SimpleNamespace(
@@ -2619,6 +2786,27 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     assert not hasattr(module, "_build_email_unsubscribe_consumer")
     assert not hasattr(module, "build_email_unsubscribe_operation")
     assert not hasattr(module, "run_email_unsubscribe_task")
+    first_idle = dependencies.training_tick()
+    second_idle = dependencies.training_tick()
+    assert first_idle.training_run is None
+    assert second_idle.training_run is None
+    assert [event[0] for event in training_events] == ["created"]
+    assert dependencies.publish_provider_observation_change() is None
+    assert [event[0] for event in training_events] == ["created"]
+    assert dependencies.training_observation_tick() == "snapshot-published"
+    assert [event[0] for event in training_events] == ["created", "published"]
+    assert training_events[1][1] == provider_observations
+    assert isinstance(training_events[0][1]["store"], EmailStore)
+    assert [event[0] for event in observation_events] == [
+        "job-created",
+        "coordinator-created",
+        "initialization-requested",
+        "detector-created",
+        "requested",
+        "fingerprint-read",
+        "requested",
+        "provider-read",
+    ]
 
 
 def test_agent_orchestrator_is_wired_with_email_continuation_driver(

@@ -1,15 +1,23 @@
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
 import json
+import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
+import app.email_training_snapshot as snapshot_module
 from app.email_important import ImportantSignals
 from app.email_training_snapshot import (
+    EmailTrainingSnapshotPublicationJob,
     MODEL_INPUT_SCHEMA_VERSION,
     FolderTrainingSnapshotError,
     build_folder_training_snapshot,
 )
+from app.email_classifier_learning import EmailClassifierLearningService
+from app.email_classifier_retrain import TrainingSubprocessRun
+from app.email_model_registry import EmailModelRegistry
+from app.email_store import EmailStore
 
 
 OBSERVED_AT = datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc)
@@ -27,9 +35,7 @@ def _message(identity: str, **overrides):
         "processed_by_email_service": True,
         "important_signals": ImportantSignals((), False),
         "sender": {"name": "Sender", "email": "sender@example.test"},
-        "to_recipients": [
-            {"name": "Derek", "email": "derek@example.test"}
-        ],
+        "to_recipients": [{"name": "Derek", "email": "derek@example.test"}],
         "cc_recipients": [],
         "subject": f"Subject {identity}",
         "body": f"Body {identity}",
@@ -66,6 +72,277 @@ def _snapshot(
 
 def _by_id(snapshot):
     return {row.stable_message_identity: row for row in snapshot.observations}
+
+
+def test_production_snapshot_job_builds_persists_and_triggers_with_real_store(
+    tmp_path,
+) -> None:
+    store = EmailStore(tmp_path / "email.sqlite3")
+    with sqlite3.connect(tmp_path / "email.sqlite3") as db:
+        db.execute("update email_category_configs set enabled=0")
+        db.execute(
+            "update email_category_configs set enabled=1 where category_key='work'"
+        )
+    registry = EmailModelRegistry(tmp_path / "email-models")
+
+    class Controller:
+        def __init__(self):
+            self.starts = []
+
+        def start(self, *, now, signal, snapshot_id):
+            self.starts.append((signal, snapshot_id))
+            return TrainingSubprocessRun(
+                run_id="snapshot-job-run",
+                status="running",
+                pid=7,
+                started_at=now.isoformat(),
+                snapshot_id=snapshot_id,
+                snapshot_sha=signal.snapshot_sha,
+                description_version=signal.description_version,
+                folder_label_watermark=signal.folder_label_watermark,
+                important_label_watermark=signal.important_label_watermark,
+            )
+
+    controller = Controller()
+    learning = EmailClassifierLearningService(
+        store,
+        registry=registry,
+        retrain_state_path=registry.root / "retrain-state.json",
+        controller=controller,
+    )
+    observations = tuple(
+        _message(
+            f"work-{index}",
+            folder_role="category",
+            provider_folder_id="folder-work",
+            provider_folder_name="Work",
+            bound_category_key="work",
+            processed_by_email_service=True,
+            important_signals=ImportantSignals(
+                ("STARRED",) if index % 2 else (), bool(index % 2)
+            ),
+            sender={"name": f"Sender {index}", "email": f"sender-{index}@example.test"},
+            subject=f"Unique junk token {chr(65 + index % 26)}-{index}",
+        )
+        for index in range(100)
+    )
+    job = EmailTrainingSnapshotPublicationJob(
+        store=store,
+        learning_service=learning,
+        observation_loader=lambda: observations,
+        description_version_loader=lambda: "description-set-v1",
+        seed=20260905,
+    )
+
+    result = job.run_once(now=OBSERVED_AT)
+
+    stored = store.get_training_snapshot(result.snapshot["snapshot_id"])
+    assert stored is not None
+    assert stored["snapshot_digest"] == result.snapshot["snapshot_digest"]
+    assert result.retrain.decision.reason == "first_minimum_ready_snapshot"
+    assert controller.starts[0][1] == stored["snapshot_id"]
+
+
+def test_snapshot_observation_event_deduplicates_identical_provider_state(tmp_path):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    published = []
+
+    class Learning:
+        registry = SimpleNamespace(root=tmp_path / "registry")
+
+        def publish_training_snapshot(self, snapshot, *, now):
+            published.append(snapshot)
+            return SimpleNamespace(snapshot=snapshot.to_dict(), retrain="checked")
+
+    observations = (_message("message-1"),)
+    job = EmailTrainingSnapshotPublicationJob(
+        store=store,
+        learning_service=Learning(),
+        observation_loader=lambda: pytest.fail("event path must not scan provider"),
+        description_version_loader=lambda: "descriptions-v1",
+    )
+
+    first = job.publish_observations(observations, now=OBSERVED_AT)
+    second = job.publish_observations(
+        observations, now=OBSERVED_AT + timedelta(minutes=5)
+    )
+
+    assert first.deduplicated is False
+    assert first.publication is not None
+    assert second.deduplicated is True
+    assert second.publication is None
+    assert len(published) == 1
+
+
+def test_snapshot_event_recovers_claimed_crash_without_duplicate_publication(tmp_path):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    starts = []
+
+    class Learning:
+        registry = SimpleNamespace(root=tmp_path / "registry")
+
+        def __init__(self):
+            self.crash = True
+
+        def publish_training_snapshot(self, snapshot, *, now):
+            store.persist_training_snapshot(snapshot)
+            if self.crash:
+                self.crash = False
+                raise RuntimeError("crash after durable snapshot")
+            pytest.fail("snapshot publication must not repeat")
+
+        def observe_snapshot_and_maybe_retrain(self, *, now):
+            starts.append(now)
+            return "triggered-once"
+
+    learning = Learning()
+    job = EmailTrainingSnapshotPublicationJob(
+        store=store,
+        learning_service=learning,
+        observation_loader=lambda: (),
+        description_version_loader=lambda: "descriptions-v1",
+    )
+    observations = (_message("message-crash"),)
+
+    with pytest.raises(RuntimeError, match="crash after durable snapshot"):
+        job.publish_observations(observations, now=OBSERVED_AT)
+    recovered = job.publish_observations(
+        observations, now=OBSERVED_AT + timedelta(minutes=1)
+    )
+    replay = job.publish_observations(
+        observations, now=OBSERVED_AT + timedelta(minutes=2)
+    )
+
+    assert recovered.publication == "triggered-once"
+    assert recovered.deduplicated is False
+    assert replay.deduplicated is True
+    assert len(starts) == 1
+
+
+def test_pending_trigger_crash_replay_keeps_one_snapshot_and_one_durable_trigger(
+    tmp_path, monkeypatch
+):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    calls = []
+
+    class Learning:
+        registry = SimpleNamespace(root=tmp_path / "registry")
+
+        def publish_training_snapshot(self, snapshot, *, now):
+            calls.append("publish")
+            stored = store.persist_training_snapshot(snapshot)
+            return SimpleNamespace(
+                snapshot=stored,
+                retrain=SimpleNamespace(),
+                pending_trigger=True,
+            )
+
+        def observe_snapshot_and_maybe_retrain(self, *, now):
+            calls.append("recover-pending")
+            return SimpleNamespace(pending_trigger=True)
+
+    original_save = snapshot_module._save_observation_event
+    crash = {"armed": True}
+
+    def crash_before_pending_status(path, value):
+        if value.get("status") == "pending-trigger" and crash["armed"]:
+            crash["armed"] = False
+            raise RuntimeError("crash before pending event status")
+        original_save(path, value)
+
+    monkeypatch.setattr(
+        snapshot_module, "_save_observation_event", crash_before_pending_status
+    )
+    job = EmailTrainingSnapshotPublicationJob(
+        store=store,
+        learning_service=Learning(),
+        observation_loader=lambda: (),
+        description_version_loader=lambda: "descriptions-v1",
+    )
+    observations = (_message("message-pending-crash"),)
+
+    with pytest.raises(RuntimeError, match="crash before pending event status"):
+        job.publish_observations(observations, now=OBSERVED_AT)
+    recovered = job.publish_observations(
+        observations, now=OBSERVED_AT + timedelta(minutes=1)
+    )
+    replay = job.publish_observations(
+        observations, now=OBSERVED_AT + timedelta(minutes=2)
+    )
+
+    assert recovered.deduplicated is False
+    assert replay.deduplicated is True
+    assert calls == ["publish", "recover-pending"]
+    with sqlite3.connect(store.path) as db:
+        assert db.execute(
+            "select count(*) from email_training_snapshots"
+        ).fetchone() == (1,)
+
+
+def test_observation_event_publishes_folder_important_and_description_changes(
+    tmp_path,
+):
+    published = []
+    description = ["descriptions-v1"]
+
+    class Learning:
+        registry = SimpleNamespace(root=tmp_path / "registry")
+
+        def publish_training_snapshot(self, snapshot, *, now):
+            published.append(snapshot)
+            return snapshot.snapshot_id
+
+    job = EmailTrainingSnapshotPublicationJob(
+        store=EmailStore(tmp_path / "email.sqlite3"),
+        learning_service=Learning(),
+        observation_loader=lambda: (),
+        description_version_loader=lambda: description[0],
+    )
+    baseline = _message("message-change")
+    job.publish_observations((baseline,), now=OBSERVED_AT)
+    job.publish_observations(
+        (
+            _message(
+                "message-change",
+                provider_folder_id="folder-legal",
+                provider_folder_name="Legal",
+                bound_category_key="legal",
+            ),
+        ),
+        now=OBSERVED_AT + timedelta(minutes=1),
+    )
+    job.publish_observations(
+        (
+            _message(
+                "message-change",
+                provider_folder_id="folder-legal",
+                provider_folder_name="Legal",
+                bound_category_key="legal",
+                important_signals=ImportantSignals(("STARRED",), True),
+            ),
+        ),
+        now=OBSERVED_AT + timedelta(minutes=2),
+    )
+    description[0] = "descriptions-v2"
+    job.publish_observations(
+        (
+            _message(
+                "message-change",
+                provider_folder_id="folder-legal",
+                provider_folder_name="Legal",
+                bound_category_key="legal",
+                important_signals=ImportantSignals(("STARRED",), True),
+            ),
+        ),
+        now=OBSERVED_AT + timedelta(minutes=3),
+    )
+
+    assert [item.description_version for item in published] == [
+        "descriptions-v1",
+        "descriptions-v1",
+        "descriptions-v1",
+        "descriptions-v2",
+    ]
 
 
 def test_current_bound_folder_wins_over_historical_prediction_and_confirmation():
@@ -133,9 +410,7 @@ def test_inbox_and_unbound_have_no_category(folder_role):
 
 @pytest.mark.parametrize("folder_role", ("sent", "draft"))
 def test_sent_and_draft_are_absent(folder_role):
-    snapshot = _snapshot(
-        [_message(f"message-{folder_role}", folder_role=folder_role)]
-    )
+    snapshot = _snapshot([_message(f"message-{folder_role}", folder_role=folder_role)])
 
     assert snapshot.observations == ()
 
@@ -243,11 +518,19 @@ def test_attachment_tie_order_does_not_change_input_or_snapshot_digest():
     }
 
     first = _snapshot(
-        [_message("attachment-order", attachments=[first_attachment, second_attachment])],
+        [
+            _message(
+                "attachment-order", attachments=[first_attachment, second_attachment]
+            )
+        ],
         snapshot_id="attachment-order-a",
     )
     second = _snapshot(
-        [_message("attachment-order", attachments=[second_attachment, first_attachment])],
+        [
+            _message(
+                "attachment-order", attachments=[second_attachment, first_attachment]
+            )
+        ],
         snapshot_id="attachment-order-b",
     )
 
@@ -284,6 +567,44 @@ def test_model_input_preserves_quoted_reply_body_and_approved_headers():
     }
 
 
+def test_published_snapshot_never_persists_private_unsubscribe_value(tmp_path):
+    private_token = "private-token-A-1234"
+    private_url = f"https://unsubscribe.example.test/remove?token={private_token}"
+    snapshot = _snapshot(
+        [
+            _message(
+                "private-unsubscribe",
+                headers={
+                    "Message-ID": "<private-unsubscribe@example.test>",
+                    "List-Unsubscribe": f"<{private_url}>, <mailto:leave@example.test>",
+                    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+                },
+            )
+        ]
+    )
+    payload = json.loads(snapshot.observations[0].normalized_model_input)
+
+    assert payload["headers"] == {"message-id": "<private-unsubscribe@example.test>"}
+    assert payload["unsubscribe"] == {
+        "has_unsubscribe": True,
+        "hosts": ["example.test", "unsubscribe.example.test"],
+        "one_click": True,
+        "schemes": ["https", "mailto"],
+        "value_sha256": snapshot_module.sha256(
+            (
+                f"<{private_url}>, <mailto:leave@example.test>\n"
+                "List-Unsubscribe=One-Click"
+            ).encode("utf-8")
+        ).hexdigest(),
+    }
+
+    database_path = tmp_path / "email.sqlite3"
+    EmailStore(database_path).persist_training_snapshot(snapshot)
+    persisted_bytes = database_path.read_bytes()
+    assert private_url.encode() not in persisted_bytes
+    assert private_token.encode() not in persisted_bytes
+
+
 def test_empty_systematically_invalid_model_input_is_rejected():
     with pytest.raises(FolderTrainingSnapshotError, match="model input is empty"):
         _snapshot(
@@ -302,9 +623,50 @@ def test_empty_systematically_invalid_model_input_is_rejected():
         )
 
 
-def test_duplicate_stable_identities_are_rejected():
-    with pytest.raises(FolderTrainingSnapshotError, match="duplicate stable identity"):
-        _snapshot([_message("duplicate"), _message("duplicate")])
+def test_provider_duplicate_identity_uses_authoritative_bound_folder():
+    snapshot = _snapshot(
+        [
+            _message(
+                "duplicate",
+                provider_folder_id="all-mail",
+                provider_folder_name="All Mail",
+                folder_role="unbound",
+                bound_category_key=None,
+                folder_binding_status=None,
+                processed_by_email_service=False,
+            ),
+            _message(
+                "duplicate",
+                provider_folder_id="inbox",
+                provider_folder_name="Inbox",
+                folder_role="inbox",
+                bound_category_key=None,
+                folder_binding_status=None,
+                processed_by_email_service=False,
+            ),
+            _message("duplicate"),
+        ],
+        proposed_splits={"duplicate": "train"},
+    )
+
+    assert len(snapshot.observations) == 1
+    assert snapshot.observations[0].provider_folder_id == "folder-work"
+    assert snapshot.observations[0].category_key == "work"
+
+
+def test_duplicate_identity_in_two_authoritative_category_folders_is_rejected():
+    with pytest.raises(FolderTrainingSnapshotError, match="conflicting folder truth"):
+        _snapshot(
+            [
+                _message("duplicate"),
+                _message(
+                    "duplicate",
+                    provider_folder_id="folder-legal",
+                    provider_folder_name="Legal",
+                    bound_category_key="legal",
+                ),
+            ]
+        )
 
 
 @pytest.mark.parametrize(
@@ -357,7 +719,9 @@ def test_explicit_group_unions_instead_of_overwriting_thread_relationships():
 
     snapshot = _snapshot(
         messages,
-        proposed_splits={message["stable_message_identity"]: "train" for message in messages},
+        proposed_splits={
+            message["stable_message_identity"]: "train" for message in messages
+        },
     )
 
     assert len({row.group_key for row in snapshot.observations}) == 1
@@ -409,9 +773,7 @@ def test_observed_at_is_canonical_utc_and_changes_signed_snapshot_digest():
 )
 def test_folder_star_or_input_change_produces_new_digest(change):
     first = _snapshot([_message("message-1")], snapshot_id="snapshot-a")
-    second = _snapshot(
-        [_message("message-1", **change)], snapshot_id="snapshot-b"
-    )
+    second = _snapshot([_message("message-1", **change)], snapshot_id="snapshot-b")
 
     assert first.snapshot_digest != second.snapshot_digest
 
@@ -473,7 +835,9 @@ def test_same_body_with_conflicting_categories_is_excluded_globally():
 
     snapshot = _snapshot(
         messages,
-        proposed_splits={message["stable_message_identity"]: "train" for message in messages},
+        proposed_splits={
+            message["stable_message_identity"]: "train" for message in messages
+        },
     )
 
     assert snapshot.manifest["training_selection"] == []
@@ -519,10 +883,7 @@ def _independent_labeled_message(identity, category, *, source="natural"):
 
 def test_training_selection_balances_every_category_to_minimum_group_count():
     messages = [
-        *[
-            _independent_labeled_message(f"work-{index}", "work")
-            for index in range(5)
-        ],
+        *[_independent_labeled_message(f"work-{index}", "work") for index in range(5)],
         *[
             _independent_labeled_message(
                 f"legal-{index}",
@@ -540,9 +901,7 @@ def test_training_selection_balances_every_category_to_minimum_group_count():
             for index in range(7)
         ],
     ]
-    proposed = {
-        message["stable_message_identity"]: "train" for message in messages
-    }
+    proposed = {message["stable_message_identity"]: "train" for message in messages}
 
     first = _snapshot(messages, proposed_splits=proposed, snapshot_id="balanced-a")
     second = _snapshot(
@@ -559,9 +918,7 @@ def test_training_selection_balances_every_category_to_minimum_group_count():
     assert len(first.manifest["training_selection"]) == 6
     assert first.manifest["observation_count"] == 14
     assert first.manifest["selected_group_count"] == 6
-    assert first.manifest["training_selection"] == second.manifest[
-        "training_selection"
-    ]
+    assert first.manifest["training_selection"] == second.manifest["training_selection"]
     assert first.snapshot_digest == second.snapshot_digest
     selected = [row for row in first.observations if row.selected_for_training]
     assert len({row.group_key for row in selected}) == len(selected)
@@ -603,9 +960,7 @@ def test_fixed_hash_splits_produce_stable_equal_category_balance():
         seed=17,
     )
 
-    assert {
-        identity: row.split for identity, row in _by_id(first).items()
-    } == {
+    assert {identity: row.split for identity, row in _by_id(first).items()} == {
         "stable-0": "train",
         "stable-1": "train",
         "stable-16": "validation",

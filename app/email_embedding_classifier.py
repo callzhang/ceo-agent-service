@@ -152,16 +152,20 @@ class DescriptionAwareEmailClassifier:
         category_labels: Sequence[str],
         important_labels: Sequence[bool],
         *,
+        important_embeddings: np.ndarray | None = None,
         tuning_folds: Sequence[tuple[np.ndarray, np.ndarray]] = (),
     ) -> "DescriptionAwareEmailClassifier":
         matrix = self._matrix(embeddings)
+        important_matrix = (
+            matrix
+            if important_embeddings is None
+            else self._matrix(important_embeddings)
+        )
         labels = tuple(validate_email_category_key(item) for item in category_labels)
         important = tuple(important_labels)
-        if (
-            len(matrix) != len(labels)
-            or len(matrix) != len(important)
-            or not len(matrix)
-        ):
+        if len(matrix) != len(labels) or not len(matrix):
+            raise ValueError("category training inputs must be non-empty and aligned")
+        if len(important_matrix) != len(important) or not len(important_matrix):
             raise ValueError("training inputs must be non-empty and aligned")
         if set(labels) != set(self.enabled_categories):
             raise ValueError("training labels must cover enabled categories exactly")
@@ -175,7 +179,7 @@ class DescriptionAwareEmailClassifier:
                 matrix, labels, tuning_folds
             )
         self._category_head = self._new_head().fit(matrix, labels)
-        self._important_head = self._new_head().fit(matrix, important)
+        self._important_head = self._new_head().fit(important_matrix, important)
         return self
 
     def mlp_logits(self, embedding: np.ndarray) -> np.ndarray:

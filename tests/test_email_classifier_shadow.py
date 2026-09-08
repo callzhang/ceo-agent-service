@@ -3,13 +3,33 @@ from pathlib import Path
 
 from app.email_classifier_contracts import EmailCategory
 from app.email_classifier_model import CpuTfidfLogisticClassifier
-from app.email_classifier_shadow import stage_snapshot_shadow_candidate
+from app.email_classifier_shadow import (
+    stage_frozen_embedding_shadow_candidate,
+    stage_snapshot_shadow_candidate,
+)
 from app.email_classifier_training import EligibilityRequirement
 from app.email_experiment_snapshot import build_snapshot, save_snapshot
 from app.email_model_registry import EmailModelRegistry
 
 
 TRAINED_AT = datetime(2026, 9, 2, 21, 0, tzinfo=timezone.utc)
+
+
+def test_embedding_shadow_entry_delegates_to_snapshot_candidate_trainer(monkeypatch):
+    observed = {}
+
+    def train(**kwargs):
+        observed.update(kwargs)
+        return "candidate-result"
+
+    monkeypatch.setattr(
+        "app.email_classifier_shadow.train_frozen_embedding_candidate", train
+    )
+
+    result = stage_frozen_embedding_shadow_candidate(snapshot_id="snapshot-9")
+
+    assert result == "candidate-result"
+    assert observed == {"snapshot_id": "snapshot-9"}
 
 
 def _snapshot(

@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+import os
+from pathlib import Path
+import tempfile
 import unicodedata
+from urllib.parse import urlsplit
 
 from app.email_experiment_snapshot import deterministic_payload_digest
+from app.email_classifier_retrain import retrain_state_reservation
 from app.email_folder_truth import (
     EmailFolderTruthState,
     resolve_email_folder_truth,
@@ -19,7 +24,7 @@ from app.email_important import ImportantSignals, important_effective
 from app.email_provider_folders import FolderRole, ProviderFolder
 
 
-MODEL_INPUT_SCHEMA_VERSION = "email-folder-model-input-v1"
+MODEL_INPUT_SCHEMA_VERSION = "email-folder-model-input-v2"
 TRAINING_SNAPSHOT_VERSION = "email-folder-training-snapshot-v1"
 MAX_BODY_CHARACTERS = 32_000
 _BODY_HEAD_CHARACTERS = 24_000
@@ -30,8 +35,6 @@ _APPROVED_HEADERS = frozenset(
         "message-id",
         "in-reply-to",
         "references",
-        "list-unsubscribe",
-        "list-unsubscribe-post",
         "auto-submitted",
     }
 )
@@ -67,10 +70,7 @@ class TrainingSnapshotObservation:
     ordered_record_digest: str
 
     def to_dict(self) -> dict[str, object]:
-        return {
-            field: getattr(self, field)
-            for field in self.__dataclass_fields__
-        }
+        return {field: getattr(self, field) for field in self.__dataclass_fields__}
 
 
 @dataclass(frozen=True)
@@ -104,6 +104,212 @@ class FolderTrainingSnapshot:
 
 
 @dataclass(frozen=True)
+class SnapshotObservationEventResult:
+    observation_digest: str
+    deduplicated: bool
+    publication: object | None
+
+
+@dataclass(frozen=True)
+class EmailTrainingSnapshotPublicationJob:
+    """Production Task 5 builder that publishes only through the learning service."""
+
+    store: object
+    learning_service: object
+    observation_loader: Callable[[], Sequence[Mapping[str, object]]]
+    description_version_loader: Callable[[], str]
+    seed: int = 20260905
+
+    def run_once(self, *, now: datetime | None = None):
+        result = self.publish_observations(self.observation_loader(), now=now)
+        return result.publication
+
+    def publish_observations(
+        self,
+        observations: Sequence[Mapping[str, object]],
+        *,
+        now: datetime | None = None,
+    ) -> SnapshotObservationEventResult:
+        """Publish one actual provider-change observation, once per durable digest."""
+
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        observations = tuple(observations)
+        identity_digest = deterministic_payload_digest(
+            sorted(_identity(item) for item in observations)
+        )
+        snapshot_id = (
+            "email-folder-snapshot-"
+            + observed_at.strftime("%Y%m%dT%H%M%S.%fZ-")
+            + identity_digest[:12]
+        )
+        snapshot = build_folder_training_snapshot(
+            observations,
+            snapshot_id=snapshot_id,
+            description_version=self.description_version_loader(),
+            observed_at=observed_at,
+            seed=self.seed,
+        )
+        observation_digest = _snapshot_observation_digest(snapshot)
+        state_path = Path(self.learning_service.registry.root) / (
+            "training-observation-event.json"
+        )
+        with retrain_state_reservation(state_path):
+            event = _load_observation_event(state_path)
+            if (
+                event is not None
+                and event["observation_digest"] == observation_digest
+                and event["status"] in {"pending-trigger", "published"}
+            ):
+                return SnapshotObservationEventResult(
+                    observation_digest=observation_digest,
+                    deduplicated=True,
+                    publication=None,
+                )
+            if event is not None and event["observation_digest"] == observation_digest:
+                observed_at = datetime.fromisoformat(str(event["observed_at"]))
+                snapshot = build_folder_training_snapshot(
+                    observations,
+                    snapshot_id=str(event["snapshot_id"]),
+                    description_version=str(event["description_version"]),
+                    observed_at=observed_at,
+                    seed=self.seed,
+                )
+            else:
+                event = {
+                    "observation_digest": observation_digest,
+                    "status": "claimed",
+                    "snapshot_id": snapshot.snapshot_id,
+                    "snapshot_sha": snapshot.snapshot_digest,
+                    "observed_at": snapshot.observed_at,
+                    "description_version": snapshot.description_version,
+                }
+                _save_observation_event(state_path, event)
+            stored = self.store.get_training_snapshot(snapshot.snapshot_id)
+            if stored is None:
+                publication = self.learning_service.publish_training_snapshot(
+                    snapshot, now=observed_at
+                )
+            else:
+                if stored["snapshot_digest"] != snapshot.snapshot_digest:
+                    raise FolderTrainingSnapshotError(
+                        "claimed training snapshot content changed"
+                    )
+                publication = self.learning_service.observe_snapshot_and_maybe_retrain(
+                    now=observed_at
+                )
+            status = (
+                "pending-trigger"
+                if getattr(publication, "pending_trigger", False)
+                else "published"
+            )
+            _save_observation_event(state_path, {**event, "status": status})
+        return SnapshotObservationEventResult(
+            observation_digest=observation_digest,
+            deduplicated=False,
+            publication=publication,
+        )
+
+
+def _snapshot_observation_digest(snapshot: FolderTrainingSnapshot) -> str:
+    excluded = {"snapshot_id", "observed_at", "ordered_record_digest"}
+    return deterministic_payload_digest(
+        {
+            "snapshot_version": snapshot.snapshot_version,
+            "description_version": snapshot.description_version,
+            "input_schema_version": snapshot.input_schema_version,
+            "seed": snapshot.seed,
+            "observations": [
+                {
+                    key: value
+                    for key, value in row.to_dict().items()
+                    if key not in excluded
+                }
+                for row in snapshot.observations
+            ],
+        }
+    )
+
+
+def _load_observation_event(path: Path) -> dict[str, object] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FolderTrainingSnapshotError(
+            "training observation event state is corrupt"
+        ) from exc
+    if not isinstance(value, Mapping):
+        raise FolderTrainingSnapshotError("training observation event is invalid")
+    digest = value.get("observation_digest")
+    if not isinstance(digest, str) or len(digest) != 64:
+        raise FolderTrainingSnapshotError(
+            "training observation event digest is invalid"
+        )
+    if value.get("status") not in {"claimed", "pending-trigger", "published"}:
+        raise FolderTrainingSnapshotError(
+            "training observation event status is invalid"
+        )
+    if not isinstance(value.get("snapshot_id"), str) or not value["snapshot_id"]:
+        raise FolderTrainingSnapshotError("training observation snapshot id is invalid")
+    _digest_text = value.get("snapshot_sha")
+    if not isinstance(_digest_text, str) or len(_digest_text) != 64:
+        raise FolderTrainingSnapshotError(
+            "training observation snapshot SHA is invalid"
+        )
+    _validate_timestamp_text(str(value.get("observed_at") or ""), "observed_at")
+    if (
+        not isinstance(value.get("description_version"), str)
+        or not value["description_version"]
+    ):
+        raise FolderTrainingSnapshotError(
+            "training observation description version is invalid"
+        )
+    return dict(value)
+
+
+def mark_observation_trigger_handled(
+    registry_root: str | Path, snapshot_sha: str
+) -> None:
+    """Mark the matching durable pending trigger handled after terminal polling."""
+
+    state_path = Path(registry_root) / "training-observation-event.json"
+    with retrain_state_reservation(state_path):
+        event = _load_observation_event(state_path)
+        if (
+            event is None
+            or event["status"] != "pending-trigger"
+            or event["snapshot_sha"] != snapshot_sha
+        ):
+            return
+        _save_observation_event(state_path, {**event, "status": "published"})
+
+
+def _save_observation_event(path: Path, value: Mapping[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(value, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+@dataclass(frozen=True)
 class _Candidate:
     account_id: str
     stable_message_identity: str
@@ -119,6 +325,73 @@ class _Candidate:
     explicit_matter_group: str | None
     observed_at: str
     source: str
+
+
+def _merge_provider_folder_observations(
+    observations: Sequence[Mapping[str, object]],
+) -> tuple[Mapping[str, object], ...]:
+    grouped: dict[str, list[Mapping[str, object]]] = defaultdict(list)
+    for observation in observations:
+        if not isinstance(observation, Mapping):
+            raise FolderTrainingSnapshotError("observation must be an object")
+        grouped[_identity(observation)].append(observation)
+    merged: list[Mapping[str, object]] = []
+    for identity in sorted(grouped):
+        copies = grouped[identity]
+        highest = max(_folder_authority(item) for item in copies)
+        authoritative = [item for item in copies if _folder_authority(item) == highest]
+        truths = {_folder_truth_key(item) for item in authoritative}
+        if len(truths) != 1:
+            raise FolderTrainingSnapshotError(
+                f"conflicting folder truth for stable identity {identity}"
+            )
+        winner = min(
+            authoritative,
+            key=lambda item: (
+                _required_text(item.get("provider_folder_id"), "provider_folder_id"),
+                _required_text(
+                    item.get("provider_folder_name"), "provider_folder_name"
+                ),
+            ),
+        )
+        signals = [item.get("important_signals") for item in copies]
+        if any(type(item) is not ImportantSignals for item in signals):
+            raise FolderTrainingSnapshotError(
+                "important_signals must be an ImportantSignals observation"
+            )
+        raw_names = tuple(
+            sorted({name for item in signals for name in item.raw_signal_names})
+        )
+        merged.append(
+            {
+                **winner,
+                "important_signals": ImportantSignals(
+                    raw_names,
+                    any(item.provider_important for item in signals),
+                ),
+            }
+        )
+    return tuple(merged)
+
+
+def _folder_authority(value: Mapping[str, object]) -> int:
+    role = _folder_role(value.get("folder_role"))
+    if role in {FolderRole.JUNK, FolderRole.TRASH}:
+        return 4
+    if role is FolderRole.CATEGORY:
+        return 3
+    if role is FolderRole.INBOX:
+        return 2
+    return 1
+
+
+def _folder_truth_key(value: Mapping[str, object]) -> str | None:
+    role = _folder_role(value.get("folder_role"))
+    if role in {FolderRole.JUNK, FolderRole.TRASH}:
+        return "junk"
+    if role is FolderRole.CATEGORY:
+        return _optional_text(value.get("bound_category_key"), "bound_category_key")
+    return None
 
 
 def build_folder_training_snapshot(
@@ -137,12 +410,10 @@ def build_folder_training_snapshot(
     observed_timestamp = _timestamp(observed_at, "observed_at")
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise FolderTrainingSnapshotError("seed must be a non-negative integer")
-    identities = [_identity(item) for item in observations]
-    if len(identities) != len(set(identities)):
-        raise FolderTrainingSnapshotError("duplicate stable identity")
+    merged_observations = _merge_provider_folder_observations(observations)
     candidates = tuple(
         candidate
-        for item in observations
+        for item in merged_observations
         if (candidate := _candidate(item, observed_at=observed_timestamp)) is not None
     )
     candidate_identities = {item.stable_message_identity for item in candidates}
@@ -223,10 +494,14 @@ def validate_folder_training_snapshot(
         raise FolderTrainingSnapshotError("unsupported model input schema version")
     _validate_timestamp_text(snapshot.observed_at, "observed_at")
     actual_manifest = snapshot.manifest
-    legacy_unsigned_time = allow_legacy_manifest and "observed_at" not in actual_manifest
+    legacy_unsigned_time = (
+        allow_legacy_manifest and "observed_at" not in actual_manifest
+    )
     identities = [row.stable_message_identity for row in snapshot.observations]
     if identities != sorted(identities) or len(identities) != len(set(identities)):
-        raise FolderTrainingSnapshotError("snapshot observations are not uniquely ordered")
+        raise FolderTrainingSnapshotError(
+            "snapshot observations are not uniquely ordered"
+        )
     splits_by_group: dict[str, set[str]] = defaultdict(set)
     for row in snapshot.observations:
         if row.snapshot_id != snapshot.snapshot_id:
@@ -329,9 +604,7 @@ def _legacy_manifest(
     return current
 
 
-def _candidate(
-    value: Mapping[str, object], *, observed_at: str
-) -> _Candidate | None:
+def _candidate(value: Mapping[str, object], *, observed_at: str) -> _Candidate | None:
     if not isinstance(value, Mapping):
         raise FolderTrainingSnapshotError("observation must be an object")
     role = _folder_role(value.get("folder_role"))
@@ -362,7 +635,9 @@ def _candidate(
     truth = resolve_email_folder_truth(
         account_id=account_id,
         current_provider_folder_id=provider_folder_id,
-        provider_folders=(ProviderFolder(provider_folder_id, provider_folder_name, role),),
+        provider_folders=(
+            ProviderFolder(provider_folder_id, provider_folder_name, role),
+        ),
         bindings=bindings,
     )
     if truth.state is EmailFolderTruthState.EXCLUDED:
@@ -421,6 +696,11 @@ def _model_input(value: Mapping[str, object]) -> tuple[str, str, str | None]:
     subject = _normalized_text(value.get("subject"), "subject")
     body = _bounded_body(value.get("body"))
     headers = _approved_headers(value.get("headers"))
+    unsubscribe = (
+        _validated_unsubscribe_features(value.get("unsubscribe_features"))
+        if value.get("unsubscribe_features") is not None
+        else unsubscribe_training_features(value.get("headers"))
+    )
     attachments = _attachments(value.get("attachments"))
     meaningful = (
         sender["name"]
@@ -430,6 +710,7 @@ def _model_input(value: Mapping[str, object]) -> tuple[str, str, str | None]:
         or subject
         or body
         or headers
+        or unsubscribe["has_unsubscribe"]
         or attachments
     )
     if not meaningful:
@@ -442,6 +723,7 @@ def _model_input(value: Mapping[str, object]) -> tuple[str, str, str | None]:
         "subject": subject,
         "body": body,
         "headers": headers,
+        "unsubscribe": unsubscribe,
         "attachment_count": len(attachments),
         "attachments": attachments,
     }
@@ -490,6 +772,99 @@ def _approved_headers(value: object) -> dict[str, str]:
     return dict(sorted(result.items()))
 
 
+def unsubscribe_training_features(value: object) -> dict[str, object]:
+    """Reduce private unsubscribe headers to non-reversible model features."""
+
+    if value is None:
+        value = {}
+    if not isinstance(value, Mapping):
+        raise FolderTrainingSnapshotError("headers must be an object")
+    normalized = {
+        str(name).strip().casefold(): _normalized_text(raw, str(name))
+        for name, raw in value.items()
+        if isinstance(name, str)
+    }
+    unsubscribe = normalized.get("list-unsubscribe", "")
+    post = normalized.get("list-unsubscribe-post", "")
+    schemes: set[str] = set()
+    hosts: set[str] = set()
+    for candidate in _unsubscribe_candidates(unsubscribe):
+        parsed = urlsplit(candidate)
+        scheme = parsed.scheme.casefold()
+        if scheme not in {"http", "https", "mailto"}:
+            continue
+        schemes.add(scheme)
+        if scheme == "mailto":
+            address = parsed.path.rsplit("@", 1)
+            if len(address) == 2 and address[1]:
+                hosts.add(address[1].casefold())
+        elif parsed.hostname:
+            hosts.add(parsed.hostname.casefold())
+    raw_digest = sha256(f"{unsubscribe}\n{post}".encode("utf-8")).hexdigest()
+    return {
+        "has_unsubscribe": bool(unsubscribe or post),
+        "hosts": sorted(hosts),
+        "one_click": post.casefold() == "list-unsubscribe=one-click",
+        "schemes": sorted(schemes),
+        "value_sha256": raw_digest if unsubscribe or post else None,
+    }
+
+
+def _validated_unsubscribe_features(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise FolderTrainingSnapshotError("unsubscribe_features must be an object")
+    if set(value) != {
+        "has_unsubscribe",
+        "hosts",
+        "one_click",
+        "schemes",
+        "value_sha256",
+    }:
+        raise FolderTrainingSnapshotError("unsubscribe_features shape is invalid")
+    has_unsubscribe = value["has_unsubscribe"]
+    one_click = value["one_click"]
+    if type(has_unsubscribe) is not bool or type(one_click) is not bool:
+        raise FolderTrainingSnapshotError("unsubscribe feature flags must be boolean")
+    schemes = value["schemes"]
+    hosts = value["hosts"]
+    if not isinstance(schemes, list) or any(
+        scheme not in {"http", "https", "mailto"} for scheme in schemes
+    ):
+        raise FolderTrainingSnapshotError("unsubscribe schemes are invalid")
+    if not isinstance(hosts, list) or any(
+        not isinstance(host, str) or not host or urlsplit(f"//{host}").hostname != host
+        for host in hosts
+    ):
+        raise FolderTrainingSnapshotError("unsubscribe hosts are invalid")
+    digest = value["value_sha256"]
+    if digest is not None and (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise FolderTrainingSnapshotError("unsubscribe digest is invalid")
+    if has_unsubscribe is False and digest is not None:
+        raise FolderTrainingSnapshotError("unsubscribe digest has no source value")
+    return {
+        "has_unsubscribe": has_unsubscribe,
+        "hosts": sorted(set(hosts)),
+        "one_click": one_click,
+        "schemes": sorted(set(schemes)),
+        "value_sha256": digest,
+    }
+
+
+def _unsubscribe_candidates(value: str) -> tuple[str, ...]:
+    candidates: list[str] = []
+    for segment in value.split(","):
+        candidate = segment.strip()
+        if candidate.startswith("<") and candidate.endswith(">"):
+            candidate = candidate[1:-1].strip()
+        if candidate:
+            candidates.append(candidate)
+    return tuple(candidates)
+
+
 def _attachments(value: object) -> list[dict[str, object]]:
     if value is None:
         return []
@@ -502,7 +877,9 @@ def _attachments(value: object) -> list[dict[str, object]]:
         size = item.get("size_bytes", 0)
         inline = item.get("inline", False)
         if isinstance(size, bool) or not isinstance(size, int) or size < 0:
-            raise FolderTrainingSnapshotError("attachment size_bytes must be non-negative")
+            raise FolderTrainingSnapshotError(
+                "attachment size_bytes must be non-negative"
+            )
         if type(inline) is not bool:
             raise FolderTrainingSnapshotError("attachment inline must be boolean")
         result.append(
@@ -549,7 +926,10 @@ def _subject_template(value: str) -> str:
 
 
 def _group_keys(candidates: Sequence[_Candidate]) -> dict[str, str]:
-    parent = {item.stable_message_identity: item.stable_message_identity for item in candidates}
+    parent = {
+        item.stable_message_identity: item.stable_message_identity
+        for item in candidates
+    }
 
     def find(identity: str) -> str:
         while parent[identity] != identity:
@@ -630,15 +1010,10 @@ def _split_groups(
         if explicit:
             split = explicit.pop()
         else:
-            bucket = int(
-                deterministic_payload_digest([seed, group])[:8], 16
-            ) % 100
+            bucket = int(deterministic_payload_digest([seed, group])[:8], 16) % 100
             split = "train" if bucket < 80 else "validation" if bucket < 90 else "test"
         split_by_group[group] = split
-    return {
-        identity: split_by_group[group]
-        for identity, group in group_keys.items()
-    }
+    return {identity: split_by_group[group] for identity, group in group_keys.items()}
 
 
 def _balanced_training_selection(
@@ -697,9 +1072,7 @@ def _balanced_training_selection(
                 item.stable_message_identity,
             ),
         )
-        selected.update(
-            row.stable_message_identity for row in ordered[:category_cap]
-        )
+        selected.update(row.stable_message_identity for row in ordered[:category_cap])
     return selected, tuple(conflicts)
 
 
@@ -779,16 +1152,12 @@ def _manifest(
         "seed": seed,
         "observed_at": observed_at,
         "observation_count": len(observations),
-        "ordered_stable_ids": [
-            row.stable_message_identity for row in observations
-        ],
+        "ordered_stable_ids": [row.stable_message_identity for row in observations],
         "input_hashes": {
             row.stable_message_identity: row.normalized_model_input_hash
             for row in observations
         },
-        "ordered_record_digests": [
-            row.ordered_record_digest for row in observations
-        ],
+        "ordered_record_digests": [row.ordered_record_digest for row in observations],
         "split_assignment": {
             row.stable_message_identity: row.split for row in observations
         },
@@ -797,9 +1166,7 @@ def _manifest(
             for row in observations
             if row.selected_for_training
         ],
-        "selected_group_count": sum(
-            row.selected_for_training for row in observations
-        ),
+        "selected_group_count": sum(row.selected_for_training for row in observations),
         "source_distribution": source_counts,
         "training_source_distribution": training_source_counts,
         "category_counts": dict(sorted(category_counts.items())),
@@ -842,15 +1209,13 @@ def _optional_text(value: object, field: str) -> str | None:
     return value.strip() or None
 
 
-def _normalized_text(
-    value: object, field: str, *, preserve_lines: bool = False
-) -> str:
+def _normalized_text(value: object, field: str, *, preserve_lines: bool = False) -> str:
     if value is None:
         return ""
     if not isinstance(value, str):
         raise FolderTrainingSnapshotError(f"{field} must be text")
-    normalized = unicodedata.normalize("NFKC", value).replace("\r\n", "\n").replace(
-        "\r", "\n"
+    normalized = (
+        unicodedata.normalize("NFKC", value).replace("\r\n", "\n").replace("\r", "\n")
     )
     if preserve_lines:
         return "\n".join(line.rstrip() for line in normalized.split("\n")).strip()
@@ -858,7 +1223,11 @@ def _normalized_text(
 
 
 def _timestamp(value: object, field: str) -> str:
-    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is None
+        or value.utcoffset() is None
+    ):
         raise FolderTrainingSnapshotError(f"{field} must be timezone-aware")
     return value.astimezone(timezone.utc).isoformat()
 

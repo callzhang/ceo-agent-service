@@ -28,6 +28,7 @@ ModelStatus = Literal["candidate", "active", "previous", "rejected", "failed"]
 MODEL_STATUSES = frozenset(get_args(ModelStatus))
 MODEL_FAMILY = "tfidf-logistic-regression"
 MODEL_ID_PREFIX = "email-tfidf-lr-"
+EMBEDDING_MODEL_ID_PREFIX = "email-embedding-mlp-"
 MAX_CPU_P95_MS = 100.0
 _PROCESS_LOCK = threading.RLock()
 
@@ -36,12 +37,250 @@ class ModelRegistryError(RuntimeError):
     """The durable model registry is malformed or a transition is unsafe."""
 
 
+@dataclass(frozen=True)
+class HistoricalSystematicErrorState:
+    unresolved: bool
+    source: str
+    reason: str
+    updated_at: str
+
+    def __post_init__(self) -> None:
+        if type(self.unresolved) is not bool:
+            raise TypeError("unresolved must be boolean")
+        for name in ("source", "reason", "updated_at"):
+            _text(getattr(self, name), name)
+        _timestamp(self.updated_at)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "unresolved": self.unresolved,
+            "source": self.source,
+            "reason": self.reason,
+            "updated_at": self.updated_at,
+        }
+
+    @property
+    def state_sha256(self) -> str:
+        return sha256(
+            json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+    @classmethod
+    def from_mapping(
+        cls, value: Mapping[str, object]
+    ) -> "HistoricalSystematicErrorState":
+        return cls(
+            unresolved=_strict_boolean(value.get("unresolved"), "unresolved"),
+            source=_text(value.get("source"), "source"),
+            reason=_text(value.get("reason"), "reason"),
+            updated_at=_text(value.get("updated_at"), "updated_at"),
+        )
+
+
+@dataclass(frozen=True)
+class HistoricalEligibility:
+    precision: float
+    accepted_hits: int
+    independent_groups: int
+
+    def __post_init__(self) -> None:
+        _unit_float("precision", self.precision)
+        for name in ("accepted_hits", "independent_groups"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+
+    @property
+    def eligible(self) -> bool:
+        return (
+            self.precision >= 0.95
+            and self.accepted_hits >= 20
+            and self.independent_groups >= 10
+        )
+
+
+@dataclass(frozen=True)
+class CandidateCompatibility:
+    enabled_categories: tuple[str, ...]
+    description_version: str
+    input_schema_version: str
+    embedding_model_id: str
+    embedding_revision: str
+    head_format: str
+    parent_model_id: str | None
+
+    def __post_init__(self) -> None:
+        categories = tuple(
+            validate_email_category_key(item) for item in self.enabled_categories
+        )
+        if not categories or len(categories) != len(set(categories)):
+            raise ValueError("enabled_categories must be non-empty and unique")
+        object.__setattr__(self, "enabled_categories", categories)
+        for name in (
+            "description_version",
+            "input_schema_version",
+            "embedding_model_id",
+            "embedding_revision",
+            "head_format",
+        ):
+            _text(getattr(self, name), name)
+        if self.parent_model_id is not None:
+            _text(self.parent_model_id, "parent_model_id")
+
+
+@dataclass(frozen=True)
+class CandidateMaturityEvidence:
+    model_id: str
+    compatibility: CandidateCompatibility
+    category_eligibility: Mapping[str, HistoricalEligibility]
+    important_eligibility: HistoricalEligibility
+    unresolved_historical_systematic_error: bool
+
+    def __post_init__(self) -> None:
+        _text(self.model_id, "model_id")
+        if tuple(self.category_eligibility) != self.compatibility.enabled_categories:
+            raise ValueError(
+                "category eligibility must preserve enabled category order"
+            )
+        if any(
+            type(value) is not HistoricalEligibility
+            for value in self.category_eligibility.values()
+        ):
+            raise TypeError("category eligibility values are invalid")
+        if type(self.important_eligibility) is not HistoricalEligibility:
+            raise TypeError("important eligibility is invalid")
+        if type(self.unresolved_historical_systematic_error) is not bool:
+            raise TypeError("systematic-error flag must be boolean")
+
+    @property
+    def passing(self) -> bool:
+        return (
+            not self.unresolved_historical_systematic_error
+            and all(item.eligible for item in self.category_eligibility.values())
+            and self.important_eligibility.eligible
+        )
+
+
+@dataclass(frozen=True)
+class WholeModelReadiness:
+    ready: bool
+    passing_model_ids: tuple[str, ...]
+    reason: str
+
+
+def assess_whole_model_readiness(
+    candidates: Sequence[CandidateMaturityEvidence],
+) -> WholeModelReadiness:
+    if len(candidates) < 2:
+        return WholeModelReadiness(False, (), "two_consecutive_candidates_required")
+    previous, current = candidates[-2:]
+    if previous.model_id == current.model_id:
+        return WholeModelReadiness(False, (), "two_distinct_candidates_required")
+    if previous.compatibility != current.compatibility:
+        return WholeModelReadiness(False, (), "candidate_compatibility_changed")
+    if not previous.passing or not current.passing:
+        reason = (
+            "historical_systematic_error_unresolved"
+            if previous.unresolved_historical_systematic_error
+            or current.unresolved_historical_systematic_error
+            else "maturity_gate_not_met"
+        )
+        return WholeModelReadiness(False, (), reason)
+    return WholeModelReadiness(
+        True,
+        (previous.model_id, current.model_id),
+        "two_consecutive_compatible_candidates_passed",
+    )
+
+
+def assess_staged_candidate_readiness(
+    candidates: Sequence[Mapping[str, object]],
+) -> WholeModelReadiness:
+    """Fail closed when either of the two consecutive evidence rows is invalid."""
+
+    if len(candidates) < 2:
+        return WholeModelReadiness(False, (), "two_consecutive_candidates_required")
+    try:
+        previous, current = (
+            candidate_maturity_from_mapping(item) for item in candidates[-2:]
+        )
+    except (KeyError, TypeError, ValueError):
+        return WholeModelReadiness(False, (), "candidate_evidence_invalid")
+    return assess_whole_model_readiness((previous, current))
+
+
+def candidate_maturity_from_mapping(
+    value: Mapping[str, object],
+) -> CandidateMaturityEvidence:
+    compatibility = value.get("compatibility")
+    metrics = value.get("metrics")
+    if not isinstance(compatibility, Mapping) or not isinstance(metrics, Mapping):
+        raise ValueError("candidate maturity evidence is incomplete")
+    category_metrics = metrics.get("categories")
+    important_metrics = metrics.get("important")
+    if not isinstance(category_metrics, Mapping) or not isinstance(
+        important_metrics, Mapping
+    ):
+        raise ValueError("candidate maturity metrics are incomplete")
+    categories = tuple(compatibility.get("enabled_categories", ()))
+
+    def eligibility(item: object) -> HistoricalEligibility:
+        if not isinstance(item, Mapping):
+            raise ValueError("candidate eligibility metrics are invalid")
+        return HistoricalEligibility(
+            precision=float(item["accepted_precision"]),
+            accepted_hits=int(item["accepted_hits"]),
+            independent_groups=int(item["independent_groups"]),
+        )
+
+    return CandidateMaturityEvidence(
+        model_id=_text(value.get("model_id"), "model_id"),
+        compatibility=CandidateCompatibility(
+            enabled_categories=categories,
+            description_version=_text(
+                compatibility.get("description_version"), "description_version"
+            ),
+            input_schema_version=_text(
+                compatibility.get("input_schema_version"), "input_schema_version"
+            ),
+            embedding_model_id=_text(
+                compatibility.get("embedding_model_id"), "embedding_model_id"
+            ),
+            embedding_revision=_text(
+                compatibility.get("embedding_revision"), "embedding_revision"
+            ),
+            head_format=_text(compatibility.get("head_format"), "head_format"),
+            parent_model_id=_optional_text(
+                compatibility.get("parent_model_id"), "parent_model_id"
+            ),
+        ),
+        category_eligibility={
+            category: eligibility(category_metrics[category]) for category in categories
+        },
+        important_eligibility=eligibility(important_metrics),
+        unresolved_historical_systematic_error=_strict_boolean(
+            value.get("unresolved_historical_systematic_error"),
+            "unresolved_historical_systematic_error",
+        ),
+    )
+
+
 def build_model_id(*, trained_at: datetime, artifact_sha256: str) -> str:
     if trained_at.tzinfo is None or trained_at.utcoffset() is None:
         raise ValueError("trained_at must be timezone-aware")
     digest = _digest(artifact_sha256)
     timestamp = trained_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"email-tfidf-lr-{timestamp}-{digest[:8]}"
+
+
+def build_embedding_model_id(*, trained_at: datetime, artifact_sha256: str) -> str:
+    if trained_at.tzinfo is None or trained_at.utcoffset() is None:
+        raise ValueError("trained_at must be timezone-aware")
+    digest = _digest(artifact_sha256)
+    timestamp = trained_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{EMBEDDING_MODEL_ID_PREFIX}{timestamp}-{digest[:8]}"
 
 
 @dataclass(frozen=True)
@@ -293,15 +532,134 @@ class EmailModelRegistry:
         self.lifecycle = self.root / "lifecycle"
         self.runtime_failures = self.root / "runtime-failures"
         self.runs = self.root / "runs"
+        self.staged_evidence = self.root / "staged-evidence"
+        self.embedding_artifacts = self.root / "embedding-artifacts"
+        self.historical_systematic_error = (
+            self.root / "historical-systematic-error.json"
+        )
         for path in (
             self.artifacts,
             self.metadata,
             self.lifecycle,
             self.runtime_failures,
             self.runs,
+            self.staged_evidence,
+            self.embedding_artifacts,
         ):
             path.mkdir(parents=True, exist_ok=True)
         self._lock_path = self.root / ".registry.lock"
+
+    def historical_systematic_error_state(self) -> HistoricalSystematicErrorState:
+        if not self.historical_systematic_error.exists():
+            return HistoricalSystematicErrorState(
+                unresolved=True,
+                source="state_missing",
+                reason="no explicit historical systematic-error review exists",
+                updated_at="1970-01-01T00:00:00+00:00",
+            )
+        try:
+            return HistoricalSystematicErrorState.from_mapping(
+                _read_json(self.historical_systematic_error)
+            )
+        except (OSError, TypeError, ValueError, ModelRegistryError):
+            return HistoricalSystematicErrorState(
+                unresolved=True,
+                source="state_invalid",
+                reason="historical systematic-error state is invalid",
+                updated_at="1970-01-01T00:00:00+00:00",
+            )
+
+    def record_historical_systematic_error_state(
+        self, state: HistoricalSystematicErrorState
+    ) -> HistoricalSystematicErrorState:
+        if type(state) is not HistoricalSystematicErrorState:
+            raise TypeError("state must be HistoricalSystematicErrorState")
+        with self._locked():
+            _write_json_atomic(self.historical_systematic_error, state.to_dict())
+        return state
+
+    def persist_staged_evidence(
+        self, model_id: str, evidence: Mapping[str, object]
+    ) -> Path:
+        """Persist immutable candidate evidence without touching active manifests."""
+
+        model_id = _staged_model_id(model_id)
+        if evidence.get("model_id") != model_id:
+            raise ModelRegistryError("staged evidence model identity mismatch")
+        destination = self.staged_evidence / f"{model_id}.json"
+        with self._locked():
+            _write_json_immutable(destination, evidence)
+        return destination
+
+    def get_staged_evidence(self, model_id: str) -> dict[str, object]:
+        return _read_json(self.staged_evidence / f"{_staged_model_id(model_id)}.json")
+
+    def list_staged_evidence(self) -> list[dict[str, object]]:
+        result = [_read_json(path) for path in self.staged_evidence.glob("*.json")]
+        return sorted(
+            result,
+            key=lambda item: (
+                str(item.get("trained_at", "")),
+                str(item.get("model_id", "")),
+            ),
+        )
+
+    def persist_embedding_artifact(self, model_id: str, source: str | Path) -> Path:
+        model_id = _staged_model_id(model_id)
+        destination = self.embedding_artifacts / f"{model_id}.artifact"
+        with self._locked():
+            _copy_immutable(Path(source), destination)
+        return destination
+
+    def stage_embedding_candidate(
+        self,
+        model_id: str,
+        source: str | Path,
+        evidence: Mapping[str, object],
+    ) -> tuple[Path, Path]:
+        """Stage artifact and evidence together, repairing an interrupted first write."""
+
+        model_id = _staged_model_id(model_id)
+        if evidence.get("model_id") != model_id:
+            raise ModelRegistryError("staged evidence model identity mismatch")
+        source = Path(source)
+        artifact = self.embedding_artifacts / f"{model_id}.artifact"
+        metadata = self.staged_evidence / f"{model_id}.json"
+        with self._locked():
+            source_digest = _sha256_file(source)
+            artifact_valid = (
+                artifact.exists() and _sha256_file(artifact) == source_digest
+            )
+            metadata_value: dict[str, object] | None = None
+            if metadata.exists():
+                try:
+                    metadata_value = _read_json(metadata)
+                except ModelRegistryError:
+                    metadata.unlink()
+                    _fsync_directory(metadata.parent)
+                else:
+                    if metadata_value != dict(evidence):
+                        raise ModelRegistryError("staged embedding candidate conflicts")
+            if artifact.exists() and not artifact_valid:
+                if artifact.stat().st_size >= source.stat().st_size:
+                    raise ModelRegistryError("staged embedding artifact conflicts")
+                artifact.unlink()
+                _fsync_directory(artifact.parent)
+            if metadata_value is not None and artifact_valid:
+                return artifact, metadata
+            if not artifact.exists():
+                _copy_immutable(source, artifact)
+            if not metadata.exists():
+                _write_json_immutable(metadata, evidence)
+            if _sha256_file(artifact) != source_digest or _read_json(metadata) != dict(
+                evidence
+            ):
+                if metadata_value is not None:
+                    raise ModelRegistryError("staged embedding candidate conflicts")
+                raise ModelRegistryError(
+                    "staged embedding candidate publication failed"
+                )
+        return artifact, metadata
 
     def stage_candidate(
         self,
@@ -411,10 +769,13 @@ class EmailModelRegistry:
                     self._verify_manifest(snapshot.previous)
                 self._restore_manifest(self.root / "active.json", snapshot.active)
                 self._restore_manifest(self.root / "previous.json", snapshot.previous)
-                if self._read_manifest(
-                    self.root / "active.json",
-                    require_full_taxonomy=True,
-                ) != snapshot.active:
+                if (
+                    self._read_manifest(
+                        self.root / "active.json",
+                        require_full_taxonomy=True,
+                    )
+                    != snapshot.active
+                ):
                     raise ModelRegistryError("active manifest restore mismatch")
                 if (
                     self._read_manifest(self.root / "previous.json")
@@ -798,15 +1159,27 @@ def _unlock_file(handle: Any) -> None:
 
 def _copy_immutable(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
     try:
-        with source.open("rb") as reader, destination.open("xb") as writer:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as writer:
+            temporary = Path(writer.name)
+        with source.open("rb") as reader, temporary.open("wb") as writer:
             shutil.copyfileobj(reader, writer)
             writer.flush()
             os.fsync(writer.fileno())
-    except FileExistsError as exc:
-        raise ModelRegistryError(
-            f"immutable path already exists: {destination.name}"
-        ) from exc
+        if _sha256_file(temporary) != _sha256_file(source):
+            raise ModelRegistryError("immutable artifact copy verification failed")
+        _publish_immutable_temp(temporary, destination)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _write_json_immutable(path: Path, value: Mapping[str, object]) -> None:
@@ -815,13 +1188,46 @@ def _write_json_immutable(path: Path, value: Mapping[str, object]) -> None:
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         + "\n"
     )
+    temporary: Path | None = None
     try:
-        with path.open("x", encoding="utf-8") as handle:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        if _read_json(temporary) != dict(value):
+            raise ModelRegistryError("immutable JSON verification failed")
+        _publish_immutable_temp(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _publish_immutable_temp(temporary: Path, destination: Path) -> None:
+    try:
+        os.link(temporary, destination)
     except FileExistsError as exc:
-        raise ModelRegistryError(f"immutable path already exists: {path.name}") from exc
+        raise ModelRegistryError(
+            f"immutable path already exists: {destination.name}"
+        ) from exc
+    temporary.unlink()
+    _fsync_directory(destination.parent)
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _write_json_atomic(path: Path, value: Mapping[str, object]) -> None:
@@ -844,6 +1250,7 @@ def _write_json_atomic(path: Path, value: Mapping[str, object]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        _fsync_directory(path.parent)
         temporary = None
     finally:
         if temporary is not None:
@@ -901,6 +1308,15 @@ def _model_id(value: object) -> str:
     return result
 
 
+def _staged_model_id(value: object) -> str:
+    result = _text(value, "model_id")
+    if Path(result).name != result or not result.startswith(
+        (MODEL_ID_PREFIX, EMBEDDING_MODEL_ID_PREFIX)
+    ):
+        raise ModelRegistryError("invalid staged model_id path component")
+    return result
+
+
 def _text(value: object, field: str) -> str:
     if not isinstance(value, str) or not value.strip() or "\x00" in value:
         raise ValueError(f"{field} must be a non-empty string")
@@ -937,6 +1353,12 @@ def _float(value: object, field: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field} must be numeric")
     return float(value)
+
+
+def _strict_boolean(value: object, field: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"{field} must be boolean")
+    return value
 
 
 def _unit_float(name: str, value: float) -> None:

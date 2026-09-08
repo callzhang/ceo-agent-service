@@ -10631,6 +10631,157 @@ class EmailStore:
         with self._connect() as db:
             return self._get_training_snapshot(db, snapshot_id)
 
+    def list_provider_folder_correction_conflicts(
+        self, snapshot_id: str
+    ) -> list[dict[str, object]]:
+        """Return current folder truth that conflicts with the original prediction."""
+
+        if not isinstance(snapshot_id, str) or not snapshot_id.strip():
+            raise ValueError("snapshot_id must be non-empty text")
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select observations.stable_message_identity as sample_id,
+                       observations.group_key,
+                       classifications.predicted_category,
+                       observations.category_key as confirmed_category,
+                       observations.normalized_model_input as redacted_text
+                from email_training_snapshot_observations as observations
+                join email_classifications as classifications
+                  on classifications.account_id=observations.account_id
+                 and classifications.stable_message_identity=
+                     observations.stable_message_identity
+                where observations.snapshot_id=?
+                  and observations.category_key is not null
+                  and classifications.predicted_category is not null
+                  and classifications.predicted_category != observations.category_key
+                order by observations.stable_message_identity
+                """,
+                (snapshot_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def latest_training_snapshot_state(self) -> dict[str, object] | None:
+        """Return the latest frozen snapshot and cumulative label-change watermarks."""
+
+        with self._connect() as db:
+            snapshots = db.execute(
+                """
+                select snapshot_id, snapshot_digest, description_version,
+                       input_schema_version, observed_at
+                from email_training_snapshots
+                where frozen=1
+                order by observed_at, snapshot_id
+                """
+            ).fetchall()
+            if not snapshots:
+                return None
+            folder_watermark = 0
+            important_watermark = 0
+            previous: dict[tuple[str, str], tuple[str | None, bool]] = {}
+            latest_rows: list[sqlite3.Row] = []
+            for snapshot in snapshots:
+                rows = db.execute(
+                    """
+                    select account_id, stable_message_identity, category_key,
+                           important, split, selected_for_training, group_key
+                    from email_training_snapshot_observations
+                    where snapshot_id=?
+                    order by stable_message_identity
+                    """,
+                    (snapshot["snapshot_id"],),
+                ).fetchall()
+                for row in rows:
+                    identity = (row["account_id"], row["stable_message_identity"])
+                    current = (row["category_key"], bool(row["important"]))
+                    existed = identity in previous
+                    prior = previous.get(identity)
+                    if (not existed and current[0] is not None) or (
+                        existed and prior is not None and prior[0] != current[0]
+                    ):
+                        folder_watermark += 1
+                    if not existed or (prior is not None and prior[1] != current[1]):
+                        important_watermark += 1
+                    previous[identity] = current
+                latest_rows = rows
+            enabled_categories = {
+                row["category_key"]
+                for row in db.execute(
+                    "select category_key from email_category_configs where enabled=1"
+                )
+            }
+            description_rows = db.execute(
+                """
+                select category_key, core_description, include_json, exclude_json,
+                       description_version
+                from email_category_configs where enabled=1
+                order by category_key
+                """
+            ).fetchall()
+            from app.email_description_optimizer import description_set_digest
+            from app.email_embedding_classifier import CategoryDescription
+
+            descriptions = {
+                row["category_key"]: CategoryDescription(
+                    core=row["core_description"],
+                    include=tuple(
+                        _json_load(
+                            row["include_json"],
+                            field="include_json",
+                            expected_type=list,
+                        )
+                    ),
+                    exclude=tuple(
+                        _json_load(
+                            row["exclude_json"],
+                            field="exclude_json",
+                            expected_type=list,
+                        )
+                    ),
+                    version=row["description_version"],
+                )
+                for row in description_rows
+            }
+            current_description_version = (
+                "description-set-sha256:" + description_set_digest(descriptions)
+                if descriptions
+                else "description-set-unavailable"
+            )
+            train = [
+                row
+                for row in latest_rows
+                if row["split"] == "train" and row["selected_for_training"] == 1
+            ]
+            validation = [row for row in latest_rows if row["split"] == "validation"]
+            test = [row for row in latest_rows if row["split"] == "test"]
+            important_train = [row for row in latest_rows if row["split"] == "train"]
+            train_categories = {row["category_key"] for row in train}
+            validation_categories = {row["category_key"] for row in validation}
+            test_categories = {row["category_key"] for row in test}
+            minimum_ready = bool(
+                train
+                and validation
+                and test
+                and enabled_categories
+                and enabled_categories <= train_categories
+                and enabled_categories <= validation_categories
+                and enabled_categories <= test_categories
+                and all(
+                    {bool(row["important"]) for row in split_rows} == {False, True}
+                    for split_rows in (important_train, validation, test)
+                )
+            )
+            latest = snapshots[-1]
+            return {
+                "snapshot_id": latest["snapshot_id"],
+                "snapshot_sha": latest["snapshot_digest"],
+                "description_version": current_description_version,
+                "input_schema_version": latest["input_schema_version"],
+                "folder_label_watermark": folder_watermark,
+                "important_label_watermark": important_watermark,
+                "minimum_ready": minimum_ready,
+            }
+
     @staticmethod
     def _get_training_snapshot(
         db: sqlite3.Connection, snapshot_id: str

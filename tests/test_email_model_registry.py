@@ -13,14 +13,215 @@ from sklearn.linear_model import LogisticRegression
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_contracts import INITIAL_EMAIL_CATEGORY_KEYS
 from app.email_model_registry import (
+    CandidateCompatibility,
+    CandidateMaturityEvidence,
+    HistoricalEligibility,
     EmailModelMetadata,
     EmailModelRegistry,
+    HistoricalSystematicErrorState,
     ModelRegistryError,
+    assess_staged_candidate_readiness,
+    assess_whole_model_readiness,
     build_model_id,
+    candidate_maturity_from_mapping,
 )
 
 
 TRAINED_AT = datetime(2026, 8, 29, 21, 45, 30, tzinfo=timezone.utc)
+
+
+def _maturity(model_id: str, *, parent: str = "active-v1", passing: bool = True):
+    categories = ("work", "legal")
+    metric = HistoricalEligibility(
+        precision=0.96 if passing else 0.94,
+        accepted_hits=20,
+        independent_groups=10,
+    )
+    return CandidateMaturityEvidence(
+        model_id=model_id,
+        compatibility=CandidateCompatibility(
+            enabled_categories=categories,
+            description_version="descriptions-v3",
+            input_schema_version="input-v1",
+            embedding_model_id="jinaai/jina-embeddings-v5-text-small",
+            embedding_revision="gpu4-r7",
+            head_format="description-mlp-v1",
+            parent_model_id=parent,
+        ),
+        category_eligibility={category: metric for category in categories},
+        important_eligibility=metric,
+        unresolved_historical_systematic_error=False,
+    )
+
+
+def test_historical_eligibility_requires_all_three_gates() -> None:
+    assert HistoricalEligibility(0.95, 20, 10).eligible is True
+    assert HistoricalEligibility(0.949, 20, 10).eligible is False
+    assert HistoricalEligibility(0.99, 19, 10).eligible is False
+    assert HistoricalEligibility(0.99, 20, 9).eligible is False
+
+
+def test_whole_model_requires_two_consecutive_compatible_passes_and_no_error() -> None:
+    first = _maturity("candidate-1")
+    only_one = assess_whole_model_readiness((first,))
+    incompatible = assess_whole_model_readiness(
+        (first, _maturity("candidate-2", parent="active-v2"))
+    )
+    ready = assess_whole_model_readiness((first, _maturity("candidate-2")))
+    blocked = assess_whole_model_readiness(
+        (
+            first,
+            CandidateMaturityEvidence(
+                **{
+                    **_maturity("candidate-2").__dict__,
+                    "unresolved_historical_systematic_error": True,
+                }
+            ),
+        )
+    )
+
+    assert only_one.ready is False
+    assert incompatible.ready is False
+    assert ready.ready is True
+    assert ready.passing_model_ids == ("candidate-1", "candidate-2")
+    assert blocked.ready is False
+
+
+def test_whole_model_does_not_count_same_candidate_twice() -> None:
+    candidate = _maturity("candidate-1")
+
+    result = assess_whole_model_readiness((candidate, candidate))
+
+    assert result.ready is False
+    assert result.reason == "two_distinct_candidates_required"
+
+
+def test_staged_evidence_is_immutable_and_never_changes_active_manifest(
+    tmp_path,
+) -> None:
+    registry = EmailModelRegistry(tmp_path / "registry")
+    evidence = {
+        "model_id": "email-embedding-mlp-example",
+        "compatibility": {"description_version": "v1"},
+        "metrics": {},
+    }
+    registry.persist_staged_evidence("email-embedding-mlp-example", evidence)
+
+    assert registry.get_staged_evidence("email-embedding-mlp-example") == evidence
+    assert registry.active_manifest() is None
+    with pytest.raises(ModelRegistryError, match="already exists"):
+        registry.persist_staged_evidence("email-embedding-mlp-example", evidence)
+
+
+@pytest.mark.parametrize(
+    "crash_window",
+    ("truncated_artifact", "truncated_evidence", "missing_artifact"),
+)
+def test_embedding_candidate_publication_recovers_interrupted_pair(
+    tmp_path, crash_window
+) -> None:
+    registry = EmailModelRegistry(tmp_path / "registry")
+    model_id = "email-embedding-mlp-crash-safe"
+    source = tmp_path / "candidate.artifact"
+    source.write_bytes(b"complete-model-artifact")
+    evidence = {"model_id": model_id, "snapshot_sha": "a" * 64}
+    artifact = registry.embedding_artifacts / f"{model_id}.artifact"
+    metadata = registry.staged_evidence / f"{model_id}.json"
+
+    if crash_window == "truncated_artifact":
+        artifact.write_bytes(b"partial")
+    elif crash_window == "truncated_evidence":
+        artifact.write_bytes(source.read_bytes())
+        metadata.write_text('{"model_id":', encoding="utf-8")
+    else:
+        metadata.write_text(json.dumps(evidence), encoding="utf-8")
+
+    published_artifact, published_metadata = registry.stage_embedding_candidate(
+        model_id, source, evidence
+    )
+    replayed = registry.stage_embedding_candidate(model_id, source, evidence)
+
+    assert published_artifact.read_bytes() == source.read_bytes()
+    assert json.loads(published_metadata.read_text()) == evidence
+    assert replayed == (published_artifact, published_metadata)
+    assert list(registry.embedding_artifacts.glob("*.tmp")) == []
+    assert list(registry.staged_evidence.glob("*.tmp")) == []
+
+
+def _maturity_mapping(model_id: str) -> dict[str, object]:
+    maturity = _maturity(model_id)
+    compatibility = maturity.compatibility
+    metric = {
+        "accepted_precision": 0.96,
+        "accepted_hits": 20,
+        "independent_groups": 10,
+    }
+    return {
+        "model_id": model_id,
+        "compatibility": {
+            **compatibility.__dict__,
+            "enabled_categories": list(compatibility.enabled_categories),
+        },
+        "metrics": {
+            "categories": {category: dict(metric) for category in ("work", "legal")},
+            "important": dict(metric),
+        },
+        "unresolved_historical_systematic_error": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "flag_value",
+    [pytest.param(None, id="missing"), pytest.param("false", id="non-bool")],
+)
+def test_staged_evidence_requires_explicit_boolean_systematic_error_flag(
+    flag_value,
+) -> None:
+    evidence = _maturity_mapping("candidate-1")
+    if flag_value is None:
+        evidence.pop("unresolved_historical_systematic_error")
+    else:
+        evidence["unresolved_historical_systematic_error"] = flag_value
+
+    with pytest.raises(ValueError, match="unresolved_historical_systematic_error"):
+        candidate_maturity_from_mapping(evidence)
+
+
+def test_invalid_intervening_staged_evidence_breaks_consecutive_readiness() -> None:
+    first = _maturity_mapping("candidate-1")
+    invalid = _maturity_mapping("candidate-invalid")
+    invalid.pop("unresolved_historical_systematic_error")
+    current = _maturity_mapping("candidate-2")
+
+    result = assess_staged_candidate_readiness((first, invalid, current))
+
+    assert result.ready is False
+    assert result.reason == "candidate_evidence_invalid"
+
+
+def test_historical_systematic_error_state_is_durable_and_missing_fails_closed(
+    tmp_path,
+) -> None:
+    registry = EmailModelRegistry(tmp_path / "registry")
+
+    missing = registry.historical_systematic_error_state()
+    cleared = registry.record_historical_systematic_error_state(
+        HistoricalSystematicErrorState(
+            unresolved=False,
+            source="operator-review",
+            reason="reviewed historical confusion groups",
+            updated_at="2026-09-07T20:00:00+00:00",
+        )
+    )
+    reloaded = EmailModelRegistry(
+        tmp_path / "registry"
+    ).historical_systematic_error_state()
+
+    assert missing.unresolved is True
+    assert missing.source == "state_missing"
+    assert cleared.unresolved is False
+    assert reloaded == cleared
+    assert len(cleared.state_sha256) == 64
 
 
 def _classifier(version: str = "candidate") -> CpuTfidfLogisticClassifier:
@@ -146,7 +347,9 @@ def _full_metadata(
             "parent_model_id": parent_model_id,
             "sample_count": 2 * len(INITIAL_EMAIL_CATEGORY_KEYS),
             "new_sample_count": 2 * len(INITIAL_EMAIL_CATEGORY_KEYS),
-            "category_counts": {category: 2 for category in INITIAL_EMAIL_CATEGORY_KEYS},
+            "category_counts": {
+                category: 2 for category in INITIAL_EMAIL_CATEGORY_KEYS
+            },
             "account_counts": {"account-a": 2 * len(INITIAL_EMAIL_CATEGORY_KEYS)},
             "per_category_metrics": {
                 category: dict(metric) for category in INITIAL_EMAIL_CATEGORY_KEYS
@@ -180,9 +383,7 @@ def _stage_full(
             parent_model_id=parent_model_id,
         ),
         parity_texts=parity_texts,
-        expected_labels=tuple(
-            classifier.predict(text).label for text in parity_texts
-        ),
+        expected_labels=tuple(classifier.predict(text).label for text in parity_texts),
     )
     return model_id
 

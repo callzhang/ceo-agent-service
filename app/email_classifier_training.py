@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import time
 import warnings
+from importlib.metadata import version as dependency_version
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
 
+import numpy as np
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
 from app.email_classifier_contracts import (
@@ -27,17 +29,559 @@ from app.email_classifier_contracts import (
     validate_email_category_key,
 )
 from app.email_classifier_model import CpuTfidfLogisticClassifier, EmailModelPrediction
+from app.email_description_optimizer import (
+    DescriptionSetOverlay,
+    description_set_digest,
+)
 from app.email_model_registry import (
     MODEL_FAMILY,
     EmailModelMetadata,
     EmailModelRegistry,
     build_model_id,
+    build_embedding_model_id,
+    CandidateCompatibility,
+    CandidateMaturityEvidence,
+    HistoricalEligibility,
+    HistoricalSystematicErrorState,
+    assess_staged_candidate_readiness,
 )
 from app.email_store import EmailStore
 
 
 class TrainingNotReady(ValueError):
     """Confirmed feedback is insufficient for a candidate model."""
+
+
+@dataclass(frozen=True)
+class FrozenEmbeddingCandidateResult:
+    model_id: str
+    training_count: int
+    validation_count: int
+    test_count: int
+    category_metrics: Mapping[str, Mapping[str, object]]
+    important_metrics: Mapping[str, object]
+    latency_ms: Mapping[str, float]
+    failure_reason: str
+    maturity: CandidateMaturityEvidence
+
+
+def train_frozen_embedding_candidate(
+    *,
+    store: EmailStore,
+    snapshot_id: str,
+    registry: EmailModelRegistry,
+    cache: object,
+    descriptions: Mapping[str, object],
+    embedding_model_id: str,
+    embedding_revision: str,
+    parent_model_id: str | None,
+    historical_systematic_error_state: HistoricalSystematicErrorState,
+    trained_at: datetime | None = None,
+    expected_snapshot_sha: str | None = None,
+    expected_description_version: str | None = None,
+    description_overlay: DescriptionSetOverlay | None = None,
+) -> FrozenEmbeddingCandidateResult:
+    """Train both heads from one frozen Task 5 split and only stage evidence."""
+
+    if type(historical_systematic_error_state) is not HistoricalSystematicErrorState:
+        raise TypeError(
+            "historical_systematic_error_state must be HistoricalSystematicErrorState"
+        )
+    unresolved_historical_systematic_error = (
+        historical_systematic_error_state.unresolved
+    )
+
+    from app.email_embedding_cache import EmbeddingCacheKey
+    from app.email_embedding_classifier import (
+        CategoryDescription,
+        DescriptionAwareEmailClassifier,
+        DescriptionVectors,
+    )
+
+    snapshot = store.get_training_snapshot(snapshot_id)
+    if snapshot is None:
+        raise TrainingNotReady("frozen training snapshot does not exist")
+    if (
+        expected_snapshot_sha is not None
+        and snapshot["snapshot_digest"] != expected_snapshot_sha
+    ):
+        raise TrainingNotReady("frozen snapshot SHA changed before training")
+    categories = tuple(descriptions)
+    if not categories or any(
+        type(descriptions[key]) is not CategoryDescription for key in categories
+    ):
+        raise ValueError("descriptions must contain ordered CategoryDescription values")
+    description_digest = description_set_digest(descriptions)
+    description_version = "description-set-sha256:" + description_digest
+    if description_overlay is not None and (
+        type(description_overlay) is not DescriptionSetOverlay
+        or description_overlay.description_set_digest != description_digest
+        or description_overlay.description_set_version != description_version
+        or description_overlay.source_snapshot_sha != snapshot["snapshot_digest"]
+    ):
+        raise TrainingNotReady("description proposal overlay does not match training")
+    if (
+        expected_description_version is not None
+        and description_version != expected_description_version
+    ):
+        raise TrainingNotReady("description version changed before training")
+    all_rows = tuple(snapshot["observations"])
+    rows = tuple(
+        row for row in snapshot["observations"] if row["category_key"] in descriptions
+    )
+    if {str(row["category_key"]) for row in rows} != set(categories):
+        raise TrainingNotReady("snapshot categories do not match enabled descriptions")
+    training = tuple(
+        row for row in rows if row["split"] == "train" and row["selected_for_training"]
+    )
+    validation = tuple(row for row in rows if row["split"] == "validation")
+    test = tuple(row for row in rows if row["split"] == "test")
+    important_training = tuple(row for row in all_rows if row["split"] == "train")
+    important_validation = tuple(
+        row for row in all_rows if row["split"] == "validation"
+    )
+    important_test = tuple(row for row in all_rows if row["split"] == "test")
+    if not training or not validation or not test:
+        raise TrainingNotReady(
+            "frozen snapshot requires train, validation, and test rows"
+        )
+    if {str(row["category_key"]) for row in training} != set(categories):
+        raise TrainingNotReady("training split must cover every enabled category")
+    for split_name, split_rows in (
+        ("training", training),
+        ("validation", validation),
+        ("test", test),
+    ):
+        if {str(row["category_key"]) for row in split_rows} != set(categories):
+            raise TrainingNotReady(
+                f"{split_name} split must cover every enabled category"
+            )
+    for split_name, split_rows in (
+        ("training", important_training),
+        ("validation", important_validation),
+        ("test", important_test),
+    ):
+        if not split_rows or {bool(row["important"]) for row in split_rows} != {
+            False,
+            True,
+        }:
+            raise TrainingNotReady(
+                f"{split_name} split must cover both important labels"
+            )
+
+    input_schema = str(snapshot["input_schema_version"])
+
+    def vector_for(row: Mapping[str, object]) -> np.ndarray:
+        key = EmbeddingCacheKey.for_text(
+            normalized_text=str(row["normalized_model_input"]),
+            input_schema_version=input_schema,
+            embedding_model_id=embedding_model_id,
+            embedding_revision=embedding_revision,
+        )
+        vector = cache.get(key)
+        if vector is None:
+            raise TrainingNotReady("snapshot embedding cache is incomplete")
+        return vector
+
+    description_vectors: dict[str, DescriptionVectors] = {}
+    for category in categories:
+        description = descriptions[category]
+
+        def description_vector(text: str) -> np.ndarray:
+            key = EmbeddingCacheKey.for_description(
+                text=text,
+                description_version=description.version,
+                input_schema_version=input_schema,
+                embedding_model_id=embedding_model_id,
+                embedding_revision=embedding_revision,
+            )
+            vector = cache.get(key)
+            if vector is None:
+                raise TrainingNotReady("description embedding cache is incomplete")
+            return vector
+
+        description_vectors[category] = DescriptionVectors(
+            core=description_vector(description.core),
+            include=np.stack(
+                [description_vector(item) for item in description.include]
+            ),
+            exclude=np.stack(
+                [description_vector(item) for item in description.exclude]
+            ),
+        )
+
+    train_matrix = np.stack([vector_for(row) for row in training])
+    important_train_matrix = np.stack([vector_for(row) for row in important_training])
+    dimension = int(train_matrix.shape[1])
+    base = DescriptionAwareEmailClassifier(
+        enabled_categories=categories,
+        descriptions=descriptions,
+        description_vectors=description_vectors,
+        dimension=dimension,
+        input_schema_version=input_schema,
+        embedding_model_id=embedding_model_id,
+        embedding_revision=embedding_revision,
+    ).fit(
+        train_matrix,
+        [str(row["category_key"]) for row in training],
+        [bool(row["important"]) for row in important_training],
+        important_embeddings=important_train_matrix,
+        tuning_folds=_category_tuning_folds(training),
+    )
+    validation_predictions = tuple(base.predict(vector_for(row)) for row in validation)
+    important_validation_predictions = tuple(
+        base.predict(vector_for(row)) for row in important_validation
+    )
+    thresholds = {
+        category: _calibrated_threshold(
+            probabilities=[
+                prediction.category_probabilities[category]
+                for prediction in validation_predictions
+            ],
+            positives=[str(row["category_key"]) == category for row in validation],
+            eligible=[
+                prediction.category == category for prediction in validation_predictions
+            ],
+        )
+        for category in categories
+    }
+    important_threshold = _calibrated_threshold(
+        probabilities=[
+            item.important_probability for item in important_validation_predictions
+        ],
+        positives=[bool(row["important"]) for row in important_validation],
+        eligible=[True for _item in important_validation_predictions],
+    )
+    classifier = DescriptionAwareEmailClassifier(
+        enabled_categories=categories,
+        descriptions=descriptions,
+        description_vectors=description_vectors,
+        dimension=dimension,
+        input_schema_version=input_schema,
+        embedding_model_id=embedding_model_id,
+        embedding_revision=embedding_revision,
+        category_thresholds=thresholds,
+        important_threshold=important_threshold,
+        alpha=base.alpha,
+        beta=base.beta,
+    ).fit(
+        train_matrix,
+        [str(row["category_key"]) for row in training],
+        [bool(row["important"]) for row in important_training],
+        important_embeddings=important_train_matrix,
+    )
+
+    started = time.perf_counter()
+    test_predictions = tuple(classifier.predict(vector_for(row)) for row in test)
+    important_test_predictions = tuple(
+        classifier.predict(vector_for(row)) for row in important_test
+    )
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    category_metrics = {
+        category: _category_acceptance_metrics(
+            category=category,
+            rows=test,
+            predictions=test_predictions,
+            threshold=thresholds[category],
+        )
+        for category in categories
+    }
+    important_metrics = _important_acceptance_metrics(
+        rows=important_test,
+        predictions=important_test_predictions,
+        threshold=important_threshold,
+    )
+    head_latencies = [float(item.head_ms) for item in important_test_predictions]
+    latency_ms = {
+        "p50": _numeric_percentile(head_latencies, 0.50),
+        "p95": _numeric_percentile(head_latencies, 0.95),
+        "p99": _numeric_percentile(head_latencies, 0.99),
+        "max": max(head_latencies),
+        "batch_total": elapsed_ms,
+    }
+    if trained_at is not None and (
+        trained_at.tzinfo is None or trained_at.utcoffset() is None
+    ):
+        raise ValueError("trained_at must be timezone-aware")
+    timestamp = (trained_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    temporary_directory = tempfile.TemporaryDirectory(dir=registry.root)
+    artifact_path = Path(temporary_directory.name) / "candidate.artifact"
+    classifier.save(artifact_path)
+    artifact_sha = sha256(artifact_path.read_bytes()).hexdigest()
+    model_id = build_embedding_model_id(
+        trained_at=timestamp, artifact_sha256=artifact_sha
+    )
+
+    compatibility = CandidateCompatibility(
+        enabled_categories=categories,
+        description_version=description_version,
+        input_schema_version=input_schema,
+        embedding_model_id=embedding_model_id,
+        embedding_revision=embedding_revision,
+        head_format="description-mlp-v1",
+        parent_model_id=parent_model_id,
+    )
+    maturity = CandidateMaturityEvidence(
+        model_id=model_id,
+        compatibility=compatibility,
+        category_eligibility={
+            category: HistoricalEligibility(
+                precision=float(category_metrics[category]["accepted_precision"]),
+                accepted_hits=int(category_metrics[category]["accepted_hits"]),
+                independent_groups=int(
+                    category_metrics[category]["independent_groups"]
+                ),
+            )
+            for category in categories
+        },
+        important_eligibility=HistoricalEligibility(
+            precision=float(important_metrics["accepted_precision"]),
+            accepted_hits=int(important_metrics["accepted_hits"]),
+            independent_groups=int(important_metrics["independent_groups"]),
+        ),
+        unresolved_historical_systematic_error=unresolved_historical_systematic_error,
+    )
+    compatibility_evidence = {
+        **compatibility.__dict__,
+        "enabled_categories": list(categories),
+    }
+    current_readiness_evidence = {
+        "model_id": model_id,
+        "compatibility": compatibility_evidence,
+        "metrics": {
+            "categories": category_metrics,
+            "important": important_metrics,
+        },
+        "unresolved_historical_systematic_error": (
+            unresolved_historical_systematic_error
+        ),
+    }
+    classification_conflicts = [
+        {
+            "sample_id": str(row["stable_message_identity"]),
+            "group_key": str(row["group_key"]),
+            "predicted_category": prediction.category,
+            "confirmed_category": str(row["category_key"]),
+            "source": "frozen_test_fp_fn",
+        }
+        for row, prediction in zip(test, test_predictions, strict=True)
+        if prediction.category != str(row["category_key"])
+    ]
+    whole_readiness = assess_staged_candidate_readiness(
+        (*registry.list_staged_evidence(), current_readiness_evidence)
+    )
+    evidence = {
+        "model_id": model_id,
+        "source_snapshot_id": snapshot_id,
+        "status": "candidate",
+        "training_never_activates": True,
+        "compatibility": compatibility_evidence,
+        "split_counts": {
+            "train": len(training),
+            "validation": len(validation),
+            "test": len(test),
+            "test_evaluations": 1,
+            "important": {
+                "train": len(important_training),
+                "validation": len(important_validation),
+                "test": len(important_test),
+            },
+        },
+        "metrics": {
+            "categories": category_metrics,
+            "important": important_metrics,
+        },
+        "classification_conflicts": classification_conflicts,
+        "historical_eligibility": {
+            "categories": {
+                key: {
+                    "precision": value.precision,
+                    "accepted_hits": value.accepted_hits,
+                    "independent_groups": value.independent_groups,
+                    "eligible": value.eligible,
+                }
+                for key, value in maturity.category_eligibility.items()
+            },
+            "important": {
+                "precision": maturity.important_eligibility.precision,
+                "accepted_hits": maturity.important_eligibility.accepted_hits,
+                "independent_groups": maturity.important_eligibility.independent_groups,
+                "eligible": maturity.important_eligibility.eligible,
+            },
+        },
+        "whole_model_readiness": {
+            "ready": whole_readiness.ready,
+            "passing_model_ids": list(whole_readiness.passing_model_ids),
+            "reason": whole_readiness.reason,
+        },
+        "latency_ms": latency_ms,
+        "parameters": {
+            "alpha": classifier.alpha,
+            "beta": classifier.beta,
+            "category_thresholds": thresholds,
+            "important_threshold": important_threshold,
+            "head_format": "description-mlp-v1",
+            "hidden_layer_sizes": [8],
+            "solver": "lbfgs",
+            "regularization_alpha": 0.001,
+            "max_iter": 1000,
+            "random_seed": 20260905,
+        },
+        "dependencies": {
+            "numpy": dependency_version("numpy"),
+            "scikit_learn": dependency_version("scikit-learn"),
+            "embedding_model_id": embedding_model_id,
+            "embedding_model_revision": embedding_revision,
+        },
+        "hashes": {
+            "snapshot_sha256": str(snapshot["snapshot_digest"]),
+            "artifact_sha256": artifact_sha,
+            "description_sha256": description_digest,
+        },
+        "trained_at": timestamp.isoformat(),
+        "failure_reason": "",
+        "historical_systematic_error_state_sha256": (
+            historical_systematic_error_state.state_sha256
+        ),
+        "historical_systematic_error_state": {
+            **historical_systematic_error_state.to_dict(),
+            "state_sha256": historical_systematic_error_state.state_sha256,
+        },
+        "unresolved_historical_systematic_error": (
+            unresolved_historical_systematic_error
+        ),
+    }
+    if description_overlay is not None:
+        evidence["description_proposal"] = {
+            "proposal_id": description_overlay.proposal_id,
+            "source_description_version": (
+                description_overlay.source_description_version
+            ),
+            "source_description_digest": (
+                description_overlay.source_description_digest
+            ),
+            "source_snapshot_id": description_overlay.source_snapshot_id,
+            "description_set_digest": description_overlay.description_set_digest,
+            "source_snapshot_sha": description_overlay.source_snapshot_sha,
+            "conflict_category_pair": list(description_overlay.conflict_category_pair),
+            "conflict_description_digests": list(
+                description_overlay.conflict_description_digests
+            ),
+        }
+    registry.stage_embedding_candidate(model_id, artifact_path, evidence)
+    temporary_directory.cleanup()
+    return FrozenEmbeddingCandidateResult(
+        model_id=model_id,
+        training_count=len(training),
+        validation_count=len(validation),
+        test_count=len(test),
+        category_metrics=category_metrics,
+        important_metrics=important_metrics,
+        latency_ms=latency_ms,
+        failure_reason="",
+        maturity=maturity,
+    )
+
+
+def _calibrated_threshold(
+    *,
+    probabilities: Sequence[float],
+    positives: Sequence[bool],
+    eligible: Sequence[bool],
+) -> float:
+    candidates = sorted({float(item) for item in probabilities}, reverse=True)
+    selected = 1.0
+    best_hits = -1
+    for threshold in candidates:
+        accepted = [
+            index
+            for index, value in enumerate(probabilities)
+            if eligible[index] and value >= threshold
+        ]
+        if not accepted:
+            continue
+        hits = sum(bool(positives[index]) for index in accepted)
+        precision = hits / len(accepted)
+        if precision >= 0.95 and hits > best_hits:
+            selected, best_hits = threshold, hits
+    return selected
+
+
+def _category_tuning_folds(rows) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    by_category: dict[str, list[int]] = {}
+    for index, row in enumerate(rows):
+        by_category.setdefault(str(row["category_key"]), []).append(index)
+    if any(len(indices) < 2 for indices in by_category.values()):
+        return ()
+    folds = []
+    all_indices = set(range(len(rows)))
+    for parity in (0, 1):
+        validation = sorted(
+            index
+            for indices in by_category.values()
+            for offset, index in enumerate(indices)
+            if offset % 2 == parity
+        )
+        training = sorted(all_indices - set(validation))
+        if validation and training:
+            folds.append(
+                (
+                    np.asarray(training, dtype=np.int64),
+                    np.asarray(validation, dtype=np.int64),
+                )
+            )
+    return tuple(folds)
+
+
+def _category_acceptance_metrics(*, category, rows, predictions, threshold):
+    expected = [str(row["category_key"]) for row in rows]
+    predicted = [item.category for item in predictions]
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        expected, predicted, labels=[category], zero_division=0
+    )
+    accepted = [
+        index
+        for index, item in enumerate(predictions)
+        if item.category == category and item.category_probability >= threshold
+    ]
+    hits = [index for index in accepted if expected[index] == category]
+    return {
+        "precision": float(precision[0]),
+        "recall": float(recall[0]),
+        "f1": float(f1[0]),
+        "accepted_hits": len(hits),
+        "accepted_precision": len(hits) / len(accepted) if accepted else 0.0,
+        "independent_groups": len({str(rows[index]["group_key"]) for index in hits}),
+        "threshold": float(threshold),
+    }
+
+
+def _important_acceptance_metrics(*, rows, predictions, threshold):
+    expected = [bool(row["important"]) for row in rows]
+    predicted = [item.important for item in predictions]
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        expected, predicted, labels=[True], zero_division=0
+    )
+    accepted = [
+        index
+        for index, item in enumerate(predictions)
+        if item.important_probability >= threshold
+    ]
+    hits = [index for index in accepted if expected[index]]
+    return {
+        "sample_count": len(rows),
+        "precision": float(precision[0]),
+        "recall": float(recall[0]),
+        "f1": float(f1[0]),
+        "accepted_hits": len(hits),
+        "accepted_precision": len(hits) / len(accepted) if accepted else 0.0,
+        "independent_groups": len({str(rows[index]["group_key"]) for index in hits}),
+        "threshold": float(threshold),
+    }
+
+
+def _numeric_percentile(values: Sequence[float], fraction: float) -> float:
+    return float(np.percentile(np.asarray(values, dtype=np.float64), fraction * 100.0))
 
 
 def _validate_unit_interval_float(name: str, value: object) -> None:

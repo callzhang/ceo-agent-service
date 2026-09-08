@@ -62,6 +62,25 @@ class ImapUidBatch:
     messages: list[dict[str, object]]
 
 
+@dataclass(frozen=True)
+class ImapUidMembership:
+    """Bounded membership result without downloading message content."""
+
+    uidvalidity: int
+    existing_uids: frozenset[int]
+    important_signals_by_uid: Mapping[int, ImportantSignals]
+
+
+@dataclass(frozen=True)
+class ProviderFolderFingerprint:
+    """Lightweight provider state that changes for messages or flags."""
+
+    uidvalidity: int
+    uidnext: int
+    exists: int
+    highest_modseq: int | None
+
+
 @dataclass(frozen=True, repr=False)
 class _EphemeralBodyHtml:
     value: str
@@ -185,8 +204,7 @@ class ImapReadonlyAdapter:
         uids = [
             uid
             for uid in _search_uids(data)
-            if (unread_only or int(uid) >= first_uid)
-            and int(uid) not in excluded_uids
+            if (unread_only or int(uid) >= first_uid) and int(uid) not in excluded_uids
         ][:limit]
         messages: list[dict[str, object]] = []
         for uid in uids:
@@ -261,6 +279,76 @@ class ImapReadonlyAdapter:
             uidvalidity=uidvalidity,
             previous_uidvalidity=cursor_uidvalidity,
             messages=messages,
+        )
+
+    def fetch_uid_membership(
+        self,
+        mailbox: str,
+        *,
+        cursor_uidvalidity: int,
+        uids: tuple[int, ...],
+    ) -> ImapUidMembership:
+        mailbox = mailbox.strip()
+        if not mailbox:
+            raise ValueError("mailbox must be non-empty")
+        if cursor_uidvalidity <= 0:
+            raise ValueError("cursor_uidvalidity must be positive")
+        if not uids or any(
+            isinstance(uid, bool) or not isinstance(uid, int) or uid <= 0
+            for uid in uids
+        ):
+            raise ValueError("membership UIDs must be positive integers")
+        if len(uids) != len(set(uids)):
+            raise ValueError("membership UIDs must be unique")
+        mailbox_argument = encode_imap_mailbox_argument(mailbox)
+        status, _ = self.session.select(mailbox_argument, readonly=True)
+        _require_ok(status, "IMAP readonly select failed")
+        uidvalidity = _uidvalidity(self.session.response("UIDVALIDITY"))
+        if uidvalidity != cursor_uidvalidity:
+            return ImapUidMembership(uidvalidity, frozenset(), {})
+        sequence_set = ",".join(str(uid) for uid in sorted(uids))
+        status, data = self.session.uid("SEARCH", None, f"UID {sequence_set}")
+        _require_ok(status, "IMAP UID membership search failed")
+        requested = frozenset(uids)
+        existing = frozenset(int(uid) for uid in _search_uids(data)) & requested
+        important_signals_by_uid: dict[int, ImportantSignals] = {}
+        for uid in sorted(existing):
+            status, flag_data = self.session.uid("FETCH", str(uid), "(FLAGS)")
+            _require_ok(status, "IMAP FLAGS fetch failed")
+            important_signals_by_uid[uid] = _imap_important_signals(flag_data)
+        return ImapUidMembership(uidvalidity, existing, important_signals_by_uid)
+
+    def fetch_folder_fingerprint(self, mailbox: str) -> ProviderFolderFingerprint:
+        mailbox = mailbox.strip()
+        if not mailbox:
+            raise ValueError("mailbox must be non-empty")
+        mailbox_argument = encode_imap_mailbox_argument(mailbox)
+        status, data = self.session.status(
+            mailbox_argument,
+            "(UIDVALIDITY UIDNEXT MESSAGES HIGHESTMODSEQ)",
+        )
+        if str(status).upper() != "OK":
+            status, data = self.session.status(
+                mailbox_argument,
+                "(UIDVALIDITY UIDNEXT MESSAGES)",
+            )
+        _require_ok(status, "IMAP folder status failed")
+        payload = b" ".join(item for item in data if isinstance(item, bytes))
+
+        def required(name: bytes) -> int:
+            match = re.search(rb"\b" + name + rb"\s+(\d+)\b", payload, re.I)
+            if match is None:
+                raise ConnectionError("IMAP folder status is incomplete")
+            return int(match.group(1))
+
+        modseq_match = re.search(rb"\bHIGHESTMODSEQ\s+(\d+)\b", payload, re.I)
+        return ProviderFolderFingerprint(
+            uidvalidity=required(b"UIDVALIDITY"),
+            uidnext=required(b"UIDNEXT"),
+            exists=required(b"MESSAGES"),
+            highest_modseq=(
+                int(modseq_match.group(1)) if modseq_match is not None else None
+            ),
         )
 
     def list_folders(self) -> tuple[ProviderFolder, ...]:

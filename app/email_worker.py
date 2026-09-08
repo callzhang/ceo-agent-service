@@ -548,6 +548,8 @@ class EmailWorkerDependencies:
     record_health: Callable[[str, Mapping[str, object]], object]
     email_store: object | None = None
     run_classification_once: Callable[[], object] | None = None
+    publish_provider_observation_change: Callable[[], object] | None = None
+    training_observation_tick: Callable[[], object] | None = None
 
 
 @dataclass(frozen=True)
@@ -610,6 +612,28 @@ def _scan_result_error_code(result: object) -> str:
             if folder_error:
                 return _health_error_code(folder_error, fallback="scan_failed")
     return ""
+
+
+def _scan_result_change_summary(result: object) -> tuple[int, bool]:
+    if isinstance(result, Sequence) and not isinstance(result, str | bytes):
+        summaries = tuple(_scan_result_change_summary(item) for item in result)
+        return (
+            sum(persisted_count for persisted_count, _changed in summaries),
+            any(changed for _persisted_count, changed in summaries),
+        )
+    persisted_count = int(
+        result.get("persisted_count", 0)
+        if isinstance(result, Mapping)
+        else getattr(result, "persisted_count", 0)
+    )
+    reported_change = (
+        result.get("provider_changed", False)
+        if isinstance(result, Mapping)
+        else getattr(result, "provider_changed", False)
+    )
+    if type(reported_change) is not bool:
+        raise TypeError("provider_changed must be boolean")
+    return persisted_count, persisted_count > 0 or reported_change
 
 
 def _ignore_health(_scope: str, _payload: Mapping[str, object]) -> None:
@@ -677,6 +701,7 @@ def run_scan_and_direct_actions_loop(
     scan_account: Callable[[Mapping[str, object], object], object],
     run_direct_actions_once: Callable[[], object],
     run_classification_once: Callable[[], object] | None = None,
+    provider_observation_complete: Callable[[], object] | None = None,
     record_health: Callable[[str, Mapping[str, object]], object] = _ignore_health,
     component_ready: Callable[[str], object] | None = None,
     sleep: Callable[[float], None] = time.sleep,
@@ -688,6 +713,7 @@ def run_scan_and_direct_actions_loop(
     cycles = 0
     while max_cycles is None or cycles < max_cycles:
         failures = 0
+        provider_changed = False
         for account in accounts:
             account_id = _account_id(account)
             try:
@@ -704,15 +730,13 @@ def run_scan_and_direct_actions_loop(
                     {"status": "failed", "error_code": error_code},
                 )
                 continue
+            persisted_count, scan_changed = _scan_result_change_summary(result)
+            provider_changed = provider_changed or scan_changed
             record_health(
                 f"account:{account_id}",
                 {
                     "status": "ready",
-                    "persisted_count": int(
-                        getattr(result, "persisted_count", 0)
-                        if not isinstance(result, Mapping)
-                        else result.get("persisted_count", 0)
-                    ),
+                    "persisted_count": persisted_count,
                 },
             )
         if run_classification_once is not None:
@@ -744,9 +768,23 @@ def run_scan_and_direct_actions_loop(
                     "component:email-provider-actions",
                     {"status": "degraded", "error_code": "provider_action_failed"},
                 )
+            elif direct_results:
+                provider_changed = True
         except Exception as exc:  # noqa: BLE001 - keep the scan cadence alive
             failures += 1
             record_health("component:email-provider-actions", _safe_health_error(exc))
+        if (
+            failures == 0
+            and provider_changed
+            and provider_observation_complete is not None
+        ):
+            try:
+                provider_observation_complete()
+            except Exception as exc:  # noqa: BLE001 - keep scan cadence alive
+                failures += 1
+                record_health(
+                    "component:email-training-observation", _safe_health_error(exc)
+                )
         record_health(
             "component:email-scan-actions",
             {"status": "ready" if failures == 0 else "degraded", "failures": failures},
@@ -843,6 +881,7 @@ def run_email_agent_task_loop(
 def run_training_scheduler_loop(
     training_tick: Callable[[], object],
     *,
+    training_observation_tick: Callable[[], object] | None = None,
     record_health: Callable[[str, Mapping[str, object]], object],
     component_ready: Callable[[str], object] | None = None,
     sleep: Callable[[float], None] = time.sleep,
@@ -850,6 +889,14 @@ def run_training_scheduler_loop(
 ) -> None:
     cycles = 0
     while max_cycles is None or cycles < max_cycles:
+        if training_observation_tick is not None:
+            try:
+                training_observation_tick()
+            except Exception as exc:  # noqa: BLE001 - keep the component alive
+                record_health(
+                    "component:email-training-observation",
+                    _safe_health_error(exc),
+                )
         try:
             training_tick()
         except Exception as exc:  # noqa: BLE001 - keep the component alive
@@ -895,6 +942,9 @@ def email_worker_components(
                 ),
                 record_health=dependencies.record_health,
                 component_ready=component_ready,
+                provider_observation_complete=getattr(
+                    dependencies, "publish_provider_observation_change", None
+                ),
             ),
         ),
         (
@@ -914,6 +964,9 @@ def email_worker_components(
             partial(
                 run_training_scheduler_loop,
                 dependencies.training_tick,
+                training_observation_tick=getattr(
+                    dependencies, "training_observation_tick", None
+                ),
                 record_health=dependencies.record_health,
                 component_ready=component_ready,
             ),
@@ -1286,12 +1339,17 @@ def build_email_worker_dependencies(
     settings: object,
     *,
     direct_action_executor_factory: Callable[[str], object] | None = None,
+    training_snapshot_job_factory: Callable[..., object] | None = None,
 ) -> EmailWorkerBootstrap:
     from app.email_classifier_agent import (
         EmailClassifierAgent,
         EmailClassifierRoutedBackend,
     )
     from app.email_classifier_learning import EmailClassifierLearningService
+    from app.email_description_optimizer import (
+        DescriptionOptimizationOrchestrator,
+        RoutedDescriptionOptimizerAgent,
+    )
     from app.email_classifier_runtime import EmailClassifierRuntime
     from app.email_classifier_scan import (
         AgentScanContext,
@@ -1299,12 +1357,16 @@ def build_email_worker_dependencies(
     )
     from app.email_model_registry import EmailModelRegistry
     from app.email_store import EmailStore
+    from app.email_training_snapshot import EmailTrainingSnapshotPublicationJob
     from app.email_task_producer import (
         EmailActionTaskProducer,
         EmailClassificationTaskProducer,
     )
     from app.agent_runtime_production import build_production_routed_codex_execution
     from app.store import AutoReplyStore
+
+    if training_snapshot_job_factory is None:
+        training_snapshot_job_factory = EmailTrainingSnapshotPublicationJob
 
     email_store = EmailStore(Path(settings.db_path))
     task_store = AutoReplyStore(Path(settings.db_path))
@@ -1317,10 +1379,23 @@ def build_email_worker_dependencies(
     source_factory = _build_email_source_factory(settings)
     model_root = Path(settings.db_path).parent / "email-models"
     registry = EmailModelRegistry(model_root)
+    description_optimizer = DescriptionOptimizationOrchestrator(
+        store=email_store,
+        registry=registry,
+        agent=lambda payload: RoutedDescriptionOptimizerAgent(
+            build_production_routed_codex_execution(
+                store=task_store,
+                workspace=Path(settings.workspace),
+                total_timeout_seconds=900.0,
+                idle_timeout_seconds=120.0,
+            )
+        )(payload),
+    )
     learning = EmailClassifierLearningService(
         email_store,
         registry=registry,
         retrain_state_path=model_root / "retrain-state.json",
+        description_optimizer=description_optimizer,
     )
     if direct_action_executor_factory is None:
         direct_action_executor_factory = _build_imap_direct_action_executor_factory(
@@ -1513,6 +1588,51 @@ def build_email_worker_dependencies(
             finally:
                 _close_email_source(source)
 
+        from app.email_training_observer import (
+            ProviderTrainingChangeDetector,
+            ProviderTrainingObservationJob,
+            TrainingObservationCoordinator,
+        )
+
+        observation_job = ProviderTrainingObservationJob(
+            state_path=registry.root / "provider-training-observations.json",
+            source_factory=source_factory,
+            email_store=email_store,
+        )
+        snapshot_job = training_snapshot_job_factory(
+            store=email_store,
+            learning_service=learning,
+            observation_loader=observation_job.cached_observations,
+            description_version_loader=lambda: _active_description_set_version(
+                email_store
+            ),
+        )
+        observation_coordinator = TrainingObservationCoordinator(
+            request_state_path=registry.root / "provider-training-requests.json",
+            job=observation_job,
+            accounts_loader=lambda: _accounts,
+            publish=snapshot_job.publish_observations,
+            description_version_loader=lambda: _active_description_set_version(
+                email_store
+            ),
+        )
+        observation_coordinator.request_initialization()
+        change_detector = ProviderTrainingChangeDetector(
+            job=observation_job,
+            accounts_loader=lambda: _accounts,
+            request=observation_coordinator.request,
+        )
+
+        def training_observation_tick():
+            change_detector.tick()
+            return observation_coordinator.tick()
+
+        def training_tick():
+            return learning.poll_retrain()
+
+        def publish_provider_observation_change():
+            observation_coordinator.request()
+
         return EmailWorkerDependencies(
             load_enabled_accounts=load_enabled_accounts,
             load_active_model=load_active_model,
@@ -1540,7 +1660,7 @@ def build_email_worker_dependencies(
                 source_factory,
             ),
             finalize_task=partial(_finalize_email_task, task_store),
-            training_tick=active_model.tick,
+            training_tick=training_tick,
             record_health=record_health,
             email_store=email_store,
             run_classification_once=partial(
@@ -1552,6 +1672,8 @@ def build_email_worker_dependencies(
                 provider_readback=read_current_classification_message,
                 action_task_producer=action_task_producer,
             ),
+            publish_provider_observation_change=(publish_provider_observation_change),
+            training_observation_tick=training_observation_tick,
         )
 
     return EmailWorkerBootstrap(
@@ -1561,6 +1683,27 @@ def build_email_worker_dependencies(
         record_health=record_health,
         task_store=task_store,
         email_store=email_store,
+    )
+
+
+def _active_description_set_version(email_store: object) -> str:
+    from app.email_description_optimizer import description_set_digest
+    from app.email_embedding_classifier import CategoryDescription
+
+    descriptions = {
+        row["category_key"]: CategoryDescription(
+            core=row["core_description"],
+            include=tuple(row["include"]),
+            exclude=tuple(row["exclude"]),
+            version=row["description_version"],
+        )
+        for row in email_store.list_category_configs()
+        if row["enabled"]
+    }
+    return (
+        "description-set-sha256:" + description_set_digest(descriptions)
+        if descriptions
+        else "description-set-unavailable"
     )
 
 

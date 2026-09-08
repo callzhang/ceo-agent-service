@@ -22,6 +22,7 @@ from app.email_classifier_training import CategoryEligibility, EmailActionEligib
 from app.email_imap_readonly import (
     ImapReadonlyAdapter,
     ImapUidBatch,
+    ProviderFolderFingerprint,
     ephemeral_body_html,
     parse_rfc822_message,
 )
@@ -67,6 +68,14 @@ class FakeImapSession:
         if command != "FETCH":
             raise AssertionError(f"mailbox write attempted: {command}")
         uid, query = args
+        if query == "(FLAGS)":
+            return "OK", [
+                b"1 (UID "
+                + str(uid).encode("ascii")
+                + b" FLAGS ("
+                + " ".join(self.flags).encode("ascii")
+                + b"))"
+            ]
         if query == "(BODYSTRUCTURE)":
             return "OK", [
                 b"1 (UID " + bytes(uid) + b" BODYSTRUCTURE " + self.bodystructure + b")"
@@ -182,6 +191,79 @@ def test_imap_folder_inventory_parses_special_use_modified_utf7_and_stable_ids()
         ProviderFolder("Sent Mail", "Sent Mail", FolderRole.SENT),
         ProviderFolder("Drafts", "Drafts", FolderRole.DRAFT),
         ProviderFolder("台北", "台北", FolderRole.UNBOUND),
+    )
+
+
+def test_uid_membership_is_one_bounded_search_without_body_fetch() -> None:
+    from app.email_important import ImportantSignals
+
+    session = _plain_session(search_result=b"2 7", uidvalidity=42)
+    adapter = ImapReadonlyAdapter(session, account_id="account-1")
+
+    membership = adapter.fetch_uid_membership(
+        "INBOX", cursor_uidvalidity=42, uids=(1, 2, 7)
+    )
+
+    assert membership.uidvalidity == 42
+    assert membership.existing_uids == frozenset({2, 7})
+    assert membership.important_signals_by_uid == {
+        2: ImportantSignals((), False),
+        7: ImportantSignals((), False),
+    }
+    assert ("uid", "SEARCH", None, "UID 1,2,7") in session.calls
+    assert [call for call in session.calls if call[:2] == ("uid", "FETCH")] == [
+        ("uid", "FETCH", "2", "(FLAGS)"),
+        ("uid", "FETCH", "7", "(FLAGS)"),
+    ]
+
+
+def test_folder_fingerprint_uses_status_without_message_fetch() -> None:
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def status(self, mailbox, query):
+            self.calls.append(("status", mailbox, query))
+            return "OK", [
+                b"INBOX (MESSAGES 7 UIDNEXT 12 UIDVALIDITY 42 HIGHESTMODSEQ 99)"
+            ]
+
+    session = Session()
+    fingerprint = ImapReadonlyAdapter(
+        session, account_id="account-1"
+    ).fetch_folder_fingerprint("INBOX")
+
+    assert fingerprint == ProviderFolderFingerprint(42, 12, 7, 99)
+    assert session.calls == [
+        (
+            "status",
+            "INBOX",
+            "(UIDVALIDITY UIDNEXT MESSAGES HIGHESTMODSEQ)",
+        )
+    ]
+
+
+def test_folder_fingerprint_falls_back_to_status_without_modseq() -> None:
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def status(self, mailbox, query):
+            self.calls.append(("status", mailbox, query))
+            if "HIGHESTMODSEQ" in query:
+                return "NO", [b"HIGHESTMODSEQ unsupported"]
+            return "OK", [b"INBOX (MESSAGES 7 UIDNEXT 12 UIDVALIDITY 42)"]
+
+    session = Session()
+    fingerprint = ImapReadonlyAdapter(
+        session, account_id="account-1"
+    ).fetch_folder_fingerprint("INBOX")
+
+    assert fingerprint == ProviderFolderFingerprint(42, 12, 7, None)
+    assert session.calls[-1] == (
+        "status",
+        "INBOX",
+        "(UIDVALIDITY UIDNEXT MESSAGES)",
     )
 
 
