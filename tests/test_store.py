@@ -7345,6 +7345,23 @@ def test_service_health_components_hold_current_component_state(tmp_path: Path):
     assert store.list_service_health_components()[0]["state"] == "healthy"
 
 
+def test_resolve_unresolved_errors_by_kind_after_successful_service_cycle(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("", "", "task_maintenance_weekly_okr_report", "session expired")
+    store.record_error("", "", "task_maintenance_weekly_okr_report", "session expired")
+    store.record_error("", "", "other_component", "still failing")
+
+    assert store.resolve_unresolved_errors_by_kind(
+        "task_maintenance_weekly_okr_report",
+        resolution="recovered by a later successful maintenance cycle",
+    ) == 2
+
+    errors = store.list_errors()
+    okr_errors = [item for item in errors if item.kind == "task_maintenance_weekly_okr_report"]
+    assert all(item.resolved_at for item in okr_errors)
+    assert next(item for item in errors if item.kind == "other_component").resolved_at == ""
+
+
 def test_redact_and_resolve_error_replaces_unsafe_historical_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error(None, None, "follow_up", "outbound message body")

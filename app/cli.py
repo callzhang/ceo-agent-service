@@ -2759,10 +2759,24 @@ def run_task_maintenance_loop(
     store = AutoReplyStore(settings.db_path)
 
     def run_step(kind: str, step: Callable[[], object]) -> None:
+        error_kind = f"task_maintenance_{kind}"
+        health_component = f"task_maintenance.{kind}"
         try:
             step()
         except Exception as exc:
-            store.record_error("", "", f"task_maintenance_{kind}", str(exc))
+            detail = str(exc)
+            store.record_error("", "", error_kind, detail)
+            store.set_service_health_component(
+                health_component,
+                state="degraded",
+                detail=detail,
+            )
+        else:
+            store.set_service_health_component(health_component, state="healthy")
+            store.resolve_unresolved_errors_by_kind(
+                error_kind,
+                resolution="recovered by a later successful maintenance cycle",
+            )
 
     now = monotonic()
     next_daily_run = now

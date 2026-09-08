@@ -21681,6 +21681,32 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def resolve_unresolved_errors_by_kind(
+        self,
+        kind: str,
+        *,
+        resolution: str,
+    ) -> int:
+        """Close service incidents after the same component succeeds later."""
+        normalized_kind = kind.strip()
+        normalized_resolution = resolution.strip()
+        if not normalized_kind:
+            raise ValueError("error kind must be non-empty")
+        if not normalized_resolution:
+            raise ValueError("error resolution must be non-empty")
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update errors
+                set resolved_at=current_timestamp,
+                    resolution=?
+                where kind=?
+                  and coalesce(resolved_at, '')=''
+                """,
+                (normalized_resolution, normalized_kind),
+            )
+            return cursor.rowcount
+
     def resolve_errors_recovered_by_wechat_reader(self) -> int:
         """Close reader incidents after a later successful reader cycle.
 

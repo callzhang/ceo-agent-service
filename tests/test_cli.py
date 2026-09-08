@@ -6153,6 +6153,12 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
     store = SimpleNamespace(
         record_error=lambda *args: calls.append(("error", *args)),
+        set_service_health_component=lambda component, **kwargs: calls.append(
+            ("health", component, kwargs)
+        ),
+        resolve_unresolved_errors_by_kind=lambda kind, **kwargs: calls.append(
+            ("resolve-kind", kind, kwargs)
+        ) or 0,
         resolve_errors_recovered_by_reply_attempts=lambda: (
             calls.append("resolve") or 0
         ),
@@ -6216,16 +6222,86 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
 
     assert calls == [
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
+        (
+            "health",
+            "task_maintenance.process_work_items",
+            {"state": "degraded", "detail": "bad todo field"},
+        ),
         "okr",
+        (
+            "health",
+            "task_maintenance.process_okr_reviews",
+            {"state": "healthy"},
+        ),
+        (
+            "resolve-kind",
+            "task_maintenance_process_okr_reviews",
+            {"resolution": "recovered by a later successful maintenance cycle"},
+        ),
         "resolve",
         "resolve-completed-task",
         "resolve-work-summary",
         "resolve-blocked",
+        (
+            "health",
+            "task_maintenance.resolve_recovered_errors",
+            {"state": "healthy"},
+        ),
+        (
+            "resolve-kind",
+            "task_maintenance_resolve_recovered_errors",
+            {"resolution": "recovered by a later successful maintenance cycle"},
+        ),
         "weekly-okr",
+        (
+            "health",
+            "task_maintenance.weekly_okr_report",
+            {"state": "healthy"},
+        ),
+        (
+            "resolve-kind",
+            "task_maintenance_weekly_okr_report",
+            {"resolution": "recovered by a later successful maintenance cycle"},
+        ),
         "scan",
+        (
+            "health",
+            "task_maintenance.scan_task_sources",
+            {"state": "healthy"},
+        ),
+        (
+            "resolve-kind",
+            "task_maintenance_scan_task_sources",
+            {"resolution": "recovered by a later successful maintenance cycle"},
+        ),
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
+        (
+            "health",
+            "task_maintenance.process_work_items",
+            {"state": "degraded", "detail": "bad todo field"},
+        ),
         "okr",
+        (
+            "health",
+            "task_maintenance.process_okr_reviews",
+            {"state": "healthy"},
+        ),
+        (
+            "resolve-kind",
+            "task_maintenance_process_okr_reviews",
+            {"resolution": "recovered by a later successful maintenance cycle"},
+        ),
         "completion-check",
+        (
+            "health",
+            "task_maintenance.check_follow_up_completions",
+            {"state": "healthy"},
+        ),
+        (
+            "resolve-kind",
+            "task_maintenance_check_follow_up_completions",
+            {"resolution": "recovered by a later successful maintenance cycle"},
+        ),
     ]
 
 

@@ -8,7 +8,6 @@ import json
 import fcntl
 import socket
 import subprocess
-import tempfile
 import time
 import urllib.request
 from contextlib import contextmanager
@@ -19,7 +18,7 @@ from playwright.sync_api import sync_playwright
 
 SCRIPT_DIR = Path("/Users/derek/.agents/skills/dingtang-okr-review/scripts")
 HEADLESS_REFRESH_SECONDS = 40
-HEADLESS_LOCK_TIMEOUT_SECONDS = 10
+HEADLESS_LOCK_TIMEOUT_SECONDS = 130
 _browser_spec = importlib.util.spec_from_file_location(
     "dingteam_okr_browser_source", SCRIPT_DIR / "dingteam_okr_browser_source.py"
 )
@@ -34,8 +33,22 @@ def _get_headless_headers() -> dict[str, str]:
     cached = browser._read_cache()
     if cached:
         return cached
-    headers = _capture_stable_headless_headers()
-    browser._write_cache(headers)
+    with _headless_browser_lock():
+        cached = browser._read_cache()
+        if cached:
+            return cached
+        headers = _capture_stable_headless_headers()
+        browser._write_cache(headers)
+        return headers
+
+
+def _validate_captured_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Reject an expired dedicated browser session before querying OKR APIs."""
+    expires_at = browser._jwt_exp(headers)
+    if expires_at is None or expires_at <= time.time() + browser.TOKEN_SKEW_SECONDS:
+        raise RuntimeError(
+            "okr_headless_session_expired: dedicated Dingteam session requires login"
+        )
     return headers
 
 
@@ -61,41 +74,45 @@ def _reserve_loopback_port() -> int:
 
 @contextmanager
 def _headless_cdp_browser(playwright):
-    """Run a disposable headless Chrome without Playwright's crashing pipe mode."""
+    """Run the authenticated headless profile without Playwright's pipe mode."""
     port = _reserve_loopback_port()
-    with tempfile.TemporaryDirectory(prefix="ceo-okr-chrome-") as profile_dir:
-        process = subprocess.Popen(
-            _headless_cdp_command(playwright, port=port, profile_dir=profile_dir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        endpoint = f"http://127.0.0.1:{port}"
-        try:
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                if process.poll() is not None:
-                    raise RuntimeError("okr_headless_browser_exited")
-                try:
-                    with urllib.request.urlopen(f"{endpoint}/json/version", timeout=1):
-                        break
-                except OSError:
-                    time.sleep(0.2)
-            else:
-                raise RuntimeError("okr_headless_browser_start_timeout")
-            browser_instance = playwright.chromium.connect_over_cdp(endpoint)
+    browser.PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    process = subprocess.Popen(
+        _headless_cdp_command(
+            playwright,
+            port=port,
+            profile_dir=str(browser.PROFILE_DIR),
+        ),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    endpoint = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError("okr_headless_browser_exited")
             try:
-                yield browser_instance
-            finally:
-                browser_instance.close()
+                with urllib.request.urlopen(f"{endpoint}/json/version", timeout=1):
+                    break
+            except OSError:
+                time.sleep(0.2)
+        else:
+            raise RuntimeError("okr_headless_browser_start_timeout")
+        browser_instance = playwright.chromium.connect_over_cdp(endpoint)
+        try:
+            yield browser_instance
         finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+            browser_instance.close()
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
 
 
 @contextmanager
@@ -121,54 +138,51 @@ def _capture_stable_headless_headers() -> dict[str, str]:
     """Capture source headers after the OKR page has finished navigating."""
     browser.PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     captured: dict[str, str] = {}
-    with _headless_browser_lock():
-        with sync_playwright() as playwright:
-            with _headless_cdp_browser(playwright) as browser_instance:
-                context = browser_instance.new_context(
-                    storage_state=str(browser.PROFILE_DIR / "storage_state.json")
-                )
-                try:
-                    def on_request(request):
-                        if "/data/okr/" not in request.url or captured:
-                            return
-                        for key, value in request.headers.items():
-                            if key.lower() in browser.AUTH_HEADER_KEYS:
-                                captured[browser._canonical(key)] = value
+    with sync_playwright() as playwright:
+        with _headless_cdp_browser(playwright) as browser_instance:
+            context = browser_instance.contexts[0]
+            try:
+                def on_request(request):
+                    if "/data/okr/" not in request.url or captured:
+                        return
+                    for key, value in request.headers.items():
+                        if key.lower() in browser.AUTH_HEADER_KEYS:
+                            captured[browser._canonical(key)] = value
 
-                    context.on("request", on_request)
-                    page = context.new_page()
-                    page.goto(browser.ENTRY_URL, wait_until="domcontentloaded", timeout=60000)
-                    page.wait_for_timeout(2500)
-                    for _ in range(3):
-                        try:
-                            page.evaluate("() => document.readyState")
-                            break
-                        except Exception as exc:
-                            if "execution context was destroyed" not in str(exc).lower():
-                                raise
-                            page.wait_for_timeout(1000)
-                    deadline = time.monotonic() + HEADLESS_REFRESH_SECONDS
-                    while time.monotonic() < deadline and "Authorization" not in captured:
-                        try:
-                            page.wait_for_timeout(800)
-                            page.evaluate("() => document.readyState")
-                        except Exception as exc:
-                            if "execution context was destroyed" not in str(exc).lower():
-                                raise
-                    if "Authorization" not in captured:
-                        app_state = page.evaluate(
-                            """() => ({
-                                root: !!document.querySelector('#root-master'),
-                                mounted: !!document.querySelector('#root-master > * > *'),
-                            })"""
-                        )
-                        if app_state.get("root") and not app_state.get("mounted"):
-                            raise RuntimeError("okr_website_unavailable: Dingteam OKR website did not render")
-                finally:
-                    context.close()
+                context.on("request", on_request)
+                page = context.new_page()
+                page.goto(browser.ENTRY_URL, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(2500)
+                for _ in range(3):
+                    try:
+                        page.evaluate("() => document.readyState")
+                        break
+                    except Exception as exc:
+                        if "execution context was destroyed" not in str(exc).lower():
+                            raise
+                        page.wait_for_timeout(1000)
+                deadline = time.monotonic() + HEADLESS_REFRESH_SECONDS
+                while time.monotonic() < deadline and "Authorization" not in captured:
+                    try:
+                        page.wait_for_timeout(800)
+                        page.evaluate("() => document.readyState")
+                    except Exception as exc:
+                        if "execution context was destroyed" not in str(exc).lower():
+                            raise
+                if "Authorization" not in captured:
+                    app_state = page.evaluate(
+                        """() => ({
+                            root: !!document.querySelector('#root-master'),
+                            mounted: !!document.querySelector('#root-master > * > *'),
+                        })"""
+                    )
+                    if app_state.get("root") and not app_state.get("mounted"):
+                        raise RuntimeError("okr_website_unavailable: Dingteam OKR website did not render")
+            finally:
+                context.close()
     if "Authorization" not in captured:
         raise RuntimeError("could not capture Dingteam auth token from the browser")
-    return captured
+    return _validate_captured_headers(captured)
 
 
 def main() -> int:
