@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import Executor
+from concurrent.futures import Executor, Future
 from datetime import UTC, datetime, timedelta
 from threading import Event, Lock
 
@@ -49,6 +49,10 @@ class ConsumerDispatcher:
         if any(self.max_in_flight[name] <= 0 for name in names):
             raise ValueError("dispatcher worker capacity must be positive")
         self._in_flight = {name: 0 for name in names}
+        self._active: dict[
+            str, dict[Future[object], tuple[DispatchEnvelope, datetime]]
+        ] = {name: {} for name in names}
+        self._adapter_by_name = {adapter.name: adapter for adapter in adapters}
         self._capacity_lock = Lock()
         self.owner = owner
         self.lease = lease
@@ -57,6 +61,7 @@ class ConsumerDispatcher:
         self._next_adapter = 0
 
     def dispatch_available(self, now: datetime, *, limit: int) -> int:
+        self.renew_in_flight(now)
         if limit <= 0 or not self.adapters:
             return 0
         submitted = 0
@@ -88,11 +93,42 @@ class ConsumerDispatcher:
                 )
                 self._release_capacity(adapter.name)
                 continue
+            with self._capacity_lock:
+                self._active[adapter.name][future] = (
+                    envelope,
+                    now + self.lease / 2,
+                )
             future.add_done_callback(
-                lambda _future, name=adapter.name: self._release_capacity(name)
+                lambda completed, name=adapter.name: self._complete_future(
+                    name, completed
+                )
             )
             submitted += 1
         return submitted
+
+    def renew_in_flight(self, now: datetime) -> None:
+        due: list[tuple[str, Future[object], DispatchEnvelope]] = []
+        with self._capacity_lock:
+            for name, active in self._active.items():
+                due.extend(
+                    (name, future, envelope)
+                    for future, (envelope, renew_at) in active.items()
+                    if not future.done() and renew_at <= now
+                )
+        for name, future, envelope in due:
+            self._adapter_by_name[name].renew(
+                envelope,
+                owner=self.owner,
+                now=now,
+                lease=self.lease,
+            )
+            with self._capacity_lock:
+                current = self._active[name].get(future)
+                if current is not None and current[0] == envelope:
+                    self._active[name][future] = (
+                        envelope,
+                        now + self.lease / 2,
+                    )
 
     def _reserve_capacity(self, adapter_name: str) -> bool:
         with self._capacity_lock:
@@ -104,14 +140,30 @@ class ConsumerDispatcher:
     def _release_capacity(self, adapter_name: str) -> None:
         with self._capacity_lock:
             self._in_flight[adapter_name] -= 1
+
+    def _complete_future(
+        self,
+        adapter_name: str,
+        future: Future[object],
+    ) -> None:
+        with self._capacity_lock:
+            removed = self._active[adapter_name].pop(future, None)
+            if removed is None:
+                return
+            self._in_flight[adapter_name] -= 1
         self.wake_event.set()
 
     def run(self, *, stop_event: Event, dispatch_limit: int = 100) -> None:
         while not stop_event.is_set():
+            self.wake_event.clear()
             submitted = self.dispatch_available(datetime.now(UTC), limit=dispatch_limit)
             if submitted:
                 continue
-            self.wake_event.clear()
             if stop_event.is_set():
                 break
-            self.wake_event.wait(timeout=self.fallback_wait_seconds)
+            self.wake_event.wait(
+                timeout=min(
+                    self.fallback_wait_seconds,
+                    self.lease.total_seconds() / 2,
+                )
+            )

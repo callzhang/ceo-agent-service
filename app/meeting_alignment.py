@@ -548,7 +548,7 @@ def consume_meeting_alignment_jobs(
     )
     for job in jobs:
         processed_ids.add(job.id)
-        _analyze_meeting_job(
+        consume_claimed_meeting_alignment_job(
             store,
             dws,
             runner,
@@ -578,6 +578,32 @@ def consume_meeting_alignment_jobs(
             max_attempts=max_attempts,
         )
     return len(processed_ids)
+
+
+def consume_claimed_meeting_alignment_job(
+    store: AutoReplyStore,
+    dws: Any,
+    runner: Any,
+    job: Any,
+    *,
+    now: datetime,
+    retry_delay: timedelta = DEFAULT_MEETING_RETRY_DELAY,
+    max_attempts: int = DEFAULT_MEETING_MAX_ATTEMPTS,
+    embedding_client: Callable[[list[str]], list[list[float]]] | None = None,
+) -> None:
+    """Execute one already-claimed meeting fact without scanning the queue."""
+    if job.status != "processing":
+        raise ValueError("meeting job must be claimed before execution")
+    _analyze_meeting_job(
+        store,
+        dws,
+        runner,
+        job,
+        now=now,
+        retry_delay=retry_delay,
+        max_attempts=max_attempts,
+        embedding_client=embedding_client,
+    )
 
 
 def recover_meeting_alignment_jobs(store: AutoReplyStore) -> int:

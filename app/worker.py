@@ -1689,7 +1689,7 @@ class DingTalkAutoReplyWorker:
             )
             run_snapshot = self._agent_run_snapshot(task)
             try:
-                completed = self._process_queued_task(conversation, task)
+                completed = self.process_claimed_reply_task(task)
             except AgentRunLeaseLostError:
                 # A claimed task must never remain processing when its agent
                 # lease was lost before a terminal run was persisted. Requeue
@@ -2193,6 +2193,18 @@ class DingTalkAutoReplyWorker:
             trigger,
             prompt_context_messages,
         )
+
+    def process_claimed_reply_task(self, task: ReplyTask) -> bool:
+        """Execute exactly one task that a queue owner already claimed."""
+        if task.status != "processing":
+            raise ValueError("reply task must be claimed before execution")
+        conversation = DingTalkConversation(
+            open_conversation_id=task.conversation_id,
+            title=task.conversation_title,
+            single_chat=task.single_chat,
+            unread_point=1,
+        )
+        return self._process_queued_task(conversation, task)
 
     def _process_agent_queued_task(
         self,

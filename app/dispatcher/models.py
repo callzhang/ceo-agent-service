@@ -50,3 +50,12 @@ class QueueAdapter(Protocol):
         owner: str,
         now: datetime,
     ) -> None: ...
+
+    def renew(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        lease: timedelta,
+    ) -> None: ...

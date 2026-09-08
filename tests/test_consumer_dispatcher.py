@@ -4,6 +4,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, Thread
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,7 +16,9 @@ from app.dispatcher.adapters import (
 )
 from app.dispatcher.models import DispatchEnvelope, QueueMetrics
 from app.dispatcher.service import ConsumerDispatcher
+from app.meeting_alignment import consume_claimed_meeting_alignment_job
 from app.store import AutoReplyStore
+from app.worker import DingTalkAutoReplyWorker
 
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
@@ -94,6 +97,53 @@ def test_dispatcher_lease_ledger_stores_only_claim_ownership(tmp_path: Path):
     }
 
 
+def test_reply_single_item_boundary_processes_preclaimed_task_without_scanning():
+    worker = object.__new__(DingTalkAutoReplyWorker)
+    task = SimpleNamespace(
+        id=7,
+        status="processing",
+        conversation_id="cid",
+        conversation_title="Title",
+        single_chat=False,
+    )
+    seen: list[int] = []
+    worker._process_queued_task = lambda _conversation, item: (
+        seen.append(item.id) or True
+    )
+
+    assert worker.process_claimed_reply_task(task) is True
+    assert seen == [7]
+
+
+def test_meeting_single_item_boundary_processes_preclaimed_job_without_reclaim(
+    tmp_path: Path,
+    monkeypatch,
+):
+    store = _store(tmp_path)
+    _meeting(store)
+    [job] = store.claim_meeting_alignment_jobs(1, NOW.isoformat())
+    seen: list[int] = []
+    monkeypatch.setattr(
+        "app.meeting_alignment._analyze_meeting_job",
+        lambda _store, _dws, _runner, item, **_kwargs: seen.append(item.id),
+    )
+    monkeypatch.setattr(
+        store,
+        "claim_meeting_alignment_jobs",
+        lambda *_args, **_kwargs: pytest.fail("single-item handler must not claim"),
+    )
+
+    consume_claimed_meeting_alignment_job(
+        store,
+        object(),
+        object(),
+        job,
+        now=NOW,
+    )
+
+    assert seen == [job.id]
+
+
 def test_all_source_adapters_report_and_atomically_claim_due_facts(tmp_path: Path):
     store = _store(tmp_path)
     run = _scheduled_run(store)
@@ -145,7 +195,7 @@ def test_scheduled_claim_is_recoverable_after_lease_expiry(tmp_path: Path):
     recovered = adapter.claim(
         NOW + timedelta(seconds=2),
         owner="dispatcher-b",
-        lease=timedelta(seconds=1),
+        lease=timedelta(seconds=2),
     )
     assert recovered == first
 
@@ -175,6 +225,14 @@ def test_legacy_source_leases_recover_with_fencing_and_monotonic_generation(
         assert second is not None
         assert second.source_id == first.source_id
         assert second.generation > first.generation
+
+        with pytest.raises(ValueError, match="no longer owned"):
+            adapter.renew(
+                first,
+                owner="owner-a",
+                now=NOW + timedelta(seconds=2),
+                lease=timedelta(seconds=2),
+            )
 
         expired_metrics = adapter.metrics(NOW + timedelta(seconds=4))
         assert expired_metrics.due == 1
@@ -304,6 +362,16 @@ class _FakeAdapter:
     ) -> None:
         self.released.append(envelope)
 
+    def renew(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        lease: timedelta,
+    ) -> None:
+        return None
+
 
 class _RecordingExecutor:
     def __init__(self) -> None:
@@ -424,12 +492,13 @@ def test_dispatcher_claims_scheduled_source_only_when_worker_capacity_is_availab
         executors={"scheduled": executor},
         max_in_flight={"scheduled": 1},
         owner="dispatcher-a",
-        lease=timedelta(seconds=1),
+        lease=timedelta(seconds=2),
     )
 
     assert dispatcher.dispatch_available(NOW, limit=2) == 1
-    # The unresolved Future keeps the only slot occupied past the source lease,
-    # so the expired source cannot be claimed a second time into a worker queue.
+    # The unresolved Future keeps the only slot occupied and heartbeats its
+    # source claim, so it cannot be enqueued a second time.
+    assert dispatcher.dispatch_available(NOW + timedelta(seconds=1), limit=2) == 0
     assert dispatcher.dispatch_available(NOW + timedelta(seconds=2), limit=2) == 0
     assert len(executor.submissions) == 1
 
@@ -450,3 +519,96 @@ def test_dispatcher_claims_scheduled_source_only_when_worker_capacity_is_availab
     executor_future = executor.futures[0]
     executor_future.set_result(None)
     assert dispatcher.dispatch_available(NOW + timedelta(seconds=2), limit=2) == 1
+
+
+def test_dispatcher_heartbeats_in_flight_scheduled_claim_across_two_dispatchers(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    _scheduled_run(store)
+    adapter_a = ScheduledTaskQueueAdapter(store)
+    adapter_b = ScheduledTaskQueueAdapter(store)
+    executor = _RecordingExecutor()
+    dispatcher_a = ConsumerDispatcher(
+        adapters=(adapter_a,),
+        consumers={"scheduled": lambda _item: None},
+        executors={"scheduled": executor},
+        max_in_flight={"scheduled": 1},
+        owner="owner-a",
+        lease=timedelta(seconds=2),
+    )
+
+    assert dispatcher_a.dispatch_available(NOW, limit=1) == 1
+    dispatcher_a.renew_in_flight(NOW + timedelta(seconds=1))
+    assert (
+        adapter_b.claim(
+            NOW + timedelta(seconds=2, microseconds=500_000),
+            owner="owner-b",
+            lease=timedelta(seconds=2),
+        )
+        is None
+    )
+
+    recovered = adapter_b.claim(
+        NOW + timedelta(seconds=4),
+        owner="owner-b",
+        lease=timedelta(seconds=2),
+    )
+    assert recovered is not None
+    with pytest.raises(ValueError, match="no longer owned"):
+        adapter_a.renew(
+            executor.submissions[0][1],
+            owner="owner-a",
+            now=NOW + timedelta(seconds=4),
+            lease=timedelta(seconds=2),
+        )
+    with pytest.raises(ValueError, match="no longer owned"):
+        adapter_a.release(
+            executor.submissions[0][1],
+            owner="owner-a",
+            now=NOW + timedelta(seconds=4),
+        )
+
+
+def test_event_set_after_empty_scan_is_not_lost_before_wait():
+    wake = Event()
+    stop = Event()
+    scan_entered = Event()
+    producer_done = Event()
+
+    class InterleavedAdapter(_FakeAdapter):
+        def claim(self, now, *, owner, lease):
+            result = super().claim(now, owner=owner, lease=lease)
+            scan_entered.set()
+            assert producer_done.wait(timeout=2)
+            return result
+
+    adapter = InterleavedAdapter("scheduled", 0)
+    executor = _RecordingExecutor()
+    dispatcher = ConsumerDispatcher(
+        adapters=(adapter,),
+        consumers={"scheduled": lambda _item: None},
+        executors={"scheduled": executor},
+        max_in_flight={"scheduled": 1},
+        owner="owner-a",
+        lease=timedelta(seconds=2),
+        wake_event=wake,
+        fallback_wait_seconds=30,
+    )
+    thread = Thread(target=dispatcher.run, kwargs={"stop_event": stop})
+    thread.start()
+    assert scan_entered.wait(timeout=2)
+    adapter.remaining = 1
+    wake.set()
+    producer_done.set()
+
+    for _ in range(100):
+        if executor.submissions:
+            break
+        Event().wait(0.01)
+    stop.set()
+    wake.set()
+    thread.join(timeout=2)
+
+    assert len(executor.submissions) == 1
+    assert not thread.is_alive()

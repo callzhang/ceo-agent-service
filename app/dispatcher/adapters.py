@@ -117,6 +117,32 @@ class ScheduledTaskQueueAdapter:
             if cursor.rowcount != 1:
                 raise ValueError("scheduled dispatch claim is no longer owned")
 
+    def renew(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        lease: timedelta,
+    ) -> None:
+        _validate_release(self.name, envelope, owner, now)
+        now_text = ensure_utc_datetime(
+            now, field="scheduled dispatcher renewal time"
+        ).isoformat(timespec="seconds")
+        lease_text = ensure_utc_datetime(
+            now + lease, field="scheduled dispatcher renewal expiry"
+        ).isoformat(timespec="seconds")
+        _lease_seconds(lease)
+        with self.store._immediate_write_transaction() as db:
+            cursor = db.execute(
+                "update scheduled_task_runs set lease_expires_at=? "
+                "where id=? and dispatch_status='pending' and lease_owner=? "
+                "and lease_expires_at>?",
+                (lease_text, int(envelope.source_id), owner, now_text),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("scheduled dispatch claim is no longer owned")
+
 
 class ReplyQueueAdapter:
     name = "reply"
@@ -248,6 +274,22 @@ class ReplyQueueAdapter:
             )
             if cursor.rowcount != 1:
                 raise ValueError("reply dispatch claim is no longer owned")
+
+    def renew(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        lease: timedelta,
+    ) -> None:
+        _renew_lease(
+            self.store,
+            envelope=envelope,
+            owner=owner,
+            now=now,
+            lease=lease,
+        )
 
 
 class MeetingQueueAdapter:
@@ -391,6 +433,22 @@ class MeetingQueueAdapter:
             if cursor.rowcount != 1:
                 raise ValueError("meeting dispatch claim is no longer owned")
 
+    def renew(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        lease: timedelta,
+    ) -> None:
+        _renew_lease(
+            self.store,
+            envelope=envelope,
+            owner=owner,
+            now=now,
+            lease=lease,
+        )
+
 
 class WorkSummaryQueueAdapter:
     name = "work_summary"
@@ -526,6 +584,22 @@ class WorkSummaryQueueAdapter:
             if cursor.rowcount != 1:
                 raise ValueError("work-summary dispatch claim is no longer owned")
 
+    def renew(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        lease: timedelta,
+    ) -> None:
+        _renew_lease(
+            self.store,
+            envelope=envelope,
+            owner=owner,
+            now=now,
+            lease=lease,
+        )
+
 
 def _lease_seconds(lease: timedelta) -> int:
     seconds = int(lease.total_seconds())
@@ -588,6 +662,35 @@ def _release_lease(
     )
     if cursor.rowcount != 1:
         raise ValueError("dispatcher source claim is no longer owned")
+
+
+def _renew_lease(
+    store: AutoReplyStore,
+    *,
+    envelope: DispatchEnvelope,
+    owner: str,
+    now: datetime,
+    lease: timedelta,
+) -> None:
+    _validate_release(envelope.adapter_name, envelope, owner, now)
+    now_text = _sqlite_time(now)
+    with store._immediate_write_transaction() as db:
+        cursor = db.execute(
+            "update dispatcher_claim_leases set lease_expires_at=?, updated_at=? "
+            "where adapter_name=? and source_id=? and owner=? and generation=? "
+            "and lease_expires_at>?",
+            (
+                _lease_expiry(now, lease),
+                now_text,
+                envelope.adapter_name,
+                envelope.source_id,
+                owner,
+                envelope.generation,
+                now_text,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("dispatcher source claim is no longer owned")
 
 
 def _latest_error(
