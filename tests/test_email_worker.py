@@ -3003,6 +3003,50 @@ def test_classification_worker_persists_certain_decision_and_direct_plan(tmp_pat
     assert classification["status"] == "processed"
 
 
+def test_classification_worker_persists_only_redacted_model_features(tmp_path):
+    from app.email_classifier_agent import AgentClassificationResult
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    email_store = EmailStore(tmp_path / "classification-redaction.sqlite3")
+    adapter = EmailClassificationTaskAdapter(email_store)
+    adapter.ensure_task(_classification_task_input())
+    agent = SimpleNamespace(
+        classify=lambda _task, **_kwargs: AgentClassificationResult(
+            category="work",
+            important=False,
+            certainty="certain",
+            confidence=0.96,
+            reason="Project coordination.",
+        )
+    )
+
+    def readback(task, payload):
+        message = _classification_provider_readback(task, payload)
+        return message | {
+            "textBody": "Contact private@example.com at https://private.example/path",
+            "markdownBody": "Contact private@example.com at https://private.example/path",
+        }
+
+    outcome = _module().run_email_classification_task_once(
+        adapter,
+        agent,
+        email_store,
+        owner="email-worker:redaction",
+        provider_readback=readback,
+        action_task_producer=_forbid_action_task_production(),
+    )
+
+    with email_store._connect() as db:
+        model_text = db.execute(
+            "select model_text from email_classifications where id=?",
+            (outcome["classification_id"],),
+        ).fetchone()["model_text"]
+    assert "private@example.com" not in model_text
+    assert "https://private.example" not in model_text
+    assert "EMAIL" in model_text
+    assert "URL" in model_text
+
+
 def test_classification_worker_persists_uncertain_feedback_without_actions(tmp_path):
     from app.email_classifier_agent import AgentClassificationResult
     from app.email_task_adapter import EmailClassificationTaskAdapter
@@ -4977,6 +5021,26 @@ def test_successful_provider_scan_completion_publishes_training_observation_even
     )
 
     assert events == ["published"]
+
+
+def test_successful_classifier_cycle_replaces_stale_failure_health() -> None:
+    health = []
+
+    _module().run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 0},
+        run_direct_actions_once=lambda: None,
+        run_classification_once=lambda: None,
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert (
+        "component:email-classifier-agent",
+        {"status": "ready", "failures": 0},
+    ) in health
 
 
 def test_idle_scan_without_provider_or_action_change_does_not_request_observation():
@@ -7889,3 +7953,36 @@ def test_training_failure_is_sanitized_isolated_and_heartbeated():
     assert "contract.pdf" not in repr(health)
     assert "SECRET" not in repr(health)
     assert "https://" not in repr(health)
+
+
+def test_training_observation_success_replaces_stale_failure_health() -> None:
+    calls = 0
+    health = []
+
+    def observation_tick():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("private provider detail")
+
+    _module().run_training_scheduler_loop(
+        lambda: None,
+        training_observation_tick=observation_tick,
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        sleep=lambda _seconds: None,
+        max_cycles=2,
+    )
+
+    observations = [
+        payload
+        for scope, payload in health
+        if scope == "component:email-training-observation"
+    ]
+    assert observations == [
+        {
+            "status": "failed",
+            "error_code": "provider_runtime_error",
+            "error_type": "ConnectionError",
+        },
+        {"status": "ready", "failures": 0},
+    ]

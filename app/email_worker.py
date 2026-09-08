@@ -782,6 +782,9 @@ def run_email_classification_task_once(
             classification_source="agent",
             action_plan=plan,
         )
+        from app.email_classifier_model import email_message_to_text
+
+        redacted_model_text = email_message_to_text(current_message) or "__empty__"
         email_store.persist_scan_result(
             classification,
             agent_result=durable_result,
@@ -802,7 +805,7 @@ def run_email_classification_task_once(
                 for item in message.get("attachments") or ()
             ),
             received_at=str(message.get("date") or ""),
-            model_text=str(message.get("text") or "") or "__empty__",
+            model_text=redacted_model_text,
         )
         if plan is not None and plan.agent_actions:
             action_task_producer.produce(plan, current_message)
@@ -1233,6 +1236,11 @@ def run_scan_and_direct_actions_loop(
                 record_health(
                     "component:email-classifier-agent", _safe_health_error(exc)
                 )
+            else:
+                record_health(
+                    "component:email-classifier-agent",
+                    {"status": "ready", "failures": 0},
+                )
         try:
             direct_results = _drain_direct_actions(
                 run_direct_actions_once,
@@ -1377,6 +1385,11 @@ def run_training_scheduler_loop(
                 record_health(
                     "component:email-training-observation",
                     _safe_health_error(exc),
+                )
+            else:
+                record_health(
+                    "component:email-training-observation",
+                    {"status": "ready", "failures": 0},
                 )
         try:
             training_tick()
