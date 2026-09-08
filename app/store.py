@@ -12953,6 +12953,18 @@ class AutoReplyStore:
         with self._connect() as db:
             rows = db.execute(
                 """
+                with recent_activity as (
+                    select conversation_id, max(activity_at) as latest_activity_at
+                    from (
+                        select conversation_id, seen_at as activity_at
+                        from seen_messages
+                        union all
+                        select conversation_id, created_at as activity_at
+                        from reply_tasks
+                        where single_chat=1
+                    )
+                    group by conversation_id
+                )
                 select
                     c.conversation_id,
                     c.title,
@@ -12977,12 +12989,11 @@ class AutoReplyStore:
                         order by t.id desc
                         limit 1
                     ), '') as direct_open_dingtalk_id,
-                    max(s.seen_at) as latest_seen_at
+                    a.latest_activity_at
                 from conversations c
-                join seen_messages s on s.conversation_id=c.conversation_id
-                where c.single_chat=1 and s.seen_at >= ?
-                group by c.conversation_id, c.title, c.single_chat, c.codex_session_id
-                order by latest_seen_at desc
+                join recent_activity a on a.conversation_id=c.conversation_id
+                where c.single_chat=1 and a.latest_activity_at >= ?
+                order by a.latest_activity_at desc
                 limit ?
                 """,
                 (since_utc, limit),

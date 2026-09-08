@@ -1315,6 +1315,45 @@ def test_recent_single_chat_recovery_preserves_latest_trigger_identity(tmp_path:
     assert records[0].direct_open_dingtalk_id == "mina-open-id"
 
 
+def test_recent_single_chat_recovery_uses_task_activity_when_seen_row_is_old(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    store.upsert_conversation(
+        conversation_id="cid-mina",
+        title="Mina 邹",
+        single_chat=True,
+        codex_session_id=None,
+    )
+    store.mark_seen("msg-old", "cid-mina")
+    with store._connect() as db:
+        db.execute(
+            "update seen_messages set seen_at='2026-01-01 00:00:00' "
+            "where message_id='msg-old'"
+        )
+    task_id = store.enqueue_reply_task(
+        conversation_id="cid-mina",
+        conversation_title="Mina 邹",
+        single_chat=True,
+        trigger_message_id="msg-recent",
+        trigger_create_time="2026-09-07 17:02:04",
+        trigger_sender="Mina 邹",
+        trigger_text="最近消息",
+        trigger_message_json=json.dumps(
+            {"sender_open_dingtalk_id": "mina-open-id"},
+            ensure_ascii=False,
+        ),
+    )
+    assert task_id is not None
+
+    records = store.list_recent_single_chat_conversations(
+        "2026-09-01 00:00:00",
+        limit=10,
+    )
+
+    assert [record.conversation_id for record in records] == ["cid-mina"]
+
+
 def test_list_work_todo_dingtalk_links_filters_by_work_todo_before_limit(
     tmp_path: Path,
 ):
