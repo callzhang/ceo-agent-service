@@ -16,6 +16,7 @@ BUNDLED_BUSINESS_SKILL_NAMES = (
     "ceo-mail-review",
     "ceo-personnel-communication",
     "ceo-work-tracking",
+    "ceo-sales-weekly-report",
 )
 
 MANAGED_BY = "ceo-agent-service"
