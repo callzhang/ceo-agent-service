@@ -460,6 +460,53 @@ def test_unperformed_wechat_delivery_is_requeued_at_most_twice(tmp_path):
     assert store.get_reply_attempt(attempt_id).retry_count == 2
 
 
+def test_user_can_retry_expired_pre_action_wechat_delivery(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery, attempt_id = _seed_with_attempt(store)
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "failed",
+        error="target_open_failed",
+        pre_action_failure=True,
+    )
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "failed",
+        error="target_open_failed",
+        pre_action_failure=True,
+    )
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "failed",
+        error="target_open_failed",
+        pre_action_failure=True,
+    )
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 0
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery.id,
+        expected_execution_generation=delivery.execution_generation,
+        reason="expired_after_target_open_retries",
+        inactive_before="2999-01-01 00:00:00",
+    )
+
+    class RetryingSender(FakeSender):
+        def send(self, item, scope):
+            self.sent.append(item.id)
+            store.mark_wechat_delivery_sending(item.id)
+            store.set_wechat_delivery_status(item.id, "sent")
+            return SendOutcome("sent")
+
+    sender = RetryingSender()
+    assert service.retry_expired_wechat_delivery(store, sender, delivery.id) == "sent"
+    assert sender.sent == [delivery.id]
+    assert store.get_wechat_delivery_for_task(1).status == "sent"
+    assert store.get_reply_attempt(attempt_id).send_status == "sent"
+
 def test_accessibility_permission_recovery_restores_exhausted_pre_action_delivery(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery, attempt_id = _seed_with_attempt(store)

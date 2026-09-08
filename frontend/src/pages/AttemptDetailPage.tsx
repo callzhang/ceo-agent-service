@@ -85,6 +85,9 @@ export function AttemptDetailPage() {
     setMessage("操作进行中…");
     try {
       const result = await command(url);
+      const refreshed = await getAttemptDetail(attemptId);
+      setDetail(refreshed.item);
+      setSnapshot(refreshed.meta.snapshot_at);
       setMessage(result.message || success);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "操作失败");
@@ -120,7 +123,7 @@ export function AttemptDetailPage() {
       <DetailSection title="Draft reply (raw Codex reply)" value={detail.draft_reply} />
       {detail.runtime_attempts.length > 0 && <details className="console-card attempt-runtime-card"><summary><h2>Runtime attempts</h2><span>{detail.runtime_attempts.length} 条执行记录</span></summary><div className="attempt-runtime-list">{detail.runtime_attempts.map((entry, index) => <RuntimeEntry entry={entry} key={`${entry.route}-${index}`} />)}</div></details>}
       {message && <p className="attempt-action-message" role="status" aria-live="polite">{message}</p>}
-      <div className="attempt-bottom-actions">{detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认重新处理这条 Attempt？")) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>重新处理</button>}{detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}</div>
+      <div className="attempt-bottom-actions">{detail.actions.delivery_action_url && <button type="button" className="primary-button" onClick={() => { if (window.confirm(detail.actions.delivery_action_label === "发送" ? "确认发送这条微信回复？" : "确认重新尝试发送这条微信回复？")) void runAction(detail.actions.delivery_action_url || "", `${detail.actions.delivery_action_label}已提交`); }}>{detail.actions.delivery_action_label}</button>}{detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认重新处理这条 Attempt？")) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>重新处理</button>}{detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}</div>
     </>}
   </ConsolePageLayout>;
 }

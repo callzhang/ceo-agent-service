@@ -10706,6 +10706,60 @@ class AutoReplyStore:
                 requeued += 1
             return requeued
 
+    def requeue_expired_wechat_delivery_for_user(self, delivery_id: int):
+        """Restore one expired, never-dispatched delivery after explicit user action.
+
+        Automatic retries deliberately stop after their bounded budget.  The
+        exhausted record is still safe for a user to retry only when it was
+        closed from a pre-action target-open failure: that path records a
+        non-empty action start time but never performed a send.  User-rejected,
+        sent, and uncertain deliveries do not meet this transition.
+        """
+        from app.wechat.models import WechatDelivery
+
+        if delivery_id < 1:
+            raise ValueError("delivery_id must be positive")
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update wechat_deliveries
+                set status='ready_to_send', error='', pre_action_failure=0,
+                    updated_at=current_timestamp
+                where id=?
+                  and status='skipped'
+                  and trim(action_started_at)<>''
+                  and exists (
+                      select 1 from reply_tasks as tasks
+                      where tasks.id=wechat_deliveries.reply_task_id
+                        and tasks.execution_generation=
+                            wechat_deliveries.execution_generation
+                  )
+                """,
+                (delivery_id,),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"WeChat delivery is not an expired pre-action retry: {delivery_id}"
+                )
+            self._sync_wechat_delivery_reply_attempt(
+                db,
+                delivery_id=delivery_id,
+                delivery_status="ready_to_send",
+                error="",
+            )
+            row = db.execute(
+                "select * from wechat_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+        return WechatDelivery(
+            id=row["id"], task_id=row["reply_task_id"],
+            account_id=row["account_id"], target_type=row["target_type"],
+            target_id=row["target_id"], conversation_id=row["conversation_id"],
+            reply_text=row["reply_text"], action_started_at=row["action_started_at"],
+            execution_generation=row["execution_generation"], status=row["status"],
+            evidence=json.loads(row["evidence_json"]), error=row["error"],
+            pre_action_failure=bool(row["pre_action_failure"]),
+        )
+
     def claim_wechat_delivery(
         self,
         delivery_id: int,

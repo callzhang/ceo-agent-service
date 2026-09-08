@@ -248,6 +248,18 @@ def approve_wechat_delivery(store, sender, delivery_id: int) -> str:
     return sender.send(delivery, scope).status
 
 
+def retry_expired_wechat_delivery(store, sender, delivery_id: int) -> str:
+    """Explicitly retry one delivery closed after bounded pre-action failures."""
+    previous = store.get_wechat_delivery_by_id(delivery_id)
+    if previous is None:
+        raise ValueError(f"no delivery {delivery_id}")
+    scope = _scope_for_delivery(store, previous)
+    if scope is None:
+        raise ValueError("no reply scope for delivery target")
+    delivery = store.requeue_expired_wechat_delivery_for_user(delivery_id)
+    return sender.send(delivery, scope).status
+
+
 def reject_wechat_delivery(store, delivery_id: int) -> None:
     """User rejects a pending delivery: mark failed, never send."""
     store.set_wechat_delivery_status(delivery_id, "failed", error="user_rejected")

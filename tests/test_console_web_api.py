@@ -23,6 +23,7 @@ from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_model_registry import EmailModelRegistry
 from app.store import AutoReplyStore
 from app.setup_wizard_models import SetupWizardEvent
+from app.wechat.models import WechatReplyScope
 from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
 from app.web_api.common import (
@@ -102,6 +103,69 @@ def _project(store: AutoReplyStore, title: str) -> int:
             ensure_ascii=False,
         ),
     )
+
+
+def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
+    tmp_path: Path, monkeypatch
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.replace_wechat_reply_scopes("acct-1", [WechatReplyScope(
+        account_id="acct-1", target_type="direct", target_id="melody",
+        conversation_id="melody", display_name="Melody",
+        trigger_mode="every_inbound_text", binding_status="verified",
+    )])
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="melody", conversation_title="Melody",
+        single_chat=True, trigger_message_id="message-1",
+        trigger_create_time="2026-09-08 19:00:00", trigger_sender="Melody",
+        trigger_text="Can you help later?",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="melody", conversation_id="melody", reply_text="Yes.",
+    )
+    store.prepare_outbound_postfix("wechat", f"wechat:{delivery_id}", "Yes.", "Can you help later?")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="melody", conversation_title="Melody",
+        trigger_message_id="message-1", trigger_sender="Melody",
+        trigger_text="Can you help later?", action="send_reply",
+        sensitivity_kind="normal", send_status="pending", channel="wechat",
+    )
+    store.mark_wechat_delivery_sending(delivery_id, now="2026-09-08 19:00:00")
+    store.set_wechat_delivery_status(
+        delivery_id, "failed", error="target_open_failed", pre_action_failure=True,
+    )
+    with store._connect() as db:
+        db.execute("update reply_attempts set retry_count=2 where id=?", (attempt_id,))
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery_id, expected_execution_generation=delivery.execution_generation,
+        reason="expired_after_target_open_retries", inactive_before="2026-09-08 20:00:00",
+    )
+    retried: list[int] = []
+    monkeypatch.setattr(
+        "app.wechat.service.retry_expired_wechat_delivery",
+        lambda _store, _sender, current_delivery_id: retried.append(current_delivery_id) or "sent",
+    )
+
+    with _client(tmp_path, spa_enabled=True) as client:
+        detail = client.get(f"/api/console/history/{attempt_id}")
+        response = client.post(f"/api/console/wechat/deliveries/{delivery_id}/retry")
+
+    assert detail.status_code == 200
+    assert detail.json()["item"]["status"]["message"] == (
+        "这条微信回复此前未能打开会话，尚未发送；你可以重试。"
+    )
+    assert detail.json()["item"]["actions"] == {
+        **detail.json()["item"]["actions"],
+        "delivery_action_label": "重试发送",
+        "delivery_action_url": f"/api/console/wechat/deliveries/{delivery_id}/retry",
+        "terminal": False,
+    }
+    assert response.status_code == 200
+    assert response.json()["message"] == "微信消息已发送"
+    assert retried == [delivery_id]
 
 
 def test_console_api_reuses_the_initialized_audit_store(

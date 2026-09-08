@@ -1718,6 +1718,20 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "delivery_failed", "message": "发送失败", "details": {"reason": normalize_display_value(exc)}}, status_code=409)
         return command_result(item=result, message="发送动作已提交")
 
+    @app.post("/api/console/wechat/deliveries/{delivery_id}/retry")
+    async def console_wechat_retry_expired(delivery_id: int, request: Request):
+        del request
+        from app.wechat import service
+        try:
+            from app.wechat.accessibility import WechatSender
+            store = store_factory()
+            sender = WechatSender(store, service.build_sender())
+            result = service.retry_expired_wechat_delivery(store, sender, delivery_id)
+        except Exception as exc:
+            return JSONResponse({"ok": False, "code": "delivery_failed", "message": "无法重试这条微信消息", "details": {"reason": normalize_display_value(exc)}}, status_code=409)
+        message = "微信消息已发送" if result == "sent" else f"微信发送状态：{result}"
+        return command_result(item=result, message=message)
+
     @app.post("/api/console/wechat/deliveries/{delivery_id}/reject")
     async def console_wechat_reject(delivery_id: int, request: Request):
         try:

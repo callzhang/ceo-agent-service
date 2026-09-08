@@ -124,4 +124,25 @@ describe("AttemptDetailPage", () => {
     expect(command).toHaveBeenCalledWith("/api/console/history/8448/rerun");
     vi.restoreAllMocks();
   });
+
+  it("shows a dedicated retry action for an expired WeChat delivery", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        actions: {
+          ...detail.actions,
+          delivery_action_label: "重试发送",
+          delivery_action_url: "/api/console/wechat/deliveries/101/retry",
+        },
+      },
+      meta: { snapshot_at: "2026-09-08T22:39:47Z" },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "重试发送" }));
+    expect(command).toHaveBeenCalledWith("/api/console/wechat/deliveries/101/retry");
+    vi.restoreAllMocks();
+  });
 });

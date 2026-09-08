@@ -75,7 +75,13 @@ def _feedback_payload(events: list[Any]) -> list[dict[str, str]]:
     ]
 
 
-def _action_links(attempt: Any, agent_runs: list[Any], reply_task: Any, sent_reply: Any) -> dict[str, Any]:
+def _action_links(
+    attempt: Any,
+    agent_runs: list[Any],
+    reply_task: Any,
+    sent_reply: Any,
+    wechat_delivery: Any,
+) -> dict[str, Any]:
     from app.audit_web import _sent_reply_has_recall_target
 
     status = str(getattr(attempt, "send_status", "") or "").strip().lower()
@@ -102,6 +108,22 @@ def _action_links(attempt: Any, agent_runs: list[Any], reply_task: Any, sent_rep
         (run for run in reversed(agent_runs) if str(getattr(getattr(run, "role", None), "value", getattr(run, "role", ""))) == "audit" and getattr(run, "codex_session_id", "")),
         None,
     )
+    delivery_action_label = ""
+    delivery_action_url = ""
+    if wechat_delivery is not None:
+        delivery_status = str(getattr(wechat_delivery, "status", "") or "").strip()
+        delivery_id = int(getattr(wechat_delivery, "id", 0) or 0)
+        if delivery_status == "ready_to_send" and delivery_id:
+            delivery_action_label = "发送"
+            delivery_action_url = f"/api/console/wechat/deliveries/{delivery_id}/approve"
+        elif (
+            delivery_status == "skipped"
+            and str(getattr(wechat_delivery, "action_started_at", "") or "").strip()
+            and delivery_id
+        ):
+            delivery_action_label = "重试发送"
+            delivery_action_url = f"/api/console/wechat/deliveries/{delivery_id}/retry"
+    terminal = terminal and not delivery_action_url
     return {
         "can_rerun": status == "failed",
         "can_recall": _sent_reply_has_recall_target(sent_reply),
@@ -112,6 +134,8 @@ def _action_links(attempt: Any, agent_runs: list[Any], reply_task: Any, sent_rep
         "consumer_url": f"/attempts/{int(attempt.id)}/execution/consumer" if consumer else "",
         "audit_url": f"/attempts/{int(attempt.id)}/execution/audit" if audit else "",
         "dingtalk_url": dingtalk_url,
+        "delivery_action_label": delivery_action_label,
+        "delivery_action_url": delivery_action_url,
         "terminal": terminal,
         "action_label": "无需操作" if terminal else "需要处理",
     }
@@ -148,6 +172,11 @@ def build_attempt_detail(store: Any, attempt_id: int) -> tuple[int, dict[str, An
     reply_task = store.get_reply_task_for_message(
         attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel
     )
+    wechat_delivery = (
+        store.get_wechat_delivery_for_task(reply_task.id)
+        if reply_task is not None and str(attempt.channel or "") == "wechat"
+        else None
+    )
     attention = reply_history_attention(
         attempt,
         task=reply_task,
@@ -161,6 +190,15 @@ def build_attempt_detail(store: Any, attempt_id: int) -> tuple[int, dict[str, An
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
     status_message, requires_decision = _status_message(attempt, attention)
+    if wechat_delivery is not None:
+        delivery_status = str(getattr(wechat_delivery, "status", "") or "").strip()
+        delivery_started = str(
+            getattr(wechat_delivery, "action_started_at", "") or ""
+        ).strip()
+        if delivery_status == "ready_to_send":
+            status_message = "这条微信回复已准备好，确认后即可发送。"
+        elif delivery_status == "skipped" and delivery_started:
+            status_message = "这条微信回复此前未能打开会话，尚未发送；你可以重试。"
     decision_options = []
     if attempt.send_status == "needs_human":
         for option in _needs_human_decision_options(attempt, agent_runs):
@@ -253,7 +291,9 @@ def build_attempt_detail(store: Any, attempt_id: int) -> tuple[int, dict[str, An
             "response_status": normalize_display_value(attempt.calendar_response_status),
             "result": _stored_json(attempt.calendar_response_result_json, {}),
         },
-        "actions": _action_links(attempt, agent_runs, reply_task, sent_reply),
+        "actions": _action_links(
+            attempt, agent_runs, reply_task, sent_reply, wechat_delivery
+        ),
         "runtime_attempts": _runtime_payload(runtime_attempts),
         "created_at": normalize_display_value(attempt.created_at),
         "updated_at": normalize_display_value(attempt.updated_at),

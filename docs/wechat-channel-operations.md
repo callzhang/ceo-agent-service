@@ -221,6 +221,18 @@ fresh dispatch without resetting or reopening any other failed delivery.
 opening failures remain outside this permission-recovery path, so an uncertain,
 disallowed, or unverified-target send is never repeated automatically.
 
+### Manual delivery action in Attempt detail
+
+The Attempt page follows the current WeChat delivery ledger, not only the
+historical Attempt status. A current `ready_to_send` record shows **发送**. An
+expired record is allowed to show **重试发送** only when it was closed after
+bounded target-open retries: it has a current matching generation, `skipped`
+status, and a non-empty `action_started_at`, which is the durable evidence that
+the Sender entered navigation but never performed a send. The click asks for
+confirmation, performs one bounded send attempt, and reloads the Attempt state.
+It never exposes a retry for `send_unknown`, sent, explicitly rejected, or
+unverified-target deliveries.
+
 When a read-only reconciliation scan completes but finds no exact outbound
 record, the delivery stays `send_unknown` with
 `read_only_reconciliation_inconclusive`. This replaces an older availability
