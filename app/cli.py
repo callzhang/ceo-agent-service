@@ -1011,10 +1011,17 @@ def run_agent_cron_dispatcher_loop(
     runtime_refresher=None,
 ) -> None:
     """Dispatch only scheduled sources; legacy adapters remain on old loops."""
-    from app.agent_cron.consumer import ScheduledAgentConsumer, build_scheduled_orchestrator
+    from app.agent_cron.consumer import (
+        ScheduledAgentConsumer,
+        ScheduledTaskTriggerConsumer,
+        build_scheduled_orchestrator,
+    )
     from app.agent_cron.options import ScheduledTaskOptionService
     from app.agent_runtime_production import PRODUCTION_RUNTIME_CAPABILITIES, build_production_agent_runtime
-    from app.dispatcher.adapters import ScheduledTaskQueueAdapter
+    from app.dispatcher.adapters import (
+        ScheduledExecutionQueueAdapter,
+        ScheduledTaskQueueAdapter,
+    )
     from app.skill_files import SkillFileService
 
     store = AutoReplyStore(settings.db_path)
@@ -1028,7 +1035,10 @@ def run_agent_cron_dispatcher_loop(
         operation_skill_files=SkillFileService(),
         runtime_skill_snapshot=runtime_skill_snapshot,
     )
-    consumer = ScheduledAgentConsumer(
+    trigger_consumer = ScheduledTaskTriggerConsumer(
+        store=store, option_service=options,
+    )
+    execution_consumer = ScheduledAgentConsumer(
         store=store, option_service=options,
         orchestrator_factory=lambda built: build_scheduled_orchestrator(
             store=store, built=built, runtime_config=runtime.config,
@@ -1040,9 +1050,16 @@ def run_agent_cron_dispatcher_loop(
         max_workers=max(1, settings.consumer_workers), thread_name_prefix="scheduled-agent"
     )
     dispatcher = ConsumerDispatcher(
-        adapters=(ScheduledTaskQueueAdapter(store),), consumers={"scheduled": consumer},
-        executors={"scheduled": executor},
-        max_in_flight={"scheduled": max(1, settings.consumer_workers)},
+        adapters=(ScheduledTaskQueueAdapter(store), ScheduledExecutionQueueAdapter(store)),
+        consumers={
+            "scheduled": trigger_consumer,
+            "scheduled_execution": execution_consumer,
+        },
+        executors={"scheduled": executor, "scheduled_execution": executor},
+        max_in_flight={
+            "scheduled": max(1, settings.consumer_workers),
+            "scheduled_execution": max(1, settings.consumer_workers),
+        },
         owner=f"scheduled-dispatcher:{os.getpid()}", lease=timedelta(minutes=5),
         wake_event=wake_event,
     )

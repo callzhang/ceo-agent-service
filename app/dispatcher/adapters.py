@@ -310,34 +310,39 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
 
 class ReplyQueueAdapter(_LedgerClaimLifecycle):
     name = "reply"
+    channel_operator = "<>"
 
     def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
         self.store = store
         self.owner_alive = owner_alive
 
+    def _channel_clause(self, alias: str = "task") -> str:
+        return f"{alias}.channel{self.channel_operator}'scheduled'"
+
     def metrics(self, now: datetime) -> QueueMetrics:
         now_text = _sqlite_time(now)
         with self.store._connect() as db:
             pending = db.execute(
-                "select count(*) from reply_tasks where status='pending'"
+                "select count(*) from reply_tasks task where status='pending' and "
+                + self._channel_clause()
             ).fetchone()[0]
             due = db.execute(
                 "select count(*) from reply_tasks task "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
-                "where (task.status='pending' "
+                "where " + self._channel_clause() + " and ((task.status='pending' "
                 "and (task.available_at='' or task.available_at<=?) "
                 "and (claim.owner is null or claim.owner='' "
                 "or claim.lease_expires_at<=?)) "
                 "or (task.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?)",
+                "and claim.lease_expires_at<=?))",
                 (self.name, now_text, now_text, now_text),
             ).fetchone()[0]
             claimed = db.execute(
                 "select count(*) from reply_tasks task "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
-                "where task.status='processing' and (claim.owner is null "
+                "where " + self._channel_clause() + " and task.status='processing' and (claim.owner is null "
                 "or claim.owner='' or claim.lease_expires_at>?)",
                 (self.name, now_text),
             ).fetchone()[0]
@@ -346,12 +351,12 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
                 "else task.available_at end) from reply_tasks task "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
-                "where (task.status='pending' "
+                "where " + self._channel_clause() + " and ((task.status='pending' "
                 "and (task.available_at='' or task.available_at<=?) "
                 "and (claim.owner is null or claim.owner='' "
                 "or claim.lease_expires_at<=?)) "
                 "or (task.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?)",
+                "and claim.lease_expires_at<=?))",
                 (self.name, now_text, now_text, now_text),
             ).fetchone()[0]
             latest_error = _latest_claim_error(db, self.name) or _latest_error(
@@ -390,7 +395,7 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
                     "claim.lease_expires_at as claim_expires_at "
                     "from reply_tasks task left join dispatcher_claim_leases claim "
                     "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
-                    "where ((task.status='pending' "
+                    "where " + self._channel_clause() + " and ((task.status='pending' "
                     "and (task.available_at='' or task.available_at<=?) "
                     "and (claim.owner is null or claim.owner='' "
                     "or claim.lease_expires_at<=?)) "
@@ -411,7 +416,8 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
             cursor = db.execute(
                 "update reply_tasks set status='processing', attempts=attempts+1, "
                 "claimed_input_version=input_version, locked_at=?, available_at='', "
-                "updated_at=? where id=? and status in ('pending','processing')",
+                "updated_at=? where id=? and status in ('pending','processing') and "
+                + self._channel_clause("reply_tasks"),
                 (now_text, now_text, row["id"]),
             )
             if cursor.rowcount != 1:
@@ -471,6 +477,11 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
             now=now,
             lease=lease,
         )
+
+
+class ScheduledExecutionQueueAdapter(ReplyQueueAdapter):
+    name = "scheduled_execution"
+    channel_operator = "="
 
 
 class MeetingQueueAdapter(_LedgerClaimLifecycle):

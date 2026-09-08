@@ -5830,6 +5830,20 @@ class AutoReplyStore:
             ).fetchone()
         return self._scheduled_task_run_from_row(row) if row is not None else None
 
+    def get_scheduled_task_run_for_reply_execution(
+        self, reply_task_id: int
+    ) -> ScheduledTaskRun | None:
+        if type(reply_task_id) is not int or reply_task_id <= 0:
+            raise ValueError("scheduled reply execution id must be positive")
+        with self._connect() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where execution_kind='reply_task' "
+                "and execution_id=? order by id desc limit 1",
+                (str(reply_task_id),),
+            ).fetchone()
+        return self._scheduled_task_run_from_row(row) if row is not None else None
+
     def latest_scheduled_task_overlap_candidate(
         self,
         task_id: int,

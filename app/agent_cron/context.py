@@ -6,7 +6,7 @@ from typing import Protocol
 
 from app.agent_context import AgentTaskContext
 from app.agent_cron.models import ScheduledTaskRun
-from app.agent_runtime_contracts import RuntimeRoute
+from app.agent_runtime_contracts import RuntimeKind, RuntimeRoute
 from app.managed_skills import ManagedSkillRevision
 from app.skill_files import SkillDocument
 
@@ -52,6 +52,11 @@ class ScheduledAgentContextBuilder:
         )
         if not isinstance(effort, str):
             raise ValueError("scheduled task reasoning effort must be text")
+        if effort.strip() and route.runtime_kind is not RuntimeKind.CODEX_CLI:
+            raise ValueError(
+                f"scheduled task runtime {route.runtime_kind.value} "
+                "does not support reasoning effort"
+            )
         unknown = set(runtime_options) - {"model", "reasoning_effort", "thinking"}
         if unknown:
             raise ValueError(
