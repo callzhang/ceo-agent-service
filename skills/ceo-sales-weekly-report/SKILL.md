@@ -20,7 +20,14 @@ scan CRM proactively, send the report, or change CRM.
 ## Required Skills And Sources
 
 Before gathering evidence, read and follow both `ceo-weekly-report` and
-`fxiaoke-crm-cli` completely, including the references they require.
+`fxiaoke-crm-cli` completely, including the references they require. From
+`ceo-weekly-report`, inherit only management reasoning, evidence classification,
+issue continuity, and privacy rules. This Skill's source authority, reporting
+window/scope, report structure, storage, and completion rules take precedence
+over any dependency publication, artifact, or source rules for this request.
+The output is final-Markdown-only in `CEO_WORKSPACE`; do not import write
+behavior from either dependency. Preserve the full `fxiaoke-crm-cli`
+read-only guidance without importing write behavior.
 
 Use the current company OKR or an explicitly approved sales plan as the
 authoritative target. Use Fxiaoke as the authority for CRM actual results. If CRM
@@ -38,8 +45,13 @@ preceding Monday 00:00 inclusive through the current Monday 00:00 exclusive. If
 the requested target period is still open, use the actual query time as cutoff
 and display it.
 
-Score a quarterly or annual target against elapsed time in that target's own
-period. A weekly actual does not become a full-period actual.
+Apply elapsed-time normalization only to additive period-to-date measures. Score
+a quarterly or annual additive target against elapsed time in that target's own
+period; a weekly actual does not become a full-period actual. ratio/snapshot
+metrics, including gross-margin percentage, are scored against their target or
+an approved dated trajectory without automatic elapsed-time division. If
+compatible target semantics are unavailable, mark the metric unscored and
+reduce score coverage.
 
 ## CRM reads only
 
@@ -143,7 +155,11 @@ Score only metrics with a valid target, compatible CRM actual, defined period,
 and consistent definition. Missing values are not zero. Remove an ineligible
 metric from the score denominator, normalize remaining eligible weights for the
 displayed score, and report score coverage as the original eligible weight.
-Always show both the score and score coverage.
+Always show both the score and score coverage. For zero eligible weight
+independently for company and each business line, when a company or
+business line has zero eligible weight, display `不可评分` or `无数据`, coverage
+0%, and enumerate missing definitions/sources; never normalize, invent numeric
+score, or assign status.
 
 ## Report Structure
 
