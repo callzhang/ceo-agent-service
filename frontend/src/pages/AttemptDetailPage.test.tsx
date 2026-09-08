@@ -182,7 +182,9 @@ describe("AttemptDetailPage", () => {
     renderPage();
 
     const header = await screen.findByTestId("attempt-title-row");
-    expect(header).toContainElement(screen.getByRole("link", { name: "返回 History" }));
+    const backLink = screen.getByRole("link", { name: "返回 History" });
+    expect(header).toContainElement(backLink);
+    expect(backLink).toHaveTextContent("←");
     expect(header).toContainElement(screen.getByRole("button", { name: "查看微信消息" }));
     expect(header).toContainElement(screen.getByRole("button", { name: "重试发送" }));
     expect(document.querySelector(".attempt-bottom-actions")).toBeNull();
