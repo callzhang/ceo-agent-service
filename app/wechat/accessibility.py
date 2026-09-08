@@ -688,6 +688,12 @@ class MacWechatAccessibility:
             return (p.x + s.width / 2, p.y + s.height / 2)
 
         def click(el, n=1):
+            try:
+                if perform(el, "AXPress") == 0:
+                    time.sleep(0.04)
+                    return
+            except Exception:
+                pass
             c = center(el)
             if not c:
                 return
@@ -878,6 +884,12 @@ class MacWechatAccessibility:
             return False
 
         def click(el, n=1):
+            try:
+                if perform(el, "AXPress") == 0:
+                    time.sleep(0.04)
+                    return
+            except Exception:
+                pass
             from ApplicationServices import AXValueGetValue, kAXValueCGPointType, kAXValueCGSizeType
             pos, size = g(el, "AXPosition"), g(el, "AXSize")
             okp, p = AXValueGetValue(pos, kAXValueCGPointType, None) if pos else (False, None)
