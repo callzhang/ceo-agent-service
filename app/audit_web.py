@@ -2830,22 +2830,29 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
         """
         select
             case
-                when lower(status)='failed' and error='user_rejected'
+                when lower(wechat_deliveries.status)='failed'
+                     and wechat_deliveries.error='user_rejected'
                     then 'skipped'
-                when lower(status)='send_unknown' then 'failed'
-                else lower(coalesce(status, ''))
+                when lower(wechat_deliveries.status)='send_unknown' then 'failed'
+                else lower(coalesce(wechat_deliveries.status, ''))
             end as status,
             count(*) as count,
             max(case
-                when lower(status)='send_unknown'
-                    then updated_at || char(31) || error
-                when lower(status)='failed' and error!='user_rejected'
-                    then updated_at || char(31) || error
+                when lower(wechat_deliveries.status)='send_unknown'
+                    then wechat_deliveries.updated_at || char(31)
+                         || wechat_deliveries.error
+                when lower(wechat_deliveries.status)='failed'
+                     and wechat_deliveries.error!='user_rejected'
+                    then wechat_deliveries.updated_at || char(31)
+                         || wechat_deliveries.error
                 else ''
             end) as latest_error
         from wechat_deliveries
-        group by status
-        order by status
+        join reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
+        where wechat_deliveries.execution_generation=
+              reply_tasks.execution_generation
+        group by 1
+        order by 1
         """
     ).fetchall()
     counts = {
@@ -2859,7 +2866,11 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
     latest_error = "" if failed_row is None else str(failed_row["latest_error"] or "")
     _, _, latest_error = latest_error.partition(chr(31))
     latest_row = db.execute(
-        "select max(updated_at) as value from wechat_deliveries"
+        """select max(wechat_deliveries.updated_at) as value
+           from wechat_deliveries
+           join reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
+           where wechat_deliveries.execution_generation=
+                 reply_tasks.execution_generation"""
     ).fetchone()
     return {
         "name": "WeChat deliveries",
@@ -3005,12 +3016,21 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
             if not _sqlite_table_exists(db, table):
                 continue
             status_placeholders = ",".join("?" for _ in statuses)
+            current_generation_filter = (
+                "and exists (select 1 from reply_tasks "
+                "where reply_tasks.id=wechat_deliveries.reply_task_id "
+                "and reply_tasks.execution_generation="
+                "wechat_deliveries.execution_generation)"
+                if table == "wechat_deliveries"
+                else ""
+            )
             sql = f"""
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
                        {error_column} as error
                 from {table}
                 where lower({status_column}) in ({status_placeholders})
+                  {current_generation_filter}
                 order by
                     case lower({status_column})
                         when 'failed' then 0

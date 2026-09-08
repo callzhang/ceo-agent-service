@@ -7818,6 +7818,39 @@ def test_worker_attention_explains_pre_action_wechat_delivery_failure(
     )
 
 
+def test_worker_status_ignores_wechat_delivery_from_old_execution_generation(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_wechat_pending(store)
+    store.mark_wechat_delivery_sending(delivery_id)
+    store.set_wechat_delivery_status(
+        delivery_id,
+        "failed",
+        error="target_open_failed",
+        pre_action_failure=True,
+    )
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    assert delivery is not None
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set execution_generation='new-generation' where id=?",
+            (delivery.task_id,),
+        )
+
+    payload = build_worker_status_payload(store)
+    queue = next(
+        row for row in payload["queues"] if row["name"] == "WeChat deliveries"
+    )
+
+    assert queue["failed"] == 0
+    assert not [
+        row
+        for row in payload["attention_rows"]
+        if row["category"] == "WeChat delivery" and row["id"] == str(delivery_id)
+    ]
+
+
 def test_render_attempt_list_labels_explained_blocked_as_blocked(
     tmp_path: Path,
 ):
