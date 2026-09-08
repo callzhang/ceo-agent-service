@@ -241,6 +241,7 @@ def test_reseeding_preserves_edits_but_disables_existing_friday_producer(
         prompt="保留我的精确执行描述 $ceo-message-triage $dingtalk-chat",
         runtime_id="friday_runtime",
         runtime_options={"model": "default"},
+        required_runtime_capabilities=(),
         now=NOW + timedelta(minutes=1),
     )
 
@@ -258,6 +259,7 @@ def test_reseeding_preserves_edits_but_disables_existing_friday_producer(
     assert repeated.prompt == edited.prompt
     assert repeated.runtime_id == "friday_runtime"
     assert repeated.enabled is False
+    assert repeated.version == edited.version + 1
     assert frozenset(repeated.required_runtime_capabilities) == (
         LOCAL_SERVICE_RUNTIME_CAPABILITIES
     )
@@ -355,6 +357,7 @@ def test_startup_seed_backfills_active_legacy_producer_capabilities(
 
     updated = _task_by_key(seeded, "dingtalk-message-check-v1")
     assert updated.id == legacy.id
+    assert updated.version == legacy.version + 1
     assert updated.name == legacy.name
     assert updated.deleted_at is None
     assert frozenset(updated.required_runtime_capabilities) == (

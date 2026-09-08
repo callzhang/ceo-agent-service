@@ -117,6 +117,7 @@ def _seed_dingtalk_message_task(
         DINGTALK_MESSAGE_MIGRATION_KEY,
         options=options,
         required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+        now=now,
     )
     if existing is not None:
         return existing
@@ -177,6 +178,7 @@ def _seed_dingtalk_meeting_task(
         migration_key,
         options=options,
         required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+        now=now,
     )
     if existing is not None:
         return existing
@@ -244,6 +246,7 @@ def _seed_wechat_task(
         migration_key,
         options=options,
         required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+        now=now,
     )
     if existing is not None:
         return existing
@@ -303,6 +306,7 @@ def _seed_oa_task(
         migration_key,
         options=options,
         required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+        now=now,
     )
     if existing is not None:
         return existing
@@ -355,6 +359,7 @@ def _seed_work_source_task(
         migration_key,
         options=options,
         required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+        now=now,
     )
     if existing is not None:
         return existing
@@ -413,6 +418,7 @@ def _seed_weekly_okr_task(
         migration_key,
         options=options,
         required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+        now=now,
     )
     if existing is not None:
         return existing
@@ -558,8 +564,20 @@ def _existing_task(
     *,
     options: ScheduledTaskOptionService | None = None,
     required_capabilities: frozenset[str] = frozenset(),
+    now: datetime | None = None,
 ) -> ScheduledTask | None:
-    existing = next(
+    if required_capabilities:
+        if options is None:
+            raise ValueError("Runtime options are required for capability migration")
+        return store.backfill_scheduled_task_runtime_capabilities(
+            migration_key=migration_key,
+            required_capabilities=required_capabilities,
+            eligible_runtime_ids=options.runtime_ids_supporting_capabilities(
+                required_capabilities
+            ),
+            now=now,
+        )
+    return next(
         (
             task
             for task in store.list_scheduled_tasks(include_deleted=True)
@@ -567,38 +585,6 @@ def _existing_task(
         ),
         None,
     )
-    if (
-        existing is None
-        or existing.deleted_at is not None
-        or not required_capabilities
-    ):
-        return existing
-    merged = tuple(
-        sorted(
-            set(existing.required_runtime_capabilities)
-            | required_capabilities
-        )
-    )
-    updated = existing
-    if merged != existing.required_runtime_capabilities:
-        updated = store.update_scheduled_task(
-            existing.id,
-            expected_version=existing.version,
-            required_runtime_capabilities=merged,
-        )
-    if options is not None and updated.enabled:
-        try:
-            options.validate_runtime_capabilities(
-                updated.runtime_id,
-                required_capabilities=frozenset(merged),
-            )
-        except ValueError:
-            updated = store.set_scheduled_task_enabled(
-                updated.id,
-                enabled=False,
-                expected_version=updated.version,
-            )
-    return updated
 
 
 def _select_runtime(

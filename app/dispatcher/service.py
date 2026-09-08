@@ -1,12 +1,43 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import Executor, Future
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 import os
 from threading import Event, Lock
 
 from app.dispatcher.models import ClaimGuard, DispatchEnvelope, QueueAdapter
+
+
+class AdapterWorkerPools:
+    """Own one bounded worker pool for each independently dispatched queue."""
+
+    def __init__(
+        self,
+        adapter_names: Sequence[str],
+        *,
+        workers_per_adapter: int,
+        thread_name_prefix: str = "agent-dispatcher",
+    ) -> None:
+        names = tuple(adapter_names)
+        if not names or any(not name.strip() for name in names):
+            raise ValueError("dispatcher adapter names must not be empty")
+        if len(set(names)) != len(names):
+            raise ValueError("dispatcher adapter names must be unique")
+        if workers_per_adapter <= 0:
+            raise ValueError("dispatcher worker capacity must be positive")
+        self.executors: dict[str, ThreadPoolExecutor] = {
+            name: ThreadPoolExecutor(
+                max_workers=workers_per_adapter,
+                thread_name_prefix=f"{thread_name_prefix}-{name}",
+            )
+            for name in names
+        }
+        self.max_in_flight = {name: workers_per_adapter for name in names}
+
+    def shutdown(self) -> None:
+        for executor in self.executors.values():
+            executor.shutdown(wait=True, cancel_futures=False)
 
 
 class ConsumerDispatcher:

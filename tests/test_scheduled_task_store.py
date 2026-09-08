@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -147,6 +148,144 @@ def test_task_and_run_snapshot_preserve_required_runtime_capabilities(
     )
     assert run.snapshot.required_runtime_capabilities == (
         task.required_runtime_capabilities
+    )
+
+
+def test_capability_backfill_is_atomic_across_concurrent_store_instances(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "concurrent-capability-backfill.sqlite3"
+    first_store = AutoReplyStore(path)
+    task = _create_task(
+        first_store,
+        migration_key="legacy-local-producer-v1",
+    )
+    second_store = AutoReplyStore(path)
+    barrier = threading.Barrier(2)
+    results = []
+    errors: list[BaseException] = []
+
+    def migrate(store: AutoReplyStore) -> None:
+        try:
+            barrier.wait()
+            results.append(
+                store.backfill_scheduled_task_runtime_capabilities(
+                    migration_key="legacy-local-producer-v1",
+                    required_capabilities=LOCAL_SERVICE_RUNTIME_CAPABILITIES,
+                    eligible_runtime_ids=frozenset({"codex_oauth"}),
+                    now=NOW + timedelta(minutes=1),
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    threads = (
+        threading.Thread(target=migrate, args=(first_store,)),
+        threading.Thread(target=migrate, args=(second_store,)),
+    )
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert len(results) == 2
+    updated = first_store.get_scheduled_task(task.id)
+    assert updated is not None
+    assert updated.version == task.version + 1
+    assert all(result == updated for result in results)
+    assert frozenset(updated.required_runtime_capabilities) == (
+        LOCAL_SERVICE_RUNTIME_CAPABILITIES
+    )
+
+
+def test_capability_backfill_reads_latest_user_fields_inside_write_transaction(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "competing-capability-backfill.sqlite3"
+    user_store = AutoReplyStore(path)
+    task = _create_task(
+        user_store,
+        migration_key="edited-local-producer-v1",
+    )
+    latest_ref = _managed_ref(user_store, skill_name="ceo-latest-user-skill")
+    migration_store = AutoReplyStore(path)
+    started = threading.Event()
+    results = []
+
+    def migrate() -> None:
+        started.set()
+        results.append(
+            migration_store.backfill_scheduled_task_runtime_capabilities(
+                migration_key="edited-local-producer-v1",
+                required_capabilities=LOCAL_SERVICE_RUNTIME_CAPABILITIES,
+                eligible_runtime_ids=frozenset({"latest-user-runtime"}),
+                now=NOW + timedelta(minutes=2),
+            )
+        )
+
+    with user_store._immediate_write_transaction() as db:
+        db.execute(
+            """
+            update scheduled_tasks
+               set name=?, prompt=?, cron_expression=?, runtime_id=?,
+                   runtime_options_json=?, working_directory=?,
+                   version=version + 1, updated_at=?
+             where id=?
+            """,
+            (
+                "最新用户名称",
+                "最新用户 Prompt",
+                "0 15 * * * *",
+                "latest-user-runtime",
+                '{"model":"latest-user-model"}',
+                "/latest/user/workspace",
+                (NOW + timedelta(minutes=1)).isoformat(),
+                task.id,
+            ),
+        )
+        db.execute(
+            "delete from scheduled_task_skill_refs where scheduled_task_id=?",
+            (task.id,),
+        )
+        db.execute(
+            """
+            insert into scheduled_task_skill_refs (
+                scheduled_task_id, skill_source, skill_name,
+                managed_skill_id, managed_revision_id, position
+            ) values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task.id,
+                latest_ref.skill_source,
+                latest_ref.skill_name,
+                latest_ref.managed_skill_id,
+                latest_ref.managed_revision_id,
+                latest_ref.position,
+            ),
+        )
+        thread = threading.Thread(target=migrate)
+        thread.start()
+        assert started.wait(timeout=1)
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert len(results) == 1
+    updated = results[0]
+    assert updated is not None
+    assert updated.version == task.version + 2
+    assert updated.name == "最新用户名称"
+    assert updated.prompt == "最新用户 Prompt"
+    assert updated.cron_expression == "0 15 * * * *"
+    assert updated.runtime_id == "latest-user-runtime"
+    assert updated.runtime_options == {"model": "latest-user-model"}
+    assert updated.working_directory == "/latest/user/workspace"
+    assert tuple(ref.skill_name for ref in updated.skill_refs) == (
+        "ceo-latest-user-skill",
+    )
+    assert frozenset(updated.required_runtime_capabilities) == (
+        LOCAL_SERVICE_RUNTIME_CAPABILITIES
     )
 
 

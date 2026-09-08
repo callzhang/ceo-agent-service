@@ -6,7 +6,7 @@ import re
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -5161,6 +5161,78 @@ class AutoReplyStore:
                 f"{deleted_filter} order by id"
             ).fetchall()
             return tuple(self._scheduled_task_from_row(db, row) for row in rows)
+
+    def backfill_scheduled_task_runtime_capabilities(
+        self,
+        *,
+        migration_key: str,
+        required_capabilities: Collection[str],
+        eligible_runtime_ids: Collection[str],
+        now: datetime | None = None,
+    ) -> ScheduledTask | None:
+        """Atomically backfill legacy seed requirements without replacing edits."""
+        migration_key = self._require_scheduled_task_text(
+            migration_key,
+            field="scheduled task migration key",
+        )
+        required_json = canonical_capabilities_json(
+            required_capabilities,
+            field="scheduled task required runtime capabilities",
+        )
+        required = frozenset(
+            decode_capabilities_json(
+                required_json,
+                field="scheduled task required runtime capabilities",
+            )
+        )
+        eligible = frozenset(
+            self._require_scheduled_task_text(
+                runtime_id,
+                field="eligible scheduled task runtime id",
+            )
+            for runtime_id in eligible_runtime_ids
+        )
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc),
+            field="scheduled task now",
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if row is None:
+                return None
+            current = self._scheduled_task_from_row(db, row)
+            if current.deleted_at is not None:
+                return current
+            current_required = frozenset(current.required_runtime_capabilities)
+            missing = required - current_required
+            must_disable = current.enabled and current.runtime_id not in eligible
+            if not missing and not must_disable:
+                return current
+            merged_json = canonical_capabilities_json(
+                current_required | required,
+                field="scheduled task required runtime capabilities",
+            )
+            enabled = current.enabled and not must_disable
+            db.execute(
+                """
+                update scheduled_tasks
+                   set required_runtime_capabilities_json=?, enabled=?,
+                       version=version + 1, updated_at=?
+                 where id=?
+                """,
+                (merged_json, int(enabled), now_text, current.id),
+            )
+            updated_row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=?",
+                (current.id,),
+            ).fetchone()
+            assert updated_row is not None
+            return self._scheduled_task_from_row(db, updated_row)
 
     def update_scheduled_task(
         self,

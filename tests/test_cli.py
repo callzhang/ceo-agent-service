@@ -6986,6 +6986,11 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "okr_review",
         "task_todo_sync_outbox",
     }
+    assert set(captured["executors"]) == set(captured["consumers"])
+    assert len({id(executor) for executor in captured["executors"].values()}) == 7
+    assert captured["max_in_flight"] == {
+        name: 2 for name in captured["consumers"]
+    }
 
 
 def test_agent_cron_dispatcher_dry_run_leaves_todo_outbox_unclaimed(
@@ -7035,6 +7040,8 @@ def test_agent_cron_dispatcher_dry_run_leaves_todo_outbox_unclaimed(
         adapter.name for adapter in captured["adapters"]
     }
     assert "task_todo_sync_outbox" not in captured["consumers"]
+    assert set(captured["executors"]) == set(captured["consumers"])
+    assert len({id(executor) for executor in captured["executors"].values()}) == 6
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):

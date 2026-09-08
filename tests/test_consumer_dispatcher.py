@@ -3,12 +3,13 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread, enumerate as enumerate_threads
 from types import SimpleNamespace
 
 import pytest
 
 import app.dispatcher.adapters as dispatcher_adapters
+import app.dispatcher.service as dispatcher_service
 from app.dispatcher.adapters import (
     MeetingQueueAdapter,
     OkrReviewQueueAdapter,
@@ -826,6 +827,119 @@ class _RecordingExecutor:
         future: Future[None] = Future()
         self.futures.append(future)
         return future
+
+
+def test_adapter_worker_pools_do_not_let_one_blocked_adapter_starve_another():
+    first = _FakeAdapter("first", 1)
+    second = _FakeAdapter("task_todo_sync_outbox", 1)
+    first_started = Event()
+    second_started = Event()
+    release_first = Event()
+
+    def consume_first(_envelope, _guard):
+        first_started.set()
+        assert release_first.wait(timeout=2)
+
+    def consume_second(_envelope, _guard):
+        second_started.set()
+
+    pools = dispatcher_service.AdapterWorkerPools(
+        (first.name, second.name),
+        workers_per_adapter=1,
+        thread_name_prefix="test-isolated-dispatcher",
+    )
+    dispatcher = ConsumerDispatcher(
+        adapters=(first, second),
+        consumers={"first": consume_first, "task_todo_sync_outbox": consume_second},
+        executors=pools.executors,
+        max_in_flight=pools.max_in_flight,
+        owner="dispatcher-a",
+        lease=timedelta(minutes=5),
+    )
+
+    try:
+        assert dispatcher.dispatch_available(NOW, limit=2) == 2
+        assert first_started.wait(timeout=1)
+        assert second_started.wait(timeout=1)
+    finally:
+        release_first.set()
+        pools.shutdown()
+
+
+def test_adapter_worker_pool_capacity_prevents_claiming_more_than_its_workers():
+    adapter = _FakeAdapter("scheduled", 4)
+    release = Event()
+    both_started = Event()
+    lock = Lock()
+    running = 0
+    peak_running = 0
+
+    def consume(_envelope, _guard):
+        nonlocal running, peak_running
+        with lock:
+            running += 1
+            peak_running = max(peak_running, running)
+            if running == 2:
+                both_started.set()
+        assert release.wait(timeout=2)
+        with lock:
+            running -= 1
+
+    pools = dispatcher_service.AdapterWorkerPools(
+        (adapter.name,),
+        workers_per_adapter=2,
+        thread_name_prefix="test-capacity-dispatcher",
+    )
+    dispatcher = ConsumerDispatcher(
+        adapters=(adapter,),
+        consumers={adapter.name: consume},
+        executors=pools.executors,
+        max_in_flight=pools.max_in_flight,
+        owner="dispatcher-a",
+        lease=timedelta(minutes=5),
+    )
+
+    try:
+        assert dispatcher.dispatch_available(NOW, limit=4) == 2
+        assert both_started.wait(timeout=1)
+        assert adapter.claimed == 2
+        assert adapter.remaining == 2
+        assert peak_running == 2
+    finally:
+        release.set()
+        pools.shutdown()
+
+
+def test_adapter_worker_pools_shutdown_waits_and_leaves_no_worker_threads():
+    prefix = "test-shutdown-dispatcher"
+    task_started = Event()
+    allow_finish = Event()
+    task_finished = Event()
+    pools = dispatcher_service.AdapterWorkerPools(
+        ("scheduled", "reply"),
+        workers_per_adapter=1,
+        thread_name_prefix=prefix,
+    )
+
+    def work():
+        task_started.set()
+        assert allow_finish.wait(timeout=2)
+        task_finished.set()
+
+    pools.executors["scheduled"].submit(work)
+    assert task_started.wait(timeout=1)
+    releaser = Thread(target=lambda: (Event().wait(0.05), allow_finish.set()))
+    releaser.start()
+
+    pools.shutdown()
+    releaser.join(timeout=1)
+
+    assert task_finished.is_set()
+    assert not [
+        thread
+        for thread in enumerate_threads()
+        if thread.name.startswith(prefix) and thread.is_alive()
+    ]
 
 
 def test_dispatcher_is_round_robin_and_does_not_wait_for_long_consumers():

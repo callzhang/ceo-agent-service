@@ -156,12 +156,7 @@ class ScheduledTaskOptionService:
             )
         if not required_capabilities:
             return route
-        snapshot = self._runtime_snapshots.get(route.name)
-        capabilities = (
-            snapshot.capabilities
-            if snapshot is not None and snapshot.route_name == route.name
-            else frozenset()
-        ) | runtime_route_surface_capabilities(route)
+        capabilities = self._reported_runtime_capabilities(route)
         missing = sorted(required_capabilities - capabilities)
         if missing:
             raise ScheduledTaskOptionUnavailableError(
@@ -169,6 +164,18 @@ class ScheduledTaskOptionService:
                 + ",".join(missing)
             )
         return route
+
+    def runtime_ids_supporting_capabilities(
+        self,
+        required_capabilities: frozenset[str],
+    ) -> frozenset[str]:
+        return frozenset(
+            route.name
+            for route in self._runtime_config.routes
+            if not (
+                required_capabilities - self._reported_runtime_capabilities(route)
+            )
+        )
 
     def list_managed_skill_options(self) -> tuple[ManagedSkillOption, ...]:
         return tuple(
@@ -292,12 +299,8 @@ class ScheduledTaskOptionService:
         reason = (
             None if available else _single_route_reason(decision.reason, route.name)
         )
-        snapshot = self._runtime_snapshots.get(route.name)
-        reported_capabilities = runtime_route_surface_capabilities(route)
-        if snapshot is not None and snapshot.route_name == route.name:
-            reported_capabilities |= snapshot.capabilities
         capabilities = tuple(
-            sorted(reported_capabilities)
+            sorted(self._reported_runtime_capabilities(route))
         )
         return RuntimeOption(
             route_name=route.name,
@@ -313,6 +316,16 @@ class ScheduledTaskOptionService:
             ),
             capabilities=capabilities,
         )
+
+    def _reported_runtime_capabilities(
+        self,
+        route: RuntimeRoute,
+    ) -> frozenset[str]:
+        snapshot = self._runtime_snapshots.get(route.name)
+        capabilities = runtime_route_surface_capabilities(route)
+        if snapshot is not None and snapshot.route_name == route.name:
+            capabilities |= snapshot.capabilities
+        return capabilities
 
     def _managed_revision_option(
         self, revision: ManagedSkillRevision

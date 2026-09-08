@@ -9,7 +9,6 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -55,7 +54,7 @@ from app.dws_client import (
     local_time_zone_name,
     native_reply_delivery_payload,
 )
-from app.dispatcher.service import ConsumerDispatcher
+from app.dispatcher.service import AdapterWorkerPools, ConsumerDispatcher
 from app.feedback_spike import (
     build_events_url,
     send_feedback_spike_links,
@@ -1089,9 +1088,6 @@ def run_agent_cron_dispatcher_loop(
         if not guard.resolved:
             guard.finish_source(now, status=status)
 
-    executor = ThreadPoolExecutor(
-        max_workers=max(1, settings.consumer_workers), thread_name_prefix="agent-dispatcher"
-    )
     adapters = (
         ScheduledTaskQueueAdapter(store),
         ScheduledExecutionQueueAdapter(store),
@@ -1110,18 +1106,22 @@ def run_agent_cron_dispatcher_loop(
     }
     if not settings.dry_run:
         consumers["task_todo_sync_outbox"] = consume_task_todo_sync_outbox
-    dispatcher = ConsumerDispatcher(
-        adapters=adapters,
-        consumers=consumers,
-        executors={adapter.name: executor for adapter in adapters},
-        max_in_flight={adapter.name: max(1, settings.consumer_workers) for adapter in adapters},
-        owner=f"scheduled-dispatcher:{os.getpid()}", lease=timedelta(minutes=5),
-        wake_event=wake_event,
+    worker_pools = AdapterWorkerPools(
+        tuple(adapter.name for adapter in adapters),
+        workers_per_adapter=max(1, settings.consumer_workers),
     )
     try:
+        dispatcher = ConsumerDispatcher(
+            adapters=adapters,
+            consumers=consumers,
+            executors=worker_pools.executors,
+            max_in_flight=worker_pools.max_in_flight,
+            owner=f"scheduled-dispatcher:{os.getpid()}", lease=timedelta(minutes=5),
+            wake_event=wake_event,
+        )
         dispatcher.run(stop_event=threading.Event())
     finally:
-        executor.shutdown(wait=False, cancel_futures=False)
+        worker_pools.shutdown()
 
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()
