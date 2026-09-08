@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "vitest"
+    "test": "vitest",
+    "verify:scheduled-tasks-viewport": "node scripts/verify-scheduled-tasks-viewport.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

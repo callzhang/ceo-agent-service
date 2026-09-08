@@ -12,10 +12,27 @@ not restarted.
   `--force-dark-mode` media emulation. Verifies dark canvas/surface separation,
   primary and secondary text, card borders, active navigation, and the empty
   state.
-- `scheduled-tasks-dark-390.png`: Google Chrome 390 x 844 with the same dark
-  media emulation. Verifies the list-then-editor single column, wrapped heading
-  copy, full-width primary action, horizontally scrollable top navigation, and
-  absence of a fixed two-column minimum width.
+- `scheduled-tasks-dark-390.png`: Google Chrome with a 390 x 844 CSS viewport
+  and `prefers-color-scheme: dark`, both set through the Chrome DevTools
+  Protocol. It verifies the complete wrapped heading copy, the new-task
+  button's right rounded edge, both workspace borders, and the list-then-editor
+  single column without hiding overflow.
+
+## Repeatable 390 px check
+
+With an isolated server running, execute:
+
+```sh
+cd frontend
+npm run verify:scheduled-tasks-viewport -- \
+  --url http://127.0.0.1:62371/scheduled-tasks \
+  --screenshot ../docs/evidence/agent-cron-task9/scheduled-tasks-dark-390.png
+```
+
+The real-browser check fails unless the document scroll width is at most the
+390 px viewport width and the header description, new-task button, and
+workspace all remain within the 12 px page gutters. It also rejects horizontal
+overflow clipping, so a passing result proves fit rather than masked content.
 
 ## Interactive browser checks
 
