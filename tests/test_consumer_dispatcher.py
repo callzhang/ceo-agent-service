@@ -78,43 +78,58 @@ def _work_summary(store: AutoReplyStore) -> int:
 
 
 def _two_due_sources(store: AutoReplyStore, adapter_name: str):
+    return _many_due_sources(store, adapter_name, count=2)
+
+
+def _many_due_sources(
+    store: AutoReplyStore, adapter_name: str, *, count: int
+) -> tuple[type, tuple[str, ...]]:
     if adapter_name == "scheduled":
         first = _scheduled_run(store)
-        second = store.create_scheduled_task_run(
-            first.scheduled_task_id,
-            trigger_kind="manual",
-            scheduled_for=NOW,
-            now=NOW,
-        )
-        return ScheduledTaskQueueAdapter, (str(first.id), str(second.id))
+        ids = [str(first.id)]
+        for _ in range(count - 1):
+            run = store.create_scheduled_task_run(
+                first.scheduled_task_id,
+                trigger_kind="manual",
+                scheduled_for=NOW,
+                now=NOW,
+            )
+            ids.append(str(run.id))
+        return ScheduledTaskQueueAdapter, tuple(ids)
     if adapter_name == "reply":
-        _reply(store)
-        assert store.enqueue_reply_task(
-            conversation_id="cid-2",
-            conversation_title="Conversation 2",
-            single_chat=False,
-            trigger_message_id="msg-2",
-            trigger_create_time=NOW.isoformat(),
-            trigger_sender="Derek",
-            trigger_text="Please check this too.",
-            execution_generation="generation-8",
-        )
-        return ReplyQueueAdapter, ("1", "2")
+        ids = []
+        for index in range(count):
+            assert store.enqueue_reply_task(
+                conversation_id=f"cid-{index}",
+                conversation_title=f"Conversation {index}",
+                single_chat=False,
+                trigger_message_id=f"msg-{index}",
+                trigger_create_time=NOW.isoformat(),
+                trigger_sender="Derek",
+                trigger_text="Please check this.",
+                execution_generation=f"generation-{index}",
+            )
+            ids.append(str(index + 1))
+        return ReplyQueueAdapter, tuple(ids)
     if adapter_name == "meeting":
-        first = _meeting(store)
-        second = store.upsert_meeting_alignment_job(
-            meeting_id="meeting-2",
-            title="Second review",
-            source_json="{}",
-            participants_json="[]",
-            ended_at=(NOW - timedelta(minutes=20)).isoformat(),
-            eligible_at=(NOW - timedelta(minutes=10)).isoformat(),
-            status="pending",
-        )
-        return MeetingQueueAdapter, (str(first), str(second))
-    first = _work_summary(store)
-    second = store.enqueue_work_summary_input("reply_attempt", "task-2", "{}")
-    return WorkSummaryQueueAdapter, (str(first), str(second))
+        ids = []
+        for index in range(count):
+            source_id = store.upsert_meeting_alignment_job(
+                meeting_id=f"meeting-{index}",
+                title=f"Review {index}",
+                source_json="{}",
+                participants_json="[]",
+                ended_at=(NOW - timedelta(minutes=20)).isoformat(),
+                eligible_at=(NOW - timedelta(minutes=10)).isoformat(),
+                status="pending",
+            )
+            ids.append(str(source_id))
+        return MeetingQueueAdapter, tuple(ids)
+    ids = tuple(
+        str(store.enqueue_work_summary_input("reply_attempt", f"task-{index}", "{}"))
+        for index in range(count)
+    )
+    return WorkSummaryQueueAdapter, ids
 
 
 def test_dispatcher_lease_ledger_stores_only_claim_ownership(tmp_path: Path):
@@ -328,6 +343,39 @@ def test_claim_skips_expired_head_owned_by_live_process(
 
     assert second is not None
     assert second.source_id == source_ids[1]
+
+
+@pytest.mark.parametrize(
+    "adapter_name", ("scheduled", "reply", "meeting", "work_summary")
+)
+def test_claim_scans_past_full_page_of_live_protected_sources(
+    tmp_path: Path, adapter_name: str
+):
+    store = _store(tmp_path)
+    adapter_type, source_ids = _many_due_sources(store, adapter_name, count=33)
+    adapter = adapter_type(store, owner_alive=lambda pid: pid == 101)
+
+    protected = []
+    for index in range(32):
+        envelope = adapter.claim(
+            NOW,
+            owner=f"owner-{index}",
+            owner_pid=101,
+            lease=timedelta(seconds=1),
+        )
+        assert envelope is not None
+        protected.append(envelope.source_id)
+    assert tuple(protected) == source_ids[:32]
+
+    available = adapter.claim(
+        NOW + timedelta(seconds=2),
+        owner="owner-b",
+        owner_pid=202,
+        lease=timedelta(seconds=5),
+    )
+
+    assert available is not None
+    assert available.source_id == source_ids[32]
 
 
 def test_claim_guard_rejects_assertion_and_completion_after_reclaim(tmp_path: Path):

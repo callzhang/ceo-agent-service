@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from app.agent_cron.models import ensure_utc_datetime
@@ -10,6 +11,9 @@ from app.dispatcher.models import (
     QueueMetrics,
 )
 from app.store import AutoReplyStore
+
+
+_CLAIM_SCAN_PAGE_SIZE = 32
 
 
 def _sqlite_time(value: datetime) -> str:
@@ -137,26 +141,39 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
             now + lease, field="scheduled dispatcher claim expiry"
         ).isoformat(timespec="seconds")
         with self.store._immediate_write_transaction() as db:
-            candidates = db.execute(
-                "select run.*, claim.owner as claim_owner, "
-                "claim.owner_pid as claim_owner_pid, "
-                "claim.lease_expires_at as claim_expires_at "
-                "from scheduled_task_runs run left join dispatcher_claim_leases claim "
-                "on claim.adapter_name=? and claim.source_id=cast(run.id as text) "
-                "where run.dispatch_status='pending' and run.scheduled_for<=? "
-                "and (run.lease_owner='' or run.lease_expires_at<=?) "
-                "and (claim.owner is null or claim.owner='' "
-                "or claim.lease_expires_at<=?) "
-                "order by run.scheduled_for,run.id limit 32",
-                (self.name, now_text, now_text, now_text),
-            ).fetchall()
-            candidate = next(
-                (
-                    row
-                    for row in candidates
-                    if not _live_expired_owner(row, now_text, self.owner_alive)
-                ),
-                None,
+
+            def fetch_page(after: sqlite3.Row | None, limit: int):
+                keyset = ""
+                params: list[object] = [self.name, now_text, now_text, now_text]
+                if after is not None:
+                    keyset = (
+                        "and (run.scheduled_for>? or "
+                        "(run.scheduled_for=? and run.id>?)) "
+                    )
+                    params.extend(
+                        [after["scheduled_for"], after["scheduled_for"], after["id"]]
+                    )
+                params.append(limit)
+                return db.execute(
+                    "select run.*, claim.owner as claim_owner, "
+                    "claim.owner_pid as claim_owner_pid, "
+                    "claim.lease_expires_at as claim_expires_at "
+                    "from scheduled_task_runs run "
+                    "left join dispatcher_claim_leases claim "
+                    "on claim.adapter_name=? and claim.source_id=cast(run.id as text) "
+                    "where run.dispatch_status='pending' and run.scheduled_for<=? "
+                    "and (run.lease_owner='' or run.lease_expires_at<=?) "
+                    "and (claim.owner is null or claim.owner='' "
+                    "or claim.lease_expires_at<=?) "
+                    + keyset
+                    + "order by run.scheduled_for,run.id limit ?",
+                    params,
+                ).fetchall()
+
+            candidate = _scan_claimable_candidate(
+                fetch_page,
+                now=now_text,
+                owner_alive=self.owner_alive,
             )
             if candidate is None:
                 return None
@@ -339,28 +356,30 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
         now_text = _sqlite_time(now)
         lease_text = _lease_expiry(now, lease)
         with self.store._immediate_write_transaction() as db:
-            row = db.execute(
-                "select task.*, claim.owner as claim_owner, "
-                "claim.generation as claim_generation, "
-                "claim.owner_pid as claim_owner_pid, "
-                "claim.lease_expires_at as claim_expires_at "
-                "from reply_tasks task left join dispatcher_claim_leases claim "
-                "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
-                "where (task.status='pending' "
-                "and (task.available_at='' or task.available_at<=?) "
-                "and (claim.owner is null or claim.owner='' "
-                "or claim.lease_expires_at<=?)) "
-                "or (task.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?) order by task.id limit 32",
-                (self.name, now_text, now_text, now_text),
-            ).fetchall()
-            row = next(
-                (
-                    candidate
-                    for candidate in row
-                    if not _live_expired_owner(candidate, now_text, self.owner_alive)
-                ),
-                None,
+
+            def fetch_page(after: sqlite3.Row | None, limit: int):
+                after_id = 0 if after is None else int(after["id"])
+                return db.execute(
+                    "select task.*, claim.owner as claim_owner, "
+                    "claim.generation as claim_generation, "
+                    "claim.owner_pid as claim_owner_pid, "
+                    "claim.lease_expires_at as claim_expires_at "
+                    "from reply_tasks task left join dispatcher_claim_leases claim "
+                    "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
+                    "where ((task.status='pending' "
+                    "and (task.available_at='' or task.available_at<=?) "
+                    "and (claim.owner is null or claim.owner='' "
+                    "or claim.lease_expires_at<=?)) "
+                    "or (task.status='processing' and claim.owner<>'' "
+                    "and claim.lease_expires_at<=?)) and task.id>? "
+                    "order by task.id limit ?",
+                    (self.name, now_text, now_text, now_text, after_id, limit),
+                ).fetchall()
+
+            row = _scan_claimable_candidate(
+                fetch_page,
+                now=now_text,
+                owner_alive=self.owner_alive,
             )
             if row is None:
                 return None
@@ -506,31 +525,50 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
         with self.store._immediate_write_transaction() as db:
-            row = db.execute(
-                "select job.*, claim.owner as claim_owner, "
-                "claim.generation as claim_generation, "
-                "claim.owner_pid as claim_owner_pid, "
-                "claim.lease_expires_at as claim_expires_at "
-                "from meeting_alignment_jobs job "
-                "left join dispatcher_claim_leases claim "
-                "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
-                "where (job.status in ('waiting','pending','retry') "
-                "and datetime(job.eligible_at)<=datetime(?) "
-                "and (job.available_at='' or datetime(job.available_at)<=datetime(?)) "
-                "and (claim.owner is null or claim.owner='' "
-                "or claim.lease_expires_at<=?)) "
-                "or (job.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?) "
-                "order by datetime(job.eligible_at), job.id limit 32",
-                (self.name, now_text, now_text, now_text, now_text),
-            ).fetchall()
-            row = next(
-                (
-                    candidate
-                    for candidate in row
-                    if not _live_expired_owner(candidate, now_text, self.owner_alive)
-                ),
-                None,
+
+            def fetch_page(after: sqlite3.Row | None, limit: int):
+                keyset = ""
+                params: list[object] = [
+                    self.name,
+                    now_text,
+                    now_text,
+                    now_text,
+                    now_text,
+                ]
+                if after is not None:
+                    keyset = (
+                        "and (datetime(job.eligible_at)>datetime(?) or "
+                        "(datetime(job.eligible_at)=datetime(?) and job.id>?)) "
+                    )
+                    params.extend(
+                        [after["eligible_at"], after["eligible_at"], after["id"]]
+                    )
+                params.append(limit)
+                return db.execute(
+                    "select job.*, claim.owner as claim_owner, "
+                    "claim.generation as claim_generation, "
+                    "claim.owner_pid as claim_owner_pid, "
+                    "claim.lease_expires_at as claim_expires_at "
+                    "from meeting_alignment_jobs job "
+                    "left join dispatcher_claim_leases claim "
+                    "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
+                    "where ((job.status in ('waiting','pending','retry') "
+                    "and datetime(job.eligible_at)<=datetime(?) "
+                    "and (job.available_at='' "
+                    "or datetime(job.available_at)<=datetime(?)) "
+                    "and (claim.owner is null or claim.owner='' "
+                    "or claim.lease_expires_at<=?)) "
+                    "or (job.status='processing' and claim.owner<>'' "
+                    "and claim.lease_expires_at<=?)) "
+                    + keyset
+                    + "order by datetime(job.eligible_at), job.id limit ?",
+                    params,
+                ).fetchall()
+
+            row = _scan_claimable_candidate(
+                fetch_page,
+                now=now_text,
+                owner_alive=self.owner_alive,
             )
             if row is None:
                 return None
@@ -672,29 +710,31 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
         with self.store._immediate_write_transaction() as db:
-            row = db.execute(
-                "select item.*, claim.owner as claim_owner, "
-                "claim.generation as claim_generation, "
-                "claim.owner_pid as claim_owner_pid, "
-                "claim.lease_expires_at as claim_expires_at "
-                "from work_summary_inputs item "
-                "left join dispatcher_claim_leases claim "
-                "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
-                "where (item.status='pending' "
-                "and (item.available_at='' or item.available_at<=?) "
-                "and (claim.owner is null or claim.owner='' "
-                "or claim.lease_expires_at<=?)) "
-                "or (item.status='processing' and claim.owner<>'' "
-                "and claim.lease_expires_at<=?) order by item.id limit 32",
-                (self.name, now_text, now_text, now_text),
-            ).fetchall()
-            row = next(
-                (
-                    candidate
-                    for candidate in row
-                    if not _live_expired_owner(candidate, now_text, self.owner_alive)
-                ),
-                None,
+
+            def fetch_page(after: sqlite3.Row | None, limit: int):
+                after_id = 0 if after is None else int(after["id"])
+                return db.execute(
+                    "select item.*, claim.owner as claim_owner, "
+                    "claim.generation as claim_generation, "
+                    "claim.owner_pid as claim_owner_pid, "
+                    "claim.lease_expires_at as claim_expires_at "
+                    "from work_summary_inputs item "
+                    "left join dispatcher_claim_leases claim "
+                    "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                    "where ((item.status='pending' "
+                    "and (item.available_at='' or item.available_at<=?) "
+                    "and (claim.owner is null or claim.owner='' "
+                    "or claim.lease_expires_at<=?)) "
+                    "or (item.status='processing' and claim.owner<>'' "
+                    "and claim.lease_expires_at<=?)) and item.id>? "
+                    "order by item.id limit ?",
+                    (self.name, now_text, now_text, now_text, after_id, limit),
+                ).fetchall()
+
+            row = _scan_claimable_candidate(
+                fetch_page,
+                now=now_text,
+                owner_alive=self.owner_alive,
             )
             if row is None:
                 return None
@@ -806,6 +846,25 @@ def _acquire_lease(
         (adapter_name, source_id, owner, owner_pid, generation, lease_expires_at, now),
     )
     return generation
+
+
+def _scan_claimable_candidate(
+    fetch_page: Callable[[sqlite3.Row | None, int], list[sqlite3.Row]],
+    *,
+    now: str,
+    owner_alive,
+) -> sqlite3.Row | None:
+    after = None
+    while True:
+        candidates = fetch_page(after, _CLAIM_SCAN_PAGE_SIZE)
+        if not candidates:
+            return None
+        for candidate in candidates:
+            if not _live_expired_owner(candidate, now, owner_alive):
+                return candidate
+        if len(candidates) < _CLAIM_SCAN_PAGE_SIZE:
+            return None
+        after = candidates[-1]
 
 
 def _live_expired_owner(row, now: str, owner_alive) -> bool:
