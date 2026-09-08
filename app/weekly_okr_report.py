@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from threading import Event, Thread
 from typing import Any, Literal, Protocol
 from zoneinfo import ZoneInfo
 
@@ -28,6 +29,7 @@ LATEST_ARCHIVE_INDEX_NAME = "latest_company_okr_index.md"
 LATEST_ARCHIVE_RAW_NAME = "latest_company_okr_raw.json"
 DEFAULT_SCHEDULE_HOUR = 18
 DEFAULT_RETRY_SECONDS = 1800
+DEFAULT_RUN_LEASE_SECONDS = 300
 # A complete manager review can require several DWS evidence reads before the
 # structured result is emitted. Keep the process bounded, but do not cut off a
 # valid review at the generic five-minute task limit.
@@ -131,6 +133,41 @@ class WeeklyOkrReportResult:
     document_url: str = ""
     local_report_path: str = ""
     send_state: str = ""
+
+
+class _WeeklyOkrReportRunLease:
+    def __init__(self, *, store, owner: str, lease_seconds: int) -> None:
+        self.store = store
+        self.owner = owner
+        self.lease_seconds = lease_seconds
+        self._stop = Event()
+        self._thread = Thread(
+            target=self._renew_until_stopped,
+            name="weekly-okr-report-lease",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2)
+        self.store.release_weekly_okr_report_run(owner=self.owner)
+
+    def _renew_until_stopped(self) -> None:
+        interval_seconds = max(1, min(60, self.lease_seconds // 3))
+        while not self._stop.wait(interval_seconds):
+            try:
+                renewed = self.store.renew_weekly_okr_report_run(
+                    owner=self.owner,
+                    now=datetime.now(UTC),
+                    lease_seconds=self.lease_seconds,
+                )
+            except Exception:
+                return
+            if not renewed:
+                return
 
 
 class WeeklyOkrAnalysisInProgress(RuntimeError):
@@ -1251,6 +1288,62 @@ def weekly_okr_report_command(
         if not quiet_not_due:
             print(json.dumps(result.__dict__, ensure_ascii=False), flush=True)
         return result
+    lease_seconds = _positive_int(
+        os.getenv(
+            "CEO_WEEKLY_OKR_RUN_LEASE_SECONDS",
+            str(DEFAULT_RUN_LEASE_SECONDS),
+        )
+    )
+    lease_owner = f"weekly-okr-report-{uuid.uuid4().hex}"
+    if not store.claim_weekly_okr_report_run(
+        owner=lease_owner,
+        now=datetime.now(UTC),
+        lease_seconds=lease_seconds,
+    ):
+        local_current = current.astimezone(WORK_TIME_ZONE)
+        report_end = (
+            local_current.date()
+            if force
+            else _scheduled_report_date(local_current, schedule_hour=schedule_hour)
+        )
+        result = WeeklyOkrReportResult(
+            status="analysis_in_progress",
+            report_date=report_end.isoformat(),
+        )
+        print(json.dumps(result.__dict__, ensure_ascii=False), flush=True)
+        return result
+    run_lease = _WeeklyOkrReportRunLease(
+        store=store,
+        owner=lease_owner,
+        lease_seconds=lease_seconds,
+    )
+    run_lease.start()
+    try:
+        result = _run_claimed_weekly_okr_report_command(
+            settings,
+            store=store,
+            current=current,
+            force=force,
+            period_label=period_label,
+            schedule_hour=schedule_hour,
+            retry_seconds=retry_seconds,
+        )
+    finally:
+        run_lease.close()
+    print(json.dumps(result.__dict__, ensure_ascii=False), flush=True)
+    return result
+
+
+def _run_claimed_weekly_okr_report_command(
+    settings,
+    *,
+    store,
+    current: datetime,
+    force: bool,
+    period_label: str,
+    schedule_hour: int,
+    retry_seconds: int,
+) -> WeeklyOkrReportResult:
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
         ding_robot_name=settings.ding_robot_name,
@@ -1293,7 +1386,6 @@ def weekly_okr_report_command(
         schedule_hour=schedule_hour,
         retry_seconds=retry_seconds,
     )
-    print(json.dumps(result.__dict__, ensure_ascii=False), flush=True)
     return result
 
 
@@ -1529,7 +1621,7 @@ def render_group_summary(
                     f"- {item.topic}（{'、'.join(item.owner_names) or '责任人待明确'}）：{item.issue}",
                 ]
             )
-    lines.extend(["", f"完整周报：{document_url}"])
+    lines.extend(["", f"完整周报：[打开完整周报]({document_url})"])
     return "\n".join(lines)
 
 

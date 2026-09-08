@@ -8,6 +8,7 @@ import pytest
 
 import app.weekly_okr_report as weekly_okr_report_module
 from app.agent_runtime_router import CodexCommandFactory
+from app.codex_decision import append_signature
 from app.store import AutoReplyStore
 from app.weekly_okr_report import (
     DEFAULT_ARCHIVE_DIR_NAME,
@@ -27,11 +28,31 @@ from app.weekly_okr_report import (
     _extract_report_payload,
     _manager_scorecards,
     refresh_company_okr_archive,
+    render_group_summary,
     run_weekly_okr_report,
     weekly_okr_report_window_open,
 )
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def test_group_summary_keeps_signature_outside_document_link():
+    document_url = "https://alidocs.example/report?utm_scene=team_space"
+    summary = render_group_summary(
+        title="CEO-2 管理者 OKR 进度周报（2026-08-31—2026-09-06）",
+        analysis=WeeklyOkrAnalysis(
+            executive_summary="已完成分析",
+            manager_reviews=[],
+        ),
+        document_url=document_url,
+        manager_count=0,
+        manager_payloads=[],
+    )
+
+    signed = append_signature(summary)
+
+    assert f"完整周报：[打开完整周报]({document_url})" in signed
+    assert f"{document_url}（by" not in signed
 
 
 class FakeStore:
@@ -1484,6 +1505,62 @@ def test_weekly_command_bounds_unresponsive_codex_wait(tmp_path, monkeypatch):
 
     assert captured["agent"].timeout_seconds == 1800
     assert captured["agent"].idle_timeout_seconds == 1800
+
+
+def test_weekly_command_allows_only_one_report_run(tmp_path, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def fake_run_weekly_okr_report(**kwargs):
+        calls.append(kwargs)
+        entered.set()
+        assert release.wait(timeout=5)
+        return WeeklyOkrReportResult(status="dry_run", report_date="2026-09-06")
+
+    monkeypatch.setattr(
+        weekly_okr_report_module,
+        "run_weekly_okr_report",
+        fake_run_weekly_okr_report,
+    )
+    monkeypatch.setenv("CEO_OKR_LIVE_SOURCE_COMMAND", "echo")
+    monkeypatch.setenv("CEO_WEEKLY_OKR_RUN_LEASE_SECONDS", "60")
+    settings = SimpleNamespace(
+        db_path=tmp_path / "auto-reply.sqlite3",
+        ding_robot_code="",
+        ding_robot_name="",
+        ding_receiver_user_id="",
+        dws_transient_retry_attempts=1,
+        dws_transient_retry_delay_seconds=0.1,
+        workspace=tmp_path,
+        codex_timeout_seconds=37,
+        codex_idle_timeout_seconds=19,
+        dry_run=True,
+    )
+    first_result = []
+
+    thread = threading.Thread(
+        target=lambda: first_result.append(
+            weekly_okr_report_module.weekly_okr_report_command(
+                settings,
+                force=True,
+            )
+        )
+    )
+    thread.start()
+    assert entered.wait(timeout=5)
+
+    second = weekly_okr_report_module.weekly_okr_report_command(
+        settings,
+        force=True,
+    )
+
+    assert second.status == "analysis_in_progress"
+    assert len(calls) == 1
+    release.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert first_result[0].status == "dry_run"
 
 
 def test_codex_agent_delegates_route_model_selection_to_runtime_adapter(tmp_path):

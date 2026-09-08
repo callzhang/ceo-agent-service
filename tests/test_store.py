@@ -1046,6 +1046,41 @@ def test_weekly_okr_parent_matches_the_complete_natural_key(tmp_path: Path):
         )
 
 
+def test_weekly_okr_report_run_lease_is_single_owner_and_recoverable(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "weekly-report-lease.sqlite3")
+    started = datetime(2026, 9, 8, 6, 0, tzinfo=timezone.utc)
+
+    assert store.claim_weekly_okr_report_run(
+        owner="owner-a", now=started, lease_seconds=120
+    )
+    assert not store.claim_weekly_okr_report_run(
+        owner="owner-b", now=started + timedelta(seconds=1), lease_seconds=120
+    )
+    assert store.renew_weekly_okr_report_run(
+        owner="owner-a", now=started + timedelta(seconds=60), lease_seconds=120
+    )
+    assert not store.release_weekly_okr_report_run(owner="owner-b")
+    assert store.release_weekly_okr_report_run(owner="owner-a")
+    assert store.claim_weekly_okr_report_run(
+        owner="owner-b", now=started + timedelta(seconds=61), lease_seconds=120
+    )
+
+
+def test_weekly_okr_report_run_lease_can_be_reclaimed_after_expiry(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "weekly-report-expired-lease.sqlite3")
+    started = datetime(2026, 9, 8, 6, 0, tzinfo=timezone.utc)
+
+    assert store.claim_weekly_okr_report_run(
+        owner="crashed-owner", now=started, lease_seconds=60
+    )
+
+    assert store.claim_weekly_okr_report_run(
+        owner="recovery-owner",
+        now=started + timedelta(seconds=61),
+        lease_seconds=60,
+    )
+
+
 def test_weekly_okr_generation_key_matches_the_claimed_job_and_lease(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "weekly-generation-parent.sqlite3")
     digest = "b" * 64

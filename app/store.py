@@ -109,6 +109,7 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 SERVICE_HEALTH_STATE_PREFIX = "service_health:"
+WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
@@ -22484,6 +22485,147 @@ class AutoReplyStore:
                 """,
                 (key, value),
             )
+
+    def claim_weekly_okr_report_run(
+        self,
+        *,
+        owner: str,
+        now: datetime,
+        lease_seconds: int,
+    ) -> bool:
+        """Atomically claim the singleton weekly report run lease."""
+        normalized_owner = owner.strip()
+        if not normalized_owner:
+            raise ValueError("weekly OKR report lease owner must be non-empty")
+        if lease_seconds <= 0:
+            raise ValueError("weekly OKR report lease seconds must be positive")
+        current = self._as_utc(now)
+        expires_at = current + timedelta(seconds=lease_seconds)
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select value from service_state where key=?",
+                (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
+            ).fetchone()
+            active_owner, active_until = self._weekly_okr_report_run_lease(
+                row["value"] if row else None
+            )
+            if active_owner and active_until is not None and active_until > current:
+                return False
+            db.execute(
+                """
+                insert into service_state (key, value, updated_at)
+                values (?, ?, current_timestamp)
+                on conflict(key) do update set
+                    value=excluded.value,
+                    updated_at=current_timestamp
+                """,
+                (
+                    WEEKLY_OKR_REPORT_RUN_STATE_KEY,
+                    json.dumps(
+                        {
+                            "owner": normalized_owner,
+                            "lease_expires_at": expires_at.isoformat(),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                ),
+            )
+            return True
+
+    def renew_weekly_okr_report_run(
+        self,
+        *,
+        owner: str,
+        now: datetime,
+        lease_seconds: int,
+    ) -> bool:
+        """Renew the weekly report lease only while its current owner holds it."""
+        normalized_owner = owner.strip()
+        if not normalized_owner:
+            raise ValueError("weekly OKR report lease owner must be non-empty")
+        if lease_seconds <= 0:
+            raise ValueError("weekly OKR report lease seconds must be positive")
+        current = self._as_utc(now)
+        expires_at = current + timedelta(seconds=lease_seconds)
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select value from service_state where key=?",
+                (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
+            ).fetchone()
+            active_owner, active_until = self._weekly_okr_report_run_lease(
+                row["value"] if row else None
+            )
+            if (
+                active_owner != normalized_owner
+                or active_until is None
+                or active_until <= current
+            ):
+                return False
+            db.execute(
+                """
+                update service_state
+                set value=?, updated_at=current_timestamp
+                where key=?
+                """,
+                (
+                    json.dumps(
+                        {
+                            "owner": normalized_owner,
+                            "lease_expires_at": expires_at.isoformat(),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    WEEKLY_OKR_REPORT_RUN_STATE_KEY,
+                ),
+            )
+            return True
+
+    def release_weekly_okr_report_run(self, *, owner: str) -> bool:
+        """Release the singleton weekly report lease when owned by ``owner``."""
+        normalized_owner = owner.strip()
+        if not normalized_owner:
+            raise ValueError("weekly OKR report lease owner must be non-empty")
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select value from service_state where key=?",
+                (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
+            ).fetchone()
+            active_owner, _ = self._weekly_okr_report_run_lease(
+                row["value"] if row else None
+            )
+            if active_owner != normalized_owner:
+                return False
+            db.execute(
+                "delete from service_state where key=?",
+                (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
+            )
+            return True
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @staticmethod
+    def _weekly_okr_report_run_lease(
+        raw: str | None,
+    ) -> tuple[str, datetime | None]:
+        if not raw:
+            return "", None
+        try:
+            value = json.loads(raw)
+            owner = str(value.get("owner") or "").strip()
+            expires_at = datetime.fromisoformat(
+                str(value.get("lease_expires_at") or "")
+            )
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            return "", None
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return owner, expires_at.astimezone(timezone.utc)
 
     def active_codex_capacity_pause(self, *, now: datetime) -> str:
         """Return the shared retry timestamp while a Codex capacity pause is active."""
