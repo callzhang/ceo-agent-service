@@ -949,8 +949,9 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-banner-actions .open-dingtalk-action { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .attempt-banner-actions .open-dingtalk-action:hover { color: white; background: var(--accent); }
 .attempt-banner-actions .disabled-action { color: var(--ink-soft); background: var(--surface-muted); }
-.attempt-review-grid { width: 100%; max-width: 1180px; margin: 0 auto; }
-.attempt-review-main { width: 100%; max-width: 1180px; margin: 0 auto; }
+.attempt-review-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 16px; width: 100%; max-width: 1180px; margin: 0 auto; align-items: start; }
+.attempt-review-main, .attempt-review-side { min-width: 0; width: 100%; }
+.attempt-review-side { display: grid; gap: 16px; align-content: start; }
 .attempt-review-main { border-color: #cbded3; box-shadow: 0 12px 28px rgb(24 31 27 / 7%); }
 .attempt-review-main .reply-meta { margin: -4px 0 16px; padding-bottom: 13px; border-bottom: 1px solid var(--line); }
 .attempt-review-block { min-width: 0; margin: 0 0 14px; }
@@ -961,9 +962,8 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-review-block .summary-text-value { line-height: 1.55; white-space: pre-wrap; }
 .attempt-review-block .summary-text-toggle { display: inline-block; margin: 5px 0 0; }
 .attempt-detail-section, .attempt-feedback-card, .attempt-feedback-events { width: 100%; }
-.attempt-review-grid .attempt-feedback-events { margin: 0; }
-.attempt-review-grid .attempt-decision-card { width: 100%; max-width: none; }
-.attempt-review-grid .attempt-feedback-card { border-color: #cbded3; background: var(--surface); }
+.attempt-review-side > .console-card { margin: 0; border-color: #cbded3; background: var(--surface); }
+.attempt-review-side .attempt-decision-card { max-width: none; }
 .attempt-runtime-card { padding: 0; overflow: hidden; }
 .attempt-runtime-card > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 20px; color: var(--ink); cursor: pointer; list-style: none; }
 .attempt-runtime-card > summary::-webkit-details-marker { display: none; }

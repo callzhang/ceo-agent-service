@@ -77,7 +77,7 @@ describe("AttemptDetailPage", () => {
     command.mockResolvedValue({ ok: true, message: "反馈已保存", meta: { updated_at: "" } });
   });
 
-  it("renders the legacy business sections and hides internal session identifiers", async () => {
+  it("renders one generated reply section and hides internal session identifiers", async () => {
     renderPage();
 
     expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
@@ -86,9 +86,10 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByRole("heading", { name: "生成回复" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "内部反馈/建议修改" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Audit summary" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Draft reply (raw Codex reply)" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Draft reply (raw Codex reply)" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Runtime attempts" })).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-grid")).toBeInTheDocument();
+    expect(document.querySelector(".attempt-review-side")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-main .attempt-review-block + .attempt-review-block")).toBeInTheDocument();
     expect(document.querySelector(".attempt-status-card")).not.toBeInTheDocument();
     expect(screen.getByText("已关联会话（标识已隐藏）")).toBeInTheDocument();
