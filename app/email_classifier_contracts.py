@@ -126,6 +126,85 @@ DIRECT_ACTIONS = (
     EmailAction.FLAG_IMPORTANT,
 )
 AGENT_ACTIONS = (EmailAction.AUTO_REPLY, EmailAction.UNSUBSCRIBE)
+ACTION_DEPENDENCY_PARAMETER = "depends_on"
+
+
+def effective_direct_action_dependencies(
+    actions: Sequence[EmailAction],
+    action_parameters: Mapping[EmailAction, Mapping[str, object]],
+) -> Mapping[EmailAction, frozenset[EmailAction]]:
+    """Build the one effective dependency graph used to validate and schedule."""
+
+    direct_actions = tuple(action for action in actions if action in DIRECT_ACTIONS)
+    graph: dict[EmailAction, set[EmailAction]] = {
+        action: {
+            EmailAction(dependency)
+            for dependency in action_parameters.get(action, {}).get(
+                ACTION_DEPENDENCY_PARAMETER, ()
+            )
+        }
+        for action in direct_actions
+    }
+    configured = set(direct_actions)
+    if any(
+        dependency not in configured
+        for dependencies in graph.values()
+        for dependency in dependencies
+    ):
+        raise ValueError(
+            "direct action dependencies must reference configured direct actions"
+        )
+
+    def explicitly_depends_on(action: EmailAction, target: EmailAction) -> bool:
+        pending = list(graph[action])
+        seen: set[EmailAction] = set()
+        while pending:
+            dependency = pending.pop()
+            if dependency is target:
+                return True
+            if dependency in seen:
+                continue
+            seen.add(dependency)
+            pending.extend(graph[dependency])
+        return False
+
+    relocation_actions = {
+        EmailAction.ARCHIVE,
+        EmailAction.MOVE,
+        EmailAction.TRASH,
+    }
+    locator_preserving_actions = {
+        EmailAction.LABEL,
+        EmailAction.MARK_READ,
+    }
+    for relocation in relocation_actions & configured:
+        graph[relocation].update(
+            preserving
+            for preserving in locator_preserving_actions & configured
+            if not explicitly_depends_on(preserving, relocation)
+        )
+    if EmailAction.MOVE in configured and EmailAction.FLAG_IMPORTANT in configured:
+        graph[EmailAction.FLAG_IMPORTANT].add(EmailAction.MOVE)
+
+    visiting: set[EmailAction] = set()
+    visited: set[EmailAction] = set()
+
+    def visit(action: EmailAction) -> None:
+        if action in visiting:
+            raise ValueError(
+                "effective direct action dependencies must be acyclic"
+            )
+        if action in visited:
+            return
+        visiting.add(action)
+        for dependency in graph[action]:
+            visit(dependency)
+        visiting.remove(action)
+        visited.add(action)
+
+    for action in direct_actions:
+        visit(action)
+    return {action: frozenset(dependencies) for action, dependencies in graph.items()}
 
 
 _MESSAGE_ID_ATOM = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
@@ -471,17 +550,40 @@ class EmailActionPlan(BaseModel):
             },
         }
         for action, parameters in self.action_parameters.items():
-            allowed_keys = parameter_schemas.get(action)
-            if allowed_keys is None:
-                if parameters:
-                    raise ValueError(f"{action.value} does not accept parameters")
-                continue
+            action_parameter_schema = parameter_schemas.get(action)
+            if action_parameter_schema is None:
+                allowed_keys = set()
+            else:
+                allowed_keys = set(action_parameter_schema)
+            if action in DIRECT_ACTIONS:
+                allowed_keys.add(ACTION_DEPENDENCY_PARAMETER)
             unexpected_keys = set(parameters) - allowed_keys
             if unexpected_keys:
+                if action_parameter_schema is None:
+                    raise ValueError(f"{action.value} does not accept parameters")
                 raise ValueError(
                     f"{action.value} has unsupported parameters: "
                     f"{', '.join(sorted(unexpected_keys))}"
                 )
+            raw_dependencies = parameters.get(ACTION_DEPENDENCY_PARAMETER, ())
+            if not isinstance(raw_dependencies, list | tuple):
+                raise ValueError("direct action dependencies must be a JSON array")
+            try:
+                dependencies = tuple(EmailAction(value) for value in raw_dependencies)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("direct action dependency is invalid") from exc
+            if len(dependencies) != len(set(dependencies)):
+                raise ValueError("direct action dependencies must be unique")
+            if action in dependencies:
+                raise ValueError("direct action cannot depend on itself")
+            if any(
+                dependency not in DIRECT_ACTIONS or dependency not in self.actions
+                for dependency in dependencies
+            ):
+                raise ValueError(
+                    "direct action dependencies must reference configured direct actions"
+                )
+        effective_direct_action_dependencies(self.actions, self.action_parameters)
 
         if EmailAction.LABEL in self.actions:
             labels = self.action_parameters.get(EmailAction.LABEL, {}).get("labels")
@@ -594,7 +696,10 @@ def build_versioned_email_action_plan(
 
     category = validate_email_category_key(category)
     copied_parameters = {
-        action: dict(parameters) for action, parameters in action_parameters.items()
+        action: dict(parameters)
+        for action, parameters in sorted(
+            action_parameters.items(), key=lambda item: item[0].value
+        )
     }
     typed_authorizations = (
         ()

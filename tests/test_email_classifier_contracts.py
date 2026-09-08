@@ -623,6 +623,55 @@ def test_action_plan_is_an_immutable_execution_authorization_snapshot():
     assert "is_execution_authorization" not in EmailActionPlan.model_fields
 
 
+def test_action_plan_rejects_cyclic_direct_action_dependencies():
+    with pytest.raises(ValidationError, match="dependencies must be acyclic"):
+        _plan(
+            actions=(EmailAction.LABEL, EmailAction.MARK_READ),
+            action_parameters={
+                EmailAction.LABEL: {
+                    "labels": ["work"],
+                    "depends_on": ["mark_read"],
+                },
+                EmailAction.MARK_READ: {"depends_on": ["label"]},
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "action_parameters",
+    (
+        {
+            EmailAction.MOVE: {
+                "target_folder": "Work",
+                "depends_on": ["flag_important"],
+            },
+        },
+        {
+            EmailAction.MOVE: {
+                "target_folder": "Work",
+                "depends_on": ["mark_read"],
+            },
+            EmailAction.MARK_READ: {"depends_on": ["flag_important"]},
+        },
+    ),
+)
+def test_action_plan_rejects_cycles_created_by_provider_safe_dependencies(
+    action_parameters,
+):
+    with pytest.raises(
+        ValidationError,
+        match="effective direct action dependencies must be acyclic",
+    ):
+        _plan(
+            actions=(
+                EmailAction.MOVE,
+                EmailAction.FLAG_IMPORTANT,
+                EmailAction.MARK_READ,
+            ),
+            action_parameters=action_parameters,
+        )
+
+
 def test_action_plan_rejects_reusing_an_identity_for_changed_snapshot_facts():
     plan = _plan()
     changed_snapshot = plan.model_dump()

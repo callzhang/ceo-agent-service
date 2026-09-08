@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -15,14 +16,19 @@ import numpy as np
 DEFAULT_EMBEDDING_MODEL_ID = "jinaai/jina-embeddings-v5-text-small"
 MAX_EMBEDDING_BATCH_SIZE = 8
 EMBEDDING_TIMEOUT_SECONDS = 2.0
+MAX_EMBEDDING_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
 class EmbeddingProtocolError(RuntimeError):
     """The endpoint returned a response that cannot be safely aligned."""
 
 
+class EmbeddingDeadlineExceeded(EmbeddingProtocolError):
+    """The absolute remote request wall-clock deadline elapsed."""
+
+
 class EmbeddingTransport(Protocol):
-    def post(self, url: str, **kwargs: object) -> Any: ...
+    def stream(self, method: str, url: str, **kwargs: object) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -77,6 +83,7 @@ class EmailEmbeddingClient:
         self.dimension = dimension
         self._api_key = api_key.strip() if api_key and api_key.strip() else None
         self._transport = transport or httpx.Client(trust_env=False)
+        self._owns_transport = transport is None
         self._clock = clock
 
     def __repr__(self) -> str:
@@ -127,15 +134,17 @@ class EmailEmbeddingClient:
         for offset in range(0, len(texts), MAX_EMBEDDING_BATCH_SIZE):
             batch = texts[offset : offset + MAX_EMBEDDING_BATCH_SIZE]
             http_started = self._clock()
+            deadline = http_started + EMBEDDING_TIMEOUT_SECONDS
             try:
-                response = self._transport.post(
-                    self.url,
-                    json={"model": self.model_id, "input": list(batch)},
+                payload = self._stream_json_response(
+                    batch=batch,
                     headers=headers,
-                    timeout=EMBEDDING_TIMEOUT_SECONDS,
+                    deadline=deadline,
                 )
-                response.raise_for_status()
-                payload = response.json()
+            except EmbeddingDeadlineExceeded:
+                raise
+            except EmbeddingProtocolError:
+                raise
             except Exception as exc:
                 raise EmbeddingProtocolError(
                     "embedding endpoint request failed"
@@ -158,6 +167,101 @@ class EmailEmbeddingClient:
                 total_ms=max(0.0, (finished - lifecycle_started) * 1000.0),
             ),
         )
+
+    def _stream_json_response(
+        self,
+        *,
+        batch: Sequence[str],
+        headers: Mapping[str, str],
+        deadline: float,
+    ) -> object:
+        remaining = self._remaining(deadline)
+        timeout = httpx.Timeout(
+            remaining,
+            connect=remaining,
+            read=remaining,
+            write=remaining,
+            pool=remaining,
+        )
+        try:
+            with self._transport.stream(
+                "POST",
+                self.url,
+                json={"model": self.model_id, "input": list(batch)},
+                headers=headers,
+                timeout=timeout,
+            ) as response:
+                self._check_deadline(deadline)
+                response.raise_for_status()
+                body = bytearray()
+                restore_network_read = self._install_deadline_read(
+                    response, deadline=deadline
+                )
+                try:
+                    for chunk in response.iter_bytes():
+                        self._check_deadline(deadline)
+                        if len(body) + len(chunk) > MAX_EMBEDDING_RESPONSE_BYTES:
+                            raise EmbeddingProtocolError(
+                                "embedding response body is too large"
+                            )
+                        body.extend(chunk)
+                        self._check_deadline(deadline)
+                finally:
+                    restore_network_read()
+                self._check_deadline(deadline)
+                payload = json.loads(body)
+                self._check_deadline(deadline)
+                return payload
+        except httpx.TimeoutException as exc:
+            raise EmbeddingDeadlineExceeded(
+                "embedding request exceeded absolute wall-clock deadline"
+            ) from exc
+
+    def _remaining(self, deadline: float) -> float:
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            raise EmbeddingDeadlineExceeded(
+                "embedding request exceeded absolute wall-clock deadline"
+            )
+        return remaining
+
+    def _check_deadline(self, deadline: float) -> None:
+        self._remaining(deadline)
+
+    def _install_deadline_read(
+        self, response: object, *, deadline: float
+    ) -> Callable[[], None]:
+        """Clamp each same-thread socket read to the remaining absolute budget."""
+
+        extensions = getattr(response, "extensions", None)
+        network_stream = (
+            extensions.get("network_stream")
+            if isinstance(extensions, Mapping)
+            else None
+        )
+        original_read = getattr(network_stream, "read", None)
+        if not callable(original_read):
+            return lambda: None
+
+        def deadline_read(max_bytes: int, timeout: float | None = None) -> bytes:
+            remaining = self._remaining(deadline)
+            bounded_timeout = (
+                remaining if timeout is None else min(float(timeout), remaining)
+            )
+            return original_read(max_bytes, timeout=bounded_timeout)
+
+        setattr(network_stream, "read", deadline_read)
+
+        def restore() -> None:
+            setattr(network_stream, "read", original_read)
+
+        return restore
+
+    def close(self) -> None:
+        if self._owns_transport:
+            close = getattr(self._transport, "close", None)
+            if callable(close):
+                close()
 
     def _validated_batch(
         self, payload: object, *, expected_count: int

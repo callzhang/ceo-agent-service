@@ -171,7 +171,7 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     with sqlite3.connect(database) as db:
         db.execute("drop table email_training_snapshot_observations")
         db.execute("drop table email_training_snapshots")
-        db.execute("update email_schema_migrations set version=22 where version=26")
+        db.execute("update email_schema_migrations set version=22 where version=30")
 
     EmailStore(database)
 
@@ -193,7 +193,8 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     assert "email_training_snapshots" in tables
     assert "email_training_snapshot_observations" in tables
     assert preserved_model_text == "__subject__preserved migration row"
-    assert versions[-1] == email_store_module.EMAIL_SCHEMA_VERSION == 26
+    assert versions == list(range(22, 31))
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 30
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select frozen from email_training_snapshots").fetchall() == []
@@ -216,7 +217,7 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
         ):
             db.execute(f"drop trigger {trigger}")
         db.execute("alter table email_training_snapshots drop column frozen")
-        db.execute("update email_schema_migrations set version=23 where version=26")
+        db.execute("update email_schema_migrations set version=23 where version=30")
 
     reopened = EmailStore(database)
 
@@ -225,6 +226,12 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
         assert (
             db.execute("select frozen from email_training_snapshots").fetchone()[0] == 1
         )
+        assert [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ] == list(range(23, 31))
 
 
 def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path):
@@ -267,7 +274,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             ],
         )
         db.execute("alter table email_training_snapshots drop column frozen")
-        db.execute("update email_schema_migrations set version=23 where version=26")
+        db.execute("update email_schema_migrations set version=23 where version=30")
 
     reopened = EmailStore(database)
     restored = reopened.get_training_snapshot(snapshot.snapshot_id)
@@ -275,6 +282,13 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
     assert restored is not None
     assert restored["snapshot_digest"] == legacy_digest
     assert restored["manifest"] == legacy_manifest
+    assert [
+        row["version"]
+        for row in _fetchall(
+            database,
+            "select version from email_schema_migrations order by version",
+        )
+    ] == list(range(23, 31))
 
 
 def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
@@ -3185,8 +3199,97 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_25() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 26
+def test_email_schema_version_is_30() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 30
+
+
+def _downgrade_task10_schema(database: Path, *, version: int) -> None:
+    if version not in {26, 27, 28, 29}:
+        raise ValueError("Task10 downgrade fixture only supports v26 through v29")
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute(
+            "delete from email_schema_migrations where version > ?", (version,)
+        )
+        db.execute(
+            "insert or ignore into email_schema_migrations(version, applied_at) "
+            "values (?, '2026-09-08T00:00:00+00:00')",
+            (version,),
+        )
+        if version < 27:
+            db.execute("drop table email_historical_classification_history")
+        if version < 28:
+            for table in (
+                "email_historical_candidates",
+                "email_historical_operations",
+                "email_historical_traversals",
+            ):
+                db.execute(f"drop table {table}")
+        elif version < 29:
+            db.execute(
+                "alter table email_historical_candidates drop column attempted_at"
+            )
+            db.execute(
+                "alter table email_historical_candidates drop column next_retry_at"
+            )
+
+
+@pytest.mark.parametrize("starting_version", (26, 27, 28, 29))
+def test_task10_schema_migrations_replay_full_chain_from_each_version(
+    tmp_path: Path,
+    starting_version: int,
+) -> None:
+    database = tmp_path / f"task10-v{starting_version}-to-v30.sqlite3"
+    EmailStore(database)
+    _downgrade_task10_schema(database, version=starting_version)
+
+    with sqlite3.connect(database) as db:
+        assert [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ] == [starting_version]
+        tables_before = {
+            row[0]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        }
+        if starting_version < 27:
+            assert "email_historical_classification_history" not in tables_before
+        if starting_version < 28:
+            assert "email_historical_candidates" not in tables_before
+        elif starting_version < 29:
+            candidate_columns = {
+                row[1]
+                for row in db.execute("pragma table_info(email_historical_candidates)")
+            }
+            assert "attempted_at" not in candidate_columns
+            assert "next_retry_at" not in candidate_columns
+
+    EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        assert [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ] == list(range(starting_version, 31))
+        tables_after = {
+            row[0]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        }
+        assert {
+            "email_historical_classification_history",
+            "email_historical_candidates",
+            "email_historical_operations",
+            "email_historical_traversals",
+        }.issubset(tables_after)
+        candidate_columns = {
+            row[1]
+            for row in db.execute("pragma table_info(email_historical_candidates)")
+        }
+        assert {"attempted_at", "next_retry_at"}.issubset(candidate_columns)
 
 
 def test_current_schema_initialization_preserves_delete_journal_mode(
@@ -3865,7 +3968,11 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             23,
             24,
             25,
-            email_store_module.EMAIL_SCHEMA_VERSION,
+            26,
+            27,
+            28,
+            29,
+            30,
         ]
         assert {
             row[1]
@@ -4115,7 +4222,11 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
         23,
         24,
         25,
-        email_store_module.EMAIL_SCHEMA_VERSION,
+        26,
+        27,
+        28,
+        29,
+        30,
     ]
 
     EmailStore(database)
@@ -4191,7 +4302,11 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
         23,
         24,
         25,
-        email_store_module.EMAIL_SCHEMA_VERSION,
+        26,
+        27,
+        28,
+        29,
+        30,
     ]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
@@ -4606,7 +4721,11 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
         23,
         24,
         25,
-        email_store_module.EMAIL_SCHEMA_VERSION,
+        26,
+        27,
+        28,
+        29,
+        30,
     ]
 
 
@@ -6362,6 +6481,201 @@ def test_move_then_important_persists_locator_and_retries_only_flag(tmp_path: Pa
     assert len(store.list_action_attempts(move.action_id)) == 1
 
 
+def test_explicit_historical_move_dependencies_gate_exact_and_global_claims(
+    tmp_path: Path,
+):
+    database = tmp_path / "historical-move-dependencies.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(
+                EmailAction.MOVE,
+                EmailAction.FLAG_IMPORTANT,
+                EmailAction.MARK_READ,
+            ),
+            action_parameters={
+                EmailAction.MOVE: {"target_folder": "Legal"},
+                EmailAction.FLAG_IMPORTANT: {"depends_on": ["move"]},
+                EmailAction.MARK_READ: {"depends_on": ["flag_important"]},
+            },
+        ),
+    )
+    classification = store.get_classification_by_stable_identity(
+        "dingtalk-account:message-id:<msg-1@example.com>"
+    )
+    assert classification is not None
+    action_ids = {
+        action["action_type"]: action["action_id"]
+        for action in _fetchall(
+            database,
+            "select action_type, action_id from email_actions "
+            "where classification_id=?",
+            (classification["id"],),
+        )
+    }
+
+    assert (
+        store.claim_direct_action(
+            action_id=action_ids["mark_read"],
+            claimed_at="2026-09-07T12:00:00+00:00",
+        )
+        is None
+    )
+    assert (
+        store.claim_direct_action(
+            action_id=action_ids["flag_important"],
+            claimed_at="2026-09-07T12:00:00+00:00",
+        )
+        is None
+    )
+    move = store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+    assert move is not None
+    assert move.action_type is EmailAction.MOVE
+    moved_locator = type(move.locator)(
+        account_id=move.account_id,
+        folder="Legal",
+        uidvalidity=84,
+        uid=119,
+        rfc_message_id=move.locator.rfc_message_id,
+        thread_id=move.locator.thread_id,
+        stable_message_identity=move.locator.stable_message_identity,
+    )
+    store.complete_direct_action_attempt(
+        move,
+        status="done",
+        provider_operation="MOVE",
+        provider_target=move.locator.stable_message_identity,
+        provider_result_id="move-receipt",
+        error="",
+        finished_at="2026-09-07T12:00:01+00:00",
+        updated_locator=moved_locator,
+    )
+
+    flag = store.claim_next_direct_action(claimed_at="2026-09-07T12:01:00+00:00")
+    assert flag is not None
+    assert flag.action_type is EmailAction.FLAG_IMPORTANT
+    assert flag.locator == moved_locator
+    assert flag.parameters == {}
+    store.complete_direct_action_attempt(
+        flag,
+        status="done",
+        provider_operation="STORE IMPORTANT",
+        provider_target=flag.locator.stable_message_identity,
+        provider_result_id="flag-receipt",
+        error="",
+        finished_at="2026-09-07T12:01:01+00:00",
+    )
+
+    mark_read = store.claim_direct_action(
+        action_id=action_ids["mark_read"],
+        claimed_at="2026-09-07T12:02:00+00:00",
+    )
+    assert mark_read is not None
+    assert mark_read.action_type is EmailAction.MARK_READ
+    assert mark_read.locator == moved_locator
+    assert mark_read.parameters == {}
+
+
+def test_explicit_historical_trash_dependency_gates_exact_and_global_claims(
+    tmp_path: Path,
+):
+    database = tmp_path / "historical-trash-dependencies.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.TRASH, EmailAction.MARK_READ),
+            action_parameters={
+                EmailAction.MARK_READ: {"depends_on": ["trash"]},
+            },
+        ),
+    )
+    classification = store.get_classification_by_stable_identity(
+        "dingtalk-account:message-id:<msg-1@example.com>"
+    )
+    assert classification is not None
+    action_ids = {
+        action["action_type"]: action["action_id"]
+        for action in _fetchall(
+            database,
+            "select action_type, action_id from email_actions "
+            "where classification_id=?",
+            (classification["id"],),
+        )
+    }
+
+    assert (
+        store.claim_direct_action(
+            action_id=action_ids["mark_read"],
+            claimed_at="2026-09-07T12:00:00+00:00",
+        )
+        is None
+    )
+    trash = store.claim_next_direct_action(
+        claimed_at="2026-09-07T12:00:00+00:00"
+    )
+    assert trash is not None
+    assert trash.action_type is EmailAction.TRASH
+    trashed_locator = type(trash.locator)(
+        account_id=trash.account_id,
+        folder="Trash",
+        uidvalidity=84,
+        uid=120,
+        rfc_message_id=trash.locator.rfc_message_id,
+        thread_id=trash.locator.thread_id,
+        stable_message_identity=trash.locator.stable_message_identity,
+    )
+    store.complete_direct_action_attempt(
+        trash,
+        status="done",
+        provider_operation="MOVE Trash",
+        provider_target=trash.locator.stable_message_identity,
+        provider_result_id="trash-receipt",
+        error="",
+        finished_at="2026-09-07T12:00:01+00:00",
+        updated_locator=trashed_locator,
+    )
+
+    mark_read = store.claim_next_direct_action(
+        claimed_at="2026-09-07T12:01:00+00:00"
+    )
+    assert mark_read is not None
+    assert mark_read.action_type is EmailAction.MARK_READ
+    assert mark_read.locator == trashed_locator
+    assert mark_read.parameters == {}
+
+
+def test_claim_rejects_cycle_between_explicit_and_provider_safe_dependencies(
+    tmp_path: Path,
+):
+    database = tmp_path / "effective-action-dependency-cycle.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
+            action_parameters={
+                EmailAction.MOVE: {"target_folder": "Legal"},
+            },
+        ),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_actions set parameters_json=? where action_type='move'",
+            ('{"depends_on":["flag_important"],"target_folder":"Legal"}',),
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="effective direct action dependencies must be acyclic",
+    ):
+        store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+
+
 def test_retry_delayed_move_blocks_important_flag_claim(tmp_path: Path):
     store = EmailStore(tmp_path / "delayed-move-blocks-important.sqlite3")
     _persist_scan(
@@ -6482,7 +6796,7 @@ def test_v21_schema_migrates_to_allow_flag_important_actions(tmp_path: Path):
         )
         assert (
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 26
+            == 30
         )
     assert (
         migrated.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
@@ -8619,7 +8933,7 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
 
     migrated = EmailStore(database)
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 26
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 30
     assert (
         migrated.list_account_folder_bindings("junk")[0]["provider_folder_id"]
         == "Deleted"

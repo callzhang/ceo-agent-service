@@ -57,6 +57,62 @@ class MessageClassifier(Protocol):
     def predict_message(self, message: Mapping[str, object]) -> PredictionLike: ...
 
 
+def route_online_classification(
+    *,
+    mode: object,
+    current_input: object,
+    model_predict: Callable[[object], object],
+    enqueue_agent: Callable[[object], object],
+    accept_model: Callable[[object], object],
+) -> object:
+    """Route one new-mail input without parallel model/Agent execution."""
+
+    from app.email_classifier_runtime import (
+        EmailClassifierRuntimeMode,
+        OnlineClassificationResult,
+        OnlineModelAcceptError,
+        OnlineModelAcceptOutcome,
+        OnlineModelAcceptStage,
+        OnlineModelDurableConflict,
+        SequentialOnlineClassifier,
+    )
+
+    runtime_mode = EmailClassifierRuntimeMode(mode)
+    if runtime_mode is EmailClassifierRuntimeMode.SHADOW_HISTORY:
+        raise ValueError("shadow_history cannot enter the realtime scan loop")
+    result = SequentialOnlineClassifier(
+        mode=runtime_mode,
+        model_predict=model_predict,
+        agent_classify=enqueue_agent,
+    ).classify(current_input)
+    if result.source == "model":
+        try:
+            accepted = accept_model(result.value)
+        except OnlineModelAcceptError as exc:
+            if isinstance(exc, OnlineModelDurableConflict):
+                raise
+            if exc.stage is OnlineModelAcceptStage.AFTER_DURABLE_COMMIT:
+                accepted = accept_model(result.value)
+            else:
+                return OnlineClassificationResult(
+                    source="agent",
+                    value=enqueue_agent(current_input),
+                    fallback_reason=f"accept_failure:{type(exc).__name__}",
+                )
+        except Exception as exc:
+            return OnlineClassificationResult(
+                source="agent",
+                value=enqueue_agent(current_input),
+                fallback_reason=f"accept_failure:{type(exc).__name__}",
+            )
+        if type(accepted) is not OnlineModelAcceptOutcome:
+            raise TypeError("model acceptance must return a typed outcome")
+        return OnlineClassificationResult(
+            source="model", value=result.value, accept_outcome=accepted
+        )
+    return result
+
+
 @dataclass(frozen=True)
 class AgentScanContext:
     allowed_category_keys: tuple[str, ...]
@@ -105,8 +161,13 @@ def scan_agent_classification_batch(
     folder_role: FolderRole,
     configured_unclassified_source: bool,
     limit: int = 50,
+    online_runtime: object | None = None,
+    accept_model: Callable[
+        [Mapping[str, object], object, Sequence[object], str, str], object
+    ]
+    | None = None,
 ) -> EmailScanResult:
-    """Observe provider state and enqueue Agent work without model inference."""
+    """Route eligible new mail through Agent-primary or promoted model-primary."""
 
     cursor = store.get_scan_cursor(_source_account_id(source), mailbox)
     cursor_uidvalidity = None if cursor is None else int(cursor["uidvalidity"])
@@ -163,14 +224,57 @@ def scan_agent_classification_batch(
             body_html=str(body_html),
             authentication_evidence=ephemeral_unsubscribe_authentication(message),
         )
-        task_producer.produce(
-            message,
-            allowed_category_keys=context.allowed_category_keys,
-            category_descriptions=context.category_descriptions,
-            folder_targets=context.folder_targets,
-            config_version=context.config_version,
-            unsubscribe_candidates=entries,
-        )
+        def enqueue_agent(_current_input: object) -> object:
+            return task_producer.produce(
+                message,
+                allowed_category_keys=context.allowed_category_keys,
+                category_descriptions=context.category_descriptions,
+                folder_targets=context.folder_targets,
+                config_version=context.config_version,
+                unsubscribe_candidates=entries,
+            )
+
+        if online_runtime is None:
+            enqueue_agent(None)
+        else:
+            from app.email_classifier_runtime import (
+                EmailClassifierRuntimeMode,
+                OnlineModelInput,
+            )
+
+            snapshot_reader = getattr(online_runtime, "snapshot", None)
+            if callable(snapshot_reader):
+                runtime_snapshot = snapshot_reader()
+                mode = EmailClassifierRuntimeMode(runtime_snapshot.mode)
+                predictor = runtime_snapshot.predictor
+                input_version = str(runtime_snapshot.input_schema_version or "")
+                snapshot_model_id = str(runtime_snapshot.model_id or "")
+            else:
+                mode = EmailClassifierRuntimeMode(online_runtime.mode)
+                predictor = online_runtime.model_predict
+                input_version = str(online_runtime.input_schema_version or "")
+                snapshot_model_id = str(getattr(online_runtime, "model_id", "") or "")
+            if mode is EmailClassifierRuntimeMode.SHADOW_HISTORY:
+                raise ValueError("shadow_history cannot enter the realtime scan loop")
+            if mode is EmailClassifierRuntimeMode.MODEL_PRIMARY:
+                if accept_model is None or predictor is None:
+                    raise ValueError("model_primary scan dependencies are incomplete")
+                model_text = email_message_to_text(message)
+                route_online_classification(
+                    mode=mode,
+                    current_input=OnlineModelInput(model_text, input_version),
+                    model_predict=predictor,
+                    enqueue_agent=enqueue_agent,
+                    accept_model=lambda prediction: accept_model(
+                        message,
+                        prediction,
+                        entries,
+                        model_text,
+                        snapshot_model_id,
+                    ),
+                )
+            else:
+                enqueue_agent(None)
         enqueued += 1
     uidvalidity = batch.uidvalidity
     record_cursor = getattr(store, "record_scan_cursor", None)

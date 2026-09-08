@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import partial
+from hashlib import sha256
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any, TextIO
@@ -35,10 +36,14 @@ def _agent_classification_action_plan(
     folder_targets: Mapping[str, str],
     config_version: str,
     created_at: datetime,
+    classification_source: str = "agent",
+    model_id: str = "email-classifier-agent:v1",
+    preserve_read: bool = False,
 ):
     """Translate a validated Agent decision into Task 3/4 deterministic actions."""
 
     from app.email_classifier_contracts import (
+        ACTION_DEPENDENCY_PARAMETER,
         EmailAction,
         build_email_action_plan,
     )
@@ -80,6 +85,11 @@ def _agent_classification_action_plan(
                     "candidate_reference": reference,
                 }
             }
+        if preserve_read:
+            actions += (EmailAction.MARK_READ,)
+            parameters[EmailAction.MARK_READ] = {
+                ACTION_DEPENDENCY_PARAMETER: [EmailAction.TRASH.value]
+            }
     else:
         target = str(folder_targets.get(category) or "").strip()
         if not target:
@@ -88,18 +98,469 @@ def _agent_classification_action_plan(
         parameters = {EmailAction.MOVE: {"target_folder": target}}
         if getattr(result, "important") is True:
             actions += (EmailAction.FLAG_IMPORTANT,)
+        if preserve_read:
+            actions += (EmailAction.MARK_READ,)
+            dependencies = [EmailAction.MOVE.value]
+            if EmailAction.FLAG_IMPORTANT in actions:
+                parameters[EmailAction.FLAG_IMPORTANT] = {
+                    ACTION_DEPENDENCY_PARAMETER: [EmailAction.MOVE.value]
+                }
+                dependencies.append(EmailAction.FLAG_IMPORTANT.value)
+            parameters[EmailAction.MARK_READ] = {
+                ACTION_DEPENDENCY_PARAMETER: dependencies
+            }
     return build_email_action_plan(
         classification_id=classification_id,
         account_id=account_id,
         category=category,
-        classification_source="agent",
+        classification_source=classification_source,
         confidence=float(getattr(result, "confidence")),
-        model_id="email-classifier-agent:v1",
+        model_id=model_id,
         config_version=config_version,
         actions=actions,
         action_parameters=parameters,
         created_at=created_at,
     )
+
+
+def persist_model_primary_classification(
+    email_store: object,
+    action_task_producer: object,
+    *,
+    message: Mapping[str, object],
+    prediction: object,
+    context: object,
+    model_id: str,
+    model_text: str,
+    unsubscribe_entries: Sequence[object],
+    preserve_read: bool = False,
+) -> object:
+    """Persist an accepted model result through the existing immutable action path."""
+
+    from hashlib import sha256
+    from types import SimpleNamespace
+
+    from app.email_classifier_contracts import (
+        EmailAttachmentMetadata,
+        EmailClassification,
+        EmailClassificationStatus,
+    )
+    from app.email_classifier_scan import _provider_locator, _stable_message_identity
+    from app.email_classifier_runtime import (
+        OnlineModelAcceptError,
+        OnlineModelAcceptOutcome,
+        OnlineModelAcceptStage,
+        OnlineModelDurableConflict,
+    )
+    from app.email_unsubscribe import browser_unsubscribe_entries
+
+    stable_identity = ""
+    plan = None
+    try:
+        if getattr(prediction, "category_accepted", None) is not True:
+            raise ValueError("only an accepted model prediction may be persisted")
+        locator = _provider_locator(message)
+        stable_identity = _stable_message_identity(message, locator)
+        if locator.thread_id is None:
+            locator = locator.model_copy(update={"thread_id": stable_identity})
+        existing_before = email_store.get_classification_by_stable_identity(
+            stable_identity
+        )
+        classification_id = (
+            int.from_bytes(sha256(stable_identity.encode("utf-8")).digest()[:8], "big")
+            & ((1 << 63) - 1)
+            or 1
+        )
+        category = str(prediction.category)
+        entries = browser_unsubscribe_entries(
+            tuple(unsubscribe_entries), normalize_indexes=True
+        )
+        selection = None
+        if category == "junk" and entries:
+            entry = entries[0]
+            selection = SimpleNamespace(
+                unsubscribe_candidate_index=entry.index,
+                unsubscribe_candidate_source=entry.source.value,
+                unsubscribe_candidate_digest=entry.reference.removeprefix(
+                    "unsubscribe-entry:"
+                ),
+                unsubscribe_candidate_reference=entry.reference,
+            )
+        result = SimpleNamespace(
+            category=category,
+            important=bool(prediction.important),
+            certainty="certain",
+            confidence=float(prediction.category_probability),
+        )
+        plan = _agent_classification_action_plan(
+            classification_id=classification_id,
+            account_id=locator.account_id,
+            result=result,
+            unsubscribe_selection=selection,
+            folder_targets=context.folder_targets,
+            config_version=context.config_version,
+            created_at=datetime.now(timezone.utc),
+            classification_source="model",
+            model_id=model_id,
+            preserve_read=preserve_read,
+        )
+        classification = EmailClassification(
+            classification_id=classification_id,
+            stable_message_identity=stable_identity,
+            provider_locator=locator,
+            category=category,
+            confidence=float(prediction.category_probability),
+            margin=_prediction_margin(prediction.category_probabilities),
+            probabilities=dict(prediction.category_probabilities),
+            model_id=model_id,
+            config_version=context.config_version,
+            status=EmailClassificationStatus.PROCESSED,
+            classification_source="model",
+            action_plan=plan,
+        )
+        if existing_before is not None:
+            durable_plan = _validated_model_accept_readback(
+                existing_before,
+                expected_plan=plan,
+                model_id=model_id,
+                category=category,
+            )
+            try:
+                persisted = email_store.repair_current_action_plan(durable_plan)
+            except Exception as exc:
+                raise OnlineModelDurableConflict(
+                    "durable model ActionPlan storage conflicts with readback"
+                ) from exc
+            if durable_plan.agent_actions:
+                action_task_producer.produce(durable_plan, message)
+            return OnlineModelAcceptOutcome.already_committed(persisted)
+        sender_value = message.get("from") or message.get("sender") or {}
+        sender = (
+            str(sender_value.get("email") or sender_value.get("name") or "")
+            if isinstance(sender_value, Mapping)
+            else str(sender_value)
+        )
+        persisted = email_store.persist_scan_result(
+            classification,
+            sender=sender,
+            recipients=tuple(),
+            subject=str(message.get("subject") or ""),
+            normalized_text=model_text,
+            attachment_metadata=tuple(
+                EmailAttachmentMetadata.model_validate(item)
+                for item in message.get("attachments") or ()
+            ),
+            received_at=str(message.get("date") or ""),
+            model_text=model_text,
+        )
+        if plan is not None and plan.agent_actions:
+            action_task_producer.produce(plan, message)
+        return OnlineModelAcceptOutcome.accepted(persisted)
+    except OnlineModelAcceptError:
+        raise
+    except Exception as exc:
+        try:
+            durable = (
+                email_store.get_classification_by_stable_identity(stable_identity)
+                if stable_identity
+                else None
+            )
+        except Exception as readback_exc:
+            has_durable = bool(
+                stable_identity
+                and email_store.has_stable_classification(stable_identity)
+            )
+            if has_durable:
+                raise OnlineModelDurableConflict(
+                    "durable model classification cannot be validated"
+                ) from readback_exc
+            durable = None
+        if durable is not None:
+            if plan is None:
+                raise OnlineModelDurableConflict(
+                    "durable model classification has no expected ActionPlan"
+                ) from exc
+            _validated_model_accept_readback(
+                durable,
+                expected_plan=plan,
+                model_id=model_id,
+                category=str(prediction.category),
+            )
+        stage = (
+            OnlineModelAcceptStage.AFTER_DURABLE_COMMIT
+            if durable is not None
+            else OnlineModelAcceptStage.BEFORE_DURABLE_COMMIT
+        )
+        raise OnlineModelAcceptError(stage, str(exc)) from exc
+
+
+def _validated_model_accept_readback(
+    existing: Mapping[str, object],
+    *,
+    expected_plan: object,
+    model_id: str,
+    category: str,
+):
+    from app.email_classifier_contracts import EmailActionPlan
+    from app.email_classifier_runtime import OnlineModelDurableConflict
+
+    try:
+        durable_plan = EmailActionPlan.model_validate_json(
+            json.dumps(existing.get("action_plan"))
+        )
+    except (TypeError, ValueError) as exc:
+        raise OnlineModelDurableConflict(
+            "durable model ActionPlan is invalid"
+        ) from exc
+    if not isinstance(expected_plan, EmailActionPlan):
+        raise TypeError("expected model ActionPlan is invalid")
+    expected = expected_plan
+    classification_matches = (
+        existing.get("classification_source") == "model"
+        and existing.get("model_id") == model_id
+        and existing.get("predicted_category") == category
+        and existing.get("config_version") == expected.config_version
+        and existing.get("id") == expected.classification_id
+        and existing.get("current_action_plan_id") == durable_plan.action_plan_id
+    )
+    plan_matches = all(
+        getattr(durable_plan, field_name) == getattr(expected, field_name)
+        for field_name in (
+            "action_plan_version",
+            "classification_id",
+            "account_id",
+            "category",
+            "classification_source",
+            "confidence",
+            "model_id",
+            "config_version",
+            "actions",
+            "action_parameters",
+        )
+    )
+    if not classification_matches or not plan_matches:
+        raise OnlineModelDurableConflict(
+            "stable identity is bound to a different durable model decision"
+        )
+    return durable_plan
+
+
+def _prediction_margin(probabilities: Mapping[str, float]) -> float:
+    ordered = sorted((float(value) for value in probabilities.values()), reverse=True)
+    if not ordered:
+        return 0.0
+    return ordered[0] - (ordered[1] if len(ordered) > 1 else 0.0)
+
+
+def _historical_action_outcome_from_receipts(
+    actions: Sequence[str],
+    receipts: Sequence[Mapping[str, object]],
+    *,
+    is_read: bool,
+) -> str:
+    """Derive the operation result from the full plan and durable receipts."""
+
+    from app.email_classifier_contracts import DIRECT_ACTIONS
+
+    direct_action_names = {
+        action.value for action in DIRECT_ACTIONS if action.value in actions
+    }
+    receipt_action_names = {
+        str(receipt.get("action_type") or "") for receipt in receipts
+    }
+    if not direct_action_names.issubset(receipt_action_names):
+        return "actions_queued"
+    if "mark_read" in direct_action_names and not is_read:
+        return "read_state_not_preserved"
+    if "move" in direct_action_names:
+        return (
+            "moved_and_flagged"
+            if "flag_important" in direct_action_names
+            else "moved"
+        )
+    if "trash" in direct_action_names:
+        return "trashed"
+    if "mark_read" in direct_action_names:
+        return "read_preserved"
+    if "unsubscribe" in actions:
+        return "unsubscribe_queued"
+    return "no_action" if not actions else "actions_queued"
+
+
+def _historical_relocation_folder_verified(
+    *,
+    action_plan: Mapping[str, object],
+    classification: Mapping[str, object],
+    state: object,
+) -> bool:
+    """Verify relocation against the durable target and current provider state."""
+
+    raw_actions = action_plan.get("actions")
+    if not isinstance(raw_actions, list):
+        return False
+    actions = tuple(str(action) for action in raw_actions)
+    if "move" not in actions and "trash" not in actions:
+        return True
+
+    persisted_folder = str(classification.get("folder") or "").strip()
+    provider_folder = str(
+        getattr(state, "provider_folder_name", None) or ""
+    ).strip()
+    if not persisted_folder or provider_folder != persisted_folder:
+        return False
+
+    if "move" in actions:
+        raw_parameters = action_plan.get("action_parameters")
+        if not isinstance(raw_parameters, Mapping):
+            return False
+        move_parameters = raw_parameters.get("move")
+        if not isinstance(move_parameters, Mapping):
+            return False
+        target_folder = str(move_parameters.get("target_folder") or "").strip()
+        return bool(target_folder) and persisted_folder == target_folder
+
+    return getattr(state, "folder_role", None) is FolderRole.TRASH
+
+
+def execute_historical_model_actions(
+    email_store: object,
+    direct_action_executor_factory: Callable[[str], object],
+    action_task_producer: object,
+    *,
+    message: Mapping[str, object],
+    prediction: object,
+    context: object,
+    model_id: str,
+    model_text: str,
+    unsubscribe_entries: Sequence[object],
+    read_after: Callable[[], object],
+    threshold: float | None = None,
+) -> object:
+    """Persist and synchronously read back a bounded historical action plan."""
+
+    from app.email_historical_classifier import HistoricalActionResult
+
+    persisted = persist_model_primary_classification(
+        email_store,
+        action_task_producer,
+        message=message,
+        prediction=prediction,
+        context=context,
+        model_id=model_id,
+        model_text=model_text,
+        unsubscribe_entries=unsubscribe_entries,
+        preserve_read=True,
+    )
+    action_plan = persisted.persisted["action_plan"]
+    actions = tuple(action_plan["actions"])
+    action_ids = email_store.direct_action_ids_for_plan(
+        action_plan["action_plan_id"]
+    )
+    email_store.begin_historical_operation(
+        account_id=str(message["accountId"]),
+        stable_message_identity=str(persisted.persisted["stable_message_identity"]),
+        model_id=model_id,
+        classification_id=int(persisted.persisted["id"]),
+        action_plan_id=str(action_plan["action_plan_id"]),
+        action_ids=action_ids,
+        predicted_category=str(prediction.category),
+        threshold=float(
+            prediction.category_probability if threshold is None else threshold
+        ),
+        probability=float(prediction.category_probability),
+        important=bool(prediction.important),
+    )
+    def current_read_state() -> bool:
+        state = read_after()
+        is_read = getattr(state, "is_read", None)
+        if type(is_read) is not bool:
+            raise TypeError("historical action readback must expose strict is_read")
+        return is_read
+
+    for action_id in action_ids:
+        statuses = email_store.direct_action_statuses_for_plan(
+            action_plan["action_plan_id"]
+        )
+        if statuses.get(action_id) == "done":
+            continue
+        result = _run_next_direct_action(
+            email_store,
+            direct_action_executor_factory,
+            available_account_ids=lambda: (str(message["accountId"]),),
+            action_id=action_id,
+        )
+        if result is None:
+            return HistoricalActionResult(
+                "provider_action_failed", is_read=current_read_state()
+            )
+        email_store.touch_historical_operation(
+            model_id=model_id,
+            stable_message_identity=str(persisted.persisted["stable_message_identity"]),
+        )
+        if getattr(result, "status", "") != "done":
+            return HistoricalActionResult(
+                "provider_action_failed", is_read=current_read_state()
+            )
+    state = read_after()
+    is_read = getattr(state, "is_read", None)
+    if type(is_read) is not bool:
+        raise TypeError("historical action readback must expose strict is_read")
+    classification = email_store.get_classification_by_stable_identity(
+        str(persisted.persisted["stable_message_identity"])
+    )
+    if classification is None or not _historical_relocation_folder_verified(
+        action_plan=action_plan,
+        classification=classification,
+        state=state,
+    ):
+        return HistoricalActionResult(
+            "provider_folder_not_verified", is_read=is_read
+        )
+    receipts = email_store.direct_action_receipts_for_plan(
+        action_plan["action_plan_id"]
+    )
+    outcome = _historical_action_outcome_from_receipts(
+        actions, receipts, is_read=is_read
+    )
+    return HistoricalActionResult(outcome, is_read=is_read)
+
+
+def run_manual_historical_batch(
+    *,
+    email_store: object,
+    model_id: str,
+    model: object,
+    cache: object,
+    historically_eligible: Mapping[str, bool],
+    candidates: Sequence[object],
+    read_state: Callable[[object], object],
+    execute: Callable[[object, object], object],
+) -> tuple[object, ...]:
+    """Explicit staged/manual entrypoint; the worker component list never invokes it."""
+
+    from app.email_historical_classifier import HistoricalClassifier
+
+    def record_and_finish(outcome):
+        if outcome.action_outcome in {
+            "state_changed_before_execute",
+            "provider_action_failed",
+            "provider_folder_not_verified",
+            "read_state_not_preserved",
+        }:
+            return None
+        result = email_store.record_historical_classification_outcome(outcome)
+        email_store.complete_historical_operation(outcome)
+        return result
+
+    return HistoricalClassifier(
+        model_id=model_id,
+        model=model,
+        cache=cache,
+        historically_eligible=historically_eligible,
+        read_state=read_state,
+        execute=execute,
+        record=record_and_finish,
+    ).run_batch(candidates)
 
 
 def run_email_classification_task_once(
@@ -550,6 +1011,9 @@ class EmailWorkerDependencies:
     run_classification_once: Callable[[], object] | None = None
     publish_provider_observation_change: Callable[[], object] | None = None
     training_observation_tick: Callable[[], object] | None = None
+    run_historical_once: Callable[..., object] | None = None
+    reconcile_action_tasks_once: Callable[[], object] | None = None
+    reconcile_historical_operations_once: Callable[[], object] | None = None
 
 
 @dataclass(frozen=True)
@@ -921,6 +1385,173 @@ def run_training_scheduler_loop(
             sleep(TRAINING_INTERVAL_SECONDS)
 
 
+def run_model_training_maintenance(
+    active_model: object,
+    *,
+    reconcile_action_tasks_once: Callable[[], object],
+) -> object:
+    """Poll learning once, refresh runtime, then repair durable model tasks."""
+
+    runtime_error: BaseException | None = None
+    try:
+        return active_model.tick()
+    except BaseException as exc:
+        runtime_error = exc
+        raise
+    finally:
+        try:
+            reconcile_action_tasks_once()
+        except BaseException:
+            if runtime_error is None:
+                raise
+
+
+def reconcile_missing_model_action_tasks(
+    email_store: object,
+    action_task_producer: object,
+    *,
+    load_message: Callable[[Mapping[str, object]], Mapping[str, object] | None],
+    record_health: Callable[[str, Mapping[str, object]], object],
+) -> dict[str, int]:
+    """Repair durable model unsubscribe plans without reclassification."""
+
+    from app.email_classifier_contracts import EmailActionPlan
+
+    candidates = tuple(email_store.list_missing_unsubscribe_action_tasks())
+    repaired = 0
+    conflicts = 0
+    for classification in candidates:
+        try:
+            message = load_message(classification)
+            if not isinstance(message, Mapping):
+                raise ValueError("model action repair message is unavailable")
+            plan = EmailActionPlan.model_validate_json(
+                json.dumps(classification["action_plan"])
+            )
+            action_task_producer.produce(plan, message)
+            remaining = {
+                int(item["id"])
+                for item in email_store.list_missing_unsubscribe_action_tasks()
+            }
+            if int(classification["id"]) in remaining:
+                raise RuntimeError("model action repair did not persist a task")
+            repaired += 1
+        except Exception:  # noqa: BLE001 - each durable conflict is isolated
+            conflicts += 1
+    payload: dict[str, object] = {
+        "status": "ready" if conflicts == 0 else "degraded",
+        "candidates": len(candidates),
+        "repaired": repaired,
+        "conflicts": conflicts,
+    }
+    if conflicts:
+        payload["error_code"] = "model_action_reconciliation_conflict"
+    record_health("component:email-model-action-reconciliation", payload)
+    return {
+        "candidates": len(candidates),
+        "repaired": repaired,
+        "conflicts": conflicts,
+    }
+
+
+def reconcile_historical_operations(
+    email_store: object,
+    direct_action_executor_factory: Callable[[str], object],
+    *,
+    read_after: Callable[[Mapping[str, object]], object],
+) -> dict[str, int]:
+    """Resume exact durable historical plans without source-folder enumeration."""
+
+    from app.email_historical_classifier import HistoricalClassificationOutcome
+
+    repaired = 0
+    deferred = 0
+    for operation in email_store.list_processing_historical_operations():
+        classification = email_store.get_classification_by_stable_identity(
+            operation["stable_message_identity"]
+        )
+        if (
+            classification is None
+            or classification.get("model_id") != operation["model_id"]
+            or int(classification.get("id") or 0) != operation["classification_id"]
+            or classification.get("current_action_plan_id")
+            != operation["action_plan_id"]
+        ):
+            deferred += 1
+            continue
+        statuses = email_store.direct_action_statuses_for_plan(
+            operation["action_plan_id"]
+        )
+        complete = True
+        for action_id in operation["action_ids"]:
+            if statuses.get(action_id) == "done":
+                continue
+            result = _run_next_direct_action(
+                email_store,
+                direct_action_executor_factory,
+                available_account_ids=(operation["account_id"],),
+                action_id=action_id,
+            )
+            if result is None or getattr(result, "status", "") != "done":
+                complete = False
+                break
+            statuses[action_id] = "done"
+            email_store.touch_historical_operation(
+                model_id=operation["model_id"],
+                stable_message_identity=operation["stable_message_identity"],
+            )
+        if not complete:
+            deferred += 1
+            continue
+        classification = email_store.get_classification_by_stable_identity(
+            operation["stable_message_identity"]
+        )
+        if classification is None:
+            deferred += 1
+            continue
+        state = read_after(operation)
+        if getattr(state, "is_read", None) is not True:
+            deferred += 1
+            continue
+        action_plan = classification.get("action_plan")
+        if not isinstance(action_plan, Mapping) or not isinstance(
+            action_plan.get("actions"), list
+        ):
+            deferred += 1
+            continue
+        if not _historical_relocation_folder_verified(
+            action_plan=action_plan,
+            classification=classification,
+            state=state,
+        ):
+            deferred += 1
+            continue
+        receipts = email_store.direct_action_receipts_for_plan(
+            operation["action_plan_id"]
+        )
+        outcome_name = _historical_action_outcome_from_receipts(
+            tuple(str(action) for action in action_plan["actions"]),
+            receipts,
+            is_read=True,
+        )
+        if outcome_name in {"actions_queued", "read_state_not_preserved"}:
+            deferred += 1
+            continue
+        outcome = HistoricalClassificationOutcome(
+            stable_message_identity=operation["stable_message_identity"],
+            model_id=operation["model_id"],
+            predicted_category=operation["predicted_category"],
+            threshold=float(operation["threshold"]),
+            probability=float(operation["probability"]),
+            important=bool(operation["important"]),
+            action_outcome=outcome_name,
+        )
+        email_store.record_historical_classification_outcome(outcome)
+        email_store.complete_historical_operation(outcome)
+        repaired += 1
+    return {"repaired": repaired, "deferred": deferred}
+
+
 def email_worker_components(
     dependencies: EmailWorkerDependencies | Any,
     *,
@@ -1137,6 +1768,7 @@ def _run_next_direct_action(
     executor_factory: Callable[[str], object] | None,
     *,
     available_account_ids: Callable[[], Sequence[str]] | Sequence[str] | None = None,
+    action_id: str | None = None,
 ) -> object | None:
     """Run one claimed action, or leave it pending when no provider exists."""
 
@@ -1151,10 +1783,15 @@ def _run_next_direct_action(
     recover = getattr(email_store, "recover_stale_processing_actions", None)
     if callable(recover):
         recover(stale_before=stale_before, recovered_at=claimed_at)
-    claim_kwargs = {"claimed_at": claimed_at}
-    if available_account_ids is not None:
-        claim_kwargs["account_ids"] = available_account_ids
-    action = email_store.claim_next_direct_action(**claim_kwargs)
+    if action_id is not None:
+        action = email_store.claim_direct_action(
+            action_id=action_id, claimed_at=claimed_at
+        )
+    else:
+        claim_kwargs = {"claimed_at": claimed_at}
+        if available_account_ids is not None:
+            claim_kwargs["account_ids"] = available_account_ids
+        action = email_store.claim_next_direct_action(**claim_kwargs)
     if action is None:
         return None
 
@@ -1249,6 +1886,175 @@ def _close_email_source(source: object) -> None:
     close = getattr(source, "logout", None)
     if callable(close):
         close()
+
+
+def _missing_historical_state(folder_name: str):
+    from app.email_historical_classifier import HistoricalClassificationState
+
+    return HistoricalClassificationState(
+        folder_role=FolderRole.UNBOUND,
+        configured_unclassified_source=False,
+        is_read=False,
+        is_unclassified=False,
+        provider_folder_name=folder_name or None,
+    )
+
+
+def _read_historical_provider_state(
+    email_store: object,
+    source_factory: Callable[[Mapping[str, object]], object],
+    account: Mapping[str, object],
+    *,
+    folder_name: str,
+    uidvalidity: int,
+    uid: int,
+    stable_message_identity: str,
+):
+    from app.email_classifier_scan import _provider_locator, _stable_message_identity
+    from app.email_historical_classifier import HistoricalClassificationState
+
+    source = source_factory(account)
+    try:
+        matches = tuple(
+            folder
+            for folder in source.list_folders()
+            if folder.display_name == folder_name
+        )
+        if len(matches) != 1:
+            return _missing_historical_state(folder_name)
+        folder = matches[0]
+        bindings = tuple(
+            item
+            for item in email_store.list_account_folder_bindings()
+            if item["account_id"] == str(account["account_id"])
+            and item["binding_status"] == "active"
+        )
+        is_bound = any(
+            item["provider_folder_id"] == folder.provider_folder_id
+            and item["category_key"] != "junk"
+            for item in bindings
+        )
+        role = FolderRole.CATEGORY if is_bound else folder.role
+        configured_source = (
+            role is FolderRole.UNBOUND
+            and folder_name in tuple(account.get("scan_folders") or ())
+            and not is_bound
+        )
+        batch = source.fetch_uid_batch(
+            folder_name,
+            cursor_uidvalidity=uidvalidity,
+            last_seen_uid=max(0, uid - 1),
+            limit=2,
+            unread_only=False,
+        )
+        if int(batch.uidvalidity) != uidvalidity:
+            return _missing_historical_state(folder_name)
+        message = next(
+            (
+                item
+                for item in batch.messages
+                if _stable_message_identity(item, _provider_locator(item))
+                == stable_message_identity
+            ),
+            None,
+        )
+        if message is None:
+            return _missing_historical_state(folder_name)
+        is_unclassified = role is FolderRole.INBOX or configured_source
+        return HistoricalClassificationState(
+            folder_role=role,
+            configured_unclassified_source=configured_source,
+            is_read=message.get("providerUnread") is False,
+            is_unclassified=is_unclassified,
+            provider_folder_name=folder_name,
+        )
+    finally:
+        _close_email_source(source)
+
+
+def _reread_historical_candidate_state(
+    email_store: object,
+    source_factory: Callable[[Mapping[str, object]], object],
+    account: Mapping[str, object],
+    candidate: object,
+):
+    from app.email_classifier_scan import _provider_locator
+
+    message = getattr(candidate, "provider_message", None)
+    if not isinstance(message, Mapping):
+        raise ValueError("historical candidate provider message is missing")
+    locator = _provider_locator(message)
+    return _read_historical_provider_state(
+        email_store,
+        source_factory,
+        account,
+        folder_name=locator.folder,
+        uidvalidity=locator.uidvalidity,
+        uid=locator.uid,
+        stable_message_identity=str(candidate.stable_message_identity),
+    )
+
+
+def _reread_historical_candidate_message(
+    source_factory: Callable[[Mapping[str, object]], object],
+    account: Mapping[str, object],
+    candidate: object,
+) -> Mapping[str, object]:
+    """Fetch the exact current provider record without trusting queued content."""
+
+    from app.email_classifier_scan import _provider_locator, _stable_message_identity
+
+    projection = getattr(candidate, "provider_message", None)
+    if not isinstance(projection, Mapping):
+        raise ValueError("historical candidate provider locator is missing")
+    locator = _provider_locator(projection)
+    source = source_factory(account)
+    try:
+        batch = source.fetch_uid_batch(
+            locator.folder,
+            cursor_uidvalidity=locator.uidvalidity,
+            last_seen_uid=max(0, locator.uid - 1),
+            limit=2,
+            unread_only=False,
+        )
+        if int(batch.uidvalidity) != locator.uidvalidity:
+            raise ValueError("historical candidate UIDVALIDITY changed")
+        message = next(
+            (
+                item
+                for item in batch.messages
+                if _stable_message_identity(item, _provider_locator(item))
+                == str(candidate.stable_message_identity)
+            ),
+            None,
+        )
+        if not isinstance(message, Mapping):
+            raise ValueError("historical candidate is no longer at queued locator")
+        return message
+    finally:
+        _close_email_source(source)
+
+
+def _read_persisted_historical_state(
+    email_store: object,
+    source_factory: Callable[[Mapping[str, object]], object],
+    account: Mapping[str, object],
+    stable_message_identity: str,
+):
+    persisted = email_store.get_classification_by_stable_identity(
+        stable_message_identity
+    )
+    if not isinstance(persisted, Mapping):
+        return _missing_historical_state("")
+    return _read_historical_provider_state(
+        email_store,
+        source_factory,
+        account,
+        folder_name=str(persisted["folder"]),
+        uidvalidity=int(persisted["uidvalidity"]),
+        uid=int(persisted["uid"]),
+        stable_message_identity=stable_message_identity,
+    )
 
 
 def _load_email_task_input(
@@ -1350,7 +2156,7 @@ def build_email_worker_dependencies(
         DescriptionOptimizationOrchestrator,
         RoutedDescriptionOptimizerAgent,
     )
-    from app.email_classifier_runtime import EmailClassifierRuntime
+    from app.email_classifier_runtime import PromotedEmailClassifierRuntime
     from app.email_classifier_scan import (
         AgentScanContext,
         scan_agent_classification_batch,
@@ -1408,19 +2214,7 @@ def build_email_worker_dependencies(
         )
 
     def load_active_model():
-        try:
-            return EmailClassifierRuntime(registry, learning_service=learning)
-        except Exception as exc:
-            from app.email_classifier_runtime import EmailClassifierUnavailable
-
-            if not isinstance(exc, EmailClassifierUnavailable):
-                raise
-
-            class ColdStartLearningRuntime:
-                def tick(self):
-                    return learning.poll_retrain()
-
-            return ColdStartLearningRuntime()
+        return PromotedEmailClassifierRuntime(registry, learning_service=learning)
 
     def record_health(scope: str, payload: Mapping[str, object]):
         task_store.set_service_state(
@@ -1523,7 +2317,6 @@ def build_email_worker_dependencies(
                 _close_email_source(source)
 
         def scan_account(account: Mapping[str, object], current_model: object):
-            del current_model
             configs = tuple(
                 item for item in email_store.list_category_configs() if item["enabled"]
             )
@@ -1582,11 +2375,305 @@ def build_email_worker_dependencies(
                             configured_unclassified_source=(
                                 role is FolderRole.UNBOUND and not is_bound
                             ),
+                            online_runtime=current_model,
+                            accept_model=lambda message, prediction, entries, model_text, model_id: (
+                                persist_model_primary_classification(
+                                    email_store,
+                                    action_task_producer,
+                                    message=message,
+                                    prediction=prediction,
+                                    context=context,
+                                    model_id=model_id,
+                                    model_text=model_text,
+                                    unsubscribe_entries=entries,
+                                )
+                            ),
                         )
                     )
                 return tuple(results)
             finally:
                 _close_email_source(source)
+
+        def run_historical_once(
+            model_id: str, *, account_id: str | None = None
+        ) -> tuple[object, ...]:
+            """Run one explicit cached historical batch; never scheduled by worker."""
+
+            from app.email_embedding_cache import EmbeddingCache
+            from app.email_embedding_classifier import DescriptionAwareEmailClassifier
+            from app.email_historical_classifier import (
+                MAX_HISTORICAL_BATCH_SIZE,
+                HistoricalClassificationCandidate,
+                enumerate_historical_page,
+            )
+            from app.email_embedding_cache import EmbeddingCacheKey
+
+            evidence = registry.get_staged_evidence(model_id)
+            artifact = registry.embedding_artifacts / f"{model_id}.artifact"
+            model = DescriptionAwareEmailClassifier.load(artifact)
+            historical = evidence.get("historical_eligibility")
+            if not isinstance(historical, Mapping) or not isinstance(
+                historical.get("categories"), Mapping
+            ):
+                raise ValueError("historical eligibility evidence is incomplete")
+            category_evidence = historical["categories"]
+            eligibility = {
+                category: bool(category_evidence[category].get("eligible"))
+                for category in model.enabled_categories
+                if isinstance(category_evidence.get(category), Mapping)
+            }
+            if set(eligibility) != set(model.enabled_categories):
+                raise ValueError("historical eligibility does not cover model")
+            cache = EmbeddingCache(registry.root, dimension=model.dimension)
+            selected_accounts = tuple(
+                account
+                for account in _accounts
+                if account_id is None or str(account["account_id"]) == account_id
+            )
+            if account_id is not None and not selected_accounts:
+                raise ValueError("historical account is not enabled")
+            reconcile_historical_operations_once()
+            outcomes: list[object] = []
+            for account in selected_accounts:
+                if len(outcomes) >= MAX_HISTORICAL_BATCH_SIZE:
+                    break
+                bindings = tuple(
+                    item
+                    for item in email_store.list_account_folder_bindings()
+                    if item["account_id"] == str(account["account_id"])
+                    and item["binding_status"] == "active"
+                )
+                configs = tuple(
+                    item
+                    for item in email_store.list_category_configs()
+                    if item["enabled"]
+                )
+                context = AgentScanContext(
+                    allowed_category_keys=tuple(
+                        item["category_key"] for item in configs
+                    ),
+                    category_descriptions={
+                        item["category_key"]: {
+                            "core": item["core_description"],
+                            "include": item["include"],
+                            "exclude": item["exclude"],
+                        }
+                        for item in configs
+                    },
+                    folder_targets={
+                        item["category_key"]: item["provider_folder_name"]
+                        for item in bindings
+                        if item["category_key"] != "junk"
+                    },
+                    config_version="|".join(
+                        sorted({str(item["config_version"]) for item in configs})
+                    ),
+                )
+                source = source_factory(account)
+                try:
+                    inventory = tuple(source.list_folders())
+                    for folder_name in account["scan_folders"]:
+                        if len(outcomes) >= MAX_HISTORICAL_BATCH_SIZE:
+                            break
+                        matches = tuple(
+                            folder
+                            for folder in inventory
+                            if folder.display_name == folder_name
+                        )
+                        if len(matches) != 1:
+                            continue
+                        folder = matches[0]
+                        is_bound = any(
+                            binding["provider_folder_id"]
+                            == folder.provider_folder_id
+                            and binding["category_key"] != "junk"
+                            for binding in bindings
+                        )
+                        role = FolderRole.CATEGORY if is_bound else folder.role
+                        configured_source = role is FolderRole.UNBOUND and not is_bound
+                        cursor = email_store.historical_traversal_cursor(
+                            account_id=str(account["account_id"]),
+                            folder=folder_name,
+                            model_id=model_id,
+                        )
+                        page = enumerate_historical_page(
+                            source,
+                            mailbox=folder_name,
+                            folder_role=role,
+                            configured_unclassified_source=configured_source,
+                            cursor_uidvalidity=cursor["uidvalidity"],
+                            last_seen_uid=cursor["last_seen_uid"],
+                        )
+                        email_store.enqueue_historical_page(
+                            account_id=str(account["account_id"]),
+                            folder=folder_name,
+                            model_id=model_id,
+                            uidvalidity=page.uidvalidity,
+                            last_seen_uid=page.last_seen_uid,
+                            candidates=page.candidates,
+                        )
+                        queued = email_store.list_historical_candidates(
+                            account_id=str(account["account_id"]),
+                            folder=folder_name,
+                            model_id=model_id,
+                        )
+
+                        def read_state(candidate):
+                            return _reread_historical_candidate_state(
+                                email_store,
+                                source_factory,
+                                account,
+                                candidate,
+                            )
+
+                        def execute(candidate, prediction):
+                            message = _reread_historical_candidate_message(
+                                source_factory, account, candidate
+                            )
+                            from app.email_unsubscribe import extract_unsubscribe_entries
+                            from app.email_imap_readonly import ephemeral_body_html
+
+                            entries = extract_unsubscribe_entries(
+                                list_unsubscribe=str(
+                                    message.get("listUnsubscribe") or ""
+                                ),
+                                list_unsubscribe_post=str(
+                                    message.get("listUnsubscribePost") or ""
+                                ),
+                                body_text=str(
+                                    message.get("markdownBody")
+                                    or message.get("textBody")
+                                    or ""
+                                ),
+                                body_html=ephemeral_body_html(message),
+                            )
+                            return execute_historical_model_actions(
+                                email_store,
+                                direct_action_executor_factory,
+                                action_task_producer,
+                                message=message,
+                                prediction=prediction,
+                                context=context,
+                                model_id=model_id,
+                                model_text=candidate.normalized_text,
+                                unsubscribe_entries=entries,
+                                read_after=lambda: _read_persisted_historical_state(
+                                    email_store,
+                                    source_factory,
+                                    account,
+                                    candidate.stable_message_identity,
+                                ),
+                                threshold=float(
+                                    model.category_thresholds[prediction.category]
+                                ),
+                            )
+
+                        runnable = []
+                        for queued_item in queued:
+                            if len(runnable) >= (
+                                MAX_HISTORICAL_BATCH_SIZE - len(outcomes)
+                            ):
+                                break
+                            candidate = HistoricalClassificationCandidate(
+                                stable_message_identity=queued_item[
+                                    "stable_message_identity"
+                                ],
+                                normalized_text=queued_item["normalized_text"],
+                                provider_message=queued_item["provider_message"],
+                            )
+                            current = read_state(candidate)
+                            if not current.eligible:
+                                reason = (
+                                    "unread"
+                                    if not current.is_read
+                                    else "no_longer_unclassified"
+                                )
+                                email_store.set_historical_candidate_state(
+                                    account_id=str(account["account_id"]),
+                                    folder=folder_name,
+                                    model_id=model_id,
+                                    stable_message_identity=candidate.stable_message_identity,
+                                    state=(
+                                        "deferred" if reason == "unread" else "terminal"
+                                    ),
+                                    reason=reason,
+                                )
+                                continue
+                            current_message = _reread_historical_candidate_message(
+                                source_factory, account, candidate
+                            )
+                            from app.email_classifier_model import email_message_to_text
+
+                            current_normalized_text = email_message_to_text(
+                                current_message
+                            )
+                            if sha256(
+                                current_normalized_text.encode("utf-8")
+                            ).hexdigest() != queued_item["normalized_input_hash"]:
+                                email_store.set_historical_candidate_state(
+                                    account_id=str(account["account_id"]),
+                                    folder=folder_name,
+                                    model_id=model_id,
+                                    stable_message_identity=(
+                                        candidate.stable_message_identity
+                                    ),
+                                    state="deferred",
+                                    reason="model_input_changed",
+                                )
+                                continue
+                            candidate = HistoricalClassificationCandidate(
+                                stable_message_identity=(
+                                    candidate.stable_message_identity
+                                ),
+                                normalized_text=current_normalized_text,
+                                provider_message=candidate.provider_message,
+                            )
+                            key = EmbeddingCacheKey.for_text(
+                                normalized_text=candidate.normalized_text,
+                                input_schema_version=str(model.input_schema_version),
+                                embedding_model_id=str(model.embedding_model_id),
+                                embedding_revision=str(model.embedding_revision),
+                            )
+                            if cache.get(key) is None:
+                                email_store.set_historical_candidate_state(
+                                    account_id=str(account["account_id"]),
+                                    folder=folder_name,
+                                    model_id=model_id,
+                                    stable_message_identity=candidate.stable_message_identity,
+                                    state="deferred",
+                                    reason="exact_cache_miss",
+                                )
+                                continue
+                            runnable.append(candidate)
+                        batch_outcomes = run_manual_historical_batch(
+                                email_store=email_store,
+                                model_id=model_id,
+                                model=model,
+                                cache=cache,
+                                historically_eligible=eligibility,
+                                candidates=runnable,
+                                read_state=read_state,
+                                execute=execute,
+                            )
+                        outcomes.extend(batch_outcomes)
+                        for outcome in batch_outcomes:
+                            retryable = outcome.action_outcome in {
+                                "state_changed_before_execute",
+                                "provider_action_failed",
+                                "provider_folder_not_verified",
+                                "read_state_not_preserved",
+                            }
+                            email_store.set_historical_candidate_state(
+                                account_id=str(account["account_id"]),
+                                folder=folder_name,
+                                model_id=model_id,
+                                stable_message_identity=outcome.stable_message_identity,
+                                state="deferred" if retryable else "terminal",
+                                reason=outcome.action_outcome,
+                            )
+                finally:
+                    _close_email_source(source)
+            return tuple(outcomes)
 
         from app.email_training_observer import (
             ProviderTrainingChangeDetector,
@@ -1627,8 +2714,69 @@ def build_email_worker_dependencies(
             change_detector.tick()
             return observation_coordinator.tick()
 
+        def load_model_action_repair_message(
+            classification: Mapping[str, object],
+        ) -> Mapping[str, object] | None:
+            account = email_store.get_account(str(classification["account_id"]))
+            if not isinstance(account, Mapping):
+                return None
+            source = source_factory(account)
+            try:
+                uid = int(classification["uid"])
+                uidvalidity = int(classification["uidvalidity"])
+                batch = source.fetch_uid_batch(
+                    str(classification["folder"]),
+                    cursor_uidvalidity=uidvalidity,
+                    last_seen_uid=max(0, uid - 1),
+                    limit=2,
+                )
+                if int(batch.uidvalidity) != uidvalidity:
+                    return None
+                return next(
+                    (
+                        message
+                        for message in batch.messages
+                        if _message_identity(message)
+                        == str(classification["stable_message_identity"])
+                    ),
+                    None,
+                )
+            finally:
+                _close_email_source(source)
+
+        def reconcile_action_tasks_once():
+            return reconcile_missing_model_action_tasks(
+                email_store,
+                action_task_producer,
+                load_message=load_model_action_repair_message,
+                record_health=record_health,
+            )
+
+        def reconcile_historical_operations_once():
+            by_id = {str(item["account_id"]): item for item in _accounts}
+
+            def read_after(operation):
+                account = by_id.get(str(operation["account_id"]))
+                if account is None:
+                    return _missing_historical_state("")
+                return _read_persisted_historical_state(
+                    email_store,
+                    source_factory,
+                    account,
+                    str(operation["stable_message_identity"]),
+                )
+
+            return reconcile_historical_operations(
+                email_store,
+                direct_action_executor_factory,
+                read_after=read_after,
+            )
+
         def training_tick():
-            return learning.poll_retrain()
+            return run_model_training_maintenance(
+                active_model,
+                reconcile_action_tasks_once=reconcile_action_tasks_once,
+            )
 
         def publish_provider_observation_change():
             observation_coordinator.request()
@@ -1674,6 +2822,11 @@ def build_email_worker_dependencies(
             ),
             publish_provider_observation_change=(publish_provider_observation_change),
             training_observation_tick=training_observation_tick,
+            run_historical_once=run_historical_once,
+            reconcile_action_tasks_once=reconcile_action_tasks_once,
+            reconcile_historical_operations_once=(
+                reconcile_historical_operations_once
+            ),
         )
 
     return EmailWorkerBootstrap(
@@ -2080,6 +3233,7 @@ def run_email_worker(
     wait: Callable[[], object] | None = None,
     output: TextIO = sys.stdout,
 ) -> None:
+    active_model: object | None = None
     try:
         bootstrap = dependencies or dependency_builder(settings)
         final_reconciliation = _fail_nonterminal_legacy_unsubscribe_tasks(bootstrap)
@@ -2117,6 +3271,16 @@ def run_email_worker(
             else bootstrap
         )
         _validate_email_worker_dependencies(dependencies)
+        reconcile_action_tasks_once = getattr(
+            dependencies, "reconcile_action_tasks_once", None
+        )
+        if callable(reconcile_action_tasks_once):
+            reconcile_action_tasks_once()
+        reconcile_historical_once = getattr(
+            dependencies, "reconcile_historical_operations_once", None
+        )
+        if callable(reconcile_historical_once):
+            reconcile_historical_once()
         if dependencies is not bootstrap:
             final_reconciliation = _fail_nonterminal_legacy_unsubscribe_tasks(
                 dependencies
@@ -2180,12 +3344,15 @@ def run_email_worker(
                         ),
                     },
                 )
-    except EmailWorkerStartupError:
+    except EmailWorkerStartupError as exc:
+        _close_active_model(active_model, active_error=exc)
         raise
     except Exception as exc:
-        raise EmailWorkerStartupError(
+        startup_error = EmailWorkerStartupError(
             f"email worker dependency construction failed: {type(exc).__name__}"
-        ) from exc
+        )
+        _close_active_model(active_model, active_error=startup_error)
+        raise startup_error from exc
 
     dependencies.record_health(
         "process:email-worker",
@@ -2200,16 +3367,36 @@ def run_email_worker(
         file=output,
         flush=True,
     )
-    threads = []
-    for name, target in components:
-        thread = thread_factory(
-            target=target,
-            name=f"ceo-agent-{name}",
-            daemon=True,
-        )
-        threads.append(thread)
-        thread.start()
-    if wait is not None:
-        wait()
-    else:
-        _wait_for_email_components(threads)
+    lifecycle_error: BaseException | None = None
+    try:
+        threads = []
+        for name, target in components:
+            thread = thread_factory(
+                target=target,
+                name=f"ceo-agent-{name}",
+                daemon=True,
+            )
+            threads.append(thread)
+            thread.start()
+        if wait is not None:
+            wait()
+        else:
+            _wait_for_email_components(threads)
+    except BaseException as exc:
+        lifecycle_error = exc
+        raise
+    finally:
+        _close_active_model(active_model, active_error=lifecycle_error)
+
+
+def _close_active_model(
+    active_model: object | None, *, active_error: BaseException | None
+) -> None:
+    close_active_model = getattr(active_model, "close", None)
+    if not callable(close_active_model):
+        return
+    try:
+        close_active_model()
+    except BaseException:
+        if active_error is None:
+            raise

@@ -21,6 +21,7 @@ from typing import Any
 from urllib.parse import unquote, unquote_plus, urlsplit
 
 from app.email_classifier_contracts import (
+    ACTION_DEPENDENCY_PARAMETER,
     DIRECT_ACTIONS,
     EmailAction,
     EmailActionPlan,
@@ -33,6 +34,7 @@ from app.email_classifier_contracts import (
     build_email_action_plan,
     build_user_confirmation_authorizations,
     build_versioned_email_action_plan,
+    effective_direct_action_dependencies,
     rehydrate_legacy_email_action_plan_json,
     rehydrate_legacy_email_category_key,
     validate_email_category_key,
@@ -60,7 +62,8 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 26
+EMAIL_SCHEMA_VERSION = 30
+HISTORICAL_DEFER_RETRY_SECONDS = 60
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -427,6 +430,17 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "selected_for_training": ("integer", True, None),
         "ordered_record_digest": ("text", True, None),
     },
+    "email_historical_classification_history": {
+        "event_id": ("text", False, None),
+        "stable_message_identity": ("text", True, None),
+        "model_id": ("text", True, None),
+        "predicted_category": ("text", False, None),
+        "threshold": ("real", False, None),
+        "probability": ("real", False, None),
+        "important": ("integer", False, None),
+        "action_outcome": ("text", True, None),
+        "created_at": ("text", True, None),
+    },
 }
 _REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
     table: frozenset(columns) for table, columns in _REQUIRED_COLUMN_CONTRACTS.items()
@@ -604,6 +618,17 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "selected_for_training in (0, 1)",
         "length(ordered_record_digest) = 64",
     ),
+    "email_historical_classification_history": (
+        "trim(event_id) != ''",
+        "trim(stable_message_identity) != ''",
+        "trim(model_id) != ''",
+        "predicted_category is null or trim(predicted_category) != ''",
+        "threshold is null or (threshold >= 0.0 and threshold <= 1.0)",
+        "probability is null or (probability >= 0.0 and probability <= 1.0)",
+        "important is null or important in (0, 1)",
+        "trim(action_outcome) != ''",
+        "trim(created_at) != ''",
+    ),
 }
 _REQUIRED_AUTOINCREMENT_COLUMNS = frozenset(
     {
@@ -638,6 +663,7 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
         "account_id",
         "stable_message_identity",
     ),
+    "email_historical_classification_history": ("event_id",),
 }
 _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
     "email_classifications": (("stable_message_identity",),),
@@ -1287,6 +1313,44 @@ def _json_dump(value: object) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _historical_candidate_projection(
+    message: Mapping[str, object],
+    *,
+    stable_message_identity: str,
+    account_id: str,
+    folder: str,
+) -> dict[str, object]:
+    """Keep only provider coordinates needed for an exact later reread."""
+
+    if str(message.get("accountId") or "") != account_id:
+        raise ValueError("historical candidate account does not match queue")
+    if str(message.get("folder") or "") != folder:
+        raise ValueError("historical candidate folder does not match queue")
+    message_identity = str(message.get("stableMessageIdentity") or "")
+    if message_identity and message_identity != stable_message_identity:
+        raise ValueError("historical candidate identity does not match queue")
+    projection: dict[str, object] = {
+        "accountId": account_id,
+        "folder": folder,
+        "uidValidity": int(message.get("uidValidity") or 0),
+        "uid": int(message.get("uid") or 0),
+        "messageId": str(message.get("messageId") or "") or None,
+        "threadId": str(message.get("threadId") or "") or None,
+        "stableMessageIdentity": stable_message_identity,
+    }
+    EmailProviderLocator.model_validate(
+        {
+            "account_id": projection["accountId"],
+            "folder": projection["folder"],
+            "uidvalidity": projection["uidValidity"],
+            "uid": projection["uid"],
+            "rfc_message_id": projection["messageId"],
+            "thread_id": projection["threadId"],
+        }
+    )
+    return projection
 
 
 def _legacy_unsubscribe_private_values(url: object) -> tuple[str, ...]:
@@ -2562,6 +2626,18 @@ class EmailStore:
                 latest_version = 25
             if latest_version == 25:
                 self._migrate_v25_to_v26(db, replace_version=is_prototype)
+                latest_version = 26
+            if latest_version == 26:
+                self._migrate_v26_to_v27(db, replace_version=is_prototype)
+                latest_version = 27
+            if latest_version == 27:
+                self._migrate_v27_to_v28(db, replace_version=is_prototype)
+                latest_version = 28
+            if latest_version == 28:
+                self._migrate_v28_to_v29(db, replace_version=is_prototype)
+                latest_version = 29
+            if latest_version == 29:
+                self._migrate_v29_to_v30(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -3920,6 +3996,165 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v26_to_v27(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Add append-only outcomes for staged historical classification."""
+
+        self._create_durable_tables(db)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=27, applied_at=? "
+                "where version=26",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (27, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v27_to_v28(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        self._create_task10_historical_tables(db)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=28, applied_at=? where version=27",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (28, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v28_to_v29(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        self._ensure_column(
+            db,
+            table="email_historical_candidates",
+            column="attempted_at",
+            declaration="text not null default ''",
+        )
+        self._ensure_column(
+            db,
+            table="email_historical_candidates",
+            column="next_retry_at",
+            declaration="text not null default ''",
+        )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=29, applied_at=? where version=28",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (29, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v29_to_v30(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Redact historical queue rows down to locator plus input digest."""
+
+        db.execute("pragma secure_delete = on")
+        rows = db.execute(
+            "select rowid, * from email_historical_candidates"
+        ).fetchall()
+        for row in rows:
+            message = _json_load(
+                row["provider_message_json"],
+                field="provider_message_json",
+                expected_type=dict,
+            )
+            projection = _historical_candidate_projection(
+                message,
+                stable_message_identity=str(row["stable_message_identity"]),
+                account_id=str(row["account_id"]),
+                folder=str(row["folder"]),
+            )
+            db.execute(
+                "update email_historical_candidates "
+                "set normalized_text=?, provider_message_json=? where rowid=?",
+                (
+                    sha256(str(row["normalized_text"]).encode("utf-8")).hexdigest(),
+                    _json_dump(projection),
+                    row["rowid"],
+                ),
+            )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=30, applied_at=? "
+                "where version=29",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (30, ?)",
+                (self._now(),),
+            )
+
+    @staticmethod
+    def _create_task10_historical_tables(db: sqlite3.Connection) -> None:
+        db.execute(
+            """
+            create table if not exists email_historical_traversals (
+                account_id text not null,
+                folder text not null,
+                model_id text not null,
+                uidvalidity integer,
+                last_seen_uid integer not null default 0,
+                updated_at text not null,
+                primary key(account_id, folder, model_id)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists email_historical_operations (
+                operation_id text primary key,
+                account_id text not null,
+                stable_message_identity text not null,
+                model_id text not null,
+                classification_id integer not null,
+                action_plan_id text not null,
+                action_ids_json text not null check(json_valid(action_ids_json)),
+                predicted_category text not null,
+                threshold real not null,
+                probability real not null,
+                important integer not null check(important in (0,1)),
+                status text not null check(status in ('processing','terminal')),
+                action_outcome text not null default '',
+                created_at text not null,
+                updated_at text not null,
+                unique(model_id, stable_message_identity)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists email_historical_candidates (
+                account_id text not null,
+                folder text not null,
+                model_id text not null,
+                stable_message_identity text not null,
+                normalized_text text not null,
+                provider_message_json text not null check(json_valid(provider_message_json)),
+                uidvalidity integer not null,
+                uid integer not null,
+                state text not null check(state in ('pending','deferred','terminal')),
+                reason text not null default '',
+                attempted_at text not null default '',
+                next_retry_at text not null default '',
+                updated_at text not null,
+                primary key(account_id, folder, model_id, stable_message_identity)
+            )
+            """
+        )
+
     @classmethod
     def _ensure_training_snapshot_frozen_column(cls, db: sqlite3.Connection) -> None:
         cls._ensure_column(
@@ -4441,6 +4676,29 @@ class EmailStore:
                 foreign key(snapshot_id)
                     references email_training_snapshots(snapshot_id)
                     on delete restrict
+            )
+            """,
+            """
+            create table if not exists email_historical_classification_history (
+                event_id text primary key check(trim(event_id) != ''),
+                stable_message_identity text not null
+                    check(trim(stable_message_identity) != ''),
+                model_id text not null check(trim(model_id) != ''),
+                predicted_category text
+                    check(
+                        predicted_category is null
+                        or trim(predicted_category) != ''
+                    ),
+                threshold real
+                    check(threshold is null or (threshold >= 0.0 and threshold <= 1.0)),
+                probability real
+                    check(
+                        probability is null
+                        or (probability >= 0.0 and probability <= 1.0)
+                    ),
+                important integer check(important is null or important in (0, 1)),
+                action_outcome text not null check(trim(action_outcome) != ''),
+                created_at text not null check(trim(created_at) != '')
             )
             """,
         )
@@ -6743,6 +7001,363 @@ class EmailStore:
             ).fetchone()
         assert row is not None
         return dict(row)
+
+    def record_historical_classification_outcome(
+        self, outcome: object
+    ) -> dict[str, Any]:
+        """Append one redacted model decision/action outcome for a manual history run."""
+
+        stable_identity = str(
+            getattr(outcome, "stable_message_identity", "") or ""
+        ).strip()
+        model_id = str(getattr(outcome, "model_id", "") or "").strip()
+        action_outcome = str(getattr(outcome, "action_outcome", "") or "").strip()
+        if not stable_identity or not model_id or not action_outcome:
+            raise ValueError("historical outcome identity is incomplete")
+        predicted_value = getattr(outcome, "predicted_category", None)
+        predicted_category = (
+            None
+            if predicted_value is None
+            else validate_email_category_key(predicted_value)
+        )
+        threshold = _optional_probability(
+            getattr(outcome, "threshold", None), field="threshold"
+        )
+        probability = _optional_probability(
+            getattr(outcome, "probability", None), field="probability"
+        )
+        important_value = getattr(outcome, "important", None)
+        if important_value is not None and type(important_value) is not bool:
+            raise TypeError("important must be a strict bool or None")
+        identity_payload = _json_dump(
+            {
+                "stable_message_identity": stable_identity,
+                "model_id": model_id,
+                "predicted_category": predicted_category,
+                "threshold": threshold,
+                "probability": probability,
+                "important": important_value,
+                "action_outcome": action_outcome,
+            }
+        )
+        event_id = "email-historical:" + sha256(
+            identity_payload.encode("utf-8")
+        ).hexdigest()
+        created_at = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            db.execute(
+                """
+                insert or ignore into email_historical_classification_history (
+                    event_id, stable_message_identity, model_id,
+                    predicted_category, threshold, probability, important,
+                    action_outcome, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    stable_identity,
+                    model_id,
+                    predicted_category,
+                    threshold,
+                    probability,
+                    None if important_value is None else int(important_value),
+                    action_outcome,
+                    created_at,
+                ),
+            )
+            row = db.execute(
+                "select * from email_historical_classification_history "
+                "where event_id=?",
+                (event_id,),
+            ).fetchone()
+        assert row is not None
+        return _historical_outcome_row(row)
+
+    def historical_traversal_cursor(
+        self, *, account_id: str, folder: str, model_id: str
+    ) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_historical_traversals "
+                "where account_id=? and folder=? and model_id=?",
+                (account_id, folder, model_id),
+            ).fetchone()
+        return {
+            "uidvalidity": None if row is None else row["uidvalidity"],
+            "last_seen_uid": 0 if row is None else int(row["last_seen_uid"]),
+        }
+
+    def enqueue_historical_page(
+        self,
+        *,
+        account_id: str,
+        folder: str,
+        model_id: str,
+        uidvalidity: int,
+        last_seen_uid: int,
+        candidates: Sequence[object],
+    ) -> None:
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            for candidate in candidates:
+                message = getattr(candidate, "provider_message", None)
+                if not isinstance(message, Mapping):
+                    raise ValueError("historical queued candidate message is missing")
+                projection = _historical_candidate_projection(
+                    message,
+                    stable_message_identity=str(candidate.stable_message_identity),
+                    account_id=account_id,
+                    folder=folder,
+                )
+                normalized_input_hash = sha256(
+                    str(candidate.normalized_text).encode("utf-8")
+                ).hexdigest()
+                db.execute(
+                    """
+                    insert into email_historical_candidates (
+                        account_id, folder, model_id, stable_message_identity,
+                        normalized_text, provider_message_json, uidvalidity, uid,
+                        state, reason, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?)
+                    on conflict(account_id, folder, model_id, stable_message_identity)
+                    do update set normalized_text=excluded.normalized_text,
+                        provider_message_json=excluded.provider_message_json,
+                        uidvalidity=excluded.uidvalidity, uid=excluded.uid,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        account_id,
+                        folder,
+                        model_id,
+                        candidate.stable_message_identity,
+                        normalized_input_hash,
+                        _json_dump(projection),
+                        int(message.get("uidValidity") or uidvalidity),
+                        int(message.get("uid") or 0),
+                        now,
+                    ),
+                )
+            db.execute(
+                """
+                insert into email_historical_traversals (
+                    account_id, folder, model_id, uidvalidity, last_seen_uid, updated_at
+                ) values (?, ?, ?, ?, ?, ?)
+                on conflict(account_id, folder, model_id) do update set
+                    uidvalidity=excluded.uidvalidity,
+                    last_seen_uid=case
+                        when email_historical_traversals.uidvalidity=excluded.uidvalidity
+                        then max(email_historical_traversals.last_seen_uid, excluded.last_seen_uid)
+                        else excluded.last_seen_uid end,
+                    updated_at=excluded.updated_at
+                """,
+                (account_id, folder, model_id, uidvalidity, last_seen_uid, now),
+            )
+
+    def list_historical_candidates(
+        self, *, account_id: str, folder: str, model_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("historical candidate limit must be positive")
+        now = self._now()
+        deferred_quota = min(2, limit)
+        with self._connect() as db:
+            deferred_rows = db.execute(
+                """
+                select * from email_historical_candidates
+                where account_id=? and folder=? and model_id=?
+                  and state='deferred'
+                  and next_retry_at != '' and next_retry_at <= ?
+                order by
+                    case when attempted_at='' then updated_at else attempted_at end,
+                    uid, stable_message_identity
+                limit ?
+                """,
+                (account_id, folder, model_id, now, limit),
+            ).fetchall()
+            reserved = list(deferred_rows[:deferred_quota])
+            pending_rows = db.execute(
+                """
+                select * from email_historical_candidates
+                where account_id=? and folder=? and model_id=? and state='pending'
+                order by uid, stable_message_identity
+                limit ?
+                """,
+                (account_id, folder, model_id, limit - len(reserved)),
+            ).fetchall()
+            rows = reserved + list(pending_rows)
+            if len(rows) < limit:
+                rows.extend(deferred_rows[len(reserved) : limit - len(rows) + len(reserved)])
+        return [
+            {
+                **dict(row),
+                "normalized_input_hash": row["normalized_text"],
+                "provider_message": _json_load(
+                    row["provider_message_json"],
+                    field="provider_message_json",
+                    expected_type=dict,
+                ),
+            }
+            for row in rows
+        ]
+
+    def set_historical_candidate_state(
+        self,
+        *,
+        account_id: str,
+        folder: str,
+        model_id: str,
+        stable_message_identity: str,
+        state: str,
+        reason: str,
+    ) -> None:
+        if state not in {"pending", "deferred", "terminal"}:
+            raise ValueError("historical candidate state is invalid")
+        now = self._now()
+        next_retry_at = ""
+        attempted_at = ""
+        if state == "deferred":
+            attempted_at = now
+            next_retry_at = (
+                datetime.fromisoformat(now)
+                + timedelta(seconds=HISTORICAL_DEFER_RETRY_SECONDS)
+            ).isoformat(timespec="seconds")
+        with self._connect() as db:
+            updated = db.execute(
+                """
+                update email_historical_candidates
+                set state=?, reason=?, attempted_at=?, next_retry_at=?, updated_at=?
+                where account_id=? and folder=? and model_id=?
+                  and stable_message_identity=?
+                """,
+                (
+                    state,
+                    reason,
+                    attempted_at,
+                    next_retry_at,
+                    now,
+                    account_id,
+                    folder,
+                    model_id,
+                    stable_message_identity,
+                ),
+            ).rowcount
+        if updated != 1:
+            raise ValueError("historical queued candidate is missing")
+
+    def list_historical_classification_history(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from email_historical_classification_history "
+                "order by created_at, event_id"
+            ).fetchall()
+        return [_historical_outcome_row(row) for row in rows]
+
+    def begin_historical_operation(
+        self,
+        *,
+        account_id: str,
+        stable_message_identity: str,
+        model_id: str,
+        classification_id: int,
+        action_plan_id: str,
+        action_ids: Sequence[str],
+        predicted_category: str,
+        threshold: float,
+        probability: float,
+        important: bool,
+    ) -> dict[str, Any]:
+        identity = f"{model_id}\0{stable_message_identity}"
+        operation_id = "email-historical-operation:" + sha256(
+            identity.encode("utf-8")
+        ).hexdigest()
+        now = self._now()
+        immutable = (
+            account_id,
+            stable_message_identity,
+            model_id,
+            classification_id,
+            action_plan_id,
+            _json_dump(list(action_ids)),
+            predicted_category,
+            float(threshold),
+            float(probability),
+            int(important),
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            db.execute(
+                """
+                insert or ignore into email_historical_operations (
+                    operation_id, account_id, stable_message_identity, model_id,
+                    classification_id, action_plan_id, action_ids_json,
+                    predicted_category, threshold, probability, important,
+                    status, action_outcome, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', '', ?, ?)
+                """,
+                (operation_id, *immutable, now, now),
+            )
+            row = db.execute(
+                "select * from email_historical_operations where operation_id=?",
+                (operation_id,),
+            ).fetchone()
+        assert row is not None
+        observed = (
+            row["account_id"], row["stable_message_identity"], row["model_id"],
+            int(row["classification_id"]), row["action_plan_id"], row["action_ids_json"],
+            row["predicted_category"], float(row["threshold"]),
+            float(row["probability"]), int(row["important"]),
+        )
+        if observed != immutable:
+            raise EmailPersistenceCorruption("historical operation identity conflict")
+        return self._historical_operation_row(row)
+
+    def list_processing_historical_operations(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from email_historical_operations where status='processing' "
+                "order by created_at, operation_id"
+            ).fetchall()
+        return [self._historical_operation_row(row) for row in rows]
+
+    def complete_historical_operation(self, outcome: object) -> None:
+        stable_identity = str(getattr(outcome, "stable_message_identity"))
+        model_id = str(getattr(outcome, "model_id"))
+        with self._connect() as db:
+            db.execute(
+                """
+                update email_historical_operations
+                set status='terminal', action_outcome=?, updated_at=?
+                where model_id=? and stable_message_identity=? and status='processing'
+                """,
+                (
+                    str(getattr(outcome, "action_outcome")),
+                    self._now(), model_id, stable_identity,
+                ),
+            )
+
+    def touch_historical_operation(
+        self, *, model_id: str, stable_message_identity: str
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update email_historical_operations set updated_at=?
+                where model_id=? and stable_message_identity=? and status='processing'
+                """,
+                (self._now(), model_id, stable_message_identity),
+            )
+
+    @staticmethod
+    def _historical_operation_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            **dict(row),
+            "action_ids": tuple(
+                _json_load(row["action_ids_json"], field="action_ids_json", expected_type=list)
+            ),
+            "important": bool(row["important"]),
+        }
 
     def upsert_classification(
         self,
@@ -11467,19 +12082,10 @@ class EmailStore:
                     for sibling in siblings
                     if sibling["action_plan_id"] == sibling["current_action_plan_id"]
                 ]
-                move_prerequisite_done = not any(
-                    sibling["action_type"] == EmailAction.MOVE.value
-                    and sibling["status"] != "done"
-                    for sibling in current_siblings
-                )
                 unfinished = [
                     sibling
                     for sibling in current_siblings
-                    if not (
-                        sibling["action_type"] == EmailAction.FLAG_IMPORTANT.value
-                        and not move_prerequisite_done
-                    )
-                    and (
+                    if (
                         sibling["status"] == "pending"
                         or (
                             sibling["status"] == "failed"
@@ -11488,6 +12094,7 @@ class EmailStore:
                             and _retry_is_due(sibling["next_attempt_at"], claimed_at)
                         )
                     )
+                    and self._direct_action_predecessors_done(db, sibling)
                     and self._direct_action_dependency_satisfied(db, sibling)
                 ]
                 if not unfinished:
@@ -11538,6 +12145,241 @@ class EmailStore:
                 attempt_number=attempt_number,
                 claimed_at=claimed_at,
             )
+
+    def direct_action_ids_for_plan(self, action_plan_id: str) -> tuple[str, ...]:
+        """Return only the direct action IDs owned by one immutable plan."""
+
+        with self._connect() as db:
+            rows = db.execute(
+                "select action_id, action_type from email_actions where action_plan_id=?",
+                (action_plan_id,),
+            ).fetchall()
+        action_types = {row["action_type"] for row in rows}
+
+        def plan_priority(row: sqlite3.Row) -> tuple[int, str]:
+            action_type = row["action_type"]
+            if EmailAction.MOVE.value in action_types:
+                historical_order = {
+                    EmailAction.MOVE.value: 0,
+                    EmailAction.FLAG_IMPORTANT.value: 1,
+                    EmailAction.MARK_READ.value: 2,
+                }
+                if action_type in historical_order:
+                    return historical_order[action_type], row["action_id"]
+            if EmailAction.TRASH.value in action_types:
+                historical_junk_order = {
+                    EmailAction.TRASH.value: 0,
+                    EmailAction.MARK_READ.value: 1,
+                }
+                if action_type in historical_junk_order:
+                    return historical_junk_order[action_type], row["action_id"]
+            return _DIRECT_ACTION_PRIORITY[action_type] + 10, row["action_id"]
+
+        return tuple(
+            row["action_id"]
+            for row in sorted(rows, key=plan_priority)
+        )
+
+    def direct_action_statuses_for_plan(self, action_plan_id: str) -> dict[str, str]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select action_id, status from email_actions where action_plan_id=?",
+                (action_plan_id,),
+            ).fetchall()
+        return {str(row["action_id"]): str(row["status"]) for row in rows}
+
+    def direct_action_receipts_for_plan(
+        self, action_plan_id: str
+    ) -> tuple[dict[str, Any], ...]:
+        """Return durable successful receipts for the plan's completed direct actions."""
+
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select a.action_id, a.action_type, a.status,
+                       t.provider_operation, t.provider_target,
+                       t.provider_result_id, t.finished_at
+                from email_actions as a
+                join email_action_attempts as t
+                  on t.id=(
+                    select max(latest.id)
+                    from email_action_attempts as latest
+                    where latest.action_id=a.action_id and latest.status='done'
+                  )
+                where a.action_plan_id=? and a.status='done'
+                order by a.action_id
+                """,
+                (action_plan_id,),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def list_missing_unsubscribe_action_tasks(self) -> list[dict[str, Any]]:
+        """Find current durable unsubscribe plans without their stable task."""
+
+        missing: list[dict[str, Any]] = []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select c.*, p.action_plan_version, p.actions_json
+                from email_classifications as c
+                join email_action_plans as p
+                  on p.action_plan_id=c.current_action_plan_id
+                where c.status='processed'
+                  and c.classification_source='model'
+                  and instr(p.actions_json, '"unsubscribe"') > 0
+                order by c.id
+                """
+            ).fetchall()
+            for row in rows:
+                action_identity = email_action_identity(
+                    account_id=row["account_id"],
+                    stable_message_identity=row["stable_message_identity"],
+                    action_type=EmailAction.UNSUBSCRIBE,
+                    action_plan_version=int(row["action_plan_version"]),
+                )
+                task = db.execute(
+                    """
+                    select 1 from reply_tasks
+                    where channel='email' and trigger_message_id=?
+                    """,
+                    (action_identity,),
+                ).fetchone()
+                if task is None:
+                    missing.append(self._classification_row(row))
+        return missing
+
+    def repair_current_action_plan(
+        self, action_plan: EmailActionPlan
+    ) -> dict[str, Any]:
+        """Idempotently restore direct rows for one verified current plan."""
+
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from email_classifications where id=?",
+                (action_plan.classification_id,),
+            ).fetchone()
+            if row is None or row["current_action_plan_id"] != action_plan.action_plan_id:
+                raise EmailActionPlanConflict("model ActionPlan is not current")
+            self._persist_action_plan(db, action_plan, now=self._now())
+            updated = db.execute(
+                "select * from email_classifications where id=?",
+                (action_plan.classification_id,),
+            ).fetchone()
+        assert updated is not None
+        return self._classification_row(updated)
+
+    def claim_direct_action(
+        self, *, action_id: str, claimed_at: str
+    ) -> StoredEmailAction | None:
+        """Claim one exact current-plan action without selecting account work."""
+
+        claimed_at = _required_utc_timestamp(claimed_at, field="claimed_at")
+        if not isinstance(action_id, str) or not action_id.strip():
+            raise ValueError("action_id must be nonblank")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                """
+                select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
+                       c.thread_id, c.stable_message_identity,
+                       c.current_action_plan_id, p.actions_json,
+                       p.action_plan_version
+                from email_actions as a
+                join email_classifications as c on c.id=a.classification_id
+                join email_action_plans as p on p.action_plan_id=a.action_plan_id
+                where a.action_id=? and c.status='processed'
+                """,
+                (action_id,),
+            ).fetchone()
+            if row is None or row["action_plan_id"] != row["current_action_plan_id"]:
+                return None
+            siblings = db.execute(
+                "select action_type, status from email_actions where action_plan_id=?",
+                (row["action_plan_id"],),
+            ).fetchall()
+            if any(item["status"] == "processing" for item in siblings):
+                return None
+            retryable = row["status"] == "pending" or (
+                row["status"] == "failed"
+                and int(row["attempt_count"]) < DIRECT_ACTION_MAX_ATTEMPTS
+                and _retry_is_due(row["next_attempt_at"], claimed_at)
+            )
+            if (
+                not retryable
+                or not self._direct_action_predecessors_done(db, row)
+                or not self._direct_action_dependency_satisfied(db, row)
+            ):
+                return None
+            attempt_number = int(row["attempt_count"]) + 1
+            updated = db.execute(
+                """
+                update email_actions
+                set status='processing', started_at=?, finished_at='',
+                    next_attempt_at='', provider_operation='', provider_target='',
+                    provider_result_id='', error='', updated_at=?
+                where action_id=? and status=? and attempt_count=?
+                """,
+                (claimed_at, claimed_at, row["action_id"], row["status"], row["attempt_count"]),
+            ).rowcount
+            if updated != 1:
+                raise EmailActionAttemptConflict(
+                    f"direct action claim changed for {row['action_id']}"
+                )
+            return self._claimed_direct_action(
+                row, attempt_number=attempt_number, claimed_at=claimed_at
+            )
+
+    @staticmethod
+    def _direct_action_predecessors_done(
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> bool:
+        """Require semantic and explicit provider-safe dependencies to be done."""
+
+        actions = _json_load(
+            row["actions_json"], field="actions_json", expected_type=list
+        )
+        current_action = str(row["action_type"])
+        if current_action not in actions:
+            raise EmailPersistenceCorruption(
+                "direct action is absent from its ActionPlan"
+            )
+        siblings = db.execute(
+            "select action_type, status, parameters_json from email_actions "
+            "where action_plan_id=?",
+            (row["action_plan_id"],),
+        ).fetchall()
+        status_by_type = {
+            str(sibling["action_type"]): str(sibling["status"])
+            for sibling in siblings
+        }
+        try:
+            typed_actions = tuple(
+                EmailAction(action)
+                for action in actions
+                if action in _DIRECT_ACTION_VALUES
+            )
+            parameters_by_action = {
+                EmailAction(str(sibling["action_type"])): _json_load(
+                    sibling["parameters_json"],
+                    field="parameters_json",
+                    expected_type=dict,
+                )
+                for sibling in siblings
+            }
+            dependency_graph = effective_direct_action_dependencies(
+                typed_actions,
+                parameters_by_action,
+            )
+            dependencies = dependency_graph[EmailAction(current_action)]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EmailPersistenceCorruption(str(exc)) from exc
+
+        return all(
+            status_by_type.get(action_type.value) == "done"
+            for action_type in dependencies
+        )
 
     @staticmethod
     def _direct_action_dependency_satisfied(
@@ -11594,6 +12436,7 @@ class EmailStore:
             field="parameters_json",
             expected_type=dict,
         )
+        parameters.pop(ACTION_DEPENDENCY_PARAMETER, None)
         return StoredEmailAction(
             action_id=row["action_id"],
             action_plan_id=row["action_plan_id"],
@@ -12476,6 +13319,24 @@ class EmailStore:
     @staticmethod
     def _legacy_config_row(row: Mapping[str, Any]) -> dict[str, Any]:
         return legacy_config_row(row)
+
+
+def _optional_probability(value: object, *, field: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError(f"{field} must be numeric or None")
+    result = float(value)
+    if not 0.0 <= result <= 1.0:
+        raise ValueError(f"{field} must be between zero and one")
+    return result
+
+
+def _historical_outcome_row(row: sqlite3.Row) -> dict[str, Any]:
+    result = dict(row)
+    if result["important"] is not None:
+        result["important"] = bool(result["important"])
+    return result
 
 
 def _validate_config(

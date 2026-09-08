@@ -1,6 +1,8 @@
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sqlite3
+from threading import Event, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -17,8 +19,18 @@ from app.email_classifier_scan import (
     EmailScanConfig,
     scan_agent_classification_batch,
     should_enqueue_agent_classification,
+    route_online_classification,
     scan_imap_accounts,
     scan_readonly_batch,
+)
+from app.email_classifier_runtime import (
+    EmailClassifierRuntimeMode,
+    OnlineClassificationResult,
+    OnlineModelAcceptError,
+    OnlineModelAcceptOutcome,
+    OnlineModelAcceptStage,
+    OnlineModelInput,
+    RuntimeSnapshot,
 )
 from app.email_provider_folders import FolderRole
 from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
@@ -147,6 +159,109 @@ def _message() -> dict[str, object]:
     }
 
 
+def test_online_scan_route_is_agent_primary_before_promotion():
+    calls = []
+
+    result = route_online_classification(
+        mode=EmailClassifierRuntimeMode.AGENT_PRIMARY,
+        current_input=OnlineModelInput("current", "input-v3"),
+        model_predict=lambda _value: calls.append("model"),
+        enqueue_agent=lambda value: calls.append(("agent", value)) or "queued",
+        accept_model=lambda _value: calls.append("accepted"),
+    )
+
+    assert result.source == "agent"
+    assert calls == [("agent", OnlineModelInput("current", "input-v3"))]
+
+
+def test_online_scan_route_accepts_model_without_agent_and_falls_back_on_reject():
+    calls = []
+    current = OnlineModelInput("current", "input-v3")
+    accepted = route_online_classification(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        current_input=current,
+        model_predict=lambda _value: OnlineClassificationResult(
+            source="model", value="legal"
+        ),
+        enqueue_agent=lambda _value: calls.append("agent"),
+        accept_model=lambda value: (
+            calls.append(("accepted", value))
+            or OnlineModelAcceptOutcome.accepted({"id": 1})
+        ),
+    )
+    rejected = route_online_classification(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        current_input=current,
+        model_predict=lambda _value: OnlineClassificationResult(
+            source="model", value=None, fallback_reason="model_rejected"
+        ),
+        enqueue_agent=lambda _value: calls.append("agent") or "queued",
+        accept_model=lambda _value: calls.append("must-not-accept"),
+    )
+
+    assert accepted.source == "model"
+    assert rejected.source == "agent"
+    assert calls == [("accepted", "legal"), "agent"]
+
+
+def test_online_scan_route_falls_back_once_when_accept_fails_before_commit():
+    calls = []
+
+    result = route_online_classification(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        current_input=OnlineModelInput("current", "input-v3"),
+        model_predict=lambda _value: OnlineClassificationResult(
+            source="model", value="work"
+        ),
+        enqueue_agent=lambda _value: calls.append("agent") or "queued",
+        accept_model=lambda _value: (_ for _ in ()).throw(
+            OnlineModelAcceptError(
+                OnlineModelAcceptStage.BEFORE_DURABLE_COMMIT, "database unavailable"
+            )
+        ),
+    )
+
+    assert result.source == "agent"
+    assert calls == ["agent"]
+
+
+def test_online_scan_route_repairs_after_commit_without_agent():
+    calls = []
+
+    def accept(_value):
+        calls.append("accept")
+        if len(calls) == 1:
+            raise OnlineModelAcceptError(
+                OnlineModelAcceptStage.AFTER_DURABLE_COMMIT, "task queue interrupted"
+            )
+        return OnlineModelAcceptOutcome.already_committed({"id": 1})
+
+    result = route_online_classification(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        current_input=OnlineModelInput("current", "input-v3"),
+        model_predict=lambda _value: OnlineClassificationResult(
+            source="model", value="work"
+        ),
+        enqueue_agent=lambda _value: calls.append("agent"),
+        accept_model=accept,
+    )
+
+    assert result.source == "model"
+    assert result.accept_outcome.status == "already_committed"
+    assert calls == ["accept", "accept"]
+
+
+def test_online_scan_route_never_allows_shadow_history_into_scan_loop():
+    with pytest.raises(ValueError, match="scan loop"):
+        route_online_classification(
+            mode=EmailClassifierRuntimeMode.SHADOW_HISTORY,
+            current_input=OnlineModelInput("current", "input-v3"),
+            model_predict=lambda _value: None,
+            enqueue_agent=lambda _value: None,
+            accept_model=lambda _value: None,
+        )
+
+
 @pytest.mark.parametrize(
     ("unread", "role", "configured", "has_record", "expected"),
     (
@@ -216,6 +331,237 @@ def test_agent_scan_enqueues_once_without_invoking_local_model(tmp_path: Path) -
     assert first.persisted_count == 1
     assert len(calls) == 1
     assert calls[0][0]["date"] == "1999-01-01"
+
+
+def test_promoted_scan_persists_accepted_model_result_without_agent_task(tmp_path):
+    message = _message() | {"providerUnread": True, "date": "2026-09-07"}
+    source = FakeSource([message])
+    store = EmailStore(tmp_path / "model-primary-scan.sqlite3")
+    agent_calls = []
+    accepted = []
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: False),
+        produce=lambda *_args, **_kwargs: agent_calls.append("agent"),
+    )
+    runtime = SimpleNamespace(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        input_schema_version="input-v3",
+        model_predict=lambda _value: OnlineClassificationResult(
+            source="model", value="accepted-prediction"
+        ),
+    )
+
+    result = scan_agent_classification_batch(
+        source,
+        store,
+        producer,
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        online_runtime=runtime,
+        accept_model=lambda raw, prediction, _entries, model_text, _model_id: (
+            accepted.append((raw, prediction, model_text))
+            or OnlineModelAcceptOutcome.accepted({"id": 1})
+        ),
+    )
+
+    assert result.persisted_count == 1
+    assert agent_calls == []
+    assert accepted[0][0] is message
+    assert accepted[0][1] == "accepted-prediction"
+    assert accepted[0][2]
+
+
+def test_scan_binds_each_message_to_one_runtime_snapshot_during_refresh(tmp_path):
+    first_prediction = object()
+    second_prediction = object()
+    snapshots = [
+        RuntimeSnapshot.model_primary(
+            predictor=lambda _value: OnlineClassificationResult(
+                source="model", value=first_prediction
+            ),
+            model_id="model-first",
+            input_schema_version="input-v3",
+            compatibility={"embedding_revision": "r1"},
+        ),
+        RuntimeSnapshot.model_primary(
+            predictor=lambda _value: OnlineClassificationResult(
+                source="model", value=second_prediction
+            ),
+            model_id="model-second",
+            input_schema_version="input-v3",
+            compatibility={"embedding_revision": "r2"},
+        ),
+    ]
+    snapshot_calls = []
+
+    class RefreshingRuntime:
+        @property
+        def mode(self):
+            pytest.fail("scan split-read mutable runtime mode")
+
+        @property
+        def model_predict(self):
+            pytest.fail("scan split-read mutable predictor")
+
+        @property
+        def model_id(self):
+            pytest.fail("scan split-read mutable model id")
+
+        def snapshot(self):
+            snapshot = snapshots[len(snapshot_calls)]
+            snapshot_calls.append(snapshot)
+            return snapshot
+
+    messages = [
+        _message() | {"uid": 1, "messageId": "<snapshot-1@example.com>", "providerUnread": True},
+        _message() | {"uid": 2, "messageId": "<snapshot-2@example.com>", "providerUnread": True},
+    ]
+    accepted = []
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: False),
+        produce=lambda *_args, **_kwargs: pytest.fail("model should bypass Agent"),
+    )
+
+    scan_agent_classification_batch(
+        FakeSource(messages),
+        EmailStore(tmp_path / "snapshot-scan.sqlite3"),
+        producer,
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        online_runtime=RefreshingRuntime(),
+        accept_model=lambda _raw, prediction, _entries, _text, model_id: (
+            accepted.append((prediction, model_id))
+            or OnlineModelAcceptOutcome.accepted({"id": len(accepted)})
+        ),
+    )
+
+    assert accepted == [
+        (first_prediction, "model-first"),
+        (second_prediction, "model-second"),
+    ]
+    assert snapshot_calls == snapshots
+
+
+def test_concurrent_refresh_cannot_mix_predictor_and_model_id_for_one_message(
+    tmp_path,
+):
+    prediction_started = Event()
+    release_prediction = Event()
+    state_lock = Lock()
+    first_prediction = object()
+    second_prediction = object()
+
+    def first_predictor(_value):
+        prediction_started.set()
+        release_prediction.wait(1.0)
+        return OnlineClassificationResult(source="model", value=first_prediction)
+
+    snapshots = {
+        "current": RuntimeSnapshot.model_primary(
+            predictor=first_predictor,
+            model_id="model-first",
+            input_schema_version="input-v3",
+            compatibility={"embedding_revision": "r1"},
+        )
+    }
+
+    class Runtime:
+        def snapshot(self):
+            with state_lock:
+                return snapshots["current"]
+
+        def refresh(self):
+            with state_lock:
+                snapshots["current"] = RuntimeSnapshot.model_primary(
+                    predictor=lambda _value: OnlineClassificationResult(
+                        source="model", value=second_prediction
+                    ),
+                    model_id="model-second",
+                    input_schema_version="input-v3",
+                    compatibility={"embedding_revision": "r2"},
+                )
+
+    runtime = Runtime()
+    accepted = []
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: False),
+        produce=lambda *_args, **_kwargs: pytest.fail("model should bypass Agent"),
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        scanning = pool.submit(
+            scan_agent_classification_batch,
+            FakeSource([_message() | {"providerUnread": True}]),
+            EmailStore(tmp_path / "concurrent-snapshot.sqlite3"),
+            producer,
+            AgentScanContext(
+                allowed_category_keys=("work", "junk"),
+                category_descriptions={"work": {}, "junk": {}},
+                folder_targets={"work": "Work"},
+                config_version="config-v1",
+            ),
+            folder_role=FolderRole.INBOX,
+            configured_unclassified_source=False,
+            online_runtime=runtime,
+            accept_model=lambda _raw, prediction, _entries, _text, model_id: (
+                accepted.append((prediction, model_id))
+                or OnlineModelAcceptOutcome.accepted({"id": 1})
+            ),
+        )
+        assert prediction_started.wait(0.5)
+        runtime.refresh()
+        release_prediction.set()
+        scanning.result(timeout=1.0)
+
+    assert accepted == [(first_prediction, "model-first")]
+
+
+def test_promoted_scan_rejection_enqueues_agent_exactly_once(tmp_path):
+    message = _message() | {"providerUnread": True, "date": "2026-09-07"}
+    source = FakeSource([message])
+    store = EmailStore(tmp_path / "model-fallback-scan.sqlite3")
+    agent_calls = []
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: False),
+        produce=lambda value, **context: agent_calls.append((value, context)),
+    )
+    runtime = SimpleNamespace(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        input_schema_version="input-v3",
+        model_predict=lambda _value: OnlineClassificationResult(
+            source="model", value=None, fallback_reason="model_rejected"
+        ),
+    )
+
+    scan_agent_classification_batch(
+        source,
+        store,
+        producer,
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        online_runtime=runtime,
+        accept_model=lambda *_args: pytest.fail("rejected model must not persist"),
+    )
+
+    assert len(agent_calls) == 1
 
 
 def test_agent_scan_never_enqueues_read_mail() -> None:

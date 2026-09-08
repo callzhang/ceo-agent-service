@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
+from email import policy
+from email.parser import BytesParser
 from datetime import datetime, timezone
 from hashlib import sha256
 from importlib import import_module
@@ -42,10 +45,2049 @@ from app.email_unsubscribe_audit import EmailUnsubscribeAuditOperation
 from app.store import AgentRole, AutoReplyStore
 from app.email_store import EmailStore
 from app.email_provider_folders import FolderRole, ProviderFolder
+from app.email_classifier_runtime import (
+    EmailClassifierRuntimeMode,
+    OnlineClassificationResult,
+    OnlineModelAcceptError,
+    OnlineModelAcceptStage,
+    OnlineModelDurableConflict,
+    OnlineModelInput,
+)
+from app.email_classifier_scan import AgentScanContext, route_online_classification
+from app.email_embedding_classifier import EmbeddingModelPrediction
+from app.email_historical_classifier import (
+    HistoricalActionResult,
+    HistoricalClassificationCandidate,
+    HistoricalClassificationState,
+)
+from app.email_provider_actions import ProviderActionResult
+from app.email_store import StoredEmailLocator
 
 
 def _module():
     return import_module("app.email_worker")
+
+
+def _accepted_model_prediction(category="work", important=True):
+    return EmbeddingModelPrediction(
+        category=category,
+        category_probability=0.97,
+        category_probabilities={category: 0.97},
+        category_accepted=True,
+        important=important,
+        important_probability=0.96 if important else 0.04,
+        head_ms=1.0,
+    )
+
+
+def test_model_primary_result_uses_existing_history_and_action_queue(tmp_path):
+    store = EmailStore(tmp_path / "model-result.sqlite3")
+    produced = []
+    message = {
+        "messageId": "<model-result@example.com>",
+        "stableMessageIdentity": "stable-model-result",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 7,
+        "providerUnread": True,
+        "from": {"email": "sender@example.com"},
+        "subject": "Board contract",
+        "textBody": "Please review the agreement.",
+        "date": "2026-09-07T12:00:00+00:00",
+    }
+
+    persisted = _module().persist_model_primary_classification(
+        store,
+        SimpleNamespace(produce=lambda plan, raw: produced.append((plan, raw))),
+        message=message,
+        prediction=_accepted_model_prediction(),
+        context=AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        model_id="email-embedding-mlp-ready",
+        model_text="exact current model text",
+        unsubscribe_entries=(),
+    )
+
+    assert persisted.status == "accepted"
+    assert persisted.persisted["classification_source"] == "model"
+    assert persisted.persisted["model_id"] == "email-embedding-mlp-ready"
+    assert persisted.persisted["predicted_category"] == "work"
+    assert persisted.persisted["action_plan"]["actions"] == [
+        "move",
+        "flag_important",
+    ]
+    assert produced == []
+    direct = store.claim_next_direct_action(
+        claimed_at="2026-09-07T12:00:01+00:00",
+        account_ids=("account-1",),
+    )
+    assert direct is not None
+    assert direct.action_type is EmailAction.MOVE
+    with sqlite3.connect(tmp_path / "model-result.sqlite3") as db:
+        assert db.execute(
+            "select count(*) from email_agent_classification_tasks"
+        ).fetchone()[0] == 0
+
+
+def _route_production_model_accept(
+    store,
+    producer,
+    *,
+    message,
+    prediction,
+    context,
+    model_id="email-embedding-mlp-ready",
+    unsubscribe_entries=(),
+    agent_calls,
+):
+    return route_online_classification(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        current_input=OnlineModelInput("exact current text", "input-v3"),
+        model_predict=lambda _value: OnlineClassificationResult(
+            source="model", value=prediction
+        ),
+        enqueue_agent=lambda _value: agent_calls.append("agent") or "queued",
+        accept_model=lambda accepted: _module().persist_model_primary_classification(
+            store,
+            producer,
+            message=message,
+            prediction=accepted,
+            context=context,
+            model_id=model_id,
+            model_text="exact current text",
+            unsubscribe_entries=unsubscribe_entries,
+        ),
+    )
+
+
+def _model_accept_message():
+    return {
+        "messageId": "<accept-production@example.com>",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 17,
+        "providerUnread": True,
+        "from": {"email": "sender@example.com"},
+        "subject": "Production accept",
+        "textBody": "Review this business message.",
+        "date": "2026-09-07T12:00:00+00:00",
+    }
+
+
+def _assert_no_model_accept_rows(database):
+    with sqlite3.connect(database) as db:
+        assert db.execute("select count(*) from email_classifications").fetchone()[0] == 0
+        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 0
+        assert db.execute("select count(*) from email_actions").fetchone()[0] == 0
+
+
+def test_model_accept_missing_folder_target_falls_back_before_commit_once(tmp_path):
+    database = tmp_path / "accept-missing-folder.sqlite3"
+    store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    agent_calls = []
+
+    result = _route_production_model_accept(
+        store,
+        EmailActionTaskProducer(task_store, store),
+        message=_model_accept_message(),
+        prediction=_accepted_model_prediction(),
+        context=AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={},
+            config_version="config-v1",
+        ),
+        agent_calls=agent_calls,
+    )
+
+    assert result.source == "agent"
+    assert agent_calls == ["agent"]
+    _assert_no_model_accept_rows(database)
+    assert task_store.list_reply_tasks(channel="email") == []
+
+
+def test_model_accept_real_store_write_failure_falls_back_once_without_rows(
+    tmp_path, monkeypatch
+):
+    database = tmp_path / "accept-db-failure.sqlite3"
+    store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    agent_calls = []
+    monkeypatch.setattr(
+        store,
+        "persist_scan_result",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            sqlite3.OperationalError("injected write failure before commit")
+        ),
+    )
+
+    result = _route_production_model_accept(
+        store,
+        EmailActionTaskProducer(task_store, store),
+        message=_model_accept_message(),
+        prediction=_accepted_model_prediction(),
+        context=AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        agent_calls=agent_calls,
+    )
+
+    assert result.source == "agent"
+    assert agent_calls == ["agent"]
+    _assert_no_model_accept_rows(database)
+    assert task_store.list_reply_tasks(channel="email") == []
+
+
+def test_model_accept_partial_commit_repairs_action_and_task_without_agent(
+    tmp_path, monkeypatch
+):
+    database = tmp_path / "accept-partial.sqlite3"
+    store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    message = _model_accept_message() | {
+        "textBody": "Unsubscribe at https://news.example.test/unsubscribe",
+        "listUnsubscribe": "<https://news.example.test/unsubscribe>",
+        "listUnsubscribePost": "",
+    }
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe="<https://news.example.test/unsubscribe>",
+        list_unsubscribe_post="",
+        body_text=str(message["textBody"]),
+        body_html="",
+    )
+    context = AgentScanContext(
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": {}, "junk": {}},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+    )
+    real_persist = store.persist_scan_result
+    persist_calls = 0
+
+    def crash_after_plan(*args, **kwargs):
+        nonlocal persist_calls
+        persisted = real_persist(*args, **kwargs)
+        persist_calls += 1
+        if persist_calls == 1:
+            with sqlite3.connect(database) as db:
+                db.execute("delete from email_actions")
+            raise RuntimeError("crash after durable plan")
+        return persisted
+
+    monkeypatch.setattr(store, "persist_scan_result", crash_after_plan)
+    real_producer = EmailActionTaskProducer(task_store, store)
+    producer_calls = 0
+
+    class CrashAfterTaskProducer:
+        def produce(self, plan, raw):
+            nonlocal producer_calls
+            routes = real_producer.produce(plan, raw)
+            producer_calls += 1
+            if producer_calls == 1:
+                raise RuntimeError("crash after durable task")
+            return routes
+
+    agent_calls = []
+    with pytest.raises(OnlineModelAcceptError) as interrupted:
+        _route_production_model_accept(
+            store,
+            CrashAfterTaskProducer(),
+            message=message,
+            prediction=_accepted_model_prediction("junk", important=False),
+            context=context,
+            unsubscribe_entries=entries,
+            agent_calls=agent_calls,
+        )
+    assert interrupted.value.stage is OnlineModelAcceptStage.AFTER_DURABLE_COMMIT
+
+    result = _route_production_model_accept(
+        store,
+        CrashAfterTaskProducer(),
+        message=message,
+        prediction=_accepted_model_prediction("junk", important=False),
+        context=context,
+        unsubscribe_entries=entries,
+        agent_calls=agent_calls,
+    )
+
+    assert result.source == "model"
+    assert result.accept_outcome.status == "already_committed"
+    assert agent_calls == []
+    with sqlite3.connect(database) as db:
+        assert db.execute("select count(*) from email_classifications").fetchone()[0] == 1
+        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 1
+        assert db.execute("select count(*) from email_actions").fetchone()[0] == 1
+    assert len(task_store.list_reply_tasks(channel="email")) == 1
+
+
+def test_worker_startup_repairs_missing_unsubscribe_task_and_repeated_tick_is_idempotent(
+    tmp_path,
+):
+    module = _module()
+    database = tmp_path / "startup-model-task-repair.sqlite3"
+    email_store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    message = _model_accept_message() | {
+        "textBody": "Unsubscribe at https://news.example.test/unsubscribe",
+        "listUnsubscribe": "<https://news.example.test/unsubscribe>",
+        "listUnsubscribePost": "",
+    }
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe=str(message["listUnsubscribe"]),
+        list_unsubscribe_post="",
+        body_text=str(message["textBody"]),
+        body_html="",
+    )
+    module.persist_model_primary_classification(
+        email_store,
+        SimpleNamespace(produce=lambda *_args: None),
+        message=message,
+        prediction=_accepted_model_prediction("junk", important=False),
+        context=AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        model_id="email-embedding-mlp-ready",
+        model_text="exact current text",
+        unsubscribe_entries=entries,
+    )
+    health = []
+
+    def reconcile():
+        return module.reconcile_missing_model_action_tasks(
+            email_store,
+            EmailActionTaskProducer(task_store, email_store),
+            load_message=lambda _classification: message,
+            record_health=lambda scope, payload: health.append((scope, payload)),
+        )
+
+    dependencies = _dependencies([], model=object())
+    dependencies.email_store = email_store
+    dependencies.task_store = task_store
+    dependencies.reconcile_action_tasks_once = reconcile
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=lambda **_kwargs: SimpleNamespace(start=lambda: None),
+        wait=lambda: None,
+        output=StringIO(),
+    )
+    reconcile()
+
+    assert len(task_store.list_reply_tasks(channel="email")) == 1
+    assert email_store.claim_next_direct_action(
+        claimed_at="2026-09-08T12:00:00+00:00",
+        account_ids=("account-1",),
+    ) is None
+    assert health[-1] == (
+        "component:email-model-action-reconciliation",
+        {"status": "ready", "candidates": 0, "repaired": 0, "conflicts": 0},
+    )
+
+
+def test_model_action_reconciliation_skips_nonunsubscribe_and_reports_conflict(
+    tmp_path,
+):
+    module = _module()
+    database = tmp_path / "model-task-repair-conflict.sqlite3"
+    email_store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    message = _model_accept_message()
+    module.persist_model_primary_classification(
+        email_store,
+        SimpleNamespace(produce=lambda *_args: None),
+        message=message,
+        prediction=_accepted_model_prediction("work", important=False),
+        context=AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        model_id="email-embedding-mlp-ready",
+        model_text="exact current text",
+        unsubscribe_entries=(),
+    )
+    assert module.reconcile_missing_model_action_tasks(
+        email_store,
+        EmailActionTaskProducer(task_store, email_store),
+        load_message=lambda _classification: message,
+        record_health=lambda *_args: None,
+    )["candidates"] == 0
+    assert task_store.list_reply_tasks(channel="email") == []
+
+    junk_message = message | {
+        "messageId": "<repair-conflict@example.com>",
+        "uid": 18,
+        "textBody": "https://news.example.test/unsubscribe",
+        "listUnsubscribe": "<https://news.example.test/unsubscribe>",
+        "listUnsubscribePost": "",
+    }
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe=str(junk_message["listUnsubscribe"])
+    )
+    module.persist_model_primary_classification(
+        email_store,
+        SimpleNamespace(produce=lambda *_args: None),
+        message=junk_message,
+        prediction=_accepted_model_prediction("junk", important=False),
+        context=AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        model_id="email-embedding-mlp-ready",
+        model_text="exact current text",
+        unsubscribe_entries=entries,
+    )
+    health = []
+
+    result = module.reconcile_missing_model_action_tasks(
+        email_store,
+        EmailActionTaskProducer(task_store, email_store),
+        load_message=lambda _classification: None,
+        record_health=lambda scope, payload: health.append((scope, payload)),
+    )
+
+    assert result == {"candidates": 1, "repaired": 0, "conflicts": 1}
+    assert health == [
+        (
+            "component:email-model-action-reconciliation",
+            {
+                "status": "degraded",
+                "candidates": 1,
+                "repaired": 0,
+                "conflicts": 1,
+                "error_code": "model_action_reconciliation_conflict",
+            },
+        )
+    ]
+    assert task_store.list_reply_tasks(channel="email") == []
+
+
+def test_training_maintenance_ticks_runtime_and_reconciliation_once():
+    module = _module()
+    calls = []
+
+    result = module.run_model_training_maintenance(
+        SimpleNamespace(tick=lambda: calls.append("runtime") or "training-result"),
+        reconcile_action_tasks_once=lambda: calls.append("reconcile"),
+    )
+
+    assert result == "training-result"
+    assert calls == ["runtime", "reconcile"]
+
+
+def test_training_maintenance_repairs_tasks_even_when_runtime_tick_fails():
+    module = _module()
+    calls = []
+
+    with pytest.raises(RuntimeError, match="training failed"):
+        module.run_model_training_maintenance(
+            SimpleNamespace(
+                tick=lambda: (
+                    calls.append("runtime")
+                    or (_ for _ in ()).throw(RuntimeError("training failed"))
+                )
+            ),
+            reconcile_action_tasks_once=lambda: calls.append("reconcile"),
+        )
+
+    assert calls == ["runtime", "reconcile"]
+
+
+@pytest.mark.parametrize("conflict", ("model_id", "category", "important", "plan_version"))
+def test_model_accept_stable_readback_conflict_fails_closed_without_agent(
+    tmp_path, conflict
+):
+    database = tmp_path / f"accept-conflict-{conflict}.sqlite3"
+    store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    message = _model_accept_message()
+    context = AgentScanContext(
+        allowed_category_keys=("work", "legal", "junk"),
+        category_descriptions={"work": {}, "legal": {}, "junk": {}},
+        folder_targets={"work": "Work", "legal": "Legal"},
+        config_version="config-v1",
+    )
+    _module().persist_model_primary_classification(
+        store,
+        EmailActionTaskProducer(task_store, store),
+        message=message,
+        prediction=_accepted_model_prediction(),
+        context=context,
+        model_id="email-embedding-mlp-ready",
+        model_text="exact current text",
+        unsubscribe_entries=(),
+    )
+    if conflict == "plan_version":
+        with sqlite3.connect(database) as db:
+            db.execute(
+                "update email_action_plans set action_plan_version=2"
+            )
+    prediction = _accepted_model_prediction(
+        "legal" if conflict == "category" else "work",
+        important=conflict != "important",
+    )
+    agent_calls = []
+
+    with pytest.raises(OnlineModelDurableConflict):
+        _route_production_model_accept(
+            store,
+            EmailActionTaskProducer(task_store, store),
+            message=message,
+            prediction=prediction,
+            context=context,
+            model_id=(
+                "email-embedding-mlp-other"
+                if conflict == "model_id"
+                else "email-embedding-mlp-ready"
+            ),
+            agent_calls=agent_calls,
+        )
+
+    assert agent_calls == []
+    with sqlite3.connect(database) as db:
+        assert db.execute("select count(*) from email_classifications").fetchone()[0] == 1
+        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 1
+        assert db.execute("select count(*) from email_actions").fetchone()[0] == 2
+    assert task_store.list_reply_tasks(channel="email") == []
+
+
+def test_worker_bootstrap_uses_agent_primary_without_online_activation(tmp_path):
+    settings = SimpleNamespace(
+        db_path=tmp_path / "worker-runtime.sqlite3",
+        workspace=tmp_path,
+        dry_run=False,
+    )
+
+    runtime = _module().build_email_worker_dependencies(settings).load_active_model()
+
+    assert runtime.mode is EmailClassifierRuntimeMode.AGENT_PRIMARY
+    assert runtime.model_predict is None
+
+
+def test_production_scan_account_model_primary_closure_persists_without_agent(
+    tmp_path, monkeypatch
+):
+    module = _module()
+    message = {
+        "messageId": "<production-model@example.com>",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 7,
+        "providerUnread": True,
+        "from": {"email": "sender@example.com"},
+        "subject": "Production model route",
+        "textBody": "Please review the work item.",
+        "date": "2026-09-08T12:00:00+00:00",
+    }
+
+    class Source:
+        account_id = "account-1"
+
+        def list_folders(self):
+            return (ProviderFolder("inbox-id", "INBOX", FolderRole.INBOX),)
+
+        def fetch_uid_batch(self, mailbox, **kwargs):
+            assert mailbox == "INBOX"
+            assert kwargs["unread_only"] is True
+            return import_module("app.email_imap_readonly").ImapUidBatch(
+                account_id=self.account_id,
+                folder=mailbox,
+                uidvalidity=42,
+                previous_uidvalidity=kwargs["cursor_uidvalidity"],
+                messages=(message,),
+            )
+
+        def logout(self):
+            return None
+
+    monkeypatch.setattr(
+        module, "_build_email_source_factory", lambda _settings: lambda _account: Source()
+    )
+    monkeypatch.setattr(module, "_build_agent_orchestrator", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **_kwargs: object(),
+    )
+    settings = SimpleNamespace(
+        db_path=tmp_path / "production-model-scan.sqlite3",
+        workspace=tmp_path,
+        dry_run=False,
+    )
+    bootstrap = module.build_email_worker_dependencies(settings)
+    store = bootstrap.email_store
+    monkeypatch.setattr(
+        store,
+        "list_category_configs",
+        lambda: [
+            {
+                "category_key": "work",
+                "enabled": True,
+                "core_description": "Business work.",
+                "include": ["delivery"],
+                "exclude": ["promotion"],
+                "config_version": "config-v1",
+            },
+            {
+                "category_key": "junk",
+                "enabled": True,
+                "core_description": "Unwanted mail.",
+                "include": ["promotion"],
+                "exclude": ["delivery"],
+                "config_version": "config-v1",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        store,
+        "list_account_folder_bindings",
+        lambda: [
+            {
+                "account_id": "account-1",
+                "category_key": "work",
+                "provider_folder_id": "work-id",
+                "provider_folder_name": "Work",
+                "binding_status": "active",
+            }
+        ],
+    )
+    runtime = SimpleNamespace(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        model_predict=lambda _input: import_module(
+            "app.email_classifier_runtime"
+        ).OnlineClassificationResult(source="model", value=_accepted_model_prediction()),
+        input_schema_version="input-v3",
+        model_id="email-embedding-mlp-ready",
+    )
+    dependencies = bootstrap.build_dependencies(
+        ({"account_id": "account-1", "enabled": True, "scan_folders": ["INBOX"]},),
+        runtime,
+    )
+
+    [result] = dependencies.scan_account(
+        {"account_id": "account-1", "enabled": True, "scan_folders": ["INBOX"]},
+        runtime,
+    )
+
+    assert result.persisted_count == 1
+    persisted = store.get_classification_by_stable_identity(
+        "account-1:message-id:<production-model@example.com>"
+    )
+    assert persisted is not None
+    assert persisted["classification_source"] == "model"
+    assert persisted["model_id"] == "email-embedding-mlp-ready"
+    with sqlite3.connect(settings.db_path) as db:
+        assert db.execute(
+            "select count(*) from email_agent_classification_tasks"
+        ).fetchone()[0] == 0
+
+
+def test_historical_actions_use_changed_locator_preserve_read_and_persist_attempts(
+    tmp_path,
+):
+    store = EmailStore(tmp_path / "historical-actions.sqlite3")
+    calls = []
+    provider_state = {"is_read": True, "folder": "INBOX"}
+    message = {
+        "messageId": "<historical@example.com>",
+        "stableMessageIdentity": "stable-historical",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 7,
+        "providerUnread": False,
+        "from": {"email": "sender@example.com"},
+        "subject": "Historical work",
+        "textBody": "A completed business thread.",
+        "date": "2026-09-01T12:00:00+00:00",
+    }
+    context = AgentScanContext(
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": {}, "junk": {}},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+    )
+    old_message = {
+        **message,
+        "messageId": "<old-pending@example.com>",
+        "stableMessageIdentity": "stable-old-pending",
+        "uid": 6,
+    }
+    _module().persist_model_primary_classification(
+        store,
+        SimpleNamespace(produce=lambda *_args: None),
+        message=old_message,
+        prediction=_accepted_model_prediction(),
+        context=context,
+        model_id="email-embedding-mlp-ready",
+        model_text="old pending text",
+        unsubscribe_entries=(),
+    )
+
+    class Executor:
+        def execute(self, action):
+            calls.append(action)
+            updated = None
+            if action.action_type is EmailAction.MOVE:
+                provider_state.update(is_read=False, folder="Work")
+                updated = StoredEmailLocator(
+                    account_id=action.account_id,
+                    folder="Work",
+                    uidvalidity=84,
+                    uid=19,
+                    rfc_message_id=action.locator.rfc_message_id,
+                    thread_id=action.locator.thread_id,
+                    stable_message_identity=action.locator.stable_message_identity,
+                )
+            elif action.action_type is EmailAction.MARK_READ:
+                provider_state["is_read"] = True
+            return ProviderActionResult(
+                status="done",
+                provider_operation=action.action_type.value,
+                provider_target=action.locator.stable_message_identity,
+                provider_result_id=f"receipt-{len(calls)}",
+                updated_locator=updated,
+            )
+
+    outcome = _module().execute_historical_model_actions(
+        store,
+        lambda _account_id: Executor(),
+        SimpleNamespace(produce=lambda *_args: pytest.fail("business move is direct")),
+        message=message,
+        prediction=_accepted_model_prediction(),
+        context=context,
+        model_id="email-embedding-mlp-ready",
+        model_text="exact historical text",
+        unsubscribe_entries=(),
+        read_after=lambda: SimpleNamespace(
+            is_read=provider_state["is_read"],
+            provider_folder_name=provider_state["folder"],
+        ),
+    )
+
+    assert outcome == HistoricalActionResult("moved_and_flagged", is_read=True)
+    assert [item.action_type for item in calls] == [
+        EmailAction.MOVE,
+        EmailAction.FLAG_IMPORTANT,
+        EmailAction.MARK_READ,
+    ]
+    assert calls[1].locator.folder == "Work"
+    assert calls[1].locator.uidvalidity == 84
+    assert calls[1].locator.uid == 19
+    assert calls[2].locator.folder == "Work"
+    assert provider_state == {"is_read": True, "folder": "Work"}
+    assert all(
+        item.locator.rfc_message_id == "<historical@example.com>" for item in calls
+    )
+    repaired = _module().reconcile_historical_operations(
+        store,
+        lambda _account_id: pytest.fail("completed effects must not repeat"),
+        read_after=lambda _operation: SimpleNamespace(
+            is_read=True, provider_folder_name="Work"
+        ),
+    )
+    assert repaired == {"repaired": 1, "deferred": 0}
+    assert store.list_processing_historical_operations() == []
+    assert len(store.list_historical_classification_history()) == 1
+    assert _module().reconcile_historical_operations(
+        store,
+        lambda _account_id: pytest.fail("terminal operation must not repeat"),
+        read_after=lambda _operation: SimpleNamespace(
+            is_read=True, provider_folder_name="Work"
+        ),
+    ) == {"repaired": 0, "deferred": 0}
+    old_pending = store.claim_next_direct_action(
+        claimed_at="2026-09-07T12:00:01+00:00", account_ids=("account-1",)
+    )
+    assert old_pending is not None
+    assert old_pending.locator.rfc_message_id == "<old-pending@example.com>"
+
+
+def test_global_workers_claim_historical_plan_in_order_and_terminalize_history(
+    tmp_path,
+):
+    store = EmailStore(tmp_path / "historical-global-sequence.sqlite3")
+    message = {
+        "messageId": "<historical-global@example.com>",
+        "stableMessageIdentity": "stable-historical-global",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 27,
+        "providerUnread": False,
+        "from": {"email": "sender@example.com"},
+        "subject": "Historical global sequencing",
+        "textBody": "A completed business thread.",
+        "date": "2026-09-01T12:00:00+00:00",
+    }
+    context = AgentScanContext(
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": {}, "junk": {}},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+    )
+    persisted = _module().persist_model_primary_classification(
+        store,
+        SimpleNamespace(produce=lambda *_args: None),
+        message=message,
+        prediction=_accepted_model_prediction(),
+        context=context,
+        model_id="model-global-sequence",
+        model_text="historical global sequence",
+        unsubscribe_entries=(),
+        preserve_read=True,
+    )
+    plan = persisted.persisted["action_plan"]
+    action_ids = store.direct_action_ids_for_plan(plan["action_plan_id"])
+    store.begin_historical_operation(
+        account_id="account-1",
+        stable_message_identity=persisted.persisted["stable_message_identity"],
+        model_id="model-global-sequence",
+        classification_id=persisted.persisted["id"],
+        action_plan_id=plan["action_plan_id"],
+        action_ids=action_ids,
+        predicted_category="work",
+        threshold=0.8,
+        probability=0.97,
+        important=True,
+    )
+    provider_state = {"folder": "INBOX", "is_read": True}
+    effects = []
+    effects_lock = __import__("threading").Lock()
+
+    class Executor:
+        def execute(self, action):
+            with effects_lock:
+                effects.append(action.action_type)
+                updated = None
+                if action.action_type is EmailAction.MOVE:
+                    assert provider_state == {"folder": "INBOX", "is_read": True}
+                    provider_state.update(folder="Work", is_read=False)
+                    updated = StoredEmailLocator(
+                        account_id=action.account_id,
+                        folder="Work",
+                        uidvalidity=84,
+                        uid=127,
+                        rfc_message_id=action.locator.rfc_message_id,
+                        thread_id=action.locator.thread_id,
+                        stable_message_identity=action.locator.stable_message_identity,
+                    )
+                elif action.action_type is EmailAction.FLAG_IMPORTANT:
+                    assert provider_state["folder"] == "Work"
+                    assert action.locator.folder == "Work"
+                else:
+                    assert action.action_type is EmailAction.MARK_READ
+                    assert effects[-2] is EmailAction.FLAG_IMPORTANT
+                    assert action.locator.folder == "Work"
+                    provider_state["is_read"] = True
+                return ProviderActionResult(
+                    status="done",
+                    provider_operation=action.action_type.value,
+                    provider_target=action.locator.stable_message_identity,
+                    provider_result_id=f"receipt-{len(effects)}",
+                    updated_locator=updated,
+                )
+
+    def drain_global_worker() -> None:
+        for _ in range(10):
+            result = _module()._run_next_direct_action(
+                store,
+                lambda _account_id: Executor(),
+                available_account_ids=("account-1",),
+            )
+            if result is None:
+                time.sleep(0.002)
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        tuple(pool.map(lambda _index: drain_global_worker(), range(3)))
+
+    assert effects == [
+        EmailAction.MOVE,
+        EmailAction.FLAG_IMPORTANT,
+        EmailAction.MARK_READ,
+    ]
+    assert provider_state == {"folder": "Work", "is_read": True}
+    assert _module().reconcile_historical_operations(
+        store,
+        lambda _account_id: pytest.fail("global effects must not repeat"),
+        read_after=lambda _operation: SimpleNamespace(
+            is_read=True, provider_folder_name="Work"
+        ),
+    ) == {"repaired": 1, "deferred": 0}
+    [history] = store.list_historical_classification_history()
+    assert history["action_outcome"] == "moved_and_flagged"
+
+
+@pytest.mark.parametrize("precompleted_count", (3, 2))
+def test_historical_outcome_uses_all_durable_receipts_when_global_worker_won_race(
+    tmp_path,
+    precompleted_count,
+):
+    store = EmailStore(tmp_path / f"historical-receipts-{precompleted_count}.sqlite3")
+    message = {
+        "messageId": f"<historical-receipts-{precompleted_count}@example.com>",
+        "stableMessageIdentity": f"stable-historical-receipts-{precompleted_count}",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 30 + precompleted_count,
+        "providerUnread": False,
+        "from": {"email": "sender@example.com"},
+        "subject": "Historical receipt race",
+        "textBody": "A completed business thread.",
+        "date": "2026-09-01T12:00:00+00:00",
+    }
+    context = AgentScanContext(
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": {}, "junk": {}},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+    )
+    provider_state = {"folder": "INBOX", "is_read": True}
+    effects = []
+
+    class Executor:
+        def execute(self, action):
+            effects.append(action.action_type)
+            updated = None
+            if action.action_type is EmailAction.MOVE:
+                provider_state.update(folder="Work", is_read=False)
+                updated = StoredEmailLocator(
+                    account_id=action.account_id,
+                    folder="Work",
+                    uidvalidity=84,
+                    uid=130 + precompleted_count,
+                    rfc_message_id=action.locator.rfc_message_id,
+                    thread_id=action.locator.thread_id,
+                    stable_message_identity=action.locator.stable_message_identity,
+                )
+            elif action.action_type is EmailAction.MARK_READ:
+                provider_state["is_read"] = True
+            return ProviderActionResult(
+                status="done",
+                provider_operation=action.action_type.value,
+                provider_target=action.locator.stable_message_identity,
+                provider_result_id=f"receipt-{len(effects)}",
+                updated_locator=updated,
+            )
+
+    _module().persist_model_primary_classification(
+        store,
+        SimpleNamespace(produce=lambda *_args: None),
+        message=message,
+        prediction=_accepted_model_prediction(),
+        context=context,
+        model_id="model-receipt-race",
+        model_text="historical receipt race",
+        unsubscribe_entries=(),
+        preserve_read=True,
+    )
+    for _ in range(precompleted_count):
+        result = _module()._run_next_direct_action(
+            store,
+            lambda _account_id: Executor(),
+            available_account_ids=("account-1",),
+        )
+        assert result is not None and result.status == "done"
+
+    outcome = _module().execute_historical_model_actions(
+        store,
+        lambda _account_id: Executor(),
+        SimpleNamespace(produce=lambda *_args: None),
+        message=message,
+        prediction=_accepted_model_prediction(),
+        context=context,
+        model_id="model-receipt-race",
+        model_text="historical receipt race",
+        unsubscribe_entries=(),
+        read_after=lambda: SimpleNamespace(
+            is_read=provider_state["is_read"],
+            provider_folder_name=provider_state["folder"],
+            folder_role=FolderRole.TRASH,
+        ),
+        threshold=0.8,
+    )
+
+    assert outcome == HistoricalActionResult("moved_and_flagged", is_read=True)
+    assert effects == [
+        EmailAction.MOVE,
+        EmailAction.FLAG_IMPORTANT,
+        EmailAction.MARK_READ,
+    ]
+    assert _module().reconcile_historical_operations(
+        store,
+        lambda _account_id: pytest.fail("durable effects must not repeat"),
+        read_after=lambda _operation: SimpleNamespace(
+            is_read=True, provider_folder_name="Work"
+        ),
+    ) == {"repaired": 1, "deferred": 0}
+    assert len(store.list_historical_classification_history()) == 1
+    assert _module().reconcile_historical_operations(
+        store,
+        lambda _account_id: pytest.fail("terminal history must not repeat"),
+        read_after=lambda _operation: SimpleNamespace(
+            is_read=True, provider_folder_name="Work"
+        ),
+    ) == {"repaired": 0, "deferred": 0}
+
+
+def test_failed_historical_mark_read_stays_processing_and_reconcile_finishes_once(
+    tmp_path,
+):
+    store = EmailStore(tmp_path / "historical-mark-read-retry.sqlite3")
+    message = {
+        "messageId": "<historical-retry@example.com>",
+        "stableMessageIdentity": "stable-historical-retry",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 8,
+        "providerUnread": False,
+        "from": {"email": "sender@example.com"},
+        "subject": "Historical retry",
+        "textBody": "A completed business thread.",
+        "date": "2026-09-01T12:00:00+00:00",
+    }
+    context = AgentScanContext(
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": {}, "junk": {}},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+    )
+    provider_state = {"is_read": True, "folder": "INBOX"}
+    attempts = []
+    successful_effects = []
+
+    class Executor:
+        def execute(self, action):
+            attempts.append(action.action_type)
+            updated = None
+            if action.action_type is EmailAction.MOVE:
+                provider_state.update(is_read=False, folder="Work")
+                updated = StoredEmailLocator(
+                    account_id=action.account_id,
+                    folder="Work",
+                    uidvalidity=84,
+                    uid=20,
+                    rfc_message_id=action.locator.rfc_message_id,
+                    thread_id=action.locator.thread_id,
+                    stable_message_identity=action.locator.stable_message_identity,
+                )
+            if action.action_type is EmailAction.MARK_READ and attempts.count(
+                EmailAction.MARK_READ
+            ) == 1:
+                return ProviderActionResult(
+                    status="failed",
+                    provider_operation="mark_read",
+                    provider_target=action.locator.stable_message_identity,
+                    provider_result_id="",
+                    error="temporary_mark_read_failure",
+                )
+            if action.action_type is EmailAction.MARK_READ:
+                provider_state["is_read"] = True
+            successful_effects.append(action.action_type)
+            return ProviderActionResult(
+                status="done",
+                provider_operation=action.action_type.value,
+                provider_target=action.locator.stable_message_identity,
+                provider_result_id=f"receipt-{len(successful_effects)}",
+                updated_locator=updated,
+            )
+
+    outcome = _module().execute_historical_model_actions(
+        store,
+        lambda _account_id: Executor(),
+        SimpleNamespace(produce=lambda *_args: None),
+        message=message,
+        prediction=_accepted_model_prediction(),
+        context=context,
+        model_id="email-embedding-mlp-ready",
+        model_text="exact historical retry text",
+        unsubscribe_entries=(),
+        read_after=lambda: SimpleNamespace(
+            is_read=provider_state["is_read"],
+            provider_folder_name=provider_state["folder"],
+        ),
+        threshold=0.8,
+    )
+
+    assert outcome == HistoricalActionResult("provider_action_failed", is_read=False)
+    assert len(store.list_processing_historical_operations()) == 1
+    assert store.list_historical_classification_history() == []
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update email_actions set next_attempt_at='2020-01-01T00:00:00+00:00' "
+            "where action_type='mark_read'"
+        )
+    assert _module().reconcile_historical_operations(
+        store,
+        lambda _account_id: Executor(),
+        read_after=lambda _operation: SimpleNamespace(
+            is_read=provider_state["is_read"],
+            provider_folder_name=provider_state["folder"],
+        ),
+    ) == {"repaired": 1, "deferred": 0}
+    assert successful_effects == [
+        EmailAction.MOVE,
+        EmailAction.FLAG_IMPORTANT,
+        EmailAction.MARK_READ,
+    ]
+    assert attempts == [
+        EmailAction.MOVE,
+        EmailAction.FLAG_IMPORTANT,
+        EmailAction.MARK_READ,
+        EmailAction.MARK_READ,
+    ]
+    assert len(store.list_historical_classification_history()) == 1
+    assert store.list_processing_historical_operations() == []
+
+
+@pytest.mark.parametrize("crash_after_receipts", (1, 2, 3))
+def test_worker_startup_recovers_exact_historical_actions_after_receipt_crash(
+    tmp_path, monkeypatch, crash_after_receipts
+):
+    module = _module()
+    database = tmp_path / f"historical-crash-{crash_after_receipts}.sqlite3"
+    store = EmailStore(database)
+    message = {
+        "messageId": "<historical-crash@example.com>",
+        "stableMessageIdentity": "stable-historical-crash",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 9,
+        "providerUnread": False,
+        "from": {"email": "sender@example.com"},
+        "subject": "Historical crash recovery",
+        "textBody": "A completed business thread.",
+        "date": "2026-09-01T12:00:00+00:00",
+    }
+    context = AgentScanContext(
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": {}, "junk": {}},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+    )
+    provider_state = {"is_read": True, "folder": "INBOX"}
+    successful_effects = []
+
+    class ProcessCrash(BaseException):
+        pass
+
+    class Executor:
+        def execute(self, action):
+            updated = None
+            if action.action_type is EmailAction.MOVE:
+                provider_state.update(is_read=False, folder="Work")
+                updated = StoredEmailLocator(
+                    account_id=action.account_id,
+                    folder="Work",
+                    uidvalidity=84,
+                    uid=21,
+                    rfc_message_id=action.locator.rfc_message_id,
+                    thread_id=action.locator.thread_id,
+                    stable_message_identity=action.locator.stable_message_identity,
+                )
+            elif action.action_type is EmailAction.MARK_READ:
+                provider_state["is_read"] = True
+            successful_effects.append(action.action_type)
+            return ProviderActionResult(
+                status="done",
+                provider_operation=action.action_type.value,
+                provider_target=action.locator.stable_message_identity,
+                provider_result_id=f"receipt-{len(successful_effects)}",
+                updated_locator=updated,
+            )
+
+    original_run = module._run_next_direct_action
+    durable_receipts = 0
+
+    def crash_after_receipt(*args, **kwargs):
+        nonlocal durable_receipts
+        result = original_run(*args, **kwargs)
+        if result is not None and result.status == "done":
+            durable_receipts += 1
+            if durable_receipts == crash_after_receipts:
+                raise ProcessCrash()
+        return result
+
+    monkeypatch.setattr(module, "_run_next_direct_action", crash_after_receipt)
+    with pytest.raises(ProcessCrash):
+        module.execute_historical_model_actions(
+            store,
+            lambda _account_id: Executor(),
+            SimpleNamespace(produce=lambda *_args: None),
+            message=message,
+            prediction=_accepted_model_prediction(),
+            context=context,
+            model_id="email-embedding-mlp-ready",
+            model_text="exact historical crash text",
+            unsubscribe_entries=(),
+            read_after=lambda: SimpleNamespace(
+                is_read=provider_state["is_read"],
+                provider_folder_name=provider_state["folder"],
+            ),
+            threshold=0.8,
+        )
+    assert len(store.list_processing_historical_operations()) == 1
+    assert store.list_historical_classification_history() == []
+
+    monkeypatch.setattr(module, "_run_next_direct_action", original_run)
+    reopened = EmailStore(database)
+    dependencies = _dependencies(
+        [], model=SimpleNamespace(close=lambda: None)
+    )
+    dependencies.email_store = reopened
+    dependencies.reconcile_historical_operations_once = lambda: (
+        module.reconcile_historical_operations(
+            reopened,
+            lambda _account_id: Executor(),
+            read_after=lambda _operation: SimpleNamespace(
+                is_read=provider_state["is_read"],
+                provider_folder_name=provider_state["folder"],
+            ),
+        )
+    )
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=lambda **_kwargs: SimpleNamespace(start=lambda: None),
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    assert successful_effects == [
+        EmailAction.MOVE,
+        EmailAction.FLAG_IMPORTANT,
+        EmailAction.MARK_READ,
+    ]
+    assert reopened.list_processing_historical_operations() == []
+    assert len(reopened.list_historical_classification_history()) == 1
+
+
+def test_worker_startup_fails_closed_for_provider_effect_without_durable_receipt(
+    tmp_path,
+):
+    module = _module()
+    store = EmailStore(tmp_path / "historical-uncertain-effect.sqlite3")
+    message = {
+        "messageId": "<historical-uncertain@example.com>",
+        "stableMessageIdentity": "stable-historical-uncertain",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 10,
+        "providerUnread": False,
+        "from": {"email": "sender@example.com"},
+        "subject": "Historical uncertain effect",
+        "textBody": "A completed business thread.",
+        "date": "2026-09-01T12:00:00+00:00",
+    }
+    provider_state = {"is_read": True, "folder": "INBOX"}
+    effects = []
+
+    class ProcessCrash(BaseException):
+        pass
+
+    class Executor:
+        def execute(self, action):
+            if action.action_type is EmailAction.MOVE:
+                provider_state.update(is_read=False, folder="Work")
+                effects.append(EmailAction.MOVE)
+                return ProviderActionResult(
+                    status="done",
+                    provider_operation="move",
+                    provider_target=action.locator.stable_message_identity,
+                    provider_result_id="receipt-move",
+                    updated_locator=StoredEmailLocator(
+                        account_id=action.account_id,
+                        folder="Work",
+                        uidvalidity=84,
+                        uid=22,
+                        rfc_message_id=action.locator.rfc_message_id,
+                        thread_id=action.locator.thread_id,
+                        stable_message_identity=action.locator.stable_message_identity,
+                    ),
+                )
+            if action.action_type is EmailAction.FLAG_IMPORTANT:
+                effects.append(EmailAction.FLAG_IMPORTANT)
+                return ProviderActionResult(
+                    status="done",
+                    provider_operation="flag_important",
+                    provider_target=action.locator.stable_message_identity,
+                    provider_result_id="receipt-flag",
+                )
+            effects.append(EmailAction.MARK_READ)
+            provider_state["is_read"] = True
+            raise ProcessCrash()
+
+    with pytest.raises(ProcessCrash):
+        module.execute_historical_model_actions(
+            store,
+            lambda _account_id: Executor(),
+            SimpleNamespace(produce=lambda *_args: None),
+            message=message,
+            prediction=_accepted_model_prediction(),
+            context=AgentScanContext(
+                allowed_category_keys=("work", "junk"),
+                category_descriptions={"work": {}, "junk": {}},
+                folder_targets={"work": "Work"},
+                config_version="config-v1",
+            ),
+            model_id="email-embedding-mlp-ready",
+            model_text="exact historical uncertain text",
+            unsubscribe_entries=(),
+            read_after=lambda: SimpleNamespace(
+                is_read=provider_state["is_read"],
+                provider_folder_name=provider_state["folder"],
+            ),
+            threshold=0.8,
+        )
+    reopened = EmailStore(store.path)
+    reconciliation = []
+    dependencies = _dependencies([], model=SimpleNamespace(close=lambda: None))
+    dependencies.email_store = reopened
+    dependencies.reconcile_historical_operations_once = lambda: reconciliation.append(
+        module.reconcile_historical_operations(
+            reopened,
+            lambda _account_id: Executor(),
+            read_after=lambda _operation: SimpleNamespace(
+                is_read=provider_state["is_read"],
+                provider_folder_name=provider_state["folder"],
+            ),
+        )
+    )
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=lambda **_kwargs: SimpleNamespace(start=lambda: None),
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    assert reconciliation == [{"repaired": 0, "deferred": 1}]
+    assert effects == [
+        EmailAction.MOVE,
+        EmailAction.FLAG_IMPORTANT,
+        EmailAction.MARK_READ,
+    ]
+    assert len(reopened.list_processing_historical_operations()) == 1
+    assert reopened.list_historical_classification_history() == []
+
+
+def test_manual_historical_batch_persists_prediction_threshold_and_outcome(tmp_path):
+    import numpy as np
+
+    from app.email_embedding_cache import EmbeddingCacheKey
+
+    store = EmailStore(tmp_path / "historical-history.sqlite3")
+    candidate = HistoricalClassificationCandidate(
+        stable_message_identity="stable-history",
+        normalized_text="exact historical text",
+    )
+    key = EmbeddingCacheKey.for_text(
+        normalized_text=candidate.normalized_text,
+        input_schema_version="input-v3",
+        embedding_model_id="jina",
+        embedding_revision="r17",
+    )
+    model = SimpleNamespace(
+        input_schema_version="input-v3",
+        embedding_model_id="jina",
+        embedding_revision="r17",
+        category_thresholds={"work": 0.8},
+        predict=lambda _vector: _accepted_model_prediction(important=False),
+    )
+    state = HistoricalClassificationState(
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        is_read=True,
+        is_unclassified=True,
+    )
+
+    outcomes = _module().run_manual_historical_batch(
+        email_store=store,
+        model_id="email-embedding-mlp-ready",
+        model=model,
+        cache=SimpleNamespace(
+            get=lambda current_key: np.array([1.0], dtype=np.float32)
+            if current_key == key
+            else None
+        ),
+        historically_eligible={"work": True},
+        candidates=(candidate,),
+        read_state=lambda _candidate: state,
+        execute=lambda *_args: HistoricalActionResult("moved", is_read=True),
+    )
+
+    history = store.list_historical_classification_history()
+    assert len(outcomes) == len(history) == 1
+    assert history[0]["model_id"] == "email-embedding-mlp-ready"
+    assert history[0]["predicted_category"] == "work"
+    assert history[0]["threshold"] == 0.8
+    assert history[0]["action_outcome"] == "moved"
+
+
+def test_historical_job_is_not_an_automatic_worker_component():
+    dependencies = _dependencies([], accounts=({"account_id": "account-1"},))
+    dependencies.run_historical_once = lambda: pytest.fail(
+        "manual history must not enter scan loop"
+    )
+
+    components = _module().email_worker_components(
+        dependencies,
+        accounts=({"account_id": "account-1"},),
+        active_model=object(),
+    )
+
+    assert [name for name, _target in components] == [
+        "email-scan-actions",
+        "email-agent-consumer",
+        "email-training",
+    ]
+
+
+def test_run_historical_once_uses_provider_rereads_cached_batch_and_durable_history(
+    tmp_path, monkeypatch
+):
+    import numpy as np
+
+    from app.email_classifier_model import email_message_to_text
+    from app.email_embedding_cache import EmbeddingCache, EmbeddingCacheKey
+    from app.email_embedding_classifier import DescriptionAwareEmailClassifier
+    from app.email_imap_readonly import ImapUidBatch
+    from app.email_model_registry import EmailModelRegistry
+
+    module = _module()
+    account = {
+        "account_id": "account-1",
+        "enabled": True,
+        "scan_folders": ["INBOX", "Work"],
+    }
+    inbox_messages = [
+        {
+            "messageId": f"<history-{index}@example.com>",
+            "accountId": "account-1",
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": index + 1,
+            "providerUnread": index < 50,
+            "from": {"email": "sender@example.com"},
+            "subject": f"Historical {index}",
+            "textBody": "A completed business thread.",
+            "date": "2026-09-01T12:00:00+00:00",
+        }
+        for index in range(52)
+    ]
+    business_message = {
+        "messageId": "<existing-business@example.com>",
+        "accountId": "account-1",
+        "folder": "Work",
+        "uidValidity": 84,
+        "uid": 500,
+        "providerUnread": False,
+        "from": {"email": "sender@example.com"},
+        "subject": "Already classified",
+        "textBody": "Must remain untouched.",
+        "date": "2026-09-01T12:00:00+00:00",
+    }
+    provider_messages = [*inbox_messages, business_message]
+    fetches = []
+    action_calls = []
+
+    class Source:
+        account_id = "account-1"
+
+        def list_folders(self):
+            return (
+                ProviderFolder("inbox-id", "INBOX", FolderRole.INBOX),
+                ProviderFolder("work-id", "Work", FolderRole.UNBOUND),
+            )
+
+        def fetch_uid_batch(self, mailbox, **kwargs):
+            fetches.append((mailbox, dict(kwargs)))
+            current = [
+                message
+                for message in provider_messages
+                if message["folder"] == mailbox
+                and int(message["uid"] or 0) > int(kwargs["last_seen_uid"])
+                and (
+                    not kwargs.get("unread_only", False)
+                    or message["providerUnread"] is True
+                )
+            ]
+            return ImapUidBatch(
+                account_id=self.account_id,
+                folder=mailbox,
+                uidvalidity=42 if mailbox == "INBOX" else 84,
+                previous_uidvalidity=kwargs["cursor_uidvalidity"],
+                messages=tuple(current[: kwargs["limit"]]),
+            )
+
+        def logout(self):
+            return None
+
+    class Executor:
+        def execute(self, action):
+            action_calls.append(action)
+            message = next(
+                item
+                for item in provider_messages
+                if f"account-1:message-id:{item['messageId']}"
+                == action.locator.stable_message_identity
+            )
+            updated = None
+            if action.action_type is EmailAction.MOVE:
+                assert message["providerUnread"] is False
+                message["folder"] = "Work"
+                message["uidValidity"] = 84
+                message["uid"] = 100 + int(action.locator.uid)
+                updated = StoredEmailLocator(
+                    account_id="account-1",
+                    folder="Work",
+                    uidvalidity=84,
+                    uid=int(message["uid"]),
+                    rfc_message_id=str(message["messageId"]),
+                    thread_id=None,
+                    stable_message_identity=action.locator.stable_message_identity,
+                )
+            elif action.action_type is EmailAction.FLAG_IMPORTANT:
+                assert action.locator.folder == "Work"
+                assert action.locator.uidvalidity == 84
+                assert message["providerUnread"] is False
+            else:
+                assert action.action_type is EmailAction.MARK_READ
+                assert action.locator.folder == "Work"
+                message["providerUnread"] = False
+            return ProviderActionResult(
+                status="done",
+                provider_operation=action.action_type.value,
+                provider_target=action.locator.stable_message_identity,
+                provider_result_id=f"receipt-{len(action_calls)}",
+                updated_locator=updated,
+            )
+
+    monkeypatch.setattr(
+        module, "_build_email_source_factory", lambda _settings: lambda _account: Source()
+    )
+    monkeypatch.setattr(module, "_build_agent_orchestrator", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **_kwargs: object(),
+    )
+    model = SimpleNamespace(
+        enabled_categories=("work", "junk"),
+        dimension=2,
+        input_schema_version="input-v3",
+        embedding_model_id="jina",
+        embedding_revision="r17",
+        category_thresholds={"work": 0.8, "junk": 0.9},
+        predict=lambda _vector: EmbeddingModelPrediction(
+            category="work",
+            category_probability=0.97,
+            category_probabilities={"work": 0.97, "junk": 0.03},
+            category_accepted=True,
+            important=True,
+            important_probability=0.96,
+            head_ms=1.0,
+        ),
+    )
+    monkeypatch.setattr(
+        DescriptionAwareEmailClassifier,
+        "load",
+        classmethod(lambda _cls, _path: model),
+    )
+    monkeypatch.setattr(
+        EmailModelRegistry,
+        "get_staged_evidence",
+        lambda _self, model_id: {
+            "model_id": model_id,
+            "historical_eligibility": {
+                "categories": {
+                    "work": {"eligible": True},
+                    "junk": {"eligible": False},
+                }
+            },
+        },
+    )
+    settings = SimpleNamespace(
+        db_path=tmp_path / "historical-production.sqlite3",
+        workspace=tmp_path,
+        dry_run=False,
+    )
+    bootstrap = module.build_email_worker_dependencies(
+        settings,
+        direct_action_executor_factory=lambda _account_id: Executor(),
+    )
+    store = bootstrap.email_store
+    monkeypatch.setattr(
+        store,
+        "list_category_configs",
+        lambda: [
+            {
+                "category_key": "work",
+                "enabled": True,
+                "core_description": "Business work.",
+                "include": ["delivery"],
+                "exclude": ["promotion"],
+                "config_version": "config-v1",
+            },
+            {
+                "category_key": "junk",
+                "enabled": True,
+                "core_description": "Unwanted mail.",
+                "include": ["promotion"],
+                "exclude": ["delivery"],
+                "config_version": "config-v1",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        store,
+        "list_account_folder_bindings",
+        lambda: [
+            {
+                "account_id": "account-1",
+                "category_key": "work",
+                "provider_folder_id": "work-id",
+                "provider_folder_name": "Work",
+                "binding_status": "active",
+            }
+        ],
+    )
+    cache = EmbeddingCache(tmp_path / "email-models", dimension=2)
+    for message in (inbox_messages[50],):
+        normalized_text = email_message_to_text(message)
+        cache.put(
+            EmbeddingCacheKey.for_text(
+                normalized_text=normalized_text,
+                input_schema_version="input-v3",
+                embedding_model_id="jina",
+                embedding_revision="r17",
+            ),
+            np.array([1.0, 0.0], dtype=np.float32),
+        )
+    dependencies = bootstrap.build_dependencies((account,), object())
+
+    outcomes = dependencies.run_historical_once(
+        "email-embedding-mlp-ready", account_id="account-1"
+    )
+
+    assert outcomes == ()
+    assert action_calls == []
+    assert fetches[0] == (
+        "INBOX",
+        {
+            "cursor_uidvalidity": None,
+            "last_seen_uid": 0,
+            "limit": 50,
+            "unread_only": False,
+        },
+    )
+    assert not any(
+        mailbox == "Work" and values["cursor_uidvalidity"] is None
+        for mailbox, values in fetches
+    )
+    assert inbox_messages[0]["folder"] == "INBOX"
+    assert inbox_messages[0]["providerUnread"] is True
+    assert business_message["folder"] == "Work"
+    assert store.get_classification_by_stable_identity(
+        "account-1:message-id:<history-0@example.com>"
+    ) is None
+    assert store.get_classification_by_stable_identity(
+        "account-1:message-id:<existing-business@example.com>"
+    ) is None
+    assert inbox_messages[50]["folder"] == "INBOX"
+    durable = EmailStore(settings.db_path).list_historical_classification_history()
+    assert durable == []
+
+    after_restart = bootstrap.build_dependencies((account,), object())
+    second = after_restart.run_historical_once(
+        "email-embedding-mlp-ready", account_id="account-1"
+    )
+    assert [item.stable_message_identity for item in second] == [
+        "account-1:message-id:<history-50@example.com>"
+    ]
+    assert len(action_calls) == 3
+    assert inbox_messages[50]["folder"] == "Work"
+    durable = EmailStore(settings.db_path).list_historical_classification_history()
+    assert len(durable) == 1
+    for message in (inbox_messages[50],):
+        stable_identity = f"account-1:message-id:{message['messageId']}"
+        persisted = store.get_classification_by_stable_identity(stable_identity)
+        assert persisted is not None
+        assert persisted["folder"] == "Work"
+        assert persisted["uidvalidity"] == 84
+
+    inbox_messages[0]["providerUnread"] = False
+    normalized_text = email_message_to_text(inbox_messages[0])
+    cache.put(
+        EmbeddingCacheKey.for_text(
+            normalized_text=normalized_text,
+            input_schema_version="input-v3",
+            embedding_model_id="jina",
+            embedding_revision="r17",
+        ),
+        np.array([1.0, 0.0], dtype=np.float32),
+    )
+    with sqlite3.connect(settings.db_path) as db:
+        db.execute(
+            "update email_historical_candidates "
+            "set next_retry_at='2020-01-01T00:00:00+00:00' "
+            "where stable_message_identity=?",
+            ("account-1:message-id:<history-0@example.com>",),
+        )
+    third = dependencies.run_historical_once(
+        "email-embedding-mlp-ready", account_id="account-1"
+    )
+    assert [item.stable_message_identity for item in third] == [
+        "account-1:message-id:<history-0@example.com>"
+    ]
+    assert fetches[-1][1]["last_seen_uid"] > 0
+
+
+def test_historical_deferred_queue_is_fair_durable_and_not_a_busy_loop(tmp_path):
+    database = tmp_path / "historical-fair-queue.sqlite3"
+    store = EmailStore(database)
+    candidates = tuple(
+        HistoricalClassificationCandidate(
+            stable_message_identity=f"stable-fair-{index:02d}",
+            normalized_text=f"historical fair {index}",
+            provider_message={
+                "messageId": f"<fair-{index}@example.com>",
+                "accountId": "account-1",
+                "folder": "INBOX",
+                "uidValidity": 42,
+                "uid": index + 1,
+                "providerUnread": index < 50,
+                "subject": f"Fair {index}",
+                "textBody": "body",
+            },
+        )
+        for index in range(51)
+    )
+    store.enqueue_historical_page(
+        account_id="account-1",
+        folder="INBOX",
+        model_id="model-fair",
+        uidvalidity=42,
+        last_seen_uid=51,
+        candidates=candidates,
+    )
+
+    first_run = store.list_historical_candidates(
+        account_id="account-1", folder="INBOX", model_id="model-fair", limit=50
+    )
+    assert [item["uid"] for item in first_run] == list(range(1, 51))
+    for item in first_run:
+        store.set_historical_candidate_state(
+            account_id="account-1",
+            folder="INBOX",
+            model_id="model-fair",
+            stable_message_identity=item["stable_message_identity"],
+            state="deferred",
+            reason="unread",
+        )
+
+    restarted = EmailStore(database)
+    second_run = restarted.list_historical_candidates(
+        account_id="account-1", folder="INBOX", model_id="model-fair", limit=50
+    )
+    assert [item["uid"] for item in second_run] == [51]
+    restarted.set_historical_candidate_state(
+        account_id="account-1",
+        folder="INBOX",
+        model_id="model-fair",
+        stable_message_identity="stable-fair-50",
+        state="terminal",
+        reason="moved",
+    )
+    assert restarted.list_historical_candidates(
+        account_id="account-1", folder="INBOX", model_id="model-fair", limit=50
+    ) == []
+
+    restarted._now = lambda: "2099-01-01T00:00:00+00:00"
+    retry_run = restarted.list_historical_candidates(
+        account_id="account-1", folder="INBOX", model_id="model-fair", limit=2
+    )
+    assert [item["uid"] for item in retry_run] == [1, 2]
+    assert all(item["attempted_at"] for item in retry_run)
+    assert all(item["next_retry_at"] for item in retry_run)
+
+
+def test_historical_queue_persists_only_minimal_json_safe_projection(tmp_path):
+    from app.email_imap_readonly import _normalized_message_record
+    from app.email_important import ImportantSignals
+    from app.email_classifier_model import email_message_to_text
+
+    raw = (
+        b"From: Private Sender <private@example.test>\r\n"
+        b"To: derek@example.test\r\n"
+        b"Subject: PRIVATE-SUBJECT-MARKER\r\n"
+        b"Message-ID: <minimal-queue@example.test>\r\n"
+        b"List-Unsubscribe: <https://private.example.test/u?token=PRIVATE-TOKEN>\r\n"
+        b"\r\n"
+    )
+    parsed = BytesParser(policy=policy.default).parsebytes(raw)
+    message = _normalized_message_record(
+        parsed,
+        body="PRIVATE-BODY-MARKER",
+        body_html="<b>PRIVATE-HTML-MARKER</b>",
+        attachments=[],
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=9,
+        important_signals=ImportantSignals(("$Important",), True),
+        provider_unread=False,
+    )
+    candidate = HistoricalClassificationCandidate(
+        stable_message_identity=str(message["stableMessageIdentity"]),
+        normalized_text=email_message_to_text(message),
+        provider_message=message,
+    )
+    database = tmp_path / "minimal-historical-queue.sqlite3"
+    store = EmailStore(database)
+
+    store.enqueue_historical_page(
+        account_id="account-1",
+        folder="INBOX",
+        model_id="model-minimal",
+        uidvalidity=42,
+        last_seen_uid=9,
+        candidates=(candidate,),
+    )
+
+    queued = store.list_historical_candidates(
+        account_id="account-1", folder="INBOX", model_id="model-minimal"
+    )
+    assert queued[0]["provider_message"] == {
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 9,
+        "messageId": "<minimal-queue@example.test>",
+        "threadId": message["threadId"],
+        "stableMessageIdentity": message["stableMessageIdentity"],
+    }
+    database_bytes = database.read_bytes()
+    for forbidden in (
+        b"PRIVATE-BODY-MARKER",
+        b"PRIVATE-HTML-MARKER",
+        b"PRIVATE-TOKEN",
+        b"PRIVATE-SUBJECT-MARKER",
+        b"$Important",
+        b"private@example.test",
+    ):
+        assert forbidden not in database_bytes
+
+
+def test_v29_historical_queue_migration_securely_redacts_legacy_provider_record(
+    tmp_path,
+):
+    database = tmp_path / "historical-v29-redaction.sqlite3"
+    store = EmailStore(database)
+    candidate = HistoricalClassificationCandidate(
+        stable_message_identity="stable-legacy-private",
+        normalized_text="safe initial input",
+        provider_message={
+            "accountId": "account-1",
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": 9,
+            "messageId": "<legacy-private@example.test>",
+            "threadId": "thread-legacy-private",
+            "stableMessageIdentity": "stable-legacy-private",
+        },
+    )
+    store.enqueue_historical_page(
+        account_id="account-1",
+        folder="INBOX",
+        model_id="model-legacy",
+        uidvalidity=42,
+        last_seen_uid=9,
+        candidates=(candidate,),
+    )
+    legacy = {
+        **candidate.provider_message,
+        "subject": "LEGACY-PRIVATE-SUBJECT",
+        "textBody": "LEGACY-PRIVATE-BODY",
+        "listUnsubscribe": "<https://private.test/u?token=LEGACY-PRIVATE-TOKEN>",
+    }
+    with sqlite3.connect(database) as db:
+        db.execute("pragma secure_delete = on")
+        db.execute("update email_schema_migrations set version=29 where version=30")
+        db.execute(
+            "update email_historical_candidates "
+            "set normalized_text=?, provider_message_json=?",
+            ("LEGACY-PRIVATE-BODY", json.dumps(legacy)),
+        )
+
+    migrated = EmailStore(database)
+    [queued] = migrated.list_historical_candidates(
+        account_id="account-1", folder="INBOX", model_id="model-legacy"
+    )
+    assert queued["normalized_input_hash"] == sha256(
+        b"LEGACY-PRIVATE-BODY"
+    ).hexdigest()
+    database_bytes = database.read_bytes()
+    assert b"LEGACY-PRIVATE-BODY" not in database_bytes
+    assert b"LEGACY-PRIVATE-TOKEN" not in database_bytes
+    assert b"LEGACY-PRIVATE-SUBJECT" not in database_bytes
+
+
+def test_historical_unsubscribe_input_is_reread_from_provider_not_queue(tmp_path):
+    from app.email_imap_readonly import ImapUidBatch
+
+    store = EmailStore(tmp_path / "historical-provider-reread.sqlite3")
+    private_url = "https://private.example.test/u?token=ONLY-PROVIDER-HAS-THIS"
+    full_message = {
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 9,
+        "messageId": "<provider-reread@example.test>",
+        "threadId": "thread-reread",
+        "stableMessageIdentity": (
+            "account-1:message-id:<provider-reread@example.test>"
+        ),
+        "providerUnread": False,
+        "subject": "Private",
+        "textBody": "Private provider body",
+        "listUnsubscribe": f"<{private_url}>",
+        "listUnsubscribePost": "",
+    }
+    candidate = HistoricalClassificationCandidate(
+        stable_message_identity=str(full_message["stableMessageIdentity"]),
+        normalized_text="normalized private provider body",
+        provider_message=full_message,
+    )
+    store.enqueue_historical_page(
+        account_id="account-1",
+        folder="INBOX",
+        model_id="model-reread",
+        uidvalidity=42,
+        last_seen_uid=9,
+        candidates=(candidate,),
+    )
+    [queued] = store.list_historical_candidates(
+        account_id="account-1", folder="INBOX", model_id="model-reread"
+    )
+    queued_candidate = HistoricalClassificationCandidate(
+        stable_message_identity=queued["stable_message_identity"],
+        normalized_text=queued["normalized_text"],
+        provider_message=queued["provider_message"],
+    )
+    reads = []
+
+    class Source:
+        def fetch_uid_batch(self, mailbox, **kwargs):
+            reads.append((mailbox, kwargs))
+            return ImapUidBatch(
+                account_id="account-1",
+                folder="INBOX",
+                uidvalidity=42,
+                previous_uidvalidity=42,
+                messages=[full_message],
+            )
+
+        def logout(self):
+            return None
+
+    reread = _module()._reread_historical_candidate_message(
+        lambda _account: Source(),
+        {"account_id": "account-1"},
+        queued_candidate,
+    )
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe=str(reread["listUnsubscribe"])
+    )
+
+    assert len(reads) == 1
+    assert entries[0].private_url == private_url
+    assert "listUnsubscribe" not in queued["provider_message"]
+
+
+def test_due_deferred_candidates_receive_fixed_quota_despite_new_pending(tmp_path):
+    database = tmp_path / "historical-deferred-quota.sqlite3"
+    store = EmailStore(database)
+
+    def enqueue(prefix: str, start_uid: int, count: int) -> None:
+        store.enqueue_historical_page(
+            account_id="account-1",
+            folder="INBOX",
+            model_id="model-fair",
+            uidvalidity=42,
+            last_seen_uid=start_uid + count,
+            candidates=tuple(
+                HistoricalClassificationCandidate(
+                    stable_message_identity=f"{prefix}-{index}",
+                    normalized_text=f"text {prefix} {index}",
+                    provider_message={
+                        "accountId": "account-1",
+                        "folder": "INBOX",
+                        "uidValidity": 42,
+                        "uid": start_uid + index,
+                        "messageId": f"<{prefix}-{index}@example.test>",
+                        "threadId": f"thread-{prefix}-{index}",
+                        "stableMessageIdentity": f"{prefix}-{index}",
+                    },
+                )
+                for index in range(count)
+            ),
+        )
+
+    enqueue("deferred", 1, 6)
+    for index in range(6):
+        store.set_historical_candidate_state(
+            account_id="account-1",
+            folder="INBOX",
+            model_id="model-fair",
+            stable_message_identity=f"deferred-{index}",
+            state="deferred",
+            reason="unread",
+        )
+    store._now = lambda: "2099-01-01T00:00:00+00:00"
+
+    selected_deferred = []
+    for round_index in range(3):
+        enqueue(f"pending-{round_index}", 100 + round_index * 8, 8)
+        batch = store.list_historical_candidates(
+            account_id="account-1", folder="INBOX", model_id="model-fair", limit=8
+        )
+        due = [item for item in batch if item["state"] == "deferred"]
+        assert len(due) >= 2
+        selected_deferred.extend(item["stable_message_identity"] for item in due[:2])
+        for item in batch:
+            store.set_historical_candidate_state(
+                account_id="account-1",
+                folder="INBOX",
+                model_id="model-fair",
+                stable_message_identity=item["stable_message_identity"],
+                state="terminal",
+                reason="selected",
+            )
+
+    assert set(selected_deferred) == {f"deferred-{index}" for index in range(6)}
 
 
 def test_agent_business_result_plans_move_then_optional_flag() -> None:
@@ -138,6 +2180,425 @@ def test_agent_junk_without_candidate_plans_direct_trash() -> None:
 
     assert plan is not None
     assert plan.actions == (EmailAction.TRASH,)
+
+
+def test_historical_junk_without_unsubscribe_trashes_then_restores_read() -> None:
+    from app.email_classifier_agent import AgentClassificationResult
+
+    plan = _module()._agent_classification_action_plan(
+        classification_id=741,
+        account_id="account-1",
+        result=AgentClassificationResult(
+            category="junk",
+            important=False,
+            certainty="certain",
+            confidence=0.98,
+            reason="Historical junk.",
+            unsubscribe_candidate_index=None,
+            unsubscribe_url=None,
+        ),
+        unsubscribe_selection=None,
+        folder_targets={},
+        config_version="config-v1",
+        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+        preserve_read=True,
+    )
+
+    assert plan is not None
+    assert plan.actions == (EmailAction.TRASH, EmailAction.MARK_READ)
+
+
+def test_historical_junk_with_unsubscribe_orders_task_trash_then_mark_read() -> None:
+    from app.email_classifier_agent import (
+        AgentClassificationResult,
+        durable_agent_classification_result,
+    )
+
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe="<https://example.com/unsubscribe?id=historical>"
+    )
+    result = AgentClassificationResult(
+        category="junk",
+        important=False,
+        certainty="certain",
+        confidence=0.98,
+        reason="Historical junk.",
+        unsubscribe_candidate_index=0,
+        unsubscribe_url=entries[0].private_url,
+    )
+    plan = _module()._agent_classification_action_plan(
+        classification_id=742,
+        account_id="account-1",
+        result=result,
+        unsubscribe_selection=durable_agent_classification_result(result, entries),
+        folder_targets={},
+        config_version="config-v1",
+        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+        preserve_read=True,
+    )
+
+    assert plan is not None
+    assert plan.actions == (
+        EmailAction.UNSUBSCRIBE,
+        EmailAction.TRASH,
+        EmailAction.MARK_READ,
+    )
+
+
+def _historical_junk_fixture():
+    message = {
+        "messageId": "<historical-junk@example.com>",
+        "stableMessageIdentity": "stable-historical-junk",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 88,
+        "providerUnread": False,
+        "from": {"email": "sender@example.com"},
+        "subject": "Historical junk",
+        "textBody": "Unwanted promotion.",
+        "date": "2026-09-01T12:00:00+00:00",
+    }
+    context = AgentScanContext(
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": {}, "junk": {}},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+    )
+    return message, context
+
+
+def test_historical_junk_trash_changed_locator_then_mark_read_and_terminal(tmp_path):
+    module = _module()
+    store = EmailStore(tmp_path / "historical-junk-read.sqlite3")
+    message, context = _historical_junk_fixture()
+    provider_state = {"folder": "INBOX", "is_read": True}
+    effects = []
+
+    class Executor:
+        def execute(self, action):
+            effects.append((action.action_type, action.locator.folder))
+            updated = None
+            if action.action_type is EmailAction.TRASH:
+                provider_state.update(folder="Trash", is_read=False)
+                updated = StoredEmailLocator(
+                    account_id=action.account_id,
+                    folder="Trash",
+                    uidvalidity=84,
+                    uid=188,
+                    rfc_message_id=action.locator.rfc_message_id,
+                    thread_id=action.locator.thread_id,
+                    stable_message_identity=action.locator.stable_message_identity,
+                )
+            else:
+                assert action.action_type is EmailAction.MARK_READ
+                provider_state["is_read"] = True
+            return ProviderActionResult(
+                status="done",
+                provider_operation=action.action_type.value,
+                provider_target=action.locator.stable_message_identity,
+                provider_result_id=f"receipt-{len(effects)}",
+                updated_locator=updated,
+            )
+
+    outcome = module.execute_historical_model_actions(
+        store,
+        lambda _account_id: Executor(),
+        SimpleNamespace(produce=lambda *_args: None),
+        message=message,
+        prediction=_accepted_model_prediction(category="junk", important=False),
+        context=context,
+        model_id="model-junk",
+        model_text="historical junk",
+        unsubscribe_entries=(),
+        read_after=lambda: SimpleNamespace(
+            is_read=provider_state["is_read"],
+            provider_folder_name=provider_state["folder"],
+            folder_role=FolderRole.TRASH,
+        ),
+    )
+
+    assert outcome == HistoricalActionResult("trashed", is_read=True)
+    assert effects == [
+        (EmailAction.TRASH, "INBOX"),
+        (EmailAction.MARK_READ, "Trash"),
+    ]
+    assert module.reconcile_historical_operations(
+        store,
+        lambda _account_id: pytest.fail("completed junk effects must not repeat"),
+        read_after=lambda _operation: SimpleNamespace(
+            is_read=True,
+            provider_folder_name="Trash",
+            folder_role=FolderRole.TRASH,
+        ),
+    ) == {"repaired": 1, "deferred": 0}
+    assert len(store.list_historical_classification_history()) == 1
+
+
+def test_historical_junk_receipts_do_not_terminalize_until_provider_is_in_trash(
+    tmp_path,
+):
+    module = _module()
+    store = EmailStore(tmp_path / "historical-junk-folder-readback.sqlite3")
+    message, context = _historical_junk_fixture()
+    provider_observation = {
+        "folder": "INBOX",
+        "folder_role": FolderRole.INBOX,
+        "is_read": True,
+    }
+    effects = []
+
+    class Executor:
+        def execute(self, action):
+            effects.append(action.action_type)
+            updated = None
+            if action.action_type is EmailAction.TRASH:
+                updated = StoredEmailLocator(
+                    account_id=action.account_id,
+                    folder="Trash",
+                    uidvalidity=84,
+                    uid=288,
+                    rfc_message_id=action.locator.rfc_message_id,
+                    thread_id=action.locator.thread_id,
+                    stable_message_identity=action.locator.stable_message_identity,
+                )
+            return ProviderActionResult(
+                status="done",
+                provider_operation=action.action_type.value,
+                provider_target=action.locator.stable_message_identity,
+                provider_result_id=f"receipt-{len(effects)}",
+                updated_locator=updated,
+            )
+
+    def readback():
+        return SimpleNamespace(
+            is_read=provider_observation["is_read"],
+            provider_folder_name=provider_observation["folder"],
+            folder_role=provider_observation["folder_role"],
+        )
+
+    outcome = module.execute_historical_model_actions(
+        store,
+        lambda _account_id: Executor(),
+        SimpleNamespace(produce=lambda *_args: None),
+        message=message,
+        prediction=_accepted_model_prediction(category="junk", important=False),
+        context=context,
+        model_id="model-junk-folder-readback",
+        model_text="historical junk folder readback",
+        unsubscribe_entries=(),
+        read_after=readback,
+    )
+
+    assert outcome == HistoricalActionResult(
+        "provider_folder_not_verified", is_read=True
+    )
+    assert effects == [EmailAction.TRASH, EmailAction.MARK_READ]
+    assert len(store.list_processing_historical_operations()) == 1
+    assert store.list_historical_classification_history() == []
+    assert module.reconcile_historical_operations(
+        store,
+        lambda _account_id: pytest.fail("durable effects must not repeat"),
+        read_after=lambda _operation: readback(),
+    ) == {"repaired": 0, "deferred": 1}
+
+    provider_observation.update(folder="Trash", folder_role=FolderRole.TRASH)
+    assert module.reconcile_historical_operations(
+        store,
+        lambda _account_id: pytest.fail("durable effects must not repeat"),
+        read_after=lambda _operation: readback(),
+    ) == {"repaired": 1, "deferred": 0}
+    assert store.list_processing_historical_operations() == []
+    [history] = store.list_historical_classification_history()
+    assert history["action_outcome"] == "trashed"
+
+
+def test_historical_unsubscribe_receipt_precedes_trash_and_mark_read(tmp_path):
+    module = _module()
+    store = EmailStore(tmp_path / "historical-junk-unsubscribe.sqlite3")
+    message, context = _historical_junk_fixture()
+    entry = extract_unsubscribe_entries(
+        list_unsubscribe="<https://example.com/unsubscribe?id=historical>"
+    )[0]
+    produced = []
+    effects = []
+    provider_state = {"folder": "INBOX", "is_read": True}
+
+    class Executor:
+        def execute(self, action):
+            effects.append(action.action_type)
+            updated = None
+            if action.action_type is EmailAction.TRASH:
+                provider_state.update(folder="Trash", is_read=False)
+                updated = StoredEmailLocator(
+                    account_id=action.account_id,
+                    folder="Trash",
+                    uidvalidity=84,
+                    uid=188,
+                    rfc_message_id=action.locator.rfc_message_id,
+                    thread_id=action.locator.thread_id,
+                    stable_message_identity=action.locator.stable_message_identity,
+                )
+            else:
+                assert action.action_type is EmailAction.MARK_READ
+                provider_state["is_read"] = True
+            return ProviderActionResult(
+                status="done",
+                provider_operation=action.action_type.value,
+                provider_target=action.locator.stable_message_identity,
+                provider_result_id=f"receipt-{len(effects)}",
+                updated_locator=updated,
+            )
+
+    outcome = module.execute_historical_model_actions(
+        store,
+        lambda _account_id: Executor(),
+        SimpleNamespace(produce=lambda plan, current: produced.append((plan, current))),
+        message=message,
+        prediction=_accepted_model_prediction(category="junk", important=False),
+        context=context,
+        model_id="model-junk-unsubscribe",
+        model_text="historical junk unsubscribe",
+        unsubscribe_entries=(entry,),
+        read_after=lambda: SimpleNamespace(
+            is_read=provider_state["is_read"],
+            provider_folder_name=provider_state["folder"],
+        ),
+    )
+    assert outcome.outcome == "provider_action_failed"
+    assert len(produced) == 1
+    assert effects == []
+
+    classification = store.get_classification_by_stable_identity(
+        "account-1:message-id:<historical-junk@example.com>"
+    )
+    assert classification is not None
+    plan = classification["action_plan"]
+    action_identity = email_action_identity(
+        account_id="account-1",
+        stable_message_identity=classification["stable_message_identity"],
+        action_type=EmailAction.UNSUBSCRIBE,
+        action_plan_version=plan["action_plan_version"],
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            """
+            insert into email_unsubscribe_receipts (
+                action_identity, effect_digest, action_plan_id,
+                action_plan_version, classification_id, account_id,
+                stable_message_identity, thread_identity, entry_reference,
+                outcome, receipt_id, evidence, result_text,
+                observation_digest, started_at, completed_at,
+                result_text_truncated, result_text_digest, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'done', ?, 'done', '', '', '', '', 0, '', ?)
+            """,
+            (
+                action_identity,
+                "f" * 64,
+                plan["action_plan_id"],
+                plan["action_plan_version"],
+                classification["id"],
+                "account-1",
+                classification["stable_message_identity"],
+                classification["thread_id"],
+                entry.reference,
+                "receipt-unsubscribe",
+                "2026-09-08T00:01:00+00:00",
+            ),
+        )
+
+    assert module.reconcile_historical_operations(
+        store,
+        lambda _account_id: Executor(),
+        read_after=lambda _operation: SimpleNamespace(
+            is_read=provider_state["is_read"],
+            provider_folder_name=provider_state["folder"],
+            folder_role=FolderRole.TRASH,
+        ),
+    ) == {"repaired": 1, "deferred": 0}
+    assert effects == [EmailAction.TRASH, EmailAction.MARK_READ]
+    assert len(store.list_historical_classification_history()) == 1
+
+
+def test_historical_junk_mark_read_failure_recovers_without_repeating_trash(tmp_path):
+    module = _module()
+    store = EmailStore(tmp_path / "historical-junk-retry.sqlite3")
+    message, context = _historical_junk_fixture()
+    provider_state = {"folder": "INBOX", "is_read": True}
+    effects = []
+    mark_attempts = 0
+
+    class Executor:
+        def execute(self, action):
+            nonlocal mark_attempts
+            updated = None
+            if action.action_type is EmailAction.TRASH:
+                effects.append(EmailAction.TRASH)
+                provider_state.update(folder="Trash", is_read=False)
+                updated = StoredEmailLocator(
+                    account_id=action.account_id,
+                    folder="Trash",
+                    uidvalidity=84,
+                    uid=188,
+                    rfc_message_id=action.locator.rfc_message_id,
+                    thread_id=action.locator.thread_id,
+                    stable_message_identity=action.locator.stable_message_identity,
+                )
+            else:
+                mark_attempts += 1
+                if mark_attempts == 1:
+                    return ProviderActionResult(
+                        status="failed",
+                        provider_operation="mark_read",
+                        provider_target=action.locator.stable_message_identity,
+                        provider_result_id="",
+                        error="temporary",
+                    )
+                effects.append(EmailAction.MARK_READ)
+                provider_state["is_read"] = True
+            return ProviderActionResult(
+                status="done",
+                provider_operation=action.action_type.value,
+                provider_target=action.locator.stable_message_identity,
+                provider_result_id=f"receipt-{len(effects)}",
+                updated_locator=updated,
+            )
+
+    outcome = module.execute_historical_model_actions(
+        store,
+        lambda _account_id: Executor(),
+        SimpleNamespace(produce=lambda *_args: None),
+        message=message,
+        prediction=_accepted_model_prediction(category="junk", important=False),
+        context=context,
+        model_id="model-junk-retry",
+        model_text="historical junk retry",
+        unsubscribe_entries=(),
+        read_after=lambda: SimpleNamespace(
+            is_read=provider_state["is_read"],
+            provider_folder_name=provider_state["folder"],
+        ),
+    )
+    assert outcome.outcome == "provider_action_failed"
+    assert len(store.list_processing_historical_operations()) == 1
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update email_actions set next_attempt_at='2020-01-01T00:00:00+00:00' "
+            "where action_type='mark_read'"
+        )
+    reopened = EmailStore(store.path)
+    assert module.reconcile_historical_operations(
+        reopened,
+        lambda _account_id: Executor(),
+        read_after=lambda _operation: SimpleNamespace(
+            is_read=provider_state["is_read"],
+            provider_folder_name="Trash",
+            folder_role=FolderRole.TRASH,
+        ),
+    ) == {"repaired": 1, "deferred": 0}
+    assert effects == [EmailAction.TRASH, EmailAction.MARK_READ]
+    assert mark_attempts == 2
+    assert len(reopened.list_historical_classification_history()) == 1
 
 
 def test_agent_junk_mailto_selection_cannot_authorize_unsubscribe() -> None:
@@ -2104,6 +4565,94 @@ def test_startup_loads_enabled_accounts_and_active_model_before_ready_and_thread
     ]
 
 
+def test_worker_closes_resident_online_batcher_when_lifecycle_returns():
+    module = _module()
+    events = []
+    model = SimpleNamespace(close=lambda: events.append("model-close"))
+    dependencies = _dependencies(events, model=model)
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=lambda **_kwargs: SimpleNamespace(start=lambda: None),
+        wait=lambda: events.append("wait"),
+        output=StringIO(),
+    )
+
+    assert events[-2:] == ["wait", "model-close"]
+
+
+@pytest.mark.parametrize("close_raises", (False, True))
+def test_worker_closes_online_batcher_once_on_error_without_masking_original(
+    close_raises,
+):
+    module = _module()
+    events = []
+
+    def close():
+        events.append("model-close")
+        if close_raises:
+            raise ValueError("close failed")
+
+    dependencies = _dependencies(events, model=SimpleNamespace(close=close))
+
+    with pytest.raises(RuntimeError, match="monitor failed"):
+        module.run_email_worker(
+            SimpleNamespace(),
+            dependencies=dependencies,
+            thread_factory=lambda **_kwargs: SimpleNamespace(start=lambda: None),
+            wait=lambda: (_ for _ in ()).throw(RuntimeError("monitor failed")),
+            output=StringIO(),
+        )
+
+    assert events.count("model-close") == 1
+
+
+def test_worker_lifecycle_remains_compatible_with_model_without_close():
+    module = _module()
+    events = []
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=_dependencies(events, model=object()),
+        thread_factory=lambda **_kwargs: SimpleNamespace(start=lambda: None),
+        wait=lambda: events.append("wait"),
+        output=StringIO(),
+    )
+
+    assert events[-1] == "wait"
+
+
+@pytest.mark.parametrize("close_raises", (False, True))
+def test_worker_closes_model_once_when_startup_dependency_build_fails(close_raises):
+    module = _module()
+    events = []
+
+    def close():
+        events.append("model-close")
+        if close_raises:
+            raise ValueError("close failed")
+
+    model = SimpleNamespace(close=close)
+    bootstrap = SimpleNamespace(
+        load_enabled_accounts=lambda: ({"account_id": "account-1"},),
+        load_active_model=lambda: model,
+        build_dependencies=lambda *_args: (_ for _ in ()).throw(
+            RuntimeError("dependency build failed")
+        ),
+    )
+
+    with pytest.raises(
+        module.EmailWorkerStartupError, match="dependency construction failed"
+    ) as failure:
+        module.run_email_worker(
+            SimpleNamespace(), dependencies=bootstrap, output=StringIO()
+        )
+
+    assert isinstance(failure.value.__cause__, RuntimeError)
+    assert events == ["model-close"]
+
+
 @pytest.mark.parametrize("failure", ["empty_accounts", "model_failure"])
 def test_startup_failure_does_not_report_ready_or_start_threads(failure):
     module = _module()
@@ -2770,10 +5319,10 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     )
     dependencies = bootstrap.build_dependencies(
         ({"account_id": "account-1", "enabled": True},),
-        SimpleNamespace(
-            loaded=SimpleNamespace(model_id="email-model:test", classifier=object()),
-            tick=lambda: None,
-        ),
+            SimpleNamespace(
+                loaded=SimpleNamespace(model_id="email-model:test", classifier=object()),
+                tick=lambda: SimpleNamespace(training_run=None),
+            ),
     )
 
     assert dependencies.orchestrator is sentinel
