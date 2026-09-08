@@ -320,8 +320,7 @@
         {
           "type": "null"
         }
-      ],
-      "default": null
+      ]
     },
     "audit_summary": {
       "minLength": 1,
@@ -345,6 +344,7 @@
     "mention_names",
     "target",
     "final_message",
+    "sensitive_private_message",
     "audit_summary",
     "confidence"
   ],

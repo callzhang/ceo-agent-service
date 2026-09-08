@@ -130,9 +130,16 @@ class MeetingAlignmentDecision(StrictModel):
     mention_names: list[str]
     target: DeliveryTarget | None
     final_message: str
-    sensitive_private_message: SensitivePrivateMessage | None = None
+    sensitive_private_message: SensitivePrivateMessage | None
     audit_summary: str = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_legacy_sensitive_private_message(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "sensitive_private_message" not in value:
+            return {**value, "sensitive_private_message": None}
+        return value
 
     @model_validator(mode="after")
     def validate_action_payload(self) -> Self:

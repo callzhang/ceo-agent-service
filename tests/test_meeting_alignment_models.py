@@ -539,3 +539,18 @@ def test_committed_schema_allows_null_target_for_delivery_retry():
     )
     target_schema = json.loads(schema_path.read_text())["properties"]["target"]
     assert {entry.get("type") for entry in target_schema["anyOf"]} >= {"null"}
+
+
+def test_committed_schema_requires_explicit_sensitive_private_message():
+    schema_path = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "schemas"
+        / "meeting_alignment_decision.schema.json"
+    )
+    schema = json.loads(schema_path.read_text())
+
+    assert "sensitive_private_message" in schema["required"]
+    assert {entry.get("type") for entry in schema["properties"][
+        "sensitive_private_message"
+    ]["anyOf"]} >= {"null"}
