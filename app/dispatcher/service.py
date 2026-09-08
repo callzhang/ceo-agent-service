@@ -14,30 +14,29 @@ class AdapterWorkerPools:
 
     def __init__(
         self,
-        adapter_names: Sequence[str],
+        worker_counts: Mapping[str, int],
         *,
-        workers_per_adapter: int,
         thread_name_prefix: str = "agent-dispatcher",
     ) -> None:
-        names = tuple(adapter_names)
+        names = tuple(worker_counts)
         if not names or any(not name.strip() for name in names):
             raise ValueError("dispatcher adapter names must not be empty")
         if len(set(names)) != len(names):
             raise ValueError("dispatcher adapter names must be unique")
-        if workers_per_adapter <= 0:
+        if any(worker_counts[name] <= 0 for name in names):
             raise ValueError("dispatcher worker capacity must be positive")
         self.executors: dict[str, ThreadPoolExecutor] = {
             name: ThreadPoolExecutor(
-                max_workers=workers_per_adapter,
+                max_workers=worker_counts[name],
                 thread_name_prefix=f"{thread_name_prefix}-{name}",
             )
             for name in names
         }
-        self.max_in_flight = {name: workers_per_adapter for name in names}
+        self.max_in_flight = dict(worker_counts)
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, wait: bool, cancel_futures: bool) -> None:
         for executor in self.executors.values():
-            executor.shutdown(wait=True, cancel_futures=False)
+            executor.shutdown(wait=wait, cancel_futures=cancel_futures)
 
 
 class ConsumerDispatcher:
@@ -50,6 +49,8 @@ class ConsumerDispatcher:
         consumers: Mapping[str, Callable[[DispatchEnvelope, ClaimGuard], object]],
         executors: Mapping[str, Executor],
         max_in_flight: Mapping[str, int],
+        shared_capacity_adapters: frozenset[str] = frozenset(),
+        shared_max_in_flight: int | None = None,
         owner: str,
         owner_pid: int | None = None,
         lease: timedelta,
@@ -81,6 +82,22 @@ class ConsumerDispatcher:
         self.max_in_flight = dict(max_in_flight)
         if any(self.max_in_flight[name] <= 0 for name in names):
             raise ValueError("dispatcher worker capacity must be positive")
+        if not shared_capacity_adapters:
+            if shared_max_in_flight is not None:
+                raise ValueError(
+                    "shared dispatcher capacity requires adapter names"
+                )
+        elif shared_max_in_flight is None or shared_max_in_flight <= 0:
+            raise ValueError("shared dispatcher capacity must be positive")
+        unknown_shared = shared_capacity_adapters - set(names)
+        if unknown_shared:
+            raise ValueError(
+                "shared dispatcher capacity has unknown adapters: "
+                + ", ".join(sorted(unknown_shared))
+            )
+        self.shared_capacity_adapters = shared_capacity_adapters
+        self.shared_max_in_flight = shared_max_in_flight
+        self._shared_in_flight = 0
         self._in_flight = {name: 0 for name in names}
         self._active: dict[
             str,
@@ -194,12 +211,22 @@ class ConsumerDispatcher:
         with self._capacity_lock:
             if self._in_flight[adapter_name] >= self.max_in_flight[adapter_name]:
                 return False
+            if (
+                adapter_name in self.shared_capacity_adapters
+                and self.shared_max_in_flight is not None
+                and self._shared_in_flight >= self.shared_max_in_flight
+            ):
+                return False
             self._in_flight[adapter_name] += 1
+            if adapter_name in self.shared_capacity_adapters:
+                self._shared_in_flight += 1
             return True
 
     def _release_capacity(self, adapter_name: str) -> None:
         with self._capacity_lock:
             self._in_flight[adapter_name] -= 1
+            if adapter_name in self.shared_capacity_adapters:
+                self._shared_in_flight -= 1
 
     def _complete_future(
         self,
@@ -211,12 +238,28 @@ class ConsumerDispatcher:
             if removed is None:
                 return
             self._in_flight[adapter_name] -= 1
+            if adapter_name in self.shared_capacity_adapters:
+                self._shared_in_flight -= 1
         _envelope, guard, _renew_at = removed
         now = datetime.now(UTC)
+        if future.cancelled():
+            try:
+                guard.release(now)
+            except Exception as exc:  # noqa: BLE001 - preserve lease error evidence
+                guard.adapter.record_lease_error(
+                    guard.envelope,
+                    owner=guard.token.owner,
+                    error=str(exc),
+                    now=now,
+                )
+                guard.mark_lost()
+            self.wake_event.set()
+            return
         if guard.resolved:
             self.wake_event.set()
             return
-        if future.exception() is None:
+        future_error = future.exception()
+        if future_error is None:
             try:
                 guard.complete(now)
             except Exception as exc:  # noqa: BLE001 - completion fencing is isolated
@@ -231,7 +274,7 @@ class ConsumerDispatcher:
             guard.adapter.record_lease_error(
                 guard.envelope,
                 owner=guard.token.owner,
-                error=str(future.exception()),
+                error=str(future_error),
                 now=now,
             )
             guard.mark_lost()

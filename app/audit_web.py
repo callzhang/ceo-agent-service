@@ -4182,7 +4182,7 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
         (
             "CEO_CONSUMER_WORKERS",
             str(consumer_worker_count()),
-            "单个 launchd 服务内并发的 reply consumer 线程数；同一会话仍由 SQLite 会话锁串行执行。",
+            "单个服务内允许同时执行的 Agent 任务总数；各队列独立调度，同一会话仍由 SQLite 会话锁串行执行。",
         ),
         (
             "CEO_POLL_INTERVAL_SECONDS",

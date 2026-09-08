@@ -629,7 +629,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "--consumer-workers",
                 type=_positive_int,
                 default=consumer_worker_count(),
-                help="bounded in-process reply consumer threads; the same conversation remains session-locked",
+                help="global concurrent Agent execution capacity; each queue remains independently scheduled",
             )
         if command == "export-feedback":
             subparser.add_argument(
@@ -918,7 +918,7 @@ def run_agent_cron_scheduler_loop(
 
 def run_agent_cron_dispatcher_loop(
     settings: WorkerSettings, runtime_skill_snapshot, *, wake_event: threading.Event,
-    runtime_refresher=None,
+    stop_event: threading.Event | None = None, runtime_refresher=None,
 ) -> None:
     """Dispatch all business queues through one fair internal claim loop."""
     from app.agent_cron.consumer import (
@@ -1106,9 +1106,22 @@ def run_agent_cron_dispatcher_loop(
     }
     if not settings.dry_run:
         consumers["task_todo_sync_outbox"] = consume_task_todo_sync_outbox
+    agent_adapters = frozenset(
+        {
+            "scheduled_execution",
+            "reply",
+            "meeting",
+            "work_summary",
+            "okr_review",
+        }
+    )
+    agent_capacity = max(1, settings.consumer_workers)
+    worker_counts = {
+        adapter.name: 1 if adapter.name == "meeting" else agent_capacity
+        for adapter in adapters
+    }
     worker_pools = AdapterWorkerPools(
-        tuple(adapter.name for adapter in adapters),
-        workers_per_adapter=max(1, settings.consumer_workers),
+        worker_counts,
     )
     try:
         dispatcher = ConsumerDispatcher(
@@ -1116,12 +1129,19 @@ def run_agent_cron_dispatcher_loop(
             consumers=consumers,
             executors=worker_pools.executors,
             max_in_flight=worker_pools.max_in_flight,
+            shared_capacity_adapters=agent_adapters,
+            shared_max_in_flight=agent_capacity,
             owner=f"scheduled-dispatcher:{os.getpid()}", lease=timedelta(minutes=5),
             wake_event=wake_event,
         )
-        dispatcher.run(stop_event=threading.Event())
-    finally:
-        worker_pools.shutdown()
+        dispatcher.run(stop_event=stop_event or threading.Event())
+    except BaseException:
+        worker_pools.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        # Controlled stop drains already-admitted work. Agent and network
+        # consumers enforce their own bounded operation timeouts.
+        worker_pools.shutdown(wait=True, cancel_futures=False)
 
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()

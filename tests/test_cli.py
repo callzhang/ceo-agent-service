@@ -2,6 +2,7 @@ import json
 import sqlite3
 import sys
 import threading
+import time
 from datetime import datetime, timedelta
 from importlib import import_module
 from pathlib import Path
@@ -6929,6 +6930,10 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
     monkeypatch, tmp_path
 ):
     captured = {}
+    blocked_started = threading.Event()
+    release_blocked = threading.Event()
+    pending_started = threading.Event()
+    futures = []
 
     class StopDispatcher(Exception):
         pass
@@ -6936,9 +6941,22 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
     class FakeDispatcher:
         def __init__(self, **kwargs):
             captured.update(kwargs)
+            self.executors = kwargs["executors"]
 
         def run(self, *, stop_event):
             del stop_event
+            futures.append(
+                self.executors["meeting"].submit(
+                    lambda: (
+                        blocked_started.set(),
+                        release_blocked.wait(timeout=10),
+                    )
+                )
+            )
+            assert blocked_started.wait(timeout=1)
+            futures.append(
+                self.executors["meeting"].submit(pending_started.set)
+            )
             raise StopDispatcher
 
     fake_runtime = SimpleNamespace(
@@ -6961,12 +6979,29 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         lambda **_: object(),
     )
 
+    started_at = time.monotonic()
     with pytest.raises(StopDispatcher):
         cli.run_agent_cron_dispatcher_loop(
             WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False),
             object(),
             wake_event=threading.Event(),
         )
+    assert time.monotonic() - started_at < 2
+
+    assert not futures[0].done()
+    assert futures[1].cancelled()
+    assert not pending_started.is_set()
+    release_blocked.set()
+    assert futures[0].result(timeout=1)[1] is True
+    captured["executors"]["meeting"].shutdown(
+        wait=True, cancel_futures=False
+    )
+    assert not [
+        thread
+        for thread in threading.enumerate()
+        if thread.name.startswith("agent-dispatcher-meeting")
+        and thread.is_alive()
+    ]
 
     assert [adapter.name for adapter in captured["adapters"]] == [
         "scheduled",
@@ -6989,8 +7024,17 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
     assert set(captured["executors"]) == set(captured["consumers"])
     assert len({id(executor) for executor in captured["executors"].values()}) == 7
     assert captured["max_in_flight"] == {
-        name: 2 for name in captured["consumers"]
+        name: 1 if name == "meeting" else 2
+        for name in captured["consumers"]
     }
+    assert captured["shared_capacity_adapters"] == {
+        "scheduled_execution",
+        "reply",
+        "meeting",
+        "work_summary",
+        "okr_review",
+    }
+    assert captured["shared_max_in_flight"] == 2
 
 
 def test_agent_cron_dispatcher_dry_run_leaves_todo_outbox_unclaimed(
@@ -7042,6 +7086,8 @@ def test_agent_cron_dispatcher_dry_run_leaves_todo_outbox_unclaimed(
     assert "task_todo_sync_outbox" not in captured["consumers"]
     assert set(captured["executors"]) == set(captured["consumers"])
     assert len({id(executor) for executor in captured["executors"].values()}) == 6
+    assert captured["max_in_flight"]["meeting"] == 1
+    assert captured["shared_max_in_flight"] == 2
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):

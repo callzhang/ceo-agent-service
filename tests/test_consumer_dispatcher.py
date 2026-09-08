@@ -844,8 +844,7 @@ def test_adapter_worker_pools_do_not_let_one_blocked_adapter_starve_another():
         second_started.set()
 
     pools = dispatcher_service.AdapterWorkerPools(
-        (first.name, second.name),
-        workers_per_adapter=1,
+        {first.name: 1, second.name: 1},
         thread_name_prefix="test-isolated-dispatcher",
     )
     dispatcher = ConsumerDispatcher(
@@ -863,7 +862,7 @@ def test_adapter_worker_pools_do_not_let_one_blocked_adapter_starve_another():
         assert second_started.wait(timeout=1)
     finally:
         release_first.set()
-        pools.shutdown()
+        pools.shutdown(wait=True, cancel_futures=False)
 
 
 def test_adapter_worker_pool_capacity_prevents_claiming_more_than_its_workers():
@@ -886,8 +885,7 @@ def test_adapter_worker_pool_capacity_prevents_claiming_more_than_its_workers():
             running -= 1
 
     pools = dispatcher_service.AdapterWorkerPools(
-        (adapter.name,),
-        workers_per_adapter=2,
+        {adapter.name: 2},
         thread_name_prefix="test-capacity-dispatcher",
     )
     dispatcher = ConsumerDispatcher(
@@ -907,7 +905,7 @@ def test_adapter_worker_pool_capacity_prevents_claiming_more_than_its_workers():
         assert peak_running == 2
     finally:
         release.set()
-        pools.shutdown()
+        pools.shutdown(wait=True, cancel_futures=False)
 
 
 def test_adapter_worker_pools_shutdown_waits_and_leaves_no_worker_threads():
@@ -916,8 +914,7 @@ def test_adapter_worker_pools_shutdown_waits_and_leaves_no_worker_threads():
     allow_finish = Event()
     task_finished = Event()
     pools = dispatcher_service.AdapterWorkerPools(
-        ("scheduled", "reply"),
-        workers_per_adapter=1,
+        {"scheduled": 1, "reply": 1},
         thread_name_prefix=prefix,
     )
 
@@ -931,7 +928,7 @@ def test_adapter_worker_pools_shutdown_waits_and_leaves_no_worker_threads():
     releaser = Thread(target=lambda: (Event().wait(0.05), allow_finish.set()))
     releaser.start()
 
-    pools.shutdown()
+    pools.shutdown(wait=True, cancel_futures=False)
     releaser.join(timeout=1)
 
     assert task_finished.is_set()
@@ -939,6 +936,227 @@ def test_adapter_worker_pools_shutdown_waits_and_leaves_no_worker_threads():
         thread
         for thread in enumerate_threads()
         if thread.name.startswith(prefix) and thread.is_alive()
+    ]
+
+
+def test_shared_agent_capacity_claims_only_two_agents_but_still_runs_todo():
+    first = _FakeAdapter("scheduled_execution", 1)
+    second = _FakeAdapter("reply", 1)
+    third = _FakeAdapter("work_summary", 1)
+    todo = _FakeAdapter("task_todo_sync_outbox", 1)
+    first_started = Event()
+    second_started = Event()
+    todo_started = Event()
+    release_first = Event()
+    release_second = Event()
+    wake = Event()
+
+    def block(started: Event, release: Event):
+        def consume(_envelope, _guard):
+            started.set()
+            assert release.wait(timeout=2)
+
+        return consume
+
+    pools = dispatcher_service.AdapterWorkerPools(
+        {adapter.name: 2 for adapter in (first, second, third, todo)},
+        thread_name_prefix="test-agent-admission",
+    )
+    dispatcher = ConsumerDispatcher(
+        adapters=(first, second, third, todo),
+        consumers={
+            first.name: block(first_started, release_first),
+            second.name: block(second_started, release_second),
+            third.name: lambda _envelope, _guard: None,
+            todo.name: lambda _envelope, _guard: todo_started.set(),
+        },
+        executors=pools.executors,
+        max_in_flight=pools.max_in_flight,
+        shared_capacity_adapters=frozenset(
+            {first.name, second.name, third.name}
+        ),
+        shared_max_in_flight=2,
+        owner="dispatcher-a",
+        lease=timedelta(minutes=5),
+        wake_event=wake,
+    )
+
+    try:
+        assert dispatcher.dispatch_available(NOW, limit=4) == 3
+        assert first_started.wait(timeout=1)
+        assert second_started.wait(timeout=1)
+        assert todo_started.wait(timeout=1)
+        assert third.claimed == 0
+        assert third.remaining == 1
+
+        wake.clear()
+        release_first.set()
+        assert wake.wait(timeout=1)
+        assert dispatcher.dispatch_available(NOW, limit=1) == 1
+        assert third.claimed == 1
+    finally:
+        release_first.set()
+        release_second.set()
+        pools.shutdown(wait=True, cancel_futures=False)
+
+
+def test_meeting_pool_and_claim_capacity_are_limited_to_one():
+    meeting = _FakeAdapter("meeting", 3)
+    started = Event()
+    release = Event()
+    pools = dispatcher_service.AdapterWorkerPools(
+        {meeting.name: 1},
+        thread_name_prefix="test-meeting-capacity",
+    )
+    dispatcher = ConsumerDispatcher(
+        adapters=(meeting,),
+        consumers={
+            meeting.name: lambda _envelope, _guard: (
+                started.set(),
+                release.wait(timeout=2),
+            )
+        },
+        executors=pools.executors,
+        max_in_flight=pools.max_in_flight,
+        shared_capacity_adapters=frozenset({meeting.name}),
+        shared_max_in_flight=2,
+        owner="dispatcher-a",
+        lease=timedelta(minutes=5),
+    )
+
+    try:
+        assert dispatcher.dispatch_available(NOW, limit=3) == 1
+        assert started.wait(timeout=1)
+        assert meeting.claimed == 1
+        assert meeting.remaining == 2
+    finally:
+        release.set()
+        pools.shutdown(wait=True, cancel_futures=False)
+
+
+def test_cancelled_future_releases_shared_agent_slot_and_wakes_dispatcher():
+    first = _FakeAdapter("reply", 1)
+    second = _FakeAdapter("work_summary", 1)
+    executor = _RecordingExecutor()
+    wake = Event()
+    dispatcher = ConsumerDispatcher(
+        adapters=(first, second),
+        consumers={first.name: lambda *_: None, second.name: lambda *_: None},
+        executors={first.name: executor, second.name: executor},
+        max_in_flight={first.name: 1, second.name: 1},
+        shared_capacity_adapters=frozenset({first.name, second.name}),
+        shared_max_in_flight=1,
+        owner="dispatcher-a",
+        lease=timedelta(minutes=5),
+        wake_event=wake,
+    )
+
+    assert dispatcher.dispatch_available(NOW, limit=2) == 1
+    assert second.claimed == 0
+    wake.clear()
+    assert executor.futures[0].cancel()
+    assert wake.wait(timeout=1)
+    assert dispatcher.dispatch_available(NOW, limit=1) == 1
+    assert second.claimed == 1
+
+
+def test_abnormal_pool_shutdown_cancels_pending_without_waiting_for_blocked_work():
+    prefix = "test-abnormal-dispatcher"
+    started = Event()
+    release = Event()
+    pending_started = Event()
+    pools = dispatcher_service.AdapterWorkerPools(
+        {"reply": 1},
+        thread_name_prefix=prefix,
+    )
+    running = pools.executors["reply"].submit(
+        lambda: (started.set(), release.wait(timeout=2))
+    )
+    assert started.wait(timeout=1)
+    pending = pools.executors["reply"].submit(pending_started.set)
+
+    shutdown_returned = Event()
+    thread = Thread(
+        target=lambda: (
+            pools.shutdown(wait=False, cancel_futures=True),
+            shutdown_returned.set(),
+        )
+    )
+    thread.start()
+    thread.join(timeout=0.5)
+
+    assert shutdown_returned.is_set()
+    assert not thread.is_alive()
+    assert not running.done()
+    assert pending.cancelled()
+    assert not pending_started.is_set()
+
+    release.set()
+    assert running.result(timeout=1)[1] is True
+    pools.shutdown(wait=True, cancel_futures=False)
+    assert not [
+        worker
+        for worker in enumerate_threads()
+        if worker.name.startswith(prefix) and worker.is_alive()
+    ]
+
+
+def test_normal_dispatcher_stop_stops_claiming_then_drains_started_work():
+    prefix = "test-normal-stop-dispatcher"
+    adapter = _FakeAdapter("reply", 2)
+    stop = Event()
+    wake = Event()
+    started = Event()
+    release = Event()
+    pools = dispatcher_service.AdapterWorkerPools(
+        {adapter.name: 1},
+        thread_name_prefix=prefix,
+    )
+    dispatcher = ConsumerDispatcher(
+        adapters=(adapter,),
+        consumers={
+            adapter.name: lambda _envelope, _guard: (
+                started.set(),
+                release.wait(timeout=2),
+            )
+        },
+        executors=pools.executors,
+        max_in_flight=pools.max_in_flight,
+        shared_capacity_adapters=frozenset({adapter.name}),
+        shared_max_in_flight=1,
+        owner="dispatcher-a",
+        lease=timedelta(minutes=5),
+        wake_event=wake,
+    )
+    run_thread = Thread(target=dispatcher.run, kwargs={"stop_event": stop})
+    run_thread.start()
+    assert started.wait(timeout=1)
+
+    stop.set()
+    wake.set()
+    run_thread.join(timeout=1)
+    assert not run_thread.is_alive()
+    assert adapter.claimed == 1
+    assert adapter.remaining == 1
+
+    drained = Event()
+    shutdown_thread = Thread(
+        target=lambda: (
+            pools.shutdown(wait=True, cancel_futures=False),
+            drained.set(),
+        )
+    )
+    shutdown_thread.start()
+    assert not drained.wait(timeout=0.05)
+    release.set()
+    shutdown_thread.join(timeout=1)
+
+    assert drained.is_set()
+    assert not shutdown_thread.is_alive()
+    assert not [
+        worker
+        for worker in enumerate_threads()
+        if worker.name.startswith(prefix) and worker.is_alive()
     ]
 
 
@@ -979,12 +1197,15 @@ def test_dispatcher_releases_claim_when_worker_pool_rejects_submission():
         consumers={"reply": lambda _item, _guard: None},
         executors={"reply": RejectingExecutor()},
         max_in_flight={"reply": 1},
+        shared_capacity_adapters=frozenset({"reply"}),
+        shared_max_in_flight=1,
         owner="dispatcher-a",
         lease=timedelta(minutes=5),
     )
 
     assert dispatcher.dispatch_available(NOW, limit=1) == 0
     assert [item.source_id for item in adapter.released] == ["reply-1"]
+    assert dispatcher._shared_in_flight == 0
 
 
 def test_renew_failure_keeps_dispatching_other_adapter_and_reports_error(

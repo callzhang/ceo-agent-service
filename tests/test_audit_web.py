@@ -4393,6 +4393,7 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "CEO_PRODUCER_INTERVAL_SECONDS" not in html
     assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS" not in html
     assert "CEO_CONSUMER_WORKERS" in html
+    assert "允许同时执行的 Agent 任务总数" in html
     assert "同一会话仍由 SQLite 会话锁串行执行" in html
     assert "CEO_CODEX_MODEL" not in html
     assert "CEO_CODEX_MODEL_REASONING_EFFORT" not in html
