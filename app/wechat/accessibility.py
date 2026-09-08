@@ -952,7 +952,11 @@ class MacWechatAccessibility:
 
         prev_app = self._frontmost_app()
         try:
-            self._wait_until_idle()
+            # A user-requested "view this message" leaves WeChat in front
+            # (restore_focus=False). It must not wait for the background-send
+            # idle window after the user has explicitly initiated navigation.
+            if restore_focus is not False:
+                self._wait_until_idle()
             self._wait_for_interaction_slot(
                 sleep=time.sleep,
                 monotonic=system_time.monotonic,

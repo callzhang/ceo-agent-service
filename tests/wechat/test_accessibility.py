@@ -608,6 +608,7 @@ def test_open_and_identify_refreshes_ax_root_after_activation(monkeypatch):
     row = object()
     composer = object()
     roots = iter((stale_root, fresh_root))
+    idle_calls = []
 
     def get_attr(element, attribute, _default):
         values = {
@@ -645,7 +646,7 @@ def test_open_and_identify_refreshes_ax_root_after_activation(monkeypatch):
             return None
 
         def _wait_until_idle(self):
-            return None
+            idle_calls.append(True)
 
     monkeypatch.setattr(accessibility, "_activate_wait", lambda *args, **kwargs: True)
 
@@ -655,7 +656,10 @@ def test_open_and_identify_refreshes_ax_root_after_activation(monkeypatch):
 
     monkeypatch.setattr(accessibility, "_open_target", open_target)
 
-    assert Runner().open_and_identify("Melody", expected_recent_text="latest") == "Melody"
+    assert Runner().open_and_identify(
+        "Melody", expected_recent_text="latest", restore_focus=False,
+    ) == "Melody"
+    assert idle_calls == []
 
 
 def test_open_target_does_not_search_when_recent_message_is_not_in_sidebar():
