@@ -956,6 +956,9 @@ class RoutedDescriptionOptimizerAgent:
         request_key = sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
+        source_snapshot_id = _text(
+            payload.get("source_snapshot_id"), "source_snapshot_id"
+        )
         prompt = (
             "Improve exactly one email category description from the bounded JSON "
             "evidence below. Return JSON only with complete core, include, exclude, "
@@ -963,8 +966,13 @@ class RoutedDescriptionOptimizerAgent:
             + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         )
         result = self.routed_execution.execute(
-            workload_kind="email_classification",
-            workload_key="description-optimization:" + request_key,
+            workload_kind="email_description_optimization",
+            workload_key=(
+                "description-optimization:"
+                + source_snapshot_id
+                + ":"
+                + request_key
+            ),
             prompt=prompt,
             command_factory=CodexCommandFactory.standard(
                 developer_instructions=(

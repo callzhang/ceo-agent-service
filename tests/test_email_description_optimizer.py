@@ -13,6 +13,7 @@ from app.email_description_optimizer import (
     propose_description_update,
     DescriptionProposalRepository,
     DescriptionOptimizationOrchestrator,
+    RoutedDescriptionOptimizerAgent,
 )
 from app.email_embedding_classifier import CategoryDescription
 from app.email_classifier_learning import EmailClassifierLearningService
@@ -24,6 +25,25 @@ from app.email_classifier_retrain import (
     save_retrain_state,
 )
 from app.email_model_registry import EmailModelRegistry
+
+
+def test_routed_optimizer_uses_frozen_snapshot_as_runtime_parent() -> None:
+    calls = []
+
+    class RoutedExecution:
+        def execute(self, **kwargs):
+            calls.append(kwargs)
+            return type("Result", (), {"value": json.dumps({"ok": True})})()
+
+    result = RoutedDescriptionOptimizerAgent(RoutedExecution())(
+        {"source_snapshot_id": "snapshot-1", "category": "legal"}
+    )
+
+    assert result == {"ok": True}
+    assert calls[0]["workload_kind"] == "email_description_optimization"
+    assert calls[0]["workload_key"].startswith(
+        "description-optimization:snapshot-1:"
+    )
 
 
 def test_optimizer_invocation_lease_recovers_hard_crash_idempotently(tmp_path):

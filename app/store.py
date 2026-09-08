@@ -473,7 +473,15 @@ FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR = (
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RUNTIME_RESULT_ENVELOPE_BYTES = 64 * 1024
 RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
-    {"structured", "meeting", "task", "weekly_okr", "memory"}
+    {
+        "structured",
+        "meeting",
+        "task",
+        "weekly_okr",
+        "memory",
+        "email_classification",
+        "email_description_optimization",
+    }
 )
 MEETING_ALIGNMENT_RUN_TERMINAL_STATUSES = frozenset(
     {"failed", "retry", "no_action", "ready_to_send"}
@@ -6837,6 +6845,32 @@ class AutoReplyStore:
                 or not parts[4].strip()
             ):
                 raise ValueError("weekly_okr workload key has an invalid generation")
+        elif workload_kind == "email_classification":
+            prefix = "email-classification:"
+            digest = workload_key.removeprefix(prefix)
+            if (
+                not workload_key.startswith(prefix)
+                or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)
+            ):
+                raise ValueError(
+                    "email classification workload key must name a persisted task"
+                )
+        elif workload_kind == "email_description_optimization":
+            prefix = "description-optimization:"
+            parent_and_digest = workload_key.removeprefix(prefix)
+            snapshot_id, separator, digest = parent_and_digest.rpartition(":")
+            if (
+                not workload_key.startswith(prefix)
+                or not separator
+                or not snapshot_id
+                or snapshot_id != snapshot_id.strip()
+                or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)
+            ):
+                raise ValueError(
+                    "email description workload key must name a frozen snapshot"
+                )
         else:
             source, separator, source_id = workload_key.partition(":")
             if (
@@ -6885,6 +6919,21 @@ class AutoReplyStore:
             else:
                 query = "select 1 from task_agent_runs where id=? and status='running'"
             args = (int(row_id),)
+        elif workload_kind == "email_classification":
+            query = (
+                "select 1 from email_agent_classification_tasks "
+                "where task_id=? and status='running'"
+            )
+            args = (workload_key,)
+        elif workload_kind == "email_description_optimization":
+            snapshot_id, _, _ = workload_key.removeprefix(
+                "description-optimization:"
+            ).rpartition(":")
+            query = (
+                "select 1 from email_training_snapshots "
+                "where snapshot_id=? and frozen=1"
+            )
+            args = (snapshot_id,)
         else:
             source, _, row_id = workload_key.partition(":")
             query = {

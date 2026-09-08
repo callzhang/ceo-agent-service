@@ -371,6 +371,29 @@ def _seed_runtime_operation_parent(
                     "values (?, 'import', 'account', 'running')",
                     (int(source_id),),
                 )
+        elif workload_kind == "email_classification":
+            db.execute(
+                "create table if not exists email_agent_classification_tasks ("
+                "task_id text primary key, status text not null)"
+            )
+            db.execute(
+                "insert into email_agent_classification_tasks (task_id, status) "
+                "values (?, 'running')",
+                (workload_key,),
+            )
+        elif workload_kind == "email_description_optimization":
+            snapshot_id, _, _ = workload_key.removeprefix(
+                "description-optimization:"
+            ).rpartition(":")
+            db.execute(
+                "create table if not exists email_training_snapshots ("
+                "snapshot_id text primary key, frozen integer not null)"
+            )
+            db.execute(
+                "insert into email_training_snapshots (snapshot_id, frozen) "
+                "values (?, 1)",
+                (snapshot_id,),
+            )
 
 
 def test_runtime_attempt_claim_is_ordered_and_idempotent(tmp_path: Path):
@@ -834,6 +857,11 @@ def test_runtime_attempt_upgrade_replaces_pretrim_session_evidence_triggers(
         ("weekly_okr", "2026-08-16:manager-1:" + "a" * 64),
         ("memory", "memory_write_event:16"),
         ("memory", "wechat_memory_import_job:17"),
+        ("email_classification", "email-classification:" + "a" * 64),
+        (
+            "email_description_optimization",
+            "description-optimization:snapshot-1:" + "b" * 64,
+        ),
     ],
 )
 def test_runtime_attempt_operation_accepts_approved_stable_workload_keys(
@@ -895,6 +923,11 @@ def test_runtime_operation_attempts_are_listed_only_for_exact_workload(tmp_path:
         ("memory", "memory-16"),
         ("memory", "memory_write_event:999"),
         ("memory", "wechat_memory_import_job:999"),
+        ("email_classification", "email-classification:not-a-digest"),
+        (
+            "email_description_optimization",
+            "description-optimization:missing-digest",
+        ),
     ],
 )
 def test_runtime_attempt_operation_rejects_unapproved_or_freeform_workload_keys(
