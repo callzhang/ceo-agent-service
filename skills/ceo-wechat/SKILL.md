@@ -38,8 +38,10 @@ from messages received by configured reply targets.
 - When it is off, retain the existing account, selected targets, and message
   history, but do not create new WeChat reply tasks.
 - When it is on, a selected direct chat triggers on each new inbound text. A
-  selected group triggers only when the message explicitly mentions the current
-  WeChat account.
+  selected direct chat waits for the same five-minute settle window as DingTalk;
+  later messages replace the pending trigger before it is processed. A selected
+  group triggers only when the message explicitly mentions the current WeChat
+  account.
 - It is independent from the other channel's message-triage switch. It does
   not turn off the Reader, send existing deliveries, or change selected targets.
 

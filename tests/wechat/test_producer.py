@@ -95,10 +95,14 @@ def test_selected_group_requires_structured_self_mention(producer, reader, store
     assert [t.trigger_message_id for t in tasks] == ["m2"]
 
 
-def test_direct_replies_to_every_inbound_text(producer, reader, store):
+def test_direct_messages_coalesce_during_the_five_minute_settle_window(producer, reader, store):
     reader.messages = [direct_message("d1", text="hi"), direct_message("d2", text="hello")]
     assert producer.run_once() == 2
-    assert store.count_reply_tasks(channel="wechat") == 2
+    tasks = store.list_reply_tasks(channel="wechat")
+    assert len(tasks) == 1
+    assert tasks[0].trigger_message_id == "d2"
+    assert tasks[0].trigger_text == "hello"
+    assert tasks[0].available_at == "2026-07-17T11:05:02"
 
 
 def test_disabled_wechat_auto_reply_does_not_create_wechat_tasks(
@@ -290,9 +294,8 @@ def test_same_second_message_visible_on_later_scan_is_not_lost(store, reader, ac
     assert producer.run_once() == 1
     reader.messages = [first, late]
     assert producer.run_once() == 1
-    assert {
-        task.trigger_message_id for task in store.list_reply_tasks(channel="wechat")
-    } == {"d1", "d2"}
+    tasks = store.list_reply_tasks(channel="wechat")
+    assert [task.trigger_message_id for task in tasks] == ["d2"]
 
 
 def test_backlog_larger_than_read_limit_is_processed_oldest_page_first(
@@ -318,6 +321,5 @@ def test_backlog_larger_than_read_limit_is_processed_oldest_page_first(
 
     assert producer.run_once() == 2
     assert producer.run_once() == 1
-    assert {
-        task.trigger_message_id for task in store.list_reply_tasks(channel="wechat")
-    } == {"d1", "d2", "d3"}
+    tasks = store.list_reply_tasks(channel="wechat")
+    assert [task.trigger_message_id for task in tasks] == ["d3"]

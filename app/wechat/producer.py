@@ -8,10 +8,13 @@ trigger_message_id) uniqueness, so repeated scans never duplicate.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
 from app.skill_features import FeatureRegistry
+
+
+DIRECT_REPLY_SETTLE_WINDOW = timedelta(minutes=5)
 
 
 def is_reply_candidate(
@@ -76,6 +79,24 @@ class WechatReplyProducer:
             for message in new_messages:
                 if not is_reply_candidate(message, scope, self_user_id=self.self_user_id):
                     continue
+                available_at = ""
+                if message.conversation_type == "direct":
+                    available_at = (
+                        datetime.fromisoformat(message.sent_at)
+                        + DIRECT_REPLY_SETTLE_WINDOW
+                    ).isoformat()
+                    if self.store.replace_pending_single_chat_reply_task_trigger(
+                        conversation_id=message.conversation_id,
+                        trigger_message_id=message.message_id,
+                        trigger_create_time=message.sent_at,
+                        trigger_sender=message.sender_display_name,
+                        trigger_text=message.text,
+                        trigger_message_json=message.model_dump_json(),
+                        available_at=available_at,
+                        channel="wechat",
+                    ):
+                        enqueued += 1
+                        continue
                 if self.store.enqueue_reply_task(
                     channel="wechat",
                     conversation_id=message.conversation_id,
@@ -86,6 +107,7 @@ class WechatReplyProducer:
                     trigger_sender=message.sender_display_name,
                     trigger_text=message.text,
                     trigger_message_json=message.model_dump_json(),
+                    available_at=available_at,
                 ):
                     enqueued += 1
             if new_messages:
