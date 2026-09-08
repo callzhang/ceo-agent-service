@@ -5575,6 +5575,30 @@ def test_claim_reply_tasks_waits_until_available_at(tmp_path: Path):
     assert after[0].error == "waiting_fast_path_unread_backoff"
 
 
+def test_claim_reply_tasks_accepts_timezone_aware_available_at(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-iso-time",
+        conversation_title="Melody",
+        single_chat=True,
+        trigger_message_id="msg-iso-time",
+        trigger_create_time="2026-09-08T01:00:00-07:00",
+        trigger_sender="Melody",
+        trigger_text="hello",
+        available_at="2026-09-08T01:04:34-07:00",
+        channel="wechat",
+    )
+
+    [claimed] = store.claim_reply_tasks(
+        limit=1,
+        channel="wechat",
+        now="2026-09-08 08:05:00",
+    )
+
+    assert claimed.status == "processing"
+    assert claimed.available_at == ""
+
+
 def test_requeue_reply_task_can_delay_next_claim(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

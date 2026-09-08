@@ -586,7 +586,7 @@ scripts/install-auto-reply-agents.sh
 运行模型只有一个 launchd job。它的 supervisor 运行 worker 和审计 Web 两个独立子进程；它们共享 SQLite，但不共享 Python 解释器。任一子进程退出时，supervisor 只退避重启该子进程，另一方继续服务；不会创建 meeting crontab 或第二个 plist：
 
 - `com.ceo-agent-service.main`：唯一 launchd job，托管队列 worker 与本地审计页面。
-- producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。
+- producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。队列的 `available_at` 按实际时间解析，兼容带时区的 ISO 时间与数据库时间格式，不以字符串顺序判断是否到期。
 - consumer pool：单一 launchd 服务内按 `CEO_CONSUMER_WORKERS` 启动 2 条受限 consumer 线程；每条按 `CEO_CONSUMER_POLL_INTERVAL_SECONDS` 间隔领取任务、调用 agent、执行发送或跳过，默认 10 秒。同一会话仍串行。
 - meeting producer loop：读取 AI 听记与日历参会证据，只为 Derek 参会且明确结束至少 `CEO_MEETING_SETTLE_SECONDS` 的会议建队列；日历只用于确认参会名单。没有匹配日程时，逐字稿中识别到的说话者只能证明这些人发言过，不能证明会议是两人会议；没有触发条件的会议保持安静。
 - meeting consumer loop：先按讨论内容决定投递范围，再处理参会名单。客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动均为业务内容：Agent 使用 DWS 搜索、排序并自行选择有明确业务承接关系的团队群；议题相似、参会人重合或近期活跃本身不构成投递证据。多个合理群时由 Agent 选择证据最强的群；没有有证据且可发送的群时返回 `no_action`，绝不私信会议创建人或参会人。只有个人、非业务内容，且完整日历名单明确为 Derek 与另一位参会人时，才可以私信该另一位参会人。所选群不可发送时重试验证或选择下一候选群，不回退为私信。发送正文固定以 `【会议跟进】会议标题（会议时间）` 开头，便于收件人识别来源会议；真实 @ 默认限于参会人，非参会人只有会议转写明确说到是他的任务、由他负责、交给他确认或跟进时才 @。确认发送成功后复用 reply agent 的本地/Chrome notification 和钉钉会话点击跳转。dry-run 只分析到 `ready_to_send`，不会 claim 发送。

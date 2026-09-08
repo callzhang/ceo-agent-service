@@ -8572,7 +8572,7 @@ class AutoReplyStore:
             now_expression = "current_timestamp" if now is None else "?"
             clauses = [
                 "status='pending'",
-                f"(available_at='' or available_at <= {now_expression})",
+                f"(available_at='' or datetime(available_at) <= datetime({now_expression}))",
             ]
             args: list[str | int] = []
             if now is not None:
@@ -8610,7 +8610,7 @@ class AutoReplyStore:
             now_expression = "current_timestamp" if now is None else "?"
             clauses = [
                 "status='pending'",
-                f"(available_at='' or available_at <= {now_expression})",
+                f"(available_at='' or datetime(available_at) <= datetime({now_expression}))",
             ]
             args: list[str] = []
             if now is not None:
@@ -8655,7 +8655,7 @@ class AutoReplyStore:
                     updated_at=current_timestamp
                 where id=?
                   and status='pending'
-                  and (available_at='' or available_at <= {now_expression})
+                  and (available_at='' or datetime(available_at) <= datetime({now_expression}))
                 """,
                 args,
             )
@@ -8684,7 +8684,7 @@ class AutoReplyStore:
                 from reply_tasks
                 where status='pending'
                   and channel=?
-                  and (available_at='' or available_at <= {now_expression})
+                  and (available_at='' or datetime(available_at) <= datetime({now_expression}))
                 order by id
                 limit ?
                 """,
