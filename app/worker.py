@@ -1204,6 +1204,8 @@ class DingTalkAutoReplyWorker:
                     title=record.title,
                     single_chat=True,
                     unread_point=0,
+                    direct_user_id=record.direct_user_id,
+                    direct_open_dingtalk_id=record.direct_open_dingtalk_id,
                 )
             )
         return [*conversations, *recovered]

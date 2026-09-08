@@ -3732,6 +3732,47 @@ def test_robot_direct_message_still_queues_when_unread_listing_fails(
     assert dws.robot_direct_message_reads == 1
 
 
+def test_recent_single_chat_recovery_uses_persisted_sender_identity(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        dry_run=True,
+    )
+    worker.store.upsert_conversation(
+        conversation_id="cid-mina",
+        title="Mina 邹",
+        single_chat=True,
+        codex_session_id=None,
+    )
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-mina",
+        conversation_title="Mina 邹",
+        single_chat=True,
+        trigger_message_id="msg-previous",
+        trigger_create_time="2026-09-07 17:02:04",
+        trigger_sender="Mina 邹",
+        trigger_text="上一条消息",
+        trigger_message_json=json.dumps(
+            {
+                "sender_open_dingtalk_id": "mina-open-id",
+            },
+            ensure_ascii=False,
+        ),
+    )
+    worker.store.mark_seen("msg-previous", "cid-mina")
+
+    recovered = worker._conversations_with_recent_single_chat_recovery([])
+
+    assert len(recovered) == 1
+    assert recovered[0].title == "Mina 邹"
+    assert recovered[0].direct_open_dingtalk_id == "mina-open-id"
+
+
 def test_robot_direct_current_user_message_still_triggers_reply(
     tmp_path: Path, monkeypatch
 ):

@@ -815,6 +815,8 @@ class ConversationRecord(BaseModel):
     title: str
     single_chat: bool
     codex_session_id: str | None = None
+    direct_user_id: str = ""
+    direct_open_dingtalk_id: str = ""
 
 
 class CodexSessionSearchResult(BaseModel):
@@ -12956,6 +12958,25 @@ class AutoReplyStore:
                     c.title,
                     c.single_chat,
                     c.codex_session_id,
+                    coalesce((
+                        select json_extract(t.trigger_message_json, '$.sender_user_id')
+                        from reply_tasks t
+                        where t.conversation_id=c.conversation_id
+                          and t.single_chat=1
+                        order by t.id desc
+                        limit 1
+                    ), '') as direct_user_id,
+                    coalesce((
+                        select json_extract(
+                            t.trigger_message_json,
+                            '$.sender_open_dingtalk_id'
+                        )
+                        from reply_tasks t
+                        where t.conversation_id=c.conversation_id
+                          and t.single_chat=1
+                        order by t.id desc
+                        limit 1
+                    ), '') as direct_open_dingtalk_id,
                     max(s.seen_at) as latest_seen_at
                 from conversations c
                 join seen_messages s on s.conversation_id=c.conversation_id
@@ -12972,6 +12993,8 @@ class AutoReplyStore:
                     title=row["title"],
                     single_chat=bool(row["single_chat"]),
                     codex_session_id=row["codex_session_id"],
+                    direct_user_id=row["direct_user_id"],
+                    direct_open_dingtalk_id=row["direct_open_dingtalk_id"],
                 )
                 for row in rows
             ]

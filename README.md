@@ -162,7 +162,7 @@ workload 启用 OAuth→API 故障切换并核对同一 run 的 attempt 与 secr
 ### 私聊规则
 
 - 私聊不需要 @ 本人。
-- 私聊消息经过未读/慢路径选择和系统通知过滤后，最新一条 remaining message 会进入 agent 判断。
+- 私聊消息经过未读/慢路径选择和系统通知过滤后，最新一条 remaining message 会进入 agent 判断。慢路径复用该会话最近已确认消息的稳定用户身份读取，不依赖会话昵称与通讯录正式姓名一致。
 - 私聊里的钉钉在线文档卡片会进入 agent 判断，不会因为渲染成图片/链接卡片就直接 `no_reply`。
 
 完整规则见 [docs/message-routing-rules.md](docs/message-routing-rules.md)。
