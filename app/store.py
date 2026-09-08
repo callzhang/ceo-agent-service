@@ -7611,6 +7611,29 @@ class AutoReplyStore:
                 """,
                 (now_text, now_text),
             )
+            weekly_okr_cursor = db.execute(
+                """
+                update weekly_okr_analysis_jobs as job
+                set status='failed', error='runtime_lease_expired',
+                    lease_owner='', lease_expires_at='',
+                    finished_at=?, updated_at=?
+                where job.status='running'
+                  and job.lease_expires_at!=''
+                  and job.lease_expires_at<=?
+                  and exists (
+                    select 1 from agent_runtime_attempts as attempt
+                    where attempt.agent_run_id is null
+                      and attempt.workload_kind='weekly_okr'
+                      and attempt.workload_key like (
+                        job.week_end || ':' || job.manager_user_id || ':' ||
+                        job.source_digest || ':' || cast(job.id as text) || ':%'
+                      )
+                      and attempt.status='failed'
+                      and attempt.failure_code='runtime_lease_expired'
+                  )
+                """,
+                (now_text, now_text, now_text),
+            )
             cursor = db.execute(
                 """
                 update agent_runtime_attempts as attempt
@@ -7633,7 +7656,11 @@ class AutoReplyStore:
                 """,
                 (now_text, now_text, now_text, stale_before),
             )
-            return terminal_meeting_cursor.rowcount + cursor.rowcount
+            return (
+                terminal_meeting_cursor.rowcount
+                + weekly_okr_cursor.rowcount
+                + cursor.rowcount
+            )
 
     def set_agent_runtime_attempt_session(
         self,

@@ -8739,6 +8739,67 @@ def test_recover_stale_runtime_attempts_immediately_closes_terminal_meeting_pare
     assert recovered.failure_code == "runtime_parent_requeued"
 
 
+def test_recover_stale_runtime_attempts_closes_expired_weekly_okr_parent(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "expired-weekly-okr-parent.sqlite3")
+    values = {
+        "week_end": "2026-09-06",
+        "manager_user_id": "manager-1",
+        "source_digest": "a" * 64,
+    }
+    claim = store.begin_weekly_okr_analysis_job(
+        **values,
+        owner="crashed-weekly-owner",
+        lease_seconds=60,
+        now="2026-09-08 04:00:00",
+    )
+    attempt = store.claim_runtime_operation_attempt(
+        "weekly_okr",
+        (
+            f"{values['week_end']}:{values['manager_user_id']}:"
+            f"{values['source_digest']}:{claim.job_id}:crashed-weekly-owner"
+        ),
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="crashed-weekly-owner",
+        lease_seconds=60,
+        now="2026-09-08 04:00:00",
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        attempt.id,
+        owner="crashed-weekly-owner",
+        lease_seconds=60,
+        now="2026-09-08 04:00:00",
+    )
+    assert store.recover_expired_runtime_operation_attempt(
+        "weekly_okr",
+        attempt.workload_key,
+        now="2026-09-08 04:01:01",
+    ) is not None
+
+    assert store.recover_stale_runtime_attempts(
+        stale_after_seconds=60,
+        now="2026-09-08 04:01:02",
+    ) == 1
+
+    with store._connect() as db:
+        job = db.execute(
+            "select status, error, lease_owner, lease_expires_at, finished_at "
+            "from weekly_okr_analysis_jobs where id=?",
+            (claim.job_id,),
+        ).fetchone()
+    assert tuple(job) == (
+        "failed",
+        "runtime_lease_expired",
+        "",
+        "",
+        "2026-09-08 04:01:02",
+    )
+
+
 def test_current_schema_reopens_and_adds_agent_run_recovery_index(
     tmp_path: Path,
 ):
