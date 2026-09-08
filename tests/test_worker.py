@@ -6844,6 +6844,20 @@ def test_calendar_link_message_is_handled_as_calendar_invite(
     assert attempt.send_status == "completed"
 
 
+def test_recurring_calendar_link_uses_instance_id_in_agent_context(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "明天站会讨论 dingtalk://dingtalkclient/action/open_mini_app?"
+        "page=pages%2Fdetail%2Findex%3FuniqueId%3Dinvite-1"
+        "%26recurrenceId%3D1788931800000",
+        single_chat=True,
+    )
+    assert DingTalkAutoReplyWorker._raw_calendar_event_id(trigger) == (
+        "invite-1_1788931800000"
+    )
+
+
 def test_calendar_invite_still_injects_calendar_context_before_codex(
     tmp_path: Path, monkeypatch
 ):

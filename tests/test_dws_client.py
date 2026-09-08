@@ -3002,6 +3002,40 @@ def test_calendar_invite_from_message_fetches_detail_from_calendar_link():
     ]
 
 
+def test_calendar_invite_from_message_uses_recurring_instance_id():
+    client = RecordingDwsClient(
+        {
+            "success": True,
+            "result": {
+                "id": "event-1_1788931800000",
+                "summary": "大模型数据项目站会",
+                "start": {"dateTime": "2026-09-09T13:30:00+08:00"},
+                "end": {"dateTime": "2026-09-09T14:30:00+08:00"},
+            },
+        }
+    )
+    message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="韩露",
+        single_chat=True,
+        sender_name="韩露",
+        create_time="2026-09-08 17:00:00",
+        content=(
+            "明天站会讨论\n"
+            "dingtalk://dingtalkclient/action/open_mini_app?"
+            "page=pages%2Fdetail%2Findex%3FuniqueId%3Devent-1"
+            "%26recurrenceId%3D1788931800000"
+        ),
+    )
+
+    event = client.calendar_invite_from_message(message)
+
+    assert event is not None
+    assert event.event_id == "event-1_1788931800000"
+    assert client.commands[0][5] == "event-1_1788931800000"
+
+
 def test_get_calendar_event_returns_none_when_detail_is_unavailable():
     class CalendarDetailUnavailableClient(DwsClient):
         def __init__(self):

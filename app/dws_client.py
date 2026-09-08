@@ -4505,15 +4505,17 @@ class DwsClient:
             query_values.append(text.split("?", 1)[1])
         for query in query_values:
             parsed = parse_qs(query, keep_blank_values=False)
-            for key in keys:
-                for value in parsed.get(key, []):
-                    if value.strip():
-                        result.append(value.strip())
-            for key in keys:
+
+            def values_for(key: str) -> list[str]:
+                values = [
+                    value.strip()
+                    for value in parsed.get(key, [])
+                    if value.strip()
+                ]
                 token = f"{key}="
                 start = query.find(token)
                 if start < 0:
-                    continue
+                    return values
                 start += len(token)
                 end = len(query)
                 for separator in ("&", ")", "]", " ", "\n", "\t"):
@@ -4521,8 +4523,18 @@ class DwsClient:
                     if index >= 0:
                         end = min(end, index)
                 value = query[start:end].strip()
-                if value:
-                    result.append(value)
+                if value and value not in values:
+                    values.append(value)
+                return values
+
+            recurrence_ids = values_for("recurrenceId")
+            for key in keys:
+                for value in values_for(key):
+                    if key == "uniqueId" and recurrence_ids:
+                        recurrence_id = recurrence_ids[0]
+                        value = f"{value}_{recurrence_id}"
+                    if value not in result:
+                        result.append(value)
         return result
 
     @staticmethod

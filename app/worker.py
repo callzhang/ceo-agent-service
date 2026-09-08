@@ -3120,16 +3120,28 @@ class DingTalkAutoReplyWorker:
                 continue
             if not isinstance(value, dict):
                 continue
+            normalized_items = {
+                str(key).replace("_", "").casefold(): item
+                for key, item in value.items()
+            }
+            event_id = next(
+                (
+                    item.strip()
+                    for key in ("eventid", "uniqueid")
+                    if isinstance((item := normalized_items.get(key)), str)
+                    and item.strip()
+                ),
+                "",
+            )
+            recurrence_id = normalized_items.get("recurrenceid")
+            if event_id:
+                if isinstance(recurrence_id, str) and recurrence_id.strip():
+                    return f"{event_id}_{recurrence_id.strip()}"
+                return event_id
             for key, item in value.items():
-                normalized = str(key).replace("_", "").casefold()
-                if normalized in {"eventid", "uniqueid"} and isinstance(item, str):
-                    if item.strip():
-                        return item.strip()
                 if isinstance(item, dict | list):
                     stack.append(item)
-        decoded = unquote(message.content)
-        match = re.search(r"(?:^|[?&])uniqueId=([^&\s]+)", decoded)
-        return unquote(match.group(1)).strip() if match else ""
+        return DwsClient._calendar_event_id_from_message(message)
 
     @classmethod
     def _raw_oa_identifiers(cls, payload: object) -> tuple[str, str]:
