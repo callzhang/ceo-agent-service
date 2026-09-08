@@ -19984,20 +19984,28 @@ class AutoReplyStore:
             ).fetchone()
             return int(row["id"])
 
-    def claim_work_summary_inputs(self, limit: int) -> list[WorkSummaryInput]:
+    def claim_work_summary_inputs(
+        self,
+        limit: int,
+        *,
+        now: str | None = None,
+    ) -> list[WorkSummaryInput]:
         if limit <= 0:
             return []
         with self._immediate_write_transaction() as db:
+            now_expression = "current_timestamp" if now is None else "?"
+            args: list[object] = [] if now is None else [now]
+            args.append(limit)
             rows = db.execute(
-                """
+                f"""
                 select *
                 from work_summary_inputs
                 where status='pending'
-                  and (available_at='' or available_at <= current_timestamp)
+                  and (available_at='' or available_at <= {now_expression})
                 order by id
                 limit ?
                 """,
-                (limit,),
+                args,
             ).fetchall()
             ids = [row["id"] for row in rows]
             if not ids:

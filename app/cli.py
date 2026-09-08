@@ -62,6 +62,7 @@ from app.dws_client import (
     local_time_zone_name,
     native_reply_delivery_payload,
 )
+from app.dispatcher.service import ConsumerDispatcher
 from app.feedback_spike import (
     build_events_url,
     send_feedback_spike_links,
@@ -131,6 +132,20 @@ from app.weekly_okr_report import (
     weekly_okr_report_command,
     weekly_okr_report_window_open,
 )
+
+
+def run_consumer_dispatcher_loop(
+    dispatcher: ConsumerDispatcher,
+    *,
+    stop_event: threading.Event,
+) -> None:
+    """Run an explicitly wired dispatcher without activating legacy queues here.
+
+    Task-specific consumers remain owned by their current service loops until
+    their migration supplies both a queue adapter and a one-item consumer.
+    """
+
+    dispatcher.run(stop_event=stop_event)
 
 WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = 3
 WECHAT_READER_LAUNCHD_LABEL = "com.stardust.ceo-agent.wechat-reader"
