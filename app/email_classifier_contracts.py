@@ -10,24 +10,97 @@ import math
 import re
 from collections.abc import Mapping as MappingABC, Sequence
 from types import MappingProxyType
-from typing import Literal, Mapping
+from typing import Annotated, Callable, Literal, Mapping
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
+    StringConstraints,
+    TypeAdapter,
+    ValidationInfo,
+    WrapValidator,
     field_serializer,
     field_validator,
     model_validator,
 )
 
 
+INITIAL_EMAIL_CATEGORY_KEYS = (
+    "work",
+    "human_resources",
+    "legal",
+    "financing",
+    "personal",
+    "notification",
+    "external_billing",
+    "shopping",
+    "junk",
+)
+RESERVED_EMAIL_CATEGORY_KEYS = frozenset(
+    {"important", "subscription", "other", "billing"}
+)
+LEGACY_EMAIL_CATEGORY_KEYS = frozenset({"important", "subscription", "billing"})
+_LEGACY_CATEGORY_CONTEXT_KEY = "allow_legacy_email_category_keys"
+
+
+def _reject_reserved_email_category_key(value: str) -> str:
+    if value in RESERVED_EMAIL_CATEGORY_KEYS:
+        raise ValueError(f"reserved email category key: {value}")
+    return value
+
+
+def _validate_email_category_key_with_context(
+    value: object,
+    handler: Callable[[object], str],
+    info: ValidationInfo,
+) -> str:
+    if (
+        info.context
+        and info.context.get(_LEGACY_CATEGORY_CONTEXT_KEY) is True
+        and type(value) is str
+        and value in LEGACY_EMAIL_CATEGORY_KEYS
+    ):
+        return value
+    return handler(value)
+
+
+EmailCategoryKey = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=r"^[a-z][a-z0-9_]{1,63}$"),
+    AfterValidator(_reject_reserved_email_category_key),
+    WrapValidator(_validate_email_category_key_with_context),
+]
+EmailClassificationSource = Literal["model", "user", "agent"]
+_EMAIL_CATEGORY_KEY_ADAPTER = TypeAdapter(EmailCategoryKey)
+
+
+def validate_email_category_key(value: object) -> EmailCategoryKey:
+    """Return one canonical category key without coercion or normalization."""
+
+    return _EMAIL_CATEGORY_KEY_ADAPTER.validate_python(value)
+
+
+def rehydrate_legacy_email_category_key(value: object) -> str:
+    """Validate persisted category history, including the three retired keys."""
+
+    return _EMAIL_CATEGORY_KEY_ADAPTER.validate_python(
+        value,
+        context={_LEGACY_CATEGORY_CONTEXT_KEY: True},
+    )
+
+
 class EmailCategory(StrEnum):
     IMPORTANT = "important"
     WORK = "work"
+    HUMAN_RESOURCES = "human_resources"
+    LEGAL = "legal"
+    FINANCING = "financing"
     PERSONAL = "personal"
     NOTIFICATION = "notification"
     BILLING = "billing"
+    EXTERNAL_BILLING = "external_billing"
     SHOPPING = "shopping"
     SUBSCRIPTION = "subscription"
     JUNK = "junk"
@@ -39,6 +112,7 @@ class EmailAction(StrEnum):
     ARCHIVE = "archive"
     MOVE = "move"
     TRASH = "trash"
+    FLAG_IMPORTANT = "flag_important"
     AUTO_REPLY = "auto_reply"
     UNSUBSCRIBE = "unsubscribe"
 
@@ -49,8 +123,88 @@ DIRECT_ACTIONS = (
     EmailAction.ARCHIVE,
     EmailAction.MOVE,
     EmailAction.TRASH,
+    EmailAction.FLAG_IMPORTANT,
 )
 AGENT_ACTIONS = (EmailAction.AUTO_REPLY, EmailAction.UNSUBSCRIBE)
+ACTION_DEPENDENCY_PARAMETER = "depends_on"
+
+
+def effective_direct_action_dependencies(
+    actions: Sequence[EmailAction],
+    action_parameters: Mapping[EmailAction, Mapping[str, object]],
+) -> Mapping[EmailAction, frozenset[EmailAction]]:
+    """Build the one effective dependency graph used to validate and schedule."""
+
+    direct_actions = tuple(action for action in actions if action in DIRECT_ACTIONS)
+    graph: dict[EmailAction, set[EmailAction]] = {
+        action: {
+            EmailAction(dependency)
+            for dependency in action_parameters.get(action, {}).get(
+                ACTION_DEPENDENCY_PARAMETER, ()
+            )
+        }
+        for action in direct_actions
+    }
+    configured = set(direct_actions)
+    if any(
+        dependency not in configured
+        for dependencies in graph.values()
+        for dependency in dependencies
+    ):
+        raise ValueError(
+            "direct action dependencies must reference configured direct actions"
+        )
+
+    def explicitly_depends_on(action: EmailAction, target: EmailAction) -> bool:
+        pending = list(graph[action])
+        seen: set[EmailAction] = set()
+        while pending:
+            dependency = pending.pop()
+            if dependency is target:
+                return True
+            if dependency in seen:
+                continue
+            seen.add(dependency)
+            pending.extend(graph[dependency])
+        return False
+
+    relocation_actions = {
+        EmailAction.ARCHIVE,
+        EmailAction.MOVE,
+        EmailAction.TRASH,
+    }
+    locator_preserving_actions = {
+        EmailAction.LABEL,
+        EmailAction.MARK_READ,
+    }
+    for relocation in relocation_actions & configured:
+        graph[relocation].update(
+            preserving
+            for preserving in locator_preserving_actions & configured
+            if not explicitly_depends_on(preserving, relocation)
+        )
+    if EmailAction.MOVE in configured and EmailAction.FLAG_IMPORTANT in configured:
+        graph[EmailAction.FLAG_IMPORTANT].add(EmailAction.MOVE)
+
+    visiting: set[EmailAction] = set()
+    visited: set[EmailAction] = set()
+
+    def visit(action: EmailAction) -> None:
+        if action in visiting:
+            raise ValueError(
+                "effective direct action dependencies must be acyclic"
+            )
+        if action in visited:
+            return
+        visiting.add(action)
+        for dependency in graph[action]:
+            visit(dependency)
+        visiting.remove(action)
+        visited.add(action)
+
+    for action in direct_actions:
+        visit(action)
+    return {action: frozenset(dependencies) for action, dependencies in graph.items()}
 
 
 _MESSAGE_ID_ATOM = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
@@ -224,8 +378,8 @@ def _action_plan_identity(
     action_plan_version: int,
     classification_id: int,
     account_id: str,
-    category: EmailCategory,
-    classification_source: Literal["model", "user"],
+    category: EmailCategoryKey,
+    classification_source: EmailClassificationSource,
     confidence: float,
     model_id: str,
     config_version: str,
@@ -243,7 +397,7 @@ def _action_plan_identity(
         "action_plan_version": action_plan_version,
         "classification_id": classification_id,
         "account_id": account_id,
-        "category": category.value,
+        "category": category,
         "classification_source": classification_source,
         "confidence": confidence,
         "model_id": model_id,
@@ -283,8 +437,8 @@ class EmailActionPlan(BaseModel):
     action_plan_version: int = Field(gt=0)
     classification_id: int = Field(gt=0)
     account_id: str = Field(min_length=1)
-    category: EmailCategory
-    classification_source: Literal["model", "user"]
+    category: EmailCategoryKey
+    classification_source: EmailClassificationSource
     confidence: float = Field(ge=0.0, le=1.0)
     model_id: str = Field(min_length=1)
     config_version: str = Field(min_length=1)
@@ -388,19 +542,48 @@ class EmailActionPlan(BaseModel):
             EmailAction.LABEL: {"labels"},
             EmailAction.MOVE: {"target_folder"},
             EmailAction.AUTO_REPLY: {"instruction"},
+            EmailAction.UNSUBSCRIBE: {
+                "candidate_index",
+                "candidate_source",
+                "candidate_digest",
+                "candidate_reference",
+            },
         }
         for action, parameters in self.action_parameters.items():
-            allowed_keys = parameter_schemas.get(action)
-            if allowed_keys is None:
-                if parameters:
-                    raise ValueError(f"{action.value} does not accept parameters")
-                continue
+            action_parameter_schema = parameter_schemas.get(action)
+            if action_parameter_schema is None:
+                allowed_keys = set()
+            else:
+                allowed_keys = set(action_parameter_schema)
+            if action in DIRECT_ACTIONS:
+                allowed_keys.add(ACTION_DEPENDENCY_PARAMETER)
             unexpected_keys = set(parameters) - allowed_keys
             if unexpected_keys:
+                if action_parameter_schema is None:
+                    raise ValueError(f"{action.value} does not accept parameters")
                 raise ValueError(
                     f"{action.value} has unsupported parameters: "
                     f"{', '.join(sorted(unexpected_keys))}"
                 )
+            raw_dependencies = parameters.get(ACTION_DEPENDENCY_PARAMETER, ())
+            if not isinstance(raw_dependencies, list | tuple):
+                raise ValueError("direct action dependencies must be a JSON array")
+            try:
+                dependencies = tuple(EmailAction(value) for value in raw_dependencies)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("direct action dependency is invalid") from exc
+            if len(dependencies) != len(set(dependencies)):
+                raise ValueError("direct action dependencies must be unique")
+            if action in dependencies:
+                raise ValueError("direct action cannot depend on itself")
+            if any(
+                dependency not in DIRECT_ACTIONS or dependency not in self.actions
+                for dependency in dependencies
+            ):
+                raise ValueError(
+                    "direct action dependencies must reference configured direct actions"
+                )
+        effective_direct_action_dependencies(self.actions, self.action_parameters)
 
         if EmailAction.LABEL in self.actions:
             labels = self.action_parameters.get(EmailAction.LABEL, {}).get("labels")
@@ -426,6 +609,27 @@ class EmailActionPlan(BaseModel):
             )
             if not isinstance(instruction, str) or not instruction.strip():
                 raise ValueError("auto_reply action requires a non-blank instruction")
+
+        if EmailAction.UNSUBSCRIBE in self.actions:
+            selection = self.action_parameters.get(EmailAction.UNSUBSCRIBE, {})
+            if selection and set(selection) != {
+                "candidate_index",
+                "candidate_source",
+                "candidate_digest",
+                "candidate_reference",
+            }:
+                raise ValueError("unsubscribe requires one exact redacted candidate")
+            digest = selection.get("candidate_digest") if selection else None
+            reference = selection.get("candidate_reference") if selection else None
+            if selection and (
+                type(selection.get("candidate_index")) is not int
+                or selection["candidate_index"] < 0
+                or not isinstance(selection.get("candidate_source"), str)
+                or not isinstance(digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                or reference != f"unsubscribe-entry:{digest}"
+            ):
+                raise ValueError("unsubscribe candidate binding is invalid")
 
         expected_identity = _action_plan_identity(
             action_plan_version=self.action_plan_version,
@@ -463,13 +667,22 @@ class EmailActionPlan(BaseModel):
         return tuple(action for action in self.actions if action in AGENT_ACTIONS)
 
 
+def rehydrate_legacy_email_action_plan_json(value: str) -> EmailActionPlan:
+    """Rehydrate immutable plans written before retired categories were reserved."""
+
+    return EmailActionPlan.model_validate_json(
+        value,
+        context={_LEGACY_CATEGORY_CONTEXT_KEY: True},
+    )
+
+
 def build_versioned_email_action_plan(
     *,
     action_plan_version: int,
     classification_id: int,
     account_id: str,
-    category: EmailCategory,
-    classification_source: Literal["model", "user"],
+    category: EmailCategoryKey,
+    classification_source: EmailClassificationSource,
     confidence: float,
     model_id: str,
     config_version: str,
@@ -481,8 +694,12 @@ def build_versioned_email_action_plan(
 ) -> EmailActionPlan:
     """Build an immutable plan whose identity covers its explicit history version."""
 
+    category = validate_email_category_key(category)
     copied_parameters = {
-        action: dict(parameters) for action, parameters in action_parameters.items()
+        action: dict(sorted(parameters.items()))
+        for action, parameters in sorted(
+            action_parameters.items(), key=lambda item: item[0].value
+        )
     }
     typed_authorizations = (
         ()
@@ -537,8 +754,8 @@ def build_email_action_plan(
     *,
     classification_id: int,
     account_id: str,
-    category: EmailCategory,
-    classification_source: Literal["model", "user"],
+    category: EmailCategoryKey,
+    classification_source: EmailClassificationSource,
     confidence: float,
     model_id: str,
     config_version: str,
@@ -568,7 +785,7 @@ def build_email_action_plan(
 
 def build_user_confirmation_authorizations(
     *,
-    category: EmailCategory,
+    category: EmailCategoryKey,
     actions: Sequence[EmailAction],
     action_parameters: Mapping[EmailAction, Mapping[str, object]],
     model_id: str,
@@ -576,13 +793,14 @@ def build_user_confirmation_authorizations(
 ) -> tuple[EmailActionAuthorization, ...]:
     """Freeze user-confirmed configured actions without model eligibility claims."""
 
+    category = validate_email_category_key(category)
     records: list[EmailActionAuthorization] = []
     for action in actions:
         parameters = dict(action_parameters.get(action, {}))
         evidence = json.dumps(
             {
                 "authorization_source": "user_confirmation",
-                "category": category.value,
+                "category": category,
                 "action_type": action.value,
                 "parameters": parameters,
                 "model_id": model_id,
@@ -618,14 +836,14 @@ class EmailClassification(BaseModel):
     classification_id: int = Field(gt=0)
     stable_message_identity: str = Field(min_length=1)
     provider_locator: EmailProviderLocator
-    category: EmailCategory
+    category: EmailCategoryKey | None
     confidence: float = Field(ge=0.0, le=1.0)
     margin: float = Field(ge=0.0, le=1.0)
-    probabilities: dict[str, float] = Field(min_length=1)
+    probabilities: dict[EmailCategoryKey, float]
     model_id: str = Field(min_length=1)
     config_version: str = Field(min_length=1)
     status: EmailClassificationStatus
-    classification_source: Literal["model", "user"]
+    classification_source: EmailClassificationSource
     action_plan: EmailActionPlan | None
 
     @field_validator("stable_message_identity", "model_id", "config_version")
@@ -655,7 +873,18 @@ class EmailClassification(BaseModel):
         if self.status is EmailClassificationStatus.PENDING_FEEDBACK:
             if self.action_plan is not None:
                 raise ValueError("pending feedback cannot have an action plan")
+            if self.classification_source == "agent":
+                if self.category is not None or self.probabilities:
+                    raise ValueError(
+                        "uncertain Agent feedback requires null category and no probabilities"
+                    )
+            elif self.category is None or not self.probabilities:
+                raise ValueError(
+                    "non-Agent pending feedback requires a predicted category"
+                )
             return self
+        if self.category is None:
+            raise ValueError("processed classification requires a category")
         if self.action_plan is None:
             raise ValueError("processed classification requires an action plan")
 

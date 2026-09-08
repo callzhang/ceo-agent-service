@@ -24,6 +24,8 @@ from app.store import ReplyTask
 
 class TaskLifecycle(StrEnum):
     CONSUMER_AUDIT = "consumer_audit"
+
+
 EMAIL_UNSUBSCRIBE_AUDITED_LIFECYCLE_VERSION = "email_unsubscribe_audited_v2"
 _EMAIL_ACTION_PAYLOAD_SCHEMA = "email_agent_action.v1"
 _AUDITED_UNSUBSCRIBE_PAYLOAD_KEYS = frozenset(
@@ -50,7 +52,15 @@ _AUDITED_UNSUBSCRIBE_PAYLOAD_KEYS = frozenset(
         "unsubscribe_network_policy_origin_references",
     }
 )
-_UNSUBSCRIBE_ENTRY_KEYS = frozenset({"source", "reference", "priority"})
+_UNSUBSCRIBE_ENTRY_KEYS = frozenset({"index", "source", "digest", "reference"})
+_UNSUBSCRIBE_SELECTION_KEYS = frozenset(
+    {
+        "candidate_index",
+        "candidate_source",
+        "candidate_digest",
+        "candidate_reference",
+    }
+)
 _UNSUBSCRIBE_AUTHENTICATION_KEYS = frozenset(
     {"evidence_reference", "one_click_verified"}
 )
@@ -58,7 +68,6 @@ _UNSUBSCRIBE_ENTRY_REFERENCE = re.compile(r"unsubscribe-entry:[0-9a-f]{64}")
 _UNSUBSCRIBE_ENTRY_PRIORITIES = {
     UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS.value: 0,
     UnsubscribeEntrySource.HEADER_HTTPS.value: 10,
-    UnsubscribeEntrySource.HEADER_MAILTO.value: 20,
     UnsubscribeEntrySource.BODY_HTML_HTTPS.value: 30,
     UnsubscribeEntrySource.BODY_TEXT_HTTPS.value: 40,
 }
@@ -111,21 +120,24 @@ def _has_valid_unsubscribe_entries(
             return False
         source = item.get("source")
         reference = item.get("reference")
-        priority = item.get("priority")
+        index = item.get("index")
+        digest = item.get("digest")
         if (
             not isinstance(source, str)
             or source not in _UNSUBSCRIBE_ENTRY_PRIORITIES
             or not _is_unsubscribe_entry_reference(reference)
-            or type(priority) is not int
-            or priority != _UNSUBSCRIBE_ENTRY_PRIORITIES[source]
+            or type(index) is not int
+            or index < 0
+            or not isinstance(digest, str)
+            or reference != f"unsubscribe-entry:{digest}"
         ):
             return False
         references.append(reference)
-    if len(references) != len(set(references)):
+    indexes = [item["index"] for item in value]
+    if len(references) != len(set(references)) or len(indexes) != len(set(indexes)):
         return False
     has_one_click = any(
-        item.get("source")
-        == UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS.value
+        item.get("source") == UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS.value
         for item in value
     )
     return not has_one_click or (
@@ -140,18 +152,39 @@ def _has_valid_unsubscribe_authentication(value: object) -> bool:
     return (
         type(value) is dict
         and set(value) == _UNSUBSCRIBE_AUTHENTICATION_KEYS
-        and is_valid_unsubscribe_opaque_reference(
-            value.get("evidence_reference")
-        )
+        and is_valid_unsubscribe_opaque_reference(value.get("evidence_reference"))
         and type(value.get("one_click_verified")) is bool
+    )
+
+
+def _has_valid_unsubscribe_selection(
+    parameters: object,
+    entries: object,
+) -> bool:
+    if type(parameters) is not dict:
+        return False
+    # Empty parameters remain valid for existing manually authorized tasks. Agent
+    # classification plans persist the exact selected candidate instead.
+    if not parameters:
+        return True
+    if set(parameters) != _UNSUBSCRIBE_SELECTION_KEYS or type(entries) is not list:
+        return False
+    return any(
+        type(entry) is dict
+        and parameters
+        == {
+            "candidate_index": entry.get("index"),
+            "candidate_source": entry.get("source"),
+            "candidate_digest": entry.get("digest"),
+            "candidate_reference": entry.get("reference"),
+        }
+        for entry in entries
     )
 
 
 def _has_valid_network_policy_references(payload: dict[str, object]) -> bool:
     policy_reference = payload.get("unsubscribe_network_policy_reference")
-    origin_references = payload.get(
-        "unsubscribe_network_policy_origin_references"
-    )
+    origin_references = payload.get("unsubscribe_network_policy_origin_references")
     return (
         is_valid_unsubscribe_opaque_reference(policy_reference)
         and type(origin_references) is list
@@ -173,13 +206,16 @@ def _is_audited_unsubscribe_task_payload(payload: dict[str, object]) -> bool:
         and payload.get("lifecycle_version")
         == EMAIL_UNSUBSCRIBE_AUDITED_LIFECYCLE_VERSION
         and payload.get("action_type") == EmailAction.UNSUBSCRIBE.value
-        and payload.get("category") == "subscription"
+        and payload.get("category") == "junk"
         and isinstance(classification_source, str)
-        and classification_source in {"model", "user"}
+        and classification_source in {"model", "user", "agent"}
         and _is_finite_confidence(confidence)
-        and type(payload.get("action_parameters")) is dict
-        and payload.get("action_parameters") == {}
-        and all(_is_non_blank_text(payload.get(field)) for field in _REQUIRED_TEXT_FIELDS)
+        and _has_valid_unsubscribe_selection(
+            payload.get("action_parameters"), payload.get("unsubscribe_entries")
+        )
+        and all(
+            _is_non_blank_text(payload.get(field)) for field in _REQUIRED_TEXT_FIELDS
+        )
         and all(
             _is_positive_integer(payload.get(field))
             for field in _REQUIRED_POSITIVE_INTEGER_FIELDS

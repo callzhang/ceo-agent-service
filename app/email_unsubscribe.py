@@ -8,7 +8,8 @@ confirmation receipt and the current page/provider state before another write.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from hashlib import sha256
 from html.parser import HTMLParser
@@ -40,30 +41,30 @@ _UNSUBSCRIBE_MARKERS = (
     "取消订阅",
     "退订",
 )
+_TEXT_MARKER_MAX_DISTANCE_CHARS = 96
+_TEXT_MARKER_MAX_LINE_BREAKS = 1
+_TEXT_CONTEXT_SIDE_BYTES = 72
 _TERMINAL_STATES = frozenset(
     {"done", "already_unsubscribed", "login_required", "captcha", "payment"}
 )
 _UNRESOLVED_ERROR = "email_unsubscribe_outcome_unresolved"
 _MAX_RESULT_TEXT_BYTES = 16 * 1024
 _PRIVATE_RESULT_URL = re.compile(r"\b(?:https?|file)://[^\s<>'\"]+")
-_PRIVATE_RESULT_PATH = re.compile(r"(?<![A-Za-z0-9_])/(?:Users|home|private|tmp)/[^\s<>'\"]+")
+_PRIVATE_RESULT_PATH = re.compile(
+    r"(?<![A-Za-z0-9_])/(?:Users|home|private|tmp)/[^\s<>'\"]+"
+)
 _AUDIT_SESSION_FIELDS = frozenset(
     {
         "version",
+        "session_reference",
         "action_identity",
         "effect_digest",
         "entry_reference",
-        "document_url",
-        "html",
-        "html_digest",
-        "cookies",
-        "cookies_digest",
         "control_references",
         "network_policy_reference",
         "network_policy_origin_references",
     }
 )
-_MAX_AUDIT_SESSION_HTML_BYTES = 1024 * 1024
 
 
 def normalize_unsubscribe_result_text(value: str) -> tuple[str, str]:
@@ -122,6 +123,182 @@ class UnsubscribeOperationKind(str, Enum):
     SUBMIT_FORM = "submit_form"
     CLICK_CONFIRMATION = "click_confirmation"
     CONFIRM_EMAIL = "confirm_email"
+    RECONCILE_HANDOFF = "reconcile_handoff"
+
+
+class UnsubscribeContinuationKind(str, Enum):
+    EMAIL_OTP = "email_otp"
+    CAPTCHA_HANDOFF = "captcha_handoff"
+    CREDENTIAL_HANDOFF = "credential_handoff"
+
+
+class ConnectedMailboxOtp:
+    """One short-lived OTP candidate; its value is never serializable."""
+
+    __slots__ = (
+        "_context_reference",
+        "_received_at",
+        "_recipient",
+        "_sender_domain",
+        "_authenticated_sender_domain",
+        "_authentication_reference",
+        "_value",
+    )
+
+    def __init__(
+        self,
+        *,
+        recipient: str,
+        sender_domain: str,
+        context_reference: str,
+        authenticated_sender_domain: str,
+        authentication_reference: str,
+        received_at: datetime,
+        value: str,
+    ) -> None:
+        if (
+            not recipient.strip()
+            or recipient != recipient.strip()
+            or not sender_domain.strip()
+            or sender_domain != sender_domain.strip().casefold()
+            or not authenticated_sender_domain.strip()
+            or authenticated_sender_domain
+            != authenticated_sender_domain.strip().casefold()
+            or received_at.tzinfo is None
+            or not value
+            or len(value) > 64
+            or any(character.isspace() for character in value)
+        ):
+            raise ValueError("connected mailbox OTP is invalid")
+        _assert_strict_opaque_reference(
+            context_reference,
+            field_name="otp_context_reference",
+        )
+        _assert_strict_opaque_reference(
+            authentication_reference,
+            field_name="otp_authentication_reference",
+        )
+        self._recipient = recipient
+        self._sender_domain = sender_domain
+        self._context_reference = context_reference
+        self._authenticated_sender_domain = authenticated_sender_domain
+        self._authentication_reference = authentication_reference
+        self._received_at = received_at
+        self._value = value
+
+    @property
+    def recipient(self) -> str:
+        return self._recipient
+
+    @property
+    def sender_domain(self) -> str:
+        return self._sender_domain
+
+    @property
+    def context_reference(self) -> str:
+        return self._context_reference
+
+    @property
+    def authenticated_sender_domain(self) -> str:
+        return self._authenticated_sender_domain
+
+    @property
+    def authentication_reference(self) -> str:
+        return self._authentication_reference
+
+    @property
+    def received_at(self) -> datetime:
+        return self._received_at
+
+    def __repr__(self) -> str:
+        return "<ConnectedMailboxOtp ephemeral>"
+
+    @property
+    def redacted(self) -> dict[str, object]:
+        return {
+            "recipient": self.recipient,
+            "sender_domain": self.sender_domain,
+            "context_reference": self.context_reference,
+            "authenticated_sender_domain": self.authenticated_sender_domain,
+            "authentication_reference": self.authentication_reference,
+            "received_at": self.received_at.isoformat(),
+        }
+
+    def consume(self) -> str:
+        value = self._value
+        if value is None:
+            raise UnsubscribeProviderAuthError("connected mailbox OTP already consumed")
+        self._value = None
+        return value
+
+
+@dataclass(frozen=True)
+class EmailOtpChallenge:
+    recipient: str
+    site_domain: str
+    context_reference: str
+    opened_at: datetime
+    expires_at: datetime
+
+    def __post_init__(self) -> None:
+        if (
+            not self.recipient.strip()
+            or self.recipient != self.recipient.strip()
+            or not self.site_domain.strip()
+            or self.site_domain != self.site_domain.strip().casefold()
+            or self.opened_at.tzinfo is None
+            or self.expires_at.tzinfo is None
+            or self.expires_at <= self.opened_at
+        ):
+            raise ValueError("email OTP challenge is invalid")
+        _assert_strict_opaque_reference(
+            self.context_reference,
+            field_name="otp_context_reference",
+        )
+
+
+def email_otp_context_reference(recipient: str, site_domain: str) -> str:
+    """Bind page and message evidence without carrying either secret body."""
+
+    normalized_recipient = recipient.strip().casefold()
+    normalized_site = site_domain.strip().casefold().rstrip(".")
+    if not normalized_recipient or "@" not in normalized_recipient or not normalized_site:
+        raise ValueError("email OTP context is invalid")
+    return "otp-context:" + sha256(
+        f"email\n{normalized_recipient}\n{normalized_site}".encode()
+    ).hexdigest()
+
+
+def select_connected_mailbox_otp(
+    challenge: EmailOtpChallenge,
+    candidates: Sequence[ConnectedMailboxOtp],
+) -> ConnectedMailboxOtp | None:
+    """Select the newest exact-bound OTP without inspecting another mailbox."""
+
+    if not isinstance(challenge, EmailOtpChallenge):
+        raise TypeError("challenge must be EmailOtpChallenge")
+    matching = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, ConnectedMailboxOtp)
+        and candidate.recipient.casefold() == challenge.recipient.casefold()
+        and _otp_domains_align(candidate.sender_domain, challenge.site_domain)
+        and _otp_domains_align(
+            candidate.authenticated_sender_domain, challenge.site_domain
+        )
+        and candidate.authentication_reference.startswith("otp-auth:")
+        and candidate.context_reference == challenge.context_reference
+        and challenge.opened_at <= candidate.received_at <= challenge.expires_at
+    ]
+    return max(matching, key=lambda item: item.received_at, default=None)
+
+
+def _otp_domains_align(left: str, right: str) -> bool:
+    left = left.casefold().rstrip(".")
+    right = right.casefold().rstrip(".")
+    return bool(left and right) and (
+        left == right or left.endswith("." + right) or right.endswith("." + left)
+    )
 
 
 class UnsubscribePageState(str, Enum):
@@ -260,9 +437,7 @@ class _ChromiumIsolatedWorld:
 
 @dataclass(frozen=True, repr=False)
 class _RestoredAuditSession:
-    document_url: str
-    html: str
-    cookies: tuple[dict[str, object], ...]
+    session_reference: str
     control_references: tuple[str, ...]
 
     def __repr__(self) -> str:
@@ -285,43 +460,21 @@ def _validated_restored_audit_session(
         or isinstance(executed_prefix_length, bool)
         or executed_prefix_length <= 0
         or executed_prefix_length != len(effect.operations) - 1
-        or payload.get("version") != 1
+        or payload.get("version") != 2
         or payload.get("action_identity") != effect.action_identity
         or payload.get("effect_digest") != effect.previous_effect_digest
         or payload.get("entry_reference") != effect.entry_reference
-        or payload.get("network_policy_reference")
-        != effect.network_policy_reference
+        or payload.get("network_policy_reference") != effect.network_policy_reference
         or payload.get("network_policy_origin_references")
         != list(effect.network_policy_origin_references)
     ):
         raise invalid
-    document_url = payload.get("document_url")
-    html = payload.get("html")
-    html_digest = payload.get("html_digest")
-    cookie_values = payload.get("cookies")
-    cookies_digest = payload.get("cookies_digest")
+    session_reference = payload.get("session_reference")
     control_values = payload.get("control_references")
-    try:
-        observed_cookies_digest = sha256(
-            json.dumps(
-                cookie_values,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-    except (TypeError, ValueError, RecursionError):
-        raise invalid from None
     if (
-        not isinstance(document_url, str)
-        or not document_url.strip()
-        or not isinstance(html, str)
-        or not html.strip()
-        or len(html.encode("utf-8")) > _MAX_AUDIT_SESSION_HTML_BYTES
-        or not isinstance(html_digest, str)
-        or html_digest != sha256(html.encode("utf-8")).hexdigest()
-        or not isinstance(cookie_values, list)
-        or not isinstance(cookies_digest, str)
-        or cookies_digest != observed_cookies_digest
+        not isinstance(session_reference, str)
+        or not session_reference.startswith("email-browser-session:")
+        or len(session_reference) != len("email-browser-session:") + 64
         or not isinstance(control_values, list)
         or not control_values
         or len(control_values) > 128
@@ -339,24 +492,19 @@ def _validated_restored_audit_session(
         raise invalid from None
     if len(set(controls)) != len(controls):
         raise invalid
-    cookies = _validated_audit_session_cookies(
-        cookie_values,
-        document_url=document_url,
-    )
     appended = effect.operations[executed_prefix_length]
     if (
         appended.kind
         not in {
             UnsubscribeOperationKind.SUBMIT_FORM,
             UnsubscribeOperationKind.CLICK_CONFIRMATION,
+            UnsubscribeOperationKind.RECONCILE_HANDOFF,
         }
         or appended.target_reference not in controls
     ):
         raise invalid
     return _RestoredAuditSession(
-        document_url=document_url,
-        html=html,
-        cookies=cookies,
+        session_reference=session_reference,
         control_references=controls,
     )
 
@@ -393,9 +541,7 @@ def _validated_audit_session_cookies(
         secure = value.get("secure")
         same_site = value.get("sameSite")
         canonical_domain = (
-            domain.lstrip(".").casefold().rstrip(".")
-            if isinstance(domain, str)
-            else ""
+            domain.lstrip(".").casefold().rstrip(".") if isinstance(domain, str) else ""
         )
         if (
             not isinstance(name, str)
@@ -406,10 +552,7 @@ def _validated_audit_session_cookies(
             or len(content.encode("utf-8")) > 4096
             or any(character in content for character in "\r\n")
             or not canonical_domain
-            or not (
-                host == canonical_domain
-                or host.endswith("." + canonical_domain)
-            )
+            or not (host == canonical_domain or host.endswith("." + canonical_domain))
             or not isinstance(path, str)
             or not path.startswith("/")
             or len(path.encode("utf-8")) > 1024
@@ -503,9 +646,11 @@ class BrowserNetworkPolicy:
                 literal = ipaddress.ip_address(host)
             except ValueError:
                 literal = None
-            if literal is not None and (
-                not self.allow_loopback_for_tests or not literal.is_loopback
-            ) and _is_forbidden_production_address(str(literal)):
+            if (
+                literal is not None
+                and (not self.allow_loopback_for_tests or not literal.is_loopback)
+                and _is_forbidden_production_address(str(literal))
+            ):
                 raise ValueError("browser network policy origin is rejected")
             if not self.allow_loopback_for_tests and parsed.scheme != "https":
                 raise ValueError("browser network policy origin is rejected")
@@ -515,9 +660,7 @@ class BrowserNetworkPolicy:
     def validate_url(self, value: str) -> str:
         try:
             parsed = urlsplit(value)
-            origin = _canonical_origin(
-                f"{parsed.scheme}://{parsed.netloc}"
-            )
+            origin = _canonical_origin(f"{parsed.scheme}://{parsed.netloc}")
             if origin not in self.allowed_origins:
                 raise ValueError
             host = parsed.hostname or ""
@@ -602,8 +745,7 @@ class UnsubscribeAuthenticationEvidence:
     @property
     def one_click_verified(self) -> bool:
         return (
-            self.dkim_covers_list_unsubscribe
-            and self.dkim_covers_list_unsubscribe_post
+            self.dkim_covers_list_unsubscribe and self.dkim_covers_list_unsubscribe_post
         )
 
 
@@ -620,9 +762,7 @@ def _assert_opaque_reference(value: str, *, field_name: str) -> None:
     try:
         assert_no_credentials(value)
     except ValueError:
-        raise ValueError(
-            f"{field_name} must be an opaque redacted reference"
-        ) from None
+        raise ValueError(f"{field_name} must be an opaque redacted reference") from None
 
 
 def _assert_strict_opaque_reference(value: str, *, field_name: str) -> None:
@@ -644,9 +784,7 @@ def _assert_strict_opaque_reference(value: str, *, field_name: str) -> None:
     try:
         assert_no_credentials(value)
     except ValueError:
-        raise ValueError(
-            f"{field_name} must be an opaque redacted reference"
-        ) from None
+        raise ValueError(f"{field_name} must be an opaque redacted reference") from None
 
 
 def _is_private_https_url(value: str) -> bool:
@@ -692,10 +830,14 @@ def unsubscribe_entry_reference(private_url: str) -> str:
 
 @dataclass(frozen=True)
 class UnsubscribeEntry:
+    index: int
     source: UnsubscribeEntrySource
     reference: str
     private_url: str = field(repr=False)
     priority: int
+    scheme: str
+    host: str
+    context: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, UnsubscribeEntrySource):
@@ -705,13 +847,24 @@ class UnsubscribeEntry:
             raise ValueError("unsubscribe entry reference does not match private URL")
         if self.priority < 0:
             raise ValueError("priority must be non-negative")
+        if self.index < 0:
+            raise ValueError("index must be non-negative")
+        parsed = urlsplit(self.private_url)
+        if (
+            self.scheme != parsed.scheme.casefold()
+            or self.host != (parsed.hostname or "").casefold()
+        ):
+            raise ValueError("unsubscribe entry URL metadata does not match")
+        if len(self.context.encode("utf-8")) > 160:
+            raise ValueError("unsubscribe entry context must be bounded")
 
     @property
     def redacted(self) -> dict[str, object]:
         return {
+            "index": self.index,
             "source": self.source.value,
+            "digest": self.reference.removeprefix("unsubscribe-entry:"),
             "reference": self.reference,
-            "priority": self.priority,
         }
 
 
@@ -719,6 +872,7 @@ def browser_unsubscribe_entries(
     entries: Sequence[UnsubscribeEntry],
     *,
     allow_loopback_for_tests: bool = False,
+    normalize_indexes: bool = False,
 ) -> tuple[UnsubscribeEntry, ...]:
     """Return only current HTTPS browser candidates in deterministic order."""
 
@@ -726,12 +880,12 @@ def browser_unsubscribe_entries(
         entry
         for entry in entries
         if _is_private_https_url(entry.private_url)
-        or (
-            allow_loopback_for_tests
-            and _is_loopback_http_url(entry.private_url)
-        )
+        or (allow_loopback_for_tests and _is_loopback_http_url(entry.private_url))
     )
-    return tuple(sorted(selected, key=lambda item: (item.priority, item.reference)))
+    ordered = tuple(sorted(selected, key=lambda item: item.index))
+    if not normalize_indexes:
+        return ordered
+    return tuple(replace(entry, index=index) for index, entry in enumerate(ordered))
 
 
 def browser_network_policy_for_entries(
@@ -818,7 +972,9 @@ class EmailUnsubscribeEffect:
             "stable_message_identity",
             "thread_identity",
         ):
-            _assert_opaque_reference(str(getattr(self, field_name)), field_name=field_name)
+            _assert_opaque_reference(
+                str(getattr(self, field_name)), field_name=field_name
+            )
         _assert_strict_opaque_reference(
             self.entry_reference,
             field_name="entry_reference",
@@ -834,9 +990,10 @@ class EmailUnsubscribeEffect:
         references = [item.operation_reference for item in self.operations]
         if len(references) != len(set(references)):
             raise ValueError("unsubscribe operation references must be unique")
-        if self.previous_effect_digest and re.fullmatch(
-            r"[0-9a-f]{64}", self.previous_effect_digest
-        ) is None:
+        if (
+            self.previous_effect_digest
+            and re.fullmatch(r"[0-9a-f]{64}", self.previous_effect_digest) is None
+        ):
             raise ValueError("previous_effect_digest must be canonical sha256 hex")
         _assert_strict_opaque_reference(
             self.network_policy_reference,
@@ -904,11 +1061,34 @@ class UnsubscribeTerminalReceipt:
 @dataclass(frozen=True)
 class UnsubscribeDiscoveredControl:
     reference: str
-    kind: Literal["form", "link", "button", "confirmation_email"]
+    kind: Literal[
+        "form",
+        "link",
+        "button",
+        "confirmation_email",
+        "email_otp",
+        "captcha_handoff",
+        "credential_handoff",
+    ]
     intent: Literal["continue", "unsubscribe", "confirm"]
 
     def __post_init__(self) -> None:
         _assert_strict_opaque_reference(self.reference, field_name="control_reference")
+
+    @property
+    def continuation_kind(self) -> UnsubscribeContinuationKind | None:
+        try:
+            return UnsubscribeContinuationKind(self.kind)
+        except ValueError:
+            return None
+
+    @property
+    def redacted(self) -> dict[str, str]:
+        return {
+            "reference": self.reference,
+            "kind": self.kind,
+            "intent": self.intent,
+        }
 
 
 @dataclass(frozen=True)
@@ -980,9 +1160,10 @@ class UnsubscribeExecutionResult:
             _assert_opaque_reference(self.error_code, field_name="error_code")
         if any(not isinstance(item, RedactedUnsubscribeStep) for item in self.journal):
             raise TypeError("journal must contain RedactedUnsubscribeStep")
-        if self.observation_digest and re.fullmatch(
-            r"[0-9a-f]{64}", self.observation_digest
-        ) is None:
+        if (
+            self.observation_digest
+            and re.fullmatch(r"[0-9a-f]{64}", self.observation_digest) is None
+        ):
             raise ValueError("observation_digest must be canonical sha256 hex")
         if type(self.result_text_truncated) is not bool:
             raise TypeError("result_text_truncated must be bool")
@@ -992,7 +1173,9 @@ class UnsubscribeExecutionResult:
                 or self.result_text_digest
                 or self.result_text_truncated
             ):
-                raise ValueError("empty result text has inconsistent integrity metadata")
+                raise ValueError(
+                    "empty result text has inconsistent integrity metadata"
+                )
         else:
             expected_result_text_digest = sha256(
                 self.result_text.encode("utf-8")
@@ -1062,9 +1245,10 @@ class EmailUnsubscribeContinuation:
             raise ValueError("continuation plan and classification must be positive")
         if re.fullmatch(r"[0-9a-f]{64}", self.effect_digest) is None:
             raise ValueError("effect_digest must be canonical sha256 hex")
-        if self.previous_effect_digest and re.fullmatch(
-            r"[0-9a-f]{64}", self.previous_effect_digest
-        ) is None:
+        if (
+            self.previous_effect_digest
+            and re.fullmatch(r"[0-9a-f]{64}", self.previous_effect_digest) is None
+        ):
             raise ValueError("previous_effect_digest must be canonical sha256 hex")
         if not self.executed_operations or not self.controls:
             raise ValueError("continuation requires operations and discovered controls")
@@ -1072,8 +1256,7 @@ class EmailUnsubscribeContinuation:
             not isinstance(item, UnsubscribeOperation)
             for item in self.executed_operations
         ) or any(
-            not isinstance(item, UnsubscribeDiscoveredControl)
-            for item in self.controls
+            not isinstance(item, UnsubscribeDiscoveredControl) for item in self.controls
         ):
             raise TypeError("continuation contains invalid typed values")
         if not self.network_policy_origin_references:
@@ -1083,6 +1266,22 @@ class EmailUnsubscribeContinuation:
                 reference,
                 field_name="network_policy_origin_reference",
             )
+
+    @property
+    def requires_human(self) -> bool:
+        for control in self.controls:
+            if control.continuation_kind is (
+                UnsubscribeContinuationKind.CREDENTIAL_HANDOFF
+            ):
+                return True
+            if control.continuation_kind is UnsubscribeContinuationKind.CAPTCHA_HANDOFF:
+                if any(
+                    operation.kind is UnsubscribeOperationKind.CLICK_CONFIRMATION
+                    and operation.target_reference == control.reference
+                    for operation in self.executed_operations
+                ):
+                    return True
+        return False
 
 
 @dataclass(frozen=True)
@@ -1103,6 +1302,7 @@ class UnsubscribeContinuationResult:
                     }
                     for item in self.continuation.executed_operations
                 ],
+                "requires_human": self.continuation.requires_human,
             },
             "journal": [asdict(item) for item in self.journal],
         }
@@ -1141,6 +1341,14 @@ class _AuditedControlBinding:
     method: Literal["GET", "POST"]
     enctype: str
     successful_controls: tuple[tuple[str, str, str], ...] = field(repr=False)
+    field_selector: str = field(default="", repr=False)
+    submitter_selector: str = field(default="", repr=False)
+    field_name: str = field(default="", repr=False)
+    submitter_name: str = field(default="", repr=False)
+    submitter_value: str = field(default="", repr=False)
+    challenge_context_reference: str = ""
+    challenge_opened_at: datetime | None = None
+    challenge_expires_at: datetime | None = None
 
 
 def _audited_control_reference(semantics: Mapping[str, object]) -> str:
@@ -1162,9 +1370,10 @@ def confirmation_target_reference(
         confirmation_message_identity,
         field_name="confirmation_message_identity",
     )
-    return "confirmation-target:" + sha256(
-        confirmation_message_identity.encode()
-    ).hexdigest()
+    return (
+        "confirmation-target:"
+        + sha256(confirmation_message_identity.encode()).hexdigest()
+    )
 
 
 class PlaywrightUnsubscribeBrowser:
@@ -1185,6 +1394,12 @@ class PlaywrightUnsubscribeBrowser:
             [EmailUnsubscribeEffect], ConfirmationNavigationTarget | None
         ]
         | None = None,
+        connected_recipient: str = "",
+        email_otp_resolver: Callable[
+            [EmailOtpChallenge], ConnectedMailboxOtp | None
+        ]
+        | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         if timeout_ms <= 0:
             raise ValueError("timeout_ms must be positive")
@@ -1195,6 +1410,11 @@ class PlaywrightUnsubscribeBrowser:
         self.network_policy = network_policy
         self.confirmation_receipt_resolver = confirmation_receipt_resolver
         self.confirmation_target_resolver = confirmation_target_resolver
+        self.connected_recipient = connected_recipient.strip()
+        self.email_otp_resolver = email_otp_resolver
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._challenge_bindings: dict[str, datetime] = {}
+        self._external_challenge_generation = 0
         self._blocked_request = False
         self._blocked_popup = False
         self._blocked_download = False
@@ -1246,9 +1466,7 @@ class PlaywrightUnsubscribeBrowser:
         if restored_document_url:
             if str(getattr(self.page, "url")) != "about:blank":
                 raise ValueError("restored browser page must start isolated")
-            self._document_url = self._validate_navigation_target(
-                restored_document_url
-            )
+            self._document_url = self._validate_navigation_target(restored_document_url)
 
     def _guard_request(self, route: object, request: object) -> None:
         try:
@@ -1343,6 +1561,11 @@ class PlaywrightUnsubscribeBrowser:
         value = self._document_url or str(getattr(self.page, "url"))
         return self._validate_navigation_target(value)
 
+    def mark_external_interaction(self) -> None:
+        """Conservatively start a new challenge generation after user handoff."""
+
+        self._external_challenge_generation += 1
+
     def _link_binding(
         self,
         snapshot: Mapping[str, object],
@@ -1353,11 +1576,7 @@ class PlaywrightUnsubscribeBrowser:
             return None
         href = str(snapshot.get("href") or "")
         target = str(snapshot.get("target") or "").casefold()
-        if (
-            not href
-            or target not in {"", "_self"}
-            or snapshot.get("download") is True
-        ):
+        if not href or target not in {"", "_self"} or snapshot.get("download") is True:
             return None
         page_identity = self._page_identity()
         target_url = self._validate_navigation_target(urljoin(page_identity, href))
@@ -1450,6 +1669,118 @@ class PlaywrightUnsubscribeBrowser:
         )
 
     def _ordinary_controls(self) -> tuple[_AuditedControlBinding, ...]:
+        authentication = self._authentication_control_snapshot()
+        if authentication is not None:
+            page_identity = self._page_identity()
+            generation_semantics = {
+                "challenge_identity": authentication["challengeIdentity"],
+                "document_generation": authentication["documentGeneration"],
+                "external_generation": getattr(
+                    self, "_external_challenge_generation", 0
+                ),
+                "field": authentication["field"],
+                "form_association": authentication["formAssociation"],
+                "successful_controls": authentication["successfulControls"],
+                "submitter": authentication["submitter"],
+                "page_identity": page_identity,
+            }
+            challenge_identity = "otp-generation:" + sha256(
+                json.dumps(
+                    generation_semantics,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            opened_at = self._challenge_bindings.setdefault(
+                challenge_identity,
+                self._clock().astimezone(timezone.utc),
+            )
+            expires_at = opened_at + timedelta(minutes=10)
+            is_email_otp = (
+                "one-time-code" in authentication["autocompleteTokens"]
+                and authentication["deliveryMethod"] == "email"
+                and str(authentication["deliveryRecipient"]).casefold()
+                == self.connected_recipient.casefold()
+                and str(authentication["method"]).upper() == "POST"
+                and authentication["enctype"]
+                == "application/x-www-form-urlencoded"
+                and str(authentication["target"]).casefold() in {"", "_self"}
+                and bool(str(authentication["field"].get("name") or ""))
+                and bool(str(authentication["submitterSelector"]))
+            )
+            authentication_kind = (
+                UnsubscribeContinuationKind.CAPTCHA_HANDOFF
+                if authentication["captcha"] is True
+                else (
+                    UnsubscribeContinuationKind.EMAIL_OTP
+                    if is_email_otp and self.connected_recipient
+                    else UnsubscribeContinuationKind.CREDENTIAL_HANDOFF
+                )
+            )
+            target_url = self._validate_navigation_target(
+                urljoin(page_identity, str(authentication["action"]) or page_identity)
+            )
+            site_domain = (urlsplit(target_url).hostname or "").casefold()
+            context_reference = (
+                email_otp_context_reference(
+                    self.connected_recipient,
+                    site_domain,
+                )
+                if is_email_otp
+                else ""
+            )
+            semantics = {
+                "challenge_identity": challenge_identity,
+                "challenge_opened_at": opened_at.isoformat(),
+                "challenge_expires_at": expires_at.isoformat(),
+                "enctype": authentication["enctype"],
+                "field": authentication["field"],
+                "field_selector": authentication["fieldSelector"],
+                "form_association": authentication["formAssociation"],
+                "kind": authentication_kind.value,
+                "method": authentication["method"],
+                "page_identity": page_identity,
+                "policy_reference": self.network_policy.reference,
+                "resolved_target": target_url,
+                "successful_controls": authentication["successfulControls"],
+                "submitter": authentication["submitter"],
+                "submitter_selector": authentication["submitterSelector"],
+                "target": authentication["target"],
+                "version": 1,
+            }
+            control = UnsubscribeDiscoveredControl(
+                reference=_audited_control_reference(semantics),
+                kind=authentication_kind.value,
+                intent="confirm",
+            )
+            return (
+                _AuditedControlBinding(
+                    control=control,
+                    target_url=target_url,
+                    method=str(authentication["method"]).upper(),
+                    enctype=str(authentication["enctype"]),
+                    successful_controls=tuple(
+                        (
+                            str(item["name"]),
+                            str(item["type"]),
+                            str(item["value"]),
+                        )
+                        for item in authentication["successfulControls"]
+                    ),
+                    field_selector=str(authentication["fieldSelector"]),
+                    submitter_selector=str(authentication["submitterSelector"]),
+                    field_name=str(authentication["field"].get("name") or ""),
+                    submitter_name=str(
+                        authentication["submitter"].get("name") or ""
+                    ),
+                    submitter_value=str(
+                        authentication["submitter"].get("value") or ""
+                    ),
+                    challenge_context_reference=context_reference,
+                    challenge_opened_at=opened_at,
+                    challenge_expires_at=expires_at,
+                ),
+            )
         snapshot = self._trusted_world.evaluate(
             "function() {"
             + _AUTHENTICATION_CONTROL_PREDICATE_JS
@@ -1656,6 +1987,190 @@ class PlaywrightUnsubscribeBrowser:
             unique.setdefault(binding.control.reference, binding)
         return tuple(unique.values())
 
+    def _authentication_control_snapshot(self) -> Mapping[str, object] | None:
+        recipient_literal = json.dumps(self.connected_recipient.casefold())
+        value = self._trusted_world.evaluate(
+            "function() {"
+            + _AUTHENTICATION_CONTROL_PREDICATE_JS
+            + f"""
+              const connectedRecipient = {recipient_literal};
+              const controls = trustedDocumentQuery(
+                'input, textarea, select, button, a, img, canvas, [role]'
+              ).filter(node => isAuthenticationControl(node));
+              if (!controls.length) return {{present: false}};
+              const metadata = controls.map(node => authenticationMetadata(node));
+              const captcha = metadata.some(value =>
+                ['captcha', 'recaptcha', 'hcaptcha', '验证码'].some(
+                  marker => value.includes(marker)
+                )
+              );
+              const field = controls.find(node =>
+                autocompleteTokens(node).includes('one-time-code')
+              ) || controls[0];
+              const form = field.form || field.closest('form');
+              const submitter = form && form.querySelector(
+                'button:not([type]), button[type="submit"], input[type="submit"]'
+              );
+              const elementPath = node => {{
+                if (!node || node.nodeType !== 1) return '';
+                const parts = [];
+                for (let current = node; current && current.nodeType === 1;
+                     current = current.parentElement) {{
+                  const tag = current.tagName.toLowerCase();
+                  const siblings = current.parentElement
+                    ? Array.from(current.parentElement.children).filter(
+                        item => item.tagName === current.tagName
+                      )
+                    : [current];
+                  parts.unshift(tag + ':nth-of-type(' +
+                    (siblings.indexOf(current) + 1) + ')');
+                }}
+                return parts.join(' > ');
+              }};
+              const identityState = globalThis.__ceoEmailAuditIdentityState ||
+                (globalThis.__ceoEmailAuditIdentityState = {{
+                  ids: new WeakMap(), next: 1
+                }});
+              const elementIdentity = node => {{
+                if (!node) return '';
+                if (!identityState.ids.has(node)) {{
+                  identityState.ids.set(node, 'element:' + identityState.next++);
+                }}
+                return identityState.ids.get(node);
+              }};
+              const handlers = (node, names) => Object.fromEntries(
+                names.map(name => [name, trustedGetAttribute(node, name) || ''])
+              );
+              const fieldType = (trustedGetAttribute(field, 'type') ||
+                field.tagName.toLowerCase()).toLowerCase();
+              const fieldSemantics = {{
+                identity: elementIdentity(field),
+                tag: field.tagName.toLowerCase(),
+                type: fieldType,
+                name: trustedGetAttribute(field, 'name') || '',
+                autocomplete: trustedGetAttribute(field, 'autocomplete') || '',
+                form: elementIdentity(form),
+                handlers: handlers(field, ['onchange', 'oninput', 'onclick'])
+              }};
+              const successfulControls = [];
+              if (form) {{
+                const elements = Array.from(form.elements);
+                if (elements.length > 128) return {{present: false}};
+                for (const item of elements) {{
+                  if (item === field || item === submitter || item.disabled) continue;
+                  const tag = item.tagName.toLowerCase();
+                  const type = (trustedGetAttribute(item, 'type') || tag).toLowerCase();
+                  const name = trustedGetAttribute(item, 'name') || '';
+                  if (!name || type === 'password' ||
+                      autocompleteTokens(item).some(token =>
+                        credentialAutocompleteTokens.has(token))) continue;
+                  if (['submit', 'button', 'reset', 'image', 'file'].includes(type)) continue;
+                  if (['checkbox', 'radio'].includes(type) && !item.checked) continue;
+                  const itemValue = String(item.value || '');
+                  if (itemValue.length > 4096) return {{present: false}};
+                  successfulControls.push({{
+                    identity: elementIdentity(item), name, type, value: itemValue
+                  }});
+                }}
+              }}
+              const pageText = (document.body && document.body.innerText || '')
+                .toLowerCase();
+              const explicitEmail = Boolean(connectedRecipient) &&
+                pageText.includes(connectedRecipient) &&
+                (pageText.includes('email') || pageText.includes('mailbox') ||
+                 pageText.includes('邮箱') || pageText.includes('邮件'));
+              const method = (form && trustedGetAttribute(form, 'method') ||
+                'GET').toUpperCase();
+              const enctype = form && trustedGetAttribute(form, 'enctype') ||
+                'application/x-www-form-urlencoded';
+              return {{
+                present: true,
+                captcha,
+                autocompleteTokens: autocompleteTokens(field),
+                deliveryMethod: explicitEmail ? 'email' : '',
+                deliveryRecipient: explicitEmail ? connectedRecipient : '',
+                challengeIdentity: elementPath(field),
+                fieldSelector: elementPath(field),
+                submitterSelector: elementPath(submitter),
+                field: fieldSemantics,
+                formAssociation: elementIdentity(form),
+                action: form && trustedGetAttribute(form, 'action') || location.href,
+                method,
+                enctype,
+                target: form && trustedGetAttribute(form, 'target') || '',
+                successfulControls,
+                submitter: {{
+                  identity: elementIdentity(submitter),
+                  label: submitter ? (submitter.innerText ||
+                    trustedGetAttribute(submitter, 'aria-label') || '') : '',
+                  tag: submitter ? submitter.tagName.toLowerCase() : '',
+                  type: submitter && trustedGetAttribute(submitter, 'type') || '',
+                  name: submitter && trustedGetAttribute(submitter, 'name') || '',
+                  value: submitter && trustedGetAttribute(submitter, 'value') || '',
+                  handlers: submitter ? handlers(submitter, ['onclick']) : {{onclick: ''}}
+                }},
+                documentGeneration: elementIdentity(document)
+              }};
+            }}
+            """
+        )
+        if not isinstance(value, Mapping) or value.get("present") is not True:
+            if isinstance(value, Mapping) and value.get("present") is False:
+                return None
+            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+        required = {
+            "captcha",
+            "autocompleteTokens",
+            "deliveryMethod",
+            "deliveryRecipient",
+            "challengeIdentity",
+            "fieldSelector",
+            "submitterSelector",
+            "field",
+            "formAssociation",
+            "action",
+            "method",
+            "enctype",
+            "target",
+            "successfulControls",
+            "submitter",
+            "documentGeneration",
+        }
+        if set(value) != required | {"present"}:
+            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+        if (
+            value["captcha"] not in {True, False}
+            or not isinstance(value["autocompleteTokens"], list)
+            or not all(isinstance(item, str) for item in value["autocompleteTokens"])
+            or any(
+                not isinstance(value[key], str)
+                for key in required
+                - {
+                    "captcha",
+                    "autocompleteTokens",
+                    "field",
+                    "successfulControls",
+                    "submitter",
+                }
+            )
+            or not isinstance(value["field"], Mapping)
+            or not isinstance(value["submitter"], Mapping)
+            or not isinstance(value["successfulControls"], list)
+            or not all(isinstance(item, Mapping) for item in value["successfulControls"])
+            or not str(value["challengeIdentity"])
+            or not str(value["documentGeneration"])
+        ):
+            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+        if not value["captcha"] and not str(value["fieldSelector"]):
+            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+        if (
+            "one-time-code" in value["autocompleteTokens"]
+            and value["deliveryMethod"] == "email"
+            and not str(value["submitterSelector"])
+        ):
+            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+        return value
+
     @staticmethod
     def _state_from_text(text: str) -> UnsubscribePageState | None:
         normalized = " ".join(text.casefold().split())
@@ -1666,9 +2181,15 @@ class PlaywrightUnsubscribeBrowser:
             for marker in ("payment", "credit card", "付款", "付费")
         ):
             return UnsubscribePageState.PAYMENT
-        if any(marker in normalized for marker in ("sign in", "log in", "login", "password", "登录")):
+        if any(
+            marker in normalized
+            for marker in ("sign in", "log in", "login", "password", "登录")
+        ):
             return UnsubscribePageState.LOGIN_REQUIRED
-        if any(marker in normalized for marker in ("already unsubscribed", "no longer subscribed", "已经退订")):
+        if any(
+            marker in normalized
+            for marker in ("already unsubscribed", "no longer subscribed", "已经退订")
+        ):
             return UnsubscribePageState.ALREADY_UNSUBSCRIBED
         if any(
             marker in normalized
@@ -1705,8 +2226,15 @@ class PlaywrightUnsubscribeBrowser:
         # atomic isolated-world evaluation inside _ordinary_controls().
         bindings = self._ordinary_controls()
         text = self._visible_text()
-        state = self._state_from_text(text)
         controls = tuple(item.control for item in bindings)
+        authentication_controls = tuple(
+            item for item in controls if item.continuation_kind is not None
+        )
+        state = (
+            UnsubscribePageState.ACTION_REQUIRED
+            if authentication_controls
+            else self._state_from_text(text)
+        )
         if state is None:
             state = UnsubscribePageState.ACTION_REQUIRED
             if (
@@ -1737,9 +2265,12 @@ class PlaywrightUnsubscribeBrowser:
                 for operation in effect.operations
             ):
                 raise UnsubscribeBrowserError("unsubscribe page state is unknown")
-        state_reference = "state:" + sha256(
-            f"{state.value}\n{' '.join(text.casefold().split())}".encode()
-        ).hexdigest()
+        state_reference = (
+            "state:"
+            + sha256(
+                f"{state.value}\n{' '.join(text.casefold().split())}".encode()
+            ).hexdigest()
+        )
         return UnsubscribePageDiscovery(
             state=state,
             state_reference=state_reference,
@@ -1872,8 +2403,10 @@ class PlaywrightUnsubscribeBrowser:
     def capture_audit_session(
         self,
         effect: EmailUnsubscribeEffect,
+        *,
+        session_reference: str,
     ) -> dict[str, object]:
-        """Capture an inert, owner-only DOM snapshot for the next Audit round."""
+        """Capture only opaque bindings for the still-live isolated page."""
 
         discovery = self.discover_current_page(effect)
         if (
@@ -1881,44 +2414,18 @@ class PlaywrightUnsubscribeBrowser:
             or not discovery.controls
         ):
             raise UnsubscribeBrowserError("browser session capture rejected")
-        sanitized = self._sanitized_audit_snapshot()
-        if sanitized.get("blocked") is not False:
-            raise UnsubscribeAuthenticationControlsError(
-                "authentication controls are not permitted"
-            )
-        html = sanitized.get("html")
         if (
-            not isinstance(html, str)
-            or not html.strip()
-            or len(html.encode("utf-8")) > _MAX_AUDIT_SESSION_HTML_BYTES
+            not session_reference.startswith("email-browser-session:")
+            or len(session_reference) != len("email-browser-session:") + 64
         ):
             raise UnsubscribeBrowserError("browser session capture rejected")
-        document_url = self._page_identity()
-        cookies = list(
-            _validated_audit_session_cookies(
-                self._context.cookies([document_url]),
-                document_url=document_url,
-            )
-        )
         return {
-            "version": 1,
+            "version": 2,
+            "session_reference": session_reference,
             "action_identity": effect.action_identity,
             "effect_digest": effect.effect_digest,
             "entry_reference": effect.entry_reference,
-            "document_url": document_url,
-            "html": html,
-            "html_digest": sha256(html.encode("utf-8")).hexdigest(),
-            "cookies": cookies,
-            "cookies_digest": sha256(
-                json.dumps(
-                    cookies,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest(),
-            "control_references": [
-                control.reference for control in discovery.controls
-            ],
+            "control_references": [control.reference for control in discovery.controls],
             "network_policy_reference": effect.network_policy_reference,
             "network_policy_origin_references": list(
                 effect.network_policy_origin_references
@@ -1935,19 +2442,34 @@ class PlaywrightUnsubscribeBrowser:
         """Re-discover the exact accepted control before any resumed write."""
 
         discovery = self.discover_current_page(effect)
-        controls = {control.reference: control for control in discovery.controls}
-        if (
-            discovery.state is not UnsubscribePageState.ACTION_REQUIRED
-            or set(controls) != set(session.control_references)
-        ):
-            raise UnsubscribeBrowserError("browser session control changed")
         appended = effect.operations[executed_prefix_length]
+        if appended.kind is UnsubscribeOperationKind.RECONCILE_HANDOFF:
+            return
+        controls = {control.reference: control for control in discovery.controls}
+        if discovery.state is not UnsubscribePageState.ACTION_REQUIRED or set(
+            controls
+        ) != set(session.control_references):
+            raise UnsubscribeBrowserError("browser session control changed")
         expected_kind = {
             UnsubscribeOperationKind.SUBMIT_FORM: "form",
             UnsubscribeOperationKind.CLICK_CONFIRMATION: "link",
+            UnsubscribeOperationKind.RECONCILE_HANDOFF: "credential_handoff",
         }.get(appended.kind)
         control = controls.get(appended.target_reference)
-        if control is None or control.kind != expected_kind:
+        allowed_kinds = {
+            UnsubscribeOperationKind.SUBMIT_FORM: {"form", "email_otp"},
+            UnsubscribeOperationKind.CLICK_CONFIRMATION: {
+                "link",
+                "captcha_handoff",
+            },
+            UnsubscribeOperationKind.RECONCILE_HANDOFF: {
+                "captcha_handoff",
+                "credential_handoff",
+            },
+        }
+        if control is None or control.kind not in allowed_kinds.get(
+            appended.kind, {expected_kind}
+        ):
             raise UnsubscribeBrowserError("browser session control changed")
 
     def _verify_effect_network_policy(self, effect: EmailUnsubscribeEffect) -> None:
@@ -2001,7 +2523,9 @@ class PlaywrightUnsubscribeBrowser:
                     controls=discovery.controls,
                     visible_text=visible_text,
                 )
-            receipt_id = f"unsubscribe-receipt:{effect.effect_digest[:24]}:{state.value}"
+            receipt_id = (
+                f"unsubscribe-receipt:{effect.effect_digest[:24]}:{state.value}"
+            )
             return UnsubscribeObservation(
                 state=state,
                 state_reference=state_reference,
@@ -2036,7 +2560,9 @@ class PlaywrightUnsubscribeBrowser:
             return
         if binding.control.kind != "form":
             raise UnsubscribeBrowserError("accepted browser control is unavailable")
-        pairs = [(name, value) for name, _field_type, value in binding.successful_controls]
+        pairs = [
+            (name, value) for name, _field_type, value in binding.successful_controls
+        ]
         encoded = urlencode(pairs)
         if binding.method == "GET":
             parsed = urlsplit(binding.target_url)
@@ -2077,6 +2603,89 @@ class PlaywrightUnsubscribeBrowser:
         )
         self._raise_if_blocked()
 
+    def _execute_email_otp_control(
+        self,
+        effect: EmailUnsubscribeEffect,
+        binding: _AuditedControlBinding,
+    ) -> None:
+        if not self.connected_recipient or self.email_otp_resolver is None:
+            raise UnsubscribeProviderAuthError("connected mailbox OTP is unavailable")
+        site_domain = (urlsplit(binding.target_url).hostname or "").casefold()
+        if (
+            not binding.field_selector
+            or not binding.submitter_selector
+            or not binding.field_name
+            or not binding.challenge_context_reference
+            or binding.challenge_opened_at is None
+            or binding.challenge_expires_at is None
+        ):
+            raise UnsubscribeBrowserError("email OTP control binding is incomplete")
+        challenge = EmailOtpChallenge(
+            recipient=self.connected_recipient,
+            site_domain=site_domain,
+            context_reference=binding.challenge_context_reference,
+            opened_at=binding.challenge_opened_at,
+            expires_at=binding.challenge_expires_at,
+        )
+        candidate = self.email_otp_resolver(challenge)
+        if candidate is None:
+            raise UnsubscribeProviderAuthError("connected mailbox OTP is unavailable")
+        secret: str | None = candidate.consume()
+        field = self.page.locator(binding.field_selector)
+        try:
+            assert secret is not None
+            pairs = [
+                (name, value)
+                for name, _field_type, value in binding.successful_controls
+            ]
+            pairs.append((binding.field_name, secret))
+            if binding.submitter_name:
+                pairs.append((binding.submitter_name, binding.submitter_value))
+            if (
+                binding.method != "POST"
+                or binding.enctype != "application/x-www-form-urlencoded"
+            ):
+                raise UnsubscribeBrowserError("email OTP request semantics rejected")
+            response = self._context.request.post(
+                binding.target_url,
+                data=urlencode(pairs),
+                headers={"Content-Type": binding.enctype},
+                max_redirects=0,
+                timeout=self.timeout_ms,
+            )
+            response_url = self._validate_navigation_target(response.url)
+            if response.status < 200 or response.status >= 300:
+                raise UnsubscribeBrowserError("email OTP provider response rejected")
+            body = response.body()
+            if len(body) > 1_048_576:
+                raise UnsubscribeBrowserError("email OTP provider response rejected")
+            self._document_url = response_url
+            self.page.set_content(
+                response.text(),
+                wait_until="domcontentloaded",
+                timeout=self.timeout_ms,
+            )
+        finally:
+            secret = None
+            try:
+                if field.count() == 1:
+                    field.fill("", timeout=min(self.timeout_ms, 500))
+            except Exception:
+                pass
+        self._raise_if_blocked()
+        self._document_url = self._validate_navigation_target(
+            str(getattr(self.page, "url"))
+        )
+
+    def _attempt_rendered_challenge(self, binding: _AuditedControlBinding) -> None:
+        if not binding.field_selector:
+            raise UnsubscribeBrowserError("CAPTCHA control binding is incomplete")
+        checkbox = self.page.locator(binding.field_selector)
+        if checkbox.count() == 1:
+            checkbox.click(timeout=self.timeout_ms)
+        self.page.wait_for_timeout(min(self.timeout_ms, 1_000))
+        self._raise_if_blocked()
+
     def execute_operation(
         self,
         effect: EmailUnsubscribeEffect,
@@ -2098,10 +2707,14 @@ class PlaywrightUnsubscribeBrowser:
                     )
                     self._validate_navigation_target(response.url)
                     if response.status < 200 or response.status >= 300:
-                        raise UnsubscribeBrowserError("one-click provider response rejected")
+                        raise UnsubscribeBrowserError(
+                            "one-click provider response rejected"
+                        )
                     visible = response.text()
                     if not visible.strip():
-                        visible = f"List-Unsubscribe POST returned HTTP {response.status}"
+                        visible = (
+                            f"List-Unsubscribe POST returned HTTP {response.status}"
+                        )
                 finally:
                     isolated.close()
                 state = self._state_from_text(visible)
@@ -2136,32 +2749,47 @@ class PlaywrightUnsubscribeBrowser:
                 self._document_url = self._validate_navigation_target(
                     getattr(self.page, "url")
                 )
+            elif operation.kind is UnsubscribeOperationKind.RECONCILE_HANDOFF:
+                self._raise_if_blocked()
+                self._document_url = self._validate_navigation_target(
+                    getattr(self.page, "url")
+                )
             elif operation.kind is UnsubscribeOperationKind.SUBMIT_FORM:
                 control = next(
                     (
                         binding
                         for binding in self._ordinary_controls()
                         if binding.control.reference == operation.target_reference
-                        and binding.control.kind == "form"
+                        and binding.control.kind in {"form", "email_otp"}
                     ),
                     None,
                 )
                 if control is None:
-                    raise UnsubscribeBrowserError("accepted browser control is unavailable")
-                self._execute_audited_control(control)
+                    raise UnsubscribeBrowserError(
+                        "accepted browser control is unavailable"
+                    )
+                if control.control.kind == "email_otp":
+                    self._execute_email_otp_control(effect, control)
+                else:
+                    self._execute_audited_control(control)
             elif operation.kind is UnsubscribeOperationKind.CLICK_CONFIRMATION:
                 control = next(
                     (
                         binding
                         for binding in self._ordinary_controls()
                         if binding.control.reference == operation.target_reference
-                        and binding.control.kind == "link"
+                        and binding.control.kind in {"link", "captcha_handoff"}
                     ),
                     None,
                 )
                 if control is None:
-                    raise UnsubscribeBrowserError("accepted browser control is unavailable")
-                self._execute_audited_control(control)
+                    raise UnsubscribeBrowserError(
+                        "accepted browser control is unavailable"
+                    )
+                if control.control.kind == "captcha_handoff":
+                    self._attempt_rendered_challenge(control)
+                else:
+                    self._execute_audited_control(control)
             elif operation.kind is UnsubscribeOperationKind.CONFIRM_EMAIL:
                 if self.confirmation_target_resolver is None:
                     raise UnsubscribeProviderAuthError(
@@ -2180,7 +2808,9 @@ class PlaywrightUnsubscribeBrowser:
                     or target.target_reference != operation.target_reference
                     or target.target_reference != expected_reference
                 ):
-                    raise UnsubscribeBrowserError("confirmation target binding rejected")
+                    raise UnsubscribeBrowserError(
+                        "confirmation target binding rejected"
+                    )
                 self.page.goto(
                     self._validate_navigation_target(target.private_url),
                     wait_until="domcontentloaded",
@@ -2204,7 +2834,8 @@ class PlaywrightUnsubscribeBrowser:
                     state_reference=observation.state_reference,
                     receipt=UnsubscribeTerminalReceipt(
                         receipt_id=observation.receipt.receipt_id,
-                        evidence="confirmation-mail:" + sha256(
+                        evidence="confirmation-mail:"
+                        + sha256(
                             target.confirmation_message_identity.encode()
                         ).hexdigest(),
                         entry_reference=effect.entry_reference,
@@ -2229,6 +2860,12 @@ def execute_unsubscribe_in_dedicated_profile(
     owner: Mapping[str, object],
     timeout_ms: int = 5_000,
     executed_prefix_length: int | None = None,
+    connected_recipient: str = "",
+    email_otp_resolver: Callable[
+        [EmailOtpChallenge], ConnectedMailboxOtp | None
+    ]
+    | None = None,
+    session_manager: object | None = None,
 ) -> UnsubscribeExecutionResult | UnsubscribeContinuationResult:
     """Run one unsubscribe effect only in a locked headless profile.
 
@@ -2239,8 +2876,11 @@ def execute_unsubscribe_in_dedicated_profile(
 
     from app.email_browser_profile import (
         EmailBrowserProfileError,
+        email_browser_session_manager,
         launch_persistent_email_context,
     )
+
+    manager = session_manager or email_browser_session_manager(profile)
 
     def session_failure() -> UnsubscribeExecutionResult:
         journal = [
@@ -2249,9 +2889,7 @@ def execute_unsubscribe_in_dedicated_profile(
                 state=step["state"],
                 reference=step["reference"],
             )
-            for step in store.list_email_unsubscribe_steps(
-                effect.action_identity
-            )
+            for step in store.list_email_unsubscribe_steps(effect.action_identity)
         ]
         try:
             store.mark_email_unsubscribe_uncertain(
@@ -2268,6 +2906,10 @@ def execute_unsubscribe_in_dedicated_profile(
 
     def clear_session() -> None:
         try:
+            manager.close_action(effect.action_identity)
+        except Exception:
+            pass
+        try:
             profile.clear_audit_session(effect.action_identity)
         except (EmailBrowserProfileError, OSError):
             pass
@@ -2282,108 +2924,103 @@ def execute_unsubscribe_in_dedicated_profile(
             raise UnsubscribeBrowserError("browser session restore rejected")
         return page
 
-    def restore_inert_page(
-        page: object,
-        session: _RestoredAuditSession,
-    ) -> None:
-        def reject_request(route: object) -> None:
-            route.abort()
-
-        page.route("**/*", reject_request)
-        try:
-            page.set_content(
-                session.html,
-                wait_until="domcontentloaded",
-                timeout=timeout_ms,
-            )
-        finally:
-            page.unroute("**/*", reject_request)
-        if str(getattr(page, "url")) != "about:blank":
-            raise UnsubscribeBrowserError("browser session restore rejected")
-
-    with profile.lock():
+    def open_live_session() -> tuple[object, object, object, Callable[[], None]]:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
             raise UnsubscribeBrowserError(
                 "headless browser runtime is unavailable"
             ) from exc
-        with sync_playwright() as playwright:
+        playwright = sync_playwright().start()
+        context = None
+        try:
             context = launch_persistent_email_context(playwright, profile)
-            try:
-                page = fresh_isolated_page(context)
-                restored_session: _RestoredAuditSession | None = None
-                if executed_prefix_length is not None:
-                    if executed_prefix_length > 0:
-                        try:
-                            payload = profile.load_audit_session(
-                                effect.action_identity
-                            )
-                            if payload is None:
-                                return session_failure()
-                            restored_session = _validated_restored_audit_session(
-                                payload,
-                                effect,
-                                executed_prefix_length=executed_prefix_length,
-                            )
-                            network_policy.validate_url(
-                                restored_session.document_url
-                            )
-                            context.add_cookies(
-                                [dict(item) for item in restored_session.cookies]
-                            )
-                            restore_inert_page(page, restored_session)
-                        except Exception:
-                            clear_session()
-                            return session_failure()
-                    else:
-                        try:
-                            profile.clear_audit_session(effect.action_identity)
-                        except (EmailBrowserProfileError, OSError):
-                            return session_failure()
-                browser = PlaywrightUnsubscribeBrowser(
-                    page,
-                    timeout_ms=timeout_ms,
-                    network_policy=network_policy,
-                    restored_document_url=(
-                        ""
-                        if restored_session is None
-                        else restored_session.document_url
-                    ),
-                )
-                if restored_session is not None:
-                    try:
-                        browser.validate_restored_audit_session(
-                            effect,
-                            restored_session,
-                            executed_prefix_length=executed_prefix_length,
-                        )
-                    except UnsubscribeBrowserError:
-                        clear_session()
-                        return session_failure()
-                result = UnsubscribeExecutor(
-                    store,
-                    browser,
-                    owner=owner,
-                ).execute(
+            page = fresh_isolated_page(context)
+            browser = PlaywrightUnsubscribeBrowser(
+                page,
+                timeout_ms=timeout_ms,
+                network_policy=network_policy,
+                connected_recipient=connected_recipient,
+                email_otp_resolver=email_otp_resolver,
+            )
+
+            def cleanup() -> None:
+                try:
+                    context.close()
+                finally:
+                    playwright.stop()
+
+            return context, page, browser, cleanup
+        except Exception:
+            if context is not None:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            playwright.stop()
+            raise
+
+    restored_session: _RestoredAuditSession | None = None
+    session_reference = ""
+    if executed_prefix_length is not None and executed_prefix_length > 0:
+        try:
+            payload = profile.load_audit_session(effect.action_identity)
+            if payload is None:
+                return session_failure()
+            restored_session = _validated_restored_audit_session(
+                payload,
+                effect,
+                executed_prefix_length=executed_prefix_length,
+            )
+            session_reference = restored_session.session_reference
+            browser = manager.resume(
+                session_reference=session_reference,
+                action_identity=effect.action_identity,
+                previous_effect_digest=effect.previous_effect_digest,
+            )
+            browser.connected_recipient = connected_recipient.strip()
+            browser.email_otp_resolver = email_otp_resolver
+            browser.validate_restored_audit_session(
+                effect,
+                restored_session,
+                executed_prefix_length=executed_prefix_length,
+            )
+        except Exception:
+            clear_session()
+            return session_failure()
+    else:
+        try:
+            profile.clear_audit_session(effect.action_identity)
+            session_reference, browser = manager.start(
+                action_identity=effect.action_identity,
+                effect_digest=effect.effect_digest,
+                open_session=open_live_session,
+            )
+        except Exception:
+            clear_session()
+            return session_failure()
+
+    result = UnsubscribeExecutor(store, browser, owner=owner).execute(
+        effect,
+        entries,
+        executed_prefix_length=executed_prefix_length,
+    )
+    if isinstance(result, UnsubscribeContinuationResult):
+        try:
+            profile.save_audit_session(
+                effect.action_identity,
+                browser.capture_audit_session(
                     effect,
-                    entries,
-                    executed_prefix_length=executed_prefix_length,
-                )
-                if isinstance(result, UnsubscribeContinuationResult):
-                    try:
-                        profile.save_audit_session(
-                            effect.action_identity,
-                            browser.capture_audit_session(effect),
-                        )
-                    except (EmailBrowserProfileError, UnsubscribeBrowserError, OSError):
-                        clear_session()
-                        return session_failure()
-                else:
-                    clear_session()
-                return result
-            finally:
-                context.close()
+                    session_reference=session_reference,
+                ),
+            )
+            manager.retain(effect.action_identity, effect_digest=effect.effect_digest)
+        except (EmailBrowserProfileError, UnsubscribeBrowserError, OSError):
+            clear_session()
+            return session_failure()
+    else:
+        clear_session()
+    return result
 
 
 def _header_values(value: str) -> tuple[str, ...]:
@@ -2417,9 +3054,7 @@ class _BodyLinkParser(HTMLParser):
         self._href = ""
         self._labels: list[str] = []
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag.casefold() != "a":
             return
         values = {name.casefold(): value or "" for name, value in attrs}
@@ -2441,20 +3076,101 @@ class _BodyLinkParser(HTMLParser):
             self._labels = []
 
 
-def _text_https_links(body_text: str) -> tuple[str, ...]:
-    tokens = body_text.split()
-    links: list[str] = []
-    for index, token in enumerate(tokens):
-        start = token.casefold().find("https://")
-        if start < 0:
+def _bounded_context_fragment(value: str, *, from_end: bool) -> str:
+    encoded = value.encode("utf-8")
+    bounded = (
+        encoded[-_TEXT_CONTEXT_SIDE_BYTES:]
+        if from_end
+        else encoded[:_TEXT_CONTEXT_SIDE_BYTES]
+    )
+    return bounded.decode("utf-8", "ignore")
+
+
+def _marker_is_local_to_url(
+    body_text: str,
+    marker_span: tuple[int, int],
+    url_match: re.Match[str],
+) -> bool:
+    marker_start, marker_end = marker_span
+    if marker_end <= url_match.start():
+        gap = body_text[marker_end : url_match.start()]
+    elif url_match.end() <= marker_start:
+        gap = body_text[url_match.end() : marker_start]
+    else:
+        gap = ""
+    return (
+        len(gap) <= _TEXT_MARKER_MAX_DISTANCE_CHARS
+        and gap.count("\n") <= _TEXT_MARKER_MAX_LINE_BREAKS
+    )
+
+
+def _text_https_links(body_text: str) -> tuple[tuple[str, str], ...]:
+    links: list[tuple[str, str]] = []
+    matches = tuple(re.finditer(r"https://[^\s<>\"']+", body_text, flags=re.IGNORECASE))
+    marker_spans: list[tuple[int, int]] = []
+    normalized = body_text.casefold()
+    for marker in _UNSUBSCRIBE_MARKERS:
+        start = 0
+        while (position := normalized.find(marker, start)) >= 0:
+            marker_spans.append((position, position + len(marker)))
+            start = position + len(marker)
+    assigned_markers: set[int] = set()
+    for marker_span in marker_spans:
+        local_matches = tuple(
+            index
+            for index, match in enumerate(matches)
+            if _marker_is_local_to_url(body_text, marker_span, match)
+        )
+        if not local_matches:
             continue
-        candidate = token[start:].strip("'\"()[]{}<>,.;，。；")
-        context = " ".join(tokens[max(0, index - 4) : index + 1])
+        marker_start, marker_end = marker_span
+        assigned_markers.add(
+            min(
+                local_matches,
+                key=lambda index: (
+                    min(
+                        abs(marker_start - matches[index].end()),
+                        abs(matches[index].start() - marker_end),
+                    )
+                    * 2
+                    + (0 if matches[index].start() >= marker_end else 1)
+                ),
+            )
+        )
+    for index, match in enumerate(matches):
+        candidate = match.group(0).strip("'\"()[]{}<>,.;，。；")
+        before_start = max(
+            0,
+            match.start() - 96,
+            matches[index - 1].end() if index else 0,
+        )
+        after_end = min(
+            len(body_text),
+            match.end() + 96,
+            matches[index + 1].start() if index + 1 < len(matches) else len(body_text),
+        )
+        before = re.sub(
+            r"https://[^\s<>\"']+",
+            "[URL]",
+            body_text[before_start : match.start()],
+            flags=re.IGNORECASE,
+        )
+        after = re.sub(
+            r"https://[^\s<>\"']+",
+            "[URL]",
+            body_text[match.end() : after_end],
+            flags=re.IGNORECASE,
+        )
+        context = (
+            _bounded_context_fragment(before, from_end=True)
+            + " [URL] "
+            + _bounded_context_fragment(after, from_end=False)
+        ).strip()
         if _is_private_https_url(candidate) and (
-            _contains_unsubscribe_marker(context)
+            index in assigned_markers
             or _contains_unsubscribe_marker(urlsplit(candidate).path)
         ):
-            links.append(candidate)
+            links.append((candidate, context))
     return tuple(links)
 
 
@@ -2469,7 +3185,7 @@ def extract_unsubscribe_entries(
 ) -> tuple[UnsubscribeEntry, ...]:
     """Extract standard and explicit body entries, retaining URLs in memory only."""
 
-    candidates: list[tuple[UnsubscribeEntrySource, str, int]] = []
+    candidates: list[tuple[UnsubscribeEntrySource, str, int, str]] = []
     one_click = (
         "".join(list_unsubscribe_post.casefold().split())
         == "list-unsubscribe=one-click"
@@ -2487,10 +3203,13 @@ def extract_unsubscribe_entries(
                     else UnsubscribeEntrySource.HEADER_HTTPS,
                     value,
                     0 if one_click else 10,
+                    "List-Unsubscribe",
                 )
             )
         elif _is_mailto_url(value):
-            candidates.append((UnsubscribeEntrySource.HEADER_MAILTO, value, 20))
+            candidates.append(
+                (UnsubscribeEntrySource.HEADER_MAILTO, value, 20, "List-Unsubscribe")
+            )
 
     parser = _BodyLinkParser()
     parser.feed(body_html)
@@ -2500,22 +3219,40 @@ def extract_unsubscribe_entries(
             _contains_unsubscribe_marker(label)
             or _contains_unsubscribe_marker(urlsplit(value).path)
         ):
-            candidates.append((UnsubscribeEntrySource.BODY_HTML_HTTPS, value, 30))
-    for value in _text_https_links(body_text):
-        candidates.append((UnsubscribeEntrySource.BODY_TEXT_HTTPS, value, 40))
-
-    by_url: dict[str, UnsubscribeEntry] = {}
-    for source, private_url, priority in candidates:
-        current = by_url.get(private_url)
-        if current is None or priority < current.priority:
-            by_url[private_url] = UnsubscribeEntry(
-                source=source,
-                reference=unsubscribe_entry_reference(private_url),
-                private_url=private_url,
-                priority=priority,
+            candidates.append(
+                (UnsubscribeEntrySource.BODY_HTML_HTTPS, value, 30, label)
             )
+    for value, context in _text_https_links(body_text):
+        candidates.append((UnsubscribeEntrySource.BODY_TEXT_HTTPS, value, 40, context))
+
+    by_url: dict[str, tuple[UnsubscribeEntrySource, str, int, str, int]] = {}
+    for discovery_order, (source, private_url, priority, context) in enumerate(
+        candidates
+    ):
+        current = by_url.get(private_url)
+        if current is None or priority < current[2]:
+            by_url[private_url] = (
+                source,
+                private_url,
+                priority,
+                context,
+                discovery_order,
+            )
+    ordered = sorted(by_url.values(), key=lambda item: (item[2], item[4]))
     return tuple(
-        sorted(by_url.values(), key=lambda item: (item.priority, item.reference))
+        UnsubscribeEntry(
+            index=index,
+            source=source,
+            reference=unsubscribe_entry_reference(private_url),
+            private_url=private_url,
+            priority=priority,
+            scheme=urlsplit(private_url).scheme.casefold(),
+            host=(urlsplit(private_url).hostname or "").casefold(),
+            context=context.encode("utf-8")[:160].decode("utf-8", "ignore").strip(),
+        )
+        for index, (source, private_url, priority, context, _order) in enumerate(
+            ordered
+        )
     )
 
 
@@ -2530,6 +3267,35 @@ def select_browser_unsubscribe_entry(
         key=lambda item: (item.priority, item.reference),
         default=None,
     )
+
+
+def select_exact_unsubscribe_entry(
+    entries: Sequence[UnsubscribeEntry],
+    selection: Mapping[str, object],
+) -> UnsubscribeEntry:
+    """Resolve one redacted selection back to its exact ephemeral URL."""
+
+    expected_keys = {
+        "candidate_index",
+        "candidate_source",
+        "candidate_digest",
+        "candidate_reference",
+    }
+    if set(selection) != expected_keys:
+        raise ValueError("unsubscribe candidate selection is incomplete")
+    index = selection["candidate_index"]
+    if type(index) is not int or index < 0 or index >= len(entries):
+        raise ValueError("unsubscribe candidate index changed")
+    entry = entries[index]
+    expected = {
+        "candidate_index": entry.index,
+        "candidate_source": entry.source.value,
+        "candidate_digest": entry.reference.removeprefix("unsubscribe-entry:"),
+        "candidate_reference": entry.reference,
+    }
+    if dict(selection) != expected:
+        raise ValueError("unsubscribe candidate binding changed")
+    return entry
 
 
 def disposition_for_unsubscribe_outcome(
@@ -2683,8 +3449,7 @@ class UnsubscribeExecutor:
                     for item in durable["operations"]
                 ),
                 controls=tuple(
-                    UnsubscribeDiscoveredControl(**item)
-                    for item in durable["controls"]
+                    UnsubscribeDiscoveredControl(**item) for item in durable["controls"]
                 ),
                 network_policy_reference=durable["network_policy_reference"],
                 network_policy_origin_references=tuple(
@@ -2797,7 +3562,9 @@ class UnsubscribeExecutor:
             completed_at=persisted["completed_at"],
         )
 
-    def _claim_write(self, effect: EmailUnsubscribeEffect) -> Mapping[str, object] | None:
+    def _claim_write(
+        self, effect: EmailUnsubscribeEffect
+    ) -> Mapping[str, object] | None:
         try:
             claim = self.store.claim_email_unsubscribe_write(
                 **self._store_arguments(effect),
@@ -2889,8 +3656,7 @@ class UnsubscribeExecutor:
             )
             if (
                 previous_effect is None
-                or previous_effect.get("effect_digest")
-                != effect.previous_effect_digest
+                or previous_effect.get("effect_digest") != effect.previous_effect_digest
                 or previous_effect.get("operations")
                 != operations[:executed_prefix_length]
             ):
@@ -3026,9 +3792,7 @@ class UnsubscribeExecutor:
                 return _result(
                     UnsubscribeOutcome.FAILED_BROWSER,
                     journal,
-                    error_code=(
-                        "email_unsubscribe_authentication_controls_blocked"
-                    ),
+                    error_code=("email_unsubscribe_authentication_controls_blocked"),
                 )
             except (UnsubscribeBrowserError, UnsubscribeProviderAuthError):
                 return existing_continuation
@@ -3098,7 +3862,11 @@ class UnsubscribeExecutor:
                 reference=observation.state_reference,
             )
         )
-        terminal = None if observation is None else _terminal_result(effect, observation, journal)
+        terminal = (
+            None
+            if observation is None
+            else _terminal_result(effect, observation, journal)
+        )
         if terminal is not None:
             if terminal.receipt is None:
                 return terminal
@@ -3148,7 +3916,11 @@ class UnsubscribeExecutor:
             resume_index = int(extension_claim["executed_prefix_length"])
 
         for operation in effect.operations[resume_index:]:
-            if observation is not None and observation.next_operation_reference != operation.operation_reference:
+            if (
+                observation is not None
+                and observation.next_operation_reference
+                != operation.operation_reference
+            ):
                 return _result(
                     UnsubscribeOutcome.FAILED_BROWSER,
                     journal,
@@ -3166,9 +3938,7 @@ class UnsubscribeExecutor:
                 return _result(
                     UnsubscribeOutcome.FAILED_BROWSER,
                     journal,
-                    error_code=(
-                        "email_unsubscribe_authentication_controls_blocked"
-                    ),
+                    error_code=("email_unsubscribe_authentication_controls_blocked"),
                 )
             except UnsubscribeProviderAuthError:
                 self.store.mark_email_unsubscribe_uncertain(

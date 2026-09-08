@@ -3,8 +3,10 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from importlib import import_module
 from pathlib import Path
+import json
 import sqlite3
 
+import numpy as np
 import pytest
 
 from app.email_classifier_contracts import (
@@ -13,8 +15,9 @@ from app.email_classifier_contracts import (
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
+    INITIAL_EMAIL_CATEGORY_KEYS,
 )
-from app.email_classifier_model import EmailModelPrediction
+from app.email_classifier_model import CpuTfidfLogisticClassifier, EmailModelPrediction
 from app.email_classifier_training import (
     CandidateAssessment,
     CategoryEligibility,
@@ -27,8 +30,22 @@ from app.email_classifier_training import (
     assess_feedback_readiness,
     evaluate_category_validation,
     train_and_promote,
+    _validation_predictions,
 )
+from app.email_classifier_training import train_frozen_embedding_candidate
+from app.email_embedding_cache import EmbeddingCache, EmbeddingCacheKey
+from app.email_embedding_classifier import CategoryDescription
+from app.email_description_optimizer import (
+    DescriptionProposal,
+    DescriptionProposalRepository,
+    build_description_set_overlay,
+    category_description_digest,
+    description_set_digest,
+)
+from app.email_important import ImportantSignals
+from app.email_training_snapshot import build_folder_training_snapshot
 from app.email_model_registry import EmailModelRegistry
+from app.email_model_registry import HistoricalSystematicErrorState
 from app.email_classifier_retrain import (
     RetrainPolicy,
     RetrainState,
@@ -125,12 +142,13 @@ def _confirm(
 def _store_with_confirmed_feedback(tmp_path: Path) -> EmailStore:
     store = EmailStore(tmp_path / "email.sqlite3")
     category_terms = {
-        EmailCategory.IMPORTANT: ("紧急", "合同", "审批"),
         EmailCategory.WORK: ("项目", "会议", "计划"),
+        EmailCategory.HUMAN_RESOURCES: ("招聘", "面试", "候选人"),
+        EmailCategory.LEGAL: ("合同", "法务", "审批"),
+        EmailCategory.FINANCING: ("融资", "投资人", "股东"),
         EmailCategory.PERSONAL: ("家人", "朋友", "聚会"),
         EmailCategory.NOTIFICATION: ("提醒", "通知", "状态"),
-        EmailCategory.SUBSCRIPTION: ("订阅", "简报", "newsletter"),
-        EmailCategory.BILLING: ("账单", "发票", "付款"),
+        EmailCategory.EXTERNAL_BILLING: ("账单", "发票", "付款"),
         EmailCategory.SHOPPING: ("订单", "物流", "商品"),
         EmailCategory.JUNK: ("促销", "折扣", "广告"),
     }
@@ -155,6 +173,53 @@ def _store_with_confirmed_feedback(tmp_path: Path) -> EmailStore:
     return store
 
 
+def _record_enabled_fit_keys(monkeypatch):
+    original_fit = CpuTfidfLogisticClassifier.fit
+    calls: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+
+    def recording_fit(self, texts, labels, **kwargs):
+        assert "enabled_category_keys" in kwargs
+        calls.append((tuple(labels), tuple(kwargs["enabled_category_keys"])))
+        return original_fit(self, texts, labels, **kwargs)
+
+    monkeypatch.setattr(CpuTfidfLogisticClassifier, "fit", recording_fit)
+    return calls
+
+
+def test_validation_fit_callers_pass_the_full_actual_training_label_set(monkeypatch):
+    calls = _record_enabled_fit_keys(monkeypatch)
+    labels = ("junk", "legal", "work")
+    leave_one_out = [
+        {"label": label, "model_text": f"{label}-{index}"}
+        for label in labels
+        for index in range(2)
+    ]
+
+    _validation_predictions(
+        leave_one_out,
+        c=0.25,
+        enabled_category_keys=labels,
+    )
+
+    assert len(calls) == len(leave_one_out)
+    assert {enabled for _fold_labels, enabled in calls} == {labels}
+
+    calls.clear()
+    holdout = [
+        {"label": labels[index % len(labels)], "model_text": f"sample-{index}"}
+        for index in range(60)
+    ]
+
+    _validation_predictions(
+        holdout,
+        c=0.25,
+        enabled_category_keys=labels,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1] == labels
+
+
 def test_feedback_keeps_redacted_model_text_for_training(tmp_path: Path):
     store = EmailStore(tmp_path / "email.sqlite3")
     classification = _classification("message-1", EmailCategory.WORK)
@@ -163,13 +228,13 @@ def test_feedback_keeps_redacted_model_text_for_training(tmp_path: Path):
         model_text="__from_domain__example.test __subject__项目 工作",
     )
 
-    _confirm(store, row["id"], EmailCategory.IMPORTANT)
+    _confirm(store, row["id"], EmailCategory.LEGAL)
 
     assert store.list_training_examples() == [
         {
             "message_id": classification.stable_message_identity,
             "model_text": "__from_domain__example.test __subject__项目 工作",
-            "label": "important",
+            "label": "legal",
         }
     ]
 
@@ -199,15 +264,15 @@ def test_training_readiness_requires_every_email_category():
 
     assert readiness.ready is False
     reason = " ".join(readiness.reasons)
-    for category in EmailCategory:
-        if category.value not in {"work", "junk"}:
-            assert category.value in reason
+    for category in INITIAL_EMAIL_CATEGORY_KEYS:
+        if category not in {"work", "junk"}:
+            assert category in reason
 
 
 def test_training_readiness_enforces_two_example_floor_per_category():
     examples = [
-        {"label": category.value, "model_text": f"sample-{category.value}"}
-        for category in EmailCategory
+        {"label": category, "model_text": f"sample-{category}"}
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
     ]
 
     readiness = assess_examples_readiness(
@@ -302,12 +367,13 @@ def test_category_eligibility_accepts_exact_precision_and_sample_boundaries():
         (EmailCategory.WORK, EmailAction.ARCHIVE, 0.97, 30, True),
         (EmailCategory.WORK, EmailAction.MOVE, 0.97, 30, True),
         (EmailCategory.WORK, EmailAction.TRASH, 0.995, 30, True),
-        (EmailCategory.SUBSCRIPTION, EmailAction.UNSUBSCRIBE, 0.95, 20, True),
+        (EmailCategory.JUNK, EmailAction.UNSUBSCRIBE, 0.95, 30, True),
         (EmailCategory.WORK, EmailAction.LABEL, 0.949, 30, False),
         (EmailCategory.WORK, EmailAction.ARCHIVE, 0.969, 30, False),
         (EmailCategory.WORK, EmailAction.TRASH, 0.994, 30, False),
         (EmailCategory.WORK, EmailAction.TRASH, 0.999, 29, False),
-        (EmailCategory.SUBSCRIPTION, EmailAction.UNSUBSCRIBE, 0.99, 19, False),
+        (EmailCategory.JUNK, EmailAction.UNSUBSCRIBE, 0.99, 19, False),
+        (EmailCategory.SUBSCRIPTION, EmailAction.UNSUBSCRIBE, 0.99, 30, False),
         (EmailCategory.WORK, EmailAction.UNSUBSCRIBE, 0.99, 30, False),
         (EmailCategory.WORK, EmailAction.AUTO_REPLY, 1.0, 100, False),
     ],
@@ -620,7 +686,10 @@ def test_candidate_assessment_defensively_copies_and_freezes_categories():
         assessment.categories = {}  # type: ignore[misc]
 
 
-def test_train_and_promote_round_trips_candidate_and_previous_model(tmp_path: Path):
+def test_train_and_promote_round_trips_candidate_and_previous_model(
+    tmp_path: Path, monkeypatch
+):
+    fit_calls = _record_enabled_fit_keys(monkeypatch)
     store = _store_with_confirmed_feedback(tmp_path)
     active = tmp_path / "models" / "model.active.pkl"
     previous = tmp_path / "models" / "model.previous.pkl"
@@ -633,13 +702,18 @@ def test_train_and_promote_round_trips_candidate_and_previous_model(tmp_path: Pa
     )
 
     assert result.promoted is True
-    assert result.example_count == 24
+    assert result.example_count == 27
     assert result.category_counts == {
-        category.value: 3 for category in EmailCategory
+        category: 3 for category in INITIAL_EMAIL_CATEGORY_KEYS
+    }
+    assert len(fit_calls) == result.example_count + 1
+    assert {enabled for _labels, enabled in fit_calls} == {
+        tuple(sorted(INITIAL_EMAIL_CATEGORY_KEYS))
     }
     assert active.exists()
     assert not previous.exists()
 
+    fit_calls.clear()
     second = train_and_promote(
         store,
         active,
@@ -648,12 +722,17 @@ def test_train_and_promote_round_trips_candidate_and_previous_model(tmp_path: Pa
     )
 
     assert second.promoted is True
+    assert len(fit_calls) == second.example_count + 1
+    assert {enabled for _labels, enabled in fit_calls} == {
+        tuple(sorted(INITIAL_EMAIL_CATEGORY_KEYS))
+    }
     assert previous.exists()
 
 
 def test_registry_promotion_marks_only_authoritative_samples_after_success(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ):
+    fit_calls = _record_enabled_fit_keys(monkeypatch)
     store = _store_with_confirmed_feedback(tmp_path)
     registry = EmailModelRegistry(tmp_path / "registry")
 
@@ -666,6 +745,10 @@ def test_registry_promotion_marks_only_authoritative_samples_after_success(
     assert result.promoted is True
     assert result.model_id.startswith("email-tfidf-lr-20260829T214530Z-")
     assert result.prediction_latency_p95_ms < 100
+    assert len(fit_calls) == result.example_count + 1
+    assert {enabled for _labels, enabled in fit_calls} == {
+        tuple(sorted(INITIAL_EMAIL_CATEGORY_KEYS))
+    }
     assert registry.active_manifest().model_id == result.model_id  # type: ignore[union-attr]
     for example in store.list_training_examples(include_inclusion=True):
         assert example["included_in_model_id"] == result.model_id
@@ -786,7 +869,7 @@ def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
 
     assert rejected.promoted is False
     assert registry.get_model(rejected.model_id).status == "rejected"
-    assert len(store.list_unincluded_training_examples()) == 24
+    assert len(store.list_unincluded_training_examples()) == 27
 
     failed_store = _store_with_confirmed_feedback(tmp_path / "failed")
     failed_registry = EmailModelRegistry(tmp_path / "failed-registry")
@@ -801,7 +884,7 @@ def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
             failed_registry,
             trained_at=datetime(2026, 8, 29, 21, 45, 32, tzinfo=timezone.utc),
         )
-    assert len(failed_store.list_unincluded_training_examples()) == 24
+    assert len(failed_store.list_unincluded_training_examples()) == 27
 
 
 def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_pending(
@@ -817,7 +900,7 @@ def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_p
             db.execute(
                 """
                 update email_classifications
-                set confirmed_category='important', category='important'
+                set confirmed_category='board_governance', category='board_governance'
                 where id=(select min(id) from email_classifications)
                 """
             )
@@ -836,7 +919,7 @@ def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_p
         )
 
     latest = store.list_unincluded_training_examples()
-    assert any(example["label"] == "important" for example in latest)
+    assert any(example["label"] == "board_governance" for example in latest)
 
 
 def test_inclusion_failure_after_promotion_restores_exact_prior_manifests(
@@ -897,7 +980,7 @@ def test_training_not_ready_does_not_create_active_model(tmp_path: Path):
     assert not active.exists()
 
 
-def test_retrain_policy_coalesces_feedback_until_batch_or_idle_window():
+def test_legacy_retrain_policy_uses_count_only_and_never_elapsed_time():
     now = datetime(2026, 8, 29, 15, 0, tzinfo=timezone.utc)
     state = RetrainState().record_feedback(now)
     policy = RetrainPolicy(minimum_new_examples=5, idle_seconds=30)
@@ -912,9 +995,9 @@ def test_retrain_policy_coalesces_feedback_until_batch_or_idle_window():
     )
 
     assert not_due.due is False
-    assert due.due is False
+    assert due.due is True
     assert idle_not_due.due is False
-    assert idle_due.reason == "idle_debounce"
+    assert idle_due.reason == "label_change_threshold"
 
 
 def test_retrain_state_round_trips_atomically(tmp_path: Path):
@@ -927,7 +1010,7 @@ def test_retrain_state_round_trips_atomically(tmp_path: Path):
     assert load_retrain_state(path) == state
 
 
-def test_retrain_if_due_advances_state_only_after_promotion(tmp_path: Path):
+def test_legacy_retrain_entry_never_promotes_or_advances_state(tmp_path: Path):
     store = _store_with_confirmed_feedback(tmp_path)
     now = datetime(2026, 8, 29, 15, 0, tzinfo=timezone.utc)
     active = tmp_path / "models" / "model.active.pkl"
@@ -943,10 +1026,10 @@ def test_retrain_if_due_advances_state_only_after_promotion(tmp_path: Path):
         policy=RetrainPolicy(minimum_new_examples=5),
     )
 
-    assert result.decision.reason == "idle_debounce"
-    assert result.training_result is not None
-    assert result.state.last_trained_feedback_count == 24
-    assert active.exists()
+    assert result.decision.reason == "legacy_promotion_disabled"
+    assert result.training_result is None
+    assert result.state.last_trained_feedback_count == 0
+    assert not active.exists()
 
 
 def test_retrain_failure_does_not_advance_state_or_create_model(tmp_path: Path):
@@ -959,16 +1042,343 @@ def test_retrain_failure_does_not_advance_state_or_create_model(tmp_path: Path):
     state = RetrainState().record_feedback(now)
     active = tmp_path / "models" / "model.active.pkl"
 
-    with pytest.raises(TrainingNotReady):
-        retrain_if_due(
-            store,
-            state,
-            active,
-            tmp_path / "models" / "model.previous.pkl",
-            now=now + timedelta(seconds=31),
-            model_version="should-not-promote",
-            policy=RetrainPolicy(minimum_new_examples=1),
-        )
+    result = retrain_if_due(
+        store,
+        state,
+        active,
+        tmp_path / "models" / "model.previous.pkl",
+        now=now + timedelta(seconds=31),
+        model_version="should-not-promote",
+        policy=RetrainPolicy(minimum_new_examples=1),
+    )
 
     assert not active.exists()
     assert state.last_trained_feedback_count == 0
+    assert result.training_result is None
+
+
+def test_frozen_snapshot_embedding_training_stages_metrics_without_activation(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    observed_at = datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc)
+    messages = []
+    proposed_splits = {}
+    for category, axis in (
+        ("work", (1.0, 0.0)),
+        ("legal", (0.0, 1.0)),
+        # Frozen snapshots may retain rows from a subsequently disabled category.
+        ("finance", (0.5, 0.5)),
+    ):
+        for index, split in enumerate(
+            (
+                "train",
+                "train",
+                "train",
+                "train",
+                "validation",
+                "validation",
+                "test",
+                "test",
+            )
+        ):
+            identity = f"{category}-{index}"
+            proposed_splits[identity] = split
+            messages.append(
+                {
+                    "account_id": "account-a",
+                    "stable_message_identity": identity,
+                    "provider_folder_id": f"folder-{category}",
+                    "provider_folder_name": category.title(),
+                    "folder_role": "category",
+                    "bound_category_key": category,
+                    "folder_binding_status": "active",
+                    "processed_by_email_service": True,
+                    "important_signals": ImportantSignals(
+                        ("STARRED",) if index % 2 else (), bool(index % 2)
+                    ),
+                    "sender": {
+                        "name": f"Sender {identity}",
+                        "email": f"{identity}@example.test",
+                    },
+                    "to_recipients": [{"name": "Derek", "email": "d@example.test"}],
+                    "cc_recipients": [],
+                    "subject": identity,
+                    "body": f"body {identity}",
+                    "headers": {"message-id": f"<{identity}@example.test>"},
+                    "attachments": [],
+                    "provider_thread_id": f"thread-{identity}",
+                    "explicit_matter_group": f"matter-{identity}",
+                    "source": "natural",
+                    "received_at": "2026-09-07T12:00:00+00:00",
+                    "_axis": axis,
+                }
+            )
+    for index, split in enumerate(
+        ("train", "train", "validation", "validation", "test", "test")
+    ):
+        identity = f"inbox-unbound-{index}"
+        proposed_splits[identity] = split
+        messages.append(
+            {
+                "account_id": "account-a",
+                "stable_message_identity": identity,
+                "provider_folder_id": "folder-inbox",
+                "provider_folder_name": "INBOX",
+                "folder_role": "unbound",
+                "bound_category_key": None,
+                "folder_binding_status": "unbound",
+                "processed_by_email_service": False,
+                "important_signals": ImportantSignals(
+                    ("STARRED",) if index % 2 else (), bool(index % 2)
+                ),
+                "sender": {
+                    "name": f"Inbox Sender {index}",
+                    "email": f"inbox-{index}@example.test",
+                },
+                "to_recipients": [{"name": "Derek", "email": "d@example.test"}],
+                "cc_recipients": [],
+                "subject": identity,
+                "body": f"body {identity}",
+                "headers": {"message-id": f"<{identity}@example.test>"},
+                "attachments": [],
+                "provider_thread_id": f"thread-{identity}",
+                "explicit_matter_group": f"matter-{identity}",
+                "source": "natural",
+                "received_at": "2026-09-07T12:00:00+00:00",
+            }
+        )
+    snapshot = build_folder_training_snapshot(
+        messages,
+        snapshot_id="snapshot-task9",
+        description_version="descriptions-v1",
+        observed_at=observed_at,
+        seed=17,
+        proposed_splits=proposed_splits,
+    )
+    stored = store.persist_training_snapshot(snapshot)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    cache = EmbeddingCache(registry.root, dimension=2)
+    for row in stored["observations"]:
+        vector = np.array(
+            [1.0, 0.05] if row["category_key"] == "work" else [0.05, 1.0],
+            dtype=np.float32,
+        )
+        cache.put(
+            EmbeddingCacheKey.for_text(
+                normalized_text=row["normalized_model_input"],
+                input_schema_version=stored["input_schema_version"],
+                embedding_model_id="jina-small",
+                embedding_revision="gpu4-r1",
+            ),
+            vector,
+        )
+    descriptions = {
+        "work": CategoryDescription(
+            core="Routine business work.",
+            include=("Projects and operations.",),
+            exclude=("Legal rights and contracts.",),
+            version="descriptions-v1",
+        ),
+        "legal": CategoryDescription(
+            core="External legal rights and obligations.",
+            include=("Contracts and compliance.",),
+            exclude=("Routine project delivery.",),
+            version="descriptions-v1",
+        ),
+    }
+    description_vectors = {
+        "Routine business work.": np.array([1.0, 0.0], dtype=np.float32),
+        "Projects and operations.": np.array([1.0, 0.1], dtype=np.float32),
+        "Legal rights and contracts.": np.array([0.0, 1.0], dtype=np.float32),
+        "External legal rights and obligations.": np.array(
+            [0.0, 1.0], dtype=np.float32
+        ),
+        "Contracts and compliance.": np.array([0.1, 1.0], dtype=np.float32),
+        "Routine project delivery.": np.array([1.0, 0.0], dtype=np.float32),
+    }
+    for text, vector in description_vectors.items():
+        cache.put(
+            EmbeddingCacheKey.for_description(
+                text=text,
+                description_version="descriptions-v1",
+                input_schema_version=stored["input_schema_version"],
+                embedding_model_id="jina-small",
+                embedding_revision="gpu4-r1",
+            ),
+            vector,
+        )
+
+    common_training_args = {
+        "store": store,
+        "snapshot_id": "snapshot-task9",
+        "registry": registry,
+        "cache": cache,
+        "descriptions": descriptions,
+        "embedding_model_id": "jina-small",
+        "embedding_revision": "gpu4-r1",
+        "parent_model_id": "agent-cold-start-v1",
+        "trained_at": observed_at,
+        "historical_systematic_error_state": HistoricalSystematicErrorState(
+            unresolved=False,
+            source="operator-review",
+            reason="historical review complete",
+            updated_at=observed_at.isoformat(),
+        ),
+    }
+    description_set_version = "description-set-sha256:" + description_set_digest(
+        descriptions
+    )
+    with pytest.raises(TrainingNotReady, match="snapshot SHA"):
+        train_frozen_embedding_candidate(
+            **common_training_args,
+            expected_snapshot_sha="b" * 64,
+        )
+    with pytest.raises(TrainingNotReady, match="description version"):
+        train_frozen_embedding_candidate(
+            **common_training_args,
+            expected_description_version="description-set-sha256:" + "0" * 64,
+        )
+
+    blocked_registry = EmailModelRegistry(tmp_path / "blocked-registry")
+    blocked = train_frozen_embedding_candidate(
+        **{
+            **common_training_args,
+            "registry": blocked_registry,
+            "historical_systematic_error_state": HistoricalSystematicErrorState(
+                unresolved=True,
+                source="historical-evaluation",
+                reason="systematic legal/work confusion remains",
+                updated_at=observed_at.isoformat(),
+            ),
+        },
+        expected_snapshot_sha=snapshot.snapshot_digest,
+        expected_description_version=description_set_version,
+    )
+    blocked_evidence = blocked_registry.get_staged_evidence(blocked.model_id)
+    assert blocked_evidence["unresolved_historical_systematic_error"] is True
+    assert blocked_evidence["whole_model_readiness"]["ready"] is False
+    assert blocked_evidence["historical_systematic_error_state"] == {
+        "unresolved": True,
+        "source": "historical-evaluation",
+        "reason": "systematic legal/work confusion remains",
+        "updated_at": observed_at.isoformat(),
+        "state_sha256": common_training_args["historical_systematic_error_state"]
+        .__class__(
+            unresolved=True,
+            source="historical-evaluation",
+            reason="systematic legal/work confusion remains",
+            updated_at=observed_at.isoformat(),
+        )
+        .state_sha256,
+    }
+
+    invalid_prior = json.loads(json.dumps(blocked_evidence))
+    invalid_prior["model_id"] = "email-embedding-mlp-invalid-prior"
+    invalid_prior.pop("unresolved_historical_systematic_error")
+    registry.persist_staged_evidence(invalid_prior["model_id"], invalid_prior)
+
+    result = train_frozen_embedding_candidate(
+        **common_training_args,
+        expected_snapshot_sha=snapshot.snapshot_digest,
+        expected_description_version=description_set_version,
+    )
+
+    assert result.training_count == 8
+    assert result.validation_count == 4
+    assert result.test_count == 4
+    assert set(result.category_metrics) == {"work", "legal"}
+    assert result.important_metrics["accepted_hits"] >= 0
+    assert result.important_metrics["sample_count"] == 8
+    assert result.failure_reason == ""
+    assert registry.active_manifest() is None
+    persisted = registry.get_staged_evidence(result.model_id)
+    assert persisted["hashes"]["snapshot_sha256"] == snapshot.snapshot_digest
+    assert persisted["parameters"]["alpha"] >= 0
+    assert persisted["dependencies"]["embedding_model_revision"] == "gpu4-r1"
+    assert persisted["compatibility"]["description_version"] == description_set_version
+    assert persisted["latency_ms"].keys() >= {"p50", "p95", "p99"}
+    assert persisted["split_counts"]["important"] == {
+        "train": 14,
+        "validation": 8,
+        "test": 8,
+    }
+    assert persisted["whole_model_readiness"]["ready"] is False
+    assert persisted["whole_model_readiness"]["reason"] == "candidate_evidence_invalid"
+
+    proposal = DescriptionProposal(
+        proposal_id="description-proposal-real-training",
+        category="legal",
+        source_description_version="descriptions-v1",
+        source_description_digest=category_description_digest(descriptions["legal"]),
+        source_snapshot_id="snapshot-task9",
+        source_snapshot_sha=snapshot.snapshot_digest,
+        proposed=CategoryDescription(
+            core=descriptions["legal"].core,
+            include=descriptions["legal"].include,
+            exclude=descriptions["legal"].exclude,
+            version="legal-proposal-v2",
+        ),
+        cited_sample_ids=("legal-0", "legal-1", "legal-2", "legal-3", "legal-4"),
+        reason="Five independent legal/work conflicts.",
+        conflict_category_pair=("work", "legal"),
+        conflict_description_digests=tuple(
+            category_description_digest(descriptions[key]) for key in ("work", "legal")
+        ),
+    )
+    overlay = build_description_set_overlay(proposal, descriptions)
+    proposal_registry = EmailModelRegistry(tmp_path / "proposal-registry")
+    proposal_repository = DescriptionProposalRepository(proposal_registry.root)
+    proposal_repository.persist(proposal)
+    proposal_repository.persist_overlay(overlay)
+    for text in (
+        proposal.proposed.core,
+        *proposal.proposed.include,
+        *proposal.proposed.exclude,
+    ):
+        cache.put(
+            EmbeddingCacheKey.for_description(
+                text=text,
+                description_version=proposal.proposed.version,
+                input_schema_version=stored["input_schema_version"],
+                embedding_model_id="jina-small",
+                embedding_revision="gpu4-r1",
+            ),
+            description_vectors[text],
+        )
+
+    proposal_result = train_frozen_embedding_candidate(
+        **{
+            **common_training_args,
+            "registry": proposal_registry,
+            "descriptions": overlay.descriptions,
+            "trained_at": observed_at + timedelta(seconds=1),
+        },
+        expected_snapshot_sha=snapshot.snapshot_digest,
+        expected_description_version=overlay.description_set_version,
+        description_overlay=overlay,
+    )
+    proposal_evidence = proposal_registry.get_staged_evidence(proposal_result.model_id)
+    evaluated = proposal_repository.record_evaluation(
+        proposal.proposal_id, model_id=proposal_result.model_id
+    )
+
+    assert proposal_result.training_count == result.training_count
+    assert proposal_result.validation_count == result.validation_count
+    assert proposal_result.test_count == result.test_count
+    assert proposal_evidence["description_proposal"] == {
+        "proposal_id": proposal.proposal_id,
+        "source_description_version": proposal.source_description_version,
+        "source_description_digest": proposal.source_description_digest,
+        "source_snapshot_id": proposal.source_snapshot_id,
+        "description_set_digest": overlay.description_set_digest,
+        "source_snapshot_sha": snapshot.snapshot_digest,
+        "conflict_category_pair": list(proposal.conflict_category_pair),
+        "conflict_description_digests": list(proposal.conflict_description_digests),
+    }
+    assert proposal_evidence["hashes"]["description_sha256"] == (
+        overlay.description_set_digest
+    )
+    assert evaluated.status == "evaluated"
+    assert evaluated.evaluated_model_id == proposal_result.model_id
+    assert evaluated.evaluated_description_set_digest == overlay.description_set_digest

@@ -2054,7 +2054,7 @@ def test_console_email_tabs_and_feedback_are_local_classifier_operations(
             "category": EmailCategory.WORK,
             "confidence": 0.61,
             "margin": 0.04,
-            "probabilities": {"work": 0.61, "important": 0.57},
+            "probabilities": {"work": 0.61, "personal": 0.39},
             "model_id": "email/logistic/model-1",
             "config_version": "email-v1",
             "status": EmailClassificationStatus.PENDING_FEEDBACK,
@@ -2074,7 +2074,7 @@ def test_console_email_tabs_and_feedback_are_local_classifier_operations(
         feedback = client.post(
             f"/api/console/email/classifications/{row['id']}/feedback",
             json={
-                "category": "important",
+                "category": "personal",
                 "feedback_request_id": "console-feedback-1",
                 "expected_current_action_plan_id": None,
             },
@@ -2094,7 +2094,7 @@ def test_console_email_tabs_and_feedback_are_local_classifier_operations(
         "applied": True,
         "replayed": False,
     }
-    assert processed_tab.json()["items"][0]["category"] == "important"
+    assert processed_tab.json()["items"][0]["category"] == "personal"
 
 
 def test_console_email_feedback_validates_intent_and_replays_idempotently(
@@ -2118,7 +2118,7 @@ def test_console_email_feedback_validates_intent_and_replays_idempotently(
                 "category": EmailCategory.WORK,
                 "confidence": 0.61,
                 "margin": 0.04,
-                "probabilities": {"work": 0.61, "important": 0.57},
+                "probabilities": {"work": 0.61, "personal": 0.39},
                 "model_id": "email/logistic/model-1",
                 "config_version": "email-v1",
                 "status": EmailClassificationStatus.PENDING_FEEDBACK,
@@ -2132,21 +2132,21 @@ def test_console_email_feedback_validates_intent_and_replays_idempotently(
         missing_request_id = client.post(
             f"/api/console/email/classifications/{row['id']}/feedback",
             json={
-                "category": "important",
+                "category": "personal",
                 "expected_current_action_plan_id": None,
             },
         )
         missing_pointer = client.post(
             f"/api/console/email/classifications/{row['id']}/feedback",
             json={
-                "category": "important",
+                "category": "personal",
                 "feedback_request_id": "console-idempotent-1",
             },
         )
         first = client.post(
             f"/api/console/email/classifications/{row['id']}/feedback",
             json={
-                "category": "important",
+                "category": "personal",
                 "feedback_request_id": "console-idempotent-1",
                 "expected_current_action_plan_id": None,
             },
@@ -2154,7 +2154,7 @@ def test_console_email_feedback_validates_intent_and_replays_idempotently(
         replay = client.post(
             f"/api/console/email/classifications/{row['id']}/feedback",
             json={
-                "category": "important",
+                "category": "personal",
                 "feedback_request_id": "console-idempotent-1",
                 "expected_current_action_plan_id": None,
             },
@@ -2162,7 +2162,7 @@ def test_console_email_feedback_validates_intent_and_replays_idempotently(
         unknown = client.post(
             f"/api/console/email/classifications/{row['id']}/feedback",
             json={
-                "category": "important",
+                "category": "personal",
                 "feedback_request_id": "console-idempotent-2",
                 "expected_current_action_plan_id": None,
             },
@@ -2170,7 +2170,7 @@ def test_console_email_feedback_validates_intent_and_replays_idempotently(
         mismatched_replay = client.post(
             f"/api/console/email/classifications/{row['id']}/feedback",
             json={
-                "category": "personal",
+                "category": "work",
                 "feedback_request_id": "console-idempotent-1",
                 "expected_current_action_plan_id": None,
             },
@@ -2189,24 +2189,22 @@ def test_console_email_feedback_validates_intent_and_replays_idempotently(
     assert mismatched_replay.json()["code"] == "email_classification_conflict"
 
 
-def test_console_email_config_is_separate_from_provider_actions(tmp_path: Path):
+def test_console_email_config_rejects_removed_subscription_category(tmp_path: Path):
     with _client(tmp_path) as client:
         saved = client.put(
             "/api/console/email/config/subscription",
             json={
-                "description": "营销订阅",
+                "core_description": "Unwanted recurring marketing mail.",
+                "include": ["newsletter"],
+                "exclude": ["requested business updates"],
                 "threshold": 0.98,
-                "actions": ["archive"],
                 "enabled": True,
+                "description_version": "subscription-description-v2",
                 "config_version": "email-v2",
             },
         )
-        listed = client.get("/api/console/email/config")
-
-    assert saved.status_code == 200
-    assert saved.json()["item"]["actions"] == ["archive"]
-    assert listed.status_code == 200
-    assert listed.json()["items"][0]["category"] == "subscription"
+    assert saved.status_code == 400
+    assert saved.json()["code"] == "invalid_email_category"
 
 
 def test_console_email_accounts_are_registered_and_keep_classifier_config_global(
@@ -2235,11 +2233,13 @@ def test_console_email_accounts_are_registered_and_keep_classifier_config_global
         config = client.put(
             "/api/console/email/config/work",
             json={
-                "description": "Work",
+                "core_description": "Daily company operations.",
+                "include": ["customer delivery"],
+                "exclude": ["personal matters"],
                 "threshold": 0.91,
-                "actions": ["archive"],
                 "enabled": True,
-                "config_version": "email-config-v1",
+                "description_version": "work-description-v2",
+                "config_version": "email-config-v2",
             },
         )
         created = client.post("/api/console/email/accounts", json=account)
@@ -2272,7 +2272,7 @@ def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Pat
             "category": EmailCategory.WORK,
             "confidence": 0.61,
             "margin": 0.04,
-            "probabilities": {"work": 0.61, "important": 0.57},
+            "probabilities": {"work": 0.61, "personal": 0.39},
             "model_id": "email/logistic/model-1",
             "config_version": "email-v1",
             "status": EmailClassificationStatus.PENDING_FEEDBACK,
@@ -2298,7 +2298,7 @@ def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Pat
         feedback = client.post(
             f"/api/console/email/classifications/{row['id']}/feedback",
             json={
-                "category": "important",
+                "category": "personal",
                 "feedback_request_id": "console-learning-feedback-1",
                 "expected_current_action_plan_id": None,
             },
@@ -2308,7 +2308,7 @@ def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Pat
     assert feedback.json()["item"]["classification_source"] == "user"
     assert feedback.json()["learning"] == {
         "retrain_due": False,
-        "retrain_reason": None,
+        "retrain_reason": "training_not_ready",
         "training_run_id": None,
         "training_status": None,
         "promoted": False,

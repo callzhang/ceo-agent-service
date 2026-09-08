@@ -253,7 +253,7 @@ def _persist_authorization(
                 "category": plan.category,
                 "confidence": plan.confidence,
                 "margin": 0.42,
-                "probabilities": {plan.category.value: plan.confidence},
+                "probabilities": {plan.category: plan.confidence},
                 "model_id": plan.model_id,
                 "config_version": plan.config_version,
                 "status": EmailClassificationStatus.PROCESSED,

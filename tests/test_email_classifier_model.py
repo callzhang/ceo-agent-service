@@ -1,12 +1,19 @@
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
+import pickle
 
 import pytest
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
 
-from app.email_classifier_contracts import EmailAction, EmailCategory
+from app.email_classifier_contracts import (
+    EmailAction,
+    INITIAL_EMAIL_CATEGORY_KEYS,
+)
 from app.email_classifier_model import (
     CpuTfidfLogisticClassifier,
+    EmailModelPrediction,
     email_message_to_text,
 )
 from app.email_model_registry import (
@@ -19,12 +26,13 @@ from app.email_worker import _scan_config
 
 def _messages() -> tuple[list[dict[str, object]], list[str]]:
     terms = {
-        "important": ("urgent contract", "紧急审批"),
         "work": ("project meeting", "项目计划"),
+        "human_resources": ("candidate interview", "候选人面试"),
+        "legal": ("urgent contract", "紧急合同"),
+        "financing": ("investor update", "融资进展"),
         "personal": ("family dinner", "朋友聚会"),
         "notification": ("security alert", "状态通知"),
-        "subscription": ("weekly newsletter", "订阅简报"),
-        "billing": ("payment invoice", "账单发票"),
+        "external_billing": ("payment invoice", "账单发票"),
         "shopping": ("order delivery", "订单物流"),
         "junk": ("promotion offer", "促销广告"),
     }
@@ -79,19 +87,56 @@ def test_message_text_redacts_quota_access_tokens():
     assert text.count("TOKEN") >= 2
 
 
+def test_legacy_artifact_with_old_category_labels_loads_and_predicts(tmp_path: Path):
+    texts = ["urgent approval", "urgent contract", "project plan", "team meeting"]
+    labels = ["important", "important", "work", "work"]
+    vectorizer = TfidfVectorizer(token_pattern=r"\S+")
+    classifier = LogisticRegression(random_state=42).fit(
+        vectorizer.fit_transform(texts), labels
+    )
+    artifact = tmp_path / "legacy-email-model.pkl"
+    artifact.write_bytes(
+        pickle.dumps(
+            {
+                "format_version": CpuTfidfLogisticClassifier.FORMAT_VERSION,
+                "feature_version": CpuTfidfLogisticClassifier.FEATURE_VERSION,
+                "c": 0.25,
+                "model_version": "legacy-model-v1",
+                "vectorizer": vectorizer,
+                "classifier": classifier,
+            }
+        )
+    )
+
+    loaded = CpuTfidfLogisticClassifier.load(artifact)
+    prediction = loaded.predict("urgent approval")
+
+    assert prediction.label in {"important", "work"}
+    assert set(prediction.probabilities) == {"important", "work"}
+
+
+def test_low_level_prediction_annotations_allow_raw_legacy_labels():
+    annotations = EmailModelPrediction.__annotations__
+
+    assert annotations["label"] == "str"
+    assert annotations["probabilities"] == "Mapping[str, float]"
+
+
 def test_cpu_classifier_predicts_and_round_trips_model_version(tmp_path: Path):
     messages, labels = _messages()
     classifier = CpuTfidfLogisticClassifier(model_version="email-model-test-1")
-    classifier.fit_messages(messages, labels)
+    classifier.fit_messages(
+        messages,
+        labels,
+        enabled_category_keys=INITIAL_EMAIL_CATEGORY_KEYS,
+    )
 
     prediction = classifier.predict_message(messages[1])
-    assert prediction.label in {category.value for category in EmailCategory}
+    assert prediction.label in set(INITIAL_EMAIL_CATEGORY_KEYS)
     assert 0 <= prediction.probability <= 1
     assert 0 <= prediction.margin <= 1
     assert prediction.model_version == "email-model-test-1"
-    assert set(prediction.probabilities) == {
-        category.value for category in EmailCategory
-    }
+    assert set(prediction.probabilities) == set(INITIAL_EMAIL_CATEGORY_KEYS)
 
     model_path = tmp_path / "email-model.pkl"
     classifier.save(model_path)
@@ -104,7 +149,11 @@ def test_cpu_classifier_predicts_and_round_trips_model_version(tmp_path: Path):
 
 def test_classifier_rejects_unknown_labels_and_unfitted_prediction():
     with pytest.raises(ValueError, match="unknown category"):
-        CpuTfidfLogisticClassifier().fit(["text", "other"], ["work", "unknown"])
+        CpuTfidfLogisticClassifier().fit(
+            ["text", "other"],
+            ["work", "unknown"],
+            enabled_category_keys=("work", "legal"),
+        )
     with pytest.raises(RuntimeError, match="not fitted"):
         CpuTfidfLogisticClassifier().predict("text")
 
@@ -119,7 +168,11 @@ def _stage_candidate(
 ) -> str:
     messages, labels = _messages()
     classifier = CpuTfidfLogisticClassifier(model_version="candidate")
-    classifier.fit_messages(messages, labels)
+    classifier.fit_messages(
+        messages,
+        labels,
+        enabled_category_keys=INITIAL_EMAIL_CATEGORY_KEYS,
+    )
     artifact = tmp_path / f"candidate-{suffix}.pkl"
     classifier.save(artifact)
     digest = sha256(artifact.read_bytes()).hexdigest()
@@ -184,21 +237,21 @@ def _stage_candidate(
 def _eligibility_rows() -> list[dict[str, object]]:
     return [
         {
-            "category": category.value,
-            "description": category.value,
+            "category": category,
+            "description": category,
             "enabled": True,
             "threshold": 0.95,
             "actions": [EmailAction.LABEL.value]
-            if category is EmailCategory.WORK
+            if category == "work"
             else [],
             "action_parameters": (
                 {EmailAction.LABEL.value: {"labels": ["Work"]}}
-                if category is EmailCategory.WORK
+                if category == "work"
                 else {}
             ),
             "config_version": "email-config:registry-boundary-v1",
         }
-        for category in EmailCategory
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
     ]
 
 
@@ -210,7 +263,7 @@ def _work_label_eligibility(registry: EmailModelRegistry, model_id: str):
             return rows
 
     config = _scan_config(ConfigStore(), registry.get_model(model_id))
-    return config.category_eligibility[EmailCategory.WORK].action_eligibility[
+    return config.category_eligibility["work"].action_eligibility[
         EmailAction.LABEL
     ]
 

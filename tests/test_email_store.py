@@ -1,7 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import gc
 from hashlib import sha256
+from importlib import import_module
 import json
 from pathlib import Path
 import sqlite3
@@ -10,8 +12,11 @@ from threading import Barrier
 import pytest
 
 import app.email_store as email_store_module
+from app.email_training_snapshot import build_folder_training_snapshot
+from app.email_experiment_snapshot import deterministic_payload_digest
 from app.email_classifier_contracts import (
     EmailAction,
+    EmailActionAuthorization,
     EmailActionPlan,
     EmailAttachmentMetadata,
     EmailCategory,
@@ -28,14 +33,763 @@ from app.email_store import (
     EmailClassificationIdentityCollision,
     EmailPersistenceCorruption,
     EmailTrainingInclusionConflict,
+    EmailTrainingSnapshotConflict,
     EmailUnsubscribeClaimConflict,
     EmailUnsubscribeReceiptConflict,
     EmailStore,
     email_unsubscribe_effect_digest,
 )
+from app.email_important import ImportantSignals
+from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_task_adapter import email_action_identity
+from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
 from app.store import AutoReplyStore
+
+
+def _frozen_training_observation(**overrides):
+    value = {
+        "account_id": "account-a",
+        "stable_message_identity": "account-a:message-id:<one@example.test>",
+        "provider_folder_id": "folder-work",
+        "provider_folder_name": "Work",
+        "folder_role": "category",
+        "bound_category_key": "work",
+        "folder_binding_status": "active",
+        "processed_by_email_service": True,
+        "important_signals": ImportantSignals(("STARRED",), True),
+        "sender": {"name": "Sender", "email": "sender@example.test"},
+        "to_recipients": [{"name": "Derek", "email": "derek@example.test"}],
+        "cc_recipients": [],
+        "subject": "One",
+        "body": "Body including quoted reply\n> prior body",
+        "headers": {"message-id": "<one@example.test>"},
+        "attachments": [],
+        "provider_thread_id": "thread-one",
+        "explicit_matter_group": None,
+        "source": "natural",
+        "received_at": "2026-09-07T12:00:00+00:00",
+    }
+    value.update(overrides)
+    return value
+
+
+def _frozen_training_snapshot(snapshot_id: str = "snapshot-store-1"):
+    return build_folder_training_snapshot(
+        [_frozen_training_observation()],
+        snapshot_id=snapshot_id,
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc),
+        seed=17,
+    )
+
+
+def _append_copied_training_observation(
+    database: Path, *, stable_message_identity: str
+) -> None:
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            insert into email_training_snapshot_observations (
+                snapshot_id, account_id, stable_message_identity,
+                provider_folder_id, provider_folder_name, category_key,
+                important, normalized_model_input,
+                normalized_model_input_hash, input_schema_version,
+                provider_thread_id, normalized_body_digest,
+                sender_template_signature, explicit_matter_group,
+                group_key, observed_at, source, split,
+                selected_for_training, ordered_record_digest
+            )
+            select snapshot_id, account_id, ?,
+                   provider_folder_id, provider_folder_name, category_key,
+                   important, normalized_model_input,
+                   normalized_model_input_hash, input_schema_version,
+                   provider_thread_id, normalized_body_digest,
+                   sender_template_signature, explicit_matter_group,
+                   group_key, observed_at, source, split,
+                   selected_for_training, ordered_record_digest
+            from email_training_snapshot_observations
+            limit 1
+            """,
+            (stable_message_identity,),
+        )
+
+
+def _legacy_unsigned_record_digest(row) -> str:
+    return deterministic_payload_digest(
+        {
+            "account_id": row.account_id,
+            "stable_message_identity": row.stable_message_identity,
+            "provider_folder_id": row.provider_folder_id,
+            "provider_folder_name": row.provider_folder_name,
+            "category_key": row.category_key,
+            "important": row.important,
+            "normalized_model_input_hash": row.normalized_model_input_hash,
+            "input_schema_version": row.input_schema_version,
+            "provider_thread_id": row.provider_thread_id,
+            "normalized_body_digest": row.normalized_body_digest,
+            "sender_template_signature": row.sender_template_signature,
+            "explicit_matter_group": row.explicit_matter_group,
+            "group_key": row.group_key,
+            "source": row.source,
+            "split": row.split,
+            "selected_for_training": row.selected_for_training,
+        }
+    )
+
+
+def _unsigned_time_legacy_manifest(snapshot, *, include_counts: bool):
+    legacy_manifest = snapshot.manifest
+    legacy_manifest.pop("observed_at")
+    legacy_manifest.pop("overall_sha256")
+    legacy_record_digests = [
+        _legacy_unsigned_record_digest(row) for row in snapshot.observations
+    ]
+    legacy_manifest["ordered_record_digests"] = legacy_record_digests
+    if not include_counts:
+        for field in (
+            "observation_count",
+            "selected_group_count",
+            "selected_category_counts",
+            "conflicted_group_count",
+            "conflicted_groups",
+        ):
+            legacy_manifest.pop(field)
+    legacy_digest = deterministic_payload_digest(legacy_manifest)
+    legacy_manifest["overall_sha256"] = legacy_digest
+    return legacy_manifest, legacy_digest, legacy_record_digests
+
+
+def _rewind_email_schema(db: sqlite3.Connection, *, version: int) -> None:
+    """Remove migration records and objects introduced after a fixture version."""
+
+    db.execute("drop index if exists idx_email_training_observations_provider_truth")
+    db.execute("drop table if exists email_classifier_runtime_samples")
+    db.execute("delete from email_schema_migrations where version > ?", (version,))
+    db.execute(
+        "insert or ignore into email_schema_migrations(version, applied_at) "
+        "values (?, '2026-09-08T00:00:00+00:00')",
+        (version,),
+    )
+
+
+def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
+    database = tmp_path / "training-snapshot-migration.sqlite3"
+    store = EmailStore(database)
+    classification = _pending_category_classification("work", classification_id=991)
+    persisted = store.persist_scan_result(
+        classification,
+        model_text="__subject__preserved migration row",
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("drop table email_training_snapshot_observations")
+        db.execute("drop table email_training_snapshots")
+        _rewind_email_schema(db, version=22)
+
+    EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        preserved_model_text = db.execute(
+            "select model_text from email_classifications where id=?",
+            (persisted["id"],),
+        ).fetchone()[0]
+        tables = {
+            row[0]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        }
+        versions = [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ]
+    assert "email_training_snapshots" in tables
+    assert "email_training_snapshot_observations" in tables
+    assert preserved_model_text == "__subject__preserved migration row"
+    assert versions == list(range(22, 34))
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 33
+    with sqlite3.connect(database) as db:
+        assert (
+            db.execute("select frozen from email_training_snapshots").fetchall() == []
+        )
+
+
+def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
+    tmp_path: Path,
+):
+    database = tmp_path / "training-snapshot-v23.sqlite3"
+    store = EmailStore(database)
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    with sqlite3.connect(database) as db:
+        for trigger in (
+            "trg_email_training_snapshots_immutable_update",
+            "trg_email_training_snapshots_immutable_delete",
+            "trg_email_training_observations_immutable_update",
+            "trg_email_training_observations_require_unfrozen_snapshot",
+        ):
+            db.execute(f"drop trigger {trigger}")
+        db.execute("alter table email_training_snapshots drop column frozen")
+        _rewind_email_schema(db, version=23)
+
+    reopened = EmailStore(database)
+
+    assert reopened.get_training_snapshot(snapshot.snapshot_id) == {
+        **snapshot.to_dict(),
+        "folder_label_watermark": 1,
+        "important_label_watermark": 1,
+    }
+    with sqlite3.connect(database) as db:
+        assert (
+            db.execute("select frozen from email_training_snapshots").fetchone()[0] == 1
+        )
+        assert [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ] == list(range(23, 34))
+
+
+def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path):
+    database = tmp_path / "training-snapshot-v23-legacy-manifest.sqlite3"
+    store = EmailStore(database)
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    legacy_manifest, legacy_digest, legacy_record_digests = (
+        _unsigned_time_legacy_manifest(snapshot, include_counts=False)
+    )
+    with sqlite3.connect(database) as db:
+        for trigger in (
+            "trg_email_training_snapshots_immutable_update",
+            "trg_email_training_snapshots_immutable_delete",
+            "trg_email_training_observations_immutable_update",
+            "trg_email_training_observations_require_unfrozen_snapshot",
+        ):
+            db.execute(f"drop trigger {trigger}")
+        db.execute(
+            "update email_training_snapshots set manifest_json=?, snapshot_digest=?",
+            (
+                json.dumps(
+                    legacy_manifest,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                legacy_digest,
+            ),
+        )
+        db.executemany(
+            "update email_training_snapshot_observations "
+            "set ordered_record_digest=? where snapshot_id=? "
+            "and stable_message_identity=?",
+            [
+                (digest, snapshot.snapshot_id, row.stable_message_identity)
+                for row, digest in zip(
+                    snapshot.observations, legacy_record_digests, strict=True
+                )
+            ],
+        )
+        db.execute("alter table email_training_snapshots drop column frozen")
+        _rewind_email_schema(db, version=23)
+
+    reopened = EmailStore(database)
+    restored = reopened.get_training_snapshot(snapshot.snapshot_id)
+
+    assert restored is not None
+    assert restored["snapshot_digest"] == legacy_digest
+    assert restored["manifest"] == legacy_manifest
+    assert [
+        row["version"]
+        for row in _fetchall(
+            database,
+            "select version from email_schema_migrations order by version",
+        )
+    ] == list(range(23, 34))
+
+
+def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "training-snapshot-v24-legacy-manifest.sqlite3")
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    legacy_manifest, legacy_digest, legacy_record_digests = (
+        _unsigned_time_legacy_manifest(snapshot, include_counts=True)
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
+        db.execute("drop trigger trg_email_training_observations_immutable_update")
+        db.execute(
+            "update email_training_snapshots set manifest_json=?, snapshot_digest=?",
+            (
+                json.dumps(
+                    legacy_manifest,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                legacy_digest,
+            ),
+        )
+        db.executemany(
+            "update email_training_snapshot_observations "
+            "set ordered_record_digest=? where snapshot_id=? "
+            "and stable_message_identity=?",
+            [
+                (digest, snapshot.snapshot_id, row.stable_message_identity)
+                for row, digest in zip(
+                    snapshot.observations, legacy_record_digests, strict=True
+                )
+            ],
+        )
+
+    restored = store.get_training_snapshot(snapshot.snapshot_id)
+
+    assert restored is not None
+    assert restored["snapshot_digest"] == legacy_digest
+    assert restored["manifest"] == legacy_manifest
+
+
+def test_store_round_trips_frozen_training_snapshot(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot.sqlite3")
+    snapshot = _frozen_training_snapshot()
+
+    stored = store.persist_training_snapshot(snapshot)
+    loaded = store.get_training_snapshot(snapshot.snapshot_id)
+
+    assert stored["snapshot_digest"] == snapshot.snapshot_digest
+    assert loaded is not None
+    assert loaded["manifest"] == snapshot.manifest
+    assert loaded["observations"] == [row.to_dict() for row in snapshot.observations]
+
+
+def test_identical_training_snapshot_persistence_is_idempotent(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot-idempotent.sqlite3")
+    snapshot = _frozen_training_snapshot()
+
+    first = store.persist_training_snapshot(snapshot)
+    second = store.persist_training_snapshot(snapshot)
+
+    assert second == first
+    with sqlite3.connect(store.path) as db:
+        assert (
+            db.execute("select count(*) from email_training_snapshots").fetchone()[0]
+            == 1
+        )
+        assert (
+            db.execute(
+                "select count(*) from email_training_snapshot_observations"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_same_snapshot_id_rejects_changed_frozen_content(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot-conflict.sqlite3")
+    first = _frozen_training_snapshot()
+    changed = build_folder_training_snapshot(
+        [
+            _frozen_training_observation(
+                provider_folder_id="folder-legal",
+                provider_folder_name="Legal",
+                bound_category_key="legal",
+                important_signals=ImportantSignals((), False),
+            )
+        ],
+        snapshot_id=first.snapshot_id,
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 19, 0, tzinfo=timezone.utc),
+        seed=17,
+    )
+    store.persist_training_snapshot(first)
+
+    with pytest.raises(EmailTrainingSnapshotConflict, match="already exists"):
+        store.persist_training_snapshot(changed)
+
+
+def test_store_rejects_observation_metadata_tampering(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot-tamper.sqlite3")
+    snapshot = _frozen_training_snapshot()
+    forged_row = replace(snapshot.observations[0], category_key="legal")
+    forged = replace(snapshot, observations=(forged_row,))
+
+    with pytest.raises(ValueError, match="observation digest"):
+        store.persist_training_snapshot(forged)
+
+
+def test_later_snapshot_does_not_mutate_earlier_observation(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot-history.sqlite3")
+    first = _frozen_training_snapshot("snapshot-before-move")
+    moved = build_folder_training_snapshot(
+        [
+            _frozen_training_observation(
+                provider_folder_id="folder-legal",
+                provider_folder_name="Legal",
+                bound_category_key="legal",
+                important_signals=ImportantSignals((), False),
+            )
+        ],
+        snapshot_id="snapshot-after-move",
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 19, 0, tzinfo=timezone.utc),
+        seed=17,
+    )
+
+    store.persist_training_snapshot(first)
+    store.persist_training_snapshot(moved)
+
+    assert (
+        store.get_training_snapshot("snapshot-before-move")["observations"][0][
+            "category_key"
+        ]
+        == "work"
+    )
+    assert (
+        store.get_training_snapshot("snapshot-after-move")["observations"][0][
+            "category_key"
+        ]
+        == "legal"
+    )
+    state = store.latest_training_snapshot_state()
+    assert state is not None
+    assert state["snapshot_id"] == "snapshot-after-move"
+    assert state["folder_label_watermark"] == 2
+    assert state["important_label_watermark"] == 2
+    assert state["minimum_ready"] is False
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "update email_training_snapshots set seed=99",
+        "update email_training_snapshot_observations set source='targeted'",
+        "delete from email_training_snapshot_observations",
+    ),
+)
+def test_database_rejects_frozen_snapshot_mutation(tmp_path: Path, statement: str):
+    store = EmailStore(tmp_path / "training-snapshot-immutable.sqlite3")
+    store.persist_training_snapshot(_frozen_training_snapshot())
+
+    with (
+        sqlite3.connect(store.path) as db,
+        pytest.raises(sqlite3.IntegrityError, match="immutable"),
+    ):
+        db.execute(statement)
+
+
+def test_database_rejects_observation_append_after_snapshot_freeze(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-snapshot-append.sqlite3")
+    store.persist_training_snapshot(_frozen_training_snapshot())
+
+    with pytest.raises(sqlite3.IntegrityError, match="frozen"):
+        _append_copied_training_observation(
+            store.path,
+            stable_message_identity="account-a:message-id:<appended@example.test>",
+        )
+
+
+def test_readback_rejects_persisted_observation_not_covered_by_manifest(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "training-snapshot-corrupt.sqlite3")
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "drop trigger if exists "
+            "trg_email_training_observations_require_unfrozen_snapshot"
+        )
+    _append_copied_training_observation(
+        store.path,
+        stable_message_identity="account-a:message-id:<corrupt@example.test>",
+    )
+
+    with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
+        store.get_training_snapshot(snapshot.snapshot_id)
+
+
+def test_readback_rejects_coordinated_parent_and_child_timestamp_tampering(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "training-snapshot-time-corrupt.sqlite3")
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    tampered_time = "2026-09-07T19:00:00+00:00"
+    with sqlite3.connect(store.path) as db:
+        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
+        db.execute("drop trigger trg_email_training_observations_immutable_update")
+        db.execute(
+            "update email_training_snapshots set observed_at=? where snapshot_id=?",
+            (tampered_time, snapshot.snapshot_id),
+        )
+        db.execute(
+            "update email_training_snapshot_observations set observed_at=? "
+            "where snapshot_id=?",
+            (tampered_time, snapshot.snapshot_id),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
+        store.get_training_snapshot(snapshot.snapshot_id)
+
+
+def _pending_category_classification(
+    category: str,
+    *,
+    classification_id: int,
+) -> EmailClassification:
+    message_id = f"<{category}-{classification_id}@example.com>"
+    return EmailClassification.model_validate(
+        {
+            "classification_id": classification_id,
+            "stable_message_identity": (f"dingtalk-account:message-id:{message_id}"),
+            "provider_locator": {
+                "account_id": "dingtalk-account",
+                "folder": "INBOX",
+                "uidvalidity": 42,
+                "uid": classification_id,
+                "rfc_message_id": message_id,
+            },
+            "category": category,
+            "confidence": 0.79,
+            "margin": 0.31,
+            "probabilities": {category: 0.79, "legal": 0.21},
+            "model_id": "email/logistic/model-1",
+            "config_version": "email-v1",
+            "status": EmailClassificationStatus.PENDING_FEEDBACK,
+            "classification_source": "model",
+            "action_plan": None,
+        }
+    )
+
+
+def test_real_store_human_confirmation_persists_plain_string_category(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "plain-category.sqlite3")
+    classification = _pending_category_classification(
+        "work",
+        classification_id=101,
+    )
+    persisted = store.persist_scan_result(
+        classification,
+        model_text="__subject__plain category integration",
+    )
+
+    application = apply_human_confirmation(
+        store,
+        persisted["id"],
+        "work",
+        feedback_request_id="feedback-plain-category",
+        expected_current_action_plan_id=None,
+        now=datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert application is not None
+    assert type(application.confirmed["category"]) is str
+    assert type(application.confirmed["action_plan"]["category"]) is str
+    with sqlite3.connect(store.path) as db:
+        stored_category = db.execute(
+            "select category from email_action_plans where action_plan_id=?",
+            (application.resulting_action_plan_id,),
+        ).fetchone()[0]
+    assert type(stored_category) is str
+    assert stored_category == "work"
+
+
+def test_real_store_persists_and_reopens_custom_category(tmp_path: Path):
+    database = tmp_path / "custom-category.sqlite3"
+    store = EmailStore(database)
+    classification = _pending_category_classification(
+        "board_governance",
+        classification_id=102,
+    )
+
+    persisted = store.persist_scan_result(
+        classification,
+        model_text="__subject__board governance",
+    )
+    reopened = EmailStore(database)
+    restored = reopened.get_classification(persisted["id"])
+
+    assert restored is not None
+    assert type(restored["category"]) is str
+    assert restored["category"] == "board_governance"
+    assert set(restored["probabilities"]) == {"board_governance", "legal"}
+
+
+def _replace_feedback_requests_with_v18_table(database: Path) -> None:
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("drop table email_feedback_requests")
+        db.execute(
+            """
+            create table email_feedback_requests (
+                feedback_request_id text primary key
+                    check(trim(feedback_request_id) != ''),
+                classification_id integer not null,
+                category text not null check(category in (
+                    'important', 'work', 'personal', 'notification',
+                    'billing', 'shopping', 'subscription', 'junk'
+                )),
+                expected_current_action_plan_id text
+                    unique
+                    check(
+                        expected_current_action_plan_id is null
+                        or trim(expected_current_action_plan_id) != ''
+                    ),
+                resulting_action_plan_id text not null unique
+                    check(trim(resulting_action_plan_id) != ''),
+                applied_at text not null check(trim(applied_at) != ''),
+                check(
+                    expected_current_action_plan_id is null
+                    or expected_current_action_plan_id != resulting_action_plan_id
+                ),
+                foreign key(classification_id) references email_classifications(id)
+                    on delete restrict,
+                foreign key(expected_current_action_plan_id)
+                    references email_action_plans(action_plan_id)
+                    on delete restrict,
+                foreign key(resulting_action_plan_id)
+                    references email_action_plans(action_plan_id)
+                    on delete restrict
+            )
+            """
+        )
+        db.execute("delete from email_schema_migrations")
+        db.execute(
+            "insert into email_schema_migrations(version, applied_at) values (18, ?)",
+            (datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc).isoformat(),),
+        )
+
+
+def test_v18_feedback_table_migrates_and_accepts_custom_human_confirmation(
+    tmp_path: Path,
+):
+    database = tmp_path / "v18-custom-feedback.sqlite3"
+    EmailStore(database)
+    _replace_feedback_requests_with_v18_table(database)
+    store = EmailStore(database)
+    pending = store.persist_scan_result(
+        _pending_category_classification("work", classification_id=103),
+        model_text="__subject__custom confirmation",
+    )
+
+    application = apply_human_confirmation(
+        store,
+        pending["id"],
+        "board_governance",
+        feedback_request_id="feedback-board-governance",
+        expected_current_action_plan_id=None,
+        now=datetime(2026, 9, 7, 12, 1, tzinfo=timezone.utc),
+    )
+    reopened = EmailStore(database)
+    restored = reopened.get_classification(pending["id"])
+
+    assert application is not None
+    assert application.confirmed["category"] == "board_governance"
+    assert type(application.confirmed["action_plan"]["category"]) is str
+    assert restored is not None
+    assert restored["category"] == "board_governance"
+    with sqlite3.connect(database) as db:
+        assert (
+            db.execute("select max(version) from email_schema_migrations").fetchone()[0]
+            == email_store_module.EMAIL_SCHEMA_VERSION
+        )
+        table_sql = db.execute(
+            "select sql from sqlite_master where name='email_feedback_requests'"
+        ).fetchone()[0]
+    assert "category in" not in table_sql.lower()
+
+
+@pytest.mark.parametrize("legacy_category", ("important", "billing", "subscription"))
+def test_reopen_rehydrates_legacy_reserved_classification_plan_and_feedback(
+    tmp_path: Path,
+    legacy_category: str,
+):
+    database = tmp_path / "legacy-category-history.sqlite3"
+    store = EmailStore(database)
+    pending = store.persist_scan_result(
+        _pending_category_classification("work", classification_id=104),
+        model_text="__subject__legacy history",
+    )
+    application = apply_human_confirmation(
+        store,
+        pending["id"],
+        "work",
+        feedback_request_id="feedback-legacy-history",
+        expected_current_action_plan_id=None,
+        now=datetime(2026, 9, 7, 12, 2, tzinfo=timezone.utc),
+    )
+    assert application is not None
+    plan_payload = dict(application.confirmed["action_plan"])
+    actions = tuple(EmailAction(action) for action in plan_payload["actions"])
+    action_parameters = {
+        EmailAction(action): parameters
+        for action, parameters in plan_payload["action_parameters"].items()
+    }
+    authorizations = tuple(
+        EmailActionAuthorization.model_validate(item)
+        for item in plan_payload["action_authorizations"]
+    )
+    legacy_plan_id = _action_plan_identity(
+        action_plan_version=plan_payload["action_plan_version"],
+        classification_id=plan_payload["classification_id"],
+        account_id=plan_payload["account_id"],
+        category=legacy_category,  # type: ignore[arg-type]
+        classification_source=plan_payload["classification_source"],
+        confidence=plan_payload["confidence"],
+        model_id=plan_payload["model_id"],
+        config_version=plan_payload["config_version"],
+        actions=actions,
+        action_parameters=action_parameters,
+        created_at=datetime.fromisoformat(plan_payload["created_at"]),
+        authorization_snapshot_format=plan_payload["authorization_snapshot_format"],
+        action_authorizations=authorizations,
+    )
+    plan_payload["action_plan_id"] = legacy_plan_id
+    plan_payload["category"] = legacy_category
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute(
+            "update email_action_plans set action_plan_id=?, category=? "
+            "where action_plan_id=?",
+            (legacy_plan_id, legacy_category, application.resulting_action_plan_id),
+        )
+        db.execute(
+            """
+            update email_classifications
+            set category=?, predicted_category=?, confirmed_category=?,
+                probabilities_json=?,
+                action_plan_json=?, current_action_plan_id=?
+            where id=?
+            """,
+            (
+                legacy_category,
+                legacy_category,
+                legacy_category,
+                json.dumps(
+                    {legacy_category: 0.79, "work": 0.21},
+                    separators=(",", ":"),
+                ),
+                json.dumps(plan_payload, separators=(",", ":")),
+                legacy_plan_id,
+                pending["id"],
+            ),
+        )
+        db.execute(
+            "update email_feedback_requests set category=?, "
+            "resulting_action_plan_id=? where feedback_request_id=?",
+            (legacy_category, legacy_plan_id, "feedback-legacy-history"),
+        )
+
+    reopened = EmailStore(database)
+    restored = reopened.get_classification(pending["id"])
+
+    assert restored is not None
+    assert restored["category"] == legacy_category
+    assert type(restored["action_plan"]["category"]) is str
+    assert restored["action_plan"]["category"] == legacy_category
 
 
 def _classification(
@@ -106,7 +860,7 @@ def _classification(
             "category": category,
             "confidence": confidence,
             "margin": 0.41,
-            "probabilities": {"work": 0.93, "important": 0.52},
+            "probabilities": {"work": 0.93, "legal": 0.52},
             "model_id": model_id,
             "config_version": config_version,
             "status": status,
@@ -1018,7 +1772,7 @@ def _create_prototype_database(
                 "Prototype preview",
                 "__subject__prototype",
                 now,
-                classification.category.value,
+                classification.category,
                 classification.confidence,
                 classification.margin,
                 json.dumps(classification.probabilities),
@@ -1374,13 +2128,13 @@ def test_feedback_moves_a_message_to_processed_and_records_user_source(tmp_path:
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK)
     )
 
-    confirmed = _confirm(store, row["id"], EmailCategory.IMPORTANT)
+    confirmed = _confirm(store, row["id"], EmailCategory.NOTIFICATION)
 
     assert confirmed is not None
-    assert confirmed["category"] == "important"
+    assert confirmed["category"] == "notification"
     assert confirmed["status"] == "processed"
     assert confirmed["classification_source"] == "user"
-    assert confirmed["action_plan"]["category"] == "important"
+    assert confirmed["action_plan"]["category"] == "notification"
     assert confirmed["action_plan"]["classification_source"] == "user"
     assert _confirm(store, 999, EmailCategory.WORK) is None
 
@@ -1388,7 +2142,7 @@ def test_feedback_moves_a_message_to_processed_and_records_user_source(tmp_path:
 def test_feedback_rebuilds_action_plan_for_confirmed_category(tmp_path: Path):
     store = EmailStore(tmp_path / "worker.sqlite3")
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         description="需要尽快处理",
         threshold=0.97,
         actions=(EmailAction.LABEL,),
@@ -1401,15 +2155,15 @@ def test_feedback_rebuilds_action_plan_for_confirmed_category(tmp_path: Path):
         model_text="__subject__合同确认",
     )
 
-    confirmed = _confirm(store, row["id"], EmailCategory.IMPORTANT)
+    confirmed = _confirm(store, row["id"], EmailCategory.NOTIFICATION)
 
     assert confirmed is not None
-    assert confirmed["category"] == "important"
+    assert confirmed["category"] == "notification"
     assert confirmed["config_version"] == "important-v2"
     assert confirmed["action_plan"]["action_plan_version"] == 1
     assert confirmed["action_plan"]["classification_id"] == confirmed["id"]
     assert confirmed["action_plan"]["account_id"] == "dingtalk-account"
-    assert confirmed["action_plan"]["category"] == "important"
+    assert confirmed["action_plan"]["category"] == "notification"
     assert confirmed["action_plan"]["classification_source"] == "user"
     assert confirmed["action_plan"]["model_id"] == "email/logistic/model-1"
     assert confirmed["action_plan"]["config_version"] == "important-v2"
@@ -1427,7 +2181,7 @@ def test_processed_email_cannot_be_confirmed_as_new_feedback(tmp_path: Path):
     )
 
     with pytest.raises(EmailClassificationConflict):
-        _confirm(store, row["id"], EmailCategory.IMPORTANT)
+        _confirm(store, row["id"], EmailCategory.NOTIFICATION)
 
 
 def test_concurrent_feedback_allows_one_confirmation_and_one_conflict(
@@ -1451,7 +2205,7 @@ def test_concurrent_feedback_allows_one_confirmation_and_one_conflict(
         results = list(
             executor.map(
                 confirm,
-                (EmailCategory.IMPORTANT, EmailCategory.PERSONAL),
+                (EmailCategory.NOTIFICATION, EmailCategory.PERSONAL),
             )
         )
 
@@ -1493,7 +2247,7 @@ def test_training_examples_exclude_pending_or_unconfirmed_user_rows_without_reop
     confirmed_row = _confirm(
         store,
         confirmed["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.NOTIFICATION,
     )
     assert confirmed_row is not None
     with sqlite3.connect(database) as db:
@@ -1510,7 +2264,7 @@ def test_training_examples_exclude_pending_or_unconfirmed_user_rows_without_reop
         {
             "message_id": confirmed_row["stable_message_identity"],
             "model_text": "__subject__need a decision",
-            "label": "important",
+            "label": "notification",
         }
     ]
 
@@ -1676,14 +2430,14 @@ def test_rescan_preserves_a_user_confirmed_category(tmp_path: Path):
     original = store.upsert_classification(
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK)
     )
-    _confirm(store, original["id"], EmailCategory.IMPORTANT)
+    _confirm(store, original["id"], EmailCategory.NOTIFICATION)
 
     rescanned = store.upsert_classification(
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK)
     )
 
     assert rescanned["id"] == original["id"]
-    assert rescanned["category"] == "important"
+    assert rescanned["category"] == "notification"
     assert rescanned["status"] == "processed"
     assert rescanned["classification_source"] == "user"
 
@@ -1697,7 +2451,7 @@ def test_rescan_preserves_all_user_confirmed_action_plan_fields(tmp_path: Path):
             model_id="email/logistic/model-v1",
         )
     )
-    confirmed = _confirm(store, original["id"], EmailCategory.IMPORTANT)
+    confirmed = _confirm(store, original["id"], EmailCategory.NOTIFICATION)
     assert confirmed is not None
 
     rescanned = store.upsert_classification(
@@ -1724,7 +2478,7 @@ def test_email_store_persists_category_configuration(tmp_path: Path):
     store = EmailStore(tmp_path / "worker.sqlite3")
 
     config = store.upsert_config(
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.EXTERNAL_BILLING,
         description="营销订阅和定期通讯",
         threshold=0.98,
         actions=(EmailAction.LABEL, EmailAction.UNSUBSCRIBE),
@@ -1735,7 +2489,12 @@ def test_email_store_persists_category_configuration(tmp_path: Path):
 
     assert config["actions"] == ["label", "unsubscribe"]
     assert config["action_parameters"] == {"label": {"labels": ["subscription"]}}
-    assert store.list_configs() == [config]
+    assert (
+        next(
+            row for row in store.list_configs() if row["category"] == "external_billing"
+        )
+        == config
+    )
 
 
 def test_email_store_rejects_auto_reply_category_configuration(tmp_path: Path):
@@ -2181,7 +2940,7 @@ def test_reopen_rejects_feedback_request_linked_to_another_classification(
     )
     applied = store.apply_human_classification(
         first["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.NOTIFICATION,
         feedback_request_id="feedback-request-1",
         expected_current_action_plan_id=None,
     )
@@ -2277,7 +3036,7 @@ def test_migration_preserves_prototype_feedback_config_and_unrelated_state(
                 "prototype preview",
                 "__subject__prototype",
                 now,
-                EmailCategory.IMPORTANT.value,
+                "important",
                 confirmed.confidence,
                 confirmed.margin,
                 json.dumps(confirmed.probabilities),
@@ -2332,7 +3091,17 @@ def test_migration_preserves_prototype_feedback_config_and_unrelated_state(
             "label": "important",
         }
     ]
-    assert store.list_configs()[0]["description"] == "prototype config"
+    assert {row["category_key"] for row in store.list_category_configs()} == {
+        "work",
+        "human_resources",
+        "legal",
+        "financing",
+        "personal",
+        "notification",
+        "external_billing",
+        "shopping",
+        "junk",
+    }
     state = _fetchall(database, "select state_json from email_retraining_state")
     assert state[0]["state_json"] == '{"last_feedback_count": 1}'
     assert len(_fetchall(database, "select * from email_messages")) == 1
@@ -2447,8 +3216,90 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_18() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 18
+def test_email_schema_version_is_33() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 33
+
+
+def _downgrade_task10_schema(database: Path, *, version: int) -> None:
+    if version not in {26, 27, 28, 29}:
+        raise ValueError("Task10 downgrade fixture only supports v26 through v29")
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys=off")
+        _rewind_email_schema(db, version=version)
+        if version < 27:
+            db.execute("drop table email_historical_classification_history")
+        if version < 28:
+            for table in (
+                "email_historical_candidates",
+                "email_historical_operations",
+                "email_historical_traversals",
+            ):
+                db.execute(f"drop table {table}")
+        elif version < 29:
+            db.execute(
+                "alter table email_historical_candidates drop column attempted_at"
+            )
+            db.execute(
+                "alter table email_historical_candidates drop column next_retry_at"
+            )
+
+
+@pytest.mark.parametrize("starting_version", (26, 27, 28, 29))
+def test_task10_schema_migrations_replay_full_chain_from_each_version(
+    tmp_path: Path,
+    starting_version: int,
+) -> None:
+    database = tmp_path / f"task10-v{starting_version}-to-v30.sqlite3"
+    EmailStore(database)
+    _downgrade_task10_schema(database, version=starting_version)
+
+    with sqlite3.connect(database) as db:
+        assert [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ] == [starting_version]
+        tables_before = {
+            row[0]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        }
+        if starting_version < 27:
+            assert "email_historical_classification_history" not in tables_before
+        if starting_version < 28:
+            assert "email_historical_candidates" not in tables_before
+        elif starting_version < 29:
+            candidate_columns = {
+                row[1]
+                for row in db.execute("pragma table_info(email_historical_candidates)")
+            }
+            assert "attempted_at" not in candidate_columns
+            assert "next_retry_at" not in candidate_columns
+
+    EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        assert [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ] == list(range(starting_version, 34))
+        tables_after = {
+            row[0]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        }
+        assert {
+            "email_historical_classification_history",
+            "email_historical_candidates",
+            "email_historical_operations",
+            "email_historical_traversals",
+        }.issubset(tables_after)
+        candidate_columns = {
+            row[1]
+            for row in db.execute("pragma table_info(email_historical_candidates)")
+        }
+        assert {"attempted_at", "next_retry_at"}.issubset(candidate_columns)
 
 
 def test_current_schema_initialization_preserves_delete_journal_mode(
@@ -2795,13 +3646,15 @@ def test_current_schema_rejects_weakened_direct_action_checks(
         (
             "action_type",
             "text collate nocase not null check(action_type in "
-            "('label', 'mark_read', 'archive', 'move', 'trash'))",
+            "('label', 'mark_read', 'archive', 'move', 'trash', "
+            "'flag_important'))",
             "text not null check(status in ('pending', 'processing', 'done', 'failed'))",
         ),
         (
             "status",
             "text not null check(action_type in "
-            "('label', 'mark_read', 'archive', 'move', 'trash'))",
+            "('label', 'mark_read', 'archive', 'move', 'trash', "
+            "'flag_important'))",
             "text collate nocase not null "
             "check(status in ('pending', 'processing', 'done', 'failed'))",
         ),
@@ -2901,6 +3754,8 @@ def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path)
                 imap_tls integer not null check(imap_tls in (0, 1)),
                 imap_username text not null,
                 imap_secret_reference text not null,
+                imap_move_mode text not null default 'move'
+                    check(imap_move_mode in ('move', 'copy_as_move')),
                 smtp_host text not null,
                 smtp_port integer not null check(smtp_port between 1 and 65535),
                 smtp_tls integer not null check(smtp_tls in (0, 1)),
@@ -2926,8 +3781,8 @@ def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path)
 @pytest.mark.parametrize(
     "damaged_declaration",
     (
-        "threshold text not null",
-        "description text not null default 'missing-default-contract'",
+        "threshold text not null check(threshold >= 0.0 and threshold <= 1.0)",
+        "core_description text check(trim(core_description) != '')",
     ),
 )
 def test_current_schema_rejects_wrong_config_column_type_or_default(
@@ -2937,36 +3792,52 @@ def test_current_schema_rejects_wrong_config_column_type_or_default(
     database = tmp_path / "wrong-config-declaration.sqlite3"
     EmailStore(database)
     gc.collect()
-    description_declaration = (
+    core_description_declaration = (
         damaged_declaration
-        if damaged_declaration.startswith("description")
-        else "description text not null default ''"
+        if damaged_declaration.startswith("core_description")
+        else "core_description text not null check(trim(core_description) != '')"
     )
     threshold_declaration = (
         damaged_declaration
         if damaged_declaration.startswith("threshold")
-        else "threshold real not null"
+        else "threshold real not null check(threshold >= 0.0 and threshold <= 1.0)"
     )
     with sqlite3.connect(database) as db:
         db.executescript(
             f"""
-            alter table email_category_configs rename to old_email_category_configs;
-            create table email_category_configs (
-                category text primary key,
-                {description_declaration},
-                {threshold_declaration},
-                actions_json text not null,
-                action_parameters_json text not null default '{{}}',
-                enabled integer not null default 1,
-                config_version text not null,
-                updated_at text not null default current_timestamp
-            );
+                alter table email_category_configs rename to old_email_category_configs;
+                create table email_category_configs (
+                    category_key text primary key check(trim(category_key) != ''),
+                    display_name text not null check(trim(display_name) != ''),
+                    {core_description_declaration},
+                    include_json text not null
+                        check(json_valid(include_json))
+                        check(json_type(include_json) = 'array')
+                        check(json_array_length(include_json) > 0)
+                        check(trim(json_extract(include_json, '$[0]')) != ''),
+                    exclude_json text not null
+                        check(json_valid(exclude_json))
+                        check(json_type(exclude_json) = 'array')
+                        check(json_array_length(exclude_json) > 0)
+                        check(trim(json_extract(exclude_json, '$[0]')) != ''),
+                    {threshold_declaration},
+                    actions_json text not null check(json_valid(actions_json)),
+                    action_parameters_json text not null
+                        check(json_valid(action_parameters_json)),
+                    enabled integer not null check(enabled in (0, 1)),
+                    description_version text not null
+                        check(trim(description_version) != ''),
+                    config_version text not null check(trim(config_version) != ''),
+                    updated_at text not null check(trim(updated_at) != '')
+                );
             drop table old_email_category_configs;
             """
         )
 
     expected_column = (
-        "description" if damaged_declaration.startswith("description") else "threshold"
+        "core_description"
+        if damaged_declaration.startswith("core_description")
+        else "threshold"
     )
     with pytest.raises(
         EmailPersistenceCorruption,
@@ -3098,7 +3969,26 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == [16, 17, 18]
+        ] == [
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+        ]
         assert {
             row[1]
             for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
@@ -3317,7 +4207,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             "label": "important",
         }
     ]
-    assert store.list_configs()[0]["description"] == "v2 important config"
+    assert "important" not in {row["category"] for row in store.list_configs()}
     assert (
         _fetchall(
             database,
@@ -3335,7 +4225,27 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 16, 17, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [
+        2,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+    ]
 
     EmailStore(database)
 
@@ -3398,7 +4308,27 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [15, 16, 17, 18]
+    ] == [
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+    ]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
     assert projected["action_plan"]["action_plan_id"] == historical_plan_id
@@ -3801,7 +4731,26 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [16, 17, 18]
+    ] == [
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+    ]
 
 
 @pytest.mark.parametrize("missing_table", ["email_messages", "email_actions"])
@@ -4021,14 +4970,14 @@ def test_startup_rejects_current_action_plan_pointer_rollback(tmp_path: Path):
     second_plan = _versioned_plan(
         classification.action_plan,
         version=2,
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         actions=(EmailAction.ARCHIVE,),
         action_parameters={},
     )
     store.append_action_plan_version(
         classification.classification_id,
         second_plan,
-        confirmed_category=EmailCategory.IMPORTANT,
+        confirmed_category=EmailCategory.NOTIFICATION,
     )
     with sqlite3.connect(database) as db:
         db.execute(
@@ -4401,7 +5350,7 @@ def test_changed_plan_appends_next_version_and_preserves_history(tmp_path: Path)
     second_plan = _versioned_plan(
         classification.action_plan,
         version=2,
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         actions=(EmailAction.ARCHIVE, EmailAction.UNSUBSCRIBE),
         action_parameters={},
     )
@@ -4409,17 +5358,17 @@ def test_changed_plan_appends_next_version_and_preserves_history(tmp_path: Path)
     corrected = store.append_action_plan_version(
         classification.classification_id,
         second_plan,
-        confirmed_category=EmailCategory.IMPORTANT,
+        confirmed_category=EmailCategory.NOTIFICATION,
     )
     replayed = store.append_action_plan_version(
         classification.classification_id,
         second_plan,
-        confirmed_category=EmailCategory.IMPORTANT,
+        confirmed_category=EmailCategory.NOTIFICATION,
     )
 
     assert first["current_action_plan_id"] != corrected["current_action_plan_id"]
     assert replayed["current_action_plan_id"] == second_plan.action_plan_id
-    assert corrected["confirmed_category"] == "important"
+    assert corrected["confirmed_category"] == "notification"
     plans = _fetchall(
         database,
         "select action_plan_id, action_plan_version from email_action_plans order by action_plan_version",
@@ -4431,6 +5380,31 @@ def test_changed_plan_appends_next_version_and_preserves_history(tmp_path: Path)
     assert len(_fetchall(database, "select * from email_actions")) == 2
 
 
+@pytest.mark.parametrize("invalid_category", ("subscription", " Work", 123))
+def test_append_action_plan_version_rejects_invalid_correction_category(
+    tmp_path: Path,
+    invalid_category: object,
+):
+    store = EmailStore(tmp_path / "invalid-correction-category.sqlite3")
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(store, classification)
+    assert classification.action_plan is not None
+    corrected = _versioned_plan(
+        classification.action_plan,
+        version=2,
+        category=EmailCategory.NOTIFICATION,
+        actions=(EmailAction.ARCHIVE,),
+        action_parameters={},
+    )
+
+    with pytest.raises(ValueError):
+        store.append_action_plan_version(
+            classification.classification_id,
+            corrected,
+            confirmed_category=invalid_category,  # type: ignore[arg-type]
+        )
+
+
 def test_changed_snapshot_cannot_reuse_an_existing_plan_version(tmp_path: Path):
     database = tmp_path / "plan-conflict.sqlite3"
     store = EmailStore(database)
@@ -4440,7 +5414,7 @@ def test_changed_snapshot_cannot_reuse_an_existing_plan_version(tmp_path: Path):
     conflicting = _versioned_plan(
         classification.action_plan,
         version=1,
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         actions=(EmailAction.ARCHIVE,),
         action_parameters={},
     )
@@ -4449,7 +5423,7 @@ def test_changed_snapshot_cannot_reuse_an_existing_plan_version(tmp_path: Path):
         store.append_action_plan_version(
             classification.classification_id,
             conflicting,
-            confirmed_category=EmailCategory.IMPORTANT,
+            confirmed_category=EmailCategory.NOTIFICATION,
         )
 
 
@@ -4505,7 +5479,7 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
     database = tmp_path / "immutable-message-snapshot.sqlite3"
     store = EmailStore(database)
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         description="Requires attention",
         threshold=0.97,
         actions=(EmailAction.LABEL,),
@@ -4542,7 +5516,7 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
     confirmed = _confirm(
         store,
         original.classification_id,
-        EmailCategory.IMPORTANT,
+        EmailCategory.NOTIFICATION,
     )
     assert confirmed is not None
 
@@ -5013,7 +5987,7 @@ def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
     )
     _persist_scan(store, original)
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         description="Move important mail",
         threshold=0.9,
         actions=(EmailAction.MOVE,),
@@ -5026,7 +6000,7 @@ def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
     assert original.action_plan is not None
     application = store.apply_human_classification(
         original.classification_id,
-        EmailCategory.IMPORTANT,
+        EmailCategory.NOTIFICATION,
         feedback_request_id="feedback-current-plan",
         expected_current_action_plan_id=original.action_plan.action_plan_id,
         created_at=datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc),
@@ -5064,7 +6038,7 @@ def _correct_to_move_plan(
 ):
     assert original.action_plan is not None
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         description="Move important mail",
         threshold=0.9,
         actions=(EmailAction.MOVE,),
@@ -5076,7 +6050,7 @@ def _correct_to_move_plan(
     )
     application = store.apply_human_classification(
         original.classification_id,
-        EmailCategory.IMPORTANT,
+        EmailCategory.NOTIFICATION,
         feedback_request_id=request_id,
         expected_current_action_plan_id=original.action_plan.action_plan_id,
         created_at=datetime(2026, 8, 30, 12, 1, tzinfo=timezone.utc),
@@ -5467,6 +6441,391 @@ def test_destination_action_is_claimed_after_locator_preserving_actions(
         EmailAction.MARK_READ,
         EmailAction.ARCHIVE,
     ]
+
+
+def test_move_then_important_persists_locator_and_retries_only_flag(tmp_path: Path):
+    database = tmp_path / "move-then-important.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.FLAG_IMPORTANT, EmailAction.MOVE),
+            action_parameters={
+                EmailAction.MOVE: {"target_folder": "Legal"},
+            },
+            stable_message_identity="dingtalk-account:imap:INBOX:42:7",
+            uid=7,
+        ),
+    )
+
+    move = store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+    assert move is not None
+    assert move.action_type is EmailAction.MOVE
+    moved_locator = type(move.locator)(
+        account_id=move.account_id,
+        folder="Legal",
+        uidvalidity=84,
+        uid=19,
+        rfc_message_id=move.locator.rfc_message_id,
+        thread_id=move.locator.thread_id,
+        stable_message_identity=move.locator.stable_message_identity,
+    )
+    store.complete_direct_action_attempt(
+        move,
+        status="done",
+        provider_operation="MOVE",
+        provider_target=move.locator.stable_message_identity,
+        provider_result_id="move-revision",
+        error="",
+        finished_at="2026-09-07T12:00:01+00:00",
+        updated_locator=moved_locator,
+    )
+
+    flag = store.claim_next_direct_action(claimed_at="2026-09-07T12:01:00+00:00")
+    assert flag is not None
+    assert flag.action_type is EmailAction.FLAG_IMPORTANT
+    assert flag.locator == moved_locator
+    store.complete_direct_action_attempt(
+        flag,
+        status="failed",
+        provider_operation="STORE IMPORTANT",
+        provider_target=flag.locator.stable_message_identity,
+        provider_result_id="",
+        error="provider_apply_failed:TimeoutError",
+        finished_at="2026-09-07T12:01:01+00:00",
+    )
+
+    retry = store.claim_next_direct_action(claimed_at="2026-09-07T12:02:00+00:00")
+    assert retry is not None
+    assert retry.action_id == flag.action_id
+    assert retry.action_type is EmailAction.FLAG_IMPORTANT
+    assert retry.locator == moved_locator
+    assert retry.attempt_number == 2
+    assert len(store.list_action_attempts(move.action_id)) == 1
+
+
+def test_explicit_historical_move_dependencies_gate_exact_and_global_claims(
+    tmp_path: Path,
+):
+    database = tmp_path / "historical-move-dependencies.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(
+                EmailAction.MOVE,
+                EmailAction.FLAG_IMPORTANT,
+                EmailAction.MARK_READ,
+            ),
+            action_parameters={
+                EmailAction.MOVE: {"target_folder": "Legal"},
+                EmailAction.FLAG_IMPORTANT: {"depends_on": ["move"]},
+                EmailAction.MARK_READ: {"depends_on": ["flag_important"]},
+            },
+        ),
+    )
+    classification = store.get_classification_by_stable_identity(
+        "dingtalk-account:message-id:<msg-1@example.com>"
+    )
+    assert classification is not None
+    action_ids = {
+        action["action_type"]: action["action_id"]
+        for action in _fetchall(
+            database,
+            "select action_type, action_id from email_actions "
+            "where classification_id=?",
+            (classification["id"],),
+        )
+    }
+
+    assert (
+        store.claim_direct_action(
+            action_id=action_ids["mark_read"],
+            claimed_at="2026-09-07T12:00:00+00:00",
+        )
+        is None
+    )
+    assert (
+        store.claim_direct_action(
+            action_id=action_ids["flag_important"],
+            claimed_at="2026-09-07T12:00:00+00:00",
+        )
+        is None
+    )
+    move = store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+    assert move is not None
+    assert move.action_type is EmailAction.MOVE
+    moved_locator = type(move.locator)(
+        account_id=move.account_id,
+        folder="Legal",
+        uidvalidity=84,
+        uid=119,
+        rfc_message_id=move.locator.rfc_message_id,
+        thread_id=move.locator.thread_id,
+        stable_message_identity=move.locator.stable_message_identity,
+    )
+    store.complete_direct_action_attempt(
+        move,
+        status="done",
+        provider_operation="MOVE",
+        provider_target=move.locator.stable_message_identity,
+        provider_result_id="move-receipt",
+        error="",
+        finished_at="2026-09-07T12:00:01+00:00",
+        updated_locator=moved_locator,
+    )
+
+    flag = store.claim_next_direct_action(claimed_at="2026-09-07T12:01:00+00:00")
+    assert flag is not None
+    assert flag.action_type is EmailAction.FLAG_IMPORTANT
+    assert flag.locator == moved_locator
+    assert flag.parameters == {}
+    store.complete_direct_action_attempt(
+        flag,
+        status="done",
+        provider_operation="STORE IMPORTANT",
+        provider_target=flag.locator.stable_message_identity,
+        provider_result_id="flag-receipt",
+        error="",
+        finished_at="2026-09-07T12:01:01+00:00",
+    )
+
+    mark_read = store.claim_direct_action(
+        action_id=action_ids["mark_read"],
+        claimed_at="2026-09-07T12:02:00+00:00",
+    )
+    assert mark_read is not None
+    assert mark_read.action_type is EmailAction.MARK_READ
+    assert mark_read.locator == moved_locator
+    assert mark_read.parameters == {}
+
+
+def test_explicit_historical_trash_dependency_gates_exact_and_global_claims(
+    tmp_path: Path,
+):
+    database = tmp_path / "historical-trash-dependencies.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.TRASH, EmailAction.MARK_READ),
+            action_parameters={
+                EmailAction.MARK_READ: {"depends_on": ["trash"]},
+            },
+        ),
+    )
+    classification = store.get_classification_by_stable_identity(
+        "dingtalk-account:message-id:<msg-1@example.com>"
+    )
+    assert classification is not None
+    action_ids = {
+        action["action_type"]: action["action_id"]
+        for action in _fetchall(
+            database,
+            "select action_type, action_id from email_actions "
+            "where classification_id=?",
+            (classification["id"],),
+        )
+    }
+
+    assert (
+        store.claim_direct_action(
+            action_id=action_ids["mark_read"],
+            claimed_at="2026-09-07T12:00:00+00:00",
+        )
+        is None
+    )
+    trash = store.claim_next_direct_action(
+        claimed_at="2026-09-07T12:00:00+00:00"
+    )
+    assert trash is not None
+    assert trash.action_type is EmailAction.TRASH
+    trashed_locator = type(trash.locator)(
+        account_id=trash.account_id,
+        folder="Trash",
+        uidvalidity=84,
+        uid=120,
+        rfc_message_id=trash.locator.rfc_message_id,
+        thread_id=trash.locator.thread_id,
+        stable_message_identity=trash.locator.stable_message_identity,
+    )
+    store.complete_direct_action_attempt(
+        trash,
+        status="done",
+        provider_operation="MOVE Trash",
+        provider_target=trash.locator.stable_message_identity,
+        provider_result_id="trash-receipt",
+        error="",
+        finished_at="2026-09-07T12:00:01+00:00",
+        updated_locator=trashed_locator,
+    )
+
+    mark_read = store.claim_next_direct_action(
+        claimed_at="2026-09-07T12:01:00+00:00"
+    )
+    assert mark_read is not None
+    assert mark_read.action_type is EmailAction.MARK_READ
+    assert mark_read.locator == trashed_locator
+    assert mark_read.parameters == {}
+
+
+def test_claim_rejects_cycle_between_explicit_and_provider_safe_dependencies(
+    tmp_path: Path,
+):
+    database = tmp_path / "effective-action-dependency-cycle.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
+            action_parameters={
+                EmailAction.MOVE: {"target_folder": "Legal"},
+            },
+        ),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_actions set parameters_json=? where action_type='move'",
+            ('{"depends_on":["flag_important"],"target_folder":"Legal"}',),
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="effective direct action dependencies must be acyclic",
+    ):
+        store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+
+
+def test_retry_delayed_move_blocks_important_flag_claim(tmp_path: Path):
+    store = EmailStore(tmp_path / "delayed-move-blocks-important.sqlite3")
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
+            action_parameters={EmailAction.MOVE: {"target_folder": "Legal"}},
+        ),
+    )
+    move = store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+    assert move is not None
+    assert move.action_type is EmailAction.MOVE
+    store.complete_direct_action_attempt(
+        move,
+        status="failed",
+        provider_operation="MOVE",
+        provider_target=move.locator.stable_message_identity,
+        provider_result_id="",
+        error="provider_apply_failed:TimeoutError",
+        finished_at="2026-09-07T12:00:01+00:00",
+    )
+
+    assert (
+        store.claim_next_direct_action(claimed_at="2026-09-07T12:00:02+00:00") is None
+    )
+
+
+def test_non_retryable_failed_move_blocks_important_flag_claim(tmp_path: Path):
+    store = EmailStore(tmp_path / "permanent-move-blocks-important.sqlite3")
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
+            action_parameters={EmailAction.MOVE: {"target_folder": "Legal"}},
+        ),
+    )
+    move = store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+    assert move is not None
+    store.complete_direct_action_attempt(
+        move,
+        status="failed",
+        provider_operation="MOVE",
+        provider_target=move.locator.stable_message_identity,
+        provider_result_id="",
+        error="provider_apply_failed:ImapDestinationUnavailable",
+        finished_at="2026-09-07T12:00:01+00:00",
+        retryable=False,
+    )
+
+    assert (
+        store.claim_next_direct_action(claimed_at="2026-09-08T12:00:00+00:00") is None
+    )
+
+
+def test_retry_exhausted_move_blocks_important_flag_claim(tmp_path: Path):
+    store = EmailStore(tmp_path / "exhausted-move-blocks-important.sqlite3")
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
+            action_parameters={EmailAction.MOVE: {"target_folder": "Legal"}},
+        ),
+    )
+    claim_times = (
+        "2026-09-07T12:00:00+00:00",
+        "2026-09-07T12:01:00+00:00",
+        "2026-09-07T12:03:00+00:00",
+    )
+    for attempt_number, claimed_at in enumerate(claim_times, start=1):
+        move = store.claim_next_direct_action(claimed_at=claimed_at)
+        assert move is not None
+        assert move.action_type is EmailAction.MOVE
+        assert move.attempt_number == attempt_number
+        store.complete_direct_action_attempt(
+            move,
+            status="failed",
+            provider_operation="MOVE",
+            provider_target=move.locator.stable_message_identity,
+            provider_result_id="",
+            error="provider_apply_failed:TimeoutError",
+            finished_at=claimed_at,
+        )
+
+    assert (
+        store.claim_next_direct_action(claimed_at="2026-09-08T12:00:00+00:00") is None
+    )
+
+
+def test_v21_schema_migrates_to_allow_flag_important_actions(tmp_path: Path):
+    database = tmp_path / "v21-important-action.sqlite3"
+    store = EmailStore(database)
+    del store
+    _replace_email_actions(
+        database,
+        action_type_declaration=(
+            "text not null check(action_type in "
+            "('label', 'mark_read', 'archive', 'move', 'trash'))"
+        ),
+        status_declaration=(
+            "text not null check(status in ('pending', 'processing', 'done', 'failed'))"
+        ),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("update email_schema_migrations set version=21")
+
+    migrated = EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        schema = db.execute(
+            "select sql from sqlite_master where type='table' and name='email_actions'"
+        ).fetchone()[0]
+        assert "flag_important" in schema
+        assert (
+            db.execute("select count(*) from email_action_attempts").fetchone()[0] == 0
+        )
+        assert (
+            db.execute("select max(version) from email_schema_migrations").fetchone()[0]
+            == 33
+        )
+    assert (
+        migrated.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+        is None
+    )
 
 
 def test_complete_direct_action_appends_attempt_and_updates_current_atomically(
@@ -5900,14 +7259,14 @@ def test_corrupt_historical_action_plan_is_rejected_on_open(tmp_path: Path):
     second_plan = _versioned_plan(
         classification.action_plan,
         version=2,
-        category=EmailCategory.IMPORTANT,
+        category=EmailCategory.NOTIFICATION,
         actions=(EmailAction.ARCHIVE,),
         action_parameters={},
     )
     store.append_action_plan_version(
         classification.classification_id,
         second_plan,
-        confirmed_category=EmailCategory.IMPORTANT,
+        confirmed_category=EmailCategory.NOTIFICATION,
     )
     with sqlite3.connect(database) as db:
         db.execute(
@@ -6866,3 +8225,1086 @@ def test_account_scan_folders_json_must_be_a_list_of_folder_names(tmp_path: Path
 
     with pytest.raises(EmailPersistenceCorruption, match="scan_folders_json"):
         EmailStore(database)
+
+
+def _task2_account_values(
+    account_id: str,
+    *,
+    enabled: bool = True,
+) -> dict[str, object]:
+    return {
+        "account_id": account_id,
+        "display_name": account_id,
+        "email_address": f"{account_id}@example.com",
+        "imap_host": "imap.example.com",
+        "imap_port": 993,
+        "imap_tls": True,
+        "imap_username": f"{account_id}@example.com",
+        "imap_secret_reference": f"keychain://{account_id}",
+        "imap_move_mode": "copy_as_move" if account_id == "primary" else "move",
+        "smtp_host": "",
+        "smtp_port": 465,
+        "smtp_tls": True,
+        "smtp_username": "",
+        "smtp_secret_reference": "",
+        "enabled": enabled,
+        "scan_folders": ["INBOX"],
+        "scan_interval_seconds": 60,
+    }
+
+
+def _task2_verified_binding(
+    *,
+    account_id: str = "primary",
+    folder_id: str = "folder-partners",
+    folder_name: str = "合作伙伴",
+    status: str = "active",
+    verified_at: str = "2026-09-07T12:10:00+00:00",
+    folder_role: FolderRole = FolderRole.UNBOUND,
+):
+    binding_type = getattr(email_store_module, "VerifiedEmailFolderBinding")
+    return binding_type(
+        account_id=account_id,
+        provider_folder_id=folder_id,
+        provider_folder_name=folder_name,
+        binding_status=status,
+        last_verified_at=verified_at,
+        provider_folder_role=folder_role,
+    )
+
+
+def _create_task2_category(
+    store: EmailStore,
+    *,
+    category_key: str = "partner_updates",
+    display_name: str = "合作伙伴",
+    bindings: tuple[object, ...] | None = None,
+) -> dict[str, object]:
+    if bindings is None:
+        bindings = (_task2_verified_binding(folder_name=display_name),)
+    return store.create_category_with_bindings(
+        category_key=category_key,
+        display_name=display_name,
+        core_description=f"Material messages for {category_key}.",
+        include=(f"included {category_key} messages",),
+        exclude=(f"excluded {category_key} promotion",),
+        threshold=0.91,
+        actions=(),
+        action_parameters={},
+        enabled=True,
+        description_version=f"{category_key}-description-v1",
+        config_version=f"{category_key}-config-v1",
+        bindings=bindings,
+    )
+
+
+def _replace_category_schema_with_v19(database: Path) -> None:
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("drop table if exists email_category_folder_bindings")
+        db.execute("drop table email_category_configs")
+        db.execute(
+            """
+            create table email_category_configs (
+                category text primary key,
+                description text not null default '',
+                threshold real not null,
+                actions_json text not null,
+                action_parameters_json text not null default '{}',
+                enabled integer not null default 1,
+                config_version text not null,
+                updated_at text not null default current_timestamp
+            )
+            """
+        )
+        db.execute("delete from email_schema_migrations where version >= 20")
+        db.execute(
+            "insert or replace into email_schema_migrations(version, applied_at) "
+            "values (19, '2026-09-07T12:00:00+00:00')"
+        )
+
+
+def test_v19_category_config_migration_maps_active_rows_and_preserves_history(
+    tmp_path: Path,
+):
+    database = tmp_path / "category-v19.sqlite3"
+    store = EmailStore(database)
+    persisted = store.persist_scan_result(
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            category=EmailCategory.EXTERNAL_BILLING,
+        ),
+        model_text="__subject__legacy billing history",
+    )
+    _replace_category_schema_with_v19(database)
+    with sqlite3.connect(database) as db:
+        db.executemany(
+            """
+            insert into email_category_configs (
+                category, description, threshold, actions_json,
+                action_parameters_json, enabled, config_version, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    "billing",
+                    "Legacy billing",
+                    0.87,
+                    '["archive"]',
+                    "{}",
+                    1,
+                    "legacy-billing-v4",
+                    "2026-09-07T12:01:00+00:00",
+                ),
+                (
+                    "important",
+                    "Legacy important",
+                    0.81,
+                    "[]",
+                    "{}",
+                    1,
+                    "legacy-important-v2",
+                    "2026-09-07T12:01:00+00:00",
+                ),
+                (
+                    "subscription",
+                    "Legacy subscription",
+                    0.82,
+                    "[]",
+                    "{}",
+                    1,
+                    "legacy-subscription-v3",
+                    "2026-09-07T12:01:00+00:00",
+                ),
+            ),
+        )
+        db.execute(
+            """
+            update email_classifications
+            set category='billing', predicted_category='billing',
+                probabilities_json='{"billing":0.93,"work":0.07}'
+            where id=?
+            """,
+            (persisted["id"],),
+        )
+        history_before = tuple(
+            db.execute(
+                "select * from email_classifications where id=?",
+                (persisted["id"],),
+            ).fetchone()
+        )
+
+    migrated = EmailStore(database)
+
+    configs = {row["category_key"]: row for row in migrated.list_category_configs()}
+    assert set(configs) == {
+        "work",
+        "human_resources",
+        "legal",
+        "financing",
+        "personal",
+        "notification",
+        "external_billing",
+        "shopping",
+        "junk",
+    }
+    assert "important" not in configs
+    assert "subscription" not in configs
+    assert configs["external_billing"]["threshold"] == 0.87
+    assert configs["external_billing"]["actions"] == ["archive"]
+    assert configs["external_billing"]["config_version"] == "legacy-billing-v4"
+    assert configs["external_billing"]["description_version"] == (
+        "email-category-descriptions-v1"
+    )
+    assert migrated.list_account_folder_bindings() == []
+    with sqlite3.connect(database) as db:
+        history_after = tuple(
+            db.execute(
+                "select * from email_classifications where id=?",
+                (persisted["id"],),
+            ).fetchone()
+        )
+        versions = [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ]
+    assert history_after == history_before
+    assert migrated.get_classification(persisted["id"])["category"] == "billing"
+    assert versions[-1] == email_store_module.EMAIL_SCHEMA_VERSION
+
+
+def test_fresh_category_configs_seed_structured_approved_boundaries(tmp_path: Path):
+    store = EmailStore(tmp_path / "seeded-categories.sqlite3")
+
+    configs = {row["category_key"]: row for row in store.list_category_configs()}
+
+    assert configs["work"]["display_name"] == "工作"
+    assert "daily operations" in configs["work"]["core_description"]
+    assert "customers" in configs["work"]["include"]
+    assert "human resources" in configs["work"]["exclude"]
+    assert "recruiting" in configs["human_resources"]["include"]
+    assert "legal disputes" in configs["human_resources"]["exclude"]
+    assert "non-financing contracts" in configs["legal"]["include"]
+    assert "financing legal documents" in configs["legal"]["exclude"]
+    assert "due diligence" in configs["financing"]["include"]
+    assert "unsolicited fundraising promotion" in configs["financing"]["exclude"]
+    assert "Derek" in configs["personal"]["include"]
+    assert "company operations" in configs["personal"]["exclude"]
+    assert "verification codes" in configs["notification"]["include"]
+    assert "real business discussion" in configs["notification"]["exclude"]
+    assert "requests payment" in configs["external_billing"]["include"]
+    assert "our invoices to customers" in configs["external_billing"]["exclude"]
+    assert "logistics" in configs["shopping"]["include"]
+    assert "external professional-service invoices" in configs["shopping"]["exclude"]
+    assert "suspicious promotion" in configs["junk"]["include"]
+    assert (
+        "Unsubscribe-link presence must not be classification evidence"
+        in configs["junk"]["exclude"]
+    )
+    assert all(config["threshold"] == 0.95 for config in configs.values())
+    assert all(config["actions"] == [] for config in configs.values())
+    assert all(config["action_parameters"] == {} for config in configs.values())
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "update email_category_configs set include_json='not-json' where category_key='work'",
+        "update email_category_configs set core_description=' ' where category_key='work'",
+        "update email_category_configs set include_json='[]' where category_key='work'",
+        "update email_category_configs set include_json='[\" \" ]' where category_key='work'",
+        "update email_category_configs set exclude_json='[]' where category_key='work'",
+        "update email_category_configs set exclude_json='[\"\"]' where category_key='work'",
+    ),
+)
+def test_category_config_schema_rejects_invalid_structured_descriptions(
+    tmp_path: Path,
+    statement: str,
+):
+    database = tmp_path / "invalid-category-description.sqlite3"
+    EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(statement)
+
+
+def test_create_category_with_verified_bindings_is_atomic_and_account_complete(
+    tmp_path: Path,
+):
+    database = tmp_path / "create-category.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("primary"))
+    store.create_account(_task2_account_values("disabled", enabled=False))
+
+    created = _create_task2_category(store)
+
+    assert created["enabled"] is True
+    assert store.get_category_config("partner_updates") == created
+    assert store.list_account_folder_bindings("partner_updates") == [
+        {
+            "account_id": "primary",
+            "category_key": "partner_updates",
+            "provider_folder_id": "folder-partners",
+            "provider_folder_name": "合作伙伴",
+            "binding_status": "active",
+            "last_verified_at": "2026-09-07T12:10:00+00:00",
+        }
+    ]
+    with pytest.raises(TypeError, match="verified folder binding"):
+        store.create_category_with_bindings(
+            category_key="raw_binding",
+            display_name="Raw",
+            core_description="Raw client binding claims.",
+            include=("raw claim",),
+            exclude=("verified claim",),
+            threshold=0.9,
+            actions=(),
+            action_parameters={},
+            enabled=True,
+            description_version="raw-v1",
+            config_version="raw-v1",
+            bindings=(
+                {
+                    "account_id": "primary",
+                    "provider_folder_id": "raw-folder",
+                    "provider_folder_name": "Raw",
+                    "binding_status": "active",
+                    "last_verified_at": "2026-09-07T12:11:00+00:00",
+                },
+            ),
+        )
+    assert store.get_category_config("raw_binding") is None
+
+
+def test_unresolved_binding_is_persisted_but_forces_category_disabled(tmp_path: Path):
+    store = EmailStore(tmp_path / "ambiguous-category.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+
+    created = _create_task2_category(
+        store,
+        category_key="vendor_updates",
+        display_name="供应商",
+        bindings=(
+            _task2_verified_binding(
+                folder_id="",
+                folder_name="供应商",
+                status="ambiguous",
+                verified_at="2026-09-07T12:12:00+00:00",
+            ),
+        ),
+    )
+
+    assert created["enabled"] is False
+    assert (
+        store.list_account_folder_bindings("vendor_updates")[0]["binding_status"]
+        == "ambiguous"
+    )
+
+
+def test_active_provider_folder_conflict_rolls_back_dynamic_category(tmp_path: Path):
+    conflict_type = getattr(email_store_module, "EmailFolderBindingConflict")
+    store = EmailStore(tmp_path / "binding-conflict.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+
+    def create(category_key: str, folder_id: str) -> dict[str, object]:
+        return _create_task2_category(
+            store,
+            category_key=category_key,
+            display_name=category_key,
+            bindings=(
+                _task2_verified_binding(
+                    folder_id=folder_id,
+                    folder_name=category_key,
+                    verified_at="2026-09-07T12:13:00+00:00",
+                ),
+            ),
+        )
+
+    create("partners", "shared-folder-id")
+    with pytest.raises(conflict_type):
+        create("vendors", "shared-folder-id")
+
+    assert store.get_category_config("vendors") is None
+    assert store.list_account_folder_bindings("vendors") == []
+
+
+def test_update_descriptions_and_binding_status_round_trip(tmp_path: Path):
+    store = EmailStore(tmp_path / "update-category.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    _create_task2_category(
+        store,
+        category_key="partners",
+        display_name="合作伙伴",
+        bindings=(
+            _task2_verified_binding(
+                folder_id="partners-folder",
+                verified_at="2026-09-07T12:14:00+00:00",
+            ),
+        ),
+    )
+
+    updated = store.update_category_descriptions(
+        "partners",
+        core_description="Material partner discussions.",
+        include=("partner contracts",),
+        exclude=("generic sales promotion",),
+        threshold=0.94,
+        enabled=True,
+        description_version="partners-description-v2",
+        config_version="partners-config-v2",
+    )
+    binding = store.set_folder_binding_status(
+        account_id="primary",
+        category_key="partners",
+        provider_folder_id="",
+        provider_folder_name="合作伙伴",
+        binding_status="missing",
+        last_verified_at="2026-09-07T12:15:00+00:00",
+        provider_folder_role=FolderRole.UNBOUND,
+    )
+
+    assert updated is not None
+    assert updated["core_description"] == "Material partner discussions."
+    assert updated["include"] == ["partner contracts"]
+    assert updated["exclude"] == ["generic sales promotion"]
+    assert updated["threshold"] == 0.94
+    assert updated["description_version"] == "partners-description-v2"
+    assert updated["config_version"] == "partners-config-v2"
+    assert binding["binding_status"] == "missing"
+    assert store.get_category_config("partners")["enabled"] is False
+
+
+def test_v19_migration_disables_categories_when_enabled_account_has_no_binding(
+    tmp_path: Path,
+):
+    database = tmp_path / "migration-binding-completeness.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("primary"))
+    _replace_category_schema_with_v19(database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            insert into email_category_configs (
+                category, description, threshold, actions_json,
+                action_parameters_json, enabled, config_version, updated_at
+            ) values ('work', 'Legacy work', 0.88, '[]', '{}', 1,
+                      'legacy-work-v1', '2026-09-07T12:20:00+00:00')
+            """
+        )
+
+    migrated = EmailStore(database)
+
+    assert all(not row["enabled"] for row in migrated.list_category_configs())
+
+
+def test_compatibility_upsert_cannot_enable_without_complete_active_bindings(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "compatibility-binding-completeness.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+
+    updated = store.upsert_config(
+        category=EmailCategory.WORK,
+        description="Daily work.",
+        threshold=0.9,
+        actions=(),
+        action_parameters={},
+        enabled=True,
+        config_version="work-v2",
+    )
+
+    assert updated["enabled"] is False
+    assert store.get_category_config("work")["enabled"] is False
+
+
+def test_v19_migration_rejects_structured_legacy_hybrid_table(tmp_path: Path):
+    database = tmp_path / "hybrid-category-table.sqlite3"
+    EmailStore(database)
+    with sqlite3.connect(database) as db:
+        db.execute("alter table email_category_configs add column description text")
+        db.execute("delete from email_schema_migrations where version >= 20")
+        db.execute(
+            "insert into email_schema_migrations(version, applied_at) "
+            "values (19, '2026-09-07T12:21:00+00:00')"
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="structured category config schema is malformed",
+    ):
+        EmailStore(database)
+
+
+def test_creating_enabled_account_disables_categories_without_its_active_binding(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "create-enabled-account-bindings.sqlite3")
+    assert all(row["enabled"] for row in store.list_category_configs())
+
+    store.create_account(_task2_account_values("new-enabled"))
+
+    assert all(not row["enabled"] for row in store.list_category_configs())
+
+
+def test_enabling_account_keeps_only_categories_with_complete_active_bindings(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "enable-account-bindings.sqlite3")
+    store.create_account(_task2_account_values("secondary", enabled=False))
+    _create_task2_category(
+        store,
+        category_key="covered_category",
+        bindings=(
+            _task2_verified_binding(
+                account_id="secondary",
+                folder_id="covered-folder",
+            ),
+        ),
+    )
+    _create_task2_category(
+        store,
+        category_key="uncovered_category",
+        bindings=(),
+    )
+
+    store.update_account(
+        "secondary",
+        _task2_account_values("secondary", enabled=True),
+    )
+
+    configs = {row["category_key"]: row for row in store.list_category_configs()}
+    assert configs["covered_category"]["enabled"] is True
+    assert configs["uncovered_category"]["enabled"] is False
+    assert configs["work"]["enabled"] is False
+
+
+def test_account_enable_and_category_disabling_are_one_transaction(tmp_path: Path):
+    database = tmp_path / "account-category-atomicity.sqlite3"
+    store = EmailStore(database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            create trigger abort_category_disabling
+            before update of enabled on email_category_configs
+            when old.enabled=1 and new.enabled=0
+            begin
+                select raise(abort, 'forced category disable failure');
+            end
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced category disable failure"):
+        store.create_account(_task2_account_values("rolled-back-account"))
+
+    assert store.get_account("rolled-back-account") is None
+    assert all(row["enabled"] for row in store.list_category_configs())
+
+
+def test_reopen_rejects_enabled_category_missing_enabled_account_binding(
+    tmp_path: Path,
+):
+    database = tmp_path / "category-binding-corruption.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("primary"))
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_category_configs set enabled=1 where category_key='work'"
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="enabled email category is missing an active account folder binding",
+    ):
+        EmailStore(database)
+
+
+def test_seeded_category_requires_explicit_enable_after_bindings_complete(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "upsert-first-binding.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    store.create_account(_task2_account_values("secondary"))
+    assert store.get_category_config("work")["enabled"] is False
+
+    first = store.upsert_verified_folder_binding(
+        "work",
+        _task2_verified_binding(
+            account_id="primary",
+            folder_id="work-primary",
+            folder_name="工作",
+        ),
+    )
+    updated = store.upsert_verified_folder_binding(
+        "work",
+        _task2_verified_binding(
+            account_id="primary",
+            folder_id="work-primary-updated",
+            folder_name="工作更新",
+            verified_at="2026-09-07T12:30:00+00:00",
+        ),
+    )
+
+    assert first["provider_folder_id"] == "work-primary"
+    assert updated["provider_folder_id"] == "work-primary-updated"
+    assert updated["provider_folder_name"] == "工作更新"
+    assert store.get_category_config("work")["enabled"] is False
+
+    store.upsert_verified_folder_binding(
+        "work",
+        _task2_verified_binding(
+            account_id="secondary",
+            folder_id="work-secondary",
+            folder_name="工作",
+        ),
+    )
+
+    complete = store.get_category_config("work")
+    assert complete["enabled"] is False
+
+    enabled = store.update_category_descriptions(
+        "work",
+        core_description=complete["core_description"],
+        include=complete["include"],
+        exclude=complete["exclude"],
+        threshold=complete["threshold"],
+        enabled=True,
+        description_version=complete["description_version"],
+        config_version="work-explicitly-enabled-v1",
+    )
+
+    assert enabled is not None
+    assert enabled["enabled"] is True
+
+
+def test_junk_upsert_accepts_only_verified_system_trash_binding(tmp_path: Path) -> None:
+    store = EmailStore(tmp_path / "junk-trash-binding.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    trash = _task2_verified_binding(
+        account_id="primary",
+        folder_id="provider-trash",
+        folder_name="Deleted",
+        folder_role=FolderRole.TRASH,
+    )
+
+    persisted = store.upsert_verified_folder_binding("junk", trash)
+
+    assert persisted["provider_folder_id"] == "provider-trash"
+    with pytest.raises(ValueError, match="system Trash"):
+        store.upsert_verified_folder_binding(
+            "junk",
+            _task2_verified_binding(
+                account_id="primary",
+                folder_id="provider-junk",
+                folder_name="垃圾邮件",
+            ),
+        )
+
+
+def test_junk_coordinator_persists_whitespace_provider_trash_exactly(
+    tmp_path: Path,
+) -> None:
+    class WhitespaceTrashProvider:
+        def list_folders(self):
+            return (ProviderFolder(" Deleted ", " Deleted ", FolderRole.TRASH),)
+
+        def create_folder_exact(self, name: str) -> None:
+            raise AssertionError(f"junk folder must not be created: {name}")
+
+        def close(self) -> None:
+            pass
+
+    coordinator = import_module("app.email_worker").ProviderFolderBindingCoordinator(
+        lambda _account: WhitespaceTrashProvider(),
+        now=lambda: "2026-09-08T10:00:00+00:00",
+    )
+    binding = coordinator.create_and_verify_bindings(
+        category_key="junk",
+        provider_folder_name="垃圾邮件",
+        enabled_accounts=({"account_id": "primary"},),
+    )[0]
+    store = EmailStore(tmp_path / "whitespace-trash-binding.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+
+    persisted = store.upsert_verified_folder_binding("junk", binding)
+
+    assert binding.binding_status == "active"
+    assert binding.provider_folder_id == " Deleted "
+    assert binding.provider_folder_name == " Deleted "
+    assert persisted["provider_folder_id"] == " Deleted "
+    assert persisted["provider_folder_name"] == " Deleted "
+    assert store.list_account_folder_bindings("junk") == [persisted]
+
+
+def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v20-provider-folder-whitespace.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("primary"))
+    store.upsert_verified_folder_binding(
+        "junk",
+        _task2_verified_binding(
+            folder_id="Deleted",
+            folder_name="Deleted",
+            folder_role=FolderRole.TRASH,
+        ),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("drop index idx_email_category_folder_bindings_active_provider")
+        db.execute(
+            "alter table email_category_folder_bindings "
+            "rename to email_category_folder_bindings_v20"
+        )
+        db.execute(
+            """
+            create table email_category_folder_bindings (
+                account_id text not null check(trim(account_id) != ''),
+                category_key text not null check(trim(category_key) != ''),
+                provider_folder_id text not null,
+                provider_folder_name text not null
+                    check(trim(provider_folder_name) != ''),
+                binding_status text not null check(binding_status in (
+                    'active', 'missing', 'ambiguous', 'error'
+                )),
+                last_verified_at text not null check(trim(last_verified_at) != ''),
+                primary key(account_id, category_key),
+                check(binding_status != 'active' or trim(provider_folder_id) != ''),
+                foreign key(account_id) references email_accounts(account_id)
+                    on delete cascade,
+                foreign key(category_key) references email_category_configs(category_key)
+                    on delete cascade
+            )
+            """
+        )
+        db.execute(
+            "insert into email_category_folder_bindings "
+            "select * from email_category_folder_bindings_v20"
+        )
+        db.execute("drop table email_category_folder_bindings_v20")
+        db.execute(
+            "create unique index "
+            "idx_email_category_folder_bindings_active_provider "
+            "on email_category_folder_bindings(account_id, provider_folder_id) "
+            "where binding_status = 'active'"
+        )
+        db.execute("delete from email_schema_migrations")
+        db.execute(
+            "insert into email_schema_migrations(version, applied_at) values (20, ?)",
+            ("2026-09-08T09:00:00+00:00",),
+        )
+
+    migrated = EmailStore(database)
+
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 33
+    assert migrated.get_account("primary")["imap_move_mode"] == "copy_as_move"
+    assert (
+        migrated.list_account_folder_bindings("junk")[0]["provider_folder_id"]
+        == "Deleted"
+    )
+    persisted = migrated.upsert_verified_folder_binding(
+        "junk",
+        _task2_verified_binding(
+            folder_id=" Deleted ",
+            folder_name=" Deleted ",
+            folder_role=FolderRole.TRASH,
+        ),
+    )
+    assert persisted["provider_folder_id"] == " Deleted "
+    assert persisted["provider_folder_name"] == " Deleted "
+
+
+@pytest.mark.parametrize("negative_status", ("missing", "ambiguous", "error"))
+def test_junk_negative_verification_invalidates_stale_trash_and_disables_writes(
+    tmp_path: Path,
+    negative_status: str,
+) -> None:
+    database = tmp_path / f"junk-{negative_status}-invalidation.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("primary"))
+    store.upsert_verified_folder_binding(
+        "junk",
+        _task2_verified_binding(
+            account_id="primary",
+            folder_id="provider-trash",
+            folder_name="Deleted",
+            folder_role=FolderRole.TRASH,
+        ),
+    )
+    junk = store.get_category_config("junk")
+    enabled = store.update_category_descriptions(
+        "junk",
+        core_description=junk["core_description"],
+        include=junk["include"],
+        exclude=junk["exclude"],
+        threshold=junk["threshold"],
+        enabled=True,
+        description_version=junk["description_version"],
+        config_version=f"junk-enabled-before-{negative_status}",
+    )
+    assert enabled is not None and enabled["enabled"] is True
+
+    observed = store.upsert_verified_folder_binding(
+        "junk",
+        _task2_verified_binding(
+            account_id="primary",
+            folder_id="",
+            folder_name="垃圾邮件",
+            status=negative_status,
+            verified_at="2026-09-08T11:00:00+00:00",
+        ),
+    )
+
+    assert observed["provider_folder_id"] == ""
+    assert observed["binding_status"] == negative_status
+    assert store.get_category_config("junk")["enabled"] is False
+    reopened = EmailStore(database)
+    assert reopened.list_account_folder_bindings("junk") == [observed]
+    assert reopened.get_category_config("junk")["enabled"] is False
+
+
+@pytest.mark.parametrize(
+    "system_role",
+    (
+        FolderRole.INBOX,
+        FolderRole.JUNK,
+        FolderRole.TRASH,
+        FolderRole.SENT,
+        FolderRole.DRAFT,
+    ),
+)
+def test_business_binding_rejects_active_provider_system_folder_role(
+    tmp_path: Path,
+    system_role: FolderRole,
+) -> None:
+    store = EmailStore(tmp_path / f"business-system-role-{system_role}.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+
+    with pytest.raises(ValueError, match="business category"):
+        store.upsert_verified_folder_binding(
+            "work",
+            _task2_verified_binding(
+                account_id="primary",
+                folder_id="system-folder",
+                folder_name="工作",
+                folder_role=system_role,
+            ),
+        )
+
+
+def test_scalar_binding_status_update_cannot_bypass_system_folder_role_invariant(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "scalar-system-role.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    store.upsert_verified_folder_binding(
+        "work", _task2_verified_binding(account_id="primary")
+    )
+
+    with pytest.raises(ValueError, match="business category"):
+        store.set_folder_binding_status(
+            account_id="primary",
+            category_key="work",
+            provider_folder_id="system-trash",
+            provider_folder_name="Trash",
+            binding_status="active",
+            last_verified_at="2026-09-08T12:30:00+00:00",
+            provider_folder_role=FolderRole.TRASH,
+        )
+
+
+def test_category_binding_refresh_rolls_back_all_accounts_and_descriptions_on_conflict(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "atomic-category-refresh.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    store.create_account(_task2_account_values("secondary"))
+    for account_id in ("primary", "secondary"):
+        store.upsert_verified_folder_binding(
+            "work",
+            _task2_verified_binding(
+                account_id=account_id,
+                folder_id=f"old-work-{account_id}",
+                folder_name="工作",
+            ),
+        )
+    work = store.get_category_config("work")
+    store.update_category_descriptions(
+        "work",
+        core_description=work["core_description"],
+        include=work["include"],
+        exclude=work["exclude"],
+        threshold=work["threshold"],
+        enabled=True,
+        description_version=work["description_version"],
+        config_version="work-before-atomic-refresh",
+    )
+    store.upsert_verified_folder_binding(
+        "legal",
+        _task2_verified_binding(
+            account_id="secondary",
+            folder_id="secondary-conflict",
+            folder_name="法务",
+        ),
+    )
+    before_config = store.get_category_config("work")
+    before_bindings = store.list_account_folder_bindings("work")
+
+    with pytest.raises(email_store_module.EmailFolderBindingConflict):
+        store.refresh_category_with_bindings(
+            "work",
+            core_description="Changed description must roll back.",
+            include=("changed include",),
+            exclude=("changed exclude",),
+            threshold=0.81,
+            enabled=False,
+            description_version="work-description-conflict",
+            config_version="work-config-conflict",
+            bindings=(
+                _task2_verified_binding(
+                    account_id="primary",
+                    folder_id="new-work-primary",
+                    folder_name="工作",
+                ),
+                _task2_verified_binding(
+                    account_id="secondary",
+                    folder_id="secondary-conflict",
+                    folder_name="工作",
+                ),
+            ),
+        )
+
+    assert store.get_category_config("work") == before_config
+    assert store.list_account_folder_bindings("work") == before_bindings
+
+
+def test_active_binding_upsert_preserves_explicitly_disabled_category(tmp_path: Path):
+    store = EmailStore(tmp_path / "binding-preserves-disabled.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    binding = _task2_verified_binding(
+        account_id="primary",
+        folder_id="work-primary",
+        folder_name="工作",
+    )
+    store.upsert_verified_folder_binding("work", binding)
+    work = store.get_category_config("work")
+    explicitly_enabled = store.update_category_descriptions(
+        "work",
+        core_description=work["core_description"],
+        include=work["include"],
+        exclude=work["exclude"],
+        threshold=work["threshold"],
+        enabled=True,
+        description_version=work["description_version"],
+        config_version="work-enabled-v1",
+    )
+    explicitly_disabled = store.update_category_descriptions(
+        "work",
+        core_description=work["core_description"],
+        include=work["include"],
+        exclude=work["exclude"],
+        threshold=work["threshold"],
+        enabled=False,
+        description_version=work["description_version"],
+        config_version="work-disabled-v1",
+    )
+
+    store.upsert_verified_folder_binding(
+        "work",
+        _task2_verified_binding(
+            account_id="primary",
+            folder_id="work-primary-updated",
+            folder_name="工作更新",
+            verified_at="2026-09-07T12:40:00+00:00",
+        ),
+    )
+
+    assert explicitly_enabled is not None
+    assert explicitly_enabled["enabled"] is True
+    assert explicitly_disabled is not None
+    assert explicitly_disabled["enabled"] is False
+    assert store.get_category_config("work")["enabled"] is False
+
+
+def test_upsert_verified_folder_binding_is_typed_atomic_and_unique(tmp_path: Path):
+    conflict_type = getattr(email_store_module, "EmailFolderBindingConflict")
+    store = EmailStore(tmp_path / "upsert-binding-conflict.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    work_binding = _task2_verified_binding(
+        account_id="primary",
+        folder_id="claimed-folder",
+        folder_name="工作",
+    )
+    store.upsert_verified_folder_binding("work", work_binding)
+
+    with pytest.raises(conflict_type):
+        store.upsert_verified_folder_binding(
+            "legal",
+            _task2_verified_binding(
+                account_id="primary",
+                folder_id="claimed-folder",
+                folder_name="法务",
+            ),
+        )
+    with pytest.raises(TypeError, match="VerifiedEmailFolderBinding"):
+        store.upsert_verified_folder_binding(
+            "legal",
+            {
+                "account_id": "primary",
+                "provider_folder_id": "raw-folder",
+                "provider_folder_name": "法务",
+                "binding_status": "active",
+                "last_verified_at": "2026-09-07T12:31:00+00:00",
+            },
+        )
+
+    assert store.list_account_folder_bindings("legal") == []
+    assert store.list_account_folder_bindings("work") == [
+        {
+            "account_id": "primary",
+            "category_key": "work",
+            "provider_folder_id": "claimed-folder",
+            "provider_folder_name": "工作",
+            "binding_status": "active",
+            "last_verified_at": "2026-09-07T12:10:00+00:00",
+        }
+    ]
+
+
+def test_category_enablement_snapshot_restores_create_and_update_compensation(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "category-enablement-compensation.sqlite3")
+    enabled_before_create = {
+        row["category_key"]: row["enabled"] for row in store.list_category_configs()
+    }
+
+    created, create_snapshot = store.create_account_with_category_enablement_snapshot(
+        _task2_account_values("created")
+    )
+
+    assert store.delete_account_if_unchanged(
+        "created",
+        expected_updated_at=created["updated_at"],
+        category_enablement_snapshot=create_snapshot,
+    )
+    assert store.get_account("created") is None
+    assert {
+        row["category_key"]: row["enabled"] for row in store.list_category_configs()
+    } == enabled_before_create
+
+    store.create_account(_task2_account_values("updated", enabled=False))
+    account_before_update = store.get_account("updated")
+    enabled_before_update = {
+        row["category_key"]: row["enabled"] for row in store.list_category_configs()
+    }
+    update_result = store.update_account_with_category_enablement_snapshot(
+        "updated",
+        _task2_account_values("updated", enabled=True),
+    )
+    assert update_result is not None
+    updated, previous, update_snapshot = update_result
+
+    assert previous == account_before_update
+    assert store.restore_account_if_unchanged(
+        previous,
+        expected_updated_at=updated["updated_at"],
+        category_enablement_snapshot=update_snapshot,
+    )
+    assert store.get_account("updated") == account_before_update
+    assert {
+        row["category_key"]: row["enabled"] for row in store.list_category_configs()
+    } == enabled_before_update
+
+
+def test_category_enablement_snapshot_refuses_concurrent_category_edit(tmp_path: Path):
+    store = EmailStore(tmp_path / "category-enablement-conflict.sqlite3")
+    created, snapshot = store.create_account_with_category_enablement_snapshot(
+        _task2_account_values("primary")
+    )
+    work = store.get_category_config("work")
+    assert work is not None
+    store.update_category_descriptions(
+        "work",
+        core_description=work["core_description"],
+        include=work["include"],
+        exclude=work["exclude"],
+        threshold=work["threshold"],
+        enabled=False,
+        description_version=work["description_version"],
+        config_version="concurrent-work-edit-v1",
+    )
+
+    restored = store.delete_account_if_unchanged(
+        "primary",
+        expected_updated_at=created["updated_at"],
+        category_enablement_snapshot=snapshot,
+    )
+
+    assert restored is False
+    assert store.get_account("primary") == created
+    assert store.get_category_config("work")["config_version"] == (
+        "concurrent-work-edit-v1"
+    )

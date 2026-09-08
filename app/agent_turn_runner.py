@@ -21,9 +21,7 @@ from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
     LEASE_SECONDS,
     TOTAL_TIMEOUT_SECONDS,
-    _is_sensitive_key,
     _is_signed_url,
-    _normalized_key,
 )
 from app.agent_result import ResultParseError
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
@@ -62,6 +60,7 @@ from app.feedback_spike import sanitize_configured_feedback_links
 from app.leak_check import (
     contains_credential,
     contains_local_runtime_leak,
+    is_sensitive_credential_name,
     redact_forbidden_leak_markers,
 )
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
@@ -84,6 +83,12 @@ _COMMON_RUNTIME_CAPABILITIES = frozenset(
 _RUNTIME_DOMAIN_RESULT_CODEC_VERSION = 1
 _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 32 * 1024
 _RUNTIME_RESULT_SUMMARY_MAX_CHARS = 2048
+
+
+def _normalized_key(key: str) -> str:
+    return "".join(character for character in key.casefold() if character.isalnum())
+
+
 _RUNTIME_RESULT_FORBIDDEN_DOCUMENT_FIELDS = frozenset(
     {
         "documentbody",
@@ -1508,7 +1513,7 @@ def _contains_sensitive_value(value: object, *, depth: int = 0) -> bool:
         if _contains_sensitive_argv(value):
             return True
         return any(
-            _is_sensitive_key(_normalized_key(str(key)))
+            is_sensitive_credential_name(str(key))
             or _contains_sensitive_value(item, depth=depth + 1)
             for key, item in value.items()
         )
@@ -1644,6 +1649,6 @@ def _contains_sensitive_argv(value: dict[object, object]) -> bool:
         if not token.startswith("--"):
             continue
         flag = token[2:].partition("=")[0]
-        if _is_sensitive_key(_normalized_key(flag)):
+        if is_sensitive_credential_name(flag):
             return True
     return False

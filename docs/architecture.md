@@ -211,11 +211,20 @@ Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 A
 
 > **实现与部署状态：** Email audited-v2 lifecycle 已在本分支实现并通过开发/loopback 验证；实际 launchd 仍运行 main checkout，因此尚未部署，也未在生产启用。
 
-Email 分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。确定性动作清单是
+邮箱服务器中的当前文件夹是类别的唯一事实来源。服务维护“业务类别 → 每个账号的精确
+provider 文件夹”绑定并单向创建/校验目标文件夹；分类结果本身不能覆盖文件夹事实。Inbox
+表示尚未分类，Spam/Trash 固定为内部 `junk`，Sent/Draft 不参加训练。`important` 不是类别，
+而是独立注意信号：兼容 provider 的 Starred/Important/Flagged 信号与成熟模型信号取并集，
+但 junk 始终抑制 important。分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。确定性动作清单是
 `label`、`mark_read`、`archive`、`move`、`trash`；它们属于 Email 子系统，由独立
 Email worker 领取、执行并通过 provider readback 验证结果。这些确定性动作
 不创建 CEO Agent task，也不创建 Consumer/Audit run。`trash` 只允许可恢复的 move-to-Trash；
 永久删除、IMAP `EXPUNGE` 和清空 Trash 在所有配置与执行入口都不可达。
+
+标准 IMAP 账号使用 `UID MOVE`。若 provider 未声明 MOVE capability，但其官方协议明确规定
+`UID COPY` 本身就是移动语义，账号可显式配置 `imap_move_mode=copy_as_move`；服务不会按主机名
+猜测，也不会把普通 IMAP 的 COPY 当作移动。两种模式都必须用稳定 Message-ID 重新定位并确认
+目标文件夹，且都不得通过 `STORE \\Deleted` 或 `EXPUNGE` 模拟移动。
 
 只有不可变 `ActionPlan` 明确授权的 `unsubscribe` 会创建 `channel=email` 的
 `pending` task；其生命周期固定为 `email_unsubscribe_audited_v2`。分类确认、零动作计划
@@ -254,6 +263,31 @@ prefix、previous effect digest、exact-origin network policy 以及页面/provi
 多步骤页面每轮只追加一个新 operation，Audit 只执行该新 operation，不重放已接受的
 operation prefix。需要下一步页面操作时保存 `awaiting_audit` continuation；`awaiting_audit` 是退订
 effect/claim 的领域状态，不是顶层 task 状态。
+
+分类器按阶段运行。冷启动只由 Agent 处理服务上线后出现的未读 Inbox/未绑定来源邮件；已读邮件
+不交给 Agent，且分类过程不把邮件标为已读。训练只在冻结的 provider-folder snapshot 上离线、
+分阶段执行，shadow 模型不进入实时扫描。单个类别达到历史门槛后，只能用于显式、分批、可恢复的
+历史归类；这不等于线上晋升。只有连续两个兼容的完整模型版本都满足全部类别、important、样本组
+和系统性错误门槛，并且来自两个先后冻结、digest 不同且 folder/important 标签水位与独立评估证据
+确实前进的 snapshot，才原子晋升整个模型。同一 snapshot 改 model ID 或训练时间不能形成连续证据。
+晋升后实时流程是严格顺序的“模型优先，失败/超时/拒绝
+后再调用一次 Agent”，二者不并行。
+
+历史和实时移动都先读取 provider 当前状态，写入后再按新 locator 回读；important flag 在移动后的
+locator 上执行。用户随后在邮箱中移动邮件时，下一份冻结 snapshot 直接采用新文件夹标签。
+`junk` 的退订候选由代码从标准 header/body 链接中发现，Agent 只在已审计的退订任务里决定和执行
+后续网页步骤；成功或无需继续后再移动到系统 Trash。连接邮箱的邮件 OTP 只在站点、收件人和有限
+时间窗同时匹配时临时读取；普通 CAPTCHA 可在隔离 profile 中尝试，密码/MFA/CAPTCHA 无法完成时
+保存有界 continuation 并转人工接管，不持久化 OTP、cookie、完整 URL 或浏览器秘密。
+
+Email Console 的 learning、model-version、folder-binding 和 classification-detail API 只投影版本、
+门槛、计数、时延、fallback、动作/readback 与 continuation 状态。它们不返回正文、附件字节、
+embedding、OTP、完整退订 URL 或私密浏览器数据。分类确认不会创建通用 CEO task；系统在任何阶段
+都不发送、回复或草拟 Email。常驻 classifier runtime 将有界的阶段耗时、cache-hit、结果和受控
+fallback code 写入 `EmailStore`；Web 进程只读取这些跨进程聚合，不依赖注入 worker 的内存对象，
+也不保存请求文本、向量或原始错误理由。每次 provider 扫描还会更新独立的“最新观察”投影；
+classification detail 从该投影读取当前文件夹事实，不从冻结训练 snapshot 推断，也不在 API 请求中
+访问邮箱网络。训练相关字段明确使用 snapshot 命名，避免把历史冻结状态误称为当前状态。
 
 ### Repository Upgrade
 

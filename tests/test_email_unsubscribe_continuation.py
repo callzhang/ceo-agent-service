@@ -71,7 +71,7 @@ def _payload() -> dict[str, object]:
         "action_plan_id": "email-plan:subscription:1",
         "action_plan_version": 1,
         "classification_id": 41,
-        "category": "subscription",
+        "category": "junk",
         "classification_source": "user",
         "confidence": 1.0,
         "model_id": "email-model:test",
@@ -79,9 +79,10 @@ def _payload() -> dict[str, object]:
         "action_parameters": {},
         "unsubscribe_entries": [
             {
+                "index": 0,
                 "source": "header_https",
+                "digest": ENTRY_REFERENCE.removeprefix("unsubscribe-entry:"),
                 "reference": ENTRY_REFERENCE,
-                "priority": 10,
             }
         ],
         "unsubscribe_authentication": None,
@@ -93,15 +94,15 @@ def _payload() -> dict[str, object]:
 def _one_click_payload(
     *,
     source: str = "header_one_click_https",
-    priority: int = 0,
     authentication: object = True,
 ) -> dict[str, object]:
     payload = _payload()
     payload["unsubscribe_entries"] = [
         {
+            "index": 0,
             "source": source,
+            "digest": ENTRY_REFERENCE.removeprefix("unsubscribe-entry:"),
             "reference": ENTRY_REFERENCE,
-            "priority": priority,
         }
     ]
     if authentication is True:
@@ -354,9 +355,7 @@ def test_recomputed_single_effect_two_operation_lineage_is_invalid(terminal):
         store.claim.update({"status": "done", "phase": "terminal"})
         store.continuation = None
 
-    decision = module.EmailUnsubscribeContinuationDriver(
-        store
-    ).continuation_state(
+    decision = module.EmailUnsubscribeContinuationDriver(store).continuation_state(
         _task(),
         audit_run=_audit_run(),
         audit_result=_audit_result(),
@@ -379,9 +378,7 @@ def test_recomputed_root_click_confirmation_is_invalid():
         ],
     )
 
-    decision = module.EmailUnsubscribeContinuationDriver(
-        store
-    ).continuation_state(
+    decision = module.EmailUnsubscribeContinuationDriver(store).continuation_state(
         _task(),
         audit_run=_audit_run(),
         audit_result=_audit_result(),
@@ -404,9 +401,7 @@ def test_recomputed_root_target_must_equal_claim_entry_reference():
         ],
     )
 
-    decision = module.EmailUnsubscribeContinuationDriver(
-        store
-    ).continuation_state(
+    decision = module.EmailUnsubscribeContinuationDriver(store).continuation_state(
         _task(),
         audit_run=_audit_run(),
         audit_result=_audit_result(),
@@ -420,9 +415,7 @@ def test_recomputed_root_requires_literal_empty_previous_effect_digest():
     store = FakeEmailStore()
     store.effect["previous_effect_digest"] = None
 
-    decision = module.EmailUnsubscribeContinuationDriver(
-        store
-    ).continuation_state(
+    decision = module.EmailUnsubscribeContinuationDriver(store).continuation_state(
         _task(),
         audit_run=_audit_run(),
         audit_result=_audit_result(),
@@ -447,9 +440,7 @@ def test_recomputed_legal_single_operation_root_remains_valid(kind):
     )
 
     task = _task(payload=_one_click_payload()) if kind == "post_one_click" else _task()
-    decision = module.EmailUnsubscribeContinuationDriver(
-        store
-    ).continuation_state(
+    decision = module.EmailUnsubscribeContinuationDriver(store).continuation_state(
         task,
         audit_run=_audit_run(),
         audit_result=_audit_result(),
@@ -464,7 +455,6 @@ def test_recomputed_legal_single_operation_root_remains_valid(kind):
     (
         _one_click_payload(
             source="header_https",
-            priority=10,
         ),
         _one_click_payload(authentication=None),
         _one_click_payload(authentication=False),
@@ -491,9 +481,7 @@ def test_recomputed_post_one_click_root_requires_exact_authorization(
         store.claim.update({"status": "done", "phase": "terminal"})
         store.continuation = None
 
-    decision = module.EmailUnsubscribeContinuationDriver(
-        store
-    ).continuation_state(
+    decision = module.EmailUnsubscribeContinuationDriver(store).continuation_state(
         _task(payload=deepcopy(payload)),
         audit_run=_audit_run(),
         audit_result=_audit_result(),
@@ -520,9 +508,7 @@ def test_recomputed_open_entry_root_rejects_mailto_source(terminal):
         store.claim.update({"status": "done", "phase": "terminal"})
         store.continuation = None
 
-    decision = module.EmailUnsubscribeContinuationDriver(
-        store
-    ).continuation_state(
+    decision = module.EmailUnsubscribeContinuationDriver(store).continuation_state(
         _task(payload=_mailto_payload()),
         audit_run=_audit_run(),
         audit_result=_audit_result(),
@@ -595,9 +581,7 @@ def test_terminal_done_claim_requires_full_audit_and_effect_identity(mutation):
     elif mutation == "unexpected_continuation":
         store.continuation = _continuation()
 
-    decision = module.EmailUnsubscribeContinuationDriver(
-        store
-    ).continuation_state(
+    decision = module.EmailUnsubscribeContinuationDriver(store).continuation_state(
         _task(),
         audit_run=_audit_run(),
         audit_result=_audit_result(),
@@ -620,9 +604,7 @@ def test_driver_returns_explicit_continue_terminal_invalid_and_unavailable_state
     assert continued.required_receipt_id == (
         "email-unsubscribe-continuation:" + EFFECT_DIGEST
     )
-    assert continued.required_receipt_binding.startswith(
-        "domain-continuation-receipt:"
-    )
+    assert continued.required_receipt_binding.startswith("domain-continuation-receipt:")
 
     store.claim.update({"status": "done", "phase": "terminal"})
     store.continuation = None
@@ -800,6 +782,48 @@ def test_receipt_projection_revalidates_typed_control_values():
 
     with pytest.raises(EmailAgentTaskMetadataError):
         email_unsubscribe_continuation_receipt(poisoned)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ("email_otp", "captcha_handoff", "credential_handoff"),
+)
+def test_driver_projects_typed_auth_continuation_without_secret(kind):
+    module = _module()
+    store = FakeEmailStore()
+    store.continuation["controls"] = [
+        {
+            "reference": "auth-control:" + sha256(kind.encode()).hexdigest(),
+            "kind": kind,
+            "intent": "confirm",
+        }
+    ]
+
+    decision = module.EmailUnsubscribeContinuationDriver(store).continuation_state(
+        _task(),
+        audit_run=_audit_run(),
+        audit_result=_audit_result(),
+    )
+
+    assert decision.state is module.DomainContinuationState.CONTINUE
+    assert decision.required_receipt_id == (
+        "email-unsubscribe-continuation:" + EFFECT_DIGEST
+    )
+    assert "847201" not in decision.required_receipt_binding
+
+    from app.email_task_adapter import (
+        email_unsubscribe_continuation_receipt,
+        validated_email_unsubscribe_continuation,
+    )
+
+    typed = validated_email_unsubscribe_continuation(
+        _payload(),
+        _claim(),
+        store.continuation,
+    )
+    summary = json.loads(email_unsubscribe_continuation_receipt(typed).summary)
+    assert summary["requires_human"] is (kind == "credential_handoff")
+    assert "847201" not in json.dumps(summary, sort_keys=True)
 
 
 def test_driver_accepts_only_current_executed_audit_with_matching_durable_continuation() -> (

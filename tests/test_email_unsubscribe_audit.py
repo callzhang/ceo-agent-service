@@ -54,7 +54,7 @@ PLAN = build_versioned_email_action_plan(
     action_plan_version=1,
     classification_id=CLASSIFICATION_ID,
     account_id=ACCOUNT_ID,
-    category=EmailCategory.SUBSCRIPTION,
+    category=EmailCategory.JUNK,
     classification_source="user",
     confidence=1.0,
     model_id="email-model:test-audit",
@@ -109,9 +109,10 @@ def _payload() -> dict[str, object]:
         "thread_identity": THREAD_IDENTITY,
         "unsubscribe_entries": [
             {
+                "index": ENTRY.index,
                 "source": "header_https",
+                "digest": ENTRY.reference.removeprefix("unsubscribe-entry:"),
                 "reference": ENTRY.reference,
-                "priority": 10,
             }
         ],
         "unsubscribe_authentication": None,
@@ -215,10 +216,10 @@ def _seed_email_state(path: Path) -> EmailStore:
                     "rfc_message_id": "<mail-41@example.com>",
                     "thread_id": THREAD_IDENTITY,
                 },
-                "category": EmailCategory.SUBSCRIPTION,
+                "category": EmailCategory.JUNK,
                 "confidence": 1.0,
                 "margin": 1.0,
-                "probabilities": {"subscription": 1.0},
+                "probabilities": {"junk": 1.0},
                 "model_id": PLAN.model_id,
                 "config_version": PLAN.config_version,
                 "status": EmailClassificationStatus.PROCESSED,
@@ -1241,9 +1242,10 @@ def test_accepted_entry_can_be_one_of_multiple_projected_entries(
     assert isinstance(entries, list)
     entries.append(
         {
-            "source": "body_https",
+            "index": 1,
+            "source": "body_html_https",
+            "digest": SECONDARY_ENTRY.reference.removeprefix("unsubscribe-entry:"),
             "reference": SECONDARY_ENTRY.reference,
-            "priority": 20,
         }
     )
     with sqlite3.connect(fixture.email_store.path) as db:

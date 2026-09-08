@@ -16,24 +16,43 @@ from app.email_classifier_contracts import (
     EmailAction,
     EmailAttachmentMetadata,
     EmailCategory,
+    INITIAL_EMAIL_CATEGORY_KEYS,
     EmailClassification,
     EmailClassificationStatus,
     build_versioned_email_action_plan,
 )
+from app.email_category_config import VerifiedEmailFolderBinding
+from app.email_provider_folders import FolderRole
+from app.email_provider_folders import ProviderFolder
+from app.email_worker import ProviderFolderBindingCoordinator
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_model_registry import (
     EmailModelMetadata,
     EmailModelRegistry,
+    build_embedding_model_id,
     build_model_id,
 )
+from app.email_embedding_client import DEFAULT_EMBEDDING_MODEL_ID
+from app.email_classifier_runtime import EmailClassifierRuntimeMode
 from app.email_store import (
+    EmailFolderBindingConflict,
     EmailStore,
     email_action_identity,
     email_unsubscribe_effect_digest,
 )
 from app.email_task_adapter import email_conversation_id
 from app.store import AgentRole, AutoReplyStore
-from app.web_api.email import register_email_routes
+from app.web_api.email import _project_legacy_model_inventory, register_email_routes
+
+
+_CANONICAL_EMBEDDING_MODEL_FIRST = build_embedding_model_id(
+    trained_at=datetime(2026, 9, 8, 8, 0, tzinfo=timezone.utc),
+    artifact_sha256="a" * 64,
+)
+_CANONICAL_EMBEDDING_MODEL_SECOND = build_embedding_model_id(
+    trained_at=datetime(2026, 9, 8, 8, 1, tzinfo=timezone.utc),
+    artifact_sha256="b" * 64,
+)
 
 
 def _client(tmp_path: Path) -> TestClient:
@@ -180,10 +199,12 @@ def test_email_routes_initialize_and_reuse_one_store(
         update = client.put(
             "/api/console/email/config/work",
             json={
-                "description": "Work",
+                "core_description": "Daily work operations.",
+                "include": ["customer delivery"],
+                "exclude": ["personal matters"],
                 "threshold": 0.9,
-                "actions": [],
                 "enabled": True,
+                "description_version": "work-description-v2",
                 "config_version": "email-config-v1",
             },
         )
@@ -240,18 +261,19 @@ def _stage_learning_evidence_model(
 ) -> str:
     source = tmp_path / f"learning-{suffix}.pkl"
     texts = [
-        f"{category.value} {variant}"
-        for category in EmailCategory
+        f"{category} {variant}"
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
         for variant in ("primary", "secondary")
     ]
     labels = [
-        category.value
-        for category in EmailCategory
+        category
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
         for _variant in ("primary", "secondary")
     ]
     classifier = CpuTfidfLogisticClassifier(model_version="candidate").fit(
         texts,
         labels,
+        enabled_category_keys=INITIAL_EMAIL_CATEGORY_KEYS,
     )
     classifier.save(source)
     digest = sha256(source.read_bytes()).hexdigest()
@@ -271,7 +293,7 @@ def _stage_learning_evidence_model(
             "auto_action_eligible": True,
             "eligibility_reason": "eligible",
         }
-        for category in (item.value for item in EmailCategory)
+        for category in INITIAL_EMAIL_CATEGORY_KEYS
     }
     metadata = EmailModelMetadata(
         model_id=model_id,
@@ -283,10 +305,10 @@ def _stage_learning_evidence_model(
         trained_at=trained_at.isoformat(),
         training_started_at=(trained_at - timedelta(seconds=2)).isoformat(),
         training_finished_at=trained_at.isoformat(),
-        sample_count=160,
-        new_sample_count=16,
-        category_counts={category.value: 20 for category in EmailCategory},
-        account_counts={"account-a": 160},
+        sample_count=180,
+        new_sample_count=18,
+        category_counts={category: 20 for category in INITIAL_EMAIL_CATEGORY_KEYS},
+        account_counts={"account-a": 180},
         validation_method="time-ordered-holdout",
         accuracy=0.96,
         macro_f1=0.955,
@@ -369,7 +391,7 @@ def test_email_learning_endpoint_exposes_real_lifecycle_evidence(
     assert by_id[active]["promotion_reason"] == "macro_f1_and_latency_passed"
     assert by_id[previous]["status"] == "previous"
     assert by_id[previous]["promotion_reason"] == "initial_validation_passed"
-    assert by_id[previous]["superseded_reason"] == f"superseded_by:{active}"
+    assert by_id[previous]["superseded_reason"] == "superseded"
     assert by_id[candidate]["status"] == "candidate"
     assert by_id[rejected]["rejection_reason"] == "subscription_precision_below_0.95"
     assert by_id[failed]["failure_reason"] == "artifact_reload_failed"
@@ -383,6 +405,60 @@ def test_email_learning_endpoint_exposes_real_lifecycle_evidence(
     serialized = json.dumps(models, sort_keys=True)
     assert "/private/" not in serialized
     assert "artifact_path" not in serialized
+
+
+def test_legacy_model_observability_redacts_every_reason_field() -> None:
+    private = (
+        "https://private.example/path?token=secret-token OTP 129944 "
+        "private body phrase browser/profile/session-reference"
+    )
+    metadata = {
+        "model_id": "email-tfidf-lr-safe",
+        "status": "failed",
+        "promotion_reason": private,
+        "failure_reason": private,
+        "per_category_metrics": {
+            "legal": {
+                "precision": 0.5,
+                "recall": 0.5,
+                "f1": 0.5,
+                "eligibility_reason": private,
+                "raw_embedding": [1.0, 2.0],
+            }
+        },
+    }
+    lifecycle = tuple(
+        SimpleNamespace(
+            event_id=f"event-{status}",
+            model_id=metadata["model_id"],
+            status=status,
+            occurred_at="2026-09-08T00:00:00+00:00",
+            reason=private,
+        )
+        for status in ("candidate", "active", "rejected", "failed", "previous")
+    )
+    entry = SimpleNamespace(
+        metadata=SimpleNamespace(to_dict=lambda: metadata),
+        status="failed",
+        status_reason=private,
+        lifecycle=lifecycle,
+        integrity_status="corrupt",
+        integrity_error=private,
+    )
+
+    serialized = json.dumps(_project_legacy_model_inventory(entry), sort_keys=True)
+
+    for fragment in (
+        "private.example",
+        "secret-token",
+        "129944",
+        "private body phrase",
+        "browser/profile/session-reference",
+        "raw_embedding",
+    ):
+        assert fragment not in serialized
+    assert '"status_reason": "unavailable"' in serialized
+    assert '"integrity_error": "registry_integrity_error"' in serialized
     assert "metadata_path" not in serialized
 
 
@@ -423,7 +499,7 @@ def test_email_learning_keeps_healthy_models_visible_when_history_is_corrupt(
     assert by_id[corrupt]["integrity_status"] == "corrupt"
     assert response.json()["learning"]["registry_issues"] == [
         {
-            "model_id": corrupt,
+            "model_id": "model-inventory-evidence",
             "integrity_status": "corrupt",
             "integrity_error": "artifact_digest_mismatch",
         }
@@ -530,10 +606,77 @@ def test_email_learning_does_not_serialize_wrong_metadata_identity(
     assert model_ids == [second]
     assert len(model_ids) == len(set(model_ids))
     assert {
-        "model_id": first,
+        "model_id": "model-inventory-evidence",
         "integrity_status": "corrupt",
         "integrity_error": "metadata_invalid",
     } in learning["registry_issues"]
+
+
+@pytest.mark.parametrize(
+    "corrupt_model_id",
+    (
+        "https://private.example/model?token=secret",
+        "847201",
+        "private full body phrase",
+        "private-browser-session",
+    ),
+)
+def test_email_learning_registry_issues_never_echo_corrupt_model_id(
+    tmp_path: Path, corrupt_model_id: str
+) -> None:
+    class Registry:
+        root = tmp_path / "models"
+
+        def active_manifest(self):
+            return None
+
+        def active_model_id_unverified(self):
+            return None
+
+        def list_model_inventory(self):
+            return [
+                SimpleNamespace(
+                    model_id=corrupt_model_id,
+                    integrity_status="corrupt",
+                    integrity_error="metadata_invalid",
+                    metadata=None,
+                )
+            ]
+
+        def list_staged_evidence(self):
+            return []
+
+    class LearningStore:
+        def list_unincluded_training_examples(self):
+            return []
+
+        def list_configs(self):
+            return []
+
+        def latest_training_snapshot_state(self):
+            return None
+
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: LearningStore(),
+        email_learning_factory=lambda: SimpleNamespace(
+            registry=Registry(),
+            retrain_state_path=tmp_path / "missing-state.json",
+        ),
+    )
+
+    response = TestClient(app).get("/api/console/email/learning")
+
+    assert response.status_code == 200
+    assert corrupt_model_id not in response.text
+    assert response.json()["learning"]["registry_issues"] == [
+        {
+            "model_id": "model-inventory-evidence",
+            "integrity_status": "corrupt",
+            "integrity_error": "metadata_invalid",
+        }
+    ]
 
 
 def test_email_classification_list_and_detail_expose_only_attachment_metadata(
@@ -556,7 +699,7 @@ def test_email_classification_list_and_detail_expose_only_attachment_metadata(
             "category": EmailCategory.WORK,
             "confidence": 0.7,
             "margin": 0.2,
-            "probabilities": {"work": 0.7, "important": 0.3},
+                "probabilities": {"work": 0.7, "legal": 0.3},
             "model_id": "email-model-v73",
             "config_version": "email-config-v3",
             "status": EmailClassificationStatus.PENDING_FEEDBACK,
@@ -602,7 +745,7 @@ def test_email_classification_list_and_detail_expose_only_attachment_metadata(
     assert detailed.status_code == 200
     assert listed.json()["items"][0]["attachment_metadata"] == expected_metadata
     assert detailed.json()["item"]["attachment_metadata"] == expected_metadata
-    assert detailed.json()["item"]["message_text"] == "正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容"
+    assert "message_text" not in detailed.json()["item"]
     assert detailed.json()["item"]["cc"] == "copy@example.com"
     assert detailed.json()["item"]["recipients"] == ["recipient@example.com"]
     assert "message_text" not in listed.json()["items"][0]
@@ -638,6 +781,17 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
                 }
             ]
 
+        def get_provider_classification_state(self, classification_id: int):
+            assert classification_id == 41
+            return {
+                "state": "categorized",
+                "category_key": "legal",
+                "important": True,
+                "provider_folder_id": "folder-legal",
+                "provider_folder_name": "Legal",
+                "observed_at": "2026-09-08T08:00:00+00:00",
+            }
+
     app = FastAPI()
     register_email_routes(app, lambda: DetailStore())
 
@@ -656,11 +810,704 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
             "result_text": "退订成功",
         }
     ]
+    assert payload["provider_classification"] == {
+        "state": "categorized",
+        "category_key": "legal",
+        "important": True,
+        "provider_folder_id": "folder-legal",
+        "provider_folder_name": "Legal",
+        "observed_at": "2026-09-08T08:00:00+00:00",
+    }
     assert payload["meta"]["snapshot_at"]
 
     missing = TestClient(app).get("/api/console/email/classifications/42")
     assert missing.status_code == 404
     assert missing.json()["code"] == "not_found"
+
+
+def test_email_folder_bindings_endpoint_is_read_only_and_provider_aware() -> None:
+    class BindingStore:
+        def list_category_configs(self):
+            return [
+                {
+                    "category_key": "legal",
+                    "display_name": "法务",
+                    "enabled": True,
+                    "description_version": "legal-v3",
+                }
+            ]
+
+        def list_account_folder_bindings(self):
+            return [
+                {
+                    "account_id": "account-1",
+                    "category_key": "legal",
+                    "provider_folder_id": "folder-legal",
+                    "provider_folder_name": "Legal",
+                    "binding_status": "active",
+                    "last_verified_at": "2026-09-08T08:00:00+00:00",
+                },
+                {
+                    "account_id": "account-2",
+                    "category_key": "legal",
+                    "provider_folder_id": "folder-legal-2",
+                    "provider_folder_name": "Legal",
+                    "binding_status": "unavailable",
+                    "last_verified_at": "2026-09-08T08:01:00+00:00",
+                },
+            ]
+
+    app = FastAPI()
+    register_email_routes(app, lambda: BindingStore())
+
+    response = TestClient(app).get("/api/console/email/folder-bindings")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [
+        {
+            "category_key": "legal",
+            "display_name": "法务",
+            "enabled": True,
+            "description_version": "legal-v3",
+            "accounts": [
+                {
+                    "account_id": "account-1",
+                    "provider_folder_id": "folder-legal",
+                    "provider_folder_name": "Legal",
+                    "binding_status": "active",
+                    "last_verified_at": "2026-09-08T08:00:00+00:00",
+                },
+                {
+                    "account_id": "account-2",
+                    "provider_folder_id": "folder-legal-2",
+                    "provider_folder_name": "Legal",
+                    "binding_status": "unavailable",
+                    "last_verified_at": "2026-09-08T08:01:00+00:00",
+                },
+            ],
+        }
+    ]
+
+
+def test_email_learning_and_model_version_expose_safe_modern_evidence(tmp_path) -> None:
+    secret_markers = {
+        "unsubscribe_url": "https://private.example/unsubscribe?token=secret",
+        "otp": "847201",
+        "raw_embedding": [0.1, 0.2],
+        "body": "private full body",
+        "browser_session": "private-browser-session",
+    }
+    evidence = {
+        "model_id": _CANONICAL_EMBEDDING_MODEL_SECOND,
+        "source_snapshot_id": "email-folder-snapshot-20260908T080100.000000Z-aaaaaaaaaaaa",
+        "source_snapshot_digest": "a" * 64,
+        "source_snapshot_observed_at": "2026-09-08T08:01:00+00:00",
+        "folder_label_watermark": 81,
+        "important_label_watermark": 41,
+        "status": "candidate",
+        "trained_at": "2026-09-08T08:02:00+00:00",
+        "compatibility": {
+            "enabled_categories": ["legal", "financing"],
+            "description_version": "description-set-sha256:" + "d" * 64,
+            "input_schema_version": "email-folder-model-input-v2",
+            "embedding_model_id": DEFAULT_EMBEDDING_MODEL_ID,
+            "embedding_revision": "release/2026-09-08+gpu4",
+            "head_format": "description-mlp-v1",
+            "parent_model_id": _CANONICAL_EMBEDDING_MODEL_FIRST,
+            "private_browser_data": "nested-private-browser",
+        },
+        "split_counts": {
+            "train": 240,
+            "validation": 40,
+            "test": 40,
+            "test_evaluations": 1,
+            "important": {"train": 240, "validation": 40, "test": 40},
+            "private_browser_data": "nested-split-private",
+        },
+        "metrics": {
+            "categories": {
+                "legal": {
+                    "accepted_precision": 0.97,
+                    "accepted_hits": 25,
+                    "independent_groups": 12,
+                },
+                "financing": {
+                    "accepted_precision": 0.96,
+                    "accepted_hits": 23,
+                    "independent_groups": 11,
+                },
+            },
+            "important": {
+                "accepted_precision": 0.98,
+                "accepted_hits": 24,
+                "independent_groups": 12,
+            },
+        },
+        "historical_eligibility": {
+            "categories": {
+                "legal": {
+                    "precision": 0.97,
+                    "accepted_hits": 25,
+                    "independent_groups": 12,
+                    "eligible": True,
+                },
+                "financing": {
+                    "precision": 0.96,
+                    "accepted_hits": 23,
+                    "independent_groups": 11,
+                    "eligible": True,
+                },
+            },
+            "important": {
+                "precision": 0.98,
+                "accepted_hits": 24,
+                "independent_groups": 12,
+                "eligible": True,
+            },
+            "raw_embedding": [9.0, 8.0],
+        },
+        "unresolved_historical_systematic_error": False,
+        "whole_model_readiness": {
+            "ready": True,
+            "passing_model_ids": [
+                _CANONICAL_EMBEDDING_MODEL_FIRST,
+                _CANONICAL_EMBEDDING_MODEL_SECOND,
+            ],
+            "reason": (
+                "https://private.example/status?token=reason-secret "
+                "OTP 129944 body phrase browser/profile/reference"
+            ),
+            "otp": "129944",
+        },
+        "latency_ms": {"p50": 8.0, "p95": 42.0, "p99": 70.0},
+        "hashes": {"snapshot_sha256": "a" * 64, "artifact_sha256": "b" * 64},
+        "failure_reason": (
+            "https://private.example/failure?token=reason-secret "
+            "OTP 847201 body phrase browser/profile/reference"
+        ),
+        **secret_markers,
+    }
+
+    class Registry:
+        root = tmp_path / "models"
+        embedding_artifacts = root / "embedding-artifacts"
+        staged_evidence = root / "staged-evidence"
+
+        def active_manifest(self):
+            return SimpleNamespace(model_id=_CANONICAL_EMBEDDING_MODEL_SECOND)
+
+        def active_model_id_unverified(self):
+            return _CANONICAL_EMBEDDING_MODEL_SECOND
+
+        def list_model_inventory(self):
+            return []
+
+        def list_staged_evidence(self):
+            first = json.loads(json.dumps(evidence))
+            first["model_id"] = _CANONICAL_EMBEDDING_MODEL_FIRST
+            first["source_snapshot_id"] = (
+                "email-folder-snapshot-20260908T080000.000000Z-cccccccccccc"
+            )
+            first["source_snapshot_digest"] = "c" * 64
+            first["source_snapshot_observed_at"] = "2026-09-08T08:00:00+00:00"
+            first["folder_label_watermark"] = 80
+            first["important_label_watermark"] = 40
+            for metrics in first["metrics"]["categories"].values():
+                metrics["accepted_hits"] -= 1
+                metrics["independent_groups"] -= 1
+            first["metrics"]["important"]["accepted_hits"] -= 1
+            first["metrics"]["important"]["independent_groups"] -= 1
+            first["whole_model_readiness"] = {
+                "ready": False,
+                "passing_model_ids": [],
+                "reason": "two_consecutive_candidates_required",
+            }
+            return [first, evidence]
+
+        def get_staged_evidence(self, model_id):
+            if model_id != evidence["model_id"]:
+                raise ValueError("unknown")
+            return evidence
+
+    class LearningStore:
+        def list_unincluded_training_examples(self):
+            return []
+
+        def list_configs(self):
+            return []
+
+        def latest_training_snapshot_state(self):
+            return {
+                "snapshot_id": "snapshot-2",
+                "snapshot_version": "email-folder-snapshot.v1",
+                "description_version": "description-set-sha256:abc",
+                "sample_count": 320,
+                "group_count": 80,
+                "category_sample_counts": {"legal": 40, "financing": 35},
+                "category_group_counts": {"legal": 15, "financing": 14},
+            }
+
+        def classifier_runtime_observability(self, *, model_id):
+            assert model_id == _CANONICAL_EMBEDDING_MODEL_SECOND
+            return {
+                "timing": runtime.latency.summary(),
+                "fallback_counts": {
+                    **runtime.latency.fallback_counts(),
+                    "token_secret_browser_profile_129944": 2,
+                },
+            }
+
+    runtime = SimpleNamespace(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        latency=SimpleNamespace(
+            summary=lambda: {
+                "warm_success_cache": {
+                    "sample_count": 30,
+                    "stages": {"total": {"p50": 5.0, "p95": 11.0, "p99": 18.0}},
+                },
+                "warm_success_remote": {
+                    "sample_count": 30,
+                    "stages": {"total": {"p50": 80.0, "p95": 340.0, "p99": 410.0}},
+                },
+                "slo_status": "compliant",
+                "raw_embedding": [7.0, 6.0],
+            },
+            fallback_counts=lambda: {"embedding_timeout": 3},
+        ),
+    )
+    registry = Registry()
+    registry.embedding_artifacts.mkdir(parents=True)
+    registry.staged_evidence.mkdir(parents=True)
+    artifact = b"safe-test-artifact"
+    artifact_digest = sha256(artifact).hexdigest()
+    (registry.embedding_artifacts / f"{_CANONICAL_EMBEDDING_MODEL_SECOND}.artifact").write_bytes(
+        artifact
+    )
+    evidence["hashes"]["artifact_sha256"] = artifact_digest
+    (registry.staged_evidence / f"{_CANONICAL_EMBEDDING_MODEL_SECOND}.json").write_text(
+        json.dumps(evidence), encoding="utf-8"
+    )
+    (registry.root / "online-active.json").write_text(
+        json.dumps(
+            {
+                "model_id": _CANONICAL_EMBEDDING_MODEL_SECOND,
+                "artifact_sha256": artifact_digest,
+                "compatibility": evidence["compatibility"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = SimpleNamespace(
+        registry=registry,
+        retrain_state_path=Path("/nonexistent/retrain-state.json"),
+    )
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: LearningStore(),
+        email_learning_factory=lambda: service,
+    )
+    client = TestClient(app)
+
+    learning = client.get("/api/console/email/learning")
+    detail = client.get(
+        f"/api/console/email/model-versions/{_CANONICAL_EMBEDDING_MODEL_SECOND}"
+    )
+
+    assert learning.status_code == 200
+    payload = learning.json()["learning"]
+    assert payload["active_mode"] == "model_primary"
+    assert payload["active_model_id"] == _CANONICAL_EMBEDDING_MODEL_SECOND
+    assert payload["training_snapshot"]["sample_count"] == 320
+    assert payload["historical_eligibility"]["categories"]["legal"]["eligible"] is True
+    assert payload["promotion_evidence"]["passing_model_ids"] == [
+        _CANONICAL_EMBEDDING_MODEL_FIRST,
+        _CANONICAL_EMBEDDING_MODEL_SECOND,
+    ]
+    assert payload["runtime_timing"]["warm_success_cache"]["stages"]["total"]["p95"] == 11.0
+    assert payload["fallback_counts"] == {
+        "embedding_timeout": 3,
+        "runtime_failure": 2,
+    }
+    assert detail.status_code == 200
+    model = detail.json()["model"]
+    assert model["model_id"] == _CANONICAL_EMBEDDING_MODEL_SECOND
+    assert model["training_snapshot_id"] == (
+        "email-folder-snapshot-20260908T080100.000000Z-aaaaaaaaaaaa"
+    )
+    assert model["training_snapshot_digest"] == "a" * 64
+    assert model["historical_eligibility"]["categories"]["legal"]["eligible"] is True
+    serialized = json.dumps({"learning": learning.json(), "detail": detail.json()})
+    for private in secret_markers.values():
+        assert json.dumps(private) not in serialized
+    assert "unsubscribe_url" not in serialized
+    assert "raw_embedding" not in serialized
+    assert "browser_session" not in serialized
+    assert "nested-private-browser" not in serialized
+    assert "nested-split-private" not in serialized
+    assert "129944" not in serialized
+    assert "[9.0, 8.0]" not in serialized
+    assert "[7.0, 6.0]" not in serialized
+    assert "reason-secret" not in serialized
+    assert "body phrase" not in serialized
+    assert "token_secret_browser_profile_129944" not in serialized
+
+
+@pytest.mark.parametrize(
+    "contents",
+    (
+        "{malformed-json",
+        json.dumps({"model_id": "email-embedding-mlp-corrupt"}),
+        json.dumps({"model_id": 42, "status": ["wrong"]}),
+    ),
+)
+def test_email_model_version_distinguishes_missing_from_corrupt_evidence(
+    tmp_path: Path, contents: str
+) -> None:
+    registry = EmailModelRegistry(tmp_path / "models")
+    model_id = "email-embedding-mlp-corrupt"
+    (registry.staged_evidence / f"{model_id}.json").write_text(
+        contents, encoding="utf-8"
+    )
+    service = SimpleNamespace(
+        registry=registry,
+        retrain_state_path=tmp_path / "models" / "retrain-state.json",
+    )
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "email.sqlite3"),
+        email_learning_factory=lambda: service,
+    )
+    client = TestClient(app)
+
+    corrupt = client.get(f"/api/console/email/model-versions/{model_id}")
+    missing = client.get(
+        "/api/console/email/model-versions/email-embedding-mlp-missing"
+    )
+    traversal = client.get(
+        "/api/console/email/model-versions/email-embedding-mlp-%2E%2E%2Fsecret"
+    )
+    backslash_traversal = client.get(
+        "/api/console/email/model-versions/email-embedding-mlp-%5Csecret"
+    )
+
+    assert corrupt.status_code == 409
+    assert corrupt.json()["code"] == "email_model_integrity_error"
+    assert "malformed" not in corrupt.text
+    assert missing.status_code == 404
+    assert traversal.status_code in {400, 404}
+    assert "secret" not in traversal.text
+    assert backslash_traversal.status_code == 400
+    assert backslash_traversal.json()["code"] == "invalid_email_model_id"
+    assert "secret" not in backslash_traversal.text
+
+
+def _valid_model_detail_evidence() -> dict[str, object]:
+    metric = {
+        "accepted_precision": 0.97,
+        "accepted_hits": 25,
+        "independent_groups": 12,
+    }
+    historical = {
+        "precision": 0.97,
+        "accepted_hits": 25,
+        "independent_groups": 12,
+        "eligible": True,
+    }
+    return {
+        "model_id": _CANONICAL_EMBEDDING_MODEL_SECOND,
+        "source_snapshot_id": "email-folder-snapshot-20260908T080000.000000Z-abcdef123456",
+        "source_snapshot_digest": "a" * 64,
+        "source_snapshot_observed_at": "2026-09-08T08:00:00+00:00",
+        "folder_label_watermark": 25,
+        "important_label_watermark": 20,
+        "status": "candidate",
+        "trained_at": "2026-09-08T08:01:00+00:00",
+        "compatibility": {
+            "enabled_categories": ["legal"],
+            "description_version": "description-set-sha256:" + "d" * 64,
+            "input_schema_version": "email-folder-model-input-v2",
+            "embedding_model_id": "jina-small",
+            "embedding_revision": "gpu4-r17",
+            "head_format": "description-mlp-v1",
+            "parent_model_id": _CANONICAL_EMBEDDING_MODEL_FIRST,
+        },
+        "split_counts": {
+            "train": 30,
+            "validation": 20,
+            "test": 20,
+            "test_evaluations": 1,
+            "important": {"train": 30, "validation": 20, "test": 20},
+        },
+        "metrics": {"categories": {"legal": metric}, "important": metric},
+        "historical_eligibility": {
+            "categories": {"legal": historical},
+            "important": historical,
+        },
+        "unresolved_historical_systematic_error": False,
+        "whole_model_readiness": {
+            "ready": True,
+            "passing_model_ids": [
+                _CANONICAL_EMBEDDING_MODEL_FIRST,
+                _CANONICAL_EMBEDDING_MODEL_SECOND,
+            ],
+            "reason": "two_consecutive_compatible_candidates_passed",
+        },
+        "latency_ms": {"p50": 10.0, "p95": 20.0, "p99": 30.0},
+        "hashes": {"snapshot_sha256": "a" * 64, "artifact_sha256": "b" * 64},
+        "failure_reason": "",
+    }
+
+
+def test_model_detail_accepts_canonical_production_model_and_opaque_external_refs(
+    tmp_path: Path,
+) -> None:
+    evidence = _valid_model_detail_evidence()
+    artifact_digest = "e" * 64
+    model_id = build_embedding_model_id(
+        trained_at=datetime(2026, 9, 8, 8, 1, tzinfo=timezone.utc),
+        artifact_sha256=artifact_digest,
+    )
+    evidence["model_id"] = model_id
+    evidence["compatibility"]["parent_model_id"] = None  # type: ignore[index]
+    evidence["whole_model_readiness"]["passing_model_ids"] = [model_id]  # type: ignore[index]
+    evidence["compatibility"]["embedding_model_id"] = DEFAULT_EMBEDDING_MODEL_ID  # type: ignore[index]
+    evidence["compatibility"]["embedding_revision"] = "release/2026-09-08+gpu4"  # type: ignore[index]
+
+    class Registry:
+        root = tmp_path / "models"
+        staged_evidence = root / "staged-evidence"
+
+        def get_staged_evidence(self, requested_model_id):
+            assert requested_model_id == model_id
+            return evidence
+
+    registry = Registry()
+    registry.staged_evidence.mkdir(parents=True)
+    (registry.staged_evidence / f"{model_id}.json").write_text("{}")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "email.sqlite3"),
+        email_learning_factory=lambda: SimpleNamespace(registry=registry),
+    )
+
+    response = TestClient(app).get(f"/api/console/email/model-versions/{model_id}")
+
+    assert response.status_code == 200
+    compatibility = response.json()["model"]["compatibility"]
+    assert compatibility["embedding_model_reference"] == "configured-external-model"
+    assert compatibility["embedding_revision_reference"] == (
+        "configured-external-revision"
+    )
+    assert DEFAULT_EMBEDDING_MODEL_ID not in response.text
+    assert "release/2026-09-08+gpu4" not in response.text
+
+
+def test_external_evidence_references_are_fixed_and_not_otp_derived(tmp_path: Path) -> None:
+    def project(model_value: str, revision_value: str) -> dict[str, object]:
+        evidence = _valid_model_detail_evidence()
+        evidence["compatibility"]["embedding_model_id"] = model_value  # type: ignore[index]
+        evidence["compatibility"]["embedding_revision"] = revision_value  # type: ignore[index]
+        model_id = str(evidence["model_id"])
+
+        class Registry:
+            root = tmp_path / model_value
+            staged_evidence = root / "staged-evidence"
+
+            def get_staged_evidence(self, _requested_model_id):
+                return evidence
+
+        registry = Registry()
+        registry.staged_evidence.mkdir(parents=True)
+        (registry.staged_evidence / f"{model_id}.json").write_text("{}")
+        app = FastAPI()
+        register_email_routes(
+            app,
+            lambda: EmailStore(tmp_path / f"{model_value}.sqlite3"),
+            email_learning_factory=lambda: SimpleNamespace(registry=registry),
+        )
+        response = TestClient(app).get(
+            f"/api/console/email/model-versions/{model_id}"
+        )
+        assert response.status_code == 200
+        assert model_value not in response.text
+        assert revision_value not in response.text
+        return response.json()["model"]["compatibility"]
+
+    first = project("847201", "129944")
+    second = project("731908", "650217")
+
+    assert first["embedding_model_reference"] == second["embedding_model_reference"]
+    assert first["embedding_revision_reference"] == second[
+        "embedding_revision_reference"
+    ]
+    assert first["embedding_model_reference"] == "configured-external-model"
+    assert first["embedding_revision_reference"] == "configured-external-revision"
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        ("model_id",),
+        ("source_snapshot_id",),
+        ("source_snapshot_observed_at",),
+        ("trained_at",),
+        ("status",),
+        ("compatibility", "description_version"),
+        ("compatibility", "input_schema_version"),
+        ("compatibility", "embedding_model_id"),
+        ("compatibility", "embedding_revision"),
+        ("compatibility", "head_format"),
+        ("compatibility", "parent_model_id"),
+        ("compatibility", "enabled_categories"),
+        ("whole_model_readiness", "passing_model_ids"),
+    ),
+)
+def test_model_detail_rejects_or_redacts_private_values_in_projected_strings(
+    tmp_path: Path, path: tuple[str, ...]
+) -> None:
+    private = (
+        "https://private.example/unsubscribe?token=secret OTP 847201 "
+        "full body browser/profile/session-reference"
+    )
+    evidence = _valid_model_detail_evidence()
+    target = evidence
+    for key in path[:-1]:
+        target = target[key]  # type: ignore[index,assignment]
+    target[path[-1]] = [private] if path[-1].endswith("categories") or path[-1].endswith("ids") else private  # type: ignore[index]
+    model_id = _CANONICAL_EMBEDDING_MODEL_SECOND
+
+    class Registry:
+        root = tmp_path / "models"
+        staged_evidence = root / "staged-evidence"
+
+        def get_staged_evidence(self, requested_model_id):
+            assert requested_model_id == model_id
+            return evidence
+
+    registry = Registry()
+    registry.staged_evidence.mkdir(parents=True)
+    (registry.staged_evidence / f"{model_id}.json").write_text("{}")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "email.sqlite3"),
+        email_learning_factory=lambda: SimpleNamespace(registry=registry),
+    )
+
+    response = TestClient(app).get(f"/api/console/email/model-versions/{model_id}")
+
+    if path in {
+        ("compatibility", "embedding_model_id"),
+        ("compatibility", "embedding_revision"),
+    }:
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 409
+        assert response.json()["code"] == "email_model_integrity_error"
+    assert "private.example" not in response.text
+    assert "847201" not in response.text
+    assert "full body" not in response.text
+    assert "browser/profile" not in response.text
+
+
+@pytest.mark.parametrize("private", ("847201", "private-browser-session", "token_abcdEFGH1234567890"))
+@pytest.mark.parametrize(
+    "path",
+    (
+        ("model_id",),
+        ("source_snapshot_id",),
+        ("compatibility", "description_version"),
+        ("compatibility", "input_schema_version"),
+        ("compatibility", "embedding_model_id"),
+        ("compatibility", "embedding_revision"),
+        ("compatibility", "head_format"),
+        ("compatibility", "parent_model_id"),
+        ("compatibility", "enabled_categories"),
+        ("whole_model_readiness", "passing_model_ids"),
+    ),
+)
+def test_model_detail_rejects_or_redacts_valid_syntax_secret_identifiers(
+    tmp_path: Path, path: tuple[str, ...], private: str
+) -> None:
+    evidence = _valid_model_detail_evidence()
+    target = evidence
+    for key in path[:-1]:
+        target = target[key]  # type: ignore[index,assignment]
+    target[path[-1]] = [private] if path[-1].endswith("categories") or path[-1].endswith("ids") else private  # type: ignore[index]
+    requested = _CANONICAL_EMBEDDING_MODEL_SECOND
+
+    class Registry:
+        root = tmp_path / "models"
+        staged_evidence = root / "staged-evidence"
+
+        def get_staged_evidence(self, _model_id):
+            return evidence
+
+    registry = Registry()
+    registry.staged_evidence.mkdir(parents=True)
+    (registry.staged_evidence / f"{requested}.json").write_text("{}")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "email.sqlite3"),
+        email_learning_factory=lambda: SimpleNamespace(registry=registry),
+    )
+    response = TestClient(app).get(f"/api/console/email/model-versions/{requested}")
+
+    if path in {
+        ("compatibility", "embedding_model_id"),
+        ("compatibility", "embedding_revision"),
+    }:
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 409
+    assert private not in response.text
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing_category_metrics",
+        "extreme_numeric_value",
+        "wrong_nested_structure",
+    ),
+)
+def test_model_detail_rejects_malformed_nested_evidence(
+    tmp_path: Path, mutation: str
+) -> None:
+    evidence = _valid_model_detail_evidence()
+    if mutation == "missing_category_metrics":
+        del evidence["metrics"]["categories"]["legal"]  # type: ignore[index]
+    elif mutation == "extreme_numeric_value":
+        evidence["latency_ms"]["p95"] = float("inf")  # type: ignore[index]
+    else:
+        evidence["historical_eligibility"] = ["wrong"]
+    model_id = str(evidence["model_id"])
+
+    class Registry:
+        root = tmp_path / "models"
+        staged_evidence = root / "staged-evidence"
+
+        def get_staged_evidence(self, _model_id):
+            return evidence
+
+    registry = Registry()
+    registry.staged_evidence.mkdir(parents=True)
+    (registry.staged_evidence / f"{model_id}.json").write_text("{}")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "email.sqlite3"),
+        email_learning_factory=lambda: SimpleNamespace(registry=registry),
+    )
+
+    response = TestClient(app).get(f"/api/console/email/model-versions/{model_id}")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "email_model_integrity_error"
 
 
 def _audited_email_detail_fixture(
@@ -679,7 +1526,7 @@ def _audited_email_detail_fixture(
         action_plan_version=1,
         classification_id=classification_id,
         account_id=account_id,
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.NOTIFICATION,
         classification_source="user",
         confidence=1.0,
         model_id="email-model:observability-v1",
@@ -721,10 +1568,10 @@ def _audited_email_detail_fixture(
                     "rfc_message_id": "<newsletter-41@example.com>",
                     "thread_id": thread_identity,
                 },
-                "category": EmailCategory.SUBSCRIPTION,
+                "category": EmailCategory.NOTIFICATION,
                 "confidence": 1.0,
                 "margin": 1.0,
-                "probabilities": {"subscription": 1.0},
+                "probabilities": {"notification": 1.0},
                 "model_id": plan.model_id,
                 "config_version": plan.config_version,
                 "status": EmailClassificationStatus.PROCESSED,
@@ -1025,6 +1872,84 @@ def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
     assert all(
         str(value) not in serialized for value in fixture.private_markers.values()
     )
+
+
+def test_email_detail_projects_safe_unsubscribe_continuation_state(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    with sqlite3.connect(fixture.database) as db:
+        db.execute("delete from email_unsubscribe_steps")
+        db.execute("delete from email_unsubscribe_receipts")
+        db.execute(
+            "update email_unsubscribe_claims set status='dispatching', "
+            "phase='navigating' where action_identity=?",
+            (fixture.action_identity,),
+        )
+        db.execute(
+            "update reply_tasks set status='processing' where id=?",
+            (fixture.task.id,),
+        )
+        db.execute(
+            "update agent_runs set status='running', completed_at='' where id=?",
+            (fixture.audit.id,),
+        )
+    fixture.store.persist_email_unsubscribe_continuation(
+        action_identity=fixture.action_identity,
+        effect_digest=fixture.effect_digest,
+        action_plan_id=fixture.plan.action_plan_id,
+        action_plan_version=fixture.plan.action_plan_version,
+        classification_id=fixture.classification_id,
+        account_id=fixture.account_id,
+        stable_message_identity=fixture.stable_message_identity,
+        thread_identity=fixture.thread_identity,
+        entry_reference="unsubscribe-entry:observability-1",
+        operations=(
+            {
+                "operation_reference": "step-observability-1",
+                "kind": "open_entry",
+                "target_reference": "unsubscribe-entry:observability-1",
+            },
+        ),
+        controls=(
+            {
+                "reference": "private-browser-control",
+                "kind": "captcha_handoff",
+                "intent": "confirm",
+            },
+        ),
+        observation_reference="private-browser-observation",
+        final_step={
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "action_required",
+            "reference": "private-browser-step",
+        },
+        owner={
+            "owner_id": "email-audit-worker",
+            "generation": 1,
+            "lease_token": "unsubscribe-observability-lease",
+        },
+        network_policy_reference="network-policy:observability-1",
+        network_policy_origin_references=("network-origin:observability-1",),
+    )
+
+    response = fixture.client.get(
+        f"/api/console/email/classifications/{fixture.classification_id}"
+    )
+
+    assert response.status_code == 200
+    event = response.json()["observability"][0]
+    assert event["continuation"] == {
+        "state": "awaiting_audit",
+        "control_kinds": ["captcha_handoff"],
+        "operation_count": 1,
+        "requires_human": True,
+    }
+    serialized = json.dumps(event, sort_keys=True)
+    assert "private-browser-control" not in serialized
+    assert "private-browser-observation" not in serialized
+    assert "private-browser-step" not in serialized
 
 
 @pytest.mark.parametrize(
@@ -1449,9 +2374,9 @@ def test_paginated_get_does_not_compete_with_scanner_write_transaction(
 @pytest.mark.parametrize(
     ("category", "actions", "action_parameters"),
     (
-        ("work", ["label"], {"label": {"labels": ["work"]}}),
+        ("configured_work", ["label"], {"label": {"labels": ["work"]}}),
         (
-            "billing",
+            "configured_billing",
             ["move"],
             {"move": {"target_folder": "Archive/Billing"}},
         ),
@@ -1463,64 +2388,79 @@ def test_email_config_api_persists_valid_action_parameters(
     actions: list[str],
     action_parameters: dict[str, dict[str, object]],
 ):
-    with _client(tmp_path) as client:
-        response = client.put(
-            f"/api/console/email/config/{category}",
-            json={
-                "description": "Configured category",
-                "threshold": 0.95,
-                "actions": actions,
-                "action_parameters": action_parameters,
-                "enabled": True,
-                "config_version": "email-config-v1",
-            },
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "action-config.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+    payload = {
+        **_dynamic_category_payload(category),
+        "actions": actions,
+        "action_parameters": action_parameters,
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/console/email/config",
+            json=payload,
         )
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     assert response.json()["item"]["action_parameters"] == action_parameters
 
 
 def test_email_config_api_rejects_auto_reply_even_with_valid_instruction(
     tmp_path: Path,
 ):
-    with _client(tmp_path) as client:
-        response = client.put(
-            "/api/console/email/config/important",
-            json={
-                "description": "No outbound replies",
-                "threshold": 0.95,
-                "actions": ["auto_reply"],
-                "action_parameters": {
-                    "auto_reply": {"instruction": "Acknowledge receipt"}
-                },
-                "enabled": True,
-                "config_version": "email-config-v1",
-            },
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "auto-reply-config.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+    payload = {
+        **_dynamic_category_payload("auto_reply_category"),
+        "actions": ["auto_reply"],
+        "action_parameters": {
+            "auto_reply": {"instruction": "Acknowledge receipt"}
+        },
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/console/email/config",
+            json=payload,
         )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == (
-        "auto_reply is disabled; email worker cannot send replies"
-    )
+    assert response.json()["code"] == "invalid_email_category"
+    assert coordinator.calls == []
 
 
-def test_email_config_api_allows_unsubscribe_only_for_subscription(tmp_path: Path):
+def test_email_config_api_rejects_reserved_unsubscribe_categories(tmp_path: Path):
     payload = {
-        "description": "Wrong unsubscribe category",
-        "threshold": 0.95,
+        **_dynamic_category_payload("important"),
         "actions": ["unsubscribe"],
-        "enabled": True,
-        "config_version": "email-config-v1",
     }
-    with _client(tmp_path) as client:
-        rejected = client.put("/api/console/email/config/important", json=payload)
-        accepted = client.put("/api/console/email/config/subscription", json=payload)
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "reserved-config.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+    with TestClient(app) as client:
+        rejected = client.post("/api/console/email/config", json=payload)
+        reserved = client.post(
+            "/api/console/email/config",
+            json={**payload, "category_key": "subscription"},
+        )
 
     assert rejected.status_code == 400
-    assert rejected.json()["detail"] == (
-        "unsubscribe can only be configured for subscription"
-    )
-    assert accepted.status_code == 200
+    assert rejected.json()["code"] == "invalid_email_category"
+    assert reserved.status_code == 400
+    assert reserved.json()["code"] == "invalid_email_category"
 
 
 def test_email_account_api_accepts_nontechnical_payload_without_secret_reference(
@@ -1582,36 +2522,607 @@ def test_email_config_api_returns_controlled_4xx_for_invalid_action_parameters(
     action_parameters: dict[str, dict[str, object]] | None,
 ):
     payload = {
-        "description": "Invalid category config",
-        "threshold": 0.95,
+        **_dynamic_category_payload("invalid_action_config"),
         "actions": actions,
-        "enabled": True,
-        "config_version": "email-config-v1",
     }
     if action_parameters is not None:
         payload["action_parameters"] = action_parameters
-    with _client(tmp_path) as client:
-        response = client.put(
-            "/api/console/email/config/work",
-            json=payload,
-        )
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "invalid-action-config.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+    with TestClient(app) as client:
+        response = client.post("/api/console/email/config", json=payload)
 
     assert response.status_code == 400
 
 
 def test_email_config_api_retains_no_parameter_archive_behavior(tmp_path: Path):
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "archive-config.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+    payload = {
+        **_dynamic_category_payload("archive_notification"),
+        "actions": ["archive"],
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/console/email/config",
+            json=payload,
+        )
+
+    assert response.status_code == 201
+    assert response.json()["item"]["actions"] == ["archive"]
+    assert response.json()["item"]["action_parameters"] == {}
+
+
+def _task2_api_account(account_id: str = "primary") -> dict[str, object]:
+    return {
+        "account_id": account_id,
+        "display_name": account_id,
+        "email_address": f"{account_id}@example.com",
+        "imap_host": "imap.example.com",
+        "imap_port": 993,
+        "imap_tls": True,
+        "imap_username": f"{account_id}@example.com",
+        "imap_secret_reference": f"keychain://{account_id}",
+        "smtp_host": "",
+        "smtp_port": 465,
+        "smtp_tls": True,
+        "smtp_username": "",
+        "smtp_secret_reference": "",
+        "enabled": True,
+        "scan_folders": ["INBOX"],
+        "scan_interval_seconds": 60,
+    }
+
+
+def _dynamic_category_payload(category_key: str = "partner_updates") -> dict[str, object]:
+    return {
+        "category_key": category_key,
+        "display_name": "合作伙伴",
+        "provider_folder_name": "合作伙伴",
+        "core_description": "Material partner relationship updates.",
+        "include": ["partner discussions"],
+        "exclude": ["unsolicited partnership promotion"],
+        "threshold": 0.91,
+        "actions": [],
+        "action_parameters": {},
+        "enabled": True,
+        "description_version": "partner-description-v1",
+        "config_version": "partner-config-v1",
+    }
+
+
+class _VerifiedFolderCoordinator:
+    def __init__(self, *, folder_id: str = "folder-partners"):
+        self.folder_id = folder_id
+        self.calls: list[dict[str, object]] = []
+
+    def create_and_verify_bindings(
+        self,
+        *,
+        category_key: str,
+        provider_folder_name: str,
+        enabled_accounts: list[dict[str, object]],
+    ) -> tuple[VerifiedEmailFolderBinding, ...]:
+        self.calls.append(
+            {
+                "category_key": category_key,
+                "provider_folder_name": provider_folder_name,
+                "account_ids": [account["account_id"] for account in enabled_accounts],
+            }
+        )
+        return tuple(
+            VerifiedEmailFolderBinding(
+                account_id=str(account["account_id"]),
+                provider_folder_id=self.folder_id,
+                provider_folder_name=provider_folder_name,
+                binding_status="active",
+                last_verified_at="2026-09-07T13:00:00+00:00",
+            )
+            for account in enabled_accounts
+        )
+
+
+class _CoordinatorFailure:
+    def __init__(self, failure: Exception):
+        self.failure = failure
+
+    def create_and_verify_bindings(self, **_kwargs):
+        raise self.failure
+
+
+class _NegativeJunkCoordinator:
+    def __init__(self, status: str):
+        self.status = status
+
+    def create_and_verify_bindings(self, **_kwargs):
+        return (
+            VerifiedEmailFolderBinding(
+                account_id="primary",
+                provider_folder_id="",
+                provider_folder_name="垃圾邮件",
+                binding_status=self.status,
+                last_verified_at="2026-09-08T11:05:00+00:00",
+            ),
+        )
+
+
+class _StaticFolderCoordinator:
+    def __init__(self, bindings: tuple[VerifiedEmailFolderBinding, ...]):
+        self.bindings = bindings
+
+    def create_and_verify_bindings(self, **_kwargs):
+        return self.bindings
+
+
+class _CreationInventoryProvider:
+    def __init__(self, status: str):
+        self.status = status
+        self.calls = 0
+
+    def list_folders(self):
+        self.calls += 1
+        if self.status == "error":
+            raise ConnectionError("inventory unavailable")
+        if self.status == "ambiguous":
+            return (
+                ProviderFolder("one", "合作伙伴", FolderRole.UNBOUND),
+                ProviderFolder("two", "合作伙伴", FolderRole.UNBOUND),
+            )
+        return ()
+
+    def create_folder_exact(self, _name: str) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _IteratorFolderCoordinator(_VerifiedFolderCoordinator):
+    def create_and_verify_bindings(self, **kwargs):
+        return iter(super().create_and_verify_bindings(**kwargs))
+
+
+def test_email_config_get_returns_structured_descriptions_and_bindings(tmp_path: Path):
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/email/config")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 9
+    work = next(item for item in items if item["category_key"] == "work")
+    assert work["display_name"] == "工作"
+    assert work["core_description"]
+    assert work["include"]
+    assert work["exclude"]
+    assert work["bindings"] == []
+    assert "category" not in work
+    assert "description" not in work
+
+
+def test_email_config_post_builds_real_folder_coordinator_by_default(
+    tmp_path: Path,
+    monkeypatch,
+):
+    coordinator = _VerifiedFolderCoordinator()
+    built_with: list[object] = []
+
+    def build(environment_factory):
+        built_with.append(environment_factory)
+        return coordinator
+
+    monkeypatch.setattr(
+        "app.email_worker.build_provider_folder_binding_coordinator", build
+    )
+    store = EmailStore(tmp_path / "default-folder-coordinator.sqlite3")
+    store.create_account(_task2_api_account())
+    app = FastAPI()
+    register_email_routes(app, lambda: store)
+
+    response = TestClient(app).post(
+        "/api/console/email/config",
+        json=_dynamic_category_payload(),
+    )
+
+    assert response.status_code == 201
+    assert len(built_with) == 1
+    assert coordinator.calls[0]["account_ids"] == ["primary"]
+
+
+def test_email_config_post_maps_coordinator_binding_conflict_to_409(tmp_path: Path):
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "coordinator-conflict-api.sqlite3"),
+        folder_binding_coordinator=_CoordinatorFailure(
+            EmailFolderBindingConflict("provider folder conflict")
+        ),
+    )
+
+    response = TestClient(app).post(
+        "/api/console/email/config",
+        json=_dynamic_category_payload(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "email_folder_binding_conflict"
+
+
+def test_email_config_post_rejects_non_sequence_coordinator_result(tmp_path: Path):
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "coordinator-result-api.sqlite3"),
+        folder_binding_coordinator=_IteratorFolderCoordinator(),
+    )
+
+    response = TestClient(app).post(
+        "/api/console/email/config",
+        json=_dynamic_category_payload(),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "email_folder_binding_unavailable"
+
+
+def test_email_config_post_uses_coordinator_readback_and_rejects_client_bindings(
+    tmp_path: Path,
+):
+    database = tmp_path / "dynamic-category-api.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_api_account())
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=coordinator,
+    )
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/console/email/config",
+            json=_dynamic_category_payload(),
+        )
+        rejected = client.post(
+            "/api/console/email/config",
+            json={
+                **_dynamic_category_payload("raw_claim"),
+                "bindings": [
+                    {
+                        "account_id": "primary",
+                        "provider_folder_id": "client-claimed-id",
+                        "binding_status": "active",
+                    }
+                ],
+            },
+        )
+
+    assert created.status_code == 201
+    assert created.json()["item"]["category_key"] == "partner_updates"
+    assert created.json()["item"]["enabled"] is True
+    assert created.json()["item"]["bindings"][0]["provider_folder_id"] == (
+        "folder-partners"
+    )
+    assert coordinator.calls == [
+        {
+            "category_key": "partner_updates",
+            "provider_folder_name": "合作伙伴",
+            "account_ids": ["primary"],
+        }
+    ]
+    assert rejected.status_code == 400
+    assert rejected.json()["code"] == "invalid_email_category"
+    assert store.get_category_config("raw_claim") is None
+
+
+@pytest.mark.parametrize("provider_status", ("error", "missing", "ambiguous"))
+def test_email_config_post_rejects_nonactive_production_folder_materialization(
+    tmp_path: Path,
+    provider_status: str,
+) -> None:
+    store = EmailStore(tmp_path / f"create-{provider_status}-binding.sqlite3")
+    store.create_account(_task2_api_account())
+    providers: list[_CreationInventoryProvider] = []
+
+    def provider_factory(_account):
+        provider = _CreationInventoryProvider(provider_status)
+        providers.append(provider)
+        return provider
+
+    coordinator = ProviderFolderBindingCoordinator(provider_factory)
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=coordinator,
+    )
+
+    response = TestClient(app).post(
+        "/api/console/email/config",
+        json=_dynamic_category_payload(),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "email_folder_binding_unavailable"
+    assert store.get_category_config("partner_updates") is None
+    assert len(providers) == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        _dynamic_category_payload("important"),
+        {**_dynamic_category_payload(), "core_description": " "},
+        {**_dynamic_category_payload(), "include": []},
+        {**_dynamic_category_payload(), "exclude": [""]},
+    ),
+)
+def test_email_config_post_returns_category_error_for_invalid_semantics(
+    tmp_path: Path,
+    payload: dict[str, object],
+):
+    coordinator = _VerifiedFolderCoordinator()
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "invalid-category-api.sqlite3"),
+        folder_binding_coordinator=coordinator,
+    )
+
+    response = TestClient(app).post("/api/console/email/config", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_email_category"
+    assert coordinator.calls == []
+
+
+def test_email_config_post_returns_conflict_for_active_provider_folder_collision(
+    tmp_path: Path,
+):
+    database = tmp_path / "category-conflict-api.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_api_account())
+    coordinator = _VerifiedFolderCoordinator(folder_id="shared-provider-folder")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=coordinator,
+    )
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/console/email/config",
+            json=_dynamic_category_payload("partners"),
+        )
+        duplicate = client.post(
+            "/api/console/email/config",
+            json=_dynamic_category_payload("partners"),
+        )
+        second = client.post(
+            "/api/console/email/config",
+            json=_dynamic_category_payload("vendors"),
+        )
+
+    assert first.status_code == 201
+    assert duplicate.status_code == 409
+    assert duplicate.json()["code"] == "email_folder_binding_conflict"
+    assert second.status_code == 409
+    assert second.json()["code"] == "email_folder_binding_conflict"
+    assert len(coordinator.calls) == 2
+    assert store.get_category_config("vendors") is None
+
+
+def test_email_config_put_updates_structured_descriptions_and_versions(tmp_path: Path):
     with _client(tmp_path) as client:
         response = client.put(
-            "/api/console/email/config/subscription",
+            "/api/console/email/config/work",
             json={
-                "description": "Archive subscription",
-                "threshold": 0.98,
-                "actions": ["archive"],
+                "core_description": "Material daily company operations.",
+                "include": ["customer delivery"],
+                "exclude": ["personal matters"],
+                "threshold": 0.93,
                 "enabled": True,
-                "config_version": "email-config-v1",
+                "description_version": "work-description-v2",
+                "config_version": "work-config-v2",
             },
         )
 
     assert response.status_code == 200
-    assert response.json()["item"]["actions"] == ["archive"]
-    assert response.json()["item"]["action_parameters"] == {}
+    item = response.json()["item"]
+    assert item["category_key"] == "work"
+    assert item["core_description"] == "Material daily company operations."
+    assert item["include"] == ["customer delivery"]
+    assert item["exclude"] == ["personal matters"]
+    assert item["threshold"] == 0.93
+    assert item["enabled"] is True
+    assert item["description_version"] == "work-description-v2"
+    assert item["config_version"] == "work-config-v2"
+    assert item["bindings"] == []
+
+
+def test_email_config_put_refreshes_provider_folder_bindings(tmp_path: Path):
+    store = EmailStore(tmp_path / "update-folder-bindings.sqlite3")
+    store.create_account(_task2_api_account())
+    coordinator = _VerifiedFolderCoordinator(folder_id="work-folder")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=coordinator,
+    )
+
+    response = TestClient(app).put(
+        "/api/console/email/config/work",
+        json={
+            "core_description": "Material daily company operations.",
+            "include": ["customer delivery"],
+            "exclude": ["personal matters"],
+            "threshold": 0.93,
+            "enabled": True,
+            "description_version": "work-description-v2",
+            "config_version": "work-config-v2",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["item"]["enabled"] is True
+    assert response.json()["item"]["bindings"][0]["provider_folder_id"] == (
+        "work-folder"
+    )
+    assert coordinator.calls == [
+        {
+            "category_key": "work",
+            "provider_folder_name": "工作",
+            "account_ids": ["primary"],
+        }
+    ]
+
+
+@pytest.mark.parametrize("negative_status", ("missing", "error"))
+def test_email_config_put_pauses_junk_writes_after_negative_trash_readback(
+    tmp_path: Path,
+    negative_status: str,
+) -> None:
+    store = EmailStore(tmp_path / f"junk-{negative_status}-api.sqlite3")
+    store.create_account(_task2_api_account())
+    store.upsert_verified_folder_binding(
+        "junk",
+        VerifiedEmailFolderBinding(
+            account_id="primary",
+            provider_folder_id="provider-trash",
+            provider_folder_name="Deleted",
+            binding_status="active",
+            last_verified_at="2026-09-08T11:00:00+00:00",
+            provider_folder_role=FolderRole.TRASH,
+        ),
+    )
+    junk = store.get_category_config("junk")
+    enabled = store.update_category_descriptions(
+        "junk",
+        core_description=junk["core_description"],
+        include=junk["include"],
+        exclude=junk["exclude"],
+        threshold=junk["threshold"],
+        enabled=True,
+        description_version=junk["description_version"],
+        config_version="junk-enabled-before-negative-readback",
+    )
+    assert enabled is not None and enabled["enabled"] is True
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=_NegativeJunkCoordinator(negative_status),
+    )
+
+    response = TestClient(app).put(
+        "/api/console/email/config/junk",
+        json={
+            "core_description": junk["core_description"],
+            "include": junk["include"],
+            "exclude": junk["exclude"],
+            "threshold": junk["threshold"],
+            "enabled": True,
+            "description_version": junk["description_version"],
+            "config_version": f"junk-{negative_status}-readback",
+        },
+    )
+
+    assert response.status_code == 200
+    item = response.json()["item"]
+    assert item["enabled"] is False
+    assert item["bindings"][0]["provider_folder_id"] == ""
+    assert item["bindings"][0]["binding_status"] == negative_status
+
+
+def test_email_config_put_maps_second_account_binding_conflict_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "atomic-refresh-api.sqlite3")
+    store.create_account(_task2_api_account("primary"))
+    store.create_account(_task2_api_account("secondary"))
+    for account_id in ("primary", "secondary"):
+        store.upsert_verified_folder_binding(
+            "work",
+            VerifiedEmailFolderBinding(
+                account_id=account_id,
+                provider_folder_id=f"old-work-{account_id}",
+                provider_folder_name="工作",
+                binding_status="active",
+                last_verified_at="2026-09-08T12:00:00+00:00",
+            ),
+        )
+    work = store.get_category_config("work")
+    store.update_category_descriptions(
+        "work",
+        core_description=work["core_description"],
+        include=work["include"],
+        exclude=work["exclude"],
+        threshold=work["threshold"],
+        enabled=True,
+        description_version=work["description_version"],
+        config_version="work-before-api-conflict",
+    )
+    store.upsert_verified_folder_binding(
+        "legal",
+        VerifiedEmailFolderBinding(
+            account_id="secondary",
+            provider_folder_id="secondary-conflict",
+            provider_folder_name="法务",
+            binding_status="active",
+            last_verified_at="2026-09-08T12:00:00+00:00",
+        ),
+    )
+    before_config = store.get_category_config("work")
+    before_bindings = store.list_account_folder_bindings("work")
+    coordinator = _StaticFolderCoordinator(
+        (
+            VerifiedEmailFolderBinding(
+                account_id="primary",
+                provider_folder_id="new-work-primary",
+                provider_folder_name="工作",
+                binding_status="active",
+                last_verified_at="2026-09-08T12:05:00+00:00",
+            ),
+            VerifiedEmailFolderBinding(
+                account_id="secondary",
+                provider_folder_id="secondary-conflict",
+                provider_folder_name="工作",
+                binding_status="active",
+                last_verified_at="2026-09-08T12:05:00+00:00",
+            ),
+        )
+    )
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        folder_binding_coordinator=coordinator,
+    )
+
+    response = TestClient(app, raise_server_exceptions=False).put(
+        "/api/console/email/config/work",
+        json={
+            "core_description": "Changed description must roll back.",
+            "include": ["changed include"],
+            "exclude": ["changed exclude"],
+            "threshold": 0.81,
+            "enabled": False,
+            "description_version": "work-description-conflict",
+            "config_version": "work-config-conflict",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "email_folder_binding_conflict"
+    assert store.get_category_config("work") == before_config
+    assert store.list_account_folder_bindings("work") == before_bindings

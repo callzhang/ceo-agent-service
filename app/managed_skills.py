@@ -120,10 +120,12 @@ class RuntimeSkillSnapshot:
 REPOSITORY_IMPORT_SOURCE = "repository:skills"
 FEEDBACK_ITERATION_SKILL_NAME = "ceo-feedback-iteration"
 WECHAT_SKILL_NAME = "ceo-wechat"
+EMAIL_CLASSIFIER_SKILL_NAME = "ceo-email-classifier"
 REPOSITORY_MANAGED_SKILL_NAMES = (
     *BUNDLED_BUSINESS_SKILL_NAMES,
     FEEDBACK_ITERATION_SKILL_NAME,
     WECHAT_SKILL_NAME,
+    EMAIL_CLASSIFIER_SKILL_NAME,
 )
 
 
@@ -134,7 +136,9 @@ def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
     business producer, but it is still a managed runtime binding and therefore
     must receive the same immutable import treatment as the business Skills.
     """
-    business = tuple((skill.name, skill.content) for skill in load_bundled_business_skills())
+    business = tuple(
+        (skill.name, skill.content) for skill in load_bundled_business_skills()
+    )
     repository_skills_root = Path(__file__).resolve().parents[1] / "skills"
 
     def load_runtime_skill(name: str) -> str:
@@ -150,8 +154,12 @@ def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
 
     return (
         *business,
-        (FEEDBACK_ITERATION_SKILL_NAME, load_runtime_skill(FEEDBACK_ITERATION_SKILL_NAME)),
+        (
+            FEEDBACK_ITERATION_SKILL_NAME,
+            load_runtime_skill(FEEDBACK_ITERATION_SKILL_NAME),
+        ),
         (WECHAT_SKILL_NAME, load_runtime_skill(WECHAT_SKILL_NAME)),
+        (EMAIL_CLASSIFIER_SKILL_NAME, load_runtime_skill(EMAIL_CLASSIFIER_SKILL_NAME)),
     )
 
 
@@ -178,10 +186,10 @@ def import_repository_managed_skills(
 ) -> tuple[RepositoryManagedSkillImport, ...]:
     """Import only this service's bundled repository Skills once.
 
-    A pre-existing managed name is deliberately left alone.  It may be a local
-    user-created Skill, and importing over it would turn an import into an
-    overwrite.  Repository import never scans global agent, plugin, or runtime
-    directories.
+    A pre-existing non-reserved managed name is deliberately left alone. The
+    reserved email-classifier name is adopted by appending the exact repository
+    revision while preserving every user revision. Repository import never
+    scans global agent, plugin, or runtime directories.
     """
     with store.managed_skill_baseline_initialization_lock():
         return _import_repository_managed_skills_locked(store)
@@ -197,8 +205,34 @@ def _import_repository_managed_skills_locked(
         existing = store.get_managed_skill_by_name(name)
         if existing is not None:
             revisions = store.list_managed_skill_revisions(existing.id)
-            if any(revision.source == REPOSITORY_IMPORT_SOURCE for revision in revisions):
-                baseline.append((name, revisions[-1]))
+            if name != EMAIL_CLASSIFIER_SKILL_NAME:
+                if any(
+                    revision.source == REPOSITORY_IMPORT_SOURCE
+                    for revision in revisions
+                ):
+                    baseline.append((name, revisions[-1]))
+                continue
+            expected_digest = validate_managed_skill_content(name, content)
+            exact_repository_revision = next(
+                (
+                    revision
+                    for revision in revisions
+                    if revision.source == REPOSITORY_IMPORT_SOURCE
+                    and revision.sha256 == expected_digest
+                    and revision.content == content
+                ),
+                None,
+            )
+            if exact_repository_revision is not None:
+                baseline.append((name, exact_repository_revision))
+                continue
+            exact_repository_revision = store.create_managed_skill_revision(
+                existing.id,
+                content,
+                source=REPOSITORY_IMPORT_SOURCE,
+            )
+            imported.append((name, exact_repository_revision))
+            baseline.append((name, exact_repository_revision))
             continue
         skill = store.create_managed_skill(name, name)
         revision = store.create_managed_skill_revision(
@@ -206,12 +240,15 @@ def _import_repository_managed_skills_locked(
             content,
             source=REPOSITORY_IMPORT_SOURCE,
         )
-        imported.append((
-            name,
-            revision,
-        ))
+        imported.append(
+            (
+                name,
+                revision,
+            )
+        )
         baseline.append((name, revision))
-    if baseline and store.get_pending_or_active_runtime_skill_config() is None:
+    current = store.get_pending_or_active_runtime_skill_config()
+    if baseline and current is None:
         store.create_runtime_skill_config(
             [
                 {
@@ -222,6 +259,8 @@ def _import_repository_managed_skills_locked(
                     "purpose": (
                         "feedback_iteration"
                         if name == FEEDBACK_ITERATION_SKILL_NAME
+                        else "email_classification"
+                        if name == EMAIL_CLASSIFIER_SKILL_NAME
                         else "repository_import"
                     ),
                 }
@@ -229,6 +268,151 @@ def _import_repository_managed_skills_locked(
             ],
             expected_parent_id=None,
         )
+    elif baseline and current is not None:
+        bindings = list(store.list_runtime_skill_bindings(current.id))
+        valid_existing_bindings = all(
+            (revision := store.get_managed_skill_revision(binding.revision_id))
+            is not None
+            and revision.skill_id == binding.skill_id
+            for binding in bindings
+        )
+        if not valid_existing_bindings:
+            return tuple(
+                RepositoryManagedSkillImport(
+                    name=name,
+                    revision_id=revision.id,
+                    revision_number=revision.revision_number,
+                    sha256=revision.sha256,
+                    source=revision.source,
+                )
+                for name, revision in imported
+            )
+        classifier = next(
+            (
+                revision
+                for name, revision in baseline
+                if name == EMAIL_CLASSIFIER_SKILL_NAME
+            ),
+            None,
+        )
+        classifier_binding = next(
+            (
+                binding
+                for binding in bindings
+                if classifier is not None and binding.skill_id == classifier.skill_id
+            ),
+            None,
+        )
+        classifier_upgrade_required = classifier is not None and (
+            classifier_binding is None
+            or classifier_binding.revision_id != classifier.id
+            or not classifier_binding.enabled
+            or classifier_binding.purpose != "email_classification"
+        )
+        if classifier_upgrade_required:
+            assert classifier is not None
+            next_load_order = (
+                max((binding.load_order for binding in bindings), default=-1) + 1
+            )
+            upgraded_bindings = [
+                {
+                    "skill_id": binding.skill_id,
+                    "revision_id": (
+                        classifier.id
+                        if binding.skill_id == classifier.skill_id
+                        else binding.revision_id
+                    ),
+                    "enabled": (
+                        True
+                        if binding.skill_id == classifier.skill_id
+                        else binding.enabled
+                    ),
+                    "load_order": binding.load_order,
+                    "purpose": (
+                        "email_classification"
+                        if binding.skill_id == classifier.skill_id
+                        else binding.purpose
+                    ),
+                }
+                for binding in bindings
+            ]
+            if classifier_binding is None:
+                upgraded_bindings.append(
+                    {
+                        "skill_id": classifier.skill_id,
+                        "revision_id": classifier.id,
+                        "enabled": True,
+                        "load_order": next_load_order,
+                        "purpose": "email_classification",
+                    }
+                )
+            store.create_runtime_skill_config(
+                upgraded_bindings,
+                expected_parent_id=current.id,
+            )
+            return tuple(
+                RepositoryManagedSkillImport(
+                    name=name,
+                    revision_id=revision.id,
+                    revision_number=revision.revision_number,
+                    sha256=revision.sha256,
+                    source=revision.source,
+                )
+                for name, revision in imported
+            )
+        repository_owned_config = all(
+            (revision := store.get_managed_skill_revision(binding.revision_id))
+            is not None
+            and revision.source == REPOSITORY_IMPORT_SOURCE
+            for binding in bindings
+        )
+        if not repository_owned_config:
+            return tuple(
+                RepositoryManagedSkillImport(
+                    name=name,
+                    revision_id=revision.id,
+                    revision_number=revision.revision_number,
+                    sha256=revision.sha256,
+                    source=revision.source,
+                )
+                for name, revision in imported
+            )
+        bound = {binding.skill_id for binding in bindings}
+        missing = [
+            (name, revision)
+            for name, revision in baseline
+            if revision.skill_id not in bound
+        ]
+        if missing:
+            store.create_runtime_skill_config(
+                [
+                    {
+                        "skill_id": binding.skill_id,
+                        "revision_id": binding.revision_id,
+                        "enabled": binding.enabled,
+                        "load_order": index,
+                        "purpose": binding.purpose,
+                    }
+                    for index, binding in enumerate(bindings)
+                ]
+                + [
+                    {
+                        "skill_id": revision.skill_id,
+                        "revision_id": revision.id,
+                        "enabled": True,
+                        "load_order": len(bindings) + index,
+                        "purpose": (
+                            "feedback_iteration"
+                            if name == FEEDBACK_ITERATION_SKILL_NAME
+                            else "email_classification"
+                            if name == EMAIL_CLASSIFIER_SKILL_NAME
+                            else "repository_import"
+                        ),
+                    }
+                    for index, (name, revision) in enumerate(missing)
+                ],
+                expected_parent_id=current.id,
+            )
     return tuple(
         RepositoryManagedSkillImport(
             name=name,
@@ -257,7 +441,9 @@ def export_managed_skill_revision(
     if skill is None:
         raise ValueError("managed Skill does not exist")
     name = validate_managed_skill_name(skill.name)
-    root = Path(skills_root or (Path(__file__).resolve().parents[1] / "skills")).expanduser()
+    root = Path(
+        skills_root or (Path(__file__).resolve().parents[1] / "skills")
+    ).expanduser()
     try:
         root.mkdir(parents=True, exist_ok=True)
         resolved_root = root.resolve(strict=True)
@@ -323,6 +509,7 @@ def resolve_pending_runtime_skills(
     config = store.get_pending_or_active_runtime_skill_config()
     if config is None:
         return RuntimeSkillSnapshot(config_id=0, revisions=())
+
     def load_snapshot(candidate: RuntimeSkillConfig) -> RuntimeSkillSnapshot:
         revisions: list[ManagedSkillRevision] = []
         for binding in store.list_runtime_skill_bindings(candidate.id):
@@ -330,7 +517,9 @@ def resolve_pending_runtime_skills(
                 continue
             revision = store.get_managed_skill_revision(binding.revision_id)
             if revision is None or revision.skill_id != binding.skill_id:
-                raise ValueError(f"revision missing for managed Skill {binding.skill_id}")
+                raise ValueError(
+                    f"revision missing for managed Skill {binding.skill_id}"
+                )
             revisions.append(revision)
         return RuntimeSkillSnapshot(config_id=candidate.id, revisions=tuple(revisions))
 
@@ -339,7 +528,9 @@ def resolve_pending_runtime_skills(
         store.record_runtime_skill_load(
             config.id,
             pid=pid,
-            loaded={revision.skill_id: revision.sha256 for revision in snapshot.revisions},
+            loaded={
+                revision.skill_id: revision.sha256 for revision in snapshot.revisions
+            },
         )
         return snapshot
     except Exception as exc:
@@ -351,7 +542,9 @@ def resolve_pending_runtime_skills(
         store.record_runtime_skill_load(
             active.id,
             pid=pid,
-            loaded={revision.skill_id: revision.sha256 for revision in snapshot.revisions},
+            loaded={
+                revision.skill_id: revision.sha256 for revision in snapshot.revisions
+            },
         )
         return snapshot
 
@@ -364,7 +557,9 @@ def validate_managed_skill_content(name: str, content: str) -> str:
     try:
         encoded_content = content.encode("utf-8")
     except UnicodeEncodeError as exc:
-        raise ManagedSkillValidationError("managed Skill content must be UTF-8") from exc
+        raise ManagedSkillValidationError(
+            "managed Skill content must be UTF-8"
+        ) from exc
 
     source_path = Path(f"managed:{name}/SKILL.md")
     try:

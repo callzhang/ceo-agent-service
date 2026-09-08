@@ -3,7 +3,7 @@ name: ceo-mail-review
 description: Use when an incoming email, DingTalk or Lark mail card, or channel=email action requires review, reply judgment, or unsubscribe handling.
 metadata:
   managed_by: ceo-agent-service
-  version: 1
+  version: 2
 ---
 
 # CEO Mail Review
@@ -140,11 +140,34 @@ runtime input consumed by the audited browser capability. Persist only opaque
 references, redacted step types and states, fixed error codes, and a terminal
 receipt.
 
-Login, CAPTCHA, and payment requirements are skipped business outcomes, as is
-the absence of a reliable browser entry. They do not require a user prompt and
-do not enter Attention. Browser runtime and provider authentication failures are
-technical failures: use the existing failed, retry, and exhausted-failure
-Attention lifecycle without inventing a new top-level task status.
+Authentication continuation uses only the isolated persistent Email browser
+profile, never the main Chrome profile or its cookies. Keep the exact origin,
+immutable action identity, and append-only audited operation lineage unchanged.
+
+- For `email_otp`, read only the same configured recipient mailbox. Select an
+  OTP only when the mail matches the current site, recipient, context, and
+  bounded challenge time window. The OTP is ephemeral: never place it in logs,
+  durable steps, receipts, training text, History, status, or errors. Submit it
+  only inside the newly audited form operation. The value may be consumed only
+  once; clear the browser field and minimize Python references without claiming
+  physical memory zeroization.
+- For `captcha_handoff`, attempt ordinary interaction with the rendered
+  challenge. Use no solver service, evasion, fingerprint spoofing, or principal
+  impersonation. If the ordinary attempt does not pass, return `needs_human`
+  with a resumable opaque browser/profile reference and no secret content.
+- For `credential_handoff`, SMS, TOTP, QR, or password may be handled only when
+  a corresponding configured capability exists. Otherwise return
+  `needs_human` with the same opaque resumable reference.
+- After the user completes a handoff, resume only the unexecuted suffix and
+  never replay the audited prefix. Reconcile the existing session and current
+  page with the distinct `RECONCILE_HANDOFF` operation before proposing another
+  write. Do not use redirect readback to skip or repeat the initial ordinary
+  CAPTCHA attempt.
+
+Payment and the absence of a reliable browser entry remain non-retryable
+business outcomes. Browser runtime and provider authentication failures are
+technical failures and use the existing retry and exhausted-failure Attention
+lifecycle; do not invent another top-level task status.
 
 ## Authorization And Outcome
 

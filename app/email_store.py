@@ -13,29 +13,59 @@ from email.parser import Parser
 from email.utils import getaddresses
 from hashlib import sha256
 import json
+import math
 import re
 import sqlite3
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+from urllib.parse import unquote, unquote_plus, urlsplit
 
 from app.email_classifier_contracts import (
+    ACTION_DEPENDENCY_PARAMETER,
     DIRECT_ACTIONS,
     EmailAction,
     EmailActionPlan,
     EmailAttachmentMetadata,
     EmailCategory,
+    EmailCategoryKey,
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
     build_email_action_plan,
     build_user_confirmation_authorizations,
     build_versioned_email_action_plan,
+    effective_direct_action_dependencies,
+    rehydrate_legacy_email_action_plan_json,
+    rehydrate_legacy_email_category_key,
+    validate_email_category_key,
 )
-from app.leak_check import assert_no_credentials
+from app.email_category_config import (
+    ACTIVE_BINDING_INDEX_SQL,
+    CATEGORY_CONFIG_CHECKS,
+    CATEGORY_CONFIG_COLUMN_CONTRACTS,
+    CATEGORY_CONFIG_TABLE_SQL,
+    DESCRIPTION_VERSION,
+    FOLDER_BINDING_CHECKS,
+    FOLDER_BINDING_COLUMN_CONTRACTS,
+    FOLDER_BINDING_TABLE_SQL,
+    INITIAL_CATEGORY_CONFIGS,
+    SEEDED_CONFIG_VERSION,
+    SEEDED_THRESHOLD,
+    STRUCTURED_CATEGORY_CONFIG_COLUMNS,
+    CategoryConfigDataError,
+    VerifiedEmailFolderBinding,
+    category_config_row,
+    legacy_config_row,
+    validate_category_descriptions,
+)
+from app.email_provider_folders import FolderRole
+from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 18
+EMAIL_SCHEMA_VERSION = 33
+MAX_CLASSIFIER_RUNTIME_SAMPLES = 2048
+HISTORICAL_DEFER_RETRY_SECONDS = 60
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -44,7 +74,7 @@ DIRECT_ACTION_RETRY_BASE_SECONDS = 2
 _CLASSIFICATION_STATUSES = frozenset(
     status.value for status in EmailClassificationStatus
 )
-_CLASSIFICATION_SOURCES = frozenset({"model", "user"})
+_CLASSIFICATION_SOURCES = frozenset({"model", "user", "agent"})
 _CURRENT_ACTION_STATUSES = frozenset({"pending", "processing", "done", "failed"})
 _TERMINAL_ATTEMPT_STATUSES = frozenset({"done", "failed"})
 _DIRECT_ACTION_VALUES = frozenset(action.value for action in DIRECT_ACTIONS)
@@ -69,6 +99,7 @@ _EMAIL_UNSUBSCRIBE_OUTCOMES = frozenset(
 _OPAQUE_PROVIDER_ID = re.compile(r"[A-Za-z0-9._:@<>\[\]{}/+=,!#$%&'*?^-]+")
 _UNSUBSCRIBE_OPAQUE_ID = re.compile(r"[A-Za-z0-9:_-]+")
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+_RUNTIME_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 _MAX_PROVIDER_IDENTIFIER_BYTES = 256
 _MAX_UNSUBSCRIBE_RESULT_TEXT_BYTES = 16 * 1024
 _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = """
@@ -122,7 +153,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "preview": ("text", True, "''"),
         "model_text": ("text", True, "''"),
         "received_at": ("text", True, "''"),
-        "category": ("text", True, None),
+        "category": ("text", False, None),
         "predicted_category": ("text", False, None),
         "confirmed_category": ("text", False, None),
         "confidence": ("real", True, None),
@@ -132,6 +163,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "config_version": ("text", True, None),
         "status": ("text", True, None),
         "classification_source": ("text", True, None),
+        "agent_result_json": ("text", True, "'null'"),
         "action_plan_json": ("text", True, "'null'"),
         "current_action_plan_id": ("text", False, None),
         "included_in_model_id": ("text", False, None),
@@ -140,16 +172,24 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "created_at": ("text", True, "current_timestamp"),
         "updated_at": ("text", True, "current_timestamp"),
     },
-    "email_category_configs": {
-        "category": ("text", False, None),
-        "description": ("text", True, "''"),
-        "threshold": ("real", True, None),
-        "actions_json": ("text", True, None),
-        "action_parameters_json": ("text", True, "'{}'"),
-        "enabled": ("integer", True, "1"),
-        "config_version": ("text", True, None),
+    "email_agent_classification_tasks": {
+        "task_id": ("text", False, None),
+        "channel": ("text", True, None),
+        "stable_message_identity": ("text", True, None),
+        "status": ("text", True, None),
+        "owner": ("text", True, "''"),
+        "generation": ("integer", True, "0"),
+        "attempt_count": ("integer", True, "0"),
+        "lease_expires_at": ("text", True, "''"),
+        "available_at": ("text", True, "''"),
+        "input_json": ("text", True, None),
+        "result_json": ("text", True, "'null'"),
+        "error": ("text", True, "''"),
+        "created_at": ("text", True, "current_timestamp"),
         "updated_at": ("text", True, "current_timestamp"),
     },
+    "email_category_configs": CATEGORY_CONFIG_COLUMN_CONTRACTS,
+    "email_category_folder_bindings": FOLDER_BINDING_COLUMN_CONTRACTS,
     "email_accounts": {
         "account_id": ("text", False, None),
         "display_name": ("text", True, None),
@@ -159,6 +199,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "imap_tls": ("integer", True, None),
         "imap_username": ("text", True, None),
         "imap_secret_reference": ("text", True, None),
+        "imap_move_mode": ("text", True, "'move'"),
         "smtp_host": ("text", True, None),
         "smtp_port": ("integer", True, None),
         "smtp_tls": ("integer", True, None),
@@ -359,15 +400,99 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "result_text_digest": ("text", True, "''"),
         "created_at": ("text", True, None),
     },
+    "email_training_snapshots": {
+        "snapshot_id": ("text", False, None),
+        "snapshot_version": ("text", True, None),
+        "description_version": ("text", True, None),
+        "input_schema_version": ("text", True, None),
+        "seed": ("integer", True, None),
+        "observed_at": ("text", True, None),
+        "snapshot_digest": ("text", True, None),
+        "manifest_json": ("text", True, None),
+        "frozen": ("integer", True, "1"),
+        "created_at": ("text", True, None),
+        "folder_label_watermark": ("integer", True, "0"),
+        "important_label_watermark": ("integer", True, "0"),
+    },
+    "email_provider_observations": {
+        "account_id": ("text", True, None),
+        "stable_message_identity": ("text", True, None),
+        "state": ("text", True, None),
+        "provider_folder_id": ("text", False, None),
+        "provider_folder_name": ("text", False, None),
+        "category_key": ("text", False, None),
+        "important": ("integer", False, None),
+        "observed_at": ("text", True, None),
+    },
+    "email_training_snapshot_observations": {
+        "snapshot_id": ("text", True, None),
+        "account_id": ("text", True, None),
+        "stable_message_identity": ("text", True, None),
+        "provider_folder_id": ("text", True, None),
+        "provider_folder_name": ("text", True, None),
+        "category_key": ("text", False, None),
+        "important": ("integer", True, None),
+        "normalized_model_input": ("text", True, None),
+        "normalized_model_input_hash": ("text", True, None),
+        "input_schema_version": ("text", True, None),
+        "provider_thread_id": ("text", False, None),
+        "normalized_body_digest": ("text", True, None),
+        "sender_template_signature": ("text", False, None),
+        "explicit_matter_group": ("text", False, None),
+        "group_key": ("text", True, None),
+        "observed_at": ("text", True, None),
+        "source": ("text", True, None),
+        "split": ("text", True, None),
+        "selected_for_training": ("integer", True, None),
+        "ordered_record_digest": ("text", True, None),
+    },
+    "email_historical_classification_history": {
+        "event_id": ("text", False, None),
+        "stable_message_identity": ("text", True, None),
+        "model_id": ("text", True, None),
+        "predicted_category": ("text", False, None),
+        "threshold": ("real", False, None),
+        "probability": ("real", False, None),
+        "important": ("integer", False, None),
+        "action_outcome": ("text", True, None),
+        "created_at": ("text", True, None),
+    },
+    "email_classifier_runtime_samples": {
+        "id": ("integer", False, None),
+        "model_id": ("text", True, None),
+        "outcome": ("text", True, None),
+        "fallback_code": ("text", True, "''"),
+        "cache_hit": ("integer", True, None),
+        "runtime_warm": ("integer", True, None),
+        "queue_ms": ("real", True, None),
+        "http_ms": ("real", True, None),
+        "embedding_ms": ("real", True, None),
+        "head_ms": ("real", True, None),
+        "total_ms": ("real", True, None),
+        "recorded_at": ("text", True, None),
+    },
 }
 _REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
     table: frozenset(columns) for table, columns in _REQUIRED_COLUMN_CONTRACTS.items()
 }
 _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
     "email_classifications": ("legacy_processed_without_plan in (0, 1)",),
+    "email_agent_classification_tasks": (
+        "trim(task_id) != ''",
+        "channel='email'",
+        "trim(stable_message_identity) != ''",
+        "status in ('pending','running','done','failed')",
+        "generation >= 0",
+        "attempt_count >= 0",
+        "json_valid(input_json)",
+        "json_valid(result_json)",
+    ),
+    "email_category_configs": CATEGORY_CONFIG_CHECKS,
+    "email_category_folder_bindings": FOLDER_BINDING_CHECKS,
     "email_accounts": (
         "imap_port between 1 and 65535",
         "imap_tls in (0, 1)",
+        "imap_move_mode in ('move', 'copy_as_move')",
         "smtp_port between 1 and 65535",
         "smtp_tls in (0, 1)",
         "enabled in (0, 1)",
@@ -387,7 +512,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
     ),
     "email_action_plans": (
         "action_plan_version > 0",
-        "classification_source in ('model', 'user')",
+        "classification_source in ('model', 'user', 'agent')",
         "confidence >= 0.0 and confidence <= 1.0",
         "json_valid(actions_json)",
         "json_valid(action_parameters_json)",
@@ -395,7 +520,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "legacy_serialization_pre_v16 in (0, 1)",
     ),
     "email_actions": (
-        "action_type in ('label', 'mark_read', 'archive', 'move', 'trash')",
+        "action_type in ('label', 'mark_read', 'archive', 'move', 'trash', 'flag_important')",
         "json_valid(parameters_json)",
         "status in ('pending', 'processing', 'done', 'failed')",
         "attempt_count >= 0",
@@ -406,7 +531,6 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
     ),
     "email_feedback_requests": (
         "trim(feedback_request_id) != ''",
-        "category in ('important', 'work', 'personal', 'notification', 'billing', 'shopping', 'subscription', 'junk')",
         "expected_current_action_plan_id is null or trim(expected_current_action_plan_id) != ''",
         "trim(resulting_action_plan_id) != ''",
         "trim(applied_at) != ''",
@@ -493,18 +617,86 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "result_text_digest = '' or length(result_text_digest) = 64",
         "trim(created_at) != ''",
     ),
+    "email_training_snapshots": (
+        "trim(snapshot_id) != ''",
+        "trim(snapshot_version) != ''",
+        "trim(description_version) != ''",
+        "trim(input_schema_version) != ''",
+        "seed >= 0",
+        "trim(observed_at) != ''",
+        "length(snapshot_digest) = 64",
+        "json_valid(manifest_json)",
+        "frozen in (0, 1)",
+        "trim(created_at) != ''",
+        "folder_label_watermark >= 0",
+        "important_label_watermark >= 0",
+    ),
+    "email_provider_observations": (
+        "trim(account_id) != ''",
+        "trim(stable_message_identity) != ''",
+        "state in ('available','unavailable','excluded')",
+        "important is null or important in (0, 1)",
+        "trim(observed_at) != ''",
+    ),
+    "email_training_snapshot_observations": (
+        "trim(snapshot_id) != ''",
+        "trim(account_id) != ''",
+        "trim(stable_message_identity) != ''",
+        "trim(provider_folder_id) != ''",
+        "trim(provider_folder_name) != ''",
+        "category_key is null or trim(category_key) != ''",
+        "important in (0, 1)",
+        "trim(normalized_model_input) != ''",
+        "length(normalized_model_input_hash) = 64",
+        "trim(input_schema_version) != ''",
+        "length(normalized_body_digest) = 64",
+        "sender_template_signature is null or length(sender_template_signature) = 64",
+        "length(group_key) = 64",
+        "trim(observed_at) != ''",
+        "source in ('natural', 'targeted')",
+        "split in ('train', 'validation', 'test')",
+        "selected_for_training in (0, 1)",
+        "length(ordered_record_digest) = 64",
+    ),
+    "email_historical_classification_history": (
+        "trim(event_id) != ''",
+        "trim(stable_message_identity) != ''",
+        "trim(model_id) != ''",
+        "predicted_category is null or trim(predicted_category) != ''",
+        "threshold is null or (threshold >= 0.0 and threshold <= 1.0)",
+        "probability is null or (probability >= 0.0 and probability <= 1.0)",
+        "important is null or important in (0, 1)",
+        "trim(action_outcome) != ''",
+        "trim(created_at) != ''",
+    ),
+    "email_classifier_runtime_samples": (
+        "trim(model_id) != ''",
+        "outcome in ('success', 'rejected', 'failure')",
+        "length(fallback_code) <= 64",
+        "cache_hit in (0, 1)",
+        "runtime_warm in (0, 1)",
+        "queue_ms >= 0",
+        "http_ms >= 0",
+        "embedding_ms >= 0",
+        "head_ms >= 0",
+        "total_ms >= 0",
+        "trim(recorded_at) != ''",
+    ),
 }
 _REQUIRED_AUTOINCREMENT_COLUMNS = frozenset(
     {
         ("email_messages", "id"),
         ("email_action_attempts", "id"),
         ("email_unsubscribe_steps", "id"),
+        ("email_classifier_runtime_samples", "id"),
     }
 )
 _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_schema_migrations": ("version",),
     "email_classifications": ("id",),
-    "email_category_configs": ("category",),
+    "email_agent_classification_tasks": ("task_id",),
+    "email_category_configs": ("category_key",),
+    "email_category_folder_bindings": ("account_id", "category_key"),
     "email_accounts": ("account_id",),
     "email_scan_cursors": ("account_id", "folder"),
     "email_messages": ("id",),
@@ -519,9 +711,19 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_unsubscribe_continuations": ("action_identity",),
     "email_unsubscribe_steps": ("id",),
     "email_unsubscribe_receipts": ("action_identity",),
+    "email_training_snapshots": ("snapshot_id",),
+    "email_provider_observations": ("account_id", "stable_message_identity"),
+    "email_training_snapshot_observations": (
+        "snapshot_id",
+        "account_id",
+        "stable_message_identity",
+    ),
+    "email_historical_classification_history": ("event_id",),
+    "email_classifier_runtime_samples": ("id",),
 }
 _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
     "email_classifications": (("stable_message_identity",),),
+    "email_agent_classification_tasks": (("stable_message_identity",),),
     "email_messages": (("stable_message_identity",),),
     "email_action_plans": (("classification_id", "action_plan_version"),),
     "email_actions": (("action_plan_id", "action_type"),),
@@ -533,11 +735,16 @@ _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
     "email_reply_receipts": (("outgoing_message_id",),),
     "email_reply_dispatch_claims": (("outgoing_message_id",),),
     "email_unsubscribe_steps": (("action_identity", "sequence"),),
+    "email_training_snapshots": (("snapshot_digest",),),
 }
 _REQUIRED_FOREIGN_KEYS: Mapping[
     str,
     tuple[tuple[str, str, str, str], ...],
 ] = {
+    "email_category_folder_bindings": (
+        ("account_id", "email_accounts", "account_id", "CASCADE"),
+        ("category_key", "email_category_configs", "category_key", "CASCADE"),
+    ),
     "email_action_plans": (
         ("classification_id", "email_classifications", "id", "RESTRICT"),
     ),
@@ -586,6 +793,9 @@ _REQUIRED_FOREIGN_KEYS: Mapping[
         ("action_plan_id", "email_action_plans", "action_plan_id", "RESTRICT"),
         ("classification_id", "email_classifications", "id", "RESTRICT"),
     ),
+    "email_training_snapshot_observations": (
+        ("snapshot_id", "email_training_snapshots", "snapshot_id", "RESTRICT"),
+    ),
 }
 _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_classifications_status": (
@@ -595,6 +805,10 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_classifications_account_status": (
         "email_classifications",
         ("account_id", "status", "updated_at"),
+    ),
+    "idx_email_agent_classification_tasks_status": (
+        "email_agent_classification_tasks",
+        ("status", "available_at", "lease_expires_at", "task_id"),
     ),
     "idx_email_messages_account_locator": (
         "email_messages",
@@ -616,8 +830,87 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
         "email_unsubscribe_receipts",
         ("classification_id", "action_identity"),
     ),
+    "idx_email_training_observations_split": (
+        "email_training_snapshot_observations",
+        ("snapshot_id", "split", "category_key", "group_key"),
+    ),
+    "idx_email_training_observations_provider_truth": (
+        "email_training_snapshot_observations",
+        ("account_id", "stable_message_identity", "observed_at", "snapshot_id"),
+    ),
+    "idx_email_provider_observations_lookup": (
+        "email_provider_observations",
+        ("account_id", "stable_message_identity", "observed_at"),
+    ),
+    "idx_email_classifier_runtime_model_id": (
+        "email_classifier_runtime_samples",
+        ("model_id", "id"),
+    ),
+}
+_REQUIRED_PARTIAL_UNIQUE_INDEXES: Mapping[
+    str,
+    tuple[str, tuple[str, ...], str],
+] = {
+    "idx_email_category_folder_bindings_active_provider": (
+        "email_category_folder_bindings",
+        ("account_id", "provider_folder_id"),
+        "where binding_status = 'active'",
+    ),
 }
 _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
+    "trg_email_training_snapshots_immutable_update": """
+        create trigger trg_email_training_snapshots_immutable_update
+        before update on email_training_snapshots
+        when not (
+            old.frozen=0 and new.frozen=1
+            and old.snapshot_id is new.snapshot_id
+            and old.snapshot_version is new.snapshot_version
+            and old.description_version is new.description_version
+            and old.input_schema_version is new.input_schema_version
+            and old.seed is new.seed
+            and old.observed_at is new.observed_at
+            and old.snapshot_digest is new.snapshot_digest
+            and old.manifest_json is new.manifest_json
+            and old.created_at is new.created_at
+            and old.folder_label_watermark is new.folder_label_watermark
+            and old.important_label_watermark is new.important_label_watermark
+        )
+        begin
+            select raise(abort, 'email training snapshot is immutable');
+        end
+    """,
+    "trg_email_training_snapshots_immutable_delete": """
+        create trigger trg_email_training_snapshots_immutable_delete
+        before delete on email_training_snapshots
+        begin
+            select raise(abort, 'email training snapshot is immutable');
+        end
+    """,
+    "trg_email_training_observations_immutable_update": """
+        create trigger trg_email_training_observations_immutable_update
+        before update on email_training_snapshot_observations
+        begin
+            select raise(abort, 'email training snapshot observation is immutable');
+        end
+    """,
+    "trg_email_training_observations_immutable_delete": """
+        create trigger trg_email_training_observations_immutable_delete
+        before delete on email_training_snapshot_observations
+        begin
+            select raise(abort, 'email training snapshot observation is immutable');
+        end
+    """,
+    "trg_email_training_observations_require_unfrozen_snapshot": """
+        create trigger trg_email_training_observations_require_unfrozen_snapshot
+        before insert on email_training_snapshot_observations
+        when not exists (
+            select 1 from email_training_snapshots
+            where snapshot_id=new.snapshot_id and frozen=0
+        )
+        begin
+            select raise(abort, 'email training snapshot is frozen');
+        end
+    """,
     "trg_email_classification_status_insert": """
         create trigger trg_email_classification_status_insert
         before insert on email_classifications
@@ -637,7 +930,7 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
     "trg_email_classification_source_insert": """
         create trigger trg_email_classification_source_insert
         before insert on email_classifications
-        when new.classification_source not in ('model', 'user')
+        when new.classification_source not in ('model', 'user', 'agent')
         begin
             select raise(abort, 'invalid email classification source');
         end
@@ -645,7 +938,7 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
     "trg_email_classification_source_update": """
         create trigger trg_email_classification_source_update
         before update of classification_source on email_classifications
-        when new.classification_source not in ('model', 'user')
+        when new.classification_source not in ('model', 'user', 'agent')
         begin
             select raise(abort, 'invalid email classification source');
         end
@@ -837,6 +1130,17 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
     """,
 }
 _REQUIRED_TRIGGER_TABLES: Mapping[str, str] = {
+    "trg_email_training_snapshots_immutable_update": "email_training_snapshots",
+    "trg_email_training_snapshots_immutable_delete": "email_training_snapshots",
+    "trg_email_training_observations_immutable_update": (
+        "email_training_snapshot_observations"
+    ),
+    "trg_email_training_observations_immutable_delete": (
+        "email_training_snapshot_observations"
+    ),
+    "trg_email_training_observations_require_unfrozen_snapshot": (
+        "email_training_snapshot_observations"
+    ),
     "trg_email_direct_action_blocks_account_update": "email_accounts",
     "trg_email_direct_action_blocks_account_delete": "email_accounts",
     "trg_email_reply_dispatch_blocks_account_update": "email_accounts",
@@ -875,6 +1179,10 @@ class EmailTrainingInclusionConflict(RuntimeError):
 
 class EmailTrainingConsistencyError(RuntimeError):
     """Registry manifests could not be proven restored after a DB failure."""
+
+
+class EmailTrainingSnapshotConflict(RuntimeError):
+    """A frozen snapshot identity is already bound to different content."""
 
 
 class EmailClassificationIdentityCollision(RuntimeError):
@@ -962,6 +1270,41 @@ class EmailAccountConflict(RuntimeError):
         self.code = code
 
 
+class EmailFolderBindingConflict(RuntimeError):
+    """A category or active provider folder conflicts with durable configuration."""
+
+
+def _validate_verified_folder_binding_role(
+    category_key: str,
+    binding: VerifiedEmailFolderBinding,
+) -> None:
+    if binding.binding_status != "active":
+        return
+    if category_key == "junk":
+        if binding.provider_folder_role is not FolderRole.TRASH:
+            raise ValueError("junk accepts only a verified system Trash binding")
+        return
+    if binding.provider_folder_role not in {FolderRole.UNBOUND, FolderRole.CATEGORY}:
+        raise ValueError("business category requires an ordinary provider folder")
+
+
+@dataclass(frozen=True)
+class EmailCategoryEnablementState:
+    """One category state changed by an account mutation."""
+
+    category_key: str
+    enabled: bool
+    updated_at: str
+    mutation_updated_at: str
+
+
+@dataclass(frozen=True)
+class EmailCategoryEnablementSnapshot:
+    """Optimistic restore token for one exact account mutation."""
+
+    states: tuple[EmailCategoryEnablementState, ...]
+
+
 class EmailPersistenceCorruption(RuntimeError):
     """Durable email state violates its JSON or enum contract."""
 
@@ -975,6 +1318,36 @@ def _validate_model_text(model_text: str) -> None:
         or "https://" in lowered
     ):
         raise ValueError("model_text must be redacted")
+
+
+def _validated_agent_result_json(
+    classification: EmailClassification, agent_result: object | None
+) -> str:
+    if classification.classification_source != "agent":
+        if agent_result is not None:
+            raise ValueError("non-Agent classification cannot carry an Agent result")
+        return "null"
+    if agent_result is None:
+        raise ValueError("Agent classification requires its exact typed result")
+    from app.email_classifier_agent import DurableAgentClassificationResult
+
+    result = (
+        agent_result
+        if isinstance(agent_result, DurableAgentClassificationResult)
+        else DurableAgentClassificationResult.model_validate(agent_result)
+    )
+    expected_status = (
+        EmailClassificationStatus.PROCESSED
+        if result.certainty == "certain"
+        else EmailClassificationStatus.PENDING_FEEDBACK
+    )
+    if classification.status is not expected_status:
+        raise ValueError("Agent certainty and canonical status diverge")
+    if classification.category != result.category:
+        raise ValueError("Agent and canonical categories diverge")
+    if classification.confidence != result.confidence:
+        raise ValueError("Agent and canonical confidence diverge")
+    return result.model_dump_json()
 
 
 def _normalized_message_id(value: object) -> str:
@@ -1010,6 +1383,83 @@ def _json_dump(value: object) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _historical_candidate_projection(
+    message: Mapping[str, object],
+    *,
+    stable_message_identity: str,
+    account_id: str,
+    folder: str,
+) -> dict[str, object]:
+    """Keep only provider coordinates needed for an exact later reread."""
+
+    if str(message.get("accountId") or "") != account_id:
+        raise ValueError("historical candidate account does not match queue")
+    if str(message.get("folder") or "") != folder:
+        raise ValueError("historical candidate folder does not match queue")
+    message_identity = str(message.get("stableMessageIdentity") or "")
+    if message_identity and message_identity != stable_message_identity:
+        raise ValueError("historical candidate identity does not match queue")
+    projection: dict[str, object] = {
+        "accountId": account_id,
+        "folder": folder,
+        "uidValidity": int(message.get("uidValidity") or 0),
+        "uid": int(message.get("uid") or 0),
+        "messageId": str(message.get("messageId") or "") or None,
+        "threadId": str(message.get("threadId") or "") or None,
+        "stableMessageIdentity": stable_message_identity,
+    }
+    EmailProviderLocator.model_validate(
+        {
+            "account_id": projection["accountId"],
+            "folder": projection["folder"],
+            "uidvalidity": projection["uidValidity"],
+            "uid": projection["uid"],
+            "rfc_message_id": projection["messageId"],
+            "thread_id": projection["threadId"],
+        }
+    )
+    return projection
+
+
+def _legacy_unsubscribe_private_values(url: object) -> tuple[str, ...]:
+    """Return exact legacy URL/token values that must not survive migration."""
+
+    candidate = str(url)
+    values = {candidate, unquote(candidate)}
+    parsed = urlsplit(candidate)
+    encoded_components = parsed.query.split("&")
+    if parsed.fragment:
+        encoded_components.extend(parsed.fragment.split("&"))
+    for component in encoded_components:
+        name, separator, private_value = component.partition("=")
+        if not separator or not is_sensitive_url_component_name(name):
+            continue
+        for decoded in (private_value, unquote_plus(private_value)):
+            if decoded:
+                values.add(decoded)
+    return tuple(sorted((value for value in values if value), key=len, reverse=True))
+
+
+def _redact_legacy_unsubscribe_json(
+    value: object,
+    replacements: Sequence[tuple[str, str]],
+) -> object:
+    """Redact legacy private values in decoded JSON, including nested fields."""
+
+    if isinstance(value, str):
+        for private_value, reference in replacements:
+            value = value.replace(private_value, reference)
+        return value
+    if isinstance(value, list):
+        return [_redact_legacy_unsubscribe_json(item, replacements) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _redact_legacy_unsubscribe_json(item, replacements)
+            for key, item in value.items()
+        }
+    return value
 
 
 def _freeze_action_value(value: object) -> object:
@@ -1700,7 +2150,45 @@ def _current_unsubscribe_task_lineage(
         """,
         (task["id"], task["execution_generation"]),
     ).fetchall()
-    return {
+    continuation_row = db.execute(
+        """
+        select continuation.controls_json, effects.operations_json
+        from email_unsubscribe_continuations as continuation
+        join email_unsubscribe_effects as effects
+          on effects.action_identity=continuation.action_identity
+         and effects.effect_digest=continuation.effect_digest
+        where continuation.action_identity=?
+        """,
+        (expected_action_identity,),
+    ).fetchone()
+    continuation: dict[str, object] | None = None
+    if continuation_row is not None:
+        controls = _json_load(
+            continuation_row["controls_json"],
+            field="controls_json",
+            expected_type=list,
+        )
+        operations = _json_load(
+            continuation_row["operations_json"],
+            field="operations_json",
+            expected_type=list,
+        )
+        control_kinds = sorted(
+            {
+                str(control["kind"])
+                for control in controls
+                if isinstance(control, dict) and "kind" in control
+            }
+        )
+        continuation = {
+            "state": "awaiting_audit",
+            "control_kinds": control_kinds,
+            "operation_count": len(operations),
+            "requires_human": bool(
+                {"captcha_handoff", "credential_handoff"} & set(control_kinds)
+            ),
+        }
+    result = {
         "kind": "unsubscribe",
         "operation": "unsubscribe",
         "lifecycle_version": "email_unsubscribe_audited_v2",
@@ -1709,12 +2197,13 @@ def _current_unsubscribe_task_lineage(
         "consumer_run_ids": [
             int(row["id"]) for row in runs if row["role"] == "consumer"
         ],
-        "audit_run_ids": [
-            int(row["id"]) for row in runs if row["role"] == "audit"
-        ],
+        "audit_run_ids": [int(row["id"]) for row in runs if row["role"] == "audit"],
         "status": str(task["status"]),
         "_sort_created_at": str(task["created_at"] or ""),
     }
+    if continuation is not None:
+        result["continuation"] = continuation
+    return result
 
 
 def _validate_unsubscribe_operations(
@@ -1729,6 +2218,7 @@ def _validate_unsubscribe_operations(
         "submit_form",
         "click_confirmation",
         "confirm_email",
+        "reconcile_handoff",
     }
     validated: list[dict[str, str]] = []
     for operation in operations:
@@ -1825,7 +2315,15 @@ def _validate_unsubscribe_controls(
             "intent",
         }:
             raise ValueError("unsubscribe control has invalid fields")
-        if control["kind"] not in {"form", "link", "button", "confirmation_email"}:
+        if control["kind"] not in {
+            "form",
+            "link",
+            "button",
+            "confirmation_email",
+            "email_otp",
+            "captcha_handoff",
+            "credential_handoff",
+        }:
             raise ValueError("unsubscribe control kind is invalid")
         if control["intent"] not in {"continue", "unsubscribe", "confirm"}:
             raise ValueError("unsubscribe control intent is invalid")
@@ -2152,6 +2650,7 @@ class EmailStore:
             except sqlite3.OperationalError as exc:
                 if "locked" not in str(exc).lower():
                     raise
+            db.execute("pragma foreign_keys = off")
             db.execute("begin immediate")
             self._create_migration_table(db)
             latest_version = self._read_schema_version(db)
@@ -2172,7 +2671,9 @@ class EmailStore:
                 legacy_unsubscribe_claims = self._prepare_v10_unsubscribe_migration(db)
             legacy_unsubscribe_schema = False
             if latest_version < 14:
-                legacy_unsubscribe_schema = self._prepare_unsubscribe_schema_migration(db)
+                legacy_unsubscribe_schema = self._prepare_unsubscribe_schema_migration(
+                    db
+                )
             self._create_base_tables(db)
             self._create_durable_tables(db)
             self._ensure_email_context_columns(db)
@@ -2182,6 +2683,9 @@ class EmailStore:
             self._ensure_unsubscribe_claim_columns(db)
             self._ensure_unsubscribe_audit_columns(db)
             self._ensure_unsubscribe_receipt_columns(db)
+            self._ensure_training_snapshot_frozen_column(db)
+            self._ensure_training_snapshot_watermark_columns(db)
+            self._ensure_email_account_move_mode_column(db)
             if legacy_reply_claims:
                 self._finish_v8_reply_claim_migration(db)
             if legacy_unsubscribe_claims:
@@ -2220,6 +2724,51 @@ class EmailStore:
                     latest_version = 17
             if latest_version == 17:
                 self._migrate_v17_to_v18(db)
+                latest_version = 18
+            if latest_version == 18:
+                self._migrate_v18_to_v19(db, replace_version=is_prototype)
+                latest_version = 19
+            if latest_version == 19:
+                self._migrate_v19_to_v20(db, replace_version=is_prototype)
+                latest_version = 20
+            if latest_version == 20:
+                self._migrate_v20_to_v21(db, replace_version=is_prototype)
+                latest_version = 21
+            if latest_version == 21:
+                self._migrate_v21_to_v22(db, replace_version=is_prototype)
+                latest_version = 22
+            if latest_version == 22:
+                self._migrate_v22_to_v23(db, replace_version=is_prototype)
+                latest_version = 23
+            if latest_version == 23:
+                self._migrate_v23_to_v24(db, replace_version=is_prototype)
+                latest_version = 24
+            if latest_version == 24:
+                self._migrate_v24_to_v25(db, replace_version=is_prototype)
+                latest_version = 25
+            if latest_version == 25:
+                self._migrate_v25_to_v26(db, replace_version=is_prototype)
+                latest_version = 26
+            if latest_version == 26:
+                self._migrate_v26_to_v27(db, replace_version=is_prototype)
+                latest_version = 27
+            if latest_version == 27:
+                self._migrate_v27_to_v28(db, replace_version=is_prototype)
+                latest_version = 28
+            if latest_version == 28:
+                self._migrate_v28_to_v29(db, replace_version=is_prototype)
+                latest_version = 29
+            if latest_version == 29:
+                self._migrate_v29_to_v30(db, replace_version=is_prototype)
+                latest_version = 30
+            if latest_version == 30:
+                self._migrate_v30_to_v31(db, replace_version=is_prototype)
+                latest_version = 31
+            if latest_version == 31:
+                self._migrate_v31_to_v32(db, replace_version=is_prototype)
+                latest_version = 32
+            if latest_version == 32:
+                self._migrate_v32_to_v33(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -2591,7 +3140,7 @@ class EmailStore:
                 preview text not null default '',
                 model_text text not null default '',
                 received_at text not null default '',
-                category text not null,
+                category text,
                 predicted_category text,
                 confirmed_category text,
                 confidence real not null,
@@ -2601,12 +3150,35 @@ class EmailStore:
                 config_version text not null,
                 status text not null,
                 classification_source text not null,
+                agent_result_json text not null default 'null',
                 action_plan_json text not null default 'null',
                 current_action_plan_id text,
                 included_in_model_id text,
                 legacy_processed_without_plan integer not null default 0
                     check(legacy_processed_without_plan in (0, 1)),
                 confirmed_at text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists email_agent_classification_tasks (
+                task_id text primary key check(trim(task_id) != ''),
+                channel text not null check(channel='email'),
+                stable_message_identity text not null unique
+                    check(trim(stable_message_identity) != ''),
+                status text not null
+                    check(status in ('pending','running','done','failed')),
+                owner text not null default '',
+                generation integer not null default 0 check(generation >= 0),
+                attempt_count integer not null default 0 check(attempt_count >= 0),
+                lease_expires_at text not null default '',
+                available_at text not null default '',
+                input_json text not null check(json_valid(input_json)),
+                result_json text not null default 'null' check(json_valid(result_json)),
+                error text not null default '',
                 created_at text not null default current_timestamp,
                 updated_at text not null default current_timestamp
             )
@@ -2874,6 +3446,938 @@ class EmailStore:
             (self._now(),),
         )
 
+    def _migrate_v18_to_v19(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Allow strictly validated category-key text in feedback history."""
+
+        db.execute(
+            "alter table email_feedback_requests rename to email_feedback_requests_v18"
+        )
+        db.execute(
+            """
+                create table email_feedback_requests (
+                    feedback_request_id text primary key
+                        check(trim(feedback_request_id) != ''),
+                    classification_id integer not null,
+                    category text not null,
+                    expected_current_action_plan_id text
+                        unique
+                        check(
+                            expected_current_action_plan_id is null
+                            or trim(expected_current_action_plan_id) != ''
+                        ),
+                    resulting_action_plan_id text not null unique
+                        check(trim(resulting_action_plan_id) != ''),
+                    applied_at text not null check(trim(applied_at) != ''),
+                    check(
+                        expected_current_action_plan_id is null
+                        or expected_current_action_plan_id
+                            != resulting_action_plan_id
+                    ),
+                    foreign key(classification_id)
+                        references email_classifications(id) on delete restrict,
+                    foreign key(expected_current_action_plan_id)
+                        references email_action_plans(action_plan_id)
+                        on delete restrict,
+                    foreign key(resulting_action_plan_id)
+                        references email_action_plans(action_plan_id)
+                        on delete restrict
+                )
+            """
+        )
+        db.execute(
+            """
+                insert into email_feedback_requests (
+                    feedback_request_id, classification_id, category,
+                    expected_current_action_plan_id, resulting_action_plan_id,
+                    applied_at
+                )
+                select feedback_request_id, classification_id, category,
+                       expected_current_action_plan_id, resulting_action_plan_id,
+                       applied_at
+                from email_feedback_requests_v18
+            """
+        )
+        db.execute("drop table email_feedback_requests_v18")
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=19, applied_at=? "
+                "where version=18",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) "
+                "values (19, ?)",
+                (self._now(),),
+            )
+
+    @staticmethod
+    def _create_category_config_tables(db: sqlite3.Connection) -> None:
+        db.execute(CATEGORY_CONFIG_TABLE_SQL)
+        db.execute(FOLDER_BINDING_TABLE_SQL)
+        db.execute(ACTIVE_BINDING_INDEX_SQL)
+
+    def _migrate_v19_to_v20(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Replace mutable category configuration without rewriting history."""
+
+        current_columns = self._table_columns(db, "email_category_configs")
+        if "category_key" in current_columns:
+            if current_columns != STRUCTURED_CATEGORY_CONFIG_COLUMNS:
+                raise EmailPersistenceCorruption(
+                    "structured category config schema is malformed"
+                )
+            tables = {
+                row["name"]
+                for row in db.execute(
+                    "select name from sqlite_master where type='table'"
+                )
+            }
+            if "email_category_folder_bindings" not in tables:
+                db.execute(
+                    "alter table email_category_configs "
+                    "rename to email_category_configs_v20"
+                )
+                self._create_category_config_tables(db)
+                db.execute(
+                    "insert into email_category_configs "
+                    "select * from email_category_configs_v20"
+                )
+                db.execute("drop table email_category_configs_v20")
+            if replace_version:
+                db.execute(
+                    "update email_schema_migrations set version=20, applied_at=? "
+                    "where version=19",
+                    (self._now(),),
+                )
+            else:
+                db.execute(
+                    "insert into email_schema_migrations(version, applied_at) "
+                    "values (20, ?)",
+                    (self._now(),),
+                )
+            return
+        legacy_rows = {
+            str(row["category"]): row
+            for row in db.execute("select * from email_category_configs")
+        }
+        db.execute(
+            "alter table email_category_configs rename to email_category_configs_v19"
+        )
+        self._create_category_config_tables(db)
+        now = self._now()
+        has_enabled_account = (
+            db.execute(
+                "select 1 from email_accounts where enabled=1 limit 1"
+            ).fetchone()
+            is not None
+        )
+        migrated_keys = set(INITIAL_CATEGORY_CONFIGS)
+        migrated_keys.update(
+            key
+            for key in legacy_rows
+            if key not in {"important", "subscription", "billing"}
+        )
+        for category_key in sorted(migrated_keys):
+            try:
+                validated_key = validate_email_category_key(category_key)
+            except ValueError as exc:
+                raise EmailPersistenceCorruption(
+                    "invalid configured email category"
+                ) from exc
+            legacy = legacy_rows.get(category_key)
+            if category_key == "external_billing" and legacy is None:
+                legacy = legacy_rows.get("billing")
+            definition = INITIAL_CATEGORY_CONFIGS.get(category_key)
+            if definition is None:
+                assert legacy is not None
+                legacy_description = str(legacy["description"]).strip()
+                core = legacy_description or f"Messages classified as {validated_key}."
+                display_name = validated_key.replace("_", " ").title()
+                include = (core,)
+                exclude = ("Messages outside this category.",)
+            else:
+                display_name = str(definition["display_name"])
+                core = str(definition["core"])
+                include = tuple(definition["include"])
+                exclude = tuple(definition["exclude"])
+            db.execute(
+                """
+                insert into email_category_configs (
+                    category_key, display_name, core_description,
+                    include_json, exclude_json, threshold, actions_json,
+                    action_parameters_json, enabled, description_version,
+                    config_version, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    validated_key,
+                    display_name,
+                    core,
+                    _json_dump(list(include)),
+                    _json_dump(list(exclude)),
+                    (
+                        float(legacy["threshold"])
+                        if legacy is not None
+                        else SEEDED_THRESHOLD
+                    ),
+                    str(legacy["actions_json"]) if legacy is not None else "[]",
+                    (
+                        str(legacy["action_parameters_json"])
+                        if legacy is not None
+                        else "{}"
+                    ),
+                    (
+                        int(bool(legacy["enabled"]) and not has_enabled_account)
+                        if legacy is not None
+                        else int(not has_enabled_account)
+                    ),
+                    DESCRIPTION_VERSION,
+                    (
+                        str(legacy["config_version"])
+                        if legacy is not None
+                        else SEEDED_CONFIG_VERSION
+                    ),
+                    str(legacy["updated_at"]) if legacy is not None else now,
+                ),
+            )
+        db.execute("drop table email_category_configs_v19")
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=20, applied_at=? "
+                "where version=19",
+                (now,),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) "
+                "values (20, ?)",
+                (now,),
+            )
+
+    def _migrate_v20_to_v21(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Preserve exact provider-owned mailbox identifiers and display names."""
+
+        db.execute(
+            "alter table email_category_folder_bindings "
+            "rename to email_category_folder_bindings_v20"
+        )
+        db.execute(FOLDER_BINDING_TABLE_SQL)
+        db.execute(
+            """
+            insert into email_category_folder_bindings (
+                account_id, category_key, provider_folder_id,
+                provider_folder_name, binding_status, last_verified_at
+            )
+            select account_id, category_key, provider_folder_id,
+                   provider_folder_name, binding_status, last_verified_at
+            from email_category_folder_bindings_v20
+            """
+        )
+        db.execute("drop table email_category_folder_bindings_v20")
+        db.execute(ACTIVE_BINDING_INDEX_SQL)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=21, applied_at=? "
+                "where version=20",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) "
+                "values (21, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v21_to_v22(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Allow the provider-neutral deterministic important-flag action."""
+
+        for trigger in (
+            "trg_email_direct_action_blocks_plan_switch",
+            "trg_email_direct_action_blocks_account_update",
+            "trg_email_direct_action_blocks_account_delete",
+        ):
+            db.execute(f"drop trigger if exists {trigger}")
+        db.execute("drop index if exists idx_email_actions_status")
+        db.execute(
+            "alter table email_action_attempts rename to email_action_attempts_v21"
+        )
+        db.execute("alter table email_actions rename to email_actions_v21")
+        statements = (
+            """
+            create table email_actions (
+                action_id text primary key,
+                action_plan_id text not null,
+                classification_id integer not null,
+                account_id text not null,
+                action_type text not null
+                    check(action_type in (
+                        'label', 'mark_read', 'archive', 'move', 'trash',
+                        'flag_important'
+                    )),
+                parameters_json text not null check(json_valid(parameters_json)),
+                config_version text not null,
+                status text not null
+                    check(status in ('pending', 'processing', 'done', 'failed')),
+                attempt_count integer not null default 0 check(attempt_count >= 0),
+                started_at text not null default '',
+                finished_at text not null default '',
+                next_attempt_at text not null default '',
+                provider_operation text not null default '',
+                provider_target text not null default '',
+                provider_result_id text not null default '',
+                error text not null default '',
+                created_at text not null,
+                updated_at text not null,
+                unique(action_plan_id, action_type),
+                foreign key(action_plan_id) references email_action_plans(action_plan_id)
+                    on delete restrict,
+                foreign key(classification_id) references email_classifications(id)
+                    on delete restrict
+            )
+            """,
+            "insert into email_actions select * from email_actions_v21",
+            """
+            create table email_action_attempts (
+                id integer primary key autoincrement,
+                action_id text not null,
+                attempt_number integer not null check(attempt_number > 0),
+                status text not null check(status in ('done', 'failed')),
+                provider_operation text not null,
+                provider_target text not null,
+                provider_result_id text not null,
+                error text not null,
+                started_at text not null,
+                finished_at text not null,
+                unique(action_id, attempt_number),
+                foreign key(action_id) references email_actions(action_id)
+                    on delete restrict
+            )
+            """,
+            "insert into email_action_attempts select * from email_action_attempts_v21",
+            "drop table email_action_attempts_v21",
+            "drop table email_actions_v21",
+        )
+        for statement in statements:
+            db.execute(statement)
+        self._create_indexes_and_triggers(db)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=22, applied_at=? "
+                "where version=21",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (22, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v22_to_v23(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Add append-only folder-derived training snapshot storage."""
+
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=23, applied_at=? "
+                "where version=22",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (23, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v23_to_v24(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Freeze existing snapshots and gate all later observation inserts."""
+
+        db.execute(
+            "drop trigger if exists trg_email_training_snapshots_immutable_update"
+        )
+        db.execute(
+            """
+            create trigger trg_email_training_snapshots_immutable_update
+            before update on email_training_snapshots
+            when not (
+                old.frozen=0 and new.frozen=1
+                and old.snapshot_id is new.snapshot_id
+                and old.snapshot_version is new.snapshot_version
+                and old.description_version is new.description_version
+                and old.input_schema_version is new.input_schema_version
+                and old.seed is new.seed
+                and old.observed_at is new.observed_at
+                and old.snapshot_digest is new.snapshot_digest
+                and old.manifest_json is new.manifest_json
+                and old.created_at is new.created_at
+                and old.folder_label_watermark is new.folder_label_watermark
+                and old.important_label_watermark is new.important_label_watermark
+            )
+            begin
+                select raise(abort, 'email training snapshot is immutable');
+            end
+            """
+        )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=24, applied_at=? "
+                "where version=23",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (24, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v24_to_v25(
+        self,
+        db: sqlite3.Connection,
+        *,
+        replace_version: bool = False,
+    ) -> None:
+        """Add truthful Agent provenance and nullable uncertain categories."""
+
+        db.execute(
+            """
+            create table email_classifications_v25 (
+                id integer primary key,
+                account_id text not null,
+                folder text not null,
+                uidvalidity integer not null,
+                uid integer not null,
+                rfc_message_id text,
+                thread_id text,
+                stable_message_identity text not null unique,
+                sender text not null default '',
+                subject text not null default '',
+                preview text not null default '',
+                model_text text not null default '',
+                received_at text not null default '',
+                category text,
+                predicted_category text,
+                confirmed_category text,
+                confidence real not null,
+                margin real not null,
+                probabilities_json text not null,
+                model_id text not null,
+                config_version text not null,
+                status text not null,
+                classification_source text not null,
+                agent_result_json text not null default 'null',
+                action_plan_json text not null default 'null',
+                current_action_plan_id text,
+                included_in_model_id text,
+                legacy_processed_without_plan integer not null default 0
+                    check(legacy_processed_without_plan in (0, 1)),
+                confirmed_at text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp
+            )
+            """
+        )
+        db.execute(
+            """
+            insert into email_classifications_v25 (
+                id, account_id, folder, uidvalidity, uid, rfc_message_id,
+                thread_id, stable_message_identity, sender, subject, preview,
+                model_text, received_at, category, predicted_category,
+                confirmed_category, confidence, margin, probabilities_json,
+                model_id, config_version, status, classification_source,
+                action_plan_json, current_action_plan_id, included_in_model_id,
+                legacy_processed_without_plan, confirmed_at, created_at, updated_at
+            )
+            select id, account_id, folder, uidvalidity, uid, rfc_message_id,
+                   thread_id, stable_message_identity, sender, subject, preview,
+                   model_text, received_at, category, predicted_category,
+                   confirmed_category, confidence, margin, probabilities_json,
+                   model_id, config_version, status, classification_source,
+                   action_plan_json, current_action_plan_id, included_in_model_id,
+                   legacy_processed_without_plan, confirmed_at, created_at, updated_at
+            from email_classifications
+            """
+        )
+        db.execute(
+            """
+            create table email_action_plans_v25 (
+                action_plan_id text primary key,
+                action_plan_version integer not null check(action_plan_version > 0),
+                classification_id integer not null,
+                account_id text not null,
+                category text not null,
+                classification_source text not null
+                    check(classification_source in ('model', 'user', 'agent')),
+                confidence real not null check(confidence >= 0.0 and confidence <= 1.0),
+                model_id text not null,
+                config_version text not null,
+                actions_json text not null check(json_valid(actions_json)),
+                action_parameters_json text not null
+                    check(json_valid(action_parameters_json)),
+                authorization_snapshot_json text
+                    check(authorization_snapshot_json is null
+                          or json_valid(authorization_snapshot_json)),
+                legacy_serialization_pre_v16 integer not null default 0
+                    check(legacy_serialization_pre_v16 in (0, 1)),
+                created_at text not null,
+                unique(classification_id, action_plan_version),
+                foreign key(classification_id) references email_classifications(id)
+                    on delete restrict
+            )
+            """
+        )
+        db.execute(
+            """
+            insert into email_action_plans_v25 (
+                action_plan_id, action_plan_version, classification_id,
+                account_id, category, classification_source, confidence,
+                model_id, config_version, actions_json, action_parameters_json,
+                authorization_snapshot_json, legacy_serialization_pre_v16,
+                created_at
+            )
+            select action_plan_id, action_plan_version, classification_id,
+                   account_id, category, classification_source, confidence,
+                   model_id, config_version, actions_json, action_parameters_json,
+                   authorization_snapshot_json, legacy_serialization_pre_v16,
+                   created_at
+            from email_action_plans
+            """
+        )
+        db.execute("drop table email_action_plans")
+        db.execute("drop table email_classifications")
+        db.execute(
+            "alter table email_classifications_v25 rename to email_classifications"
+        )
+        db.execute("alter table email_action_plans_v25 rename to email_action_plans")
+        self._create_indexes_and_triggers(db)
+        self._ensure_training_inclusion_trigger(db)
+        foreign_key_violations = db.execute("pragma foreign_key_check").fetchall()
+        if foreign_key_violations:
+            raise EmailPersistenceCorruption(
+                "v25 migration foreign key violation: "
+                + repr([tuple(row) for row in foreign_key_violations])
+            )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=25, applied_at=? "
+                "where version=24",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (25, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v25_to_v26(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Adopt the classifier queue into the validated Email schema."""
+
+        db.execute("pragma secure_delete = on")
+        tables = {
+            row["name"]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        }
+        legacy_rows = (
+            db.execute("select * from email_agent_classification_tasks").fetchall()
+            if "email_agent_classification_tasks" in tables
+            else ()
+        )
+        if "email_agent_classification_tasks" in tables:
+            db.execute("drop table email_agent_classification_tasks")
+        self._create_base_tables(db)
+        for row in legacy_rows:
+            payload = json.loads(row["input_json"])
+            candidates = payload.get("unsubscribe_candidates", [])
+            redacted_candidates = [
+                {
+                    "index": index,
+                    "source": "legacy",
+                    "digest": sha256(str(url).encode("utf-8")).hexdigest(),
+                    "reference": "unsubscribe-entry:"
+                    + sha256(str(url).encode("utf-8")).hexdigest(),
+                }
+                for index, url in enumerate(candidates)
+            ]
+            replacements: list[tuple[str, str]] = []
+            for candidate, redacted in zip(
+                candidates, redacted_candidates, strict=True
+            ):
+                replacements.extend(
+                    (private_value, str(redacted["reference"]))
+                    for private_value in _legacy_unsubscribe_private_values(candidate)
+                )
+            replacements.sort(key=lambda item: len(item[0]), reverse=True)
+            payload = _redact_legacy_unsubscribe_json(payload, replacements)
+            assert isinstance(payload, dict)
+            payload["unsubscribe_candidates"] = redacted_candidates
+            result = json.loads(row["result_json"])
+            if isinstance(result, dict):
+                selected_url = result.pop("unsubscribe_url", None)
+                result = _redact_legacy_unsubscribe_json(result, replacements)
+                assert isinstance(result, dict)
+                if selected_url is not None:
+                    selected_url = str(selected_url)
+                    digest = sha256(selected_url.encode("utf-8")).hexdigest()
+                    reference = "unsubscribe-entry:" + digest
+                    result = _redact_legacy_unsubscribe_json(
+                        result,
+                        [
+                            (private_value, reference)
+                            for private_value in _legacy_unsubscribe_private_values(
+                                selected_url
+                            )
+                        ],
+                    )
+                    assert isinstance(result, dict)
+                    result["unsubscribe_candidate_digest"] = digest
+                    result["unsubscribe_candidate_reference"] = reference
+                    result["unsubscribe_candidate_source"] = "legacy"
+                else:
+                    result["unsubscribe_candidate_index"] = None
+                    result["unsubscribe_candidate_source"] = None
+                    result["unsubscribe_candidate_digest"] = None
+                    result["unsubscribe_candidate_reference"] = None
+            db.execute(
+                """
+                insert into email_agent_classification_tasks (
+                    task_id, channel, stable_message_identity, status, owner,
+                    input_json, result_json, error, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["task_id"],
+                    row["channel"],
+                    row["stable_message_identity"],
+                    "pending" if row["status"] == "running" else row["status"],
+                    "",
+                    _json_dump(payload),
+                    _json_dump(result),
+                    row["error"],
+                    row["created_at"],
+                    row["updated_at"],
+                ),
+            )
+        for row in db.execute(
+            "select id, agent_result_json from email_classifications where agent_result_json != 'null'"
+        ).fetchall():
+            result = json.loads(row["agent_result_json"])
+            selected_url = result.pop("unsubscribe_url", None)
+            if selected_url is not None:
+                selected_url = str(selected_url)
+                digest = sha256(selected_url.encode("utf-8")).hexdigest()
+                reference = "unsubscribe-entry:" + digest
+                result = _redact_legacy_unsubscribe_json(
+                    result,
+                    [
+                        (private_value, reference)
+                        for private_value in _legacy_unsubscribe_private_values(
+                            selected_url
+                        )
+                    ],
+                )
+                assert isinstance(result, dict)
+                result["unsubscribe_candidate_source"] = "legacy"
+                result["unsubscribe_candidate_digest"] = digest
+                result["unsubscribe_candidate_reference"] = reference
+            else:
+                result["unsubscribe_candidate_index"] = None
+                result["unsubscribe_candidate_source"] = None
+                result["unsubscribe_candidate_digest"] = None
+                result["unsubscribe_candidate_reference"] = None
+            db.execute(
+                "update email_classifications set agent_result_json=? where id=?",
+                (_json_dump(result), row["id"]),
+            )
+        self._create_indexes_and_triggers(db)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=26, applied_at=? where version=25",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (26, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v26_to_v27(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Add append-only outcomes for staged historical classification."""
+
+        self._create_durable_tables(db)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=27, applied_at=? "
+                "where version=26",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (27, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v27_to_v28(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        self._create_task10_historical_tables(db)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=28, applied_at=? where version=27",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (28, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v28_to_v29(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        self._ensure_column(
+            db,
+            table="email_historical_candidates",
+            column="attempted_at",
+            declaration="text not null default ''",
+        )
+        self._ensure_column(
+            db,
+            table="email_historical_candidates",
+            column="next_retry_at",
+            declaration="text not null default ''",
+        )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=29, applied_at=? where version=28",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (29, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v29_to_v30(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Redact historical queue rows down to locator plus input digest."""
+
+        db.execute("pragma secure_delete = on")
+        rows = db.execute(
+            "select rowid, * from email_historical_candidates"
+        ).fetchall()
+        for row in rows:
+            message = _json_load(
+                row["provider_message_json"],
+                field="provider_message_json",
+                expected_type=dict,
+            )
+            projection = _historical_candidate_projection(
+                message,
+                stable_message_identity=str(row["stable_message_identity"]),
+                account_id=str(row["account_id"]),
+                folder=str(row["folder"]),
+            )
+            db.execute(
+                "update email_historical_candidates "
+                "set normalized_text=?, provider_message_json=? where rowid=?",
+                (
+                    sha256(str(row["normalized_text"]).encode("utf-8")).hexdigest(),
+                    _json_dump(projection),
+                    row["rowid"],
+                ),
+            )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=30, applied_at=? "
+                "where version=29",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (30, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v30_to_v31(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Record the bounded cross-process classifier runtime evidence schema."""
+
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=31, applied_at=? "
+                "where version=30",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (31, ?)",
+                (self._now(),),
+            )
+
+    @classmethod
+    def _ensure_training_snapshot_watermark_columns(
+        cls, db: sqlite3.Connection
+    ) -> None:
+        columns = cls._table_columns(db, "email_training_snapshots")
+        if "folder_label_watermark" not in columns:
+            db.execute(
+                "alter table email_training_snapshots add column "
+                "folder_label_watermark integer not null default 0 "
+                "check(folder_label_watermark >= 0)"
+            )
+        if "important_label_watermark" not in columns:
+            db.execute(
+                "alter table email_training_snapshots add column "
+                "important_label_watermark integer not null default 0 "
+                "check(important_label_watermark >= 0)"
+            )
+
+    def _migrate_v31_to_v32(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Record current provider truth and frozen snapshot watermarks."""
+
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=32, applied_at=? "
+                "where version=31",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (32, ?)",
+                (self._now(),),
+            )
+
+    @classmethod
+    def _ensure_email_account_move_mode_column(cls, db: sqlite3.Connection) -> None:
+        cls._ensure_column(
+            db,
+            table="email_accounts",
+            column="imap_move_mode",
+            declaration=(
+                "text not null default 'move' "
+                "check(imap_move_mode in ('move', 'copy_as_move'))"
+            ),
+        )
+
+    def _migrate_v32_to_v33(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Persist the explicit provider move command semantics."""
+
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=33, applied_at=? "
+                "where version=32",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (33, ?)",
+                (self._now(),),
+            )
+
+    @staticmethod
+    def _create_task10_historical_tables(db: sqlite3.Connection) -> None:
+        db.execute(
+            """
+            create table if not exists email_historical_traversals (
+                account_id text not null,
+                folder text not null,
+                model_id text not null,
+                uidvalidity integer,
+                last_seen_uid integer not null default 0,
+                updated_at text not null,
+                primary key(account_id, folder, model_id)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists email_historical_operations (
+                operation_id text primary key,
+                account_id text not null,
+                stable_message_identity text not null,
+                model_id text not null,
+                classification_id integer not null,
+                action_plan_id text not null,
+                action_ids_json text not null check(json_valid(action_ids_json)),
+                predicted_category text not null,
+                threshold real not null,
+                probability real not null,
+                important integer not null check(important in (0,1)),
+                status text not null check(status in ('processing','terminal')),
+                action_outcome text not null default '',
+                created_at text not null,
+                updated_at text not null,
+                unique(model_id, stable_message_identity)
+            )
+            """
+        )
+        db.execute(
+            """
+            create table if not exists email_historical_candidates (
+                account_id text not null,
+                folder text not null,
+                model_id text not null,
+                stable_message_identity text not null,
+                normalized_text text not null,
+                provider_message_json text not null check(json_valid(provider_message_json)),
+                uidvalidity integer not null,
+                uid integer not null,
+                state text not null check(state in ('pending','deferred','terminal')),
+                reason text not null default '',
+                attempted_at text not null default '',
+                next_retry_at text not null default '',
+                updated_at text not null,
+                primary key(account_id, folder, model_id, stable_message_identity)
+            )
+            """
+        )
+
+    @classmethod
+    def _ensure_training_snapshot_frozen_column(cls, db: sqlite3.Connection) -> None:
+        cls._ensure_column(
+            db,
+            table="email_training_snapshots",
+            column="frozen",
+            declaration="integer not null default 1 check(frozen in (0, 1))",
+        )
+
     @classmethod
     def _ensure_unsubscribe_claim_columns(cls, db: sqlite3.Connection) -> None:
         had_phase = "phase" in cls._table_columns(db, "email_unsubscribe_claims")
@@ -2987,6 +4491,8 @@ class EmailStore:
                 imap_tls integer not null check(imap_tls in (0, 1)),
                 imap_username text not null,
                 imap_secret_reference text not null,
+                imap_move_mode text not null default 'move'
+                    check(imap_move_mode in ('move', 'copy_as_move')),
                 smtp_host text not null,
                 smtp_port integer not null check(smtp_port between 1 and 65535),
                 smtp_tls integer not null check(smtp_tls in (0, 1)),
@@ -3043,7 +4549,7 @@ class EmailStore:
                 account_id text not null,
                 category text not null,
                 classification_source text not null
-                    check(classification_source in ('model', 'user')),
+                    check(classification_source in ('model', 'user', 'agent')),
                 confidence real not null check(confidence >= 0.0 and confidence <= 1.0),
                 model_id text not null,
                 config_version text not null,
@@ -3068,7 +4574,10 @@ class EmailStore:
                 classification_id integer not null,
                 account_id text not null,
                 action_type text not null
-                    check(action_type in ('label', 'mark_read', 'archive', 'move', 'trash')),
+                    check(action_type in (
+                        'label', 'mark_read', 'archive', 'move', 'trash',
+                        'flag_important'
+                    )),
                 parameters_json text not null check(json_valid(parameters_json)),
                 config_version text not null,
                 status text not null
@@ -3112,10 +4621,7 @@ class EmailStore:
                 feedback_request_id text primary key
                     check(trim(feedback_request_id) != ''),
                 classification_id integer not null,
-                category text not null check(category in (
-                    'important', 'work', 'personal', 'notification',
-                    'billing', 'shopping', 'subscription', 'junk'
-                )),
+                category text not null,
                 expected_current_action_plan_id text
                     unique
                     check(
@@ -3328,6 +4834,126 @@ class EmailStore:
                     on delete restrict
             )
             """,
+            """
+            create table if not exists email_training_snapshots (
+                snapshot_id text primary key check(trim(snapshot_id) != ''),
+                snapshot_version text not null check(trim(snapshot_version) != ''),
+                description_version text not null
+                    check(trim(description_version) != ''),
+                input_schema_version text not null
+                    check(trim(input_schema_version) != ''),
+                seed integer not null check(seed >= 0),
+                observed_at text not null check(trim(observed_at) != ''),
+                snapshot_digest text not null unique
+                    check(length(snapshot_digest) = 64),
+                manifest_json text not null check(json_valid(manifest_json)),
+                frozen integer not null default 1 check(frozen in (0, 1)),
+                created_at text not null check(trim(created_at) != ''),
+                folder_label_watermark integer not null default 0
+                    check(folder_label_watermark >= 0),
+                important_label_watermark integer not null default 0
+                    check(important_label_watermark >= 0)
+            )
+            """,
+            """
+            create table if not exists email_provider_observations (
+                account_id text not null check(trim(account_id) != ''),
+                stable_message_identity text not null
+                    check(trim(stable_message_identity) != ''),
+                state text not null
+                    check(state in ('available','unavailable','excluded')),
+                provider_folder_id text,
+                provider_folder_name text,
+                category_key text,
+                important integer check(important is null or important in (0, 1)),
+                observed_at text not null check(trim(observed_at) != ''),
+                primary key(account_id, stable_message_identity)
+            )
+            """,
+            """
+            create table if not exists email_training_snapshot_observations (
+                snapshot_id text not null check(trim(snapshot_id) != ''),
+                account_id text not null check(trim(account_id) != ''),
+                stable_message_identity text not null
+                    check(trim(stable_message_identity) != ''),
+                provider_folder_id text not null
+                    check(trim(provider_folder_id) != ''),
+                provider_folder_name text not null
+                    check(trim(provider_folder_name) != ''),
+                category_key text
+                    check(category_key is null or trim(category_key) != ''),
+                important integer not null check(important in (0, 1)),
+                normalized_model_input text not null
+                    check(trim(normalized_model_input) != ''),
+                normalized_model_input_hash text not null
+                    check(length(normalized_model_input_hash) = 64),
+                input_schema_version text not null
+                    check(trim(input_schema_version) != ''),
+                provider_thread_id text,
+                normalized_body_digest text not null
+                    check(length(normalized_body_digest) = 64),
+                sender_template_signature text
+                    check(
+                        sender_template_signature is null
+                        or length(sender_template_signature) = 64
+                    ),
+                explicit_matter_group text,
+                group_key text not null check(length(group_key) = 64),
+                observed_at text not null check(trim(observed_at) != ''),
+                source text not null check(source in ('natural', 'targeted')),
+                split text not null
+                    check(split in ('train', 'validation', 'test')),
+                selected_for_training integer not null
+                    check(selected_for_training in (0, 1)),
+                ordered_record_digest text not null
+                    check(length(ordered_record_digest) = 64),
+                primary key(snapshot_id, account_id, stable_message_identity),
+                foreign key(snapshot_id)
+                    references email_training_snapshots(snapshot_id)
+                    on delete restrict
+            )
+            """,
+            """
+            create table if not exists email_historical_classification_history (
+                event_id text primary key check(trim(event_id) != ''),
+                stable_message_identity text not null
+                    check(trim(stable_message_identity) != ''),
+                model_id text not null check(trim(model_id) != ''),
+                predicted_category text
+                    check(
+                        predicted_category is null
+                        or trim(predicted_category) != ''
+                    ),
+                threshold real
+                    check(threshold is null or (threshold >= 0.0 and threshold <= 1.0)),
+                probability real
+                    check(
+                        probability is null
+                        or (probability >= 0.0 and probability <= 1.0)
+                    ),
+                important integer check(important is null or important in (0, 1)),
+                action_outcome text not null check(trim(action_outcome) != ''),
+                created_at text not null check(trim(created_at) != '')
+            )
+            """,
+            """
+            create table if not exists email_classifier_runtime_samples (
+                id integer primary key autoincrement,
+                model_id text not null check(trim(model_id) != ''),
+                outcome text not null
+                    check(outcome in ('success', 'rejected', 'failure')),
+                fallback_code text not null default ''
+                    check(length(fallback_code) <= 64),
+                cache_hit integer not null check(cache_hit in (0, 1)),
+                runtime_warm integer not null check(runtime_warm in (0, 1)),
+                queue_ms real not null check(queue_ms >= 0),
+                http_ms real not null check(http_ms >= 0),
+                embedding_ms real not null check(embedding_ms >= 0),
+                head_ms real not null check(head_ms >= 0),
+                total_ms real not null check(total_ms >= 0),
+                recorded_at text not null check(trim(recorded_at) != '')
+            )
+            """,
         )
         for statement in statements:
             db.execute(statement)
@@ -3335,6 +4961,12 @@ class EmailStore:
     @staticmethod
     def _create_indexes_and_triggers(db: sqlite3.Connection) -> None:
         statements = (
+            """
+            create index if not exists idx_email_agent_classification_tasks_status
+            on email_agent_classification_tasks(
+                status, available_at, lease_expires_at, task_id
+            )
+            """,
             """
             create index if not exists idx_email_classifications_status
             on email_classifications(status, updated_at desc, id desc)
@@ -3360,6 +4992,82 @@ class EmailStore:
             on email_unsubscribe_claims(status, updated_at, action_identity)
             """,
             """
+            create index if not exists idx_email_training_observations_split
+            on email_training_snapshot_observations(
+                snapshot_id, split, category_key, group_key
+            )
+            """,
+            """
+            create index if not exists idx_email_training_observations_provider_truth
+            on email_training_snapshot_observations(
+                account_id, stable_message_identity, observed_at desc, snapshot_id desc
+            )
+            """,
+            """
+            create index if not exists idx_email_provider_observations_lookup
+            on email_provider_observations(
+                account_id, stable_message_identity, observed_at desc
+            )
+            """,
+            """
+            create index if not exists idx_email_classifier_runtime_model_id
+            on email_classifier_runtime_samples(model_id, id desc)
+            """,
+            """
+            create trigger if not exists trg_email_training_snapshots_immutable_update
+            before update on email_training_snapshots
+            when not (
+                old.frozen=0 and new.frozen=1
+                and old.snapshot_id is new.snapshot_id
+                and old.snapshot_version is new.snapshot_version
+                and old.description_version is new.description_version
+                and old.input_schema_version is new.input_schema_version
+                and old.seed is new.seed
+                and old.observed_at is new.observed_at
+            and old.snapshot_digest is new.snapshot_digest
+            and old.manifest_json is new.manifest_json
+            and old.created_at is new.created_at
+            and old.folder_label_watermark is new.folder_label_watermark
+            and old.important_label_watermark is new.important_label_watermark
+            )
+            begin
+                select raise(abort, 'email training snapshot is immutable');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_training_snapshots_immutable_delete
+            before delete on email_training_snapshots
+            begin
+                select raise(abort, 'email training snapshot is immutable');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_training_observations_immutable_update
+            before update on email_training_snapshot_observations
+            begin
+                select raise(abort, 'email training snapshot observation is immutable');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_training_observations_immutable_delete
+            before delete on email_training_snapshot_observations
+            begin
+                select raise(abort, 'email training snapshot observation is immutable');
+            end
+            """,
+            """
+            create trigger if not exists
+                trg_email_training_observations_require_unfrozen_snapshot
+            before insert on email_training_snapshot_observations
+            when not exists (
+                select 1 from email_training_snapshots
+                where snapshot_id=new.snapshot_id and frozen=0
+            )
+            begin
+                select raise(abort, 'email training snapshot is frozen');
+            end
+            """,
+            """
             create trigger if not exists trg_email_classification_status_insert
             before insert on email_classifications
             when new.status not in ('pending_feedback', 'processed')
@@ -3378,7 +5086,7 @@ class EmailStore:
             """
             create trigger if not exists trg_email_classification_source_insert
             before insert on email_classifications
-            when new.classification_source not in ('model', 'user')
+            when new.classification_source not in ('model', 'user', 'agent')
             begin
                 select raise(abort, 'invalid email classification source');
             end
@@ -3386,7 +5094,7 @@ class EmailStore:
             """
             create trigger if not exists trg_email_classification_source_update
             before update of classification_source on email_classifications
-            when new.classification_source not in ('model', 'user')
+            when new.classification_source not in ('model', 'user', 'agent')
             begin
                 select raise(abort, 'invalid email classification source');
             end
@@ -3592,7 +5300,7 @@ class EmailStore:
         ).fetchall()
         for row in rows:
             try:
-                plan = EmailActionPlan.model_validate_json(row["action_plan_json"])
+                plan = rehydrate_legacy_email_action_plan_json(row["action_plan_json"])
             except ValueError as exc:
                 raise EmailPersistenceCorruption(
                     f"invalid action_plan_json for classification {row['id']}"
@@ -3651,7 +5359,14 @@ class EmailStore:
                 )
 
             indexes_by_table: dict[str, dict[str, sqlite3.Row]] = {}
-            for table, required_columns in _REQUIRED_TABLE_COLUMNS.items():
+            table_order = [
+                table
+                for table in _REQUIRED_TABLE_COLUMNS
+                if table != "email_category_folder_bindings"
+            ]
+            table_order.append("email_category_folder_bindings")
+            for table in table_order:
+                required_columns = _REQUIRED_TABLE_COLUMNS[table]
                 column_rows = list(
                     db.execute(f"pragma table_info({json.dumps(table)})")
                 )
@@ -3790,6 +5505,31 @@ class EmailStore:
                         f"required index {index_name} is missing or malformed"
                     )
 
+            for index_name, (
+                table,
+                required_columns,
+                required_predicate,
+            ) in _REQUIRED_PARTIAL_UNIQUE_INDEXES.items():
+                index_row = indexes_by_table[table].get(index_name)
+                sql_row = db.execute(
+                    "select sql from sqlite_master where type='index' and name=?",
+                    (index_name,),
+                ).fetchone()
+                if (
+                    index_row is None
+                    or not index_row["unique"]
+                    or not index_row["partial"]
+                    or cls._index_columns(db, index_name) != required_columns
+                    or sql_row is None
+                    or not isinstance(sql_row["sql"], str)
+                    or "".join(_schema_sql_tokens(required_predicate))
+                    not in "".join(_schema_sql_tokens(sql_row["sql"]))
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"required partial unique index {index_name} "
+                        "is missing or malformed"
+                    )
+
             trigger_rows = {
                 _schema_identifier(row["name"], field="sqlite_master trigger name"): row
                 for row in db.execute(
@@ -3832,6 +5572,42 @@ class EmailStore:
             ) from exc
 
     def _validate_durable_rows(self, db: sqlite3.Connection) -> None:
+        for row in db.execute("select * from email_agent_classification_tasks"):
+            payload = _json_load(
+                row["input_json"], field="input_json", expected_type=dict
+            )
+            if payload.get("stable_message_identity") != row["stable_message_identity"]:
+                raise EmailPersistenceCorruption(
+                    "classifier task stable identity diverges from input"
+                )
+            candidates = payload.get("unsubscribe_candidates")
+            if not isinstance(candidates, list) or any(
+                not isinstance(candidate, dict)
+                or set(candidate) != {"index", "source", "digest", "reference"}
+                or candidate["index"] != index
+                or not isinstance(candidate["digest"], str)
+                or not _SHA256_HEX.fullmatch(candidate["digest"])
+                or candidate["reference"] != "unsubscribe-entry:" + candidate["digest"]
+                for index, candidate in enumerate(candidates)
+            ):
+                raise EmailPersistenceCorruption(
+                    "classifier task unsubscribe candidates are not redacted"
+                )
+            result = json.loads(row["result_json"])
+            if isinstance(result, dict) and "unsubscribe_url" in result:
+                raise EmailPersistenceCorruption(
+                    "classifier task result contains private unsubscribe URL"
+                )
+            if row["status"] == "running" and (
+                not row["owner"] or not row["lease_expires_at"]
+            ):
+                raise EmailPersistenceCorruption(
+                    "running classifier task has no durable lease"
+                )
+            if row["status"] != "running" and (row["owner"] or row["lease_expires_at"]):
+                raise EmailPersistenceCorruption(
+                    "non-running classifier task retains a lease"
+                )
         for row in db.execute(
             "select account_id, scan_folders_json from email_accounts"
         ):
@@ -3918,10 +5694,12 @@ class EmailStore:
             ).append(row)
         for row in classifications.values():
             try:
-                EmailCategory(row["category"])
-                EmailCategory(row["predicted_category"])
+                if row["category"] is not None:
+                    rehydrate_legacy_email_category_key(row["category"])
+                if row["predicted_category"] is not None:
+                    rehydrate_legacy_email_category_key(row["predicted_category"])
                 if row["confirmed_category"]:
-                    EmailCategory(row["confirmed_category"])
+                    rehydrate_legacy_email_category_key(row["confirmed_category"])
             except ValueError as exc:
                 raise EmailPersistenceCorruption(
                     f"invalid classification category for {row['id']}"
@@ -3934,11 +5712,53 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     f"invalid classification source for {row['id']}"
                 )
-            _json_load(
+            probabilities = _json_load(
                 row["probabilities_json"],
                 field="probabilities_json",
                 expected_type=dict,
             )
+            try:
+                tuple(
+                    rehydrate_legacy_email_category_key(category)
+                    for category in probabilities
+                )
+            except ValueError as exc:
+                raise EmailPersistenceCorruption(
+                    f"invalid classification probabilities for {row['id']}"
+                ) from exc
+            if row["agent_result_json"] != "null":
+                from app.email_classifier_agent import DurableAgentClassificationResult
+
+                try:
+                    agent_result = DurableAgentClassificationResult.model_validate_json(
+                        row["agent_result_json"]
+                    )
+                except ValueError as exc:
+                    raise EmailPersistenceCorruption(
+                        f"invalid Agent result for classification {row['id']}"
+                    ) from exc
+                if row["classification_source"] == "model":
+                    raise EmailPersistenceCorruption(
+                        f"model classification {row['id']} carries Agent result"
+                    )
+                if row["classification_source"] == "agent":
+                    expected_status = (
+                        EmailClassificationStatus.PROCESSED.value
+                        if agent_result.certainty == "certain"
+                        else EmailClassificationStatus.PENDING_FEEDBACK.value
+                    )
+                    if (
+                        row["category"] != agent_result.category
+                        or row["confidence"] != agent_result.confidence
+                        or row["status"] != expected_status
+                    ):
+                        raise EmailPersistenceCorruption(
+                            f"Agent result diverges for classification {row['id']}"
+                        )
+            elif row["classification_source"] == "agent":
+                raise EmailPersistenceCorruption(
+                    f"Agent classification {row['id']} has no Agent result"
+                )
             message = messages.get(row["stable_message_identity"])
             if (
                 message is None
@@ -3994,9 +5814,18 @@ class EmailStore:
             classification_plans = plans_by_classification.get(row["id"], [])
             has_plan_snapshot = row["action_plan_json"] not in {"", "null"}
             if row["status"] == EmailClassificationStatus.PENDING_FEEDBACK.value:
-                if row["classification_source"] != "model":
+                if row["classification_source"] not in {"model", "agent"}:
                     raise EmailPersistenceCorruption(
-                        f"pending feedback classification {row['id']} must use model source"
+                        f"pending feedback classification {row['id']} must have model "
+                        "or agent source"
+                    )
+                if row["classification_source"] == "agent" and (
+                    row["category"] is not None
+                    or row["predicted_category"] is not None
+                    or probabilities
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"uncertain Agent classification {row['id']} has a category"
                     )
                 if row["legacy_processed_without_plan"] != 0:
                     raise EmailPersistenceCorruption(
@@ -4015,6 +5844,10 @@ class EmailStore:
                         f"pending feedback classification {row['id']} is confirmed"
                     )
                 continue
+            if row["category"] is None:
+                raise EmailPersistenceCorruption(
+                    f"processed classification {row['id']} has no category"
+                )
             if (
                 row["classification_source"] == "user"
                 and row["confirmed_category"] != row["category"]
@@ -4023,7 +5856,7 @@ class EmailStore:
                     f"user-confirmed classification {row['id']} has inconsistent category"
                 )
             if (
-                row["classification_source"] == "model"
+                row["classification_source"] in {"model", "agent"}
                 and row["confirmed_category"] is not None
                 and row["confirmed_category"] != row["category"]
             ):
@@ -4067,7 +5900,7 @@ class EmailStore:
             )
             plan_fields = (
                 current_plan.account_id,
-                current_plan.category.value,
+                current_plan.category,
                 current_plan.classification_source,
                 current_plan.confidence,
                 current_plan.model_id,
@@ -4139,7 +5972,7 @@ class EmailStore:
                 expected_plan_id = _validate_expected_action_plan_id(
                     row["expected_current_action_plan_id"]
                 )
-                category = EmailCategory(row["category"])
+                category = rehydrate_legacy_email_category_key(row["category"])
             except (TypeError, ValueError) as exc:
                 raise EmailPersistenceCorruption(
                     "invalid durable email feedback request"
@@ -4153,7 +5986,7 @@ class EmailStore:
                 classification is not None
                 and resulting_plan is not None
                 and resulting_plan.classification_id == row["classification_id"]
-                and resulting_plan.category is category
+                and resulting_plan.category == category
                 and resulting_plan.classification_source == "user"
             )
             if not valid_result:
@@ -4558,12 +6391,24 @@ class EmailStore:
                     "unsubscribe receipt does not match its exact accepted effect"
                 )
 
-        for row in db.execute(
-            "select category, actions_json, action_parameters_json "
-            "from email_category_configs"
-        ):
+        for row in db.execute("select * from email_category_configs"):
             try:
-                EmailCategory(row["category"])
+                validate_email_category_key(row["category_key"])
+                validate_category_descriptions(
+                    display_name=row["display_name"],
+                    core_description=row["core_description"],
+                    include=_json_load(
+                        row["include_json"],
+                        field="include_json",
+                        expected_type=list,
+                    ),
+                    exclude=_json_load(
+                        row["exclude_json"],
+                        field="exclude_json",
+                        expected_type=list,
+                    ),
+                    description_version=row["description_version"],
+                )
             except ValueError as exc:
                 raise EmailPersistenceCorruption(
                     "invalid configured email category"
@@ -4583,6 +6428,23 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     "invalid configured email action"
                 ) from exc
+
+        for row in db.execute("select * from email_category_folder_bindings"):
+            try:
+                VerifiedEmailFolderBinding(
+                    account_id=row["account_id"],
+                    provider_folder_id=row["provider_folder_id"],
+                    provider_folder_name=row["provider_folder_name"],
+                    binding_status=row["binding_status"],
+                    last_verified_at=row["last_verified_at"],
+                )
+                validate_email_category_key(row["category_key"])
+            except ValueError as exc:
+                raise EmailPersistenceCorruption(
+                    "invalid email category folder binding"
+                ) from exc
+
+        self._validate_category_binding_completeness(db)
 
         action_rows = list(db.execute("select * from email_actions"))
         actions_by_plan: dict[str, list[sqlite3.Row]] = {}
@@ -4715,10 +6577,18 @@ class EmailStore:
             action_plan = None
         else:
             try:
-                plan = EmailActionPlan.model_validate_json(row["action_plan_json"])
+                plan = rehydrate_legacy_email_action_plan_json(row["action_plan_json"])
             except ValueError as exc:
                 raise EmailPersistenceCorruption("invalid action_plan_json") from exc
             action_plan = plan.model_dump(mode="json")
+        if row["agent_result_json"] != "null":
+            agent_result = _json_load(
+                row["agent_result_json"],
+                field="agent_result_json",
+                expected_type=dict,
+            )
+        else:
+            agent_result = None
         return {
             "id": row["id"],
             "account_id": row["account_id"],
@@ -4742,6 +6612,7 @@ class EmailStore:
             "config_version": row["config_version"],
             "status": row["status"],
             "classification_source": row["classification_source"],
+            "agent_result": agent_result,
             "action_plan": action_plan,
             "current_action_plan_id": row["current_action_plan_id"],
             "confirmed_at": row["confirmed_at"],
@@ -4810,7 +6681,7 @@ class EmailStore:
                 }
             )
         try:
-            return EmailActionPlan.model_validate_json(_json_dump(payload))
+            return rehydrate_legacy_email_action_plan_json(_json_dump(payload))
         except ValueError as exc:
             raise EmailPersistenceCorruption(
                 f"invalid immutable ActionPlan {row['action_plan_id']}"
@@ -4839,8 +6710,8 @@ class EmailStore:
         confirmed = self._classification_row(classification)
         confirmed.update(
             {
-                "category": action_plan.category.value,
-                "confirmed_category": action_plan.category.value,
+                "category": action_plan.category,
+                "confirmed_category": action_plan.category,
                 "confidence": action_plan.confidence,
                 "model_id": action_plan.model_id,
                 "config_version": action_plan.config_version,
@@ -4989,7 +6860,7 @@ class EmailStore:
             plan.action_plan_version,
             plan.classification_id,
             plan.account_id,
-            plan.category.value,
+            plan.category,
             plan.classification_source,
             plan.confidence,
             plan.model_id,
@@ -5056,7 +6927,7 @@ class EmailStore:
                 plan.action_plan_version,
                 plan.classification_id,
                 plan.account_id,
-                plan.category.value,
+                plan.category,
                 plan.classification_source,
                 plan.confidence,
                 plan.model_id,
@@ -5211,6 +7082,7 @@ class EmailStore:
         self,
         classification: EmailClassification,
         *,
+        agent_result: object | None = None,
         sender: str = "",
         recipients: Sequence[str] = (),
         subject: str = "",
@@ -5230,6 +7102,7 @@ class EmailStore:
         """Atomically persist scan state and advance its folder cursor last."""
 
         _validate_model_text(model_text)
+        agent_result_json = _validated_agent_result_json(classification, agent_result)
         now = self._now()
         locator = classification.provider_locator
         if (cursor_uidvalidity is None) != (cursor_last_seen_uid is None):
@@ -5263,7 +7136,7 @@ class EmailStore:
             )
             if existing is None:
                 confirmed_category = (
-                    classification.category.value
+                    classification.category
                     if classification.status is EmailClassificationStatus.PROCESSED
                     else None
                 )
@@ -5275,8 +7148,9 @@ class EmailStore:
                         model_text, received_at, category, predicted_category,
                         confirmed_category, confidence, margin, probabilities_json,
                         model_id, config_version, status, classification_source,
-                        action_plan_json, current_action_plan_id, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'null', null, ?)
+                        agent_result_json, action_plan_json,
+                        current_action_plan_id, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'null', null, ?)
                     """,
                     (
                         classification.classification_id,
@@ -5292,8 +7166,8 @@ class EmailStore:
                         preview,
                         model_text,
                         received_at,
-                        classification.category.value,
-                        classification.category.value,
+                        classification.category,
+                        classification.category,
                         confirmed_category,
                         classification.confidence,
                         classification.margin,
@@ -5302,6 +7176,7 @@ class EmailStore:
                         classification.config_version,
                         classification.status.value,
                         classification.classification_source,
+                        agent_result_json,
                         now,
                     ),
                 )
@@ -5321,6 +7196,13 @@ class EmailStore:
                         ),
                     )
             else:
+                if (
+                    existing["classification_source"] == "agent"
+                    and existing["agent_result_json"] != agent_result_json
+                ):
+                    raise EmailClassificationConflict(
+                        "canonical Agent result diverges from retry"
+                    )
                 db.execute(
                     """
                     update email_classifications
@@ -5391,6 +7273,363 @@ class EmailStore:
         assert row is not None
         return dict(row)
 
+    def record_historical_classification_outcome(
+        self, outcome: object
+    ) -> dict[str, Any]:
+        """Append one redacted model decision/action outcome for a manual history run."""
+
+        stable_identity = str(
+            getattr(outcome, "stable_message_identity", "") or ""
+        ).strip()
+        model_id = str(getattr(outcome, "model_id", "") or "").strip()
+        action_outcome = str(getattr(outcome, "action_outcome", "") or "").strip()
+        if not stable_identity or not model_id or not action_outcome:
+            raise ValueError("historical outcome identity is incomplete")
+        predicted_value = getattr(outcome, "predicted_category", None)
+        predicted_category = (
+            None
+            if predicted_value is None
+            else validate_email_category_key(predicted_value)
+        )
+        threshold = _optional_probability(
+            getattr(outcome, "threshold", None), field="threshold"
+        )
+        probability = _optional_probability(
+            getattr(outcome, "probability", None), field="probability"
+        )
+        important_value = getattr(outcome, "important", None)
+        if important_value is not None and type(important_value) is not bool:
+            raise TypeError("important must be a strict bool or None")
+        identity_payload = _json_dump(
+            {
+                "stable_message_identity": stable_identity,
+                "model_id": model_id,
+                "predicted_category": predicted_category,
+                "threshold": threshold,
+                "probability": probability,
+                "important": important_value,
+                "action_outcome": action_outcome,
+            }
+        )
+        event_id = "email-historical:" + sha256(
+            identity_payload.encode("utf-8")
+        ).hexdigest()
+        created_at = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            db.execute(
+                """
+                insert or ignore into email_historical_classification_history (
+                    event_id, stable_message_identity, model_id,
+                    predicted_category, threshold, probability, important,
+                    action_outcome, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    stable_identity,
+                    model_id,
+                    predicted_category,
+                    threshold,
+                    probability,
+                    None if important_value is None else int(important_value),
+                    action_outcome,
+                    created_at,
+                ),
+            )
+            row = db.execute(
+                "select * from email_historical_classification_history "
+                "where event_id=?",
+                (event_id,),
+            ).fetchone()
+        assert row is not None
+        return _historical_outcome_row(row)
+
+    def historical_traversal_cursor(
+        self, *, account_id: str, folder: str, model_id: str
+    ) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_historical_traversals "
+                "where account_id=? and folder=? and model_id=?",
+                (account_id, folder, model_id),
+            ).fetchone()
+        return {
+            "uidvalidity": None if row is None else row["uidvalidity"],
+            "last_seen_uid": 0 if row is None else int(row["last_seen_uid"]),
+        }
+
+    def enqueue_historical_page(
+        self,
+        *,
+        account_id: str,
+        folder: str,
+        model_id: str,
+        uidvalidity: int,
+        last_seen_uid: int,
+        candidates: Sequence[object],
+    ) -> None:
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            for candidate in candidates:
+                message = getattr(candidate, "provider_message", None)
+                if not isinstance(message, Mapping):
+                    raise ValueError("historical queued candidate message is missing")
+                projection = _historical_candidate_projection(
+                    message,
+                    stable_message_identity=str(candidate.stable_message_identity),
+                    account_id=account_id,
+                    folder=folder,
+                )
+                normalized_input_hash = sha256(
+                    str(candidate.normalized_text).encode("utf-8")
+                ).hexdigest()
+                db.execute(
+                    """
+                    insert into email_historical_candidates (
+                        account_id, folder, model_id, stable_message_identity,
+                        normalized_text, provider_message_json, uidvalidity, uid,
+                        state, reason, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?)
+                    on conflict(account_id, folder, model_id, stable_message_identity)
+                    do update set normalized_text=excluded.normalized_text,
+                        provider_message_json=excluded.provider_message_json,
+                        uidvalidity=excluded.uidvalidity, uid=excluded.uid,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        account_id,
+                        folder,
+                        model_id,
+                        candidate.stable_message_identity,
+                        normalized_input_hash,
+                        _json_dump(projection),
+                        int(message.get("uidValidity") or uidvalidity),
+                        int(message.get("uid") or 0),
+                        now,
+                    ),
+                )
+            db.execute(
+                """
+                insert into email_historical_traversals (
+                    account_id, folder, model_id, uidvalidity, last_seen_uid, updated_at
+                ) values (?, ?, ?, ?, ?, ?)
+                on conflict(account_id, folder, model_id) do update set
+                    uidvalidity=excluded.uidvalidity,
+                    last_seen_uid=case
+                        when email_historical_traversals.uidvalidity=excluded.uidvalidity
+                        then max(email_historical_traversals.last_seen_uid, excluded.last_seen_uid)
+                        else excluded.last_seen_uid end,
+                    updated_at=excluded.updated_at
+                """,
+                (account_id, folder, model_id, uidvalidity, last_seen_uid, now),
+            )
+
+    def list_historical_candidates(
+        self, *, account_id: str, folder: str, model_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("historical candidate limit must be positive")
+        now = self._now()
+        deferred_quota = min(2, limit)
+        with self._connect() as db:
+            deferred_rows = db.execute(
+                """
+                select * from email_historical_candidates
+                where account_id=? and folder=? and model_id=?
+                  and state='deferred'
+                  and next_retry_at != '' and next_retry_at <= ?
+                order by
+                    case when attempted_at='' then updated_at else attempted_at end,
+                    uid, stable_message_identity
+                limit ?
+                """,
+                (account_id, folder, model_id, now, limit),
+            ).fetchall()
+            reserved = list(deferred_rows[:deferred_quota])
+            pending_rows = db.execute(
+                """
+                select * from email_historical_candidates
+                where account_id=? and folder=? and model_id=? and state='pending'
+                order by uid, stable_message_identity
+                limit ?
+                """,
+                (account_id, folder, model_id, limit - len(reserved)),
+            ).fetchall()
+            rows = reserved + list(pending_rows)
+            if len(rows) < limit:
+                rows.extend(deferred_rows[len(reserved) : limit - len(rows) + len(reserved)])
+        return [
+            {
+                **dict(row),
+                "normalized_input_hash": row["normalized_text"],
+                "provider_message": _json_load(
+                    row["provider_message_json"],
+                    field="provider_message_json",
+                    expected_type=dict,
+                ),
+            }
+            for row in rows
+        ]
+
+    def set_historical_candidate_state(
+        self,
+        *,
+        account_id: str,
+        folder: str,
+        model_id: str,
+        stable_message_identity: str,
+        state: str,
+        reason: str,
+    ) -> None:
+        if state not in {"pending", "deferred", "terminal"}:
+            raise ValueError("historical candidate state is invalid")
+        now = self._now()
+        next_retry_at = ""
+        attempted_at = ""
+        if state == "deferred":
+            attempted_at = now
+            next_retry_at = (
+                datetime.fromisoformat(now)
+                + timedelta(seconds=HISTORICAL_DEFER_RETRY_SECONDS)
+            ).isoformat(timespec="seconds")
+        with self._connect() as db:
+            updated = db.execute(
+                """
+                update email_historical_candidates
+                set state=?, reason=?, attempted_at=?, next_retry_at=?, updated_at=?
+                where account_id=? and folder=? and model_id=?
+                  and stable_message_identity=?
+                """,
+                (
+                    state,
+                    reason,
+                    attempted_at,
+                    next_retry_at,
+                    now,
+                    account_id,
+                    folder,
+                    model_id,
+                    stable_message_identity,
+                ),
+            ).rowcount
+        if updated != 1:
+            raise ValueError("historical queued candidate is missing")
+
+    def list_historical_classification_history(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from email_historical_classification_history "
+                "order by created_at, event_id"
+            ).fetchall()
+        return [_historical_outcome_row(row) for row in rows]
+
+    def begin_historical_operation(
+        self,
+        *,
+        account_id: str,
+        stable_message_identity: str,
+        model_id: str,
+        classification_id: int,
+        action_plan_id: str,
+        action_ids: Sequence[str],
+        predicted_category: str,
+        threshold: float,
+        probability: float,
+        important: bool,
+    ) -> dict[str, Any]:
+        identity = f"{model_id}\0{stable_message_identity}"
+        operation_id = "email-historical-operation:" + sha256(
+            identity.encode("utf-8")
+        ).hexdigest()
+        now = self._now()
+        immutable = (
+            account_id,
+            stable_message_identity,
+            model_id,
+            classification_id,
+            action_plan_id,
+            _json_dump(list(action_ids)),
+            predicted_category,
+            float(threshold),
+            float(probability),
+            int(important),
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            db.execute(
+                """
+                insert or ignore into email_historical_operations (
+                    operation_id, account_id, stable_message_identity, model_id,
+                    classification_id, action_plan_id, action_ids_json,
+                    predicted_category, threshold, probability, important,
+                    status, action_outcome, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', '', ?, ?)
+                """,
+                (operation_id, *immutable, now, now),
+            )
+            row = db.execute(
+                "select * from email_historical_operations where operation_id=?",
+                (operation_id,),
+            ).fetchone()
+        assert row is not None
+        observed = (
+            row["account_id"], row["stable_message_identity"], row["model_id"],
+            int(row["classification_id"]), row["action_plan_id"], row["action_ids_json"],
+            row["predicted_category"], float(row["threshold"]),
+            float(row["probability"]), int(row["important"]),
+        )
+        if observed != immutable:
+            raise EmailPersistenceCorruption("historical operation identity conflict")
+        return self._historical_operation_row(row)
+
+    def list_processing_historical_operations(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from email_historical_operations where status='processing' "
+                "order by created_at, operation_id"
+            ).fetchall()
+        return [self._historical_operation_row(row) for row in rows]
+
+    def complete_historical_operation(self, outcome: object) -> None:
+        stable_identity = str(getattr(outcome, "stable_message_identity"))
+        model_id = str(getattr(outcome, "model_id"))
+        with self._connect() as db:
+            db.execute(
+                """
+                update email_historical_operations
+                set status='terminal', action_outcome=?, updated_at=?
+                where model_id=? and stable_message_identity=? and status='processing'
+                """,
+                (
+                    str(getattr(outcome, "action_outcome")),
+                    self._now(), model_id, stable_identity,
+                ),
+            )
+
+    def touch_historical_operation(
+        self, *, model_id: str, stable_message_identity: str
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update email_historical_operations set updated_at=?
+                where model_id=? and stable_message_identity=? and status='processing'
+                """,
+                (self._now(), model_id, stable_message_identity),
+            )
+
+    @staticmethod
+    def _historical_operation_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            **dict(row),
+            "action_ids": tuple(
+                _json_load(row["action_ids_json"], field="action_ids_json", expected_type=list)
+            ),
+            "important": bool(row["important"]),
+        }
+
     def upsert_classification(
         self,
         classification: EmailClassification,
@@ -5420,6 +7659,37 @@ class EmailStore:
                 (account_id, folder),
             ).fetchone()
         return None if row is None else dict(row)
+
+    def record_scan_cursor(
+        self,
+        *,
+        account_id: str,
+        folder: str,
+        uidvalidity: int,
+        last_seen_uid: int,
+        expected_uidvalidity: int | None = None,
+    ) -> dict[str, Any]:
+        """Advance an observation-only scan after durable task enqueue."""
+
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            self._advance_cursor(
+                db,
+                account_id=account_id,
+                folder=folder,
+                uidvalidity=uidvalidity,
+                last_seen_uid=last_seen_uid,
+                last_success_at=now,
+                last_error="",
+                expected_uidvalidity=expected_uidvalidity,
+            )
+            row = db.execute(
+                "select * from email_scan_cursors where account_id=? and folder=?",
+                (account_id, folder),
+            ).fetchone()
+        assert row is not None
+        return dict(row)
 
     def list_accounts(self) -> list[dict[str, Any]]:
         with self._connect() as db:
@@ -6409,6 +8679,12 @@ class EmailStore:
                         "link": {"click_confirmation"},
                         "button": {"click_confirmation"},
                         "confirmation_email": {"confirm_email"},
+                        "email_otp": {"submit_form"},
+                        "captcha_handoff": {
+                            "click_confirmation",
+                            "reconcile_handoff",
+                        },
+                        "credential_handoff": {"reconcile_handoff"},
                     }
                     if control is None:
                         raise EmailUnsubscribeClaimConflict(
@@ -6419,6 +8695,24 @@ class EmailStore:
                     ):
                         raise EmailUnsubscribeClaimConflict(
                             "unsubscribe continuation control kind is invalid"
+                        )
+                    captcha_attempted = any(
+                        item["kind"] == "click_confirmation"
+                        and item["target_reference"] == control.get("reference")
+                        for item in validated_operations[:-1]
+                    )
+                    if control.get("kind") == "captcha_handoff" and (
+                        (
+                            next_operation["kind"] == "click_confirmation"
+                            and captcha_attempted
+                        )
+                        or (
+                            next_operation["kind"] == "reconcile_handoff"
+                            and not captcha_attempted
+                        )
+                    ):
+                        raise EmailUnsubscribeClaimConflict(
+                            "unsubscribe CAPTCHA continuation stage is invalid"
                         )
                     if any(
                         persisted[key] != binding[key]
@@ -8173,6 +10467,18 @@ class EmailStore:
         *,
         allow_shared_email: bool = False,
     ) -> dict[str, Any]:
+        row, _snapshot = self.create_account_with_category_enablement_snapshot(
+            values,
+            allow_shared_email=allow_shared_email,
+        )
+        return row
+
+    def create_account_with_category_enablement_snapshot(
+        self,
+        values: Mapping[str, object],
+        *,
+        allow_shared_email: bool = False,
+    ) -> tuple[dict[str, Any], EmailCategoryEnablementSnapshot]:
         now = self._now()
         with self._connect() as db:
             db.execute("begin immediate")
@@ -8191,12 +10497,17 @@ class EmailStore:
             )
             now = self._next_account_timestamp()
             self._insert_account(db, values, created_at=now, updated_at=now)
+            category_snapshot = self._disable_categories_missing_active_bindings(
+                db,
+                updated_at=now,
+            )
+            self._validate_category_binding_completeness(db)
             row = db.execute(
                 "select * from email_accounts where account_id=?",
                 (values["account_id"],),
             ).fetchone()
         assert row is not None
-        return self._account_row(row)
+        return self._account_row(row), category_snapshot
 
     def update_account(
         self,
@@ -8205,6 +10516,30 @@ class EmailStore:
         *,
         allow_shared_email: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        result = self.update_account_with_category_enablement_snapshot(
+            account_id,
+            values,
+            allow_shared_email=allow_shared_email,
+        )
+        if result is None:
+            return None
+        row, previous, _snapshot = result
+        return row, previous
+
+    def update_account_with_category_enablement_snapshot(
+        self,
+        account_id: str,
+        values: Mapping[str, object],
+        *,
+        allow_shared_email: bool = False,
+    ) -> (
+        tuple[
+            dict[str, Any],
+            dict[str, Any],
+            EmailCategoryEnablementSnapshot,
+        ]
+        | None
+    ):
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
@@ -8226,6 +10561,7 @@ class EmailStore:
                 update email_accounts set
                     display_name=?, email_address=?, imap_host=?, imap_port=?,
                     imap_tls=?, imap_username=?, imap_secret_reference=?,
+                    imap_move_mode=?,
                     smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
                     smtp_secret_reference=?, enabled=?, scan_folders_json=?,
                     scan_interval_seconds=?, updated_at=?
@@ -8239,6 +10575,7 @@ class EmailStore:
                     int(bool(values["imap_tls"])),
                     values["imap_username"],
                     values["imap_secret_reference"],
+                    values.get("imap_move_mode", "move"),
                     values["smtp_host"],
                     values["smtp_port"],
                     int(bool(values["smtp_tls"])),
@@ -8251,25 +10588,44 @@ class EmailStore:
                     account_id,
                 ),
             )
+            category_snapshot = self._disable_categories_missing_active_bindings(
+                db,
+                updated_at=updated_at,
+            )
+            self._validate_category_binding_completeness(db)
             row = db.execute(
                 "select * from email_accounts where account_id=?",
                 (account_id,),
             ).fetchone()
         assert row is not None
-        return self._account_row(row), previous
+        return self._account_row(row), previous, category_snapshot
 
     def delete_account_if_unchanged(
         self,
         account_id: str,
         *,
         expected_updated_at: str,
+        category_enablement_snapshot: EmailCategoryEnablementSnapshot | None = None,
     ) -> bool:
         with self._connect() as db:
             db.execute("begin immediate")
+            if category_enablement_snapshot is not None and not (
+                self._category_enablement_snapshot_is_current(
+                    db,
+                    category_enablement_snapshot,
+                )
+            ):
+                return False
             cursor = db.execute(
                 "delete from email_accounts where account_id=? and updated_at=?",
                 (account_id, expected_updated_at),
             )
+            if cursor.rowcount == 1 and category_enablement_snapshot is not None:
+                self._restore_category_enablement_snapshot(
+                    db,
+                    category_enablement_snapshot,
+                )
+                self._validate_category_binding_completeness(db)
         return cursor.rowcount == 1
 
     def restore_account_if_unchanged(
@@ -8277,14 +10633,23 @@ class EmailStore:
         snapshot: Mapping[str, object],
         *,
         expected_updated_at: str,
+        category_enablement_snapshot: EmailCategoryEnablementSnapshot | None = None,
     ) -> bool:
         with self._connect() as db:
             db.execute("begin immediate")
+            if category_enablement_snapshot is not None and not (
+                self._category_enablement_snapshot_is_current(
+                    db,
+                    category_enablement_snapshot,
+                )
+            ):
+                return False
             cursor = db.execute(
                 """
                 update email_accounts set
                     display_name=?, email_address=?, imap_host=?, imap_port=?,
                     imap_tls=?, imap_username=?, imap_secret_reference=?,
+                    imap_move_mode=?,
                     smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
                     smtp_secret_reference=?, enabled=?, scan_folders_json=?,
                     scan_interval_seconds=?, created_at=?, updated_at=?
@@ -8298,6 +10663,7 @@ class EmailStore:
                     int(bool(snapshot["imap_tls"])),
                     snapshot["imap_username"],
                     snapshot["imap_secret_reference"],
+                    snapshot.get("imap_move_mode", "move"),
                     snapshot["smtp_host"],
                     snapshot["smtp_port"],
                     int(bool(snapshot["smtp_tls"])),
@@ -8312,7 +10678,139 @@ class EmailStore:
                     expected_updated_at,
                 ),
             )
+            if cursor.rowcount == 1:
+                if category_enablement_snapshot is None:
+                    self._disable_categories_missing_active_bindings(
+                        db,
+                        updated_at=self._now(),
+                    )
+                else:
+                    self._restore_category_enablement_snapshot(
+                        db,
+                        category_enablement_snapshot,
+                    )
+                self._validate_category_binding_completeness(db)
         return cursor.rowcount == 1
+
+    @staticmethod
+    def _disable_categories_missing_active_bindings(
+        db: sqlite3.Connection,
+        *,
+        updated_at: str,
+    ) -> EmailCategoryEnablementSnapshot:
+        rows = db.execute(
+            """
+            select category_key, enabled, updated_at
+            from email_category_configs
+            where enabled=1 and exists (
+                select 1 from email_accounts as accounts
+                where accounts.enabled=1
+                  and not exists (
+                      select 1 from email_category_folder_bindings as bindings
+                      where bindings.account_id=accounts.account_id
+                        and bindings.category_key=
+                            email_category_configs.category_key
+                        and bindings.binding_status='active'
+                  )
+            )
+            order by category_key
+            """
+        ).fetchall()
+        db.execute(
+            """
+            update email_category_configs set enabled=0, updated_at=?
+            where enabled=1 and exists (
+                select 1 from email_accounts as accounts
+                where accounts.enabled=1
+                  and not exists (
+                      select 1 from email_category_folder_bindings as bindings
+                      where bindings.account_id=accounts.account_id
+                        and bindings.category_key=
+                            email_category_configs.category_key
+                        and bindings.binding_status='active'
+                  )
+            )
+            """,
+            (updated_at,),
+        )
+        return EmailCategoryEnablementSnapshot(
+            states=tuple(
+                EmailCategoryEnablementState(
+                    category_key=row["category_key"],
+                    enabled=bool(row["enabled"]),
+                    updated_at=row["updated_at"],
+                    mutation_updated_at=updated_at,
+                )
+                for row in rows
+            )
+        )
+
+    @staticmethod
+    def _category_enablement_snapshot_is_current(
+        db: sqlite3.Connection,
+        snapshot: EmailCategoryEnablementSnapshot,
+    ) -> bool:
+        if type(snapshot) is not EmailCategoryEnablementSnapshot:
+            return False
+        for state in snapshot.states:
+            if type(state) is not EmailCategoryEnablementState:
+                return False
+            row = db.execute(
+                "select enabled, updated_at from email_category_configs "
+                "where category_key=?",
+                (state.category_key,),
+            ).fetchone()
+            if (
+                row is None
+                or bool(row["enabled"]) is not False
+                or row["updated_at"] != state.mutation_updated_at
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _restore_category_enablement_snapshot(
+        db: sqlite3.Connection,
+        snapshot: EmailCategoryEnablementSnapshot,
+    ) -> None:
+        for state in snapshot.states:
+            updated = db.execute(
+                """
+                update email_category_configs set enabled=?, updated_at=?
+                where category_key=? and enabled=0 and updated_at=?
+                """,
+                (
+                    int(state.enabled),
+                    state.updated_at,
+                    state.category_key,
+                    state.mutation_updated_at,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise EmailPersistenceCorruption(
+                    "category enablement changed during account compensation"
+                )
+
+    @staticmethod
+    def _validate_category_binding_completeness(db: sqlite3.Connection) -> None:
+        incomplete = db.execute(
+            """
+            select configs.category_key, accounts.account_id
+            from email_category_configs as configs
+            cross join email_accounts as accounts
+            left join email_category_folder_bindings as bindings
+              on bindings.category_key=configs.category_key
+             and bindings.account_id=accounts.account_id
+             and bindings.binding_status='active'
+            where configs.enabled=1 and accounts.enabled=1
+              and bindings.account_id is null
+            limit 1
+            """
+        ).fetchone()
+        if incomplete is not None:
+            raise EmailPersistenceCorruption(
+                "enabled email category is missing an active account folder binding"
+            )
 
     @staticmethod
     def _assert_email_address_available(
@@ -8346,11 +10844,12 @@ class EmailStore:
             """
             insert into email_accounts (
                 account_id, display_name, email_address, imap_host, imap_port,
-                imap_tls, imap_username, imap_secret_reference, smtp_host,
+                imap_tls, imap_username, imap_secret_reference, imap_move_mode,
+                smtp_host,
                 smtp_port, smtp_tls, smtp_username, smtp_secret_reference,
                 enabled, scan_folders_json, scan_interval_seconds, created_at,
                 updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 values["account_id"],
@@ -8361,6 +10860,7 @@ class EmailStore:
                 int(bool(values["imap_tls"])),
                 values["imap_username"],
                 values["imap_secret_reference"],
+                values.get("imap_move_mode", "move"),
                 values["smtp_host"],
                 values["smtp_port"],
                 int(bool(values["smtp_tls"])),
@@ -8385,6 +10885,7 @@ class EmailStore:
             "imap_tls": bool(row["imap_tls"]),
             "imap_username": row["imap_username"],
             "imap_secret_reference": row["imap_secret_reference"],
+            "imap_move_mode": row["imap_move_mode"],
             "smtp_host": row["smtp_host"],
             "smtp_port": row["smtp_port"],
             "smtp_tls": bool(row["smtp_tls"]),
@@ -8606,8 +11107,39 @@ class EmailStore:
             **self._classification_evidence_row(row),
             "message_text": message.get_payload(),
             "cc": message.get("Cc", ""),
-            "recipients": [address for _, address in getaddresses(message.get_all("To", []))],
+            "recipients": [
+                address for _, address in getaddresses(message.get_all("To", []))
+            ],
         }
+
+    def get_classification_by_stable_identity(
+        self, stable_message_identity: str
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_classifications where stable_message_identity=?",
+                (stable_message_identity,),
+            ).fetchone()
+        return None if row is None else self._classification_row(row)
+
+    def has_stable_classification(self, stable_message_identity: str) -> bool:
+        return (
+            self.get_classification_by_stable_identity(stable_message_identity)
+            is not None
+        )
+
+    def stable_classification_uids(
+        self, *, account_id: str, folder: str, uidvalidity: int
+    ) -> frozenset[int]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select uid from email_classifications
+                where account_id=? and folder=? and uidvalidity=?
+                """,
+                (account_id, folder, uidvalidity),
+            ).fetchall()
+        return frozenset(int(row["uid"]) for row in rows)
 
     def list_email_classification_observability(
         self, classification_id: int
@@ -8898,6 +11430,757 @@ class EmailStore:
             result.append(sample)
         return result
 
+    def persist_training_snapshot(self, snapshot: object) -> dict[str, object]:
+        """Atomically append one validated immutable training snapshot."""
+
+        from app.email_training_snapshot import (
+            FolderTrainingSnapshot,
+            validate_folder_training_snapshot,
+        )
+
+        if type(snapshot) is not FolderTrainingSnapshot:
+            raise TypeError("snapshot must be a FolderTrainingSnapshot")
+        validate_folder_training_snapshot(snapshot)
+        manifest = snapshot.manifest
+        manifest_json = json.dumps(
+            manifest,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        created_at = self._now()
+        with self._connect() as db:
+            existing = db.execute(
+                "select snapshot_digest from email_training_snapshots "
+                "where snapshot_id=?",
+                (snapshot.snapshot_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing["snapshot_digest"] != snapshot.snapshot_digest:
+                    raise EmailTrainingSnapshotConflict(
+                        "training snapshot id already exists with different content"
+                    )
+                loaded = self._get_training_snapshot(db, snapshot.snapshot_id)
+                assert loaded is not None
+                return loaded
+            previous_snapshot = db.execute(
+                """
+                select snapshot_id, folder_label_watermark,
+                       important_label_watermark
+                from email_training_snapshots
+                where frozen=1
+                order by observed_at desc, snapshot_id desc
+                limit 1
+                """
+            ).fetchone()
+            previous_rows: dict[tuple[str, str], sqlite3.Row] = {}
+            folder_label_watermark = 0
+            important_label_watermark = 0
+            if previous_snapshot is not None:
+                folder_label_watermark = int(
+                    previous_snapshot["folder_label_watermark"]
+                )
+                important_label_watermark = int(
+                    previous_snapshot["important_label_watermark"]
+                )
+                previous_rows = {
+                    (str(row["account_id"]), str(row["stable_message_identity"])): row
+                    for row in db.execute(
+                        """
+                        select account_id, stable_message_identity,
+                               category_key, important
+                        from email_training_snapshot_observations
+                        where snapshot_id=?
+                        """,
+                        (previous_snapshot["snapshot_id"],),
+                    )
+                }
+            for row in snapshot.observations:
+                previous = previous_rows.get(
+                    (row.account_id, row.stable_message_identity)
+                )
+                if row.category_key is not None and (
+                    previous is None or previous["category_key"] != row.category_key
+                ):
+                    folder_label_watermark += 1
+                if previous is None or bool(previous["important"]) != row.important:
+                    important_label_watermark += 1
+            try:
+                db.execute(
+                    """
+                    insert into email_training_snapshots (
+                        snapshot_id, snapshot_version, description_version,
+                        input_schema_version, seed, observed_at, snapshot_digest,
+                        manifest_json, frozen, created_at,
+                        folder_label_watermark, important_label_watermark
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                    """,
+                    (
+                        snapshot.snapshot_id,
+                        snapshot.snapshot_version,
+                        snapshot.description_version,
+                        snapshot.input_schema_version,
+                        snapshot.seed,
+                        snapshot.observed_at,
+                        snapshot.snapshot_digest,
+                        manifest_json,
+                        created_at,
+                        folder_label_watermark,
+                        important_label_watermark,
+                    ),
+                )
+                db.executemany(
+                    """
+                    insert into email_training_snapshot_observations (
+                        snapshot_id, account_id, stable_message_identity,
+                        provider_folder_id, provider_folder_name, category_key,
+                        important, normalized_model_input,
+                        normalized_model_input_hash, input_schema_version,
+                        provider_thread_id, normalized_body_digest,
+                        sender_template_signature, explicit_matter_group,
+                        group_key, observed_at, source, split,
+                        selected_for_training, ordered_record_digest
+                    ) values (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    [
+                        (
+                            row.snapshot_id,
+                            row.account_id,
+                            row.stable_message_identity,
+                            row.provider_folder_id,
+                            row.provider_folder_name,
+                            row.category_key,
+                            int(row.important),
+                            row.normalized_model_input,
+                            row.normalized_model_input_hash,
+                            row.input_schema_version,
+                            row.provider_thread_id,
+                            row.normalized_body_digest,
+                            row.sender_template_signature,
+                            row.explicit_matter_group,
+                            row.group_key,
+                            row.observed_at,
+                            row.source,
+                            row.split,
+                            int(row.selected_for_training),
+                            row.ordered_record_digest,
+                        )
+                        for row in snapshot.observations
+                    ],
+                )
+                frozen = db.execute(
+                    "update email_training_snapshots set frozen=1 "
+                    "where snapshot_id=? and frozen=0",
+                    (snapshot.snapshot_id,),
+                ).rowcount
+                if frozen != 1:
+                    raise EmailTrainingSnapshotConflict(
+                        "training snapshot could not be atomically frozen"
+                    )
+            except sqlite3.IntegrityError as exc:
+                raise EmailTrainingSnapshotConflict(
+                    "training snapshot already exists or violates frozen constraints"
+                ) from exc
+            stored = self._get_training_snapshot(db, snapshot.snapshot_id)
+            assert stored is not None
+            return stored
+
+    def get_training_snapshot(self, snapshot_id: str) -> dict[str, object] | None:
+        if not isinstance(snapshot_id, str) or not snapshot_id.strip():
+            raise ValueError("snapshot_id must be non-empty text")
+        with self._connect() as db:
+            return self._get_training_snapshot(db, snapshot_id)
+
+    def list_provider_folder_correction_conflicts(
+        self, snapshot_id: str
+    ) -> list[dict[str, object]]:
+        """Return current folder truth that conflicts with the original prediction."""
+
+        if not isinstance(snapshot_id, str) or not snapshot_id.strip():
+            raise ValueError("snapshot_id must be non-empty text")
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select observations.stable_message_identity as sample_id,
+                       observations.group_key,
+                       classifications.predicted_category,
+                       observations.category_key as confirmed_category,
+                       observations.normalized_model_input as redacted_text
+                from email_training_snapshot_observations as observations
+                join email_classifications as classifications
+                  on classifications.account_id=observations.account_id
+                 and classifications.stable_message_identity=
+                     observations.stable_message_identity
+                where observations.snapshot_id=?
+                  and observations.category_key is not null
+                  and classifications.predicted_category is not null
+                  and classifications.predicted_category != observations.category_key
+                order by observations.stable_message_identity
+                """,
+                (snapshot_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_classifier_runtime_sample(
+        self,
+        *,
+        model_id: str,
+        outcome: str,
+        fallback_code: str = "",
+        cache_hit: bool,
+        runtime_warm: bool,
+        queue_ms: float,
+        http_ms: float,
+        embedding_ms: float,
+        head_ms: float,
+        total_ms: float,
+    ) -> None:
+        """Persist one bounded, content-free runtime timing observation."""
+
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ValueError("model_id must be non-empty")
+        if outcome not in {"success", "rejected", "failure"}:
+            raise ValueError("runtime outcome is invalid")
+        if fallback_code and _RUNTIME_CODE.fullmatch(fallback_code) is None:
+            raise ValueError("fallback_code must be a controlled code")
+        if type(cache_hit) is not bool or type(runtime_warm) is not bool:
+            raise TypeError("runtime flags must be boolean")
+        values = (queue_ms, http_ms, embedding_ms, head_ms, total_ms)
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(float(value))
+            or float(value) < 0
+            for value in values
+        ):
+            raise ValueError("runtime timings must be finite and non-negative")
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into email_classifier_runtime_samples (
+                    model_id, outcome, fallback_code, cache_hit, runtime_warm,
+                    queue_ms, http_ms, embedding_ms, head_ms, total_ms, recorded_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    model_id.strip(),
+                    outcome,
+                    fallback_code,
+                    int(cache_hit),
+                    int(runtime_warm),
+                    *(float(value) for value in values),
+                    self._now(),
+                ),
+            )
+            db.execute(
+                """
+                delete from email_classifier_runtime_samples
+                where id not in (
+                    select id from email_classifier_runtime_samples
+                    order by id desc limit ?
+                )
+                """,
+                (MAX_CLASSIFIER_RUNTIME_SAMPLES,),
+            )
+
+    def record_classifier_runtime_fallback(
+        self, *, model_id: str, fallback_code: str
+    ) -> None:
+        """Persist a zero-time fallback when no model timing sample exists."""
+
+        self.record_classifier_runtime_sample(
+            model_id=model_id,
+            outcome="rejected",
+            fallback_code=fallback_code,
+            cache_hit=False,
+            runtime_warm=True,
+            queue_ms=0.0,
+            http_ms=0.0,
+            embedding_ms=0.0,
+            head_ms=0.0,
+            total_ms=0.0,
+        )
+
+    def classifier_runtime_observability(
+        self, *, model_id: str
+    ) -> dict[str, object]:
+        """Read bounded cross-process timing percentiles and fallback counters."""
+
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ValueError("model_id must be non-empty")
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select outcome, fallback_code, cache_hit, runtime_warm,
+                       queue_ms, http_ms, embedding_ms, head_ms, total_ms
+                from email_classifier_runtime_samples
+                where model_id=? order by id desc limit ?
+                """,
+                (model_id.strip(), MAX_CLASSIFIER_RUNTIME_SAMPLES),
+            ).fetchall()
+
+        def percentile(values: list[float], quantile: float) -> float:
+            if not values:
+                return 0.0
+            ordered = sorted(values)
+            position = (len(ordered) - 1) * quantile
+            lower = math.floor(position)
+            upper = math.ceil(position)
+            if lower == upper:
+                return ordered[lower]
+            weight = position - lower
+            return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+        def segment(selected: list[sqlite3.Row]) -> dict[str, object]:
+            return {
+                "sample_count": len(selected),
+                "stages": {
+                    stage: {
+                        key: percentile(
+                            [float(row[f"{stage}_ms"]) for row in selected], quantile
+                        )
+                        for key, quantile in (("p50", 0.5), ("p95", 0.95), ("p99", 0.99))
+                    }
+                    for stage in ("queue", "http", "embedding", "head", "total")
+                },
+            }
+
+        all_rows = list(rows)
+        warm_success = [
+            row
+            for row in rows
+            if row["runtime_warm"] == 1 and row["outcome"] == "success"
+        ]
+        timing = {
+            "all": segment(all_rows),
+            "warm_success": segment(warm_success),
+            "warm_success_cache": segment(
+                [row for row in warm_success if row["cache_hit"] == 1]
+            ),
+            "warm_success_remote": segment(
+                [row for row in warm_success if row["cache_hit"] == 0]
+            ),
+            "slo_status": (
+                "not_enough_data"
+                if not warm_success
+                else "compliant"
+                if percentile(
+                    [float(row["total_ms"]) for row in warm_success], 0.95
+                )
+                < 500.0
+                else "non_compliant"
+            ),
+        }
+        fallback_counts: dict[str, int] = {}
+        for row in rows:
+            code = str(row["fallback_code"] or "")
+            if code:
+                fallback_counts[code] = fallback_counts.get(code, 0) + 1
+        return {"timing": timing, "fallback_counts": fallback_counts}
+
+    def latest_training_snapshot_state(self) -> dict[str, object] | None:
+        """Return the latest frozen snapshot and cumulative label-change watermarks."""
+
+        with self._connect() as db:
+            latest = db.execute(
+                """
+                select snapshot_id, snapshot_version, snapshot_digest,
+                       description_version, input_schema_version, observed_at,
+                       folder_label_watermark, important_label_watermark
+                from email_training_snapshots
+                where frozen=1
+                order by observed_at desc, snapshot_id desc
+                limit 1
+                """
+            ).fetchone()
+            if latest is None:
+                return None
+            aggregate = db.execute(
+                """
+                select count(*) as sample_count,
+                       count(distinct group_key) as group_count
+                from email_training_snapshot_observations
+                where snapshot_id=?
+                """,
+                (latest["snapshot_id"],),
+            ).fetchone()
+            category_rows = db.execute(
+                """
+                select category_key, count(*) as sample_count,
+                       count(distinct group_key) as group_count
+                from email_training_snapshot_observations
+                where snapshot_id=? and category_key is not null
+                group by category_key
+                order by category_key
+                """,
+                (latest["snapshot_id"],),
+            ).fetchall()
+            split_rows = db.execute(
+                """
+                select split,
+                       count(*) as sample_count,
+                       min(important) as minimum_important,
+                       max(important) as maximum_important,
+                       group_concat(distinct case
+                           when split != 'train' or selected_for_training=1
+                           then category_key end
+                       ) as categories
+                from email_training_snapshot_observations
+                where snapshot_id=?
+                group by split
+                """,
+                (latest["snapshot_id"],),
+            ).fetchall()
+            description_rows = db.execute(
+                """
+                select category_key, core_description, include_json, exclude_json,
+                       description_version
+                from email_category_configs where enabled=1
+                order by category_key
+                """
+            ).fetchall()
+            enabled_categories = {row["category_key"] for row in description_rows}
+            from app.email_description_optimizer import description_set_digest
+            from app.email_embedding_classifier import CategoryDescription
+
+            descriptions = {
+                row["category_key"]: CategoryDescription(
+                    core=row["core_description"],
+                    include=tuple(
+                        _json_load(
+                            row["include_json"],
+                            field="include_json",
+                            expected_type=list,
+                        )
+                    ),
+                    exclude=tuple(
+                        _json_load(
+                            row["exclude_json"],
+                            field="exclude_json",
+                            expected_type=list,
+                        )
+                    ),
+                    version=row["description_version"],
+                )
+                for row in description_rows
+            }
+            current_description_version = (
+                "description-set-sha256:" + description_set_digest(descriptions)
+                if descriptions
+                else "description-set-unavailable"
+            )
+            split_summary = {str(row["split"]): row for row in split_rows}
+
+            def split_categories(name: str) -> set[str]:
+                row = split_summary.get(name)
+                if row is None or not row["categories"]:
+                    return set()
+                return set(str(row["categories"]).split(","))
+
+            def split_has_both_important(name: str) -> bool:
+                row = split_summary.get(name)
+                return bool(
+                    row is not None
+                    and int(row["sample_count"]) > 0
+                    and row["minimum_important"] == 0
+                    and row["maximum_important"] == 1
+                )
+
+            train_categories = split_categories("train")
+            validation_categories = split_categories("validation")
+            test_categories = split_categories("test")
+            minimum_ready = bool(
+                train_categories
+                and validation_categories
+                and test_categories
+                and enabled_categories
+                and enabled_categories <= train_categories
+                and enabled_categories <= validation_categories
+                and enabled_categories <= test_categories
+                and all(split_has_both_important(name) for name in ("train", "validation", "test"))
+            )
+            latest_category_counts = {
+                str(row["category_key"]): int(row["sample_count"])
+                for row in category_rows
+            }
+            latest_category_group_counts = {
+                str(row["category_key"]): int(row["group_count"])
+                for row in category_rows
+            }
+            return {
+                "snapshot_id": latest["snapshot_id"],
+                "snapshot_version": latest["snapshot_version"],
+                "snapshot_sha": latest["snapshot_digest"],
+                "description_version": current_description_version,
+                "input_schema_version": latest["input_schema_version"],
+                "folder_label_watermark": int(latest["folder_label_watermark"]),
+                "important_label_watermark": int(
+                    latest["important_label_watermark"]
+                ),
+                "minimum_ready": minimum_ready,
+                "sample_count": int(aggregate["sample_count"]),
+                "group_count": int(aggregate["group_count"]),
+                "category_sample_counts": latest_category_counts,
+                "category_group_counts": latest_category_group_counts,
+            }
+
+    def get_provider_classification_state(
+        self, classification_id: int
+    ) -> dict[str, object]:
+        """Project current provider-folder truth without provider network I/O."""
+
+        _require_positive_int(classification_id, field="classification_id")
+        with self._connect() as db:
+            classification = db.execute(
+                "select account_id, stable_message_identity "
+                "from email_classifications where id=?",
+                (classification_id,),
+            ).fetchone()
+            if classification is None:
+                return {"state": "unavailable", "reason": "classification_missing"}
+            row = db.execute(
+                """
+                select state, category_key, important, provider_folder_id,
+                       provider_folder_name, observed_at
+                from email_provider_observations
+                where account_id=? and stable_message_identity=?
+                """,
+                (
+                    classification["account_id"],
+                    classification["stable_message_identity"],
+                ),
+            ).fetchone()
+        if row is None:
+            return {"state": "unavailable", "reason": "provider_truth_not_observed"}
+        if row["state"] != "available":
+            return {
+                "state": str(row["state"]),
+                "reason": "provider_truth_" + str(row["state"]),
+                "observed_at": row["observed_at"],
+            }
+        category_key = row["category_key"]
+        state = (
+            "junk"
+            if category_key == "junk"
+            else "categorized"
+            if category_key is not None
+            else "unclassified"
+        )
+        return {
+            "state": state,
+            "category_key": category_key,
+            "important": bool(row["important"]),
+            "provider_folder_id": row["provider_folder_id"],
+            "provider_folder_name": row["provider_folder_name"],
+            "observed_at": row["observed_at"],
+        }
+
+    def record_current_provider_observations(
+        self,
+        observations: Sequence[Mapping[str, object]],
+        *,
+        unavailable_folders: Sequence[str],
+        authoritative_folders: Sequence[str] | None = None,
+        active_account_ids: Sequence[str] | None = None,
+        observed_at: str,
+    ) -> None:
+        """Publish one scan generation and reconcile its authoritative membership.
+
+        ``observed_at`` is the durable generation marker. Only folders explicitly
+        listed as authoritative may tombstone identities absent from this
+        generation; unavailable or still-partial folders retain an unknown row.
+        """
+
+        if not isinstance(observed_at, str) or not observed_at.strip():
+            raise ValueError("observed_at must be non-empty text")
+        rows: list[tuple[object, ...]] = []
+        for observation in observations:
+            account_id = str(observation.get("account_id") or "").strip()
+            identity = str(
+                observation.get("stable_message_identity") or ""
+            ).strip()
+            folder_id = str(observation.get("provider_folder_id") or "").strip()
+            folder_name = str(
+                observation.get("provider_folder_name") or ""
+            ).strip()
+            if not account_id or not identity or not folder_id or not folder_name:
+                raise ValueError("provider observation identity is incomplete")
+            role_value = observation.get("folder_role")
+            role = str(getattr(role_value, "value", role_value))
+            binding_status = str(
+                observation.get("folder_binding_status") or "unbound"
+            )
+            state = "excluded" if role in {"sent", "draft"} else "available"
+            category_key = observation.get("bound_category_key")
+            if role in {"spam", "trash"}:
+                category_key = "junk"
+            elif binding_status != "active":
+                category_key = None
+            signals = observation.get("important_signals")
+            important_value = getattr(signals, "provider_important", None)
+            if isinstance(signals, Mapping):
+                important_value = signals.get("provider_important")
+            if type(important_value) is not bool:
+                raise ValueError("provider important state is invalid")
+            rows.append(
+                (
+                    account_id,
+                    identity,
+                    state,
+                    folder_id,
+                    folder_name,
+                    category_key,
+                    int(important_value),
+                    observed_at,
+                )
+            )
+        unavailable = tuple(str(value) for value in unavailable_folders)
+        authoritative = tuple(str(value) for value in (authoritative_folders or ()))
+        active_accounts = (
+            None
+            if active_account_ids is None
+            else tuple(str(value) for value in active_account_ids)
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            db.executemany(
+                """
+                insert into email_provider_observations (
+                    account_id, stable_message_identity, state,
+                    provider_folder_id, provider_folder_name, category_key,
+                    important, observed_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(account_id, stable_message_identity) do update set
+                    state=excluded.state,
+                    provider_folder_id=excluded.provider_folder_id,
+                    provider_folder_name=excluded.provider_folder_name,
+                    category_key=excluded.category_key,
+                    important=excluded.important,
+                    observed_at=excluded.observed_at
+                """,
+                rows,
+            )
+            current_membership: dict[tuple[str, str], set[str]] = {}
+            for row in rows:
+                current_membership.setdefault((str(row[0]), str(row[3])), set()).add(
+                    str(row[1])
+                )
+            for value in authoritative:
+                account_id, separator, folder_id = value.partition(":")
+                if not separator or not account_id or not folder_id:
+                    raise ValueError("authoritative folder identity is invalid")
+                identities = current_membership.get((account_id, folder_id), set())
+                if identities:
+                    placeholders = ",".join("?" for _ in identities)
+                    db.execute(
+                        "update email_provider_observations set state='unavailable', "
+                        "provider_folder_id=null, provider_folder_name=null, "
+                        "category_key=null, important=null, observed_at=? "
+                        "where account_id=? and provider_folder_id=? and "
+                        f"stable_message_identity not in ({placeholders})",
+                        (observed_at, account_id, folder_id, *sorted(identities)),
+                    )
+                else:
+                    db.execute(
+                        "update email_provider_observations set state='unavailable', "
+                        "provider_folder_id=null, provider_folder_name=null, "
+                        "category_key=null, important=null, observed_at=? "
+                        "where account_id=? and provider_folder_id=?",
+                        (observed_at, account_id, folder_id),
+                    )
+            if active_accounts is not None:
+                if active_accounts:
+                    placeholders = ",".join("?" for _ in active_accounts)
+                    db.execute(
+                        "update email_provider_observations set state='unavailable', "
+                        "provider_folder_id=null, provider_folder_name=null, "
+                        "category_key=null, important=null, observed_at=? "
+                        f"where account_id not in ({placeholders})",
+                        (observed_at, *active_accounts),
+                    )
+                else:
+                    db.execute(
+                        "update email_provider_observations set state='unavailable', "
+                        "provider_folder_id=null, provider_folder_name=null, "
+                        "category_key=null, important=null, observed_at=?",
+                        (observed_at,),
+                    )
+            for value in unavailable:
+                account_id, separator, folder_id = value.partition(":")
+                if not separator or not account_id or not folder_id:
+                    raise ValueError("unavailable folder identity is invalid")
+                db.execute(
+                    """
+                    update email_provider_observations
+                    set state='unavailable', category_key=null, important=null,
+                        observed_at=?
+                    where account_id=? and provider_folder_id=?
+                    """,
+                    (observed_at, account_id, folder_id),
+                )
+
+    @staticmethod
+    def _get_training_snapshot(
+        db: sqlite3.Connection, snapshot_id: str
+    ) -> dict[str, object] | None:
+        snapshot = db.execute(
+            "select * from email_training_snapshots where snapshot_id=?",
+            (snapshot_id,),
+        ).fetchone()
+        if snapshot is None:
+            return None
+        if snapshot["frozen"] != 1:
+            raise EmailPersistenceCorruption("training snapshot is not frozen")
+        rows = db.execute(
+            """
+            select * from email_training_snapshot_observations
+            where snapshot_id=?
+            order by stable_message_identity
+            """,
+            (snapshot_id,),
+        ).fetchall()
+        observation_values = []
+        for row in rows:
+            value = dict(row)
+            value["important"] = bool(value["important"])
+            value["selected_for_training"] = bool(value["selected_for_training"])
+            observation_values.append(value)
+        try:
+            from app.email_training_snapshot import (
+                FolderTrainingSnapshot,
+                TrainingSnapshotObservation,
+                validate_folder_training_snapshot,
+            )
+
+            restored = FolderTrainingSnapshot(
+                snapshot_id=snapshot["snapshot_id"],
+                snapshot_version=snapshot["snapshot_version"],
+                description_version=snapshot["description_version"],
+                input_schema_version=snapshot["input_schema_version"],
+                seed=snapshot["seed"],
+                observed_at=snapshot["observed_at"],
+                observations=tuple(
+                    TrainingSnapshotObservation(**value) for value in observation_values
+                ),
+                snapshot_digest=snapshot["snapshot_digest"],
+                _manifest_json=snapshot["manifest_json"],
+            )
+            validate_folder_training_snapshot(restored, allow_legacy_manifest=True)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise EmailPersistenceCorruption(
+                "persisted training snapshot does not match its manifest"
+            ) from exc
+        result = restored.to_dict()
+        result["folder_label_watermark"] = int(
+            snapshot["folder_label_watermark"]
+        )
+        result["important_label_watermark"] = int(
+            snapshot["important_label_watermark"]
+        )
+        return result
+
     def list_unincluded_training_examples(self) -> list[dict[str, Any]]:
         return [
             row
@@ -9064,7 +12347,7 @@ class EmailStore:
     def confirm_classification(
         self,
         row_id: int,
-        category: EmailCategory,
+        category: EmailCategoryKey,
         *,
         feedback_request_id: str,
         expected_current_action_plan_id: str | None,
@@ -9082,7 +12365,7 @@ class EmailStore:
     def apply_human_classification(
         self,
         row_id: int,
-        category: EmailCategory,
+        category: EmailCategoryKey,
         *,
         feedback_request_id: str,
         expected_current_action_plan_id: str | None,
@@ -9102,7 +12385,7 @@ class EmailStore:
     def _apply_human_classification(
         self,
         row_id: int,
-        category: EmailCategory,
+        category: EmailCategoryKey,
         *,
         feedback_request_id: str,
         expected_current_action_plan_id: str | None,
@@ -9113,7 +12396,7 @@ class EmailStore:
         expected_current_action_plan_id = _validate_expected_action_plan_id(
             expected_current_action_plan_id
         )
-        category = EmailCategory(category)
+        category = validate_email_category_key(category)
         with self._connect() as db:
             db.execute("begin immediate")
             request = db.execute(
@@ -9123,7 +12406,7 @@ class EmailStore:
             if request is not None:
                 same_intent = (
                     request["classification_id"] == row_id
-                    and request["category"] == category.value
+                    and request["category"] == category
                     and request["expected_current_action_plan_id"]
                     == expected_current_action_plan_id
                 )
@@ -9214,8 +12497,8 @@ class EmailStore:
                   and current_action_plan_id is ?
                 """,
                 (
-                    category.value,
-                    category.value,
+                    category,
+                    category,
                     EmailClassificationStatus.PROCESSED.value,
                     config_version,
                     action_plan.model_dump_json(),
@@ -9242,7 +12525,7 @@ class EmailStore:
                 (
                     feedback_request_id,
                     row_id,
-                    category.value,
+                    category,
                     expected_current_action_plan_id,
                     action_plan.action_plan_id,
                     applied_at,
@@ -9259,7 +12542,7 @@ class EmailStore:
     def _category_action_snapshot(
         db: sqlite3.Connection,
         *,
-        category: EmailCategory,
+        category: EmailCategoryKey,
         fallback_config_version: str,
     ) -> tuple[
         tuple[EmailAction, ...],
@@ -9269,9 +12552,9 @@ class EmailStore:
         selected_config = db.execute(
             """
             select actions_json, action_parameters_json, enabled, config_version
-            from email_category_configs where category=?
+            from email_category_configs where category_key=?
             """,
-            (category.value,),
+            (category,),
         ).fetchone()
         if selected_config is None:
             return (), {}, fallback_config_version
@@ -9301,13 +12584,14 @@ class EmailStore:
         classification_id: int,
         action_plan: EmailActionPlan,
         *,
-        confirmed_category: EmailCategory,
+        confirmed_category: EmailCategoryKey,
     ) -> dict[str, Any]:
         """Append a correction plan and atomically make it current."""
 
+        confirmed_category_value = validate_email_category_key(confirmed_category)
         if action_plan.classification_id != classification_id:
             raise EmailActionPlanConflict("ActionPlan classification does not match")
-        if action_plan.category != confirmed_category:
+        if action_plan.category != confirmed_category_value:
             raise EmailActionPlanConflict(
                 "ActionPlan category does not match correction"
             )
@@ -9348,8 +12632,8 @@ class EmailStore:
                     where id=?
                     """,
                     (
-                        action_plan.category.value,
-                        confirmed_category.value,
+                        action_plan.category,
+                        confirmed_category_value,
                         action_plan.classification_source,
                         action_plan.confidence,
                         action_plan.model_id,
@@ -9500,9 +12784,11 @@ class EmailStore:
                 """
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
-                       c.current_action_plan_id
+                       c.current_action_plan_id, p.actions_json,
+                       p.action_plan_version
                 from email_actions as a
                 join email_classifications as c on c.id=a.classification_id
+                join email_action_plans as p on p.action_plan_id=a.action_plan_id
                 where c.status='processed'
                 """
             ).fetchall()
@@ -9530,12 +12816,17 @@ class EmailStore:
                 unfinished = [
                     sibling
                     for sibling in current_siblings
-                    if sibling["status"] == "pending"
-                    or (
-                        sibling["status"] == "failed"
-                        and int(sibling["attempt_count"]) < DIRECT_ACTION_MAX_ATTEMPTS
-                        and _retry_is_due(sibling["next_attempt_at"], claimed_at)
+                    if (
+                        sibling["status"] == "pending"
+                        or (
+                            sibling["status"] == "failed"
+                            and int(sibling["attempt_count"])
+                            < DIRECT_ACTION_MAX_ATTEMPTS
+                            and _retry_is_due(sibling["next_attempt_at"], claimed_at)
+                        )
                     )
+                    and self._direct_action_predecessors_done(db, sibling)
+                    and self._direct_action_dependency_satisfied(db, sibling)
                 ]
                 if not unfinished:
                     continue
@@ -9586,6 +12877,274 @@ class EmailStore:
                 claimed_at=claimed_at,
             )
 
+    def direct_action_ids_for_plan(self, action_plan_id: str) -> tuple[str, ...]:
+        """Return only the direct action IDs owned by one immutable plan."""
+
+        with self._connect() as db:
+            rows = db.execute(
+                "select action_id, action_type from email_actions where action_plan_id=?",
+                (action_plan_id,),
+            ).fetchall()
+        action_types = {row["action_type"] for row in rows}
+
+        def plan_priority(row: sqlite3.Row) -> tuple[int, str]:
+            action_type = row["action_type"]
+            if EmailAction.MOVE.value in action_types:
+                historical_order = {
+                    EmailAction.MOVE.value: 0,
+                    EmailAction.FLAG_IMPORTANT.value: 1,
+                    EmailAction.MARK_READ.value: 2,
+                }
+                if action_type in historical_order:
+                    return historical_order[action_type], row["action_id"]
+            if EmailAction.TRASH.value in action_types:
+                historical_junk_order = {
+                    EmailAction.TRASH.value: 0,
+                    EmailAction.MARK_READ.value: 1,
+                }
+                if action_type in historical_junk_order:
+                    return historical_junk_order[action_type], row["action_id"]
+            return _DIRECT_ACTION_PRIORITY[action_type] + 10, row["action_id"]
+
+        return tuple(
+            row["action_id"]
+            for row in sorted(rows, key=plan_priority)
+        )
+
+    def direct_action_statuses_for_plan(self, action_plan_id: str) -> dict[str, str]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select action_id, status from email_actions where action_plan_id=?",
+                (action_plan_id,),
+            ).fetchall()
+        return {str(row["action_id"]): str(row["status"]) for row in rows}
+
+    def direct_action_receipts_for_plan(
+        self, action_plan_id: str
+    ) -> tuple[dict[str, Any], ...]:
+        """Return durable successful receipts for the plan's completed direct actions."""
+
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select a.action_id, a.action_type, a.status,
+                       t.provider_operation, t.provider_target,
+                       t.provider_result_id, t.finished_at
+                from email_actions as a
+                join email_action_attempts as t
+                  on t.id=(
+                    select max(latest.id)
+                    from email_action_attempts as latest
+                    where latest.action_id=a.action_id and latest.status='done'
+                  )
+                where a.action_plan_id=? and a.status='done'
+                order by a.action_id
+                """,
+                (action_plan_id,),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def list_missing_unsubscribe_action_tasks(self) -> list[dict[str, Any]]:
+        """Find current durable unsubscribe plans without their stable task."""
+
+        missing: list[dict[str, Any]] = []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select c.*, p.action_plan_version, p.actions_json
+                from email_classifications as c
+                join email_action_plans as p
+                  on p.action_plan_id=c.current_action_plan_id
+                where c.status='processed'
+                  and c.classification_source='model'
+                  and instr(p.actions_json, '"unsubscribe"') > 0
+                order by c.id
+                """
+            ).fetchall()
+            for row in rows:
+                action_identity = email_action_identity(
+                    account_id=row["account_id"],
+                    stable_message_identity=row["stable_message_identity"],
+                    action_type=EmailAction.UNSUBSCRIBE,
+                    action_plan_version=int(row["action_plan_version"]),
+                )
+                task = db.execute(
+                    """
+                    select 1 from reply_tasks
+                    where channel='email' and trigger_message_id=?
+                    """,
+                    (action_identity,),
+                ).fetchone()
+                if task is None:
+                    missing.append(self._classification_row(row))
+        return missing
+
+    def repair_current_action_plan(
+        self, action_plan: EmailActionPlan
+    ) -> dict[str, Any]:
+        """Idempotently restore direct rows for one verified current plan."""
+
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from email_classifications where id=?",
+                (action_plan.classification_id,),
+            ).fetchone()
+            if row is None or row["current_action_plan_id"] != action_plan.action_plan_id:
+                raise EmailActionPlanConflict("model ActionPlan is not current")
+            self._persist_action_plan(db, action_plan, now=self._now())
+            updated = db.execute(
+                "select * from email_classifications where id=?",
+                (action_plan.classification_id,),
+            ).fetchone()
+        assert updated is not None
+        return self._classification_row(updated)
+
+    def claim_direct_action(
+        self, *, action_id: str, claimed_at: str
+    ) -> StoredEmailAction | None:
+        """Claim one exact current-plan action without selecting account work."""
+
+        claimed_at = _required_utc_timestamp(claimed_at, field="claimed_at")
+        if not isinstance(action_id, str) or not action_id.strip():
+            raise ValueError("action_id must be nonblank")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                """
+                select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
+                       c.thread_id, c.stable_message_identity,
+                       c.current_action_plan_id, p.actions_json,
+                       p.action_plan_version
+                from email_actions as a
+                join email_classifications as c on c.id=a.classification_id
+                join email_action_plans as p on p.action_plan_id=a.action_plan_id
+                where a.action_id=? and c.status='processed'
+                """,
+                (action_id,),
+            ).fetchone()
+            if row is None or row["action_plan_id"] != row["current_action_plan_id"]:
+                return None
+            siblings = db.execute(
+                "select action_type, status from email_actions where action_plan_id=?",
+                (row["action_plan_id"],),
+            ).fetchall()
+            if any(item["status"] == "processing" for item in siblings):
+                return None
+            retryable = row["status"] == "pending" or (
+                row["status"] == "failed"
+                and int(row["attempt_count"]) < DIRECT_ACTION_MAX_ATTEMPTS
+                and _retry_is_due(row["next_attempt_at"], claimed_at)
+            )
+            if (
+                not retryable
+                or not self._direct_action_predecessors_done(db, row)
+                or not self._direct_action_dependency_satisfied(db, row)
+            ):
+                return None
+            attempt_number = int(row["attempt_count"]) + 1
+            updated = db.execute(
+                """
+                update email_actions
+                set status='processing', started_at=?, finished_at='',
+                    next_attempt_at='', provider_operation='', provider_target='',
+                    provider_result_id='', error='', updated_at=?
+                where action_id=? and status=? and attempt_count=?
+                """,
+                (claimed_at, claimed_at, row["action_id"], row["status"], row["attempt_count"]),
+            ).rowcount
+            if updated != 1:
+                raise EmailActionAttemptConflict(
+                    f"direct action claim changed for {row['action_id']}"
+                )
+            return self._claimed_direct_action(
+                row, attempt_number=attempt_number, claimed_at=claimed_at
+            )
+
+    @staticmethod
+    def _direct_action_predecessors_done(
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> bool:
+        """Require semantic and explicit provider-safe dependencies to be done."""
+
+        actions = _json_load(
+            row["actions_json"], field="actions_json", expected_type=list
+        )
+        current_action = str(row["action_type"])
+        if current_action not in actions:
+            raise EmailPersistenceCorruption(
+                "direct action is absent from its ActionPlan"
+            )
+        siblings = db.execute(
+            "select action_type, status, parameters_json from email_actions "
+            "where action_plan_id=?",
+            (row["action_plan_id"],),
+        ).fetchall()
+        status_by_type = {
+            str(sibling["action_type"]): str(sibling["status"])
+            for sibling in siblings
+        }
+        try:
+            typed_actions = tuple(
+                EmailAction(action)
+                for action in actions
+                if action in _DIRECT_ACTION_VALUES
+            )
+            parameters_by_action = {
+                EmailAction(str(sibling["action_type"])): _json_load(
+                    sibling["parameters_json"],
+                    field="parameters_json",
+                    expected_type=dict,
+                )
+                for sibling in siblings
+            }
+            dependency_graph = effective_direct_action_dependencies(
+                typed_actions,
+                parameters_by_action,
+            )
+            dependencies = dependency_graph[EmailAction(current_action)]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EmailPersistenceCorruption(str(exc)) from exc
+
+        return all(
+            status_by_type.get(action_type.value) == "done"
+            for action_type in dependencies
+        )
+
+    @staticmethod
+    def _direct_action_dependency_satisfied(
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> bool:
+        """Require audited terminal evidence before a dependent junk Trash."""
+
+        if row["action_type"] != EmailAction.TRASH.value:
+            return True
+        actions = _json_load(
+            row["actions_json"], field="actions_json", expected_type=list
+        )
+        if EmailAction.UNSUBSCRIBE.value not in actions:
+            return True
+        action_identity = email_action_identity(
+            account_id=row["account_id"],
+            stable_message_identity=row["stable_message_identity"],
+            action_type=EmailAction.UNSUBSCRIBE,
+            action_plan_version=int(row["action_plan_version"]),
+        )
+        receipt = db.execute(
+            """
+            select outcome from email_unsubscribe_receipts
+            where action_identity=? and action_plan_id=? and classification_id=?
+            """,
+            (action_identity, row["action_plan_id"], row["classification_id"]),
+        ).fetchone()
+        return receipt is not None and receipt["outcome"] in {
+            "done",
+            "already_unsubscribed",
+            "skipped_no_reliable_entry",
+        }
+
     @staticmethod
     def _claimed_direct_action(
         row: sqlite3.Row,
@@ -9608,6 +13167,7 @@ class EmailStore:
             field="parameters_json",
             expected_type=dict,
         )
+        parameters.pop(ACTION_DEPENDENCY_PARAMETER, None)
         return StoredEmailAction(
             action_id=row["action_id"],
             action_plan_id=row["action_plan_id"],
@@ -9922,12 +13482,500 @@ class EmailStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def list_configs(self) -> list[dict[str, Any]]:
+    def list_category_configs(self) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from email_category_configs order by category"
+                "select * from email_category_configs order by category_key"
             ).fetchall()
-        return [self._config_row(row) for row in rows]
+        return [self._category_config_row(row) for row in rows]
+
+    def get_category_config(self, category_key: str) -> dict[str, Any] | None:
+        category_key = validate_email_category_key(category_key)
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+        return None if row is None else self._category_config_row(row)
+
+    def create_category_with_bindings(
+        self,
+        *,
+        category_key: str,
+        display_name: str,
+        core_description: str,
+        include: Sequence[str],
+        exclude: Sequence[str],
+        threshold: float,
+        actions: tuple[EmailAction, ...],
+        action_parameters: Mapping[EmailAction, Mapping[str, object]],
+        enabled: bool,
+        description_version: str,
+        config_version: str,
+        bindings: Sequence[VerifiedEmailFolderBinding],
+    ) -> dict[str, Any]:
+        category_key = validate_email_category_key(category_key)
+        include_values, exclude_values = validate_category_descriptions(
+            display_name=display_name,
+            core_description=core_description,
+            include=include,
+            exclude=exclude,
+            description_version=description_version,
+        )
+        _validate_config(
+            category=category_key,
+            threshold=threshold,
+            actions=actions,
+            action_parameters=action_parameters,
+            config_version=config_version,
+        )
+        if any(
+            not isinstance(binding, VerifiedEmailFolderBinding) for binding in bindings
+        ):
+            raise TypeError(
+                "bindings must contain coordinator-produced verified folder binding values"
+            )
+        if category_key == "junk" and bindings:
+            raise ValueError("junk does not accept a business-folder binding")
+        for binding in bindings:
+            _validate_verified_folder_binding_role(category_key, binding)
+        account_ids = [binding.account_id for binding in bindings]
+        if len(account_ids) != len(set(account_ids)):
+            raise EmailFolderBindingConflict("duplicate category/account binding")
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            enabled_accounts = {
+                row["account_id"]
+                for row in db.execute(
+                    "select account_id from email_accounts where enabled=1"
+                )
+            }
+            existing_accounts = {
+                row["account_id"]
+                for row in db.execute("select account_id from email_accounts")
+            }
+            if not set(account_ids) <= existing_accounts:
+                raise EmailFolderBindingConflict("folder binding account is unknown")
+            active_accounts = {
+                binding.account_id
+                for binding in bindings
+                if binding.binding_status == "active"
+            }
+            final_enabled = bool(enabled and enabled_accounts <= active_accounts)
+            try:
+                db.execute(
+                    """
+                    insert into email_category_configs (
+                        category_key, display_name, core_description,
+                        include_json, exclude_json, threshold, actions_json,
+                        action_parameters_json, enabled, description_version,
+                        config_version, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        category_key,
+                        display_name,
+                        core_description,
+                        _json_dump(list(include_values)),
+                        _json_dump(list(exclude_values)),
+                        threshold,
+                        _json_dump([action.value for action in actions]),
+                        _json_dump(
+                            {
+                                action.value: dict(parameters)
+                                for action, parameters in action_parameters.items()
+                            }
+                        ),
+                        int(final_enabled),
+                        description_version,
+                        config_version,
+                        now,
+                    ),
+                )
+                for binding in bindings:
+                    db.execute(
+                        """
+                        insert into email_category_folder_bindings (
+                            account_id, category_key, provider_folder_id,
+                            provider_folder_name, binding_status, last_verified_at
+                        ) values (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            binding.account_id,
+                            category_key,
+                            binding.provider_folder_id,
+                            binding.provider_folder_name,
+                            binding.binding_status,
+                            binding.last_verified_at,
+                        ),
+                    )
+            except sqlite3.IntegrityError as exc:
+                raise EmailFolderBindingConflict(
+                    "email category or folder binding conflicts with stored state"
+                ) from exc
+            row = db.execute(
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+        assert row is not None
+        return self._category_config_row(row)
+
+    @staticmethod
+    def _bindings_cover_enabled_accounts(
+        db: sqlite3.Connection,
+        category_key: str,
+    ) -> bool:
+        return (
+            db.execute(
+                """
+                select not exists (
+                    select 1 from email_accounts as accounts
+                    where accounts.enabled=1
+                      and not exists (
+                          select 1 from email_category_folder_bindings as bindings
+                          where bindings.account_id=accounts.account_id
+                            and bindings.category_key=?
+                            and bindings.binding_status='active'
+                      )
+                )
+                """,
+                (category_key,),
+            ).fetchone()[0]
+            == 1
+        )
+
+    def update_category_descriptions(
+        self,
+        category_key: str,
+        *,
+        core_description: str,
+        include: Sequence[str],
+        exclude: Sequence[str],
+        threshold: float,
+        enabled: bool,
+        description_version: str,
+        config_version: str,
+    ) -> dict[str, Any] | None:
+        category_key = validate_email_category_key(category_key)
+        include_values, exclude_values = validate_category_descriptions(
+            display_name="unchanged",
+            core_description=core_description,
+            include=include,
+            exclude=exclude,
+            description_version=description_version,
+        )
+        if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+            raise ValueError("threshold must be numeric")
+        if not 0.0 <= float(threshold) <= 1.0:
+            raise ValueError("threshold must be between zero and one")
+        if type(config_version) is not str or not config_version.strip():
+            raise ValueError("config_version must be non-empty")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            existing = db.execute(
+                "select 1 from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+            if existing is None:
+                return None
+            final_enabled = bool(
+                enabled and self._bindings_cover_enabled_accounts(db, category_key)
+            )
+            db.execute(
+                """
+                update email_category_configs set
+                    core_description=?, include_json=?, exclude_json=?,
+                    threshold=?, enabled=?, description_version=?,
+                    config_version=?, updated_at=?
+                where category_key=?
+                """,
+                (
+                    core_description,
+                    _json_dump(list(include_values)),
+                    _json_dump(list(exclude_values)),
+                    float(threshold),
+                    int(final_enabled),
+                    description_version,
+                    config_version,
+                    self._now(),
+                    category_key,
+                ),
+            )
+            row = db.execute(
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+        assert row is not None
+        return self._category_config_row(row)
+
+    def refresh_category_with_bindings(
+        self,
+        category_key: str,
+        *,
+        core_description: str,
+        include: Sequence[str],
+        exclude: Sequence[str],
+        threshold: float,
+        enabled: bool,
+        description_version: str,
+        config_version: str,
+        bindings: Sequence[VerifiedEmailFolderBinding],
+    ) -> dict[str, Any] | None:
+        """Atomically replace enabled-account bindings and category configuration."""
+
+        category_key = validate_email_category_key(category_key)
+        include_values, exclude_values = validate_category_descriptions(
+            display_name="unchanged",
+            core_description=core_description,
+            include=include,
+            exclude=exclude,
+            description_version=description_version,
+        )
+        if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+            raise ValueError("threshold must be numeric")
+        if not 0.0 <= float(threshold) <= 1.0:
+            raise ValueError("threshold must be between zero and one")
+        if type(config_version) is not str or not config_version.strip():
+            raise ValueError("config_version must be non-empty")
+        if isinstance(bindings, (str, bytes)) or not isinstance(bindings, Sequence):
+            raise TypeError("bindings must be a sequence")
+        if any(type(binding) is not VerifiedEmailFolderBinding for binding in bindings):
+            raise TypeError("bindings must contain verified folder binding values")
+        account_ids = tuple(binding.account_id for binding in bindings)
+        if len(account_ids) != len(set(account_ids)):
+            raise EmailFolderBindingConflict("duplicate category/account binding")
+        for binding in bindings:
+            _validate_verified_folder_binding_role(category_key, binding)
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            existing = db.execute(
+                "select 1 from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+            if existing is None:
+                return None
+            enabled_accounts = {
+                row["account_id"]
+                for row in db.execute(
+                    "select account_id from email_accounts where enabled=1"
+                )
+            }
+            if set(account_ids) != enabled_accounts:
+                raise EmailFolderBindingConflict(
+                    "folder bindings must cover exactly the enabled accounts"
+                )
+            try:
+                for binding in bindings:
+                    db.execute(
+                        """
+                        insert into email_category_folder_bindings (
+                            account_id, category_key, provider_folder_id,
+                            provider_folder_name, binding_status, last_verified_at
+                        ) values (?, ?, ?, ?, ?, ?)
+                        on conflict(account_id, category_key) do update set
+                            provider_folder_id=excluded.provider_folder_id,
+                            provider_folder_name=excluded.provider_folder_name,
+                            binding_status=excluded.binding_status,
+                            last_verified_at=excluded.last_verified_at
+                        """,
+                        (
+                            binding.account_id,
+                            category_key,
+                            binding.provider_folder_id,
+                            binding.provider_folder_name,
+                            binding.binding_status,
+                            binding.last_verified_at,
+                        ),
+                    )
+                final_enabled = bool(
+                    enabled and self._bindings_cover_enabled_accounts(db, category_key)
+                )
+                db.execute(
+                    """
+                    update email_category_configs set
+                        core_description=?, include_json=?, exclude_json=?,
+                        threshold=?, enabled=?, description_version=?,
+                        config_version=?, updated_at=?
+                    where category_key=?
+                    """,
+                    (
+                        core_description,
+                        _json_dump(list(include_values)),
+                        _json_dump(list(exclude_values)),
+                        float(threshold),
+                        int(final_enabled),
+                        description_version,
+                        config_version,
+                        now,
+                        category_key,
+                    ),
+                )
+                self._validate_category_binding_completeness(db)
+            except sqlite3.IntegrityError as exc:
+                raise EmailFolderBindingConflict(
+                    "email category or folder binding conflicts with stored state"
+                ) from exc
+            row = db.execute(
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+        assert row is not None
+        return self._category_config_row(row)
+
+    def set_folder_binding_status(
+        self,
+        *,
+        account_id: str,
+        category_key: str,
+        provider_folder_id: str,
+        provider_folder_name: str,
+        binding_status: str,
+        last_verified_at: str,
+        provider_folder_role: FolderRole,
+    ) -> dict[str, Any]:
+        category_key = validate_email_category_key(category_key)
+        binding = VerifiedEmailFolderBinding(
+            account_id=account_id,
+            provider_folder_id=provider_folder_id,
+            provider_folder_name=provider_folder_name,
+            binding_status=binding_status,
+            last_verified_at=last_verified_at,
+            provider_folder_role=provider_folder_role,
+        )
+        _validate_verified_folder_binding_role(category_key, binding)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            try:
+                updated = db.execute(
+                    """
+                    update email_category_folder_bindings set
+                        provider_folder_id=?, provider_folder_name=?,
+                        binding_status=?, last_verified_at=?
+                    where account_id=? and category_key=?
+                    """,
+                    (
+                        binding.provider_folder_id,
+                        binding.provider_folder_name,
+                        binding.binding_status,
+                        binding.last_verified_at,
+                        binding.account_id,
+                        category_key,
+                    ),
+                ).rowcount
+            except sqlite3.IntegrityError as exc:
+                raise EmailFolderBindingConflict(
+                    "email folder binding conflicts with stored state"
+                ) from exc
+            if updated != 1:
+                raise EmailFolderBindingConflict("email folder binding does not exist")
+            if binding.binding_status != "active":
+                db.execute(
+                    "update email_category_configs set enabled=0, updated_at=? "
+                    "where category_key=?",
+                    (self._now(), category_key),
+                )
+            row = db.execute(
+                """
+                select * from email_category_folder_bindings
+                where account_id=? and category_key=?
+                """,
+                (binding.account_id, category_key),
+            ).fetchone()
+        assert row is not None
+        return dict(row)
+
+    def upsert_verified_folder_binding(
+        self,
+        category_key: str,
+        binding: VerifiedEmailFolderBinding,
+    ) -> dict[str, Any]:
+        category_key = validate_email_category_key(category_key)
+        if type(binding) is not VerifiedEmailFolderBinding:
+            raise TypeError("binding must be a VerifiedEmailFolderBinding")
+        _validate_verified_folder_binding_role(category_key, binding)
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            try:
+                db.execute(
+                    """
+                    insert into email_category_folder_bindings (
+                        account_id, category_key, provider_folder_id,
+                        provider_folder_name, binding_status, last_verified_at
+                    ) values (?, ?, ?, ?, ?, ?)
+                    on conflict(account_id, category_key) do update set
+                        provider_folder_id=excluded.provider_folder_id,
+                        provider_folder_name=excluded.provider_folder_name,
+                        binding_status=excluded.binding_status,
+                        last_verified_at=excluded.last_verified_at
+                    """,
+                    (
+                        binding.account_id,
+                        category_key,
+                        binding.provider_folder_id,
+                        binding.provider_folder_name,
+                        binding.binding_status,
+                        binding.last_verified_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise EmailFolderBindingConflict(
+                    "email folder binding conflicts with stored state"
+                ) from exc
+            complete = self._bindings_cover_enabled_accounts(db, category_key)
+            if not complete:
+                db.execute(
+                    """
+                    update email_category_configs
+                    set enabled=0, updated_at=?
+                    where category_key=? and enabled=1
+                    """,
+                    (now, category_key),
+                )
+            row = db.execute(
+                """
+                select * from email_category_folder_bindings
+                where account_id=? and category_key=?
+                """,
+                (binding.account_id, category_key),
+            ).fetchone()
+            self._validate_category_binding_completeness(db)
+        assert row is not None
+        return dict(row)
+
+    def list_account_folder_bindings(
+        self,
+        category_key: str | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if category_key is None:
+                rows = db.execute(
+                    """
+                    select * from email_category_folder_bindings
+                    order by account_id, category_key
+                    """
+                ).fetchall()
+            else:
+                validated_key = validate_email_category_key(category_key)
+                rows = db.execute(
+                    """
+                    select * from email_category_folder_bindings
+                    where category_key=? order by account_id
+                    """,
+                    (validated_key,),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_configs(self) -> list[dict[str, Any]]:
+        """Return the established worker-facing shape during its later migration."""
+
+        rows = self.list_category_configs()
+        configured = [
+            row for row in rows if row["config_version"] != SEEDED_CONFIG_VERSION
+        ]
+        return [self._legacy_config_row(row) for row in configured or rows]
 
     def upsert_config(
         self,
@@ -9940,8 +13988,9 @@ class EmailStore:
         enabled: bool,
         config_version: str,
     ) -> dict[str, Any]:
+        category_key = validate_email_category_key(category.value)
         _validate_config(
-            category=category,
+            category=category_key,
             threshold=threshold,
             actions=actions,
             action_parameters=action_parameters,
@@ -9949,23 +13998,24 @@ class EmailStore:
         )
         now = self._now()
         with self._connect() as db:
+            db.execute("begin immediate")
+            existing = db.execute(
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
+            ).fetchone()
+            if existing is None:
+                raise ValueError("email category config does not exist")
+            final_enabled = bool(
+                enabled and self._bindings_cover_enabled_accounts(db, category_key)
+            )
             db.execute(
                 """
-                insert into email_category_configs (
-                    category, description, threshold, actions_json,
-                    action_parameters_json, enabled, config_version, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(category) do update set
-                    description=excluded.description,
-                    threshold=excluded.threshold,
-                    actions_json=excluded.actions_json,
-                    action_parameters_json=excluded.action_parameters_json,
-                    enabled=excluded.enabled,
-                    config_version=excluded.config_version,
-                    updated_at=excluded.updated_at
+                update email_category_configs set
+                    core_description=?, threshold=?, actions_json=?,
+                    action_parameters_json=?, enabled=?, config_version=?,
+                    updated_at=? where category_key=?
                 """,
                 (
-                    category.value,
                     description,
                     threshold,
                     _json_dump([action.value for action in actions]),
@@ -9975,41 +14025,54 @@ class EmailStore:
                             for action, parameters in action_parameters.items()
                         }
                     ),
-                    int(enabled),
+                    int(final_enabled),
                     config_version,
                     now,
+                    category_key,
                 ),
             )
             row = db.execute(
-                "select * from email_category_configs where category=?",
-                (category.value,),
+                "select * from email_category_configs where category_key=?",
+                (category_key,),
             ).fetchone()
         assert row is not None
-        return self._config_row(row)
+        return self._legacy_config_row(self._category_config_row(row))
 
     @staticmethod
-    def _config_row(row: sqlite3.Row) -> dict[str, Any]:
-        return {
-            "category": row["category"],
-            "description": row["description"],
-            "threshold": row["threshold"],
-            "actions": _json_load(
-                row["actions_json"], field="actions_json", expected_type=list
-            ),
-            "action_parameters": _json_load(
-                row["action_parameters_json"],
-                field="action_parameters_json",
-                expected_type=dict,
-            ),
-            "enabled": bool(row["enabled"]),
-            "config_version": row["config_version"],
-            "updated_at": row["updated_at"],
-        }
+    def _category_config_row(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            return category_config_row(row)
+        except (CategoryConfigDataError, KeyError, TypeError, ValueError) as exc:
+            raise EmailPersistenceCorruption(
+                "invalid structured email category config"
+            ) from exc
+
+    @staticmethod
+    def _legacy_config_row(row: Mapping[str, Any]) -> dict[str, Any]:
+        return legacy_config_row(row)
+
+
+def _optional_probability(value: object, *, field: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError(f"{field} must be numeric or None")
+    result = float(value)
+    if not 0.0 <= result <= 1.0:
+        raise ValueError(f"{field} must be between zero and one")
+    return result
+
+
+def _historical_outcome_row(row: sqlite3.Row) -> dict[str, Any]:
+    result = dict(row)
+    if result["important"] is not None:
+        result["important"] = bool(result["important"])
+    return result
 
 
 def _validate_config(
     *,
-    category: EmailCategory,
+    category: str,
     threshold: float,
     actions: tuple[EmailAction, ...],
     action_parameters: Mapping[EmailAction, Mapping[str, object]],

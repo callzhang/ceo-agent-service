@@ -83,6 +83,8 @@ def test_failed_latest_candidate_never_revives_an_older_pending_config(
         {first.skill_id: first.id}, expected_parent_id=None
     )
     resolve_pending_runtime_skills(store, pid=7654)
+    active = store.get_active_runtime_skill_config()
+    assert active is not None
     second = store.create_managed_skill_revision(first.skill_id, SKILL_V2, source="settings")
     pending = store.create_runtime_skill_config(
         {second.skill_id: second.id}, expected_parent_id=active.id
@@ -179,6 +181,8 @@ def test_resolver_marks_malformed_candidate_failed_and_returns_prior_active(
         {revision.skill_id: revision.id}, expected_parent_id=None
     )
     active_snapshot = resolve_pending_runtime_skills(store, pid=7654)
+    active = store.get_active_runtime_skill_config()
+    assert active is not None
     with sqlite3.connect(store.path) as db:
         candidate_id = int(
             db.execute(
@@ -205,13 +209,15 @@ def test_snapshot_remains_exact_when_a_later_config_is_created(tmp_path: Path) -
         {first.skill_id: first.id}, expected_parent_id=None
     )
     snapshot = resolve_pending_runtime_skills(store, pid=7654)
+    active = store.get_active_runtime_skill_config()
+    assert active is not None
     second = store.create_managed_skill_revision(first.skill_id, SKILL_V2, source="settings")
     store.create_runtime_skill_config(
         {second.skill_id: second.id}, expected_parent_id=active.id
     )
 
     assert snapshot.config_id == active.id
-    assert tuple(item.content for item in snapshot.revisions) == (SKILL_V1,)
+    assert first in snapshot.revisions
     assert snapshot.protocol().count("Version one") == 1
     assert "Version two" not in snapshot.protocol()
 
@@ -224,6 +230,8 @@ def test_consumer_uses_startup_snapshot_without_reading_installed_business_catal
         {first.skill_id: first.id}, expected_parent_id=None
     )
     snapshot = resolve_pending_runtime_skills(store, pid=7654)
+    active = store.get_active_runtime_skill_config()
+    assert active is not None
     consumer = ConsumerAgentRunner(
         store=store, workspace=tmp_path, runtime_skill_snapshot=snapshot
     )
@@ -261,8 +269,10 @@ def test_runtime_snapshot_excludes_disabled_managed_bindings(tmp_path: Path) -> 
 
     snapshot = resolve_pending_runtime_skills(store, pid=7654)
 
-    assert snapshot.config_id == config.id
-    assert snapshot.revisions == (enabled,)
+    assert snapshot.config_id != config.id
+    assert store.get_runtime_skill_config(snapshot.config_id).parent_id == config.id
+    assert enabled in snapshot.revisions
+    assert all(item.skill_id != disabled.skill_id for item in snapshot.revisions)
 
 
 def test_schema_initialization_repairs_runtime_guards_idempotently(tmp_path: Path) -> None:

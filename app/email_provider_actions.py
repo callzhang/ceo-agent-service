@@ -17,11 +17,19 @@ from app.email_classifier_contracts import (
     EmailProviderLocator,
 )
 from app.email_imap_mailbox import (
+    ImapFetchFlagsError,
     ImapMailboxCodecError,
-    decode_imap_mailbox_token,
     encode_imap_mailbox_argument,
+    parse_imap_flag_list,
+    parse_imap_fetch_flags,
+)
+from app.email_imap_folders import (
+    ImapFolderListError,
+    ParsedImapFolder,
+    parse_imap_list_response,
 )
 from app.email_store import StoredEmailAction, StoredEmailLocator
+from app.email_provider_folders import ProviderFolder
 
 
 @dataclass(frozen=True)
@@ -43,6 +51,8 @@ class ProviderMessageState:
     archived: bool
     folder: str
     trashed: bool
+    important_signal_names: frozenset[str] = frozenset()
+    required_important_signal_names: frozenset[str] = frozenset()
     locator: StoredEmailLocator | None = None
 
     def satisfies(
@@ -72,6 +82,10 @@ class ProviderMessageState:
                 if destination_folder is not None
                 else self.trashed
             )
+        if action_type is EmailAction.FLAG_IMPORTANT:
+            return bool(self.required_important_signal_names) and (
+                self.required_important_signal_names <= self.important_signal_names
+            )
         raise ValueError(f"unsupported deterministic email action: {action_type.value}")
 
 
@@ -82,6 +96,7 @@ def _provider_operation(action_type: EmailAction) -> str:
         EmailAction.ARCHIVE: "MOVE ARCHIVE",
         EmailAction.MOVE: "MOVE",
         EmailAction.TRASH: "move_to_trash",
+        EmailAction.FLAG_IMPORTANT: "STORE IMPORTANT",
     }
     try:
         return operations[action_type]
@@ -92,13 +107,24 @@ def _provider_operation(action_type: EmailAction) -> str:
 
 
 class DeterministicEmailProvider(Protocol):
-    def read_state(self, locator: StoredEmailLocator) -> ProviderMessageState: ...
+    def list_folders(self) -> tuple[ProviderFolder, ...]: ...
+
+    def create_folder_exact(self, name: str) -> None: ...
+
+    def read_state(
+        self,
+        locator: StoredEmailLocator,
+        *,
+        action_type: EmailAction,
+    ) -> ProviderMessageState: ...
 
     def apply(
         self,
         locator: StoredEmailLocator,
         action_type: EmailAction,
         parameters: Mapping[str, object],
+        *,
+        observed_state: ProviderMessageState,
     ) -> StoredEmailLocator | None: ...
 
 
@@ -123,7 +149,10 @@ class DeterministicEmailActionExecutor:
         try:
             destination = self._resolve_destination(action)
             try:
-                current = self.provider.read_state(action.locator)
+                current = self.provider.read_state(
+                    action.locator,
+                    action_type=action.action_type,
+                )
             except Exception as exc:
                 return self._failed(action, "READ", "provider_read_failed", exc)
             if current.satisfies(
@@ -144,6 +173,7 @@ class DeterministicEmailActionExecutor:
                     current_locator,
                     action.action_type,
                     action.parameters,
+                    observed_state=current,
                 )
             except Exception as exc:
                 return self._failed(action, operation, "provider_apply_failed", exc)
@@ -154,7 +184,10 @@ class DeterministicEmailActionExecutor:
                     provider_closed = True
                     readback_provider = self._readback_provider_factory()
                 verification_provider = readback_provider or self.provider
-                verified = verification_provider.read_state(readback_locator)
+                verified = verification_provider.read_state(
+                    readback_locator,
+                    action_type=action.action_type,
+                )
             except Exception as exc:
                 return self._failed(
                     action,
@@ -276,21 +309,18 @@ class ImapMessageUnavailable(ImapProviderError):
     """The stable message could not be located uniquely."""
 
 
-@dataclass(frozen=True)
-class _ImapMailbox:
-    name: str
-    flags: frozenset[str]
-
-
-_LIST_RESPONSE = re.compile(
-    rb'^\((?P<flags>[^)]*)\)\s+(?:NIL|"(?:\\.|[^"])*")\s+(?P<name>.+)$'
-)
 _UID_RESPONSE = re.compile(rb"\bUID\s+(?P<uid>[1-9][0-9]*)\b")
 _COPYUID_RESPONSE = re.compile(
     rb"^(?P<uidvalidity>[1-9][0-9]*)\s+"
     rb"(?P<source>\S+)\s+(?P<destination>\S+)$"
 )
-_PERMANENTFLAGS_RESPONSE = re.compile(rb"^\((?P<flags>[^)]*)\)$")
+_PERMANENTFLAGS_RESPONSE = re.compile(rb"^\((?P<flags>[^()]*)\)$")
+
+
+@dataclass(frozen=True)
+class _PermanentFlagsState:
+    advertised: bool
+    flags: frozenset[str]
 
 
 class ImapDeterministicProvider:
@@ -302,14 +332,18 @@ class ImapDeterministicProvider:
         *,
         account_id: str,
         capabilities: frozenset[str] | None = None,
+        move_mode: Literal["move", "copy_as_move"] = "move",
     ):
         account_id = account_id.strip()
         if not account_id:
             raise ValueError("account_id must be non-empty")
         self.session = session
         self.account_id = account_id
+        if move_mode not in {"move", "copy_as_move"}:
+            raise ValueError("unsupported IMAP move mode")
+        self.move_mode = move_mode
         self._authenticated_capabilities = capabilities
-        self._mailbox_cache: tuple[_ImapMailbox, ...] | None = None
+        self._mailbox_cache: tuple[ParsedImapFolder, ...] | None = None
         self._moved_locators: dict[str, StoredEmailLocator] = {}
         self._closed = False
 
@@ -323,6 +357,7 @@ class ImapDeterministicProvider:
         port: int = 993,
         timeout: float | None = 20.0,
         account_id: str,
+        move_mode: Literal["move", "copy_as_move"] = "move",
     ) -> "ImapDeterministicProvider":
         session = imaplib.IMAP4_SSL(
             host,
@@ -339,7 +374,12 @@ class ImapDeterministicProvider:
         except Exception:
             _logout_or_shutdown(session)
             raise
-        return cls(session, account_id=account_id, capabilities=capabilities)
+        return cls(
+            session,
+            account_id=account_id,
+            capabilities=capabilities,
+            move_mode=move_mode,
+        )
 
     def resolve_destination(
         self,
@@ -349,7 +389,7 @@ class ImapDeterministicProvider:
     ) -> str:
         self._validate_locator(locator)
         capabilities = self._capabilities()
-        if "MOVE" not in capabilities:
+        if "MOVE" not in capabilities and self.move_mode != "copy_as_move":
             raise ImapMoveUnsupported("IMAP UID MOVE is unavailable")
         if locator.rfc_message_id is None and "UIDPLUS" not in capabilities:
             raise ImapReadbackUnsupported("move locator readback is unavailable")
@@ -376,7 +416,22 @@ class ImapDeterministicProvider:
             raise ImapDestinationUnavailable("IMAP destination is unavailable")
         return matches[0]
 
-    def read_state(self, locator: StoredEmailLocator) -> ProviderMessageState:
+    def list_folders(self) -> tuple[ProviderFolder, ...]:
+        return tuple(mailbox.provider_folder() for mailbox in self._mailboxes())
+
+    def create_folder_exact(self, name: str) -> None:
+        try:
+            status, _ = self.session.create(_imap_mailbox_argument(name))
+            _require_ok(status, "IMAP folder creation failed")
+        finally:
+            self._mailbox_cache = None
+
+    def read_state(
+        self,
+        locator: StoredEmailLocator,
+        *,
+        action_type: EmailAction,
+    ) -> ProviderMessageState:
         self._validate_locator(locator)
         candidates = [self._moved_locators.get(locator.stable_message_identity), locator]
         seen: set[tuple[str, int, int]] = set()
@@ -387,7 +442,11 @@ class ImapDeterministicProvider:
             if key in seen:
                 continue
             seen.add(key)
-            state = self._read_exact(candidate, expected_message_id=locator.rfc_message_id)
+            state = self._read_exact(
+                candidate,
+                expected_message_id=locator.rfc_message_id,
+                action_type=action_type,
+            )
             if state is not None:
                 return state
         if locator.rfc_message_id is None:
@@ -415,6 +474,7 @@ class ImapDeterministicProvider:
                         stable_message_identity=locator.stable_message_identity,
                     ),
                     expected_message_id=locator.rfc_message_id,
+                    action_type=action_type,
                 )
                 if state is not None:
                     matches.append(state)
@@ -427,6 +487,8 @@ class ImapDeterministicProvider:
         locator: StoredEmailLocator,
         action_type: EmailAction,
         parameters: Mapping[str, object],
+        *,
+        observed_state: ProviderMessageState,
     ) -> StoredEmailLocator | None:
         self._validate_locator(locator)
         if action_type is EmailAction.LABEL:
@@ -438,6 +500,22 @@ class ImapDeterministicProvider:
         if action_type is EmailAction.MARK_READ:
             self._uid_store(locator, ("\\Seen",), wildcard_permits=False)
             return None
+        if action_type is EmailAction.FLAG_IMPORTANT:
+            missing_flags = (
+                observed_state.required_important_signal_names
+                - observed_state.important_signal_names
+            )
+            self._uid_store(
+                locator,
+                tuple(
+                    flag
+                    for flag in ("\\Flagged", "$Important")
+                    if flag in missing_flags
+                ),
+                wildcard_permits=False,
+                allow_absent_standard_flagged=True,
+            )
+            return None
         if action_type not in {
             EmailAction.ARCHIVE,
             EmailAction.MOVE,
@@ -448,12 +526,13 @@ class ImapDeterministicProvider:
         selected_uidvalidity = self._select(locator.folder, readonly=False)
         if selected_uidvalidity != locator.uidvalidity:
             raise ImapMessageUnavailable("message UIDVALIDITY changed before move")
+        command = "MOVE" if "MOVE" in self._capabilities() else "COPY"
         status, _ = self.session.uid(
-            "MOVE",
+            command,
             str(locator.uid),
             _imap_mailbox_argument(destination),
         )
-        _require_ok(status, "IMAP UID MOVE failed")
+        _require_ok(status, f"IMAP UID {command} failed")
         copied = _copyuid(self.session.response("COPYUID"), source_uid=locator.uid)
         if copied is not None:
             destination_uidvalidity, destination_uid = copied
@@ -484,12 +563,22 @@ class ImapDeterministicProvider:
         flags: tuple[str, ...],
         *,
         wildcard_permits: bool,
+        allow_absent_standard_flagged: bool = False,
     ) -> None:
         selected_uidvalidity = self._select(locator.folder, readonly=False)
         if selected_uidvalidity != locator.uidvalidity:
             raise ImapMessageUnavailable("message UIDVALIDITY changed before store")
         permanent_flags = self._permanent_flags()
-        normalized = {flag.casefold() for flag in permanent_flags}
+        if permanent_flags.advertised:
+            normalized = {flag.casefold() for flag in permanent_flags.flags}
+        elif allow_absent_standard_flagged and all(
+            flag.casefold() == "\\flagged" for flag in flags
+        ):
+            normalized = {"\\flagged"}
+        else:
+            raise ImapPermanentFlagsUnsupported(
+                "IMAP PERMANENTFLAGS is unavailable"
+            )
         wildcard = "\\*".casefold() in normalized
         if any(
             flag.casefold() not in normalized and not (wildcard_permits and wildcard)
@@ -506,18 +595,30 @@ class ImapDeterministicProvider:
         )
         _require_ok(status, "IMAP UID STORE failed")
 
-    def _permanent_flags(self) -> frozenset[str]:
+    def _permanent_flags(self) -> _PermanentFlagsState:
         response = self.session.response("PERMANENTFLAGS")
+        if response is None:
+            return _PermanentFlagsState(False, frozenset())
         if not isinstance(response, tuple) or len(response) != 2:
-            raise ImapPermanentFlagsUnsupported(
-                "IMAP PERMANENTFLAGS is unavailable"
-            )
+            raise ImapPermanentFlagsUnsupported("invalid IMAP PERMANENTFLAGS")
         code, values = response
-        raw_values = tuple(value for value in values or () if value is not None)
-        if str(code).upper() != "PERMANENTFLAGS" or len(raw_values) != 1:
-            raise ImapPermanentFlagsUnsupported(
-                "IMAP PERMANENTFLAGS is unavailable"
-            )
+        normalized_code = str(code).upper() if code is not None else None
+        if values is None and code is None:
+            return _PermanentFlagsState(False, frozenset())
+        if (
+            normalized_code in {None, "PERMANENTFLAGS"}
+            and isinstance(values, (list, tuple))
+            and tuple(values) == (None,)
+        ):
+            return _PermanentFlagsState(False, frozenset())
+        if (
+            normalized_code != "PERMANENTFLAGS"
+            or not isinstance(values, (list, tuple))
+        ):
+            raise ImapPermanentFlagsUnsupported("invalid IMAP PERMANENTFLAGS")
+        raw_values = tuple(value for value in values if value is not None)
+        if len(raw_values) != 1:
+            raise ImapPermanentFlagsUnsupported("invalid IMAP PERMANENTFLAGS")
         raw = raw_values[0]
         if not isinstance(raw, bytes):
             raise ImapPermanentFlagsUnsupported("invalid IMAP PERMANENTFLAGS")
@@ -525,17 +626,19 @@ class ImapDeterministicProvider:
         if match is None:
             raise ImapPermanentFlagsUnsupported("invalid IMAP PERMANENTFLAGS")
         try:
-            return frozenset(match.group("flags").decode("ascii").split())
-        except UnicodeDecodeError as exc:
+            flags = frozenset(parse_imap_flag_list(match.group("flags")))
+        except ImapFetchFlagsError as exc:
             raise ImapPermanentFlagsUnsupported(
                 "invalid IMAP PERMANENTFLAGS"
             ) from exc
+        return _PermanentFlagsState(True, flags)
 
     def _read_exact(
         self,
         locator: StoredEmailLocator,
         *,
         expected_message_id: str | None,
+        action_type: EmailAction,
     ) -> ProviderMessageState | None:
         try:
             uidvalidity = self._select(locator.folder, readonly=True)
@@ -556,12 +659,32 @@ class ImapDeterministicProvider:
         observed_message_id = _fetch_message_id(data)
         if expected_message_id is not None and observed_message_id != expected_message_id:
             return None
-        raw_flags = imaplib.ParseFlags(response)
+        try:
+            raw_flags = parse_imap_fetch_flags(data)
+        except ImapFetchFlagsError as exc:
+            raise ImapProviderError("invalid IMAP FETCH FLAGS metadata") from exc
         labels = frozenset(
-            flag.decode("ascii")
+            flag
             for flag in raw_flags
-            if not flag.startswith(b"\\")
+            if not flag.startswith("\\")
         )
+        normalized_raw_flags = {flag.casefold() for flag in raw_flags}
+        important_signal_names = frozenset(
+            canonical
+            for normalized, canonical in (
+                ("\\flagged", "\\Flagged"),
+                ("$important", "$Important"),
+            )
+            if normalized in normalized_raw_flags
+        )
+        required_important_signal_names: set[str] = set()
+        if action_type is EmailAction.FLAG_IMPORTANT:
+            permanent_flags = self._permanent_flags()
+            required_important_signal_names.add("\\Flagged")
+            if permanent_flags.advertised and "$important" in {
+                flag.casefold() for flag in permanent_flags.flags
+            }:
+                required_important_signal_names.add("$Important")
         mailbox_flags = self._cached_mailbox_flags(locator.folder)
         observed_locator = StoredEmailLocator(
             account_id=locator.account_id,
@@ -578,16 +701,20 @@ class ImapDeterministicProvider:
                 locator.folder,
                 str(locator.uidvalidity),
                 str(locator.uid),
-                *sorted(flag.decode("ascii") for flag in raw_flags),
+                *sorted(raw_flags),
             )
         )
         return ProviderMessageState(
             revision="imap:" + sha256(revision_payload.encode("utf-8")).hexdigest(),
             labels=labels,
-            is_read=b"\\Seen" in raw_flags,
+            is_read="\\seen" in normalized_raw_flags,
             archived=bool({"\\ARCHIVE", "\\ALL"} & mailbox_flags),
             folder=locator.folder,
             trashed="\\TRASH" in mailbox_flags,
+            important_signal_names=important_signal_names,
+            required_important_signal_names=frozenset(
+                required_important_signal_names
+            ),
             locator=observed_locator,
         )
 
@@ -617,17 +744,16 @@ class ImapDeterministicProvider:
             for item in raw
         )
 
-    def _mailboxes(self) -> tuple[_ImapMailbox, ...]:
+    def _mailboxes(self) -> tuple[ParsedImapFolder, ...]:
         if self._mailbox_cache is not None:
             return self._mailbox_cache
         status, data = self.session.list()
         _require_ok(status, "IMAP folder discovery failed")
-        mailboxes = tuple(_parse_mailbox(item) for item in data or ())
-        selectable = tuple(
-            mailbox
-            for mailbox in mailboxes
-            if "\\NOSELECT" not in {flag.upper() for flag in mailbox.flags}
-        )
+        try:
+            mailboxes = parse_imap_list_response(data)
+        except ImapFolderListError as exc:
+            raise ImapDestinationUnavailable("invalid IMAP folder list") from exc
+        selectable = tuple(mailbox for mailbox in mailboxes if mailbox.selectable)
         names = [mailbox.name for mailbox in selectable]
         if not selectable or len(names) != len(set(names)):
             raise ImapDestinationUnavailable("IMAP folder list is ambiguous")
@@ -647,27 +773,14 @@ class ImapDeterministicProvider:
             raise ImapPermanentProviderError("IMAP account locator mismatch")
 
 
-def _parse_mailbox(raw: object) -> _ImapMailbox:
-    if not isinstance(raw, bytes):
-        raise ImapDestinationUnavailable("unsupported IMAP folder response")
-    match = _LIST_RESPONSE.fullmatch(raw.strip())
-    if match is None:
-        raise ImapDestinationUnavailable("unsupported IMAP folder response")
+def _parse_mailbox(raw: object) -> ParsedImapFolder:
     try:
-        flags = frozenset(match.group("flags").decode("ascii").split())
-        name = _decode_imap_quoted(match.group("name"))
-    except UnicodeDecodeError as exc:
-        raise ImapDestinationUnavailable("non-ASCII IMAP folder is unsupported") from exc
-    if not name:
-        raise ImapDestinationUnavailable("blank IMAP folder is unsupported")
-    return _ImapMailbox(name=name, flags=flags)
-
-
-def _decode_imap_quoted(raw: bytes) -> str:
-    try:
-        return decode_imap_mailbox_token(raw)
-    except ImapMailboxCodecError as exc:
+        parsed = parse_imap_list_response((raw,))
+    except ImapFolderListError as exc:
         raise ImapDestinationUnavailable("malformed IMAP folder response") from exc
+    if len(parsed) != 1:
+        raise ImapDestinationUnavailable("malformed IMAP folder response")
+    return parsed[0]
 
 
 def _response_bytes(data: object) -> bytes:

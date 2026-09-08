@@ -217,6 +217,7 @@ def _account_payload(account_id: str = "work_mail") -> dict[str, object]:
         "imap_tls": True,
         "imap_username": f"{account_id}@example.test",
         "imap_secret_reference": f"CEO_EMAIL_{account_id.upper()}_IMAP_SECRET",
+        "imap_move_mode": "move",
         "smtp_host": "smtp.example.test",
         "smtp_port": 465,
         "smtp_tls": True,
@@ -267,6 +268,7 @@ def test_imap_account_create_update_and_enable_do_not_require_smtp_fields(
 
     assert created.status_code == 201
     assert created.json()["item"]["enabled"] is False
+    assert created.json()["item"]["imap_move_mode"] == "move"
     assert not any(key.startswith("smtp_") for key in created.json()["item"])
 
     update_payload = _imap_only_account_payload()
@@ -332,6 +334,18 @@ def test_email_account_payload_forbids_extra_fields():
     payload = _account_payload()
     payload["threshold"] = 0.9
 
+    with pytest.raises(ValidationError):
+        EmailAccountPayload.model_validate(payload)
+
+
+def test_email_account_payload_accepts_only_explicit_imap_move_modes():
+    payload = _account_payload()
+    payload["scan_folders"] = tuple(payload["scan_folders"])
+    payload["imap_move_mode"] = "copy_as_move"
+
+    assert EmailAccountPayload.model_validate(payload).imap_move_mode == "copy_as_move"
+
+    payload["imap_move_mode"] = "auto"
     with pytest.raises(ValidationError):
         EmailAccountPayload.model_validate(payload)
 
@@ -470,7 +484,7 @@ def test_two_accounts_share_global_classifier_config(tmp_path: Path):
             "threshold": 0.91,
             "actions": ["archive"],
             "action_parameters": {},
-            "enabled": True,
+            "enabled": False,
             "config_version": "email-config-v1",
             "updated_at": store.list_configs()[0]["updated_at"],
         }
@@ -567,6 +581,10 @@ def test_create_secret_write_failure_removes_account_and_retry_succeeds(
     env_file.write_text("KEEP=unchanged\n", encoding="utf-8")
     payload = _account_payload()
     payload["imap_secret"] = IMAP_SECRET
+    category_enabled_before = {
+        row["category_key"]: row["enabled"]
+        for row in store.list_category_configs()
+    }
     original_writer = app_config.write_env_values
 
     def fail_write(*_args, **_kwargs):
@@ -585,6 +603,10 @@ def test_create_secret_write_failure_removes_account_and_retry_succeeds(
     assert IMAP_SECRET not in failed.text
     assert "private path" not in failed.text
     assert store.get_account("work_mail") is None
+    assert {
+        row["category_key"]: row["enabled"]
+        for row in store.list_category_configs()
+    } == category_enabled_before
     assert env_file.read_text(encoding="utf-8") == "KEEP=unchanged\n"
 
     monkeypatch.setattr(app_config, "write_env_values", original_writer)
@@ -619,8 +641,13 @@ def test_update_secret_write_failure_restores_exact_account_and_retry_succeeds(
 ):
     client, store, env_file = _client(tmp_path)
     original = _account_payload()
+    original["enabled"] = False
     assert client.post("/api/console/email/accounts", json=original).status_code == 201
     before = store.get_account("work_mail")
+    category_enabled_before = {
+        row["category_key"]: row["enabled"]
+        for row in store.list_category_configs()
+    }
     env_file.write_text("KEEP=unchanged\n", encoding="utf-8")
     update = _account_payload()
     update.update(
@@ -644,12 +671,51 @@ def test_update_secret_write_failure_restores_exact_account_and_retry_succeeds(
     assert IMAP_SECRET not in failed.text
     assert "private path" not in failed.text
     assert store.get_account("work_mail") == before
+    assert {
+        row["category_key"]: row["enabled"]
+        for row in store.list_category_configs()
+    } == category_enabled_before
     assert env_file.read_text(encoding="utf-8") == "KEEP=unchanged\n"
 
     monkeypatch.setattr(app_config, "write_env_values", original_writer)
     retried = client.put("/api/console/email/accounts/work_mail", json=update)
     assert retried.status_code == 200
     assert store.get_account("work_mail")["display_name"] == "Changed"
+
+
+def test_secret_failure_compensation_does_not_overwrite_concurrent_category_edit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client, store, _ = _client(tmp_path)
+    payload = _account_payload()
+    payload["imap_secret"] = IMAP_SECRET
+
+    def edit_category_then_fail(*_args, **_kwargs):
+        work = store.get_category_config("work")
+        assert work is not None
+        store.update_category_descriptions(
+            "work",
+            core_description=work["core_description"],
+            include=work["include"],
+            exclude=work["exclude"],
+            threshold=work["threshold"],
+            enabled=False,
+            description_version=work["description_version"],
+            config_version="concurrent-work-edit-v1",
+        )
+        raise OSError("hidden")
+
+    monkeypatch.setattr(app_config, "write_env_values", edit_category_then_fail)
+
+    failed = client.post("/api/console/email/accounts", json=payload)
+
+    assert failed.status_code == 500
+    assert failed.json()["code"] == "email_account_consistency_failed"
+    assert store.get_account("work_mail") is not None
+    assert store.get_category_config("work")["config_version"] == (
+        "concurrent-work-edit-v1"
+    )
 
 
 @pytest.mark.parametrize(

@@ -7,7 +7,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 
 from app.agent_result import EffectKind
-from app.leak_check import is_sensitive_field_name
+from app.leak_check import is_sensitive_url_component_name
 from app.native_cli_metadata import structured_target_identifiers
 
 
@@ -17,25 +17,6 @@ DEFAULT_MCP_EFFECTS_PATH = (
 TOTAL_TIMEOUT_SECONDS = int(os.getenv("CEO_TASK_CODEX_TIMEOUT_SECONDS", "1200"))
 IDLE_TIMEOUT_SECONDS = int(os.getenv("CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS", "900"))
 LEASE_SECONDS = TOTAL_TIMEOUT_SECONDS + IDLE_TIMEOUT_SECONDS + 300
-_SENSITIVE_KEY_NAMES = frozenset(
-    {
-        "authorization",
-        "bearer",
-        "cookie",
-        "password",
-        "secret",
-        "signature",
-        "signedurl",
-        "token",
-        "accesstoken",
-        "refreshtoken",
-        "idtoken",
-        "apikey",
-        "clientsecret",
-        "privatekey",
-        "webhook",
-    }
-)
 _MAX_MCP_RESULT_DEPTH = 32
 _MAX_MCP_RESULT_NODES = 2048
 _MAX_MCP_RESULT_JSON_STRINGS = 64
@@ -830,18 +811,6 @@ def _valid_mcp_content_block(value: object) -> bool:
     )
 
 
-def _normalized_key(key: str) -> str:
-    return "".join(character for character in key.casefold() if character.isalnum())
-
-
-def _is_sensitive_key(normalized_key: str) -> bool:
-    if normalized_key in _SENSITIVE_KEY_NAMES:
-        return True
-    if normalized_key.startswith("x") and normalized_key[1:] in _SENSITIVE_KEY_NAMES:
-        return True
-    return is_sensitive_field_name(normalized_key)
-
-
 def _is_signed_url(value: str) -> bool:
     try:
         parsed = urlsplit(value)
@@ -850,6 +819,6 @@ def _is_signed_url(value: str) -> bool:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.query:
         return False
     return any(
-        _is_sensitive_key(_normalized_key(name))
+        is_sensitive_url_component_name(name)
         for name, _value in parse_qsl(parsed.query, keep_blank_values=True)
     )

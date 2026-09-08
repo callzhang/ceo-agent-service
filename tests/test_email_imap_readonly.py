@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import email.message
 import imaplib
 import json
@@ -11,6 +12,7 @@ from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
     EmailClassificationStatus,
+    INITIAL_EMAIL_CATEGORY_KEYS,
 )
 from app.email_classifier_scan import (
     EmailScanConfig,
@@ -21,14 +23,17 @@ from app.email_classifier_training import CategoryEligibility, EmailActionEligib
 from app.email_imap_readonly import (
     ImapReadonlyAdapter,
     ImapUidBatch,
+    ProviderFolderFingerprint,
     ephemeral_body_html,
     parse_rfc822_message,
 )
+from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_store import EmailStore
+from app.email_unsubscribe import EmailOtpChallenge, email_otp_context_reference
 
 
 _HEADER_FETCH = (
-    "(BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID REFERENCES "
+    "(FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID REFERENCES "
     "IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST AUTO-SUBMITTED)])"
 )
 
@@ -42,12 +47,16 @@ class FakeImapSession:
         section_payloads: Mapping[str, bytes],
         search_result: bytes = b"1",
         uidvalidity: int = 42,
+        flags: tuple[str, ...] = (),
+        flags_attribute: str = "FLAGS",
     ):
         self.headers = headers
         self.bodystructure = bodystructure
         self.section_payloads = dict(section_payloads)
         self.search_result = search_result
         self.uidvalidity = uidvalidity
+        self.flags = flags
+        self.flags_attribute = flags_attribute
         self.calls: list[tuple[object, ...]] = []
 
     def select(self, mailbox: str, readonly: bool = False):
@@ -61,6 +70,14 @@ class FakeImapSession:
         if command != "FETCH":
             raise AssertionError(f"mailbox write attempted: {command}")
         uid, query = args
+        if query == "(FLAGS)":
+            return "OK", [
+                b"1 (UID "
+                + str(uid).encode("ascii")
+                + b" FLAGS ("
+                + " ".join(self.flags).encode("ascii")
+                + b"))"
+            ]
         if query == "(BODYSTRUCTURE)":
             return "OK", [
                 b"1 (UID " + bytes(uid) + b" BODYSTRUCTURE " + self.bodystructure + b")"
@@ -70,6 +87,11 @@ class FakeImapSession:
                 (
                     b"1 (UID "
                     + bytes(uid)
+                    + b" "
+                    + self.flags_attribute.encode("ascii")
+                    + b" ("
+                    + " ".join(self.flags).encode("ascii")
+                    + b")"
                     + b" BODY[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID "
                     b"REFERENCES IN-REPLY-TO LIST-UNSUBSCRIBE "
                     b"LIST-UNSUBSCRIBE-POST AUTO-SUBMITTED)] {"
@@ -139,6 +161,464 @@ def _plain_session(
     )
 
 
+def test_connected_mailbox_otp_fetch_is_readonly_bounded_and_challenge_scoped() -> None:
+    opened_at = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+    challenge = EmailOtpChallenge(
+        recipient="derek@stardust.ai",
+        site_domain="accounts.example.com",
+        context_reference=email_otp_context_reference(
+            "derek@stardust.ai", "accounts.example.com"
+        ),
+        opened_at=opened_at,
+        expires_at=opened_at + timedelta(minutes=10),
+    )
+
+    class OtpSession:
+        def __init__(self):
+            self.calls: list[tuple[object, ...]] = []
+
+        def select(self, mailbox, readonly=False):
+            self.calls.append(("select", mailbox, readonly))
+            return "OK", [b"2"]
+
+        def uid(self, command, *args):
+            self.calls.append(("uid", command, *args))
+            if command == "SEARCH":
+                return "OK", [b"40 41"]
+            uid, query = args
+            received = (
+                "08-Sep-2026 12:01:00 +0000"
+                if uid == b"41"
+                else "08-Sep-2026 11:59:00 +0000"
+            )
+            if query == (
+                "(INTERNALDATE BODY.PEEK[HEADER.FIELDS "
+                "(FROM TO SUBJECT AUTHENTICATION-RESULTS)])"
+            ):
+                headers = (
+                    b"From: Verify <no-reply@accounts.example.com>\r\n"
+                    b"To: Derek <derek@stardust.ai>\r\n"
+                    b"Subject: accounts.example.com verification\r\n"
+                    b"Authentication-Results: mx.aliyun.com; "
+                    b"dkim=pass header.d=accounts.example.com\r\n\r\n"
+                )
+                return "OK", [
+                    (
+                        f'1 (UID {uid.decode()} INTERNALDATE "{received}" '
+                        f'BODY[HEADER.FIELDS (FROM TO SUBJECT)] {{{len(headers)}}}'.encode(),
+                        headers,
+                    ),
+                    b")",
+                ]
+            if query == "(BODY.PEEK[TEXT]<0.8192>)":
+                return "OK", [(b"body", b"Your code is 847201\r\n"), b")"]
+            raise AssertionError(f"unexpected OTP fetch: {query}")
+
+    session = OtpSession()
+    adapter = ImapReadonlyAdapter(
+        session,
+        account_id="account-1",
+        mailbox_address="derek@stardust.ai",
+        trusted_authserv_domain="imap.qiye.aliyun.com",
+    )
+
+    candidates = adapter.fetch_email_otp_candidates(challenge, limit=8)
+
+    assert len(candidates) == 1
+    assert candidates[0].received_at == opened_at + timedelta(minutes=1)
+    assert candidates[0].consume() == "847201"
+    assert session.calls[0] == ("select", "INBOX", True)
+    assert session.calls[1] == (
+        "uid",
+        "SEARCH",
+        None,
+        "SINCE",
+        "08-Sep-2026",
+        "TO",
+        "derek@stardust.ai",
+    )
+    assert all(call[1] in {"SEARCH", "FETCH"} for call in session.calls[1:])
+
+
+def test_connected_mailbox_otp_fetch_rejects_a_different_recipient() -> None:
+    class NoIoSession:
+        def select(self, *_args, **_kwargs):
+            raise AssertionError("another mailbox must not be queried")
+
+    opened_at = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+    adapter = ImapReadonlyAdapter(
+        NoIoSession(),
+        account_id="account-1",
+        mailbox_address="derek@stardust.ai",
+    )
+    challenge = EmailOtpChallenge(
+        recipient="other@stardust.ai",
+        site_domain="accounts.example.com",
+        context_reference=email_otp_context_reference(
+            "other@stardust.ai", "accounts.example.com"
+        ),
+        opened_at=opened_at,
+        expires_at=opened_at + timedelta(minutes=10),
+    )
+
+    assert adapter.fetch_email_otp_candidates(challenge, limit=8) == ()
+
+
+@pytest.mark.parametrize(
+    ("from_domain", "authentication_results", "subject", "expected"),
+    (
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; spf=pass smtp.mailfrom=accounts.example.com",
+            "accounts.example.com verification",
+            1,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; dkim=fail header.d=accounts.example.com",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.attacker.test; dkim=pass header.d=accounts.example.com",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "attacker.test",
+            "mx.aliyun.com; dkim=pass header.d=attacker.test",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; dkim=pass header.d=accounts.example.com",
+            "unrelated verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; dkim=fail header.d=accounts.example.com; "
+            "dkim=pass header.d=attacker.test",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; dkim=pass header.d=attacker.test; "
+            "dkim=fail header.d=accounts.example.com",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; spf=fail smtp.mailfrom=accounts.example.com; "
+            "spf=pass smtp.mailfrom=attacker.test",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; spf=pass smtp.mailfrom=attacker.test; "
+            "spf=fail smtp.mailfrom=accounts.example.com",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; dkim=pass header.d=accounts.example.com; "
+            "dkim=pass header.d=attacker.test",
+            "accounts.example.com verification",
+            0,
+        ),
+        (
+            "accounts.example.com",
+            "mx.aliyun.com; spf=pass smtp.mailfrom=accounts.example.com; "
+            "spf=pass smtp.mailfrom=attacker.test",
+            "accounts.example.com verification",
+            0,
+        ),
+    ),
+)
+def test_connected_mailbox_otp_rejects_spoofed_or_unbound_provider_evidence(
+    from_domain: str,
+    authentication_results: str,
+    subject: str,
+    expected: int,
+) -> None:
+    opened_at = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+    challenge = EmailOtpChallenge(
+        recipient="derek@stardust.ai",
+        site_domain="accounts.example.com",
+        context_reference=email_otp_context_reference(
+            "derek@stardust.ai", "accounts.example.com"
+        ),
+        opened_at=opened_at,
+        expires_at=opened_at + timedelta(minutes=10),
+    )
+
+    class OtpSession:
+        def select(self, mailbox, readonly=False):
+            return "OK", [b"1"]
+
+        def uid(self, command, *args):
+            if command == "SEARCH":
+                return "OK", [b"41"]
+            uid, query = args
+            if "HEADER.FIELDS" in query:
+                headers = (
+                    f"From: Verify <no-reply@{from_domain}>\r\n"
+                    "To: Derek <derek@stardust.ai>\r\n"
+                    f"Subject: {subject}\r\n"
+                    f"Authentication-Results: {authentication_results}\r\n\r\n"
+                ).encode()
+                return "OK", [
+                    (
+                        b'1 (UID 41 INTERNALDATE "08-Sep-2026 12:01:00 +0000" '
+                        + f"BODY[HEADER.FIELDS] {{{len(headers)}}}".encode(),
+                        headers,
+                    ),
+                    b")",
+                ]
+            return "OK", [(b"body", b"Your code is 847201\r\n"), b")"]
+
+    adapter = ImapReadonlyAdapter(
+        OtpSession(),
+        account_id="account-1",
+        mailbox_address="derek@stardust.ai",
+        trusted_authserv_domain="imap.qiye.aliyun.com",
+    )
+    assert len(adapter.fetch_email_otp_candidates(challenge)) == expected
+
+
+def test_connected_mailbox_otp_does_not_accept_forged_authentication_results_after_provider_fail() -> None:
+    opened_at = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+    challenge = EmailOtpChallenge(
+        recipient="derek@stardust.ai",
+        site_domain="accounts.example.com",
+        context_reference=email_otp_context_reference(
+            "derek@stardust.ai", "accounts.example.com"
+        ),
+        opened_at=opened_at,
+        expires_at=opened_at + timedelta(minutes=10),
+    )
+
+    class Session:
+        def select(self, *_args, **_kwargs):
+            return "OK", [b"1"]
+
+        def uid(self, command, *args):
+            if command == "SEARCH":
+                return "OK", [b"41"]
+            _uid, query = args
+            if "HEADER.FIELDS" in query:
+                headers = (
+                    b"From: Verify <no-reply@accounts.example.com>\r\n"
+                    b"To: derek@stardust.ai\r\n"
+                    b"Subject: accounts.example.com verification\r\n"
+                    b"Authentication-Results: mx.aliyun.com; dkim=fail "
+                    b"header.d=accounts.example.com\r\n"
+                    b"Authentication-Results: mx.aliyun.com; dkim=pass "
+                    b"header.d=accounts.example.com\r\n\r\n"
+                )
+                return "OK", [
+                    (
+                        b'1 (UID 41 INTERNALDATE "08-Sep-2026 12:01:00 +0000" '
+                        + f"BODY[HEADER.FIELDS] {{{len(headers)}}}".encode(),
+                        headers,
+                    ),
+                    b")",
+                ]
+            return "OK", [(b"body", b"Your code is 847201\r\n"), b")"]
+
+    adapter = ImapReadonlyAdapter(
+        Session(),
+        account_id="account-1",
+        mailbox_address="derek@stardust.ai",
+        trusted_authserv_domain="imap.qiye.aliyun.com",
+    )
+    assert adapter.fetch_email_otp_candidates(challenge) == ()
+
+
+class FolderListSession:
+    def __init__(self, responses: list[object]):
+        self.responses = responses
+
+    def list(self):
+        return "OK", self.responses
+
+
+def test_imap_folder_inventory_parses_special_use_modified_utf7_and_stable_ids() -> (
+    None
+):
+    adapter = ImapReadonlyAdapter(
+        FolderListSession(
+            [
+                b'(\\Inbox) "/" INBOX',
+                b'(\\Junk) "/" Spam',
+                b'(\\Trash) "/" Deleted',
+                b'(\\Sent) "/" "Sent Mail"',
+                b'(\\Drafts) "/" Drafts',
+                b'() "/" "&U,BTFw-"',
+            ]
+        ),
+        account_id="account-1",
+    )
+
+    assert adapter.list_folders() == (
+        ProviderFolder("INBOX", "INBOX", FolderRole.INBOX),
+        ProviderFolder("Spam", "Spam", FolderRole.JUNK),
+        ProviderFolder("Deleted", "Deleted", FolderRole.TRASH),
+        ProviderFolder("Sent Mail", "Sent Mail", FolderRole.SENT),
+        ProviderFolder("Drafts", "Drafts", FolderRole.DRAFT),
+        ProviderFolder("台北", "台北", FolderRole.UNBOUND),
+    )
+
+
+def test_uid_membership_is_one_bounded_search_without_body_fetch() -> None:
+    from app.email_important import ImportantSignals
+
+    session = _plain_session(search_result=b"2 7", uidvalidity=42)
+    adapter = ImapReadonlyAdapter(session, account_id="account-1")
+
+    membership = adapter.fetch_uid_membership(
+        "INBOX", cursor_uidvalidity=42, uids=(1, 2, 7)
+    )
+
+    assert membership.uidvalidity == 42
+    assert membership.existing_uids == frozenset({2, 7})
+    assert membership.important_signals_by_uid == {
+        2: ImportantSignals((), False),
+        7: ImportantSignals((), False),
+    }
+    assert ("uid", "SEARCH", None, "UID 1,2,7") in session.calls
+    assert [call for call in session.calls if call[:2] == ("uid", "FETCH")] == [
+        ("uid", "FETCH", "2", "(FLAGS)"),
+        ("uid", "FETCH", "7", "(FLAGS)"),
+    ]
+
+
+def test_folder_fingerprint_uses_status_without_message_fetch() -> None:
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def status(self, mailbox, query):
+            self.calls.append(("status", mailbox, query))
+            return "OK", [
+                b"INBOX (MESSAGES 7 UIDNEXT 12 UIDVALIDITY 42 HIGHESTMODSEQ 99)"
+            ]
+
+    session = Session()
+    fingerprint = ImapReadonlyAdapter(
+        session, account_id="account-1"
+    ).fetch_folder_fingerprint("INBOX")
+
+    assert fingerprint == ProviderFolderFingerprint(42, 12, 7, 99)
+    assert session.calls == [
+        (
+            "status",
+            "INBOX",
+            "(UIDVALIDITY UIDNEXT MESSAGES HIGHESTMODSEQ)",
+        )
+    ]
+
+
+def test_folder_fingerprint_falls_back_to_status_without_modseq() -> None:
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def status(self, mailbox, query):
+            self.calls.append(("status", mailbox, query))
+            if "HIGHESTMODSEQ" in query:
+                return "NO", [b"HIGHESTMODSEQ unsupported"]
+            return "OK", [b"INBOX (MESSAGES 7 UIDNEXT 12 UIDVALIDITY 42)"]
+
+    session = Session()
+    fingerprint = ImapReadonlyAdapter(
+        session, account_id="account-1"
+    ).fetch_folder_fingerprint("INBOX")
+
+    assert fingerprint == ProviderFolderFingerprint(42, 12, 7, None)
+    assert session.calls[-1] == (
+        "status",
+        "INBOX",
+        "(UIDVALIDITY UIDNEXT MESSAGES)",
+    )
+
+
+def test_imap_folder_inventory_uses_protocol_flags_not_localized_name_guessing() -> (
+    None
+):
+    adapter = ImapReadonlyAdapter(
+        FolderListSession([b'() "/" "&V4NXPpCuTvY-"']),
+        account_id="account-1",
+    )
+
+    assert adapter.list_folders() == (
+        ProviderFolder("垃圾邮件", "垃圾邮件", FolderRole.UNBOUND),
+    )
+
+
+def test_imap_folder_inventory_excludes_non_addressable_noselect_entries() -> None:
+    adapter = ImapReadonlyAdapter(
+        FolderListSession(
+            [
+                b'(\\Noselect) "/" Parent',
+                b'() "/" Parent/Child',
+            ]
+        ),
+        account_id="account-1",
+    )
+
+    assert adapter.list_folders() == (
+        ProviderFolder("Parent/Child", "Parent/Child", FolderRole.UNBOUND),
+    )
+
+
+def test_imap_folder_inventory_uses_safe_precedence_for_multiple_special_roles() -> (
+    None
+):
+    adapter = ImapReadonlyAdapter(
+        FolderListSession(
+            [
+                b'(\\Inbox \\Drafts) "/" DraftInbox',
+                b'(\\Sent \\Trash) "/" DeletedSent',
+                b'(\\Junk \\Trash) "/" DeletedSpam',
+            ]
+        ),
+        account_id="account-1",
+    )
+
+    assert adapter.list_folders() == (
+        ProviderFolder("DraftInbox", "DraftInbox", FolderRole.DRAFT),
+        ProviderFolder("DeletedSent", "DeletedSent", FolderRole.TRASH),
+        ProviderFolder("DeletedSpam", "DeletedSpam", FolderRole.TRASH),
+    )
+
+
+def test_readonly_folder_inventory_parses_literal_and_whitespace_mailbox_names() -> (
+    None
+):
+    adapter = ImapReadonlyAdapter(
+        FolderListSession(
+            [
+                (b'(\\Trash) "/" {9}', b" Deleted "),
+                b" (STATUS (MESSAGES 0))",
+                b'() "/" " Folder "',
+            ]
+        ),
+        account_id="account-1",
+    )
+
+    assert adapter.list_folders() == (
+        ProviderFolder(" Deleted ", " Deleted ", FolderRole.TRASH),
+        ProviderFolder(" Folder ", " Folder ", FolderRole.UNBOUND),
+    )
+
+
 def test_imap_adapter_fetches_only_headers_bodystructure_and_bounded_text_section():
     session = _plain_session()
     adapter = ImapReadonlyAdapter(session, account_id="dingtalk-account")
@@ -177,6 +657,146 @@ def test_imap_adapter_fetches_only_headers_bodystructure_and_bounded_text_sectio
         "SEARCH",
         "FETCH",
     }
+
+
+def test_imap_adapter_can_search_all_unread_uids_without_cursor_date_gate():
+    session = _plain_session()
+    adapter = ImapReadonlyAdapter(session, account_id="dingtalk-account")
+
+    adapter.fetch_uid_batch(
+        "INBOX",
+        cursor_uidvalidity=42,
+        last_seen_uid=99,
+        limit=1,
+        unread_only=True,
+    )
+
+    assert ("uid", "SEARCH", None, "UNSEEN") in session.calls
+
+
+def test_imap_adapter_normalizes_trusted_flags_without_using_priority_headers():
+    from app.email_important import ImportantSignals
+
+    session = _plain_session()
+    session.flags = ("\\Seen", "$Important")
+    session.headers = session.headers.replace(
+        b"Subject:",
+        b"X-Priority: 1\r\nSubject:",
+    )
+
+    message = (
+        ImapReadonlyAdapter(session, account_id="account-a")
+        .fetch_uid_batch(
+            "INBOX",
+            cursor_uidvalidity=42,
+            last_seen_uid=0,
+            limit=1,
+        )
+        .messages[0]
+    )
+
+    assert message["importantSignals"] == ImportantSignals(("$Important",), True)
+    assert message["providerUnread"] is False
+
+
+def test_imap_adapter_exposes_unread_from_provider_seen_flag() -> None:
+    session = _plain_session()
+    session.flags = ()
+
+    message = (
+        ImapReadonlyAdapter(session, account_id="account-a")
+        .fetch_uid_batch("INBOX", cursor_uidvalidity=42, last_seen_uid=0, limit=1)
+        .messages[0]
+    )
+
+    assert message["providerUnread"] is True
+
+
+@pytest.mark.parametrize("flags_attribute", ("flags", "FlAgS"))
+def test_imap_adapter_parses_flags_attribute_and_atoms_case_insensitively(
+    flags_attribute: str,
+):
+    from app.email_important import ImportantSignals
+
+    session = _plain_session()
+    session.flags_attribute = flags_attribute
+    session.flags = ("\\fLaGgEd", "$iMpOrTaNt")
+
+    message = (
+        ImapReadonlyAdapter(session, account_id="account-a")
+        .fetch_uid_batch("INBOX", cursor_uidvalidity=42, last_seen_uid=0, limit=1)
+        .messages[0]
+    )
+
+    assert message["importantSignals"] == ImportantSignals(
+        ("\\fLaGgEd", "$iMpOrTaNt"),
+        True,
+    )
+
+
+def test_imap_adapter_does_not_parse_flags_text_inside_header_literal():
+    from app.email_important import ImportantSignals
+
+    session = _plain_session()
+    session.headers = session.headers.replace(
+        b"Subject: =?utf-8?b?5rWL6K+V?=",
+        b"Subject: FLAGS (\\Flagged $Important)",
+    )
+    assert b"FLAGS (\\Flagged $Important)" in session.headers
+
+    message = (
+        ImapReadonlyAdapter(session, account_id="account-a")
+        .fetch_uid_batch("INBOX", cursor_uidvalidity=42, last_seen_uid=0, limit=1)
+        .messages[0]
+    )
+
+    assert message["importantSignals"] == ImportantSignals((), False)
+
+
+@pytest.mark.parametrize(
+    "flags_attribute",
+    ("X-FLAGS", "FLAGS-EXT", "XFLAGS", "FLAGS2", "FLAGS_2"),
+)
+def test_imap_adapter_does_not_treat_extension_atoms_as_standard_flags(
+    flags_attribute: str,
+):
+    from app.email_important import ImportantSignals
+
+    session = _plain_session()
+    session.flags_attribute = flags_attribute
+    session.flags = ("\\Flagged", "$Important")
+
+    message = (
+        ImapReadonlyAdapter(session, account_id="account-a")
+        .fetch_uid_batch("INBOX", cursor_uidvalidity=42, last_seen_uid=0, limit=1)
+        .messages[0]
+    )
+
+    assert message["importantSignals"] == ImportantSignals((), False)
+
+
+def test_fetch_parser_ignores_x_flags_when_standard_flags_coexist():
+    from app.email_imap_mailbox import parse_imap_fetch_flags
+
+    parsed = parse_imap_fetch_flags(
+        [b"1 (UID 7 X-FLAGS ($Important) FLAGS (\\Flagged))"]
+    )
+
+    assert parsed == ("\\Flagged",)
+
+
+def test_rfc822_priority_header_alone_is_not_provider_important():
+    from app.email_important import ImportantSignals
+
+    parsed = parse_rfc822_message(
+        b"X-Priority: 1\r\nSubject: URGENT\r\n\r\nPlease review urgently.",
+        account_id="account-a",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=1,
+    )
+
+    assert parsed["importantSignals"] == ImportantSignals((), False)
 
 
 def test_imap_adapter_searches_after_last_seen_uid_and_resets_on_uidvalidity_change():
@@ -741,28 +1361,32 @@ def test_multi_account_folder_scan_isolates_auth_failure_and_sanitizes_result(
 def _scan_config() -> EmailScanConfig:
     return EmailScanConfig(
         config_version="email-scan-v1",
-        thresholds={category: 0.8 for category in EmailCategory},
+        thresholds={category: 0.8 for category in INITIAL_EMAIL_CATEGORY_KEYS},
         actions={EmailCategory.WORK: (EmailAction.LABEL,)},
         category_eligibility={
             category: CategoryEligibility(
                 category=category,
                 configured_threshold=0.8,
-                validated_precision=(0.99 if category is EmailCategory.WORK else None),
-                validation_sample_count=(30 if category is EmailCategory.WORK else 0),
-                auto_action_eligible=category is EmailCategory.WORK,
+                validated_precision=(
+                    0.99 if category == EmailCategory.WORK.value else None
+                ),
+                validation_sample_count=(
+                    30 if category == EmailCategory.WORK.value else 0
+                ),
+                auto_action_eligible=category == EmailCategory.WORK.value,
                 reason=(
                     "precision_and_sample_gate_met"
-                    if category is EmailCategory.WORK
+                    if category == EmailCategory.WORK.value
                     else "insufficient_validation_samples"
                 ),
                 source_model_id="model-test",
                 action_eligibility={
                     EmailAction.LABEL: EmailActionEligibility(
                         action=EmailAction.LABEL,
-                        auto_action_eligible=category is EmailCategory.WORK,
+                        auto_action_eligible=category == EmailCategory.WORK.value,
                         reason=(
                             "action_precision_and_support_gate_met"
-                            if category is EmailCategory.WORK
+                            if category == EmailCategory.WORK.value
                             else "action_precision_and_support_gate_not_met"
                         ),
                         source_model_id="model-test",
@@ -770,7 +1394,7 @@ def _scan_config() -> EmailScanConfig:
                     )
                 },
             )
-            for category in EmailCategory
+            for category in INITIAL_EMAIL_CATEGORY_KEYS
         },
         action_parameters={
             EmailCategory.WORK: {
@@ -817,7 +1441,7 @@ def test_scan_persists_processed_or_pending_without_mailbox_actions(tmp_path: Pa
         {
             "message-1": FakePrediction("work", 0.95, 0.4, {"work": 0.95}),
             "message-2": FakePrediction(
-                "subscription", 0.61, 0.03, {"subscription": 0.61}
+                "notification", 0.61, 0.03, {"notification": 0.61}
             ),
         }
     )

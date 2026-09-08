@@ -10,6 +10,7 @@ from app.email_classifier_contracts import (
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
+    INITIAL_EMAIL_CATEGORY_KEYS,
 )
 from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_classifier_retrain import (
@@ -23,10 +24,17 @@ from app.email_model_registry import EmailModelRegistry
 from app.email_store import EmailStore
 
 
+CURRENT_EMAIL_CATEGORIES = tuple(
+    EmailCategory(category) for category in INITIAL_EMAIL_CATEGORY_KEYS
+)
+
+
 def _classification(message_id: str, category: EmailCategory) -> EmailClassification:
-    classification_id = int.from_bytes(
-        sha256(message_id.encode("utf-8")).digest()[:8], "big"
-    ) & ((1 << 63) - 1) or 1
+    classification_id = (
+        int.from_bytes(sha256(message_id.encode("utf-8")).digest()[:8], "big")
+        & ((1 << 63) - 1)
+        or 1
+    )
     return EmailClassification(
         classification_id=classification_id,
         stable_message_identity=f"test-account:imap:INBOX:1:{classification_id}",
@@ -139,13 +147,15 @@ def _parallel_calls(*calls):
     return results
 
 
-def test_feedback_api_service_confirms_first_and_records_state_without_retraining(tmp_path: Path):
+def test_feedback_api_service_confirms_first_and_records_state_without_retraining(
+    tmp_path: Path,
+):
     service, store, rows, _ = _service_with_pending(tmp_path)
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
 
     result = service.confirm_and_maybe_retrain(
         rows[0]["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.LEGAL,
         feedback_request_id="learning-first-confirmation",
         expected_current_action_plan_id=None,
         now=now,
@@ -156,8 +166,10 @@ def test_feedback_api_service_confirms_first_and_records_state_without_retrainin
     assert result.retrain is not None
     assert result.retrain.decision.due is False
     assert result.error is None
-    assert load_retrain_state(tmp_path / "models" / "retrain-state.json").last_feedback_at
-    assert store.list_training_examples()[0]["label"] == "important"
+    assert load_retrain_state(
+        tmp_path / "models" / "retrain-state.json"
+    ).last_feedback_at
+    assert store.list_training_examples()[0]["label"] == "legal"
 
 
 def test_learning_service_corrects_processed_classification_through_pipeline(
@@ -175,8 +187,8 @@ def test_learning_service_corrects_processed_classification_through_pipeline(
     assert first is not None
     first_plan_id = first.confirmed["current_action_plan_id"]
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
-        description="important",
+        category=EmailCategory.LEGAL,
+        description="legal",
         threshold=0.97,
         actions=(EmailAction.ARCHIVE,),
         action_parameters={},
@@ -186,7 +198,7 @@ def test_learning_service_corrects_processed_classification_through_pipeline(
 
     corrected = service.confirm_and_maybe_retrain(
         rows[0]["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.LEGAL,
         feedback_request_id="learning-correction-second",
         expected_current_action_plan_id=first_plan_id,
         now=now + timedelta(seconds=1),
@@ -194,10 +206,10 @@ def test_learning_service_corrects_processed_classification_through_pipeline(
 
     assert corrected is not None
     assert corrected.error is None
-    assert corrected.confirmed["confirmed_category"] == "important"
+    assert corrected.confirmed["confirmed_category"] == "legal"
     assert corrected.confirmed["current_action_plan_id"] != first_plan_id
     assert corrected.confirmed["action_plan"]["action_plan_version"] == 2
-    assert store.list_training_examples()[0]["label"] == "important"
+    assert store.list_training_examples()[0]["label"] == "legal"
 
 
 def test_learning_service_exact_replay_does_not_record_or_request_retraining(
@@ -207,7 +219,7 @@ def test_learning_service_exact_replay_does_not_record_or_request_retraining(
     first_at = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     first = service.confirm_and_maybe_retrain(
         rows[0]["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.LEGAL,
         feedback_request_id="learning-feedback-1",
         expected_current_action_plan_id=None,
         now=first_at,
@@ -217,7 +229,7 @@ def test_learning_service_exact_replay_does_not_record_or_request_retraining(
 
     replay = service.confirm_and_maybe_retrain(
         rows[0]["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.LEGAL,
         feedback_request_id="learning-feedback-1",
         expected_current_action_plan_id=None,
         now=first_at + timedelta(hours=1),
@@ -231,15 +243,14 @@ def test_learning_service_exact_replay_does_not_record_or_request_retraining(
     assert state_path.read_text(encoding="utf-8") == state_after_first
 
 
-def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
+def test_feedback_only_never_starts_snapshot_training(tmp_path: Path):
     service, store, rows, registry = _service_with_pending(
         tmp_path,
-        count=16,
-        categories=tuple(EmailCategory),
+        count=18,
+        categories=CURRENT_EMAIL_CATEGORIES,
     )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
 
-    promoted_result = None
     for row in rows:
         result = service.confirm_and_maybe_retrain(
             row["id"],
@@ -248,43 +259,18 @@ def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
             expected_current_action_plan_id=None,
             now=now,
         )
-        if result is not None and result.retrain is not None and result.retrain.training_result is not None:
-            promoted_result = result
+        assert result is not None
+        assert result.retrain is not None
+        assert result.retrain.decision.due is False
 
     polled = service.poll_retrain(now=now + timedelta(seconds=31))
-    assert polled.training_run is not None
-    assert polled.training_run.status in {"queued", "running"}
-    assert len(polled.training_run.sample_snapshots) == 16
-    assert all(
-        len(sample["sample_digest"]) == 64
-        for sample in polled.training_run.sample_snapshots
-    )
-    # The real trainer is intentionally a subprocess.  On CPU-only machines
-    # importing sklearn can exceed one second before the first poll observes
-    # the terminal result, so keep the test bounded without assuming a
-    # particular workstation startup time.
-    for _ in range(1000):
-        polled = service.poll_retrain(now=now + timedelta(seconds=32))
-        if polled.training_run is not None and polled.training_run.status not in {
-            "queued",
-            "running",
-        }:
-            break
-        time.sleep(0.01)
-    promoted_result = polled
-
-    assert promoted_result is not None
-    assert promoted_result.training_run is not None
-    assert promoted_result.training_run.status == "succeeded"
-    assert registry.active_manifest() is not None
-    assert store.list_unincluded_training_examples() == []
-    assert load_retrain_state(tmp_path / "models" / "retrain-state.json").last_trained_feedback_count == 16
+    assert polled.training_run is None
+    assert registry.active_manifest() is None
+    assert len(store.list_unincluded_training_examples()) == 18
 
 
 def test_feedback_service_keeps_confirmation_when_training_is_not_ready(tmp_path: Path):
-    service, store, rows, _ = _service_with_pending(
-        tmp_path, minimum_new_examples=1
-    )
+    service, store, rows, _ = _service_with_pending(tmp_path, minimum_new_examples=1)
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
 
     result = service.confirm_and_maybe_retrain(
@@ -342,20 +328,22 @@ def test_partial_taxonomy_feedback_waits_without_repeated_training_launch(
 
     assert tick.training_run is None
     assert tick.decision.due is False
-    assert tick.decision.reason == "training_not_ready"
+    assert tick.decision.reason is None
     assert controller.starts == []
 
     second_tick = service.poll_retrain(now=now + timedelta(seconds=62))
     assert second_tick.training_run is None
-    assert second_tick.decision.reason == "training_not_ready"
+    assert second_tick.decision.reason is None
     assert controller.starts == []
 
 
-def test_manual_training_uses_same_readiness_path_with_only_trigger_override(tmp_path: Path):
+def test_manual_training_uses_same_readiness_path_with_only_trigger_override(
+    tmp_path: Path,
+):
     service, _store, rows, _registry = _service_with_pending(
         tmp_path,
-        count=16,
-        categories=tuple(EmailCategory),
+        count=18,
+        categories=CURRENT_EMAIL_CATEGORIES,
     )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     for row in rows:
@@ -369,16 +357,16 @@ def test_manual_training_uses_same_readiness_path_with_only_trigger_override(tmp
 
     result = service.request_manual_training(now=now)
 
-    assert result.decision.due is True
-    assert result.decision.reason == "manual"
-    assert result.training_run is not None
+    assert result.decision.due is False
+    assert result.decision.reason == "training_not_ready"
+    assert result.training_run is None
 
 
 def test_concurrent_manual_requests_launch_only_one_training_child(tmp_path: Path):
     service, store, rows, registry = _service_with_pending(
         tmp_path,
-        count=16,
-        categories=tuple(EmailCategory),
+        count=18,
+        categories=CURRENT_EMAIL_CATEGORIES,
     )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     _confirm_all(service, rows, now=now)
@@ -401,16 +389,16 @@ def test_concurrent_manual_requests_launch_only_one_training_child(tmp_path: Pat
         lambda: second.request_manual_training(now=now),
     )
 
-    assert controller.starts == ["run-1"]
-    assert {result.training_run.run_id for result in results} == {"run-1"}
-    assert load_retrain_state(service.retrain_state_path).active_run_id == "run-1"
+    assert controller.starts == []
+    assert all(result.training_run is None for result in results)
+    assert load_retrain_state(service.retrain_state_path).active_run_id is None
 
 
 def test_concurrent_manual_and_poll_launch_only_one_training_child(tmp_path: Path):
     service, store, rows, registry = _service_with_pending(
         tmp_path,
-        count=16,
-        categories=tuple(EmailCategory),
+        count=18,
+        categories=CURRENT_EMAIL_CATEGORIES,
     )
     feedback_at = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     _confirm_all(service, rows, now=feedback_at)
@@ -434,16 +422,16 @@ def test_concurrent_manual_and_poll_launch_only_one_training_child(tmp_path: Pat
         lambda: polling.poll_retrain(now=due_at),
     )
 
-    assert controller.starts == ["run-1"]
-    assert {result.training_run.run_id for result in results} == {"run-1"}
-    assert load_retrain_state(service.retrain_state_path).active_run_id == "run-1"
+    assert controller.starts == []
+    assert all(result.training_run is None for result in results)
+    assert load_retrain_state(service.retrain_state_path).active_run_id is None
 
 
 def test_learning_poll_clears_orphan_and_next_tick_can_retry(tmp_path: Path):
     service, store, rows, registry = _service_with_pending(
         tmp_path,
-        count=16,
-        categories=tuple(EmailCategory),
+        count=18,
+        categories=CURRENT_EMAIL_CATEGORIES,
     )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     for row in rows:
@@ -461,7 +449,21 @@ def test_learning_poll_clears_orphan_and_next_tick_can_retry(tmp_path: Path):
             "Process", (), {"pid": 4321, "poll": lambda self: None}
         )(),
     )
-    run = first.start(now=now + timedelta(seconds=31))
+    from app.email_classifier_retrain import SnapshotTrainingSignal
+
+    signal = SnapshotTrainingSignal(
+        snapshot_sha="a" * 64,
+        description_version="v1",
+        folder_label_watermark=50,
+        important_label_watermark=0,
+        minimum_ready=True,
+    )
+    run = first.start(
+        command=["trainer"],
+        now=now + timedelta(seconds=31),
+        signal=signal,
+        snapshot_id="snapshot-1",
+    )
     state = load_retrain_state(tmp_path / "models" / "retrain-state.json")
     save_retrain_state(
         tmp_path / "models" / "retrain-state.json", state.with_active_run(run.run_id)
@@ -482,6 +484,5 @@ def test_learning_poll_clears_orphan_and_next_tick_can_retry(tmp_path: Path):
     assert failed.training_run is not None
     assert failed.training_run.status == "failed"
     assert failed.state.active_run_id is None
-    assert retried.training_run is not None
-    assert retried.training_run.status == "running"
-    assert retried.training_run.run_id != run.run_id
+    assert retried.training_run is None
+    assert retried.decision.due is False

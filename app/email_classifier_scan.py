@@ -14,14 +14,23 @@ from typing import Callable, Mapping, Protocol, Sequence
 from app.email_classifier_contracts import (
     EmailAction,
     EmailAttachmentMetadata,
-    EmailCategory,
+    EmailCategoryKey,
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
+    INITIAL_EMAIL_CATEGORY_KEYS,
+    validate_email_category_key,
 )
 from app.email_classifier_model import email_message_to_text
 from app.email_classifier_training import CategoryEligibility
-from app.email_imap_readonly import ImapUidBatch, fallback_stable_message_identity
+from app.email_provider_folders import FolderRole
+from app.email_unsubscribe import extract_unsubscribe_entries
+from app.email_imap_readonly import (
+    ImapUidBatch,
+    ephemeral_body_html,
+    ephemeral_unsubscribe_authentication,
+    fallback_stable_message_identity,
+)
 from app.email_pipeline import (
     EmailCategoryConfig,
     EmailModelPrediction,
@@ -48,18 +57,254 @@ class MessageClassifier(Protocol):
     def predict_message(self, message: Mapping[str, object]) -> PredictionLike: ...
 
 
+def route_online_classification(
+    *,
+    mode: object,
+    current_input: object,
+    model_predict: Callable[[object], object],
+    enqueue_agent: Callable[[object], object],
+    accept_model: Callable[[object], object],
+) -> object:
+    """Route one new-mail input without parallel model/Agent execution."""
+
+    from app.email_classifier_runtime import (
+        EmailClassifierRuntimeMode,
+        OnlineClassificationResult,
+        OnlineModelAcceptError,
+        OnlineModelAcceptOutcome,
+        OnlineModelAcceptStage,
+        OnlineModelDurableConflict,
+        SequentialOnlineClassifier,
+    )
+
+    runtime_mode = EmailClassifierRuntimeMode(mode)
+    if runtime_mode is EmailClassifierRuntimeMode.SHADOW_HISTORY:
+        raise ValueError("shadow_history cannot enter the realtime scan loop")
+    result = SequentialOnlineClassifier(
+        mode=runtime_mode,
+        model_predict=model_predict,
+        agent_classify=enqueue_agent,
+    ).classify(current_input)
+    if result.source == "model":
+        try:
+            accepted = accept_model(result.value)
+        except OnlineModelAcceptError as exc:
+            if isinstance(exc, OnlineModelDurableConflict):
+                raise
+            if exc.stage is OnlineModelAcceptStage.AFTER_DURABLE_COMMIT:
+                accepted = accept_model(result.value)
+            else:
+                return OnlineClassificationResult(
+                    source="agent",
+                    value=enqueue_agent(current_input),
+                    fallback_reason=f"accept_failure:{type(exc).__name__}",
+                )
+        except Exception as exc:
+            return OnlineClassificationResult(
+                source="agent",
+                value=enqueue_agent(current_input),
+                fallback_reason=f"accept_failure:{type(exc).__name__}",
+            )
+        if type(accepted) is not OnlineModelAcceptOutcome:
+            raise TypeError("model acceptance must return a typed outcome")
+        return OnlineClassificationResult(
+            source="model", value=result.value, accept_outcome=accepted
+        )
+    return result
+
+
+@dataclass(frozen=True)
+class AgentScanContext:
+    allowed_category_keys: tuple[str, ...]
+    category_descriptions: Mapping[str, object]
+    folder_targets: Mapping[str, str]
+    config_version: str
+
+    def __post_init__(self) -> None:
+        categories = tuple(
+            validate_email_category_key(key) for key in self.allowed_category_keys
+        )
+        if not categories or len(categories) != len(set(categories)):
+            raise ValueError("allowed category keys must be unique and nonempty")
+        if set(self.category_descriptions) != set(categories):
+            raise ValueError("category descriptions must cover allowed categories")
+        if not self.config_version.strip():
+            raise ValueError("config_version must be nonblank")
+
+
+def should_enqueue_agent_classification(
+    *,
+    provider_unread: bool,
+    folder_role: FolderRole,
+    configured_unclassified_source: bool,
+    has_stable_record: bool,
+) -> bool:
+    """Apply the complete cold-start gate without any message-date condition."""
+
+    if type(provider_unread) is not bool:
+        raise TypeError("provider_unread must be a strict bool")
+    if type(folder_role) is not FolderRole:
+        raise TypeError("folder_role must be a FolderRole")
+    source_is_eligible = folder_role is FolderRole.INBOX or (
+        folder_role is FolderRole.UNBOUND and configured_unclassified_source
+    )
+    return provider_unread and source_is_eligible and not has_stable_record
+
+
+def scan_agent_classification_batch(
+    source: object,
+    store: object,
+    task_producer: object,
+    context: AgentScanContext,
+    *,
+    mailbox: str = "INBOX",
+    folder_role: FolderRole,
+    configured_unclassified_source: bool,
+    limit: int = 50,
+    online_runtime: object | None = None,
+    accept_model: Callable[
+        [Mapping[str, object], object, Sequence[object], str, str], object
+    ]
+    | None = None,
+) -> EmailScanResult:
+    """Route eligible new mail through Agent-primary or promoted model-primary."""
+
+    cursor = store.get_scan_cursor(_source_account_id(source), mailbox)
+    cursor_uidvalidity = None if cursor is None else int(cursor["uidvalidity"])
+    last_seen_uid = 0 if cursor is None else int(cursor["last_seen_uid"])
+    stable_provider_uids = getattr(task_producer.adapter, "stable_provider_uids", None)
+    excluded_uids = (
+        stable_provider_uids(
+            account_id=_source_account_id(source),
+            folder=mailbox,
+            uidvalidity=cursor_uidvalidity,
+        )
+        if cursor_uidvalidity is not None and callable(stable_provider_uids)
+        else frozenset()
+    )
+    stable_classification_uids = getattr(store, "stable_classification_uids", None)
+    if cursor_uidvalidity is not None and callable(stable_classification_uids):
+        excluded_uids = excluded_uids | stable_classification_uids(
+            account_id=_source_account_id(source),
+            folder=mailbox,
+            uidvalidity=cursor_uidvalidity,
+        )
+    batch = source.fetch_uid_batch(
+        mailbox,
+        cursor_uidvalidity=cursor_uidvalidity,
+        last_seen_uid=last_seen_uid,
+        limit=limit,
+        unread_only=True,
+        excluded_uids=excluded_uids,
+    )
+    if not isinstance(batch, ImapUidBatch):
+        raise TypeError("fetch_uid_batch must return ImapUidBatch")
+    enqueued = 0
+    highest_uid = last_seen_uid
+    for message in batch.messages:
+        locator = _provider_locator(message)
+        stable_identity = _stable_message_identity(message, locator)
+        highest_uid = max(highest_uid, locator.uid)
+        has_record = task_producer.adapter.has_stable_record(stable_identity)
+        has_canonical = getattr(store, "has_stable_classification", None)
+        if callable(has_canonical):
+            has_record = has_record or has_canonical(stable_identity)
+        if not should_enqueue_agent_classification(
+            provider_unread=message.get("providerUnread"),
+            folder_role=folder_role,
+            configured_unclassified_source=configured_unclassified_source,
+            has_stable_record=has_record,
+        ):
+            continue
+        body_html = ephemeral_body_html(message)
+        entries = extract_unsubscribe_entries(
+            list_unsubscribe=str(message.get("listUnsubscribe") or ""),
+            list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
+            body_text=str(message.get("markdownBody") or message.get("textBody") or ""),
+            body_html=str(body_html),
+            authentication_evidence=ephemeral_unsubscribe_authentication(message),
+        )
+        def enqueue_agent(_current_input: object) -> object:
+            return task_producer.produce(
+                message,
+                allowed_category_keys=context.allowed_category_keys,
+                category_descriptions=context.category_descriptions,
+                folder_targets=context.folder_targets,
+                config_version=context.config_version,
+                unsubscribe_candidates=entries,
+            )
+
+        if online_runtime is None:
+            enqueue_agent(None)
+        else:
+            from app.email_classifier_runtime import (
+                EmailClassifierRuntimeMode,
+                OnlineModelInput,
+            )
+
+            snapshot_reader = getattr(online_runtime, "snapshot", None)
+            if callable(snapshot_reader):
+                runtime_snapshot = snapshot_reader()
+                mode = EmailClassifierRuntimeMode(runtime_snapshot.mode)
+                predictor = runtime_snapshot.predictor
+                input_version = str(runtime_snapshot.input_schema_version or "")
+                snapshot_model_id = str(runtime_snapshot.model_id or "")
+            else:
+                mode = EmailClassifierRuntimeMode(online_runtime.mode)
+                predictor = online_runtime.model_predict
+                input_version = str(online_runtime.input_schema_version or "")
+                snapshot_model_id = str(getattr(online_runtime, "model_id", "") or "")
+            if mode is EmailClassifierRuntimeMode.SHADOW_HISTORY:
+                raise ValueError("shadow_history cannot enter the realtime scan loop")
+            if mode is EmailClassifierRuntimeMode.MODEL_PRIMARY:
+                if accept_model is None or predictor is None:
+                    raise ValueError("model_primary scan dependencies are incomplete")
+                model_text = email_message_to_text(message)
+                route_online_classification(
+                    mode=mode,
+                    current_input=OnlineModelInput(model_text, input_version),
+                    model_predict=predictor,
+                    enqueue_agent=enqueue_agent,
+                    accept_model=lambda prediction: accept_model(
+                        message,
+                        prediction,
+                        entries,
+                        model_text,
+                        snapshot_model_id,
+                    ),
+                )
+            else:
+                enqueue_agent(None)
+        enqueued += 1
+    uidvalidity = batch.uidvalidity
+    record_cursor = getattr(store, "record_scan_cursor", None)
+    if callable(record_cursor):
+        record_cursor(
+            account_id=batch.account_id,
+            folder=batch.folder,
+            uidvalidity=uidvalidity,
+            last_seen_uid=highest_uid,
+            expected_uidvalidity=(
+                cursor_uidvalidity
+                if cursor_uidvalidity is not None and cursor_uidvalidity != uidvalidity
+                else None
+            ),
+        )
+    return EmailScanResult(len(batch.messages), enqueued, 0, 0)
+
+
 @dataclass(frozen=True)
 class EmailScanConfig:
     config_version: str
-    thresholds: Mapping[EmailCategory, float]
-    actions: Mapping[EmailCategory, tuple[EmailAction, ...]]
-    category_eligibility: Mapping[EmailCategory, CategoryEligibility] = field(
+    thresholds: Mapping[EmailCategoryKey, float]
+    actions: Mapping[EmailCategoryKey, tuple[EmailAction, ...]]
+    category_eligibility: Mapping[EmailCategoryKey, CategoryEligibility] = field(
         default_factory=dict
     )
     action_parameters: Mapping[
-        EmailCategory, Mapping[EmailAction, Mapping[str, object]]
+        EmailCategoryKey, Mapping[EmailAction, Mapping[str, object]]
     ] = field(default_factory=dict)
-    category_enabled: Mapping[EmailCategory, bool] = field(default_factory=dict)
+    category_enabled: Mapping[EmailCategoryKey, bool] = field(default_factory=dict)
 
     @classmethod
     def cold_start(
@@ -68,7 +313,7 @@ class EmailScanConfig:
         """Conservative defaults for the review-only validation phase."""
         return cls(
             config_version=config_version,
-            thresholds={category: 0.95 for category in EmailCategory},
+            thresholds={category: 0.95 for category in INITIAL_EMAIL_CATEGORY_KEYS},
             actions={},
             category_eligibility={
                 category: CategoryEligibility(
@@ -79,54 +324,85 @@ class EmailScanConfig:
                     auto_action_eligible=False,
                     reason="cold_start",
                 )
-                for category in EmailCategory
+                for category in INITIAL_EMAIL_CATEGORY_KEYS
             },
             action_parameters={},
-            category_enabled={category: True for category in EmailCategory},
+            category_enabled={
+                category: True for category in INITIAL_EMAIL_CATEGORY_KEYS
+            },
         )
 
     def __post_init__(self) -> None:
         if not self.config_version.strip():
             raise ValueError("config_version must be non-empty")
-        for category in EmailCategory:
-            threshold = self.thresholds.get(category)
+        current_categories = set(INITIAL_EMAIL_CATEGORY_KEYS)
+        thresholds = {
+            validate_email_category_key(category): threshold
+            for category, threshold in self.thresholds.items()
+        }
+        if set(thresholds) != current_categories:
+            raise ValueError("thresholds must cover every current email category")
+        for category in INITIAL_EMAIL_CATEGORY_KEYS:
+            threshold = thresholds.get(category)
             if threshold is None or not 0 <= threshold <= 1:
-                raise ValueError(f"missing or invalid threshold for {category.value}")
-        eligibility = dict(self.category_eligibility)
+                raise ValueError(f"missing or invalid threshold for {category}")
+        actions = {
+            validate_email_category_key(category): tuple(category_actions)
+            for category, category_actions in self.actions.items()
+        }
+        if not set(actions) <= current_categories:
+            raise ValueError("actions contain a non-current email category")
+        eligibility = {
+            validate_email_category_key(category): value
+            for category, value in self.category_eligibility.items()
+        }
         if not eligibility:
             eligibility = {
                 category: CategoryEligibility(
                     category=category,
-                    configured_threshold=self.thresholds[category],
+                    configured_threshold=thresholds[category],
                     validated_precision=None,
                     validation_sample_count=0,
                     auto_action_eligible=False,
                     reason="eligibility_not_provided",
                 )
-                for category in EmailCategory
+                for category in INITIAL_EMAIL_CATEGORY_KEYS
             }
-        if set(eligibility) != set(EmailCategory):
+        if set(eligibility) != current_categories:
             raise ValueError("category_eligibility must cover every email category")
         for category, category_eligibility in eligibility.items():
-            if category_eligibility.category is not category:
+            if category_eligibility.category != category:
                 raise ValueError("category_eligibility category keys must match values")
-            if category_eligibility.configured_threshold != self.thresholds[category]:
+            if category_eligibility.configured_threshold != thresholds[category]:
                 raise ValueError(
                     "category eligibility threshold must match scan threshold"
                 )
-        unexpected_categories = set(self.action_parameters) - set(self.actions)
+        action_parameters = {
+            validate_email_category_key(category): parameters
+            for category, parameters in self.action_parameters.items()
+        }
+        if not set(action_parameters) <= current_categories:
+            raise ValueError("action parameters contain a non-current email category")
+        unexpected_categories = set(action_parameters) - set(actions)
         if unexpected_categories:
             raise ValueError("action parameters contain a category with no actions")
         if any(
             EmailAction.AUTO_REPLY in category_actions
-            for category_actions in self.actions.values()
+            for category_actions in actions.values()
         ):
             raise ValueError("auto_reply is disabled for email scanning")
-        category_enabled = dict(self.category_enabled)
+        category_enabled = {
+            validate_email_category_key(category): enabled
+            for category, enabled in self.category_enabled.items()
+        }
         if not category_enabled:
-            category_enabled = {category: True for category in EmailCategory}
-        if set(category_enabled) != set(EmailCategory):
+            category_enabled = {
+                category: True for category in INITIAL_EMAIL_CATEGORY_KEYS
+            }
+        if set(category_enabled) != current_categories:
             raise ValueError("category_enabled must cover every email category")
+        object.__setattr__(self, "thresholds", MappingProxyType(thresholds))
+        object.__setattr__(self, "actions", MappingProxyType(actions))
         object.__setattr__(
             self,
             "category_eligibility",
@@ -136,6 +412,11 @@ class EmailScanConfig:
             self,
             "category_enabled",
             MappingProxyType(category_enabled),
+        )
+        object.__setattr__(
+            self,
+            "action_parameters",
+            MappingProxyType(action_parameters),
         )
 
 
@@ -254,7 +535,9 @@ def scan_readonly_batch(
     )
     for message in messages:
         prediction = classifier.predict_message(message)
-        category = EmailCategory(str(prediction.label))
+        category = validate_email_category_key(prediction.label)
+        if category not in INITIAL_EMAIL_CATEGORY_KEYS:
+            raise ValueError(f"category is not enabled for live scanning: {category}")
         threshold = config.thresholds[category]
         actions = config.actions.get(category, ())
         action_parameters = config.action_parameters.get(category, {})

@@ -19,13 +19,46 @@ from app.email_task_adapter import (
     EmailAgentTaskInput,
     EmailAgentTaskRoute,
     EmailAgentTaskAdapter,
+    EmailClassificationTask,
+    EmailClassificationTaskAdapter,
+    EmailClassificationTaskInput,
     EmailThreadMessage,
 )
 from app.email_unsubscribe import (
     browser_network_policy_for_entries,
+    browser_unsubscribe_entries,
     extract_unsubscribe_entries,
+    select_exact_unsubscribe_entry,
 )
 from app.store import AutoReplyStore
+
+
+class EmailClassificationTaskProducer:
+    """Enqueue one durable classifier task without creating a CEO reply task."""
+
+    def __init__(self, email_store: EmailStore):
+        self.adapter = EmailClassificationTaskAdapter(email_store)
+
+    def produce(
+        self,
+        message: Mapping[str, object],
+        *,
+        allowed_category_keys: Sequence[str],
+        category_descriptions: Mapping[str, object],
+        folder_targets: Mapping[str, str],
+        config_version: str,
+        unsubscribe_candidates: Sequence[object],
+    ) -> EmailClassificationTask:
+        return self.adapter.ensure_task(
+            EmailClassificationTaskInput.from_message(
+                message,
+                allowed_category_keys=allowed_category_keys,
+                category_descriptions=category_descriptions,
+                folder_targets=folder_targets,
+                config_version=config_version,
+                unsubscribe_candidates=unsubscribe_candidates,
+            )
+        )
 
 
 class EmailActionTaskProducer:
@@ -118,13 +151,19 @@ class EmailActionTaskProducer:
         body_text = str(message.get("markdownBody") or message.get("textBody") or "")
         body_html = ephemeral_body_html(message)
         authentication = ephemeral_unsubscribe_authentication(message)
-        entries = extract_unsubscribe_entries(
-            list_unsubscribe=str(message.get("listUnsubscribe") or ""),
-            list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
-            body_text=body_text,
-            body_html=body_html,
-            authentication_evidence=authentication,
+        entries = browser_unsubscribe_entries(
+            extract_unsubscribe_entries(
+                list_unsubscribe=str(message.get("listUnsubscribe") or ""),
+                list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
+                body_text=body_text,
+                body_html=body_html,
+                authentication_evidence=authentication,
+            ),
+            normalize_indexes=True,
         )
+        selection = dict(action_plan.action_parameters.get(EmailAction.UNSUBSCRIBE, {}))
+        if selection:
+            entries = (select_exact_unsubscribe_entry(entries, selection),)
         policy = browser_network_policy_for_entries(entries)
         return EmailAgentTaskInput(
             stable_message_identity=stable_identity,

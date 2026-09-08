@@ -15,7 +15,10 @@ from urllib.parse import urlsplit
 import pytest
 
 from app.agent_contracts import ProposedAction
-from app.email_browser_profile import EmailBrowserProfile
+from app.email_browser_profile import (
+    EmailBrowserProfile,
+    email_browser_session_manager,
+)
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -142,9 +145,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     "action_required",
                     "Choose unsubscribe",
                     content=(
-                        "<script>fetch('"
-                        f"{type(self).blocked_origin}/effect"
-                        "')</script>"
+                        f"<script>fetch('{type(self).blocked_origin}/effect')</script>"
                     ),
                 )
             )
@@ -217,7 +218,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     next_step="step-2",
                     content=(
                         '<form method="post" action="/two-step-second" '
-                        '>'
+                        ">"
                         '<button type="submit">Continue</button></form>'
                     ),
                 )
@@ -256,9 +257,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
         elif path.startswith("/auth-control-"):
             secret = "profile-secret-never-persist"
             controls = {
-                "/auth-control-password": (
-                    f'<input type="password" value="{secret}">'
-                ),
+                "/auth-control-password": (f'<input type="password" value="{secret}">'),
                 "/auth-control-hidden-otp": (
                     f'<input type="text" autocomplete="one-time-code" '
                     f'value="{secret}" hidden>'
@@ -398,10 +397,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     "action_required",
                     "Confirm unsubscribe",
                     next_step="step-2",
-                    content=(
-                        '<a href="/terminal-click" '
-                        '>Confirm</a>'
-                    ),
+                    content=('<a href="/terminal-click" >Confirm</a>'),
                 )
             )
         elif path in {"/terminal-click", "/unsubscribe"}:
@@ -486,7 +482,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     next_step="step-3",
                     content=(
                         '<form method="post" action="/two-step-terminal" '
-                        '>'
+                        ">"
                         '<button type="submit">Unsubscribe</button></form>'
                     ),
                 )
@@ -499,9 +495,10 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     receipt="receipt-two-step",
                 )
             )
-        elif path == "/safe-form-terminal" and self.headers.get(
-            "Cookie"
-        ) != "audit_session=persistent-profile":
+        elif (
+            path == "/safe-form-terminal"
+            and self.headers.get("Cookie") != "audit_session=persistent-profile"
+        ):
             self._send(b"browser session missing", status=403)
         elif path in {"/safe-form-terminal", "/implicit-terminal"}:
             self._send(_page("done", "You are unsubscribed"))
@@ -588,7 +585,7 @@ def _loopback_server_pair():
 
 
 @pytest.mark.parametrize("remove_accepted_control", (False, True))
-def test_dedicated_profile_restores_page_across_audit_invocations_without_reopen(
+def test_dedicated_profile_resumes_live_page_across_audit_invocations_without_reopen(
     tmp_path: Path,
     remove_accepted_control: bool,
 ) -> None:
@@ -628,13 +625,24 @@ def test_dedicated_profile_restores_page_across_audit_invocations_without_reopen
             ("GET", "/mutable-form?opaque=private-fixture-token")
         ]
         if remove_accepted_control:
-            session = profile.load_audit_session(effect.action_identity)
-            assert session is not None
-            session["html"] = "<!doctype html><html><body>Preferences</body></html>"
-            session["html_digest"] = sha256(
-                str(session["html"]).encode()
-            ).hexdigest()
-            profile.save_audit_session(effect.action_identity, session)
+            handoff_errors: list[BaseException] = []
+
+            def handoff_from_api_thread() -> None:
+                try:
+                    email_browser_session_manager(profile).handoff_action(
+                        effect.action_identity,
+                        lambda page: page.locator("form").evaluate(
+                            "node => node.remove()"
+                        ),
+                    )
+                except BaseException as exc:
+                    handoff_errors.append(exc)
+
+            handoff_thread = Thread(target=handoff_from_api_thread)
+            handoff_thread.start()
+            handoff_thread.join(timeout=5)
+            assert not handoff_thread.is_alive()
+            assert handoff_errors == []
         extension = replace(
             effect,
             operations=effect.operations
@@ -696,7 +704,7 @@ def test_dedicated_profile_restores_page_across_audit_invocations_without_reopen
         "/auth-control-compound",
     ),
 )
-def test_dedicated_profile_blocks_authentication_controls_before_snapshot(
+def test_dedicated_profile_projects_authentication_controls_without_secret_snapshot(
     tmp_path: Path,
     path: str,
 ) -> None:
@@ -729,22 +737,24 @@ def test_dedicated_profile_blocks_authentication_controls_before_snapshot(
             executed_prefix_length=0,
         )
 
-        assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
-        assert result.error_code == (
-            "email_unsubscribe_authentication_controls_blocked"
-        )
-        assert not isinstance(result, UnsubscribeContinuationResult)
+        assert isinstance(result, UnsubscribeContinuationResult)
+        assert result.continuation.controls[0].kind in {
+            "captcha_handoff",
+            "credential_handoff",
+        }
         assert _FixtureHandler.requests == [
             ("GET", f"{path}?opaque=private-fixture-token")
         ]
-        assert not tuple(profile.profile_dir.glob("audit-sessions/*.json"))
+        session = profile.load_audit_session(effect.action_identity)
+        assert session is not None
+        assert "html" not in session
+        assert "cookies" not in session
         assert secret not in store.path.read_bytes()
         assert secret.decode() not in repr(result)
         assert secret.decode() not in json.dumps(result.redacted, sort_keys=True)
-        assert secret.decode() not in result.error_code
-        for candidate in profile.profile_dir.rglob("*"):
-            if candidate.is_file():
-                assert secret not in candidate.read_bytes()
+        assert secret.decode() not in json.dumps(session, sort_keys=True)
+        email_browser_session_manager(profile).close_action(effect.action_identity)
+        profile.clear_audit_session(effect.action_identity)
 
 
 @pytest.mark.parametrize(
@@ -755,7 +765,7 @@ def test_dedicated_profile_blocks_authentication_controls_before_snapshot(
         "/hostile-auth-value-mutation",
     ),
 )
-def test_dedicated_profile_blocks_hostile_authentication_pages_in_isolated_world(
+def test_dedicated_profile_projects_hostile_authentication_pages_in_isolated_world(
     tmp_path: Path,
     path: str,
 ) -> None:
@@ -788,22 +798,21 @@ def test_dedicated_profile_blocks_hostile_authentication_pages_in_isolated_world
             executed_prefix_length=0,
         )
 
-        assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
-        assert result.error_code == (
-            "email_unsubscribe_authentication_controls_blocked"
-        )
-        assert not isinstance(result, UnsubscribeContinuationResult)
+        assert isinstance(result, UnsubscribeContinuationResult)
+        assert result.continuation.controls[0].kind == "credential_handoff"
         assert _FixtureHandler.requests == [
             ("GET", f"{path}?opaque=private-fixture-token")
         ]
-        assert not tuple(profile.profile_dir.glob("audit-sessions/*.json"))
+        session = profile.load_audit_session(effect.action_identity)
+        assert session is not None
+        assert "html" not in session
+        assert "cookies" not in session
         assert secret not in store.path.read_bytes()
         assert secret.decode() not in repr(result)
         assert secret.decode() not in json.dumps(result.redacted, sort_keys=True)
-        assert secret.decode() not in result.error_code
-        for candidate in profile.profile_dir.rglob("*"):
-            if candidate.is_file():
-                assert secret not in candidate.read_bytes()
+        assert secret.decode() not in json.dumps(session, sort_keys=True)
+        email_browser_session_manager(profile).close_action(effect.action_identity)
+        profile.clear_audit_session(effect.action_identity)
 
 
 @pytest.fixture(scope="module")
@@ -826,9 +835,7 @@ def _operations(
         UnsubscribeOperation(
             operation_reference=f"step-{index}",
             kind=kind,
-            target_reference=(
-                "entry" if index == 1 else targets[index - 2]
-            ),
+            target_reference=("entry" if index == 1 else targets[index - 2]),
         )
         for index, kind in enumerate(kinds, start=1)
     )
@@ -866,7 +873,7 @@ def _setup(
         action_plan_version=1,
         classification_id=701,
         account_id="fixture-account",
-        category=EmailCategory.SUBSCRIPTION,
+        category=EmailCategory.JUNK,
         classification_source="model",
         confidence=0.99,
         model_id="email-model:browser-fixture",
@@ -910,10 +917,10 @@ def _setup(
                     "rfc_message_id": "<browser-701@example.com>",
                     "thread_id": "fixture-thread",
                 },
-                "category": EmailCategory.SUBSCRIPTION,
+                "category": EmailCategory.JUNK,
                 "confidence": 0.99,
                 "margin": 0.5,
-                "probabilities": {"subscription": 0.99},
+                "probabilities": {"junk": 0.99},
                 "model_id": plan.model_id,
                 "config_version": plan.config_version,
                 "status": EmailClassificationStatus.PROCESSED,
@@ -927,10 +934,14 @@ def _setup(
         received_at="2026-08-30T08:00:00+00:00",
     )
     entry = UnsubscribeEntry(
+        index=0,
         source=UnsubscribeEntrySource.BODY_HTML_HTTPS,
         reference=unsubscribe_entry_reference(private_url),
         private_url=private_url,
         priority=30,
+        scheme=urlsplit(private_url).scheme,
+        host=urlsplit(private_url).hostname or "",
+        context="Unsubscribe",
     )
     parsed = urlsplit(private_url)
     origin = (
@@ -987,11 +998,14 @@ def _run(
                 owner=_BROWSER_OWNER,
             )
             assert claim is not None and claim["acquired"] is True
-            assert store.recover_terminated_email_unsubscribe_claims(
-                owner=_BROWSER_OWNER,
-                termination_verifier=lambda candidate: candidate == _BROWSER_OWNER,
-                recovered_at="2026-08-30T12:00:00+00:00",
-            ) == 1
+            assert (
+                store.recover_terminated_email_unsubscribe_claims(
+                    owner=_BROWSER_OWNER,
+                    termination_verifier=lambda candidate: candidate == _BROWSER_OWNER,
+                    recovered_at="2026-08-30T12:00:00+00:00",
+                )
+                == 1
+            )
             owner = _RESTART_OWNER
         context = chrome_browser.new_context()
         page = context.new_page()
@@ -1170,12 +1184,12 @@ def test_page_control_reference_is_local_digest_and_never_persists_dom_attribute
         )
     )
 
-    serialized = json.dumps(first.redacted, sort_keys=True) + repr(first) + repr(durable)
+    serialized = (
+        json.dumps(first.redacted, sort_keys=True) + repr(first) + repr(durable)
+    )
     assert "customerSegmentPlatinum42" not in serialized
     assert "Confirm unsubscribe" not in serialized
-    assert first.continuation.controls[0].reference.startswith(
-        "unsubscribe-control:"
-    )
+    assert first.continuation.controls[0].reference.startswith("unsubscribe-control:")
 
 
 def test_mutated_audited_link_target_has_zero_unauthorized_requests(
@@ -1251,13 +1265,11 @@ def test_ordinary_form_executes_exact_audited_submitter(
     path: str,
     expected_body: str,
 ) -> None:
-    _first, result, requests, details, _durable = (
-        _open_then_execute_discovered_control(
-            tmp_path,
-            chrome_browser,
-            path=path,
-            operation_kind=UnsubscribeOperationKind.SUBMIT_FORM,
-        )
+    _first, result, requests, details, _durable = _open_then_execute_discovered_control(
+        tmp_path,
+        chrome_browser,
+        path=path,
+        operation_kind=UnsubscribeOperationKind.SUBMIT_FORM,
     )
 
     assert result.outcome is UnsubscribeOutcome.DONE
@@ -1320,7 +1332,7 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
             action_plan_version=1,
             classification_id=701,
             account_id="fixture-account",
-            category=EmailCategory.SUBSCRIPTION,
+            category=EmailCategory.JUNK,
             classification_source="model",
             confidence=0.99,
             model_id="email-model:browser-fixture",
@@ -1336,9 +1348,7 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
             thread_identity="fixture-thread",
             subject="Fixture newsletter",
             trigger=EmailThreadMessage(
-                message_id=(
-                    "fixture-account:message-id:<browser-701@example.com>"
-                ),
+                message_id=("fixture-account:message-id:<browser-701@example.com>"),
                 sender="newsletter@example.com",
                 text="Newsletter body without attachment content.",
                 create_time="2026-08-30T08:00:00+00:00",
@@ -1363,9 +1373,7 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
                     "target": {
                         "action_identity": metadata["action_identity"],
                         "account_id": metadata["account_id"],
-                        "stable_message_identity": metadata[
-                            "stable_message_identity"
-                        ],
+                        "stable_message_identity": metadata["stable_message_identity"],
                         "thread_identity": metadata["thread_identity"],
                         "entry_reference": metadata["unsubscribe_entries"][0][
                             "reference"
@@ -1554,16 +1562,17 @@ def test_snapshot_sanitizer_rechecks_authentication_before_any_state_read(
             assert sanitized["blocked"] is True
             assert secret not in sanitized["html"]
             assert f'value="{secret}"' not in sanitized["html"]
-            with pytest.raises(
-                UnsubscribeAuthenticationControlsError,
-                match="authentication controls are not permitted",
-            ) as error:
-                browser.capture_audit_session(effect)
+            captured = browser.capture_audit_session(
+                effect,
+                session_reference="email-browser-session:" + "7" * 64,
+            )
+            assert "html" not in captured
+            assert "cookies" not in captured
+            assert secret not in repr(captured)
         finally:
             context.close()
 
-    assert secret not in str(error.value)
-    assert secret not in repr(error.value)
+    assert secret not in repr(captured)
 
 
 @pytest.mark.parametrize(
@@ -1599,6 +1608,49 @@ def test_authentication_predicate_parses_credential_autocomplete_token_lists(
         )
         with pytest.raises(UnsubscribeAuthenticationControlsError):
             browser._assert_no_authentication_controls()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "const old = document.querySelector('#code'); old.replaceWith(old.cloneNode(true))",
+        "document.querySelector('#code').setAttribute('onclick', 'window.evil = true')",
+        "document.querySelector('form').setAttribute('target', '_blank')",
+        "document.querySelector('input[type=hidden]').value = 'challenge-2'",
+    ),
+)
+def test_authentication_control_binding_rejects_same_selector_and_request_mutations(
+    chrome_browser,
+    mutation: str,
+) -> None:
+    context = chrome_browser.new_context()
+    page = context.new_page()
+    browser = PlaywrightUnsubscribeBrowser(
+        page,
+        restored_document_url="https://accounts.example.com/verify",
+        connected_recipient="derek@stardust.ai",
+        timeout_ms=2_000,
+        network_policy=BrowserNetworkPolicy(
+            allowed_origins=frozenset({"https://accounts.example.com"}),
+            resolver=lambda _host, _port: ("93.184.216.34",),
+        ),
+    )
+    try:
+        page.set_content(
+            "Email verification code sent to derek@stardust.ai for "
+            "accounts.example.com"
+            '<form method="post" action="/verify">'
+            '<input type="hidden" name="challenge_id" value="challenge-1">'
+            '<input id="code" name="code" autocomplete="one-time-code">'
+            '<button id="verify" type="submit" name="decision" value="verify">'
+            "Verify</button></form>"
+        )
+        first = browser._ordinary_controls()[0]
+        page.evaluate(mutation)
+        second = browser._ordinary_controls()[0]
+        assert second.control.reference != first.control.reference
     finally:
         context.close()
 
@@ -1675,9 +1727,7 @@ def test_confirmation_email_fixture(tmp_path: Path, chrome_browser) -> None:
         operations=_operations(
             UnsubscribeOperationKind.OPEN_ENTRY,
             UnsubscribeOperationKind.CONFIRM_EMAIL,
-            targets=(
-                confirmation_target_reference("fixture-confirmation-message"),
-            ),
+            targets=(confirmation_target_reference("fixture-confirmation-message"),),
         ),
         confirmation_path="/confirmation-receipt",
     )
@@ -1703,9 +1753,7 @@ def test_confirmation_email_target_is_bound_to_effect_mail_and_control(
         operations=_operations(
             UnsubscribeOperationKind.OPEN_ENTRY,
             UnsubscribeOperationKind.CONFIRM_EMAIL,
-            targets=(
-                confirmation_target_reference("fixture-confirmation-message"),
-            ),
+            targets=(confirmation_target_reference("fixture-confirmation-message"),),
         ),
         confirmation_path="/confirmation-receipt",
         confirmation_binding=binding,
@@ -1763,9 +1811,9 @@ def test_unapproved_redirect_and_subresources_are_blocked_before_request(
             ),
         )
         try:
-            result = UnsubscribeExecutor(
-                store, browser, owner=_BROWSER_OWNER
-            ).execute(effect, (entry,))
+            result = UnsubscribeExecutor(store, browser, owner=_BROWSER_OWNER).execute(
+                effect, (entry,)
+            )
         finally:
             context.close()
 
@@ -1838,9 +1886,9 @@ def test_unapproved_form_popup_and_download_have_zero_external_effect(
             ),
         )
         try:
-            result = UnsubscribeExecutor(
-                store, browser, owner=_BROWSER_OWNER
-            ).execute(effect, (entry,))
+            result = UnsubscribeExecutor(store, browser, owner=_BROWSER_OWNER).execute(
+                effect, (entry,)
+            )
         finally:
             context.close()
 
@@ -1878,9 +1926,9 @@ def test_verified_one_click_posts_exact_body_without_cookie(
             ),
         )
         try:
-            result = UnsubscribeExecutor(
-                store, browser, owner=_BROWSER_OWNER
-            ).execute(effect, (entry,))
+            result = UnsubscribeExecutor(store, browser, owner=_BROWSER_OWNER).execute(
+                effect, (entry,)
+            )
         finally:
             context.close()
 

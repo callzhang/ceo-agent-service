@@ -26,7 +26,7 @@ def _prediction() -> EmailModelPrediction:
         category=EmailCategory.WORK,
         confidence=0.999,
         margin=0.90,
-        probabilities={"work": 0.999, "important": 0.001},
+        probabilities={"work": 0.999, "legal": 0.001},
         model_id="email-model:active-v1",
     )
 
