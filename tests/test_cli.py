@@ -6321,6 +6321,12 @@ def test_maintenance_error_detail_hides_okr_command_and_traceback():
     assert "Traceback" not in detail
 
 
+def test_not_due_maintenance_result_does_not_count_as_recovery():
+    assert cli._maintenance_step_completed(SimpleNamespace(status="not_due")) is False
+    assert cli._maintenance_step_completed(SimpleNamespace(status="completed")) is True
+    assert cli._maintenance_step_completed(None) is True
+
+
 def test_task_maintenance_loop_does_not_block_follow_up_delivery(
     monkeypatch, tmp_path
 ):

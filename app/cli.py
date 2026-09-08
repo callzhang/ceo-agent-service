@@ -2759,6 +2759,11 @@ def _maintenance_error_detail(exc: Exception) -> str:
     return detail
 
 
+def _maintenance_step_completed(result: object) -> bool:
+    """A scheduler no-op must not clear a prior component failure."""
+    return str(getattr(result, "status", "")).strip().casefold() != "not_due"
+
+
 def run_task_maintenance_loop(
     settings: WorkerSettings,
     *,
@@ -2775,7 +2780,7 @@ def run_task_maintenance_loop(
         error_kind = f"task_maintenance_{kind}"
         health_component = f"task_maintenance.{kind}"
         try:
-            step()
+            result = step()
         except Exception as exc:
             detail = _maintenance_error_detail(exc)
             store.record_error("", "", error_kind, detail)
@@ -2785,6 +2790,8 @@ def run_task_maintenance_loop(
                 detail=detail,
             )
         else:
+            if not _maintenance_step_completed(result):
+                return
             store.set_service_health_component(health_component, state="healthy")
             store.resolve_unresolved_errors_by_kind(
                 error_kind,
