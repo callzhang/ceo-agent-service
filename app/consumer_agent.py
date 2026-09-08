@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -262,6 +262,7 @@ class ConsumerAgentRunner:
         forced_runtime_route=None,
         reasoning_effort: str = "",
         skill_protocol_override: str | None = None,
+        execution_environment: Mapping[str, str] | None = None,
     ) -> None:
         self.store = store
         self.workspace = workspace
@@ -281,6 +282,7 @@ class ConsumerAgentRunner:
         self.forced_runtime_route = forced_runtime_route
         self.reasoning_effort = reasoning_effort
         self.skill_protocol_override = skill_protocol_override
+        self.execution_environment = dict(execution_environment or {})
 
     def _configured_route_names(self) -> tuple[str, ...]:
         config = self.runtime_config or (
@@ -460,6 +462,7 @@ class ConsumerAgentRunner:
             refresh_runtime_capabilities=self.refresh_runtime_capabilities,
             forced_runtime_route=self.forced_runtime_route,
             reasoning_effort=self.reasoning_effort,
+            execution_mode_environment=self.execution_environment,
         )
 
         def renew_session_lock() -> None:

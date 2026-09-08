@@ -338,6 +338,8 @@ def test_non_wechat_seed_commands_are_registered_one_shot_cli_entries(
         prompt = _task_by_key(tasks, migration_key).prompt
         command = prompt.split("`", 2)[1]
         argv = shlex.split(command)
+        assert "--dry-run" not in argv
+        assert "--not-send-message" not in argv
         assert argv[:3] == ["cd", str(Path(__file__).resolve().parents[1]), "&&"]
         assert argv[3:6] == [str(Path(sys.executable).resolve()), "-m", "app.cli"]
         parsed = build_parser().parse_args(argv[6:])

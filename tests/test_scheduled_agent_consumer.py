@@ -10,11 +10,16 @@ from types import SimpleNamespace
 import pytest
 
 from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult
-from app.agent_cron.consumer import ScheduledAgentConsumer, ScheduledTaskTriggerConsumer
+from app.agent_cron.consumer import (
+    ScheduledAgentConsumer,
+    ScheduledTaskTriggerConsumer,
+    build_scheduled_orchestrator,
+)
 from app.agent_cron.context import ScheduledAgentContextBuilder
 from app.agent_cron.models import ScheduledTaskSkillRef
 from app.agent_orchestrator import AgentOrchestrator
 from app.agent_result import AgentError
+from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
 from app.agent_turn_runner import AgentTurnRunResult
 from app.dispatcher.adapters import (
@@ -182,6 +187,39 @@ def test_context_uses_exact_snapshot_and_rejects_unsupported_thinking(tmp_path):
         )
         with pytest.raises(ValueError, match="does not support reasoning effort"):
             ScheduledAgentContextBuilder(options).build(run, reply_task_id=7)
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "ambient", "expected"),
+    (
+        (True, "0", "1"),
+        (False, "1", "0"),
+    ),
+)
+def test_scheduled_orchestrator_pins_parent_execution_mode_for_both_roles(
+    tmp_path, monkeypatch, dry_run, ambient, expected
+):
+    monkeypatch.setenv("CEO_DRY_RUN", ambient)
+    monkeypatch.setenv("CEO_NOT_SEND_MESSAGE", ambient)
+    store, run, options = fixture(tmp_path)
+    built = ScheduledAgentContextBuilder(options).build(run, reply_task_id=7)
+    runtime_config = load_runtime_config(
+        {"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth"}
+    )
+
+    orchestrator = build_scheduled_orchestrator(
+        store=store,
+        built=built,
+        runtime_config=runtime_config,
+        dry_run=dry_run,
+    )
+
+    expected_environment = {
+        "CEO_DRY_RUN": expected,
+        "CEO_NOT_SEND_MESSAGE": expected,
+    }
+    assert orchestrator.consumer.execution_environment == expected_environment
+    assert orchestrator.audit.execution_environment == expected_environment
 
 
 def test_trigger_dispatches_once_and_generic_reply_adapter_excludes_it(tmp_path):

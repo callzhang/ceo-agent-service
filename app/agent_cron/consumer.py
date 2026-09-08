@@ -147,14 +147,25 @@ def build_scheduled_orchestrator(
     from app.consumer_agent import ConsumerAgentRunner
 
     scoped_config = runtime_config.model_copy(update={"routes": (built.route,)})
+    execution_environment = scheduled_execution_environment(dry_run)
     common = {
         "store": store, "workspace": built.workspace, "codex_bin": codex_bin,
         "runtime_config": scoped_config, "forced_runtime_route": built.route,
         "reasoning_effort": built.reasoning_effort,
         "skill_protocol_override": built.skill_protocol,
         "refresh_runtime_capabilities": refresh_runtime_capabilities,
+        "execution_environment": execution_environment,
     }
     return AgentOrchestrator(
         store=store, consumer=ConsumerAgentRunner(**common),
         audit=AuditAgentRunner(**common, dry_run=dry_run),
     )
+
+
+def scheduled_execution_environment(dry_run: bool) -> dict[str, str]:
+    """Pin the service execution mode for every local scheduled Agent child."""
+    value = "1" if dry_run else "0"
+    return {
+        "CEO_DRY_RUN": value,
+        "CEO_NOT_SEND_MESSAGE": value,
+    }
