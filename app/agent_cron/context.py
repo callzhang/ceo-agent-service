@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Protocol
 
@@ -28,6 +29,58 @@ class ScheduledAgentContext:
     workspace: Path
     reasoning_effort: str
     skill_protocol: str
+
+    def to_execution_json(self) -> str:
+        payload = {
+            "schema": "scheduled_agent_execution.v1",
+            "context": {
+                "conversation_id": self.context.conversation_id,
+                "conversation_title": self.context.conversation_title,
+                "single_chat": self.context.single_chat,
+                "trigger_message_id": self.context.trigger_message_id,
+                "trigger_sender": self.context.trigger_sender,
+                "trigger_text": self.context.trigger_text,
+                "trigger_create_time": self.context.trigger_create_time,
+                "trigger_raw_payload": self.context.trigger_raw_payload,
+            },
+            "route": self.route.model_dump(mode="json"),
+            "workspace": str(self.workspace),
+            "reasoning_effort": self.reasoning_effort,
+            "skill_protocol": self.skill_protocol,
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    @classmethod
+    def from_execution_json(
+        cls, value: str, *, reply_task_id: int
+    ) -> ScheduledAgentContext:
+        try:
+            payload = json.loads(value)
+            if payload.get("schema") != "scheduled_agent_execution.v1":
+                raise ValueError("scheduled execution context schema is invalid")
+            saved = payload["context"]
+            context = AgentTaskContext(
+                task_id=reply_task_id,
+                channel="scheduled",
+                conversation_id=saved["conversation_id"],
+                conversation_title=saved["conversation_title"],
+                single_chat=bool(saved["single_chat"]),
+                trigger_message_id=saved["trigger_message_id"],
+                trigger_sender=saved["trigger_sender"],
+                trigger_text=saved["trigger_text"],
+                trigger_create_time=saved["trigger_create_time"],
+                messages=(), materials=(), prior_receipts=(),
+                trigger_raw_payload=saved["trigger_raw_payload"],
+            )
+            return cls(
+                context=context,
+                route=RuntimeRoute.model_validate(payload["route"]),
+                workspace=Path(payload["workspace"]),
+                reasoning_effort=payload["reasoning_effort"],
+                skill_protocol=payload["skill_protocol"],
+            )
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("scheduled execution context is invalid") from exc
 
 
 class ScheduledAgentContextBuilder:

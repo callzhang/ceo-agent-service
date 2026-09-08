@@ -5695,14 +5695,22 @@ class AutoReplyStore:
             assert row is not None
             return self._scheduled_task_run_from_row(row)
 
-    def ensure_scheduled_task_reply_execution(
+    def dispatch_scheduled_task_reply_execution(
         self, run_id: int, *, owner: str, claim_generation: int,
-        now: datetime | None = None,
+        execution_context_json: str, now: datetime | None = None,
     ) -> tuple[ScheduledTaskRun, ReplyTask]:
-        """Atomically create/link one execution under the current dispatch claim."""
+        """Atomically persist the execution source and complete its trigger claim."""
         owner = self._require_scheduled_task_text(owner, field="scheduled task run lease owner")
         if type(claim_generation) is not int or claim_generation <= 0:
             raise ValueError("scheduled dispatcher claim generation must be positive")
+        if not isinstance(execution_context_json, str):
+            raise ValueError("scheduled execution context must be text")
+        try:
+            context_payload = json.loads(execution_context_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("scheduled execution context must be JSON") from exc
+        if context_payload.get("schema") != "scheduled_agent_execution.v1":
+            raise ValueError("scheduled execution context schema is invalid")
         now_text = self._scheduled_task_time_text(
             now or datetime.now(timezone.utc), field="scheduled task run execution link time"
         )
@@ -5720,29 +5728,38 @@ class AutoReplyStore:
             if row is None or claim is None:
                 raise ValueError("scheduled dispatch claim is no longer current")
             run = self._scheduled_task_run_from_row(row)
-            if run.execution_kind or run.execution_id:
-                if run.execution_kind != "reply_task" or not run.execution_id:
-                    raise ValueError("scheduled task execution link is invalid")
-                task_row = db.execute("select * from reply_tasks where id=?", (int(run.execution_id),)).fetchone()
-                if task_row is None:
-                    raise ValueError("scheduled task execution source is missing")
-                return run, self._reply_task_from_row(task_row)
             spec = ReplyTaskSpec(
                 channel="scheduled", conversation_id=f"scheduled-task-run:{run.id}",
                 conversation_title=run.snapshot.name, single_chat=False,
                 trigger_message_id=run.event_id, trigger_create_time=run.scheduled_for.isoformat(),
                 trigger_sender="Agent Cron", trigger_text=run.snapshot.prompt,
-                trigger_message_json=run.snapshot.to_json(),
+                trigger_message_json=execution_context_json,
                 execution_generation=f"scheduled-run-{run.id}",
                 business_object_key=f"scheduled-task-run:{run.id}",
             )
             task, _created = self._ensure_business_reply_task(db, spec)
+            if run.execution_kind and (
+                run.execution_kind != "reply_task" or run.execution_id != str(task.id)
+            ):
+                raise ValueError("scheduled task execution link is invalid")
             cursor = db.execute(
-                "update scheduled_task_runs set execution_kind='reply_task', execution_id=? "
-                "where id=? and execution_kind='' and execution_id=''", (str(task.id), run.id),
+                "update scheduled_task_runs set execution_kind='reply_task', execution_id=?, "
+                "dispatch_status='dispatched', skip_or_error_reason='', lease_owner='', "
+                "lease_expires_at=null, dispatched_at=? where id=? and dispatch_status='pending' "
+                "and lease_owner=? and lease_expires_at>?",
+                (str(task.id), now_text, run.id, owner, now_text),
             )
             if cursor.rowcount != 1:
-                raise ValueError("scheduled task execution link changed")
+                raise ValueError("scheduled task dispatch claim changed")
+            ledger = db.execute(
+                "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+                "terminal_at=?, last_error='', updated_at=? where adapter_name='scheduled' "
+                "and source_id=? and owner=? and generation=? and lease_expires_at>? "
+                "and terminal_at=''",
+                (now_text, now_text, str(run.id), owner, claim_generation, now_text),
+            )
+            if ledger.rowcount != 1:
+                raise ValueError("scheduled dispatcher ledger claim changed")
             linked = db.execute(
                 f"select {self._scheduled_task_run_columns()} from scheduled_task_runs where id=?",
                 (run.id,),

@@ -1039,7 +1039,7 @@ def run_agent_cron_dispatcher_loop(
         store=store, option_service=options,
     )
     execution_consumer = ScheduledAgentConsumer(
-        store=store, option_service=options,
+        store=store,
         orchestrator_factory=lambda built: build_scheduled_orchestrator(
             store=store, built=built, runtime_config=runtime.config,
             dry_run=settings.dry_run,

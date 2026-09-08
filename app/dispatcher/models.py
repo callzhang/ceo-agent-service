@@ -146,3 +146,10 @@ class ClaimGuard:
         with self._lock:
             self._lost = True
             self._resolved = True
+
+    def accept_atomic_source_completion(self) -> None:
+        """Prevent duplicate completion after the source transaction committed."""
+        with self._lock:
+            if self._resolved:
+                raise ValueError("dispatcher source claim is already resolved")
+            self._resolved = True

@@ -29,7 +29,7 @@ class ScheduledTaskTriggerConsumer:
         if run is None:
             raise ValueError("scheduled task run does not exist")
         try:
-            self._builder.build(run, reply_task_id=1)
+            built = self._builder.build(run, reply_task_id=0)
         except ValueError as exc:
             reason = f"scheduled_task_execution_unavailable: {exc}"
             self._store.record_error(
@@ -38,23 +38,23 @@ class ScheduledTaskTriggerConsumer:
             )
             guard.finish_source(now, status="skipped", reason=reason)
             return
-        self._store.ensure_scheduled_task_reply_execution(
+        self._store.dispatch_scheduled_task_reply_execution(
             run.id, owner=guard.token.owner,
-            claim_generation=guard.token.generation, now=now,
+            claim_generation=guard.token.generation,
+            execution_context_json=built.to_execution_json(), now=now,
         )
-        guard.finish_source(now, status="dispatched")
+        guard.accept_atomic_source_completion()
 
 
 class ScheduledAgentConsumer:
     """Run a claimed scheduled execution through the ordinary Audit lifecycle."""
 
     def __init__(
-        self, *, store: AutoReplyStore, option_service,
+        self, *, store: AutoReplyStore,
         orchestrator_factory: Callable[[ScheduledAgentContext], ScheduledOrchestrator],
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
-        self._builder = ScheduledAgentContextBuilder(option_service)
         self._orchestrator_factory = orchestrator_factory
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -67,20 +67,9 @@ class ScheduledAgentConsumer:
         run = self._store.get_scheduled_task_run_for_reply_execution(task.id)
         if run is None or run.dispatch_status != "dispatched":
             raise ValueError("scheduled trigger dispatch fact is missing")
-        try:
-            built = self._builder.build(run, reply_task_id=task.id)
-        except ValueError as exc:
-            reason = f"scheduled_task_execution_unavailable: {exc}"
-            guard.assert_current(self._now().astimezone(UTC))
-            self._store.fail_reply_task(
-                task.id, reason,
-                expected_execution_generation=task.execution_generation,
-            )
-            self._store.record_error(
-                f"scheduled-task:{run.scheduled_task_id}", run.event_id,
-                "scheduled_task_execution_unavailable", reason,
-            )
-            return
+        built = ScheduledAgentContext.from_execution_json(
+            task.trigger_message_json, reply_task_id=task.id
+        )
         result = self._orchestrator_factory(built).process(
             task, built.context, refresh_context=lambda: built.context,
         )

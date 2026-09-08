@@ -186,6 +186,132 @@ def test_trigger_dispatches_once_and_generic_reply_adapter_excludes_it(tmp_path)
     )
     assert claimed and claimed.source_id == persisted.execution_id
 
+    with store._connect() as db:
+        visible = db.execute(
+            "select runs.dispatch_status from reply_tasks tasks "
+            "join scheduled_task_runs runs on runs.execution_kind='reply_task' "
+            "and runs.execution_id=cast(tasks.id as text) "
+            "where tasks.channel='scheduled'"
+        ).fetchall()
+    assert visible and {row["dispatch_status"] for row in visible} == {"dispatched"}
+
+
+def test_atomic_dispatch_rolls_back_source_link_run_and_ledger_on_interrupt(tmp_path):
+    store, run, options = fixture(tmp_path)
+    adapter = ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, _guard = claim(adapter, run.id, "trigger")
+    built = ScheduledAgentContextBuilder(options).build(run, reply_task_id=0)
+    with store._connect() as db:
+        db.execute(
+            "create trigger abort_scheduled_dispatch before update of dispatch_status "
+            "on scheduled_task_runs when new.dispatch_status='dispatched' "
+            "begin select raise(abort, 'interrupted'); end"
+        )
+    with pytest.raises(Exception, match="interrupted"):
+        store.dispatch_scheduled_task_reply_execution(
+            run.id, owner="trigger", claim_generation=envelope.generation,
+            execution_context_json=built.to_execution_json(), now=NOW,
+        )
+    persisted = store.get_scheduled_task_run(run.id)
+    assert persisted.dispatch_status == "pending" and persisted.execution_id == ""
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from reply_tasks where channel='scheduled'"
+        ).fetchone()[0] == 0
+        ledger = db.execute(
+            "select terminal_at from dispatcher_claim_leases "
+            "where adapter_name='scheduled' and source_id=?", (str(run.id),)
+        ).fetchone()
+    assert ledger["terminal_at"] == ""
+    with store._connect() as db:
+        db.execute("drop trigger abort_scheduled_dispatch")
+    finished, source = store.dispatch_scheduled_task_reply_execution(
+        run.id, owner="trigger", claim_generation=envelope.generation,
+        execution_context_json=built.to_execution_json(), now=NOW,
+    )
+    assert finished.dispatch_status == "dispatched"
+    assert finished.execution_id == str(source.id)
+    assert store.list_reply_tasks(channel="scheduled") == [source]
+
+
+def test_preflight_loss_skips_before_source_or_agent_fact(tmp_path):
+    store, run, options = fixture(tmp_path)
+    options.available = False
+    adapter = ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, guard = claim(adapter, run.id, "trigger")
+    ScheduledTaskTriggerConsumer(store=store, option_service=options, now=lambda: NOW)(
+        envelope, guard
+    )
+    persisted = store.get_scheduled_task_run(run.id)
+    assert persisted.dispatch_status == "skipped"
+    assert persisted.execution_id == ""
+    assert store.list_reply_tasks(channel="scheduled") == []
+    assert store.list_agent_runs_for_task_generation(1, "scheduled-run-1") == []
+
+
+def test_execution_uses_persisted_preflight_context_after_current_options_change(tmp_path):
+    store, run, options = fixture(tmp_path)
+    persisted = dispatch(store, run, options)
+    task_id = int(persisted.execution_id)
+    options.available = False
+    options.operation.path.write_text("CHANGED AFTER DISPATCH")
+    observed = []
+
+    class Orchestrator:
+        def process(self, task, context, *, refresh_context):
+            observed.append((context.trigger_text, refresh_context().trigger_text))
+            claimed = store.claim_agent_run(
+                task.id, task.execution_generation, role=AgentRole.AUDIT,
+                proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+                operation_id="persisted-context", owner="fake",
+            ).run
+            result = audit("executed", 0)
+            result = result.model_copy(update={"external_result": result.external_result.model_copy(
+                update={"operation_id": "persisted-context"})})
+            store.complete_agent_run(claimed.id, result.model_dump(mode="json"), owner="fake")
+            return SimpleNamespace(status="executed", final_run_id=claimed.id,
+                summary="done", error=AgentError(code="", retryable=False), audit_result=result)
+
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, guard = claim(adapter, task_id, "execution")
+    consumer = ScheduledAgentConsumer(
+        store=store,
+        orchestrator_factory=lambda built: (
+            observed.append(built.skill_protocol) or Orchestrator()
+        ), now=lambda: NOW,
+    )
+    consumer(envelope, guard)
+    assert "EXACT OPERATION BODY" in observed[0]
+    assert "CHANGED AFTER DISPATCH" not in observed[0]
+    assert observed[1] == ("Only snapshot", "Only snapshot")
+
+
+def test_provider_failure_only_fails_execution_fact(tmp_path):
+    store, run, options = fixture(tmp_path)
+    task_id = int(dispatch(store, run, options).execution_id)
+    task = store.get_reply_task(task_id)
+    claimed = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="provider-failure", owner="fake",
+    ).run
+    error = AgentError(code="provider_failed", retryable=False)
+    store.fail_agent_run(claimed.id, error.model_dump(mode="json"), owner="fake")
+    result = SimpleNamespace(
+        status="failed_terminal", final_run_id=claimed.id, summary="provider failed",
+        error=error, audit_result=None,
+    )
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, guard = claim(adapter, task_id, "execution")
+    ScheduledAgentConsumer(
+        store=store,
+        orchestrator_factory=lambda _built: SimpleNamespace(
+            process=lambda *_args, **_kwargs: result
+        ), now=lambda: NOW,
+    )(envelope, guard)
+    assert store.get_reply_task(task_id).status == "failed"
+    assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
+
 
 def test_retry_reclaims_same_execution_source(tmp_path):
     store, run, options = fixture(tmp_path)
@@ -211,7 +337,7 @@ def test_retry_reclaims_same_execution_source(tmp_path):
             return SimpleNamespace(status="executed", final_run_id=run_claim.id,
                 summary="done", error=AgentError(code="", retryable=False), audit_result=result)
     consumer = ScheduledAgentConsumer(
-        store=store, option_service=options,
+        store=store,
         orchestrator_factory=lambda _built: Orchestrator(), now=lambda: NOW,
     )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
@@ -234,7 +360,7 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, execution_id, "execution")
     ScheduledAgentConsumer(
-        store=store, option_service=options,
+        store=store,
         orchestrator_factory=lambda _built: orchestrator, now=lambda: NOW,
     )(envelope, guard)
     task = store.get_reply_task(execution_id)
