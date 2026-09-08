@@ -433,6 +433,21 @@ class AgentOrchestrator:
         by_revision: dict[int, list[AgentRun]] = {}
         for run in runs:
             by_revision.setdefault(run.proposal_revision, []).append(run)
+        if feedback_cycles > MAX_CONTENT_FEEDBACK_CYCLES:
+            feedback_audits: list[AgentRun] = []
+            for run in runs:
+                if run.role is not AgentRole.AUDIT or run.status != "completed":
+                    continue
+                try:
+                    result = _audit_result(run)
+                except (ResultParseError, ValueError):
+                    continue
+                if result.outcome is AuditOutcome.FEEDBACK_PROVIDED:
+                    feedback_audits.append(run)
+            if feedback_audits:
+                return self._feedback_exhausted(
+                    max(feedback_audits, key=lambda item: item.id)
+                )
         highest_materialized_revision = max(
             (run.proposal_revision for run in runs if run.role is AgentRole.CONSUMER),
             default=0,
@@ -463,8 +478,6 @@ class AgentOrchestrator:
                             "agent_feedback_missing",
                             feedback_cycles,
                         )
-                    if feedback_cycles > MAX_CONTENT_FEEDBACK_CYCLES:
-                        return self._feedback_exhausted(previous_audit)
                     return _NextConsumer(
                         revision,
                         previous_audit.id,
@@ -680,8 +693,6 @@ class AgentOrchestrator:
                     feedback_cycles,
                 )
             if audit_state.outcome is AuditOutcome.FEEDBACK_PROVIDED:
-                if feedback_cycles > MAX_CONTENT_FEEDBACK_CYCLES:
-                    return self._feedback_exhausted(latest)
                 if revision < highest_materialized_revision:
                     continue
                 if audit_state.feedback is None:

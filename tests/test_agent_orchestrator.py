@@ -2598,6 +2598,18 @@ def test_fourth_revision_request_becomes_actionable_needs_human(store):
     assert result.audit_result is not None
     assert result.audit_result.outcome is AuditOutcome.FEEDBACK_PROVIDED
     assert result.feedback is not None
+    latest_audit = max(
+        (
+            run
+            for run in store.list_agent_runs_for_task_generation(
+                task.id,
+                task.execution_generation,
+            )
+            if run.role is AgentRole.AUDIT
+        ),
+        key=lambda run: run.id,
+    )
+    assert result.final_run_id == latest_audit.id
 
 
 def test_authorization_wait_defers_without_consuming_feedback_cycle(store):
