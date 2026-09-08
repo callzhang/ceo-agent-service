@@ -32,6 +32,8 @@ from app.web_api.tasks import (
 )
 from app.web_api.settings import info_payload
 from app.web_api.email import register_email_routes
+from app.web_api.scheduled_tasks import register_scheduled_task_routes
+from app.agent_cron.options import ScheduledTaskOptionService
 from app.skill_features import FeatureRegistry
 from app.skill_files import (
     SkillFileService,
@@ -80,6 +82,11 @@ def register_console_routes(
     feature_registry_factory: Callable[[], FeatureRegistry] | None = None,
     skill_file_service_factory: Callable[[], SkillFileService] | None = None,
     dws_factory: Callable[[], Any] | None = None,
+    scheduled_task_option_service_factory: Callable[
+        [], ScheduledTaskOptionService
+    ] | None = None,
+    scheduled_task_wake_callback: Callable[[], None] | None = None,
+    scheduled_task_now: Callable[[], Any] | None = None,
 ) -> None:
     feature_registry_factory = feature_registry_factory or FeatureRegistry
     skill_file_service_factory = skill_file_service_factory or SkillFileService
@@ -238,6 +245,15 @@ def register_console_routes(
             app,
             email_store_factory,
             email_learning_factory=email_learning_factory,
+        )
+
+    if scheduled_task_option_service_factory is not None:
+        register_scheduled_task_routes(
+            app,
+            store_factory,
+            option_service_factory=scheduled_task_option_service_factory,
+            wake_callback=scheduled_task_wake_callback,
+            now=scheduled_task_now,
         )
 
     async def json_object(request: Request) -> dict[str, Any]:

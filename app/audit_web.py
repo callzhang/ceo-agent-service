@@ -9894,6 +9894,10 @@ def create_audit_app(
     workbench_scheduler_join_timeout_seconds: float = 1.0,
     spa_enabled: bool = False,
     email_learning_factory=None,
+    scheduled_task_runtime_snapshots=None,
+    scheduled_task_runtime_skill_snapshot=None,
+    scheduled_task_wake_callback=None,
+    scheduled_task_environment=None,
 ) -> FastAPI:
     # The audit process is read-heavy. Reuse one initialized Store so requests do
     # not repeatedly contend with the worker for schema initialization writes.
@@ -10143,7 +10147,29 @@ def create_audit_app(
         """Minimal local liveness receipt used by service and feedback evidence."""
         return {"ok": True, "status": "ok"}
 
+    from app.agent_cron.options import ScheduledTaskOptionService
+    from app.agent_runtime_production import PRODUCTION_RUNTIME_CAPABILITIES
+    from app.managed_skills import import_repository_managed_skills
+    from app.skill_files import SkillFileService
     from app.web_api import register_console_routes
+
+    def scheduled_task_option_service() -> ScheduledTaskOptionService:
+        import_repository_managed_skills(audit_store)
+        return ScheduledTaskOptionService(
+            store=audit_store,
+            environment=(
+                os.environ
+                if scheduled_task_environment is None
+                else scheduled_task_environment
+            ),
+            runtime_snapshots=(
+                PRODUCTION_RUNTIME_CAPABILITIES
+                if scheduled_task_runtime_snapshots is None
+                else scheduled_task_runtime_snapshots
+            ),
+            operation_skill_files=SkillFileService(),
+            runtime_skill_snapshot=scheduled_task_runtime_skill_snapshot,
+        )
 
     if email_learning_factory is None:
         from app.email_classifier_learning import EmailClassifierLearningService
@@ -10186,6 +10212,8 @@ def create_audit_app(
             ding_robot_code=ding_robot_code,
             ding_robot_name=ding_robot_name,
         ),
+        scheduled_task_option_service_factory=scheduled_task_option_service,
+        scheduled_task_wake_callback=scheduled_task_wake_callback,
     )
 
     register_repository_upgrade_routes(
