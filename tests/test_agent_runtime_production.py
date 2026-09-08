@@ -161,6 +161,43 @@ def test_production_factory_requires_preinitialized_api_snapshot(tmp_path, monke
     assert "snapshot_missing" in decision.reason
 
 
+def test_production_routed_execution_overrides_only_codex_oauth_model(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
+    monkeypatch.setenv("CEO_CODEX_MODEL", "gpt-5.6-sol")
+    monkeypatch.setenv("CEO_CODEX_API_MODEL", "MiniMax-M2.5")
+    monkeypatch.setenv("CEO_CODEX_API_KEY", "test-secret")
+
+    routed = build_production_routed_codex_execution(
+        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+        workspace=tmp_path,
+        total_timeout_seconds=10,
+        idle_timeout_seconds=5,
+        codex_oauth_model="gpt-5.6-luna",
+    )
+
+    assert [(route.name, route.model) for route in routed._config.routes] == [
+        ("codex_oauth", "gpt-5.6-luna"),
+        ("codex_api", "MiniMax-M2.5"),
+    ]
+
+
+def test_production_routed_execution_rejects_unsupported_codex_oauth_model(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
+
+    with pytest.raises(ValueError, match="codex_oauth_model"):
+        build_production_routed_codex_execution(
+            store=AutoReplyStore(tmp_path / "store.sqlite3"),
+            workspace=tmp_path,
+            total_timeout_seconds=10,
+            idle_timeout_seconds=5,
+            codex_oauth_model="unsupported-model",
+        )
+
+
 def test_production_runtime_probe_matches_task_idle_timeout_by_default(
     tmp_path, monkeypatch
 ):

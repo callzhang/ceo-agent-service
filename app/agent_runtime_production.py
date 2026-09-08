@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
-from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
+from app.agent_runtime_config import (
+    SUPPORTED_CODEX_RUNTIME_MODELS,
+    AgentRuntimeConfig,
+    load_runtime_config,
+)
 from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
     RuntimeKind,
@@ -171,6 +175,7 @@ def build_production_routed_codex_execution(
     codex_bin: str = "codex",
     executor: ProcessExecutor | None = None,
     capability_registry: RuntimeCapabilityRegistry = PRODUCTION_RUNTIME_CAPABILITIES,
+    codex_oauth_model: str | None = None,
 ) -> RoutedCodexExecution:
     """Build the single reviewed production routing stack.
 
@@ -180,6 +185,22 @@ def build_production_routed_codex_execution(
     """
 
     runtime_config = load_runtime_config(os.environ)
+    if codex_oauth_model is not None and codex_oauth_model.strip():
+        codex_oauth_model = codex_oauth_model.strip()
+        if codex_oauth_model not in SUPPORTED_CODEX_RUNTIME_MODELS:
+            raise ValueError("codex_oauth_model must select a supported Codex model")
+        if not any(route.name == "codex_oauth" for route in runtime_config.routes):
+            raise ValueError("codex_oauth_model requires the codex_oauth route")
+        runtime_config = runtime_config.model_copy(
+            update={
+                "routes": tuple(
+                    route.model_copy(update={"model": codex_oauth_model})
+                    if route.name == "codex_oauth"
+                    else route
+                    for route in runtime_config.routes
+                )
+            }
+        )
     kwargs = {
         "store": store,
         "config": runtime_config,
