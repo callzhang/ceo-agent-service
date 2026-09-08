@@ -2656,6 +2656,20 @@ def run_meeting_producer_loop(
                     "meeting_alignment_producer",
                     str(exc),
                 )
+                store.set_service_health_component(
+                    "meeting_alignment.producer",
+                    state="degraded",
+                    detail=str(exc),
+                )
+        else:
+            store.set_service_health_component(
+                "meeting_alignment.producer",
+                state="healthy",
+            )
+            store.resolve_unresolved_errors_by_kind(
+                "meeting_alignment_producer",
+                resolution="recovered by a later successful meeting scan",
+            )
         sleep(poll_interval_seconds)
 
 

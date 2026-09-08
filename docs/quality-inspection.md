@@ -43,6 +43,9 @@ History 一致”；它不解释 Agent 如何调用命令，也不维护外部�
 成功读取立即写为 `healthy`。审计页的系统健康状态展示该组件，但 Attention、任务队列和质量门不把
 这类历史 error 记录当作未完成业务项。
 
+会议扫描也遵循同一规则：`meeting_alignment_producer` 失败会把对应组件标为 `degraded`；后续
+扫描成功会立即恢复为 `healthy` 并收口该类历史服务错误，不依赖会议总结任务是否已经发送。
+
 服务健康恢复不依赖静默观察期。任务错误也不按时间自动关闭：只有该 trigger 的实际后续
 `done`、`skipped`、`needs_human` 或其他持久化终态可以收口原错误。历史 error 保留在 History，
 用于追溯而不覆盖当前任务 projection。

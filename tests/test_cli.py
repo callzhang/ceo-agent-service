@@ -5613,7 +5613,14 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     class StopLoop(Exception):
         pass
 
-    store = object()
+    store = SimpleNamespace(
+        set_service_health_component=lambda *args, **kwargs: calls.append(
+            ("health", args, kwargs)
+        ),
+        resolve_unresolved_errors_by_kind=lambda *args, **kwargs: calls.append(
+            ("resolve-errors", args, kwargs)
+        ),
+    )
     dws = object()
     runner = object()
     settings = WorkerSettings(
@@ -5677,17 +5684,27 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     assert calls[0][:3] == ("produce-meeting", store, dws)
     assert calls[0][3].utcoffset() is not None
     assert calls[0][4] == 600
-    assert calls[1] == ("sleep", 60)
-    assert calls[2][0] == "runner"
-    assert set(calls[2][1]) == {"routed_execution"}
-    routed_execution = calls[2][1]["routed_execution"]
+    assert calls[1] == (
+        "health",
+        ("meeting_alignment.producer",),
+        {"state": "healthy"},
+    )
+    assert calls[2] == (
+        "resolve-errors",
+        ("meeting_alignment_producer",),
+        {"resolution": "recovered by a later successful meeting scan"},
+    )
+    assert calls[3] == ("sleep", 60)
+    assert calls[4][0] == "runner"
+    assert set(calls[4][1]) == {"routed_execution"}
+    routed_execution = calls[4][1]["routed_execution"]
     assert routed_execution._total_timeout_seconds == 1200
     assert routed_execution._idle_timeout_seconds == 900
-    assert calls[3][:4] == ("consume-meeting", store, dws, runner)
-    assert calls[3][4].utcoffset() is not None
-    assert calls[3][5:7] == (4, True)
-    assert calls[3][7] is not None
-    assert calls[4] == ("sleep", 10)
+    assert calls[5][:4] == ("consume-meeting", store, dws, runner)
+    assert calls[5][4].utcoffset() is not None
+    assert calls[5][5:7] == (4, True)
+    assert calls[5][7] is not None
+    assert calls[6] == ("sleep", 10)
 
 
 def test_meeting_loops_skip_when_network_not_ready(monkeypatch, tmp_path):
@@ -6036,7 +6053,12 @@ def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
     class StopLoop(Exception):
         pass
 
-    store = SimpleNamespace(record_error=lambda *args: calls.append(("error", args)))
+    store = SimpleNamespace(
+        record_error=lambda *args: calls.append(("error", args)),
+        set_service_health_component=lambda *args, **kwargs: calls.append(
+            ("health", args, kwargs)
+        ),
+    )
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
     monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
     monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: object())
@@ -6062,7 +6084,41 @@ def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
     assert calls[0][0] == "error"
     assert calls[0][1][2] == "meeting_alignment_producer"
     assert "minutes down" in calls[0][1][3]
-    assert calls[1] == ("sleep", 60)
+    assert calls[1] == (
+        "health",
+        ("meeting_alignment.producer",),
+        {"state": "degraded", "detail": "minutes down"},
+    )
+    assert calls[2] == ("sleep", 60)
+
+
+def test_meeting_producer_success_recovers_prior_service_error(monkeypatch, tmp_path):
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    store = cli.AutoReplyStore(settings.db_path)
+    store.record_error("", "", "meeting_alignment_producer", "DWS unavailable")
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: object())
+    monkeypatch.setattr(cli, "produce_meeting_alignment_jobs", lambda *args, **kwargs: 0)
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_producer_loop(
+            settings,
+            poll_interval_seconds=60,
+            settle_seconds=600,
+            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
+            network_ready=lambda: True,
+        )
+
+    error = store.list_errors()[0]
+    assert error.resolved_at
+    assert error.resolution == "recovered by a later successful meeting scan"
+    health = {
+        item["component"]: item for item in store.list_service_health_components()
+    }
+    assert health["meeting_alignment.producer"]["state"] == "healthy"
 
 
 def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_path):
