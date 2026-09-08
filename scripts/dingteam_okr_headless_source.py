@@ -180,8 +180,6 @@ def _capture_stable_headless_headers() -> dict[str, str]:
                         raise RuntimeError("okr_website_unavailable: Dingteam OKR website did not render")
             finally:
                 context.close()
-    if "Authorization" not in captured:
-        raise RuntimeError("could not capture Dingteam auth token from the browser")
     return _validate_captured_headers(captured)
 
 

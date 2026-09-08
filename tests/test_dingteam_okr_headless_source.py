@@ -178,6 +178,17 @@ def test_expired_captured_session_is_rejected_before_api_fetch(monkeypatch):
         module._validate_captured_headers({"Authorization": "expired"})
 
 
+def test_missing_captured_session_is_reported_as_expired(monkeypatch):
+    module = load_module()
+    monkeypatch.setattr(module.browser, "_jwt_exp", lambda _headers: None)
+
+    with pytest.raises(RuntimeError, match="okr_headless_session_expired"):
+        module._validate_captured_headers({})
+
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert "could not capture Dingteam auth token" not in source
+
+
 def test_headless_browser_uses_process_lock():
     module = load_module()
     source = SCRIPT_PATH.read_text(encoding="utf-8")
