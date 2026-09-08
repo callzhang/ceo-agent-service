@@ -8,7 +8,10 @@ from typing import Protocol
 
 from app.agent_cron.models import ScheduledTask, ScheduledTaskRun
 from app.agent_cron.schedule import CronSchedule
-from app.store import AutoReplyStore
+from app.store import (
+    AutoReplyStore,
+    ScheduledTaskRunCreateState,
+)
 
 
 PREVIOUS_EXECUTION_ACTIVE = "scheduled_task_previous_execution_active"
@@ -129,17 +132,26 @@ class AgentCronScheduler:
                 self._set_next(task, current)
                 continue
 
-            reason, detail = self._skip_reason(task)
-            run = self._store.create_scheduled_task_run_if_absent(
-                task.id,
-                scheduled_for=planned.scheduled_for,
-                now=current,
-                dispatch_status="skipped" if reason is not None else "pending",
-                reason=reason or "",
-            )
-            self._set_next(task, current)
-            if run is None:
+            while True:
+                reason, detail, overlap_run_id = self._skip_reason(task)
+                result = self._store.create_scheduled_task_run_if_current(
+                    task.id,
+                    expected_version=planned.task_version,
+                    expected_overlap_run_id=overlap_run_id,
+                    scheduled_for=planned.scheduled_for,
+                    now=current,
+                    reason=reason or "",
+                )
+                if result.state is not ScheduledTaskRunCreateState.RETRY:
+                    break
+            if result.state is ScheduledTaskRunCreateState.STALE_TASK:
+                self.reload(current)
                 continue
+            self._set_next(task, current)
+            if result.state is ScheduledTaskRunCreateState.DUPLICATE:
+                continue
+            run = result.run
+            assert run is not None
             created_count += 1
             if reason is not None:
                 if reason != PREVIOUS_EXECUTION_ACTIVE:
@@ -189,15 +201,23 @@ class AgentCronScheduler:
         with self._lock:
             self._planned[task.id] = planned
 
-    def _skip_reason(self, task: ScheduledTask) -> tuple[str | None, str]:
+    def _skip_reason(
+        self,
+        task: ScheduledTask,
+    ) -> tuple[str | None, str, int | None]:
         prior = self._store.latest_scheduled_task_overlap_candidate(task.id)
         if prior is not None and not self._run_is_terminal(prior):
-            return PREVIOUS_EXECUTION_ACTIVE, PREVIOUS_EXECUTION_ACTIVE
+            return (
+                PREVIOUS_EXECUTION_ACTIVE,
+                PREVIOUS_EXECUTION_ACTIVE,
+                prior.id,
+            )
+        overlap_run_id = prior.id if prior is not None else None
 
         try:
             self._option_service.resolve_runtime_route(task.runtime_id)
         except ValueError as exc:
-            return RUNTIME_UNAVAILABLE, str(exc)
+            return RUNTIME_UNAVAILABLE, str(exc), overlap_run_id
 
         for ref in task.skill_refs:
             try:
@@ -217,8 +237,8 @@ class AgentCronScheduler:
                     if ref.skill_source == "managed"
                     else OPERATION_SKILL_UNAVAILABLE
                 )
-                return reason, str(exc)
-        return None, ""
+                return reason, str(exc), overlap_run_id
+        return None, "", overlap_run_id
 
     def _run_is_terminal(self, run: ScheduledTaskRun) -> bool:
         if run.dispatch_status in {"skipped", "failed"}:

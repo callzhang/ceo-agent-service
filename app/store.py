@@ -1054,6 +1054,19 @@ class AgentRuntimeAttemptStartClaim:
     start_acquired: bool
 
 
+class ScheduledTaskRunCreateState(StrEnum):
+    CREATED = "created"
+    DUPLICATE = "duplicate"
+    RETRY = "retry"
+    STALE_TASK = "stale_task"
+
+
+@dataclass(frozen=True)
+class ScheduledTaskRunCreateResult:
+    state: ScheduledTaskRunCreateState
+    run: ScheduledTaskRun | None = None
+
+
 
 
 class AgentRunLeaseLostError(RuntimeError):
@@ -5341,32 +5354,117 @@ class AutoReplyStore:
         )
         return run
 
-    def create_scheduled_task_run_if_absent(
+    def create_scheduled_task_run_if_current(
         self,
         task_id: int,
         *,
+        expected_version: int,
+        expected_overlap_run_id: int | None,
         scheduled_for: datetime,
         now: datetime | None = None,
         event_id: str | None = None,
-        dispatch_status: str = "pending",
         reason: str = "",
-    ) -> ScheduledTaskRun | None:
-        """Atomically create one scheduled trigger for a planned instant.
-
-        Unlike ``create_scheduled_task_run``, a duplicate is reported as
-        ``None`` so only the process that inserted the row may wake or mutate
-        it.  This is the scheduler leader-election boundary.
-        """
-        run, created = self._create_scheduled_task_run(
-            task_id,
-            trigger_kind="scheduled",
-            scheduled_for=scheduled_for,
-            now=now,
-            event_id=event_id,
-            dispatch_status=dispatch_status,
-            reason=reason,
+    ) -> ScheduledTaskRunCreateResult:
+        """Validate scheduling facts and insert one trigger in one write lock."""
+        expected_version = self._require_scheduled_task_version(expected_version)
+        if expected_overlap_run_id is not None and (
+            type(expected_overlap_run_id) is not int or expected_overlap_run_id <= 0
+        ):
+            raise ValueError("expected overlap run id must be positive")
+        if not isinstance(reason, str):
+            raise ValueError("initial scheduled task dispatch reason must be text")
+        reason = reason.strip()
+        scheduled_for_text = self._scheduled_task_time_text(
+            scheduled_for,
+            field="scheduled task run scheduled_for",
         )
-        return run if created else None
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc),
+            field="scheduled task run now",
+        )
+        event_id = self._require_scheduled_task_text(
+            event_id or uuid4().hex,
+            field="scheduled task run event id",
+        )
+        with self._immediate_write_transaction() as db:
+            task_row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+            if (
+                task_row is None
+                or int(task_row["version"]) != expected_version
+                or not bool(task_row["enabled"])
+                or task_row["deleted_at"] is not None
+            ):
+                return ScheduledTaskRunCreateResult(
+                    ScheduledTaskRunCreateState.STALE_TASK
+                )
+
+            overlap_row = db.execute(
+                "select id from scheduled_task_runs "
+                "where scheduled_task_id=? and (dispatch_status='pending' or "
+                "(execution_kind<>'' and execution_id<>'')) "
+                "order by id desc limit 1",
+                (task_id,),
+            ).fetchone()
+            overlap_run_id = (
+                int(overlap_row["id"]) if overlap_row is not None else None
+            )
+            if overlap_run_id != expected_overlap_run_id:
+                return ScheduledTaskRunCreateResult(
+                    ScheduledTaskRunCreateState.RETRY
+                )
+
+            task = self._scheduled_task_from_row(db, task_row)
+            snapshot_json = ScheduledTaskSnapshot.from_task(task).to_json()
+            ScheduledTaskSnapshot.from_json(snapshot_json)
+            dispatch_status = "skipped" if reason else "pending"
+            try:
+                cursor = db.execute(
+                    """
+                    insert into scheduled_task_runs (
+                        event_id, scheduled_task_id, trigger_kind, scheduled_for,
+                        dispatch_status, skip_or_error_reason, snapshot_json,
+                        created_at, dispatched_at
+                    ) values (?, ?, 'scheduled', ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        task_id,
+                        scheduled_for_text,
+                        dispatch_status,
+                        reason,
+                        snapshot_json,
+                        now_text,
+                        now_text if reason else None,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                existing = db.execute(
+                    f"select {self._scheduled_task_run_columns()} "
+                    "from scheduled_task_runs "
+                    "where scheduled_task_id=? and trigger_kind='scheduled' "
+                    "and scheduled_for=?",
+                    (task_id, scheduled_for_text),
+                ).fetchone()
+                if existing is None:
+                    raise
+                return ScheduledTaskRunCreateResult(
+                    ScheduledTaskRunCreateState.DUPLICATE,
+                    self._scheduled_task_run_from_row(existing),
+                )
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return ScheduledTaskRunCreateResult(
+                ScheduledTaskRunCreateState.CREATED,
+                self._scheduled_task_run_from_row(row),
+            )
 
     def _create_scheduled_task_run(
         self,

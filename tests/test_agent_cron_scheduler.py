@@ -49,6 +49,29 @@ class MissingManagedSkill(AvailableOptions):
         raise ValueError("exact revision is not loaded")
 
 
+class FirstResolutionBarrier(AvailableOptions):
+    def __init__(self, parties: int) -> None:
+        self._barrier = threading.Barrier(parties)
+        self._local = threading.local()
+
+    def resolve_runtime_route(self, route_name: str) -> object:
+        if not getattr(self._local, "resolved", False):
+            self._local.resolved = True
+            self._barrier.wait(timeout=5)
+        return super().resolve_runtime_route(route_name)
+
+
+class PausedResolution(AvailableOptions):
+    def __init__(self) -> None:
+        self.reached = threading.Event()
+        self.release = threading.Event()
+
+    def resolve_runtime_route(self, route_name: str) -> object:
+        self.reached.set()
+        assert self.release.wait(timeout=5)
+        return super().resolve_runtime_route(route_name)
+
+
 def _task(
     store: AutoReplyStore,
     *,
@@ -144,6 +167,88 @@ def test_two_schedulers_atomically_deduplicate_the_same_planned_instant(
     assert len(runs) == 1
     assert runs[0].dispatch_status == "pending"
     assert wakes == ["wake"]
+
+
+def test_different_due_instants_atomically_serialize_overlap_decisions(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _task(store)
+    options = FirstResolutionBarrier(2)
+    wakes: list[str] = []
+    first = _scheduler(store, options=options, wakes=wakes)
+    second = _scheduler(store, options=options, wakes=wakes)
+    first.start(NOW)
+    second.start(NOW + timedelta(minutes=1))
+
+    threads = [
+        threading.Thread(target=first.tick, args=(NOW + timedelta(minutes=2),)),
+        threading.Thread(target=second.tick, args=(NOW + timedelta(minutes=2),)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    runs = store.list_scheduled_task_runs(task.id)
+    assert len(runs) == 2
+    assert sum(run.dispatch_status == "pending" for run in runs) == 1
+    skipped = next(run for run in runs if run.dispatch_status == "skipped")
+    assert skipped.skip_or_error_reason == PREVIOUS_EXECUTION_ACTIVE
+    assert wakes == ["wake"]
+
+
+@pytest.mark.parametrize("mutation", ["update", "disable", "delete"])
+def test_task_mutation_between_read_and_insert_is_a_stale_noop(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _task(store)
+    options = PausedResolution()
+    scheduler = _scheduler(store, options=options)
+    scheduler.start(NOW)
+    errors: list[BaseException] = []
+
+    def tick() -> None:
+        try:
+            scheduler.tick(NOW + timedelta(minutes=1))
+        except BaseException as exc:  # test captures thread failures explicitly
+            errors.append(exc)
+
+    thread = threading.Thread(target=tick)
+    thread.start()
+    assert options.reached.wait(timeout=5)
+    if mutation == "update":
+        store.update_scheduled_task(
+            task.id,
+            expected_version=task.version,
+            cron_expression="0 0 * * * *",
+            now=NOW + timedelta(seconds=30),
+        )
+    elif mutation == "disable":
+        store.set_scheduled_task_enabled(
+            task.id,
+            enabled=False,
+            expected_version=task.version,
+            now=NOW + timedelta(seconds=30),
+        )
+    else:
+        store.delete_scheduled_task(
+            task.id,
+            expected_version=task.version,
+            now=NOW + timedelta(seconds=30),
+        )
+    options.release.set()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert errors == []
+    assert store.list_scheduled_task_runs(task.id) == ()
+    if mutation == "update":
+        assert scheduler.next_run_at(task.id) == NOW + timedelta(hours=1)
+    else:
+        assert scheduler.next_run_at(task.id) is None
 
 
 def test_active_previous_execution_skips_without_creating_business_execution(
