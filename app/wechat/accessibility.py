@@ -159,6 +159,26 @@ def _screen_is_locked(session_state) -> bool:
     return bool(session_state.get("CGSSessionScreenIsLocked", False))
 
 
+def _click_at_accessibility_center(element, *, center, quartz, sleep, count=1) -> bool:
+    """Click an AX element at its visible center.
+
+    WeChat's session rows are exposed as static-text AX nodes. ``AXPress`` can
+    report success for those nodes without changing the selected conversation,
+    so a real pointer click is the action that establishes the chat view.
+    """
+    point = center(element)
+    if point is None:
+        return False
+    for _ in range(count):
+        for event_type in (quartz.kCGEventLeftMouseDown, quartz.kCGEventLeftMouseUp):
+            event = quartz.CGEventCreateMouseEvent(
+                None, event_type, point, quartz.kCGMouseButtonLeft,
+            )
+            quartz.CGEventPost(quartz.kCGHIDEventTap, event)
+        sleep(0.04)
+    return True
+
+
 def _open_target(
     target_label, *, first, click, type_fn, settle, sleep, search_query=None,
     find_all=None, subtree_has_text=None, expected_recent_text=None,
@@ -688,20 +708,9 @@ class MacWechatAccessibility:
             return (p.x + s.width / 2, p.y + s.height / 2)
 
         def click(el, n=1):
-            try:
-                if perform(el, "AXPress") == 0:
-                    time.sleep(0.04)
-                    return
-            except Exception:
-                pass
-            c = center(el)
-            if not c:
-                return
-            for _ in range(n):
-                for ev in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
-                    e = Quartz.CGEventCreateMouseEvent(None, ev, c, Quartz.kCGMouseButtonLeft)
-                    Quartz.CGEventPost(Quartz.kCGHIDEventTap, e)
-                time.sleep(0.04)
+            _click_at_accessibility_center(
+                el, center=center, quartz=Quartz, sleep=time.sleep, count=n,
+            )
 
         def scroll_session_list():
             from ApplicationServices import (
@@ -884,24 +893,19 @@ class MacWechatAccessibility:
             return False
 
         def click(el, n=1):
-            try:
-                if perform(el, "AXPress") == 0:
-                    time.sleep(0.04)
-                    return
-            except Exception:
-                pass
             from ApplicationServices import AXValueGetValue, kAXValueCGPointType, kAXValueCGSizeType
-            pos, size = g(el, "AXPosition"), g(el, "AXSize")
-            okp, p = AXValueGetValue(pos, kAXValueCGPointType, None) if pos else (False, None)
-            oks, s = AXValueGetValue(size, kAXValueCGSizeType, None) if size else (False, None)
-            if not (okp and oks):
-                return
-            c = (p.x + s.width / 2, p.y + s.height / 2)
-            for _ in range(n):
-                for ev in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
-                    Quartz.CGEventPost(Quartz.kCGHIDEventTap,
-                                       Quartz.CGEventCreateMouseEvent(None, ev, c, Quartz.kCGMouseButtonLeft))
-                time.sleep(0.04)
+
+            def center(element):
+                pos, size = g(element, "AXPosition"), g(element, "AXSize")
+                okp, point = AXValueGetValue(pos, kAXValueCGPointType, None) if pos else (False, None)
+                oks, size_value = AXValueGetValue(size, kAXValueCGSizeType, None) if size else (False, None)
+                if not (okp and oks):
+                    return None
+                return (point.x + size_value.width / 2, point.y + size_value.height / 2)
+
+            _click_at_accessibility_center(
+                el, center=center, quartz=Quartz, sleep=time.sleep, count=n,
+            )
 
         def scroll_session_list():
             from ApplicationServices import (

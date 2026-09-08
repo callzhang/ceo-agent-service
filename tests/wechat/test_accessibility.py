@@ -11,7 +11,7 @@ from app.wechat.accessibility import (
     AccessibilityResult, MacWechatAccessibility, SenderExecutionError,
     SendOutcome, WechatSender, _open_target,
     _attribute_text_matches, _screen_is_locked, _text_evidence_matches,
-    _walk_accessibility_tree, _result_after_return,
+    _walk_accessibility_tree, _result_after_return, _click_at_accessibility_center,
     reconcile_incomplete_deliveries,
 )
 from app.wechat.models import WechatReplyScope
@@ -42,6 +42,33 @@ class PreDispatchFailureRunner:
         raise SenderExecutionError(
             "sender helper is unavailable", action_may_have_started=False,
         )
+
+
+def test_session_row_click_uses_pointer_events_even_when_ax_press_would_be_noop():
+    events = []
+
+    class Quartz:
+        kCGEventLeftMouseDown = "down"
+        kCGEventLeftMouseUp = "up"
+        kCGMouseButtonLeft = "left"
+        kCGHIDEventTap = "tap"
+
+        @staticmethod
+        def CGEventCreateMouseEvent(_source, event_type, point, button):
+            return (event_type, point, button)
+
+        @staticmethod
+        def CGEventPost(tap, event):
+            events.append((tap, event))
+
+    assert _click_at_accessibility_center(
+        object(), center=lambda _element: (110, 220), quartz=Quartz,
+        sleep=lambda _seconds: None,
+    ) is True
+    assert events == [
+        ("tap", ("down", (110, 220), "left")),
+        ("tap", ("up", (110, 220), "left")),
+    ]
 
 
 def _scope(binding_status):
