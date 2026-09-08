@@ -9822,6 +9822,7 @@ _SPA_EXACT_PAGE_PATHS = frozenset(
         "/",
         "/history",
         "/tasks",
+        "/scheduled-tasks",
         "/settings",
         "/user-feedback",
         "/tutorial",

@@ -5,6 +5,7 @@ const destinations = [
   ["Agent", "/"],
   ["History", "/history"],
   ["Tasks", "/tasks"],
+  ["定时任务", "/scheduled-tasks"],
   ["Email", "/email"],
   ["用户反馈", "/user-feedback"],
   ["Settings", "/settings"],

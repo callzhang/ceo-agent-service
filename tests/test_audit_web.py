@@ -8098,6 +8098,28 @@ def test_fastapi_app_serves_built_workbench_assets_with_secure_boundaries(
     assert settings.status_code == 200
 
 
+def test_fastapi_spa_serves_scheduled_tasks_deep_link(tmp_path: Path):
+    asset_dir = tmp_path / "assets"
+    asset_dir.mkdir()
+    index = b"<!doctype html><title>Scheduled tasks workbench</title>"
+    (asset_dir / "index.html").write_bytes(index)
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    complete_setup_wizard(store)
+
+    with TestClient(
+        create_audit_app(
+            store.path,
+            workbench_asset_dir=asset_dir,
+            workbench_workspace=tmp_path,
+            spa_enabled=True,
+        )
+    ) as client:
+        response = client.get("/scheduled-tasks")
+
+    assert response.status_code == 200
+    assert response.content == index
+
+
 def test_workbench_root_rejects_index_symlink_outside_asset_directory(
     tmp_path: Path,
 ):

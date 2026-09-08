@@ -6,6 +6,7 @@ import { AppShell } from "./AppShell";
 const AgentPage = lazy(() => import("../app").then((module) => ({ default: module.App })));
 const TaskDetailPage = lazy(() => import("../pages/TaskDetailPage").then((module) => ({ default: module.TaskDetailPage })));
 const TasksPage = lazy(() => import("../pages/TasksPage").then((module) => ({ default: module.TasksPage })));
+const ScheduledTasksPage = lazy(() => import("../pages/ScheduledTasksPage").then((module) => ({ default: module.ScheduledTasksPage })));
 const AttentionPage = lazy(() => import("../pages/AttentionPage").then((module) => ({ default: module.AttentionPage })));
 const HistoryPage = lazy(() => import("../pages/HistoryPage").then((module) => ({ default: module.HistoryPage })));
 const StatusPage = lazy(() => import("../pages/StatusPage").then((module) => ({ default: module.StatusPage })));
@@ -60,6 +61,7 @@ function ConsoleRoutes() {
       <Route path="/history/oa-approvals/:processInstanceId" element={<BusinessDetailPage kind="OA Approval" endpoint="/api/console/oa-approvals/:id" />} />
       <Route path="/tasks" element={<TasksPage />} />
       <Route path="/tasks/:projectId" element={<TaskDetailRoute />} />
+      <Route path="/scheduled-tasks" element={<ScheduledTasksPage />} />
       <Route path="/settings" element={<SettingsRoute />} />
       <Route path="/user-feedback" element={<FeedbackPage />} />
       <Route path="/email" element={<EmailPage />} />

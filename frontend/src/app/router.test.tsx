@@ -14,6 +14,7 @@ describe("console router", () => {
     ["/history/oa-approvals/unknown", "OA Approval"],
     ["/tasks", "Tasks"],
     ["/tasks/836", "Task 836"],
+    ["/scheduled-tasks", "定时任务"],
     ["/settings?tab=status", "Settings"],
     ["/user-feedback", "用户反馈"],
     ["/tutorial", "Tutorial"],
@@ -23,6 +24,15 @@ describe("console router", () => {
   ])("renders a deep link for %s", async (path, heading) => {
     if (path.startsWith("/settings")) {
       vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ item: { service: { state: "running" }, summary: {}, components: [], queues: [], connectors: {}, wechat: {} }, meta: { snapshot_at: "" } }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    }
+    if (path === "/scheduled-tasks") {
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        const payload = url.endsWith("/scheduled-task-options")
+          ? { runtime_options: [], managed_skill_options: [], operation_skill_options: [], meta: { snapshot_at: "" } }
+          : { items: [], meta: { total: 0, snapshot_at: "" } };
+        return new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
+      }));
     }
     window.history.replaceState({}, "", path);
     render(<ConsoleRouter />);
