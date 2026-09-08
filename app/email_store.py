@@ -63,7 +63,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 32
+EMAIL_SCHEMA_VERSION = 33
 MAX_CLASSIFIER_RUNTIME_SAMPLES = 2048
 HISTORICAL_DEFER_RETRY_SECONDS = 60
 DIRECT_ACTION_MAX_ATTEMPTS = 3
@@ -199,6 +199,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "imap_tls": ("integer", True, None),
         "imap_username": ("text", True, None),
         "imap_secret_reference": ("text", True, None),
+        "imap_move_mode": ("text", True, "'move'"),
         "smtp_host": ("text", True, None),
         "smtp_port": ("integer", True, None),
         "smtp_tls": ("integer", True, None),
@@ -491,6 +492,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
     "email_accounts": (
         "imap_port between 1 and 65535",
         "imap_tls in (0, 1)",
+        "imap_move_mode in ('move', 'copy_as_move')",
         "smtp_port between 1 and 65535",
         "smtp_tls in (0, 1)",
         "enabled in (0, 1)",
@@ -2683,6 +2685,7 @@ class EmailStore:
             self._ensure_unsubscribe_receipt_columns(db)
             self._ensure_training_snapshot_frozen_column(db)
             self._ensure_training_snapshot_watermark_columns(db)
+            self._ensure_email_account_move_mode_column(db)
             if legacy_reply_claims:
                 self._finish_v8_reply_claim_migration(db)
             if legacy_unsubscribe_claims:
@@ -2763,6 +2766,9 @@ class EmailStore:
                 latest_version = 31
             if latest_version == 31:
                 self._migrate_v31_to_v32(db, replace_version=is_prototype)
+                latest_version = 32
+            if latest_version == 32:
+                self._migrate_v32_to_v33(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -4275,6 +4281,36 @@ class EmailStore:
                 "insert into email_schema_migrations(version, applied_at) values (32, ?)",
                 (self._now(),),
             )
+
+    @classmethod
+    def _ensure_email_account_move_mode_column(cls, db: sqlite3.Connection) -> None:
+        cls._ensure_column(
+            db,
+            table="email_accounts",
+            column="imap_move_mode",
+            declaration=(
+                "text not null default 'move' "
+                "check(imap_move_mode in ('move', 'copy_as_move'))"
+            ),
+        )
+
+    def _migrate_v32_to_v33(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Persist the explicit provider move command semantics."""
+
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=33, applied_at=? "
+                "where version=32",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (33, ?)",
+                (self._now(),),
+            )
+
     @staticmethod
     def _create_task10_historical_tables(db: sqlite3.Connection) -> None:
         db.execute(
@@ -4455,6 +4491,8 @@ class EmailStore:
                 imap_tls integer not null check(imap_tls in (0, 1)),
                 imap_username text not null,
                 imap_secret_reference text not null,
+                imap_move_mode text not null default 'move'
+                    check(imap_move_mode in ('move', 'copy_as_move')),
                 smtp_host text not null,
                 smtp_port integer not null check(smtp_port between 1 and 65535),
                 smtp_tls integer not null check(smtp_tls in (0, 1)),
@@ -10523,6 +10561,7 @@ class EmailStore:
                 update email_accounts set
                     display_name=?, email_address=?, imap_host=?, imap_port=?,
                     imap_tls=?, imap_username=?, imap_secret_reference=?,
+                    imap_move_mode=?,
                     smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
                     smtp_secret_reference=?, enabled=?, scan_folders_json=?,
                     scan_interval_seconds=?, updated_at=?
@@ -10536,6 +10575,7 @@ class EmailStore:
                     int(bool(values["imap_tls"])),
                     values["imap_username"],
                     values["imap_secret_reference"],
+                    values.get("imap_move_mode", "move"),
                     values["smtp_host"],
                     values["smtp_port"],
                     int(bool(values["smtp_tls"])),
@@ -10609,6 +10649,7 @@ class EmailStore:
                 update email_accounts set
                     display_name=?, email_address=?, imap_host=?, imap_port=?,
                     imap_tls=?, imap_username=?, imap_secret_reference=?,
+                    imap_move_mode=?,
                     smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
                     smtp_secret_reference=?, enabled=?, scan_folders_json=?,
                     scan_interval_seconds=?, created_at=?, updated_at=?
@@ -10622,6 +10663,7 @@ class EmailStore:
                     int(bool(snapshot["imap_tls"])),
                     snapshot["imap_username"],
                     snapshot["imap_secret_reference"],
+                    snapshot.get("imap_move_mode", "move"),
                     snapshot["smtp_host"],
                     snapshot["smtp_port"],
                     int(bool(snapshot["smtp_tls"])),
@@ -10802,11 +10844,12 @@ class EmailStore:
             """
             insert into email_accounts (
                 account_id, display_name, email_address, imap_host, imap_port,
-                imap_tls, imap_username, imap_secret_reference, smtp_host,
+                imap_tls, imap_username, imap_secret_reference, imap_move_mode,
+                smtp_host,
                 smtp_port, smtp_tls, smtp_username, smtp_secret_reference,
                 enabled, scan_folders_json, scan_interval_seconds, created_at,
                 updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 values["account_id"],
@@ -10817,6 +10860,7 @@ class EmailStore:
                 int(bool(values["imap_tls"])),
                 values["imap_username"],
                 values["imap_secret_reference"],
+                values.get("imap_move_mode", "move"),
                 values["smtp_host"],
                 values["smtp_port"],
                 int(bool(values["smtp_tls"])),
@@ -10841,6 +10885,7 @@ class EmailStore:
             "imap_tls": bool(row["imap_tls"]),
             "imap_username": row["imap_username"],
             "imap_secret_reference": row["imap_secret_reference"],
+            "imap_move_mode": row["imap_move_mode"],
             "smtp_host": row["smtp_host"],
             "smtp_port": row["smtp_port"],
             "smtp_tls": bool(row["smtp_tls"]),

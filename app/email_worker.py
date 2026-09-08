@@ -2946,6 +2946,7 @@ def _build_imap_direct_action_executor_factory(email_store: object):
                 secret,
                 port=int(account["imap_port"]),
                 account_id=account_id,
+                move_mode=str(account.get("imap_move_mode") or "move"),
             )
 
         return DeterministicEmailActionExecutor(

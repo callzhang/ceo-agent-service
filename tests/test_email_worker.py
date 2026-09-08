@@ -6976,6 +6976,7 @@ def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
             "imap_port": 993,
             "imap_username": "a@example.com",
             "imap_secret_reference": "CEO_EMAIL_A_IMAP_SECRET",
+            "imap_move_mode": "copy_as_move",
             "smtp_secret_reference": "CEO_EMAIL_A_SMTP_SECRET",
         },
         "account-b": {
@@ -7017,19 +7018,27 @@ def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
             "imap-a.example.com",
             "a@example.com",
             "imap-secret-a",
-            {"port": 993, "account_id": "account-a"},
+            {
+                "port": 993,
+                "account_id": "account-a",
+                "move_mode": "copy_as_move",
+            },
         ),
         (
             "imap-b.example.com",
             "b@example.com",
             "imap-secret-b",
-            {"port": 1993, "account_id": "account-b"},
+            {"port": 1993, "account_id": "account-b", "move_mode": "move"},
         ),
         (
             "imap-a.example.com",
             "a@example.com",
             "imap-secret-a",
-            {"port": 993, "account_id": "account-a"},
+            {
+                "port": 993,
+                "account_id": "account-a",
+                "move_mode": "copy_as_move",
+            },
         ),
     ]
     assert all("must-not-be-read" not in repr(call) for call in calls)

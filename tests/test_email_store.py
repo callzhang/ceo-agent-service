@@ -206,8 +206,8 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     assert "email_training_snapshots" in tables
     assert "email_training_snapshot_observations" in tables
     assert preserved_model_text == "__subject__preserved migration row"
-    assert versions == list(range(22, 33))
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 32
+    assert versions == list(range(22, 34))
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 33
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select frozen from email_training_snapshots").fetchall() == []
@@ -248,7 +248,7 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == list(range(23, 33))
+        ] == list(range(23, 34))
 
 
 def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path):
@@ -305,7 +305,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == list(range(23, 33))
+    ] == list(range(23, 34))
 
 
 def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
@@ -3216,8 +3216,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_32() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 32
+def test_email_schema_version_is_33() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 33
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:
@@ -3284,7 +3284,7 @@ def test_task10_schema_migrations_replay_full_chain_from_each_version(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == list(range(starting_version, 33))
+        ] == list(range(starting_version, 34))
         tables_after = {
             row[0]
             for row in db.execute("select name from sqlite_master where type='table'")
@@ -3754,6 +3754,8 @@ def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path)
                 imap_tls integer not null check(imap_tls in (0, 1)),
                 imap_username text not null,
                 imap_secret_reference text not null,
+                imap_move_mode text not null default 'move'
+                    check(imap_move_mode in ('move', 'copy_as_move')),
                 smtp_host text not null,
                 smtp_port integer not null check(smtp_port between 1 and 65535),
                 smtp_tls integer not null check(smtp_tls in (0, 1)),
@@ -3985,6 +3987,7 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             30,
             31,
             32,
+            33,
         ]
         assert {
             row[1]
@@ -4241,6 +4244,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
         30,
         31,
         32,
+        33,
     ]
 
     EmailStore(database)
@@ -4323,6 +4327,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
         30,
         31,
         32,
+        33,
     ]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
@@ -4744,6 +4749,7 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
         30,
         31,
         32,
+        33,
     ]
 
 
@@ -6814,7 +6820,7 @@ def test_v21_schema_migrates_to_allow_flag_important_actions(tmp_path: Path):
         )
         assert (
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 32
+            == 33
         )
     assert (
         migrated.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
@@ -8235,6 +8241,7 @@ def _task2_account_values(
         "imap_tls": True,
         "imap_username": f"{account_id}@example.com",
         "imap_secret_reference": f"keychain://{account_id}",
+        "imap_move_mode": "copy_as_move" if account_id == "primary" else "move",
         "smtp_host": "",
         "smtp_port": 465,
         "smtp_tls": True,
@@ -8951,7 +8958,8 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
 
     migrated = EmailStore(database)
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 32
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 33
+    assert migrated.get_account("primary")["imap_move_mode"] == "copy_as_move"
     assert (
         migrated.list_account_folder_bindings("junk")[0]["provider_folder_id"]
         == "Deleted"

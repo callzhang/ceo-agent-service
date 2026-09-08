@@ -697,6 +697,7 @@ def register_email_routes(
                 "imap_port",
                 "imap_tls",
                 "imap_username",
+                "imap_move_mode",
                 "enabled",
                 "scan_folders",
                 "scan_interval_seconds",

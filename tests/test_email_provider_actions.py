@@ -468,6 +468,20 @@ class FakeWritableImapSession:
                 self.timeout_after_move = False
                 raise TimeoutError("provider timed out after accepting UID MOVE")
             return "OK", [None]
+        if command == "COPY":
+            uid = int(args[0])
+            destination = self._mailbox_name(str(args[1]))
+            message = self.messages[self.selected].pop(uid)
+            destination_uid = max(self.messages.get(destination, {18: (None, set())})) + 1
+            self.messages.setdefault(destination, {})[destination_uid] = message
+            destination_uidvalidity = self.mailboxes[destination][1]
+            self.selected = destination
+            self.copyuid_response = (
+                f"{destination_uidvalidity} {uid} {destination_uid}".encode("ascii")
+                if self.include_copyuid
+                else None
+            )
+            return "OK", [None]
         raise AssertionError(f"unexpected UID command: {command}")
 
     def logout(self):
@@ -1065,6 +1079,31 @@ def test_production_imap_destination_actions_use_uid_move_and_return_new_locator
     assert "\\DELETED" not in command_text
     assert "'COPY'" not in command_text
     assert session.logged_out is True
+
+
+def test_production_imap_explicit_copy_as_move_mode_uses_uid_copy_without_delete() -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(
+        capabilities=(b"IMAP4rev1", b"UIDPLUS"),
+    )
+    provider = module.ImapDeterministicProvider(
+        session,
+        account_id="account-1",
+        move_mode="copy_as_move",
+    )
+
+    result = module.DeterministicEmailActionExecutor(provider).execute(
+        _action(EmailAction.MOVE, {"target_folder": "Projects"})
+    )
+
+    assert result.status == "done"
+    assert result.updated_locator is not None
+    assert result.updated_locator.folder == "Projects"
+    assert ("uid", "COPY", "7", "Projects") in session.calls
+    command_text = " ".join(str(call) for call in session.calls).upper()
+    assert "'MOVE'" not in command_text
+    assert "EXPUNGE" not in command_text
+    assert "\\DELETED" not in command_text
 
 
 @pytest.mark.parametrize(

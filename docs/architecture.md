@@ -134,6 +134,11 @@ Email worker 领取、执行并通过 provider readback 验证结果。这些确
 不创建 CEO Agent task，也不创建 Consumer/Audit run。`trash` 只允许可恢复的 move-to-Trash；
 永久删除、IMAP `EXPUNGE` 和清空 Trash 在所有配置与执行入口都不可达。
 
+标准 IMAP 账号使用 `UID MOVE`。若 provider 未声明 MOVE capability，但其官方协议明确规定
+`UID COPY` 本身就是移动语义，账号可显式配置 `imap_move_mode=copy_as_move`；服务不会按主机名
+猜测，也不会把普通 IMAP 的 COPY 当作移动。两种模式都必须用稳定 Message-ID 重新定位并确认
+目标文件夹，且都不得通过 `STORE \\Deleted` 或 `EXPUNGE` 模拟移动。
+
 只有不可变 `ActionPlan` 明确授权的 `unsubscribe` 会创建 `channel=email` 的
 `pending` task；其生命周期固定为 `email_unsubscribe_audited_v2`。分类确认、零动作计划
 和其他 Email 动作都不会创建 task。`auto_reply`、SMTP 和 `mailto` 发送全部禁用：配置、

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from email.errors import HeaderParseError
 from email.headerregistry import Address
 import re
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -38,6 +39,7 @@ class EmailAccountPayload(BaseModel):
     imap_tls: bool = True
     imap_username: str = Field(min_length=1, max_length=320)
     imap_secret_reference: str = Field(pattern=_IMAP_SECRET_REFERENCE_PATTERN)
+    imap_move_mode: Literal["move", "copy_as_move"] = "move"
     # Retained only as inert storage compatibility for the legacy schema.
     smtp_host: str = ""
     smtp_port: int = Field(default=1, ge=1, le=65535)

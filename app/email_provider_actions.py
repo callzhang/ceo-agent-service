@@ -332,12 +332,16 @@ class ImapDeterministicProvider:
         *,
         account_id: str,
         capabilities: frozenset[str] | None = None,
+        move_mode: Literal["move", "copy_as_move"] = "move",
     ):
         account_id = account_id.strip()
         if not account_id:
             raise ValueError("account_id must be non-empty")
         self.session = session
         self.account_id = account_id
+        if move_mode not in {"move", "copy_as_move"}:
+            raise ValueError("unsupported IMAP move mode")
+        self.move_mode = move_mode
         self._authenticated_capabilities = capabilities
         self._mailbox_cache: tuple[ParsedImapFolder, ...] | None = None
         self._moved_locators: dict[str, StoredEmailLocator] = {}
@@ -353,6 +357,7 @@ class ImapDeterministicProvider:
         port: int = 993,
         timeout: float | None = 20.0,
         account_id: str,
+        move_mode: Literal["move", "copy_as_move"] = "move",
     ) -> "ImapDeterministicProvider":
         session = imaplib.IMAP4_SSL(
             host,
@@ -369,7 +374,12 @@ class ImapDeterministicProvider:
         except Exception:
             _logout_or_shutdown(session)
             raise
-        return cls(session, account_id=account_id, capabilities=capabilities)
+        return cls(
+            session,
+            account_id=account_id,
+            capabilities=capabilities,
+            move_mode=move_mode,
+        )
 
     def resolve_destination(
         self,
@@ -379,7 +389,7 @@ class ImapDeterministicProvider:
     ) -> str:
         self._validate_locator(locator)
         capabilities = self._capabilities()
-        if "MOVE" not in capabilities:
+        if "MOVE" not in capabilities and self.move_mode != "copy_as_move":
             raise ImapMoveUnsupported("IMAP UID MOVE is unavailable")
         if locator.rfc_message_id is None and "UIDPLUS" not in capabilities:
             raise ImapReadbackUnsupported("move locator readback is unavailable")
@@ -516,12 +526,13 @@ class ImapDeterministicProvider:
         selected_uidvalidity = self._select(locator.folder, readonly=False)
         if selected_uidvalidity != locator.uidvalidity:
             raise ImapMessageUnavailable("message UIDVALIDITY changed before move")
+        command = "MOVE" if "MOVE" in self._capabilities() else "COPY"
         status, _ = self.session.uid(
-            "MOVE",
+            command,
             str(locator.uid),
             _imap_mailbox_argument(destination),
         )
-        _require_ok(status, "IMAP UID MOVE failed")
+        _require_ok(status, f"IMAP UID {command} failed")
         copied = _copyuid(self.session.response("COPYUID"), source_uid=locator.uid)
         if copied is not None:
             destination_uidvalidity, destination_uid = copied

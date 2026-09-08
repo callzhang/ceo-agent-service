@@ -217,6 +217,7 @@ def _account_payload(account_id: str = "work_mail") -> dict[str, object]:
         "imap_tls": True,
         "imap_username": f"{account_id}@example.test",
         "imap_secret_reference": f"CEO_EMAIL_{account_id.upper()}_IMAP_SECRET",
+        "imap_move_mode": "move",
         "smtp_host": "smtp.example.test",
         "smtp_port": 465,
         "smtp_tls": True,
@@ -267,6 +268,7 @@ def test_imap_account_create_update_and_enable_do_not_require_smtp_fields(
 
     assert created.status_code == 201
     assert created.json()["item"]["enabled"] is False
+    assert created.json()["item"]["imap_move_mode"] == "move"
     assert not any(key.startswith("smtp_") for key in created.json()["item"])
 
     update_payload = _imap_only_account_payload()
@@ -332,6 +334,18 @@ def test_email_account_payload_forbids_extra_fields():
     payload = _account_payload()
     payload["threshold"] = 0.9
 
+    with pytest.raises(ValidationError):
+        EmailAccountPayload.model_validate(payload)
+
+
+def test_email_account_payload_accepts_only_explicit_imap_move_modes():
+    payload = _account_payload()
+    payload["scan_folders"] = tuple(payload["scan_folders"])
+    payload["imap_move_mode"] = "copy_as_move"
+
+    assert EmailAccountPayload.model_validate(payload).imap_move_mode == "copy_as_move"
+
+    payload["imap_move_mode"] = "auto"
     with pytest.raises(ValidationError):
         EmailAccountPayload.model_validate(payload)
 

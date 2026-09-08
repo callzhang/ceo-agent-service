@@ -49,6 +49,7 @@ from app.email_embedding_classifier import (
     DescriptionVectors,
 )
 from app.email_important import important_effective, normalize_important_signals
+from app.email_imap_mailbox import encode_imap_mailbox_argument
 from app.email_imap_readonly import ImapReadonlyAdapter, parse_rfc822_message
 from app.email_model_registry import (
     CandidateCompatibility,
@@ -1272,6 +1273,7 @@ def test_live_mailbox_move_flag_truth_and_restore_is_opt_in(tmp_path):
             required["CEO_LIVE_EMAIL_IMAP_PASSWORD"],
             port=int(os.getenv("CEO_LIVE_EMAIL_IMAP_PORT") or "993"),
             account_id=required["CEO_LIVE_EMAIL_ACCOUNT_ID"],
+            move_mode=os.getenv("CEO_LIVE_EMAIL_IMAP_MOVE_MODE") or "move",
         )
 
     def locate(hint):
@@ -1341,9 +1343,19 @@ def test_live_mailbox_move_flag_truth_and_restore_is_opt_in(tmp_path):
             assert state.locator is not None
             actual = state.locator
             assert target_folder in {item.display_name for item in provider.list_folders()}
+            provider.resolve_destination(
+                actual,
+                EmailAction.MOVE,
+                {"target_folder": target_folder},
+            )
             provider._select(actual.folder, readonly=False)
+            command = (
+                "MOVE" if "MOVE" in provider._capabilities() else "COPY"
+            )
             status, _ = provider.session.uid(
-                "MOVE", str(actual.uid), target_folder
+                command,
+                str(actual.uid),
+                encode_imap_mailbox_argument(target_folder),
             )
             assert status == "OK"
         finally:
@@ -1470,15 +1482,49 @@ def test_live_mailbox_move_flag_truth_and_restore_is_opt_in(tmp_path):
             model_text="Provider folder truth live test",
         )
 
+        class BoundedLiveObservationSource:
+            """Exercise the real adapter without traversing unrelated mailbox history."""
+
+            def __init__(self):
+                self.source = ImapReadonlyAdapter.connect(
+                    required["CEO_LIVE_EMAIL_IMAP_HOST"],
+                    required["CEO_LIVE_EMAIL_IMAP_USERNAME"],
+                    required["CEO_LIVE_EMAIL_IMAP_PASSWORD"],
+                    port=int(os.getenv("CEO_LIVE_EMAIL_IMAP_PORT") or "993"),
+                    account_id=account_id,
+                    mailbox_address=required["CEO_LIVE_EMAIL_IMAP_USERNAME"],
+                )
+
+            def list_folders(self):
+                return tuple(
+                    folder
+                    for folder in self.source.list_folders()
+                    if folder.display_name == required["CEO_LIVE_EMAIL_TEST_FOLDER"]
+                )
+
+            def fetch_uid_batch(
+                self,
+                mailbox,
+                *,
+                cursor_uidvalidity,
+                last_seen_uid,
+                limit,
+            ):
+                return self.source.fetch_uid_batch(
+                    mailbox,
+                    # Anchor the first live batch immediately before the
+                    # designated message. A None cursor intentionally starts
+                    # the production adapter at UID 1.
+                    cursor_uidvalidity=current.uidvalidity,
+                    last_seen_uid=max(last_seen_uid, current.uid - 1),
+                    limit=limit,
+                )
+
+            def logout(self):
+                self.source.logout()
+
         def readonly_source(_account):
-            return ImapReadonlyAdapter.connect(
-                required["CEO_LIVE_EMAIL_IMAP_HOST"],
-                required["CEO_LIVE_EMAIL_IMAP_USERNAME"],
-                required["CEO_LIVE_EMAIL_IMAP_PASSWORD"],
-                port=int(os.getenv("CEO_LIVE_EMAIL_IMAP_PORT") or "993"),
-                account_id=account_id,
-                mailbox_address=required["CEO_LIVE_EMAIL_IMAP_USERNAME"],
-            )
+            return BoundedLiveObservationSource()
 
         observer = ProviderTrainingObservationJob(
             state_path=tmp_path / "live-provider-observer.json",
