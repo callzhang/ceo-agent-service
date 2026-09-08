@@ -480,10 +480,7 @@ def register_console_routes(
         visible_title = service.build_sender().open_and_identify(
             scope.display_name,
             search_query=scope.display_name,
-            expected_recent_text=(
-                str(getattr(attempt, "trigger_text", "") or "").strip()
-                if scope.target_type == "direct" else None
-            ),
+            expected_recent_text=None,
             keep_foreground=True,
         )
         if visible_title != scope.display_name:

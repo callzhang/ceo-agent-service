@@ -182,7 +182,7 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
     assert retried == [delivery_id]
     assert open_response.status_code == 200
     assert open_response.json()["message"] == "已打开微信消息：Melody"
-    assert opened == [("Melody", "Melody", "Can you help later?")]
+    assert opened == [("Melody", "Melody", "")]
 
 
 def test_console_api_reuses_the_initialized_audit_store(
