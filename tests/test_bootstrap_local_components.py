@@ -34,7 +34,7 @@ def test_bootstrap_business_skill_selector_installs_only_business_skills(
     ]
     assert "terminal-notifier" not in completed.stdout
     installed = tmp_path / ".agents" / "skills"
-    assert len(list(installed.glob("ceo-*/SKILL.md"))) == 7
+    assert len(list(installed.glob("ceo-*/SKILL.md"))) == 8
     assert not (tmp_path / ".codex" / "skills").exists()
 
 
