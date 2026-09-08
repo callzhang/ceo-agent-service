@@ -10462,10 +10462,17 @@ class AutoReplyStore:
             for row in rows
         }
 
-    def requeue_unperformed_wechat_deliveries(self, *, max_retries: int = 2) -> int:
-        """Return pre-action failures to the send queue for a bounded retry."""
+    def requeue_unperformed_wechat_deliveries(
+        self,
+        *,
+        max_retries: int = 2,
+        retry_delay_seconds: int = 5 * 60,
+    ) -> int:
+        """Return aged pre-action failures to the send queue for a bounded retry."""
         if max_retries < 1:
             return 0
+        if retry_delay_seconds < 0:
+            raise ValueError("retry_delay_seconds must not be negative")
         with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
@@ -10483,6 +10490,8 @@ class AutoReplyStore:
                 where deliveries.status='failed'
                   and deliveries.pre_action_failure=1
                   and deliveries.action_started_at<>''
+                  and datetime(deliveries.action_started_at) <=
+                      datetime('now', printf('-%d seconds', ?))
                   and deliveries.execution_generation=tasks.execution_generation
                   and coalesce((
                       select attempts.retry_count
@@ -10494,7 +10503,7 @@ class AutoReplyStore:
                       limit 1
                   ), ?) < ?
                 """,
-                (0, max_retries),
+                (retry_delay_seconds, 0, max_retries),
             ).fetchall()
             requeued = 0
             for row in rows:

@@ -382,7 +382,7 @@ def test_unknown_delivery_status_fails_history_attempt(tmp_path):
 def test_auto_mode_retries_delivery_when_no_wechat_action_was_performed(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     d, attempt_id = _seed_with_attempt(store)
-    store.mark_wechat_delivery_sending(d.id)
+    store.mark_wechat_delivery_sending(d.id, now="2020-01-01 00:00:00")
     store.set_wechat_delivery_status(
         d.id,
         "failed",
@@ -407,6 +407,21 @@ def test_auto_mode_retries_delivery_when_no_wechat_action_was_performed(tmp_path
     assert store.get_reply_attempt(attempt_id).send_status == "sent"
 
 
+def test_unperformed_wechat_delivery_waits_five_minutes_before_retry(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery, _attempt_id = _seed_with_attempt(store)
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "failed",
+        error="target_open_failed",
+        pre_action_failure=True,
+    )
+
+    assert store.requeue_unperformed_wechat_deliveries() == 0
+    assert store.get_wechat_delivery_for_task(1).status == "failed"
+
+
 def test_unperformed_wechat_delivery_is_requeued_at_most_twice(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     d, attempt_id = _seed_with_attempt(store)
@@ -418,7 +433,7 @@ def test_unperformed_wechat_delivery_is_requeued_at_most_twice(tmp_path):
         pre_action_failure=True,
     )
 
-    assert store.requeue_unperformed_wechat_deliveries() == 1
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
     assert store.get_reply_attempt(attempt_id).retry_count == 1
 
     store.mark_wechat_delivery_sending(d.id)
@@ -429,7 +444,7 @@ def test_unperformed_wechat_delivery_is_requeued_at_most_twice(tmp_path):
         pre_action_failure=True,
     )
 
-    assert store.requeue_unperformed_wechat_deliveries() == 1
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
     assert store.get_reply_attempt(attempt_id).retry_count == 2
 
     store.mark_wechat_delivery_sending(d.id)
@@ -440,7 +455,7 @@ def test_unperformed_wechat_delivery_is_requeued_at_most_twice(tmp_path):
         pre_action_failure=True,
     )
 
-    assert store.requeue_unperformed_wechat_deliveries() == 0
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 0
     assert store.get_wechat_delivery_for_task(1).status == "failed"
     assert store.get_reply_attempt(attempt_id).retry_count == 2
 
@@ -456,7 +471,7 @@ def test_pre_action_failure_requeues_using_persisted_state_not_error_text(tmp_pa
         pre_action_failure=True,
     )
 
-    assert store.requeue_unperformed_wechat_deliveries() == 1
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
     refreshed = store.get_wechat_delivery_for_task(1)
     assert refreshed is not None
     assert refreshed.status == "ready_to_send"
@@ -495,7 +510,7 @@ def test_unperformed_delivery_without_attempt_is_requeued_at_most_twice(tmp_path
         pre_action_failure=True,
     )
 
-    assert store.requeue_unperformed_wechat_deliveries() == 1
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
     assert store.get_wechat_delivery_for_task(1).status == "ready_to_send"
     attempt = store.get_latest_reply_attempt_for_trigger("u9", "m1")
     assert attempt is not None
@@ -509,7 +524,7 @@ def test_unperformed_delivery_without_attempt_is_requeued_at_most_twice(tmp_path
         error="action_not_performed",
         pre_action_failure=True,
     )
-    assert store.requeue_unperformed_wechat_deliveries() == 1
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
 
     store.mark_wechat_delivery_sending(delivery.id)
     store.set_wechat_delivery_status(
@@ -518,7 +533,7 @@ def test_unperformed_delivery_without_attempt_is_requeued_at_most_twice(tmp_path
         error="action_not_performed",
         pre_action_failure=True,
     )
-    assert store.requeue_unperformed_wechat_deliveries() == 0
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 0
 
 
 def test_recall_uses_runner_capability_with_text(tmp_path):
@@ -590,7 +605,7 @@ def test_wechat_retry_and_recall_use_same_prepared_body(tmp_path, monkeypatch):
     )
 
     assert sender.send(delivery, scope).status == "failed"
-    assert store.requeue_unperformed_wechat_deliveries() == 1
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
     requeued = store.get_wechat_delivery_by_id(delivery.id)
     assert sender.send(requeued, scope).status == "sent"
     assert service.recall_wechat_delivery(
