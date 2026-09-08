@@ -137,7 +137,6 @@ def register_email_routes(
                 "imap_username",
                 "enabled",
                 "scan_folders",
-                "scan_interval_seconds",
                 "created_at",
                 "updated_at",
             )

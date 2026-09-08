@@ -2,14 +2,26 @@ import { request } from "./console";
 
 export type ScheduledTaskSkillSource = "managed" | "operation";
 export type ScheduledTaskTriggerKind = "scheduled" | "manual";
+export type ScheduledTaskDispatchStatus = "pending" | "dispatched" | "skipped" | "failed";
 
-export interface ScheduledTaskSkillRef {
-  skill_source: ScheduledTaskSkillSource;
+interface ScheduledTaskSkillRefBase {
   skill_name: string;
-  managed_skill_id: number | null;
-  managed_revision_id: number | null;
   position: number;
 }
+
+export interface ManagedScheduledTaskSkillRef extends ScheduledTaskSkillRefBase {
+  skill_source: "managed";
+  managed_skill_id: number;
+  managed_revision_id: number;
+}
+
+export interface OperationScheduledTaskSkillRef extends ScheduledTaskSkillRefBase {
+  skill_source: "operation";
+  managed_skill_id: null;
+  managed_revision_id: null;
+}
+
+export type ScheduledTaskSkillRef = ManagedScheduledTaskSkillRef | OperationScheduledTaskSkillRef;
 
 export interface ScheduledTaskDraft {
   name: string;
@@ -34,7 +46,7 @@ export interface ScheduledTaskRun {
   scheduled_task_id: number;
   trigger_kind: ScheduledTaskTriggerKind;
   scheduled_for: string;
-  dispatch_status: string;
+  dispatch_status: ScheduledTaskDispatchStatus;
   skip_or_error_reason: string;
   execution_kind: string;
   execution_id: string;
@@ -114,12 +126,15 @@ function nullableString(value: unknown): value is string | null {
 
 function validSkillRef(value: unknown): value is ScheduledTaskSkillRef {
   const item = record(value);
-  return Boolean(item
-    && (item.skill_source === "managed" || item.skill_source === "operation")
-    && typeof item.skill_name === "string"
-    && (typeof item.managed_skill_id === "number" || item.managed_skill_id === null)
-    && (typeof item.managed_revision_id === "number" || item.managed_revision_id === null)
-    && typeof item.position === "number");
+  if (!item || typeof item.skill_name !== "string" || !item.skill_name.trim()
+    || !Number.isInteger(item.position) || Number(item.position) < 0) return false;
+  if (item.skill_source === "managed") {
+    return Number.isInteger(item.managed_skill_id) && Number(item.managed_skill_id) > 0
+      && Number.isInteger(item.managed_revision_id) && Number(item.managed_revision_id) > 0;
+  }
+  return item.skill_source === "operation"
+    && item.managed_skill_id === null
+    && item.managed_revision_id === null;
 }
 
 function validRun(value: unknown): value is ScheduledTaskRun {
@@ -129,7 +144,8 @@ function validRun(value: unknown): value is ScheduledTaskRun {
     && typeof item.id === "number" && typeof item.event_id === "string"
     && typeof item.scheduled_task_id === "number"
     && (item.trigger_kind === "scheduled" || item.trigger_kind === "manual")
-    && typeof item.scheduled_for === "string" && typeof item.dispatch_status === "string"
+    && typeof item.scheduled_for === "string"
+    && (item.dispatch_status === "pending" || item.dispatch_status === "dispatched" || item.dispatch_status === "skipped" || item.dispatch_status === "failed")
     && typeof item.skip_or_error_reason === "string" && typeof item.execution_kind === "string"
     && typeof item.execution_id === "string" && typeof item.created_at === "string"
     && nullableString(item.dispatched_at)

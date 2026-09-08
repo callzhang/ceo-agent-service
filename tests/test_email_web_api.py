@@ -1545,22 +1545,27 @@ def test_email_account_api_accepts_nontechnical_payload_without_secret_reference
         "imap_secret": "known-imap-secret",
         "enabled": True,
         "scan_folders": ["INBOX"],
-        "scan_interval_seconds": 60,
     }
     with TestClient(app) as client:
         created = client.post("/api/console/email/accounts", json=payload)
         listed = client.get("/api/console/email/accounts")
         updated = client.put(
             "/api/console/email/accounts/work_mail",
-            json={**payload, "imap_secret": "", "scan_interval_seconds": 120},
+            json={**payload, "imap_secret": ""},
+        )
+        rejected_cadence = client.put(
+            "/api/console/email/accounts/work_mail",
+            json={**payload, "scan_interval_seconds": 120},
         )
 
     assert created.status_code == 201
     assert created.json()["restart_required"] is True
     assert listed.json()["items"][0]["imap_secret_configured"] is True
     assert updated.status_code == 200
-    assert updated.json()["item"]["scan_interval_seconds"] == 120
+    assert rejected_cadence.status_code == 400
+    assert EmailStore(database).get_account("work_mail")["scan_interval_seconds"] == 60
     for response in (created, listed, updated):
+        assert "scan_interval_seconds" not in response.json().get("item", response.json().get("items", [{}])[0])
         assert "known-imap-secret" not in response.text
         assert "imap_secret_reference" not in response.text
 

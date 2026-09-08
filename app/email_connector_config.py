@@ -19,6 +19,7 @@ from pydantic import (
 _ACCOUNT_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]{1,63}$"
 _IMAP_SECRET_REFERENCE_PATTERN = r"^CEO_EMAIL_[A-Z0-9_]+_IMAP_SECRET$"
 _SECRET_REFERENCE_PATTERN = re.compile(_IMAP_SECRET_REFERENCE_PATTERN)
+_INTERNAL_SCAN_INTERVAL_SECONDS = 60
 
 
 class EmailAccountPayload(BaseModel):
@@ -46,7 +47,6 @@ class EmailAccountPayload(BaseModel):
     smtp_secret_reference: str = ""
     enabled: bool = True
     scan_folders: tuple[str, ...] = ("INBOX",)
-    scan_interval_seconds: int = Field(default=60, ge=15, le=3600)
     allow_shared_email: bool = False
     imap_secret: SecretStr | None = Field(default=None, exclude=True)
     smtp_secret: SecretStr | None = Field(default=None, exclude=True)
@@ -94,9 +94,12 @@ class EmailAccountPayload(BaseModel):
     def stored_values(self) -> dict[str, object]:
         """Return exactly the non-secret fields owned by ``email_accounts``."""
 
-        return self.model_dump(
+        values = self.model_dump(
             exclude={"allow_shared_email", "imap_secret", "smtp_secret"}
         )
+        # Polling cadence belongs to the internal worker, not Connector config.
+        values["scan_interval_seconds"] = _INTERNAL_SCAN_INTERVAL_SECONDS
+        return values
 
 
 def resolve_secret(reference: str, env: Mapping[str, str]) -> str | None:

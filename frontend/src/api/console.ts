@@ -244,7 +244,6 @@ export interface EmailAccountItem {
   imap_secret_configured: boolean;
   enabled: boolean;
   scan_folders: string[];
-  scan_interval_seconds: number;
   created_at: string;
   updated_at: string;
 }
@@ -259,7 +258,6 @@ export interface EmailAccountPayload {
   imap_secret?: string;
   enabled: boolean;
   scan_folders: string[];
-  scan_interval_seconds: number;
 }
 export interface EmailAccountSaveResult {
   ok: boolean;

@@ -31,6 +31,12 @@ const task = {
   updated_at: "2026-09-08T12:00:00Z",
   deleted_at: null,
 } as const;
+const validRun = {
+  id: 11, event_id: "manual:11", scheduled_task_id: 7, trigger_kind: "manual",
+  scheduled_for: "2026-09-08T12:00:00Z", dispatch_status: "pending", skip_or_error_reason: "",
+  execution_kind: "", execution_id: "", created_at: "2026-09-08T12:00:00Z", dispatched_at: null,
+  snapshot: { task_id: 7, task_version: 3, name: task.name, prompt: task.prompt, cron_expression: task.cron_expression, timezone_name: task.timezone_name, runtime_id: task.runtime_id, runtime_options: task.runtime_options, working_directory: task.working_directory, skill_refs: task.skill_refs },
+} as const;
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -43,6 +49,18 @@ describe("scheduled tasks API", () => {
 
     expect((await listScheduledTasks()).items[0].version).toBe(3);
     await expect(getScheduledTaskOptions()).rejects.toThrow("invalid scheduled task options response");
+  });
+
+  it.each([
+    ["managed ref without exact ids", { ...task, skill_refs: [{ ...task.skill_refs[0], skill_source: "managed", managed_skill_id: null, managed_revision_id: null }] }],
+    ["managed ref with invalid ids", { ...task, skill_refs: [{ ...task.skill_refs[0], skill_source: "managed", managed_skill_id: 0, managed_revision_id: -2 }] }],
+    ["operation ref carrying managed ids", { ...task, skill_refs: [{ ...task.skill_refs[0], managed_skill_id: 2, managed_revision_id: 3 }] }],
+    ["operation ref without identity", { ...task, skill_refs: [{ ...task.skill_refs[0], skill_name: "" }] }],
+    ["unknown dispatch state", { ...task, recent_run: { ...validRun, dispatch_status: "completed" } }],
+  ])("rejects %s", async (_label, invalidTask) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [invalidTask], meta: { total: 1, snapshot_at: "now" } }), { headers: { "Content-Type": "application/json" } })));
+
+    await expect(listScheduledTasks()).rejects.toThrow("invalid scheduled tasks response");
   });
 
   it("uses exact versions for update, enable state, and delete mutations", async () => {
@@ -68,15 +86,9 @@ describe("scheduled tasks API", () => {
   });
 
   it("runs manually and paginates history with the opaque cursor", async () => {
-    const run = {
-      id: 11, event_id: "manual:11", scheduled_task_id: 7, trigger_kind: "manual",
-      scheduled_for: "2026-09-08T12:00:00Z", dispatch_status: "pending", skip_or_error_reason: "",
-      execution_kind: "", execution_id: "", created_at: "2026-09-08T12:00:00Z", dispatched_at: null,
-      snapshot: { task_id: 7, task_version: 3, name: task.name, prompt: task.prompt, cron_expression: task.cron_expression, timezone_name: task.timezone_name, runtime_id: task.runtime_id, runtime_options: task.runtime_options, working_directory: task.working_directory, skill_refs: task.skill_refs },
-    };
     const fetch = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ item: run, meta: { snapshot_at: "now" } }), { status: 201, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ scheduled_task: task, items: [run], meta: { snapshot_at: "now", page_size: 20, next_cursor: "11", has_more: true } }), { headers: { "Content-Type": "application/json" } }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ item: validRun, meta: { snapshot_at: "now" } }), { status: 201, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ scheduled_task: task, items: [validRun], meta: { snapshot_at: "now", page_size: 20, next_cursor: "11", has_more: true } }), { headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetch);
 
     expect((await runScheduledTask(7)).item.id).toBe(11);

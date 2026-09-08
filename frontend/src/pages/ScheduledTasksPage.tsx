@@ -10,7 +10,9 @@ import {
   setScheduledTaskEnabled,
   updateScheduledTask,
   type ManagedSkillOption,
+  type ManagedScheduledTaskSkillRef,
   type OperationSkillOption,
+  type OperationScheduledTaskSkillRef,
   type ScheduledTask,
   type ScheduledTaskDraft,
   type ScheduledTaskOptions,
@@ -28,7 +30,7 @@ interface SkillChoice {
   description: string;
   available: boolean;
   unavailableReason: string | null;
-  ref: Omit<ScheduledTaskSkillRef, "position">;
+  ref: Omit<ManagedScheduledTaskSkillRef, "position"> | Omit<OperationScheduledTaskSkillRef, "position">;
 }
 
 function emptyDraft(options: ScheduledTaskOptions | null): ScheduledTaskDraft {
@@ -104,12 +106,50 @@ function refKey(ref: Omit<ScheduledTaskSkillRef, "position"> | ScheduledTaskSkil
     : `operation:${ref.skill_name}`;
 }
 
+function positionedRef(ref: SkillChoice["ref"], position: number): ScheduledTaskSkillRef {
+  return ref.skill_source === "managed" ? { ...ref, position } : { ...ref, position };
+}
+
 function activeSkillQuery(prompt: string) {
   const marker = prompt.lastIndexOf("$");
   if (marker < 0) return null;
   const suffix = prompt.slice(marker + 1);
   if ([...suffix].some((character) => character.trim() === "")) return null;
   return { marker, query: suffix.toLocaleLowerCase() };
+}
+
+function isSkillNameCharacter(character: string | undefined) {
+  if (!character) return false;
+  const code = character.charCodeAt(0);
+  return (code >= 48 && code <= 57)
+    || (code >= 65 && code <= 90)
+    || (code >= 97 && code <= 122)
+    || character === "-"
+    || character === "_";
+}
+
+function skillTokenRanges(prompt: string, skillName: string) {
+  const token = `$${skillName}`;
+  const ranges: Array<{ start: number; end: number }> = [];
+  let offset = 0;
+  while (offset < prompt.length) {
+    const start = prompt.indexOf(token, offset);
+    if (start < 0) break;
+    const end = start + token.length;
+    if (!isSkillNameCharacter(prompt[end])) ranges.push({ start, end });
+    offset = end;
+  }
+  return ranges;
+}
+
+function hasSkillToken(prompt: string, skillName: string) {
+  return skillTokenRanges(prompt, skillName).length > 0;
+}
+
+function removeSkillToken(prompt: string, skillName: string) {
+  return skillTokenRanges(prompt, skillName)
+    .reverse()
+    .reduce((value, range) => `${value.slice(0, range.start)}${value.slice(range.end)}`, prompt);
 }
 
 function TaskListItem({ task, selected, onSelect }: { task: ScheduledTask; selected: boolean; onSelect: () => void }) {
@@ -198,17 +238,41 @@ export function ScheduledTasksPage() {
     setDraft((current) => ({ ...current, [key]: value })); setMessage(""); setError(""); setConflict(false);
   }
 
+  function updatePrompt(prompt: string) {
+    setDraft((current) => ({
+      ...current,
+      prompt,
+      skill_refs: current.skill_refs
+        .filter((ref) => !hasSkillToken(current.prompt, ref.skill_name) || hasSkillToken(prompt, ref.skill_name))
+        .map((ref, position) => ({ ...ref, position })),
+    }));
+    setMessage(""); setError(""); setConflict(false);
+  }
+
   function selectSkill(choice: SkillChoice) {
     if (!choice.available || query === null) return;
     const nextPrompt = `${draft.prompt.slice(0, query.marker)}$${choice.name} `;
     const existing = draft.skill_refs.some((ref) => refKey(ref) === choice.key);
-    const refs = existing ? draft.skill_refs : [...draft.skill_refs, { ...choice.ref, position: draft.skill_refs.length }];
+    const refs: ScheduledTaskSkillRef[] = existing ? draft.skill_refs : [
+      ...draft.skill_refs.filter((ref) => !(ref.skill_source === choice.ref.skill_source && ref.skill_name === choice.name)),
+      positionedRef(choice.ref, 0),
+    ].map((ref, position) => ({ ...ref, position }));
     setDraft((current) => ({ ...current, prompt: nextPrompt, skill_refs: refs }));
     setSkillMenuOpen(false);
   }
 
   function removeSkill(index: number) {
-    updateDraft("skill_refs", draft.skill_refs.filter((_, position) => position !== index).map((ref, position) => ({ ...ref, position })));
+    setDraft((current) => {
+      const removed = current.skill_refs[index];
+      const skill_refs = current.skill_refs.filter((_, position) => position !== index).map((ref, position) => ({ ...ref, position }));
+      const stillReferenced = removed && skill_refs.some((ref) => ref.skill_name === removed.skill_name);
+      return {
+        ...current,
+        prompt: removed && !stillReferenced ? removeSkillToken(current.prompt, removed.skill_name) : current.prompt,
+        skill_refs,
+      };
+    });
+    setMessage(""); setError(""); setConflict(false);
   }
 
   async function save() {
@@ -291,7 +355,7 @@ export function ScheduledTasksPage() {
             <div className="scheduled-task-form-row"><label><span>Cron（秒 分 时 日 月 周）</span><input aria-label="Cron 表达式" value={draft.cron_expression} onChange={(event) => updateDraft("cron_expression", event.target.value)} /></label><label><span>时区</span><input aria-label="时区" value={draft.timezone_name} onChange={(event) => updateDraft("timezone_name", event.target.value)} /></label></div>
             <div className="scheduled-task-form-row"><label><span>Runtime</span><select aria-label="Runtime" value={draft.runtime_id} onChange={(event) => updateDraft("runtime_id", event.target.value)}>{options?.runtime_options.map((runtime) => <option key={runtime.route_name} value={runtime.route_name} disabled={!runtime.available}>{runtime.route_name} · {runtime.model}{runtime.available ? "" : ` · 不可用：${runtime.unavailable_reason}`}</option>)}</select></label><label><span>Reasoning</span><select aria-label="Reasoning" value={draft.runtime_options.thinking || ""} onChange={(event) => updateDraft("runtime_options", { thinking: event.target.value as ScheduledTaskDraft["runtime_options"]["thinking"] })}><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option></select></label></div>
             <label><span>工作目录（可选）</span><input aria-label="工作目录" value={draft.working_directory} onChange={(event) => updateDraft("working_directory", event.target.value)} placeholder="使用服务默认目录" /></label>
-            <label className="scheduled-task-prompt-field"><span>任务描述</span><textarea aria-label="任务描述" rows={7} value={draft.prompt} onChange={(event) => { updateDraft("prompt", event.target.value); setSkillMenuOpen(activeSkillQuery(event.target.value) !== null); }} placeholder="描述 Agent 每次触发要完成什么；输入 $ 引用 Skill" />
+            <label className="scheduled-task-prompt-field"><span>任务描述</span><textarea aria-label="任务描述" rows={7} value={draft.prompt} onChange={(event) => { updatePrompt(event.target.value); setSkillMenuOpen(activeSkillQuery(event.target.value) !== null); }} placeholder="描述 Agent 每次触发要完成什么；输入 $ 引用 Skill" />
               {skillMenuOpen && query !== null && <div className="scheduled-task-suggestions" role="listbox" aria-label="Skill 建议">{suggestions.length ? suggestions.map((choice) => <button type="button" role="option" aria-selected="false" disabled={!choice.available} key={choice.key} onClick={() => selectSkill(choice)}><strong>{choice.label}</strong><small>{choice.description}{choice.available ? "" : ` · 不可用：${choice.unavailableReason}`}</small></button>) : <p>没有匹配的 Skill</p>}</div>}
             </label>
             <div className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>Agent Skills</h3><span>由结构化引用执行，不从描述文字推断</span></div>{draft.skill_refs.length ? <div className="scheduled-task-skill-chips">{draft.skill_refs.map((ref, index) => { const choice = choices.find((item) => item.key === refKey(ref)); const label = choice?.label || ref.skill_name; return <button type="button" key={`${refKey(ref)}:${index}`} aria-label={`移除${label}`} onClick={() => removeSkill(index)}><span>{label}</span><small>{ref.skill_source === "managed" ? "Managed" : "Operation"}</small><b aria-hidden="true">×</b></button>; })}</div> : <p className="scheduled-task-empty-copy">输入 <code>$</code> 搜索并选择至少一个 Skill。</p>}</div>

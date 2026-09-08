@@ -301,7 +301,6 @@ interface EmailAccountDraft {
   imap_secret_configured: boolean;
   enabled: boolean;
   scan_folders: string;
-  scan_interval_seconds: string;
 }
 
 function newEmailAccountDraft(): EmailAccountDraft {
@@ -317,7 +316,6 @@ function newEmailAccountDraft(): EmailAccountDraft {
     imap_secret_configured: false,
     enabled: true,
     scan_folders: "INBOX",
-    scan_interval_seconds: "60",
   };
 }
 
@@ -334,7 +332,6 @@ function emailAccountDraft(account: EmailAccountItem): EmailAccountDraft {
     imap_secret_configured: account.imap_secret_configured,
     enabled: account.enabled,
     scan_folders: account.scan_folders.join(", "),
-    scan_interval_seconds: String(account.scan_interval_seconds),
   };
 }
 
@@ -358,7 +355,6 @@ function emailAccountId(address: string) {
 
 function accountPayload(draft: EmailAccountDraft): EmailAccountPayload | null {
   const imapPort = Number(draft.imap_port);
-  const scanInterval = Number(draft.scan_interval_seconds);
   const scanFolders = draft.scan_folders.split(",").map((folder) => folder.trim()).filter(Boolean);
   if (
     !draft.display_name.trim()
@@ -368,9 +364,6 @@ function accountPayload(draft: EmailAccountDraft): EmailAccountPayload | null {
     || !Number.isInteger(imapPort)
     || imapPort < 1
     || imapPort > 65535
-    || !Number.isInteger(scanInterval)
-    || scanInterval < 15
-    || scanInterval > 3600
     || !scanFolders.length
   ) return null;
   return {
@@ -384,7 +377,6 @@ function accountPayload(draft: EmailAccountDraft): EmailAccountPayload | null {
     ...(draft.imap_secret.trim() ? { imap_secret: draft.imap_secret } : {}),
     enabled: draft.enabled,
     scan_folders: scanFolders,
-    scan_interval_seconds: scanInterval,
   };
 }
 
@@ -399,7 +391,6 @@ function savedAccountPayload(account: EmailAccountItem): EmailAccountPayload {
     imap_username: account.imap_username,
     enabled: account.enabled,
     scan_folders: account.scan_folders,
-    scan_interval_seconds: account.scan_interval_seconds,
   };
 }
 
@@ -434,7 +425,7 @@ function EmailAccountsPanel() {
     if (!draft || busyAccountId) return;
     const payload = accountPayload(draft);
     if (!payload) {
-      setError("请完整填写 IMAP 账户信息；端口需为 1–65535，扫描间隔需为 15–3600 秒。");
+      setError("请完整填写 IMAP 账户信息；端口需为 1–65535，且至少填写一个扫描文件夹。");
       return;
     }
     if (!draft.account_id && !payload.imap_secret) {
@@ -497,7 +488,7 @@ function EmailAccountsPanel() {
     {state === "error" && <button type="button" className="secondary-button" onClick={() => window.location.reload()}>重新加载</button>}
     {state === "ready" && <div className="email-account-list">
       {accounts.length ? accounts.map((account) => <article className="email-account-card" key={account.account_id}>
-        <div className="email-account-summary"><div><h4>{account.display_name}</h4><p>{account.email_address}</p><p className="muted">{account.imap_host}:{account.imap_port} · {account.scan_folders.join("、")} · 每 {account.scan_interval_seconds} 秒扫描</p></div><label className="email-account-switch"><span>启用</span><input type="checkbox" role="switch" aria-label={`启用${account.display_name}`} checked={account.enabled} disabled={Boolean(busyAccountId)} onChange={() => void toggleAccount(account)} /></label></div>
+        <div className="email-account-summary"><div><h4>{account.display_name}</h4><p>{account.email_address}</p><p className="muted">{account.imap_host}:{account.imap_port} · {account.scan_folders.join("、")}</p></div><label className="email-account-switch"><span>启用</span><input type="checkbox" role="switch" aria-label={`启用${account.display_name}`} checked={account.enabled} disabled={Boolean(busyAccountId)} onChange={() => void toggleAccount(account)} /></label></div>
         <div className="email-account-status-row"><span>{account.imap_secret_configured ? "已保存密码" : "尚未设置密码"}</span><span>{connectionStates[account.account_id] || "尚未测试连接"}</span></div>
         <div className="email-account-actions"><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`编辑${account.display_name}`} onClick={() => { setDraft(emailAccountDraft(account)); setError(""); }}>编辑</button><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`测试${account.display_name}连接`} onClick={() => void testConnection(account)}>测试连接</button></div>
       </article>) : <p className="wechat-empty">还没有邮箱账户。点击“添加邮箱”开始配置。</p>}
@@ -512,7 +503,6 @@ function EmailAccountsPanel() {
         <label><span>IMAP 用户名</span><input aria-label="IMAP 用户名" value={draft.imap_username} onChange={(event) => setDraft({ ...draft, imap_username: event.target.value })} /></label>
         <div><SecretField id="email-imap-secret" label="IMAP 密码" value={draft.imap_secret} onChange={(value) => setDraft({ ...draft, imap_secret: value })} />{draft.imap_secret_configured && <p className="field-help">密码已保存；留空不会修改。</p>}</div>
         <label><span>扫描文件夹</span><input aria-label="扫描文件夹" value={draft.scan_folders} placeholder="INBOX, Receipts" onChange={(event) => setDraft({ ...draft, scan_folders: event.target.value })} /><small>多个文件夹用英文逗号分隔。</small></label>
-        <label><span>扫描间隔（秒）</span><input aria-label="扫描间隔（秒）" type="number" min="15" max="3600" value={draft.scan_interval_seconds} onChange={(event) => setDraft({ ...draft, scan_interval_seconds: event.target.value })} /></label>
       </div>
       <div className="email-account-options"><label><input type="checkbox" checked={draft.imap_tls} onChange={(event) => setDraft({ ...draft, imap_tls: event.target.checked })} /> 使用 SSL/TLS</label><label><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /> 启用此邮箱</label></div>
       <button type="submit" className="primary-button" disabled={Boolean(busyAccountId)}>{busyAccountId ? "正在保存…" : "保存邮箱"}</button>

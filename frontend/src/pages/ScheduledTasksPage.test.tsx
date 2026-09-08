@@ -76,7 +76,7 @@ describe("ScheduledTasksPage", () => {
     expect(screen.queryByRole("listbox", { name: "Skill 建议" })).not.toBeInTheDocument();
   });
 
-  it("selects Skills through $ suggestions and submits structured refs independently from prompt parsing", async () => {
+  it("selects Skills through $ suggestions without inferring extra refs from arbitrary text", async () => {
     const user = userEvent.setup();
     renderPage();
     const prompt = await screen.findByLabelText("任务描述");
@@ -88,15 +88,36 @@ describe("ScheduledTasksPage", () => {
     expect(prompt).toHaveValue("同步听记 $ceo-minutes-sync ");
     const chip = screen.getByRole("button", { name: /移除每天听记同步.*revision 2/ });
     expect(chip).toBeInTheDocument();
-    await user.clear(prompt);
-    await user.type(prompt, "这个描述不再包含 Skill 名称");
+    fireEvent.change(prompt, { target: { value: "这个描述保留 $ceo-minutes-sync 但不会从 $dingtalk-chat 推断执行引用" } });
     await user.click(screen.getByRole("button", { name: "保存更改" }));
 
     expect(api.updateScheduledTask).toHaveBeenCalledWith(7, expect.objectContaining({
       version: 3,
-      prompt: "这个描述不再包含 Skill 名称",
-      skill_refs: [operationRef, managedRef],
+      prompt: "这个描述保留 $ceo-minutes-sync 但不会从 $dingtalk-chat 推断执行引用",
+      skill_refs: [{ ...managedRef, position: 0 }],
     }));
+  });
+
+  it("keeps explicit $ tokens and structured refs synchronized in both edit directions", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const prompt = await screen.findByLabelText("任务描述");
+
+    fireEvent.change(prompt, { target: { value: "只保留普通描述" } });
+    expect(screen.queryByRole("button", { name: "移除dingtalk-chat" })).not.toBeInTheDocument();
+
+    await user.type(prompt, " $ceo");
+    await user.click(screen.getByRole("option", { name: /每天听记同步.*revision 2/ }));
+    expect(screen.getByRole("button", { name: /移除每天听记同步.*revision 2/ })).toBeInTheDocument();
+    fireEvent.change(prompt, { target: { value: "只保留普通描述" } });
+    expect(screen.queryByRole("button", { name: /移除每天听记同步.*revision 2/ })).not.toBeInTheDocument();
+
+    await user.type(prompt, " $dingtalk");
+    await user.click(screen.getByRole("option", { name: /dingtalk-chat/ }));
+    expect(prompt).toHaveValue("只保留普通描述 $dingtalk-chat ");
+    await user.click(screen.getByRole("button", { name: "移除dingtalk-chat" }));
+    expect(prompt).toHaveValue("只保留普通描述  ");
+    expect(prompt).not.toHaveValue(expect.stringContaining("$dingtalk-chat"));
   });
 
   it("creates, toggles, manually runs, and deletes with explicit confirmation", async () => {
