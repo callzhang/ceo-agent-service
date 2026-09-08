@@ -137,6 +137,45 @@ def test_repository_import_is_idempotent_and_preserves_user_owned_name(
     assert store.list_managed_skill_revisions(user.id) == (user_revision,)
 
 
+def test_minutes_sync_repository_import_preserves_exact_bytes_and_revision(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "minutes-sync.sqlite3")
+    expected = (
+        Path(__file__).resolve().parents[1]
+        / "skills"
+        / "ceo-minutes-sync"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    import_repository_managed_skills(store)
+
+    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
+    assert skill is not None
+    revision = store.list_managed_skill_revisions(skill.id)[0]
+    assert revision.content == expected
+    assert revision.sha256 == hashlib.sha256(expected.encode("utf-8")).hexdigest()
+    assert revision.source == REPOSITORY_IMPORT_SOURCE
+    assert revision.parent_revision_id is None
+
+
+def test_minutes_sync_repository_import_does_not_overwrite_custom_same_name(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "custom-minutes-sync.sqlite3")
+    custom = store.create_managed_skill("ceo-minutes-sync", "Custom minutes sync")
+    custom_revision = store.create_managed_skill_revision(
+        custom.id,
+        SKILL_V1.replace("ceo-test", "ceo-minutes-sync"),
+        source="settings",
+    )
+
+    imported = import_repository_managed_skills(store)
+
+    assert "ceo-minutes-sync" not in {entry.name for entry in imported}
+    assert store.list_managed_skill_revisions(custom.id) == (custom_revision,)
+
+
 def test_repository_import_reconciles_partial_service_owned_records_into_initial_config(
     tmp_path: Path,
 ) -> None:
