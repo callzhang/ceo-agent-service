@@ -46,18 +46,41 @@ def seed_scheduled_tasks(
         raise ValueError("ceo-minutes-sync repository revision is missing")
     revision = repository_revisions[-1]
 
+    managed_option = next(
+        option
+        for option in options.list_managed_skill_options()
+        if option.skill_id == skill.id
+    )
+    revision_option = next(
+        option
+        for option in managed_option.revisions
+        if option.revision_id == revision.id
+    )
     runtime_options = options.list_runtime_options()
     selected = next((option for option in runtime_options if option.available), None)
-    enabled = selected is not None
+    enabled = selected is not None and revision_option.available
     if selected is None:
         selected = runtime_options[0]
 
     prompt = "同步新增或新获得访问权限的 DingTalk AI 听记，并使用 $ceo-minutes-sync 输出可核验结果。"
-    if not enabled:
-        prompt += (
-            "\n\n未启用：没有健康且已配置的 Runtime（"
+    disabled_reasons: list[str] = []
+    if not any(option.available for option in runtime_options):
+        disabled_reasons.append(
+            "没有健康且已配置的 Runtime（"
             + _runtime_unavailable_summary(runtime_options)
-            + "）。请先修复 Runtime，再编辑并启用此任务。"
+            + "）"
+        )
+    if not revision_option.available:
+        disabled_reasons.append(
+            "精确 repository Skill revision 当前不可用（"
+            + (revision_option.unavailable_reason or "unavailable")
+            + "）"
+        )
+    if disabled_reasons:
+        prompt += (
+            "\n\n未启用："
+            + "；".join(disabled_reasons)
+            + "。请先修复 Runtime 或加载精确 Skill revision，再编辑并启用此任务。"
         )
 
     task = store.create_scheduled_task(

@@ -139,3 +139,53 @@ def test_seed_without_healthy_runtime_is_disabled_with_visible_reason(
         option.route_name for option in options.list_runtime_options()
     }
     assert store.list_scheduled_task_runs(task.id) == ()
+
+
+def test_seed_is_disabled_when_exact_repository_revision_is_not_loaded(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "revision-not-loaded.sqlite3")
+    existing_skill = store.create_managed_skill("ceo-existing", "Existing Skill")
+    existing_revision = store.create_managed_skill_revision(
+        existing_skill.id,
+        "---\nname: ceo-existing\ndescription: Existing\n"
+        "metadata:\n  managed_by: ceo-agent-service\n---\n\n# Existing\n",
+        source="settings",
+    )
+    existing_config = store.create_runtime_skill_config(
+        {existing_skill.id: existing_revision.id}, expected_parent_id=None
+    )
+    import_repository_managed_skills(store)
+    bindings_before = store.list_runtime_skill_bindings(existing_config.id)
+    options = ScheduledTaskOptionService(
+        store=store,
+        environment={
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_api,codex_oauth",
+            "CEO_CLAUDE_API_KEY": "test-secret",
+            "CEO_CLAUDE_MODEL": "sonnet",
+            "CEO_CODEX_MODEL": "gpt-5.6-sol",
+        },
+        runtime_snapshots={
+            route: _snapshot(route, healthy=route == "codex_oauth")
+            for route in ("claude_api", "codex_oauth")
+        },
+        operation_skill_files=SkillFileService(tmp_path / "operation-skills"),
+        runtime_skill_snapshot=RuntimeSkillSnapshot(
+            existing_config.id, (existing_revision,)
+        ),
+        now=lambda: NOW,
+    )
+
+    task = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path, now=NOW
+    )[0]
+
+    assert task.enabled is False
+    assert task.runtime_id == "codex_oauth"
+    assert "managed_revision_not_loaded" in task.prompt
+    assert store.get_pending_or_active_runtime_skill_config() == existing_config
+    assert store.list_runtime_skill_bindings(existing_config.id) == bindings_before
+    ref = task.skill_refs[0]
+    revision = store.get_managed_skill_revision(ref.managed_revision_id)
+    assert revision is not None
+    assert revision.source == REPOSITORY_IMPORT_SOURCE

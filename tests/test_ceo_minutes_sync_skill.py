@@ -85,6 +85,39 @@ def test_minutes_sync_skill_requires_source_freshness_evidence() -> None:
         assert required in text
 
 
+def test_minutes_sync_skill_fails_closed_when_source_freshness_is_unknown() -> None:
+    text = _skill_text()
+
+    for required in (
+        "freshness_unknown",
+        "explicitly belongs to that artifact",
+        "cannot prove freshness",
+        "must not be `synced` or `skipped`",
+        "makes the overall run non-successful",
+    ):
+        assert required in text
+    assert "derive a stable version record" not in text
+
+
+def test_minutes_sync_skill_triages_restricted_items_before_requesting_access() -> None:
+    text = _skill_text()
+
+    for required in (
+        "trusted visible metadata",
+        "CEO-relevant",
+        "clearly out-of-scope",
+        "cannot determine relevance",
+        "content is necessary",
+        "explicitly authorizes",
+        "audit evidence",
+        "needs_review",
+        "prevents overall success",
+        "A submitted access request remains `permission_pending`",
+        "or trusted metadata proves it clearly out-of-scope",
+    ):
+        assert required in text
+
+
 def test_minutes_sync_skill_defines_exclusive_counts_and_real_success() -> None:
     text = _skill_text()
 
