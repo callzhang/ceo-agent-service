@@ -95,6 +95,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .console-page-header { display: flex; align-items: end; justify-content: space-between; gap: 16px; max-width: 1180px; margin: 0 auto 18px; }
 .console-page-header h1 { margin: 0; font-size: clamp(1.5rem, 3vw, 2.2rem); }
 .console-page-actions { display: flex; align-items: center; gap: 10px; }
+.attempt-title-row { display: flex; align-items: end; justify-content: space-between; gap: 16px; max-width: 1180px; margin: 0 auto 18px; }
+.attempt-title-leading, .attempt-title-actions { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.attempt-title-leading .eyebrow { margin-bottom: 3px; }
+.attempt-title-leading h1 { margin: 0; font-size: clamp(1.5rem, 3vw, 2.2rem); }
+.attempt-title-actions { justify-content: flex-end; flex-wrap: wrap; }
 .console-card { max-width: 1180px; margin: 0 auto 16px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: 0 8px 24px rgb(24 31 27 / 5%); }
 .console-card h2 { margin-bottom: 14px; font-size: 1.05rem; }
 .console-card-muted { color: var(--ink-soft); }
@@ -619,6 +624,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .console-page-card { padding: 18px; }
   .console-page-header { align-items: flex-start; flex-direction: column; }
   .console-page-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+  .attempt-title-row { align-items: flex-start; flex-direction: column; }
+  .attempt-title-actions { width: 100%; justify-content: flex-start; }
   .console-card { padding: 16px; }
   .attention-panel-header { flex-direction: column; gap: 16px; }
   .attention-panel-actions { width: 100%; justify-items: stretch; }

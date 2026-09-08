@@ -104,7 +104,8 @@ export function AttemptDetailPage() {
     }
   };
 
-  return <ConsolePageLayout title={detail ? `Attempt #${detail.id}` : "Attempt"} actions={<><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} /><Link className="secondary-button" to="/history">返回 History</Link></>}>
+  return <ConsolePageLayout title={detail ? `Attempt #${detail.id}` : "Attempt"} showHeader={false} suppressHiddenTitle>
+    <header className="attempt-title-row" data-testid="attempt-title-row"><div className="attempt-title-leading"><Link className="secondary-button" to="/history">返回 History</Link><div><p className="eyebrow">CEO AGENT CONSOLE</p><h1 id="console-page-title">{detail ? `Attempt #${detail.id}` : "Attempt"}</h1></div></div><div className="attempt-title-actions"><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />{detail?.actions.wechat_info_url && <Link className="secondary-button" to={detail.actions.wechat_info_url}>查看微信信息</Link>}{detail?.actions.delivery_action_url && <button type="button" className="primary-button" onClick={() => { if (window.confirm(detail.actions.delivery_action_label === "发送" ? "确认发送这条微信回复？" : "确认重新尝试发送这条微信回复？")) void runAction(detail.actions.delivery_action_url || "", `${detail.actions.delivery_action_label}已提交`); }}>{detail.actions.delivery_action_label}</button>}</div></header>
     {state === "loading" && !detail && <section className="console-card page-state" role="status">正在加载…</section>}
     {state === "error" && <section className="console-card page-state page-state-error" role="alert">{message}</section>}
     {detail && <>
@@ -123,7 +124,7 @@ export function AttemptDetailPage() {
       <DetailSection title="Draft reply (raw Codex reply)" value={detail.draft_reply} />
       {detail.runtime_attempts.length > 0 && <details className="console-card attempt-runtime-card"><summary><h2>Runtime attempts</h2><span>{detail.runtime_attempts.length} 条执行记录</span></summary><div className="attempt-runtime-list">{detail.runtime_attempts.map((entry, index) => <RuntimeEntry entry={entry} key={`${entry.route}-${index}`} />)}</div></details>}
       {message && <p className="attempt-action-message" role="status" aria-live="polite">{message}</p>}
-      <div className="attempt-bottom-actions">{detail.actions.delivery_action_url && <button type="button" className="primary-button" onClick={() => { if (window.confirm(detail.actions.delivery_action_label === "发送" ? "确认发送这条微信回复？" : "确认重新尝试发送这条微信回复？")) void runAction(detail.actions.delivery_action_url || "", `${detail.actions.delivery_action_label}已提交`); }}>{detail.actions.delivery_action_label}</button>}{detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认重新处理这条 Attempt？")) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>重新处理</button>}{detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}</div>
+      {(detail.actions.can_rerun || detail.actions.can_recall) && <div className="attempt-bottom-actions">{detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认重新处理这条 Attempt？")) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>重新处理</button>}{detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}</div>}
     </>}
   </ConsolePageLayout>;
 }

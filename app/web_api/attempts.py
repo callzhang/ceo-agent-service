@@ -96,7 +96,7 @@ def _action_links(
     dingtalk_url = ""
     if service_task and str(getattr(attempt, "oa_url", "") or "").strip():
         dingtalk_url = str(attempt.oa_url).strip()
-    elif not service_task:
+    elif not service_task and str(getattr(attempt, "channel", "") or "") != "wechat":
         conversation_id = str(getattr(attempt, "conversation_id", "") or "").strip()
         if conversation_id:
             dingtalk_url = f"/open-dingtalk-popup?conversation_id={quote(conversation_id, safe='')}"
@@ -134,6 +134,7 @@ def _action_links(
         "consumer_url": f"/attempts/{int(attempt.id)}/execution/consumer" if consumer else "",
         "audit_url": f"/attempts/{int(attempt.id)}/execution/audit" if audit else "",
         "dingtalk_url": dingtalk_url,
+        "wechat_info_url": "/wechat/conversations" if str(getattr(attempt, "channel", "") or "") == "wechat" else "",
         "delivery_action_label": delivery_action_label,
         "delivery_action_url": delivery_action_url,
         "terminal": terminal,

@@ -135,6 +135,7 @@ describe("AttemptDetailPage", () => {
           ...detail.actions,
           delivery_action_label: "重试发送",
           delivery_action_url: "/api/console/wechat/deliveries/101/retry",
+          wechat_info_url: "/wechat/conversations",
         },
       },
       meta: { snapshot_at: "2026-09-08T22:39:47Z" },
@@ -144,5 +145,27 @@ describe("AttemptDetailPage", () => {
     await user.click(await screen.findByRole("button", { name: "重试发送" }));
     expect(command).toHaveBeenCalledWith("/api/console/wechat/deliveries/101/retry");
     vi.restoreAllMocks();
+  });
+
+  it("keeps navigation and WeChat controls in the Attempt title row", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        actions: {
+          ...detail.actions,
+          delivery_action_label: "重试发送",
+          delivery_action_url: "/api/console/wechat/deliveries/101/retry",
+          wechat_info_url: "/wechat/conversations",
+        },
+      },
+      meta: { snapshot_at: "2026-09-08T22:39:47Z" },
+    });
+    renderPage();
+
+    const header = await screen.findByTestId("attempt-title-row");
+    expect(header).toContainElement(screen.getByRole("link", { name: "返回 History" }));
+    expect(header).toContainElement(screen.getByRole("link", { name: "查看微信信息" }));
+    expect(header).toContainElement(screen.getByRole("button", { name: "重试发送" }));
+    expect(document.querySelector(".attempt-bottom-actions")).toBeNull();
   });
 });
