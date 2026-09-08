@@ -263,6 +263,105 @@ def test_reseeding_preserves_edits_but_disables_existing_friday_producer(
     )
 
 
+def test_startup_seed_leaves_deleted_legacy_producer_exactly_unchanged(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "deleted-legacy-producer.sqlite3")
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes={"codex_oauth"},
+        operation_skills=("dingtalk-chat",),
+    )
+    original = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "dingtalk-message-check-v1",
+    )
+    legacy = store.update_scheduled_task(
+        original.id,
+        expected_version=original.version,
+        name="用户删除的旧消息任务",
+        prompt="保留用户修改后的旧 Prompt",
+        runtime_id="legacy-user-runtime",
+        runtime_options={"model": "legacy-user-model"},
+        required_runtime_capabilities=(),
+        skill_refs=original.skill_refs,
+        now=NOW + timedelta(minutes=1),
+    )
+    deleted = store.delete_scheduled_task(
+        legacy.id,
+        expected_version=legacy.version,
+        now=NOW + timedelta(minutes=2),
+    )
+    before = store.list_scheduled_tasks(include_deleted=True)
+
+    seeded = seed_scheduled_tasks(
+        store=store,
+        options=options,
+        working_directory=tmp_path / "startup",
+        now=NOW + timedelta(minutes=3),
+    )
+
+    after = store.list_scheduled_tasks(include_deleted=True)
+    preserved = _task_by_key(after, "dingtalk-message-check-v1")
+    assert len(after) == len(before)
+    assert preserved == deleted
+    assert preserved.deleted_at == NOW + timedelta(minutes=2)
+    assert preserved.required_runtime_capabilities == ()
+    assert preserved.name == legacy.name
+    assert preserved.prompt == legacy.prompt
+    assert preserved.runtime_id == legacy.runtime_id
+    assert preserved.runtime_options == legacy.runtime_options
+    assert preserved.skill_refs == legacy.skill_refs
+    assert _task_by_key(seeded, "dingtalk-message-check-v1") == deleted
+    assert all(
+        task.migration_key != "dingtalk-message-check-v1"
+        for task in store.list_scheduled_tasks()
+    )
+
+
+def test_startup_seed_backfills_active_legacy_producer_capabilities(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "active-legacy-producer.sqlite3")
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes={"codex_oauth"},
+        operation_skills=("dingtalk-chat",),
+    )
+    original = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "dingtalk-message-check-v1",
+    )
+    legacy = store.update_scheduled_task(
+        original.id,
+        expected_version=original.version,
+        name="用户保留的旧消息任务",
+        required_runtime_capabilities=(),
+        now=NOW + timedelta(minutes=1),
+    )
+
+    seeded = seed_scheduled_tasks(
+        store=store,
+        options=options,
+        working_directory=tmp_path / "startup",
+        now=NOW + timedelta(minutes=2),
+    )
+
+    updated = _task_by_key(seeded, "dingtalk-message-check-v1")
+    assert updated.id == legacy.id
+    assert updated.name == legacy.name
+    assert updated.deleted_at is None
+    assert frozenset(updated.required_runtime_capabilities) == (
+        LOCAL_SERVICE_RUNTIME_CAPABILITIES
+    )
+
+
 def test_seed_creates_dingtalk_message_check_every_minute(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "dingtalk-message.sqlite3")
     options = _options(

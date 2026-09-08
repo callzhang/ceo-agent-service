@@ -567,7 +567,11 @@ def _existing_task(
         ),
         None,
     )
-    if existing is None or not required_capabilities:
+    if (
+        existing is None
+        or existing.deleted_at is not None
+        or not required_capabilities
+    ):
         return existing
     merged = tuple(
         sorted(
