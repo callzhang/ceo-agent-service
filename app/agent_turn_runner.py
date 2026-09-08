@@ -1074,7 +1074,12 @@ class AgentTurnProcess(Generic[ResultT]):
                     session_for_receipts,
                     session_start=session_start,
                 )
-            if _contains_sensitive_value(result.model_dump(mode="json")):
+            # Prepared results may legitimately contain the service's signed
+            # feedback callbacks from an earlier revision. Validate those only
+            # after preparation, where the exact configured pair is sanitized.
+            if prepare_result is None and _contains_sensitive_value(
+                result.model_dump(mode="json")
+            ):
                 raise ValueError("agent_result_contains_sensitive_value")
             if (
                 route.runtime_kind is RuntimeKind.CLAUDE_CLI

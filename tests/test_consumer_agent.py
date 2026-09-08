@@ -1916,6 +1916,65 @@ def test_consumer_feedback_revision_prepares_its_corrected_dingtalk_body(
     assert "The whole application was approved." not in corrected
 
 
+def test_consumer_feedback_revision_accepts_exact_service_feedback_links(
+    store,
+    task,
+    context,
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    first = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(
+            _proposal_jsonl(
+                {"content": "The application is pending additional evidence."},
+                capability="dingtalk-chat",
+                operation="send_direct_message",
+                target={"open_dingtalk_id": "recipient-1"},
+            )
+        ),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    assert first.result.proposal is not None
+    prepared_body = first.result.proposal.actions[0].payload["content"]
+    assert isinstance(prepared_body, str)
+    assert "feedback_token=spike_" in prepared_body
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=first.run_id,
+        operation_id="audit-preserved-feedback-links",
+        owner="audit-test",
+    ).run
+    store.complete_agent_run(
+        audit.id,
+        {"outcome": "feedback_provided", "summary": "Keep the reviewed body."},
+        owner="audit-test",
+    )
+
+    revised = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(
+            _proposal_jsonl(
+                {"content": prepared_body},
+                capability="dingtalk-chat",
+                operation="send_direct_message",
+                target={"open_dingtalk_id": "recipient-1"},
+            )
+        ),
+    ).run(task, context, proposal_revision=1, parent_agent_run_id=audit.id)
+
+    assert revised.result.proposal is not None
+    assert revised.result.proposal.actions[0].payload["content"] == prepared_body
+
+
 def test_consumer_preserves_dash_prefixed_explicit_content_as_message_body(
     store,
     task,
