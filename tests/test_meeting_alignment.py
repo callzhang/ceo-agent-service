@@ -1063,6 +1063,36 @@ def test_consumer_keeps_external_agent_failure_retryable_after_limit(tmp_path):
     assert run.status == "retry"
 
 
+def test_runtime_attempt_conflict_stays_retryable_at_attempt_limit(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class ConflictingRunner:
+        last_session_id = ""
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+
+        def decide(self, *, prompt: str, run_id=None):
+            raise RoutedCodexExecutionError("runtime_attempt_active")
+
+    assert consume_meeting_alignment_jobs(
+        store,
+        dws,
+        ConflictingRunner(),
+        now=NOW,
+        limit=1,
+        max_attempts=1,
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.available_at == (NOW + timedelta(minutes=1)).isoformat()
+    [run] = store.list_meeting_alignment_runs(job_id)
+    assert run.status == "retry"
+
+
 def test_consumer_pauses_meeting_analysis_after_codex_capacity_exhaustion(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()

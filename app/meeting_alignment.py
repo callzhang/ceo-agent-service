@@ -849,6 +849,7 @@ def _analyze_meeting_job(
                 now=now,
                 retry_delay=retry_delay,
                 max_attempts=max_attempts,
+                external_dependency=True,
             )
             return
         if routed_exc is not None and (
