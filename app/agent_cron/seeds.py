@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 from pathlib import Path
 
 from app.agent_cron.models import ScheduledTask, ScheduledTaskSkillRef
@@ -8,6 +9,7 @@ from app.agent_cron.options import RuntimeOption, ScheduledTaskOptionService
 from app.managed_skills import (
     MINUTES_SYNC_SKILL_NAME,
     REPOSITORY_IMPORT_SOURCE,
+    repository_managed_skill_content,
 )
 from app.store import AutoReplyStore
 
@@ -37,10 +39,14 @@ def seed_scheduled_tasks(
     skill = store.get_managed_skill_by_name(MINUTES_SYNC_SKILL_NAME)
     if skill is None:
         raise ValueError("ceo-minutes-sync repository managed Skill is missing")
+    repository_content = repository_managed_skill_content(MINUTES_SYNC_SKILL_NAME)
+    repository_sha256 = hashlib.sha256(repository_content.encode("utf-8")).hexdigest()
     repository_revisions = tuple(
         revision
         for revision in store.list_managed_skill_revisions(skill.id)
         if revision.source == REPOSITORY_IMPORT_SOURCE
+        and revision.sha256 == repository_sha256
+        and revision.content == repository_content
     )
     if not repository_revisions:
         raise ValueError("ceo-minutes-sync repository revision is missing")

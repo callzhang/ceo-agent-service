@@ -1,0 +1,102 @@
+{
+  "schema": "ceo_minutes_sync_skill_scenarios.v1",
+  "archive_contract": {
+    "artifacts": {
+      "basic": "detail.data.basic",
+      "summary": "detail.data.summary",
+      "transcript": "transcript.data.paragraphs"
+    },
+    "json_encoding": {
+      "encoding": "UTF-8",
+      "ensure_ascii": false,
+      "sort_keys": true,
+      "separators": [",", ":"],
+      "trailing_newline": false
+    }
+  },
+  "scenarios": [
+    {
+      "case": "complete_new",
+      "prior": null,
+      "dws": {
+        "list": {"ok": true, "data": {"complete": true, "items": [{"taskUuid": "m-new", "title": "CEO product review"}]}, "meta": {"pagination": {"next_token": null}}},
+        "detail": {"ok": true, "data": {"basic": {"taskUuid": "m-new", "title": "CEO product review"}, "summary": {"fullSummary": "Decision and owners"}}},
+        "transcript": {"ok": true, "data": {"complete": true, "pages": 2, "paragraphs": ["first page", "second page"]}, "meta": {"pagination": {"next_token": null}}}
+      },
+      "expected": {"outcome": "synced", "cursor_advance": true, "access_request": false, "evidence": "fresh_fetch"}
+    },
+    {
+      "case": "complete_unchanged",
+      "prior": {
+        "artifact_sha256": {
+          "basic": "8d0f1237855d80b0bf3125347593e88d8b030f7feafbdbee2ed0f165d5081682",
+          "summary": "af6f54c72fcb7e8919f1cbc98f8fd62db232e2b00f9a6d937fca9e66c629bb72",
+          "transcript": "196aae79601c27bae90fd44bfde8451d1b50bc1238497ef0e21517f7f998c270"
+        }
+      },
+      "dws": {
+        "list": {"ok": true, "data": {"complete": true, "items": [{"taskUuid": "m-same"}]}, "meta": {"pagination": {"next_token": null}}},
+        "detail": {"ok": true, "data": {"basic": {"taskUuid": "m-same"}, "summary": {"fullSummary": "Same summary"}}},
+        "transcript": {"ok": true, "data": {"complete": true, "pages": 1, "paragraphs": ["Same transcript"]}, "meta": {"pagination": {"next_token": null}}}
+      },
+      "expected": {"outcome": "skipped", "cursor_advance": true, "access_request": false, "evidence": "unchanged_fetched"}
+    },
+    {
+      "case": "transcript_incomplete",
+      "prior": null,
+      "dws": {
+        "list": {"ok": true, "data": {"complete": true, "items": [{"taskUuid": "m-partial"}]}, "meta": {"pagination": {"next_token": null}}},
+        "detail": {"ok": true, "data": {"basic": {"taskUuid": "m-partial"}, "summary": {"fullSummary": "Partial"}}},
+        "transcript": {"ok": true, "data": {"complete": false, "pages": 1, "paragraphs": ["Only first page"]}, "meta": {"pagination": {"next_token": "page-2"}}}
+      },
+      "expected": {"outcome": "failed", "cursor_advance": false, "access_request": false, "evidence": "freshness_unknown"}
+    },
+    {
+      "case": "complete_without_remote_version",
+      "prior": null,
+      "dws": {
+        "list": {"ok": true, "data": {"complete": true, "items": [{"taskUuid": "m-no-version"}]}, "meta": {"pagination": {"next_token": null}}},
+        "detail": {"ok": true, "data": {"basic": {"taskUuid": "m-no-version"}, "summary": {"fullSummary": "No remote version fields"}}},
+        "transcript": {"ok": true, "data": {"complete": true, "pages": 1, "paragraphs": ["Complete bytes"]}, "meta": {"pagination": {"next_token": null}}}
+      },
+      "expected": {"outcome": "synced", "cursor_advance": true, "access_request": false, "evidence": "fresh_fetch"}
+    },
+    {
+      "case": "permission_recovered",
+      "prior": {"status": "permission_pending", "taskUuid": "m-recovered"},
+      "dws": {
+        "list": {"ok": true, "data": {"complete": true, "items": []}, "meta": {"pagination": {"next_token": null}}},
+        "detail": {"ok": true, "data": {"basic": {"taskUuid": "m-recovered"}, "summary": {"fullSummary": "Now readable"}}},
+        "transcript": {"ok": true, "data": {"complete": true, "pages": 1, "paragraphs": ["Recovered transcript"]}, "meta": {"pagination": {"next_token": null}}}
+      },
+      "expected": {"outcome": "synced", "cursor_advance": true, "access_request": false, "evidence": "permission_recovered"}
+    },
+    {
+      "case": "restricted_relevant_authorized",
+      "authorization": {"request_access": true},
+      "dws": {
+        "list": {"ok": true, "data": {"complete": true, "items": [{"taskUuid": "m-relevant", "title": "CEO budget decision", "owner": "CFO"}]}, "meta": {"pagination": {"next_token": null}}},
+        "detail": {"ok": false, "error": {"code": "permission_denied"}}
+      },
+      "expected": {"outcome": "permission_pending", "cursor_advance": false, "access_request": true, "evidence": "request_pending"}
+    },
+    {
+      "case": "restricted_out_of_scope",
+      "authorization": {"request_access": true},
+      "dws": {
+        "list": {"ok": true, "data": {"complete": true, "items": [{"taskUuid": "m-unrelated", "title": "Cafeteria menu", "owner": "Facilities"}]}, "meta": {"pagination": {"next_token": null}}},
+        "detail": {"ok": false, "error": {"code": "permission_denied"}}
+      },
+      "expected": {"outcome": "skipped", "cursor_advance": true, "access_request": false, "evidence": "out_of_scope_metadata"}
+    },
+    {
+      "case": "restricted_relevance_unknown",
+      "authorization": {"request_access": true},
+      "dws": {
+        "list": {"ok": true, "data": {"complete": true, "items": [{"taskUuid": "m-unknown", "title": "Weekly sync"}]}, "meta": {"pagination": {"next_token": null}}},
+        "detail": {"ok": false, "error": {"code": "permission_denied"}}
+      },
+      "expected": {"outcome": "permission_pending", "cursor_advance": false, "access_request": false, "evidence": "needs_review"}
+    }
+  ]
+}

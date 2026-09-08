@@ -189,3 +189,25 @@ def test_seed_is_disabled_when_exact_repository_revision_is_not_loaded(
     revision = store.get_managed_skill_revision(ref.managed_revision_id)
     assert revision is not None
     assert revision.source == REPOSITORY_IMPORT_SOURCE
+
+
+def test_seed_binds_revision_matching_current_repository_sha_not_last_revision(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "current-repository-sha.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
+    assert skill is not None
+    current = store.list_managed_skill_revisions(skill.id)[0]
+    later_different = store.create_managed_skill_revision(
+        skill.id,
+        current.content.replace("# CEO Minutes Sync", "# Old repository draft", 1),
+        source=REPOSITORY_IMPORT_SOURCE,
+    )
+
+    task = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path, now=NOW
+    )[0]
+
+    assert task.skill_refs[0].managed_revision_id == current.id
+    assert task.skill_refs[0].managed_revision_id != later_different.id

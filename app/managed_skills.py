@@ -159,6 +159,20 @@ def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
     )
 
 
+def repository_managed_skill_content(name: str) -> str:
+    """Return the current exact repository baseline for one managed Skill."""
+    try:
+        return next(
+            content
+            for repository_name, content in _repository_managed_skills()
+            if repository_name == name
+        )
+    except StopIteration as exc:
+        raise ManagedSkillValidationError(
+            f"repository managed Skill does not exist: {name}"
+        ) from exc
+
+
 @dataclass(frozen=True)
 class RepositoryManagedSkillImport:
     name: str
@@ -201,8 +215,33 @@ def _import_repository_managed_skills_locked(
         existing = store.get_managed_skill_by_name(name)
         if existing is not None:
             revisions = store.list_managed_skill_revisions(existing.id)
-            if any(revision.source == REPOSITORY_IMPORT_SOURCE for revision in revisions):
+            repository_revisions = tuple(
+                revision
+                for revision in revisions
+                if revision.source == REPOSITORY_IMPORT_SOURCE
+            )
+            if not repository_revisions:
+                continue
+            if len(repository_revisions) != len(revisions):
                 baseline.append((name, revisions[-1]))
+                continue
+            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            current = next(
+                (
+                    revision
+                    for revision in repository_revisions
+                    if revision.sha256 == digest and revision.content == content
+                ),
+                None,
+            )
+            if current is None:
+                current = store.create_managed_skill_revision(
+                    existing.id,
+                    content,
+                    source=REPOSITORY_IMPORT_SOURCE,
+                )
+                imported.append((name, current))
+            baseline.append((name, current))
             continue
         skill = store.create_managed_skill(name, name)
         revision = store.create_managed_skill_revision(

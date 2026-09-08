@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import app.managed_skills as managed_skills_module
 import app.store as store_module
 from app.business_skills import load_bundled_business_skills
 from app.managed_skills import (
@@ -174,6 +175,88 @@ def test_minutes_sync_repository_import_does_not_overwrite_custom_same_name(
 
     assert "ceo-minutes-sync" not in {entry.name for entry in imported}
     assert store.list_managed_skill_revisions(custom.id) == (custom_revision,)
+
+
+def test_repository_import_appends_changed_exact_bytes_to_pure_repository_skill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = AutoReplyStore(tmp_path / "changed-repository-skill.sqlite3")
+    first_content = dict(managed_skills_module._repository_managed_skills())[
+        "ceo-minutes-sync"
+    ]
+    monkeypatch.setattr(
+        managed_skills_module,
+        "_repository_managed_skills",
+        lambda: (("ceo-minutes-sync", first_content),),
+    )
+    first = import_repository_managed_skills(store)[0]
+    changed_content = first_content.replace(
+        "# CEO Minutes Sync", "# CEO Minutes Sync\n\nRepository revision two", 1
+    )
+    monkeypatch.setattr(
+        managed_skills_module,
+        "_repository_managed_skills",
+        lambda: (("ceo-minutes-sync", changed_content),),
+    )
+
+    changed = import_repository_managed_skills(store)
+    unchanged = import_repository_managed_skills(store)
+
+    assert len(changed) == 1
+    assert changed[0].revision_number == 2
+    assert changed[0].sha256 == hashlib.sha256(changed_content.encode()).hexdigest()
+    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
+    assert skill is not None
+    revisions = store.list_managed_skill_revisions(skill.id)
+    assert revisions[1].parent_revision_id == first.revision_id
+    assert revisions[1].content == changed_content
+    assert unchanged == ()
+    assert len(revisions) == 2
+
+
+def test_concurrent_changed_repository_import_appends_only_one_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "concurrent-changed-import.sqlite3"
+    store = AutoReplyStore(path)
+    import_repository_managed_skills(store)
+    current_content = dict(managed_skills_module._repository_managed_skills())[
+        "ceo-minutes-sync"
+    ]
+    changed_content = current_content.replace(
+        "# CEO Minutes Sync", "# CEO Minutes Sync\n\nConcurrent revision", 1
+    )
+    original = managed_skills_module._repository_managed_skills
+    monkeypatch.setattr(
+        managed_skills_module,
+        "_repository_managed_skills",
+        lambda: tuple(
+            (name, changed_content if name == "ceo-minutes-sync" else content)
+            for name, content in original()
+        ),
+    )
+    barrier = Barrier(2)
+    errors: list[BaseException] = []
+
+    def reconcile() -> None:
+        try:
+            barrier.wait()
+            import_repository_managed_skills(AutoReplyStore(path))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [Thread(target=reconcile) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert all(not thread.is_alive() for thread in threads)
+    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
+    assert skill is not None
+    revisions = store.list_managed_skill_revisions(skill.id)
+    assert sum(revision.content == changed_content for revision in revisions) == 1
 
 
 def test_repository_import_reconciles_partial_service_owned_records_into_initial_config(
