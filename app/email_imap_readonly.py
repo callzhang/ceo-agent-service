@@ -606,10 +606,25 @@ class ImapReadonlyAdapter:
             return int(match.group(1))
 
         modseq_match = re.search(rb"\bHIGHESTMODSEQ\s+(\d+)\b", payload, re.I)
+        messages_match = re.search(rb"\bMESSAGES\s+(\d+)\b", payload, re.I)
+        if messages_match is None:
+            select_status, select_data = self.session.select(
+                mailbox_argument, readonly=True
+            )
+            _require_ok(select_status, "IMAP readonly folder select failed")
+            selected_payload = b" ".join(
+                item for item in select_data if isinstance(item, bytes)
+            )
+            selected_count = re.fullmatch(rb"\s*(\d+)\s*", selected_payload)
+            if selected_count is None:
+                raise ConnectionError("IMAP readonly folder count is incomplete")
+            exists = int(selected_count.group(1))
+        else:
+            exists = int(messages_match.group(1))
         return ProviderFolderFingerprint(
             uidvalidity=required(b"UIDVALIDITY"),
             uidnext=required(b"UIDNEXT"),
-            exists=required(b"MESSAGES"),
+            exists=exists,
             highest_modseq=(
                 int(modseq_match.group(1)) if modseq_match is not None else None
             ),

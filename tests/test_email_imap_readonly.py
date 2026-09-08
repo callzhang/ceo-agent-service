@@ -549,6 +549,28 @@ def test_folder_fingerprint_falls_back_to_status_without_modseq() -> None:
     )
 
 
+def test_folder_fingerprint_uses_readonly_select_when_status_omits_messages() -> None:
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def status(self, mailbox, query):
+            self.calls.append(("status", mailbox, query))
+            return "OK", [b'"INBOX" (UIDNEXT 32583 UIDVALIDITY 2)']
+
+        def select(self, mailbox, readonly=False):
+            self.calls.append(("select", mailbox, readonly))
+            return "OK", [b"32581"]
+
+    session = Session()
+    fingerprint = ImapReadonlyAdapter(
+        session, account_id="account-1"
+    ).fetch_folder_fingerprint("INBOX")
+
+    assert fingerprint == ProviderFolderFingerprint(2, 32583, 32581, None)
+    assert session.calls[-1] == ("select", "INBOX", True)
+
+
 def test_imap_folder_inventory_uses_protocol_flags_not_localized_name_guessing() -> (
     None
 ):
