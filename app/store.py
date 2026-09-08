@@ -17605,7 +17605,7 @@ class AutoReplyStore:
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
-                                and tasks.status in ('done', 'pending', 'processing')
+                                and tasks.status in ('pending', 'processing')
                           )
                       )
                       or (
@@ -17668,7 +17668,7 @@ class AutoReplyStore:
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
-                                and tasks.status in ('done', 'pending', 'processing')
+                                and tasks.status in ('pending', 'processing')
                           )
                       )
                       or (
@@ -17736,7 +17736,7 @@ class AutoReplyStore:
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
-                                and tasks.status in ('done', 'pending', 'processing')
+                                and tasks.status in ('pending', 'processing')
                           )
                       )
                       or (

@@ -467,7 +467,7 @@ def test_quality_gate_reports_only_current_needs_human_attempts_as_attention(tmp
     }
 
 
-def test_quality_gate_ignores_needs_human_projection_when_task_is_done(tmp_path):
+def test_quality_gate_reports_needs_human_projection_when_queue_task_is_done(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     store.enqueue_reply_task(
         conversation_id="conversation",
@@ -497,15 +497,10 @@ def test_quality_gate_ignores_needs_human_projection_when_task_is_done(tmp_path)
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert ("reply_attempts", "needs_human", 0) not in {
+    assert ("reply_attempts", "needs_human", 1) in {
         (item.source, item.code, item.count) for item in report.attention
     }
-    assert not [
-        item
-        for item in report.attention
-        if item.source == "reply_attempts" and item.code == "needs_human"
-    ]
-    assert store.count_current_unresolved_problem_attempts() == 0
+    assert store.count_current_unresolved_problem_attempts() == 1
 
 
 def test_quality_gate_deduplicates_failed_delivery_after_sent_reply_receipt(tmp_path):

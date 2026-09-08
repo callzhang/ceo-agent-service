@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-07: keep an unresolved `needs_human` result visible after its queue
+  task reaches `done`. The queue task is closed so workers do not re-execute it,
+  while the latest reply-attempt projection remains actionable in Attention and
+  in the hourly quality report until a decision or revision resolves it.
+
 - 2026-09-07: make DingTalk meeting-summary delivery resumable across a service
   restart. A prepared delivery now has a stable provider UUID and durable receipt;
   a recovered worker continues that delivery rather than sending a second message.

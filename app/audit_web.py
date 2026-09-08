@@ -3067,7 +3067,10 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                     }
                 )
     for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
-        if str(attempt["send_status"] or "").casefold() != "failed":
+        if str(attempt["send_status"] or "").casefold() not in {
+            "failed",
+            "needs_human",
+        }:
             continue
         trigger_key = (
             attempt["channel"],

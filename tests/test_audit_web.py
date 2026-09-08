@@ -5326,6 +5326,53 @@ def test_browser_notifications_page_shows_only_current_unresolved_problems(
     assert f"Attempt #{superseded_failure}" not in response.text
 
 
+def test_attention_api_keeps_needs_human_visible_after_queue_task_closes(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-decision",
+        conversation_title="Management",
+        single_chat=False,
+        trigger_message_id="msg-decision",
+        trigger_create_time="2026-09-07 00:00:00",
+        trigger_sender="Mina",
+        trigger_text="Choose the strategy",
+        execution_generation="generation",
+    )
+    task = store.get_reply_task_for_message("cid-decision", "msg-decision")
+    assert task is not None
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="A high-risk policy choice remains unresolved.",
+        send_status="needs_human",
+    )
+
+    response = TestClient(create_audit_app(store.path)).get("/api/attention/status")
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    assert response.json()["rows"] == [
+        {
+            "category": "Reply",
+            "id": str(attempt_id),
+            "status": "needs_human",
+            "context": "Management",
+            "summary": "Choose the strategy",
+            "updated_at": store.get_reply_attempt(attempt_id).updated_at,
+            "error": "",
+        }
+    ]
+
+
 def test_browser_notifications_exclude_active_and_provider_recovery_tasks(
     tmp_path: Path,
 ):

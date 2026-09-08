@@ -438,7 +438,7 @@ def _check_reply_attempts(
                       where t.channel=latest.channel
                         and t.conversation_id=latest.conversation_id
                         and t.trigger_message_id=latest.trigger_message_id
-                        and lower(t.status) in ('done', 'pending', 'processing')
+                        and lower(t.status) in ('pending', 'processing')
                   )
             """,
         ),
