@@ -50,7 +50,7 @@ class ProjectSkill:
 class SkillDocument:
     name: str
     description: str
-    managed_by: str
+    managed_by: str | None
     path: Path
     content: str
     sha256: str
@@ -85,6 +85,15 @@ class SkillFileService:
         return tuple(result)
 
     def get_skill(self, name: str) -> SkillDocument:
+        return self._get_skill_document(name, require_managed_marker=True)
+
+    def get_operation_skill(self, name: str) -> SkillDocument:
+        """Read one installed operation Skill without requiring service ownership."""
+        return self._get_skill_document(name, require_managed_marker=False)
+
+    def _get_skill_document(
+        self, name: str, *, require_managed_marker: bool
+    ) -> SkillDocument:
         path = self._resolve_skill_path(name)
         try:
             raw_bytes = path.read_bytes()
@@ -99,12 +108,13 @@ class SkillFileService:
             raise SkillFileValidationError(f"Skill name does not match directory: {path}")
         description = _required_scalar(frontmatter, "description", path)
         metadata = frontmatter.get("metadata")
-        if not isinstance(metadata, dict) or metadata.get("managed_by") != MANAGED_BY:
+        managed_by = metadata.get("managed_by") if isinstance(metadata, dict) else None
+        if require_managed_marker and managed_by != MANAGED_BY:
             raise SkillFileValidationError(f"Skill missing managed marker {MANAGED_BY!r}: {path}")
         return SkillDocument(
             name=name,
             description=description,
-            managed_by=MANAGED_BY,
+            managed_by=managed_by if isinstance(managed_by, str) else None,
             path=path,
             content=content,
             sha256=hashlib.sha256(raw_bytes).hexdigest(),
