@@ -170,27 +170,42 @@ def _open_target(
     navigation_query = search_query or target_label
     row = None
     if expected_recent_text:
-        def unique_matching_row():
-            rows = (
+        def sidebar_rows():
+            return (
                 find_all(id_eq=f"session_item_{target_label}")
                 if find_all is not None else []
             )
+
+        def unique_sidebar_row():
+            rows = sidebar_rows()
+            return rows[0] if len(rows) == 1 else None
+
+        def unique_matching_row():
+            if subtree_has_text is None:
+                return None
             matching = [
-                candidate for candidate in rows
-                if subtree_has_text is not None
-                and subtree_has_text(candidate, expected_recent_text)
+                candidate for candidate in sidebar_rows()
+                if subtree_has_text(candidate, expected_recent_text)
             ]
             return matching[0] if len(matching) == 1 else None
 
         row = _poll_value(unique_matching_row, sleep=sleep)
         if row is None:
-            return None
+            # A verified chat can show a locally unsent draft instead of the
+            # latest inbound preview. A unique recent-session row plus the
+            # composer-title check below remains target-bound, while search
+            # remains disabled for direct chats.
+            row = unique_sidebar_row()
+            if row is None:
+                return None
     elif navigation_query == target_label:
         row = first(id_eq=f"session_item_{target_label}")
     if row is not None:
         for attempt in range(3):
             if attempt and expected_recent_text:
                 refreshed_row = _poll_value(unique_matching_row, sleep=sleep)
+                if refreshed_row is None:
+                    refreshed_row = unique_sidebar_row()
                 if refreshed_row is None:
                     return None
                 row = refreshed_row

@@ -452,6 +452,32 @@ def test_open_target_selects_unique_sidebar_row_by_recent_message():
     assert clicked == [(expected_row, 1)]
 
 
+def test_open_target_uses_unique_sidebar_row_when_preview_is_stale():
+    row = object()
+    composer = object()
+    clicked = []
+
+    def first(*, role=None, id_eq=None, title_contains=None):
+        if id_eq == "chat_input_field":
+            return composer
+        return None
+
+    opened = _open_target(
+        "Melody",
+        first=first,
+        find_all=lambda **_kwargs: [row],
+        subtree_has_text=lambda _row, _text: False,
+        click=lambda element, n=1: clicked.append((element, n)),
+        type_fn=lambda _text: None,
+        settle=0,
+        sleep=lambda _seconds: None,
+        expected_recent_text="latest inbound",
+    )
+
+    assert opened is composer
+    assert clicked == [(row, 1)]
+
+
 def test_open_target_waits_for_delayed_matching_sidebar_row():
     expected_row = object()
     composer = object()
