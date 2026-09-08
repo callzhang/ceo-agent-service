@@ -433,6 +433,20 @@ def _check_reply_attempts(
             latest + """
                 select count(*) from latest
                 where ordinal=1 and lower(send_status)='needs_human'
+                  and reviewed_at is null
+                  and not exists (
+                      select 1
+                      from reply_tasks as historical_task
+                      join business_object_tasks as current_business_object
+                        on current_business_object.business_object_key=
+                           historical_task.business_object_key
+                      where historical_task.channel=latest.channel
+                        and historical_task.conversation_id=latest.conversation_id
+                        and historical_task.trigger_message_id=
+                            latest.trigger_message_id
+                        and current_business_object.reply_task_id<>
+                            historical_task.id
+                  )
                   and not exists (
                       select 1 from reply_tasks t
                       where t.channel=latest.channel

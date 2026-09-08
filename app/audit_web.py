@@ -2768,6 +2768,17 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                 end as live_status
             from latest a
             where a.ordinal=1
+              and not exists (
+                  select 1
+                  from reply_tasks as historical_task
+                  join business_object_tasks as current_business_object
+                    on current_business_object.business_object_key=
+                       historical_task.business_object_key
+                  where historical_task.channel=a.channel
+                    and historical_task.conversation_id=a.conversation_id
+                    and historical_task.trigger_message_id=a.trigger_message_id
+                    and current_business_object.reply_task_id<>historical_task.id
+              )
         )
     """
     rows = db.execute(
@@ -2792,7 +2803,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
         for row in rows
     }
     latest_row = db.execute(
-        "select max(updated_at) as value from reply_attempts"
+        current_attempts + "select max(updated_at) as value from current"
     ).fetchone()
     failed_row = next(
         (row for row in rows if str(row["status"] or "") == "failed"),

@@ -467,6 +467,29 @@ def test_quality_gate_reports_only_current_needs_human_attempts_as_attention(tmp
     }
 
 
+def test_quality_gate_excludes_reviewed_needs_human_attempt(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into reply_attempts (
+                channel, conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, action, sensitivity_kind,
+                codex_reason, send_status, reviewed_at, updated_at
+            ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
+                'trigger', 'agent_run', 'normal', 'specific action required',
+                'needs_human', '2026-08-07 00:45:00', '2026-08-07 00:30:00')"""
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not [
+        item
+        for item in report.attention
+        if item.source == "reply_attempts" and item.code == "needs_human"
+    ]
+    assert store.count_current_unresolved_problem_attempts() == 0
+
+
 def test_quality_gate_reports_needs_human_projection_when_queue_task_is_done(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     store.enqueue_reply_task(
@@ -501,6 +524,60 @@ def test_quality_gate_reports_needs_human_projection_when_queue_task_is_done(tmp
         (item.source, item.code, item.count) for item in report.attention
     }
     assert store.count_current_unresolved_problem_attempts() == 1
+
+
+def test_quality_gate_excludes_needs_human_from_historical_business_object_task(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        historical_task = db.execute(
+            """insert into reply_tasks (
+                channel, conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, business_object_key, status
+            ) values ('dingtalk', 'work-notice', '工作通知', 0, 'old-message',
+                '2026-08-07 00:00:00', 'OA审批', '旧审批通知', 'oa:process:task',
+                'done')"""
+        )
+        current_task = db.execute(
+            """insert into reply_tasks (
+                channel, conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, business_object_key, status
+            ) values ('dingtalk', 'oa-pending-scan', '审批待办', 0, 'current-message',
+                '2026-08-07 00:30:00', 'OA审批', '当前审批任务', 'oa:process:task',
+                'done')"""
+        )
+        db.execute(
+            """insert into business_object_tasks (business_object_key, reply_task_id)
+            values ('oa:process:task', ?)""",
+            (current_task.lastrowid,),
+        )
+        db.execute(
+            """insert into reply_attempts (
+                channel, conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, action, sensitivity_kind,
+                codex_reason, send_status, updated_at
+            ) values ('dingtalk', 'work-notice', '工作通知', 'old-message',
+                'OA审批', '旧审批通知', 'agent_run', 'normal',
+                'specific action required', 'needs_human', '2026-08-07 00:30:00')"""
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not [
+        item
+        for item in report.attention
+        if item.source == "reply_attempts" and item.code == "needs_human"
+    ]
+    assert store.count_current_unresolved_problem_attempts() == 0
+    with store._connect() as db:
+        historical_attempt = db.execute(
+            "select send_status from reply_attempts where trigger_message_id='old-message'"
+        ).fetchone()
+        assert historical_attempt["send_status"] == "needs_human"
+        assert historical_task.lastrowid != current_task.lastrowid
 
 
 def test_quality_gate_deduplicates_failed_delivery_after_sent_reply_receipt(tmp_path):

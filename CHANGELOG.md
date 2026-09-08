@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-07: align hourly quality-check `needs_human` attention and the
+  Workers reply-attempt summary with the stable-business-object current
+  projection. Historical attempts remain queryable in History but stop
+  contributing to current counts after `business_object_tasks` points to a
+  different task.
+
 - 2026-09-07: keep exhausted Audit feedback loops as explicit failures instead
   of synthesizing `needs_human`; human escalation still requires Audit's valid
   high-risk, low-confidence, Skill-gap result and actionable choices.

@@ -7291,6 +7291,61 @@ def test_attention_hides_historical_failed_task_when_business_object_is_done(
     assert store.count_current_unresolved_problem_attempts() == 0
 
 
+def test_worker_attempt_counts_hide_historical_needs_human_business_object(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    historical = store.ensure_reply_task(
+        conversation_id="work-notice",
+        conversation_title="OA comment",
+        single_chat=True,
+        trigger_message_id="comment-1",
+        trigger_create_time="2026-09-07 10:00:00",
+        trigger_sender="OA审批",
+        trigger_text="old comment",
+        business_object_key="legacy:comment-1",
+    )
+    current = store.ensure_reply_task(
+        conversation_id="oa-pending",
+        conversation_title="OA pending",
+        single_chat=False,
+        trigger_message_id="pending-1",
+        trigger_create_time="2026-09-07 10:05:00",
+        trigger_sender="OA审批",
+        trigger_text="current approval",
+        business_object_key="oa:proc-1:task-1",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='done', business_object_key=? where id=?",
+            (current.business_object_key, historical.id),
+        )
+        db.execute("update reply_tasks set status='done' where id=?", (current.id,))
+    attempt_id = store.record_reply_attempt(
+        conversation_id=historical.conversation_id,
+        conversation_title=historical.conversation_title,
+        trigger_message_id=historical.trigger_message_id,
+        trigger_sender=historical.trigger_sender,
+        trigger_text=historical.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="old decision request",
+        send_status="needs_human",
+    )
+
+    payload = build_worker_status_payload(store)
+    reply_attempt_queue = next(
+        queue for queue in payload["queues"] if queue["name"] == "Reply attempts"
+    )
+
+    assert reply_attempt_queue["counts"].get("needs_human", 0) == 0
+    assert not any(
+        row["category"] == "Reply" and row["id"] == str(attempt_id)
+        for row in payload["attention_rows"]
+    )
+    assert store.get_reply_attempt(attempt_id).send_status == "needs_human"
+
+
 def test_attention_includes_recent_unresolved_service_errors(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error(
