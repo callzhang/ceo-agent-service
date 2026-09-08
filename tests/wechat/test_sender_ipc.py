@@ -58,10 +58,11 @@ class FakeAccessibility:
 
     def open_and_identify(
         self, target_label, *, search_query=None, expected_recent_text=None,
+        restore_focus=None,
     ):
         self.calls.append((
             "open_and_identify", target_label, search_query,
-            expected_recent_text,
+            expected_recent_text, restore_focus,
         ))
         return target_label
 

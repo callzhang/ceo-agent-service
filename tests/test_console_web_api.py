@@ -144,14 +144,27 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
         reason="expired_after_target_open_retries", inactive_before="2026-09-08 20:00:00",
     )
     retried: list[int] = []
+    opened: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
         "app.wechat.service.retry_expired_wechat_delivery",
         lambda _store, _sender, current_delivery_id: retried.append(current_delivery_id) or "sent",
+    )
+    monkeypatch.setattr(
+        "app.wechat.service.build_sender",
+        lambda: SimpleNamespace(
+            open_and_identify=lambda target_label, *, search_query, expected_recent_text, keep_foreground: (
+                opened.append((target_label, search_query or "", expected_recent_text or ""))
+                or target_label
+            )
+        ),
     )
 
     with _client(tmp_path, spa_enabled=True) as client:
         detail = client.get(f"/api/console/history/{attempt_id}")
         response = client.post(f"/api/console/wechat/deliveries/{delivery_id}/retry")
+        open_response = client.post(
+            f"/api/console/history/{attempt_id}/open-wechat-message"
+        )
 
     assert detail.status_code == 200
     assert detail.json()["item"]["status"]["message"] == (
@@ -161,11 +174,15 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
         **detail.json()["item"]["actions"],
         "delivery_action_label": "重试发送",
         "delivery_action_url": f"/api/console/wechat/deliveries/{delivery_id}/retry",
+        "wechat_open_url": f"/api/console/history/{attempt_id}/open-wechat-message",
         "terminal": False,
     }
     assert response.status_code == 200
     assert response.json()["message"] == "微信消息已发送"
     assert retried == [delivery_id]
+    assert open_response.status_code == 200
+    assert open_response.json()["message"] == "已打开微信消息：Melody"
+    assert opened == [("Melody", "Melody", "Can you help later?")]
 
 
 def test_console_api_reuses_the_initialized_audit_store(

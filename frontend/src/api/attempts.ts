@@ -66,7 +66,7 @@ export interface AttemptDetail {
     consumer_url: string;
     audit_url: string;
     dingtalk_url: string;
-    wechat_info_url?: string;
+    wechat_open_url?: string;
     delivery_action_label?: string;
     delivery_action_url?: string;
     terminal: boolean;

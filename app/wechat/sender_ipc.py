@@ -80,6 +80,7 @@ class WechatSenderRpcService:
                         params, "expected_recent_text", maximum=10_000,
                     ) or None
                 ),
+                restore_focus=not _optional_bool(params, "keep_foreground"),
             )
         if method == "send":
             result = self.runner.send(
@@ -246,11 +247,13 @@ class WechatSenderClient:
     def open_and_identify(
         self, target_label: str, *, search_query: str | None = None,
         expected_recent_text: str | None = None,
+        keep_foreground: bool = False,
     ) -> str:
         result = self._request("open_and_identify", {
             "target_label": target_label,
             "search_query": search_query or "",
             "expected_recent_text": expected_recent_text or "",
+            "keep_foreground": keep_foreground,
         })
         return result if isinstance(result, str) else ""
 

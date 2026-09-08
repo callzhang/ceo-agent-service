@@ -458,6 +458,38 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "recall_failed", "message": "无法撤回该 Attempt", "details": {"technical": normalize_display_value(body)}}, status_code=status)
         return command_result(message="撤回已提交")
 
+    @app.post("/api/console/history/{attempt_id}/open-wechat-message")
+    async def console_open_wechat_message(attempt_id: int, request: Request):
+        del request
+        store = store_factory()
+        attempt = store.get_reply_attempt(attempt_id)
+        if attempt is None or str(getattr(attempt, "channel", "") or "") != "wechat":
+            return JSONResponse({"ok": False, "code": "not_found", "message": "未找到微信消息", "details": {}}, status_code=404)
+        reply_task = store.get_reply_task_for_message(
+            attempt.conversation_id, attempt.trigger_message_id, channel="wechat",
+        )
+        delivery = store.get_wechat_delivery_for_task(reply_task.id) if reply_task else None
+        if delivery is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "未找到对应微信会话", "details": {}}, status_code=404)
+        scope = store.get_wechat_reply_scope(
+            delivery.account_id, delivery.target_type, delivery.target_id,
+        )
+        if scope is None:
+            return JSONResponse({"ok": False, "code": "not_configured", "message": "该微信会话未在 Config 中配置", "details": {}}, status_code=409)
+        from app.wechat import service
+        visible_title = service.build_sender().open_and_identify(
+            scope.display_name,
+            search_query=scope.display_name,
+            expected_recent_text=(
+                str(getattr(attempt, "trigger_text", "") or "").strip()
+                if scope.target_type == "direct" else None
+            ),
+            keep_foreground=True,
+        )
+        if visible_title != scope.display_name:
+            return JSONResponse({"ok": False, "code": "open_failed", "message": "未能定位这条微信消息", "details": {}}, status_code=409)
+        return command_result(message=f"已打开微信消息：{visible_title}")
+
     @app.post("/api/console/history/{attempt_id}/human-decision")
     async def console_history_human_decision(attempt_id: int, request: Request):
         payload = await json_object(request)

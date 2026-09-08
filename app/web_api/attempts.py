@@ -134,7 +134,11 @@ def _action_links(
         "consumer_url": f"/attempts/{int(attempt.id)}/execution/consumer" if consumer else "",
         "audit_url": f"/attempts/{int(attempt.id)}/execution/audit" if audit else "",
         "dingtalk_url": dingtalk_url,
-        "wechat_info_url": "/wechat/conversations" if str(getattr(attempt, "channel", "") or "") == "wechat" else "",
+        "wechat_open_url": (
+            f"/api/console/history/{int(attempt.id)}/open-wechat-message"
+            if str(getattr(attempt, "channel", "") or "") == "wechat" and reply_task is not None
+            else ""
+        ),
         "delivery_action_label": delivery_action_label,
         "delivery_action_url": delivery_action_url,
         "terminal": terminal,

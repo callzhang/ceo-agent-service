@@ -136,7 +136,7 @@ describe("AttemptDetailPage", () => {
           ...detail.actions,
           delivery_action_label: "重试发送",
           delivery_action_url: "/api/console/wechat/deliveries/101/retry",
-          wechat_info_url: "/wechat/conversations",
+          wechat_open_url: "/api/console/history/8448/open-wechat-message",
         },
       },
       meta: { snapshot_at: "2026-09-08T22:39:47Z" },
@@ -156,7 +156,7 @@ describe("AttemptDetailPage", () => {
           ...detail.actions,
           delivery_action_label: "重试发送",
           delivery_action_url: "/api/console/wechat/deliveries/101/retry",
-          wechat_info_url: "/wechat/conversations",
+          wechat_open_url: "/api/console/history/8448/open-wechat-message",
         },
       },
       meta: { snapshot_at: "2026-09-08T22:39:47Z" },
@@ -165,7 +165,7 @@ describe("AttemptDetailPage", () => {
 
     const header = await screen.findByTestId("attempt-title-row");
     expect(header).toContainElement(screen.getByRole("link", { name: "返回 History" }));
-    expect(header).toContainElement(screen.getByRole("link", { name: "查看微信信息" }));
+    expect(header).toContainElement(screen.getByRole("button", { name: "查看微信消息" }));
     expect(header).toContainElement(screen.getByRole("button", { name: "重试发送" }));
     expect(document.querySelector(".attempt-bottom-actions")).toBeNull();
   });

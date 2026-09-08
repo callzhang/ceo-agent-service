@@ -816,6 +816,7 @@ class MacWechatAccessibility:
     def open_and_identify(
         self, target_label: str, *, search_query: str | None = None,
         expected_recent_text: str | None = None,
+        restore_focus: bool | None = None,
     ) -> str:
         """Open the target via search and return the visible composer title (the
         opened chat's display name), WITHOUT composing or sending. Used by binding
@@ -954,7 +955,7 @@ class MacWechatAccessibility:
                 return ""
             return (g(composer, "AXTitle") or "") if composer else ""
         finally:
-            if self.restore_focus:
+            if self.restore_focus if restore_focus is None else restore_focus:
                 self._reactivate(prev_app)
 
     def recall_last_outbound(self, text: str) -> bool:
