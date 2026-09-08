@@ -396,9 +396,10 @@ def test_common_envelopes_and_normalization_are_explicitly_json_serializable():
     assert "<structured error>" not in json.dumps(json_safe({"detail": "<structured error>"}), ensure_ascii=False)
 
 
-def test_attempt_detail_api_preserves_legacy_business_sections(tmp_path: Path):
+def test_attempt_detail_api_preserves_legacy_business_sections(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
+    monkeypatch.setattr("app.codex_history.find_codex_session_path", lambda _session_id, **_kwargs: None)
 
     with _client(tmp_path, spa_enabled=True) as client:
         response = client.get(f"/api/console/history/{attempt_id}")
@@ -446,7 +447,7 @@ def test_attempt_detail_api_preserves_legacy_business_sections(tmp_path: Path):
     assert item["actions"]["can_rerun"] is False
     assert item["actions"]["terminal"] is True
     assert item["actions"]["dingtalk_url"].startswith("/open-dingtalk-popup?")
-    assert item["actions"]["agent_url"] == "/codex/session-1"
+    assert item["actions"]["agent_url"] == ""
 
 
 def test_feedback_direct_resolve_requires_batch(tmp_path: Path):

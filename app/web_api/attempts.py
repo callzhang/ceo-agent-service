@@ -133,6 +133,11 @@ def _action_links(
     session_id = str(getattr(attempt, "codex_session_id", "") or "").strip()
     if not session_id:
         session_id = str(getattr(audit or consumer, "codex_session_id", "") or "").strip()
+    if session_id:
+        from app.codex_history import find_codex_session_path
+
+        if find_codex_session_path(session_id) is None:
+            session_id = ""
     delivery_action_label = ""
     delivery_action_url = ""
     if wechat_delivery is not None:
