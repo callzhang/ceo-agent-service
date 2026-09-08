@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 import pytest
@@ -308,6 +309,45 @@ def test_meeting_job_retry_and_startup_recovery_preserve_attempts(tmp_path):
         0,
         None,
     )
+
+
+def test_startup_recovery_closes_interrupted_meeting_run_and_runtime_attempt(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = seed_job(store, meeting_id="minutes-interrupted")
+    [claimed] = store.claim_meeting_alignment_jobs(
+        limit=1, now="2026-07-14 02:11:00"
+    )
+    assert claimed.id == job_id
+    run_id = store.begin_meeting_alignment_run(job_id)
+    attempt = store.claim_runtime_operation_attempt(
+        "meeting",
+        str(run_id),
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="interrupted-meeting",
+        lease_seconds=1800,
+        now="2026-07-14 02:11:00",
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        attempt.id,
+        owner="interrupted-meeting",
+        lease_seconds=1800,
+        now="2026-07-14 02:11:00",
+    )
+
+    [recovered] = store.reset_processing_meeting_alignment_jobs()
+
+    assert recovered.id == job_id
+    [run] = store.list_meeting_alignment_runs(job_id)
+    assert run.status == "retry"
+    assert json.loads(run.error)["kind"] == "meeting_alignment_service_startup_requeue"
+    runtime_attempt = store.get_agent_runtime_attempt(attempt.id)
+    assert runtime_attempt is not None
+    assert runtime_attempt.status == "failed"
+    assert runtime_attempt.failure_code == "runtime_parent_requeued"
+    assert runtime_attempt.finished_at
 
 
 def test_activation_baseline_silences_unsent_historical_jobs(tmp_path):

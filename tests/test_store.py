@@ -8667,6 +8667,54 @@ def test_recover_stale_runtime_attempts_closes_terminal_parent_and_expired_lease
     ]
 
 
+def test_recover_stale_runtime_attempts_immediately_closes_terminal_meeting_parent(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "terminal-meeting-runtime.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="terminal-meeting",
+        title="Meeting",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-08-27T05:00:00+00:00",
+        eligible_at="2026-08-27T05:01:00+00:00",
+        status="pending",
+    )
+    store.claim_meeting_alignment_jobs(limit=1, now="2026-08-27T05:01:00+00:00")
+    run_id = store.begin_meeting_alignment_run(job_id)
+    attempt = store.claim_runtime_operation_attempt(
+        "meeting",
+        str(run_id),
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="meeting-owner",
+        lease_seconds=3600,
+        now="2026-08-27T05:01:00+00:00",
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        attempt.id,
+        owner="meeting-owner",
+        lease_seconds=3600,
+        now="2026-08-27T05:01:00+00:00",
+    )
+    store.finish_meeting_alignment_run(
+        run_id,
+        status="retry",
+        error='{"kind":"runtime_session_conflict"}',
+    )
+
+    assert store.recover_stale_runtime_attempts(
+        stale_after_seconds=3600,
+        now="2026-08-27T05:02:00+00:00",
+    ) == 1
+    recovered = store.get_agent_runtime_attempt(attempt.id)
+    assert recovered is not None
+    assert recovered.status == "failed"
+    assert recovered.failure_code == "runtime_parent_requeued"
+
+
 def test_current_schema_reopens_and_adds_agent_run_recovery_index(
     tmp_path: Path,
 ):

@@ -7594,6 +7594,23 @@ class AutoReplyStore:
             stale_before = (
                 now_value - timedelta(seconds=stale_after_seconds)
             ).strftime("%Y-%m-%d %H:%M:%S")
+            terminal_meeting_cursor = db.execute(
+                """
+                update agent_runtime_attempts as attempt
+                set status='failed', failure_class='process',
+                    failure_code='runtime_parent_requeued', failover_permitted=1,
+                    lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
+                where attempt.status in ('starting', 'running')
+                  and attempt.agent_run_id is null
+                  and attempt.workload_kind='meeting'
+                  and exists (
+                    select 1 from meeting_alignment_runs parent
+                    where cast(parent.id as text)=attempt.workload_key
+                      and parent.status<>'running'
+                  )
+                """,
+                (now_text, now_text),
+            )
             cursor = db.execute(
                 """
                 update agent_runtime_attempts as attempt
@@ -7616,7 +7633,7 @@ class AutoReplyStore:
                 """,
                 (now_text, now_text, now_text, stale_before),
             )
-            return cursor.rowcount
+            return terminal_meeting_cursor.rowcount + cursor.rowcount
 
     def set_agent_runtime_attempt_session(
         self,
@@ -11609,7 +11626,7 @@ class AutoReplyStore:
     def reset_processing_meeting_alignment_jobs(
         self,
     ) -> list[MeetingAlignmentJob]:
-        with self._connect() as db:
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             rows = db.execute(
                 """
                 update meeting_alignment_jobs
@@ -11622,6 +11639,46 @@ class AutoReplyStore:
                 """
             ).fetchall()
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
+            if jobs:
+                job_ids = [job.id for job in jobs]
+                placeholders = ",".join("?" for _ in job_ids)
+                run_rows = db.execute(
+                    f"select id from meeting_alignment_runs "
+                    f"where status='running' and job_id in ({placeholders})",
+                    job_ids,
+                ).fetchall()
+                run_ids = [int(row["id"]) for row in run_rows]
+                if run_ids:
+                    run_placeholders = ",".join("?" for _ in run_ids)
+                    error = json.dumps(
+                        {
+                            "kind": "meeting_alignment_service_startup_requeue",
+                            "message": "service restarted while meeting work was claimed",
+                        },
+                        ensure_ascii=False,
+                    )
+                    db.execute(
+                        f"""
+                        update meeting_alignment_runs
+                        set status='retry', error=?, audit_summary=?,
+                            finished_at=?, updated_at=?
+                        where status='running' and id in ({run_placeholders})
+                        """,
+                        [error, error, now_text, now_text, *run_ids],
+                    )
+                    db.execute(
+                        f"""
+                        update agent_runtime_attempts
+                        set status='failed', failure_class='process',
+                            failure_code='runtime_parent_requeued',
+                            failover_permitted=1, lease_owner='', lease_expires_at='',
+                            finished_at=?, updated_at=?
+                        where workload_kind='meeting'
+                          and workload_key in ({run_placeholders})
+                          and status in ('starting', 'running')
+                        """,
+                        [now_text, now_text, *[str(run_id) for run_id in run_ids]],
+                    )
             return sorted(jobs, key=lambda job: job.id)
 
     def rerun_meeting_alignment_jobs(self, job_ids: list[int]) -> list[int]:
