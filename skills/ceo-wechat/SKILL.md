@@ -13,6 +13,23 @@ dedicated **CEO WeChat Sender** only when a delivery is actually sent. The main
 service must not read WeChat's original database directly or grant its shared
 Python process permission to other apps' data.
 
+## Capability package
+
+This is an executable capability package, not only an instruction file:
+
+- `capability.json` declares the two trusted runtime boundaries and their
+  allowed operations.
+- `scripts/reader.py` is the agent-facing entrypoint for `status` and bounded
+  `read-recent` calls.
+- `scripts/sender.py` is the agent-facing entrypoint for pending deliveries and
+  explicit `approve` / `reject` actions.
+
+The scripts call the service's narrow Reader/Sender IPC clients. They do not
+access the WeChat database or Accessibility APIs directly: those permissions
+remain in the fixed-identity `CEO WeChat Reader.app` and
+`CEO WeChat Sender.app`. Do not replace that signed boundary with editable
+Skill code.
+
 ## Automatic-reply switch
 
 The **WeChat Auto Reply** switch controls whether new reply tasks are created

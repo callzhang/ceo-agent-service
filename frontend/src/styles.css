@@ -335,6 +335,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .skills-status.incomplete { background: #fff5df; color: var(--warning); }
 .skills-associated { display: grid; gap: 7px; padding-top: 11px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: .78rem; }
 .skills-associated > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.wechat-skill-configuration { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 16px 0; padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-muted); }
+.wechat-skill-configuration h4, .wechat-skill-configuration p { margin: 0; }
+.wechat-skill-configuration h4 { margin-bottom: 5px; }
+.wechat-skill-configuration a { display: inline-block; margin-top: 9px; font-size: .8rem; font-weight: 700; }
 .skill-link { padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--accent); cursor: pointer; font: inherit; font-size: .75rem; }
 .skills-toggle { position: relative; display: block; flex: 0 0 auto; width: 43px; height: 25px; }
 .skills-toggle input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }

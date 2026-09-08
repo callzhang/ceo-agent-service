@@ -1,0 +1,18 @@
+{
+  "name": "ceo-wechat",
+  "version": 1,
+  "runtime": {
+    "reader": {
+      "entrypoint": "scripts/reader.py",
+      "trusted_app": "CEO WeChat Reader.app",
+      "transport": "owner-only Unix socket",
+      "operations": ["status", "read-recent"]
+    },
+    "sender": {
+      "entrypoint": "scripts/sender.py",
+      "trusted_app": "CEO WeChat Sender.app",
+      "transport": "owner-only Unix socket",
+      "operations": ["pending", "approve", "reject"]
+    }
+  }
+}

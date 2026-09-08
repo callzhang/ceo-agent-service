@@ -620,4 +620,19 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("Meeting Work Skill")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "选择 Message Triage" })).toHaveAttribute("aria-pressed", "true");
   });
+
+  it("shows the WeChat automatic-reply configuration inside its Skill", async () => {
+    const user = userEvent.setup();
+    getSkillFeatures.mockResolvedValueOnce({ features: [{ feature_id: "wechat_auto_reply", name: "WeChat Auto Reply", description: "微信自动回复", skills: ["ceo-wechat"], enabled: true, status: "ready" }] });
+    listManagedSkills.mockResolvedValueOnce({ items: [{ id: 9, name: "ceo-wechat", display_name: "ceo-wechat", created_at: "2026-09-08T00:00:00Z" }] });
+    listManagedSkillRevisions.mockResolvedValueOnce({ items: [] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: null, active: null });
+    renderSettings("/settings?tab=skills");
+
+    await user.click(await screen.findByRole("button", { name: "选择 WeChat Auto Reply" }));
+    const configuration = (await screen.findByRole("heading", { name: "自动回复配置" })).closest("section");
+    expect(configuration).not.toBeNull();
+    expect(within(configuration!).getByRole("switch", { name: "启用微信自动回复" })).toBeChecked();
+    expect(within(configuration!).getByRole("link", { name: "管理自动回复对象" })).toHaveAttribute("href", "/settings?tab=connectors&connector=wechat");
+  });
 });
