@@ -476,6 +476,91 @@ description: OpenClaw skill for browser automation.
 
 
 @pytest.mark.parametrize(
+    ("directory_name", "public_name"),
+    (
+        ("nuwa", "huashu-nuwa"),
+        ("stardust-sre", "production-devops-sre"),
+    ),
+)
+def test_operation_catalog_uses_frontmatter_name_as_public_identity(
+    tmp_path: Path,
+    directory_name: str,
+    public_name: str,
+) -> None:
+    root = tmp_path / "operation-skills"
+    path = root / directory_name / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        f"---\nname: {public_name}\ndescription: Aliased operation Skill\n---\n# Skill\n",
+        encoding="utf-8",
+    )
+    service = _service(tmp_path, operation_root=root)
+
+    option = service.list_operation_skill_options()[0]
+
+    assert option.name == public_name
+    assert option.source == str(path)
+    assert service.resolve_operation_skill(public_name).path == path
+    with pytest.raises(
+        ScheduledTaskOptionUnavailableError,
+        match="operation_skill_unavailable",
+    ):
+        service.resolve_operation_skill(directory_name)
+
+
+def test_duplicate_operation_public_name_is_one_stable_unavailable_choice(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "operation-skills"
+    paths = []
+    for directory_name in ("first", "second"):
+        path = root / directory_name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "---\nname: shared-name\ndescription: Duplicate\n---\n# Skill\n",
+            encoding="utf-8",
+        )
+        paths.append(path)
+    service = _service(tmp_path, operation_root=root)
+
+    options = service.list_operation_skill_options()
+
+    assert len(options) == 1
+    assert options[0].name == "shared-name"
+    assert options[0].available is False
+    assert options[0].unavailable_reason == "operation_skill_name_conflict"
+    assert options[0].source == ";".join(str(path) for path in paths)
+    with pytest.raises(
+        ScheduledTaskOptionUnavailableError,
+        match="operation_skill_name_conflict",
+    ):
+        service.resolve_operation_skill("shared-name")
+
+
+def test_operation_catalog_does_not_follow_symlinks_or_treat_names_as_paths(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "operation-skills"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "SKILL.md").write_text(
+        "---\nname: escaped\ndescription: Outside\n---\n# Skill\n",
+        encoding="utf-8",
+    )
+    root.mkdir()
+    (root / "alias").symlink_to(outside, target_is_directory=True)
+    service = _service(tmp_path, operation_root=root)
+
+    assert service.list_operation_skill_options() == ()
+    for supplied_name in ("escaped", "alias", "../outside"):
+        with pytest.raises(
+            ScheduledTaskOptionUnavailableError,
+            match="operation_skill_unavailable",
+        ):
+            service.resolve_operation_skill(supplied_name)
+
+
+@pytest.mark.parametrize(
     "frontmatter",
     (
         "- name\n- description\n",

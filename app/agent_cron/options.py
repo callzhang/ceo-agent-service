@@ -156,12 +156,49 @@ class ScheduledTaskOptionService:
         return revision
 
     def list_operation_skill_options(self) -> tuple[OperationSkillOption, ...]:
-        options: list[OperationSkillOption] = []
+        documents, invalid_options = self._read_operation_skill_catalog()
+        options = [*invalid_options]
+        for name, matches in documents.items():
+            if len(matches) == 1:
+                options.append(self._operation_skill_option(matches[0]))
+            else:
+                options.append(
+                    OperationSkillOption(
+                        name=name,
+                        source=";".join(sorted(str(match.path) for match in matches)),
+                        content_summary="",
+                        sha256="",
+                        available=False,
+                        unavailable_reason="operation_skill_name_conflict",
+                    )
+                )
+        return tuple(sorted(options, key=lambda option: option.name))
+
+    def resolve_operation_skill(self, name: str) -> SkillDocument:
+        if not isinstance(name, str) or not name:
+            raise ScheduledTaskOptionUnavailableError(
+                f"operation Skill {name}: operation_skill_unavailable"
+            )
+        documents, _invalid_options = self._read_operation_skill_catalog()
+        matches = documents.get(name, ())
+        if len(matches) > 1:
+            raise ScheduledTaskOptionUnavailableError(
+                f"operation Skill {name}: operation_skill_name_conflict"
+            )
+        if not matches:
+            raise ScheduledTaskOptionUnavailableError(
+                f"operation Skill {name}: operation_skill_unavailable"
+            )
+        return matches[0]
+
+    def _read_operation_skill_catalog(
+        self,
+    ) -> tuple[dict[str, tuple[SkillDocument, ...]], tuple[OperationSkillOption, ...]]:
+        documents: dict[str, list[SkillDocument]] = {}
+        invalid_options: list[OperationSkillOption] = []
         for project_skill in self._operation_skill_files.list_skills():
             try:
-                document = self._operation_skill_files.get_operation_skill(
-                    project_skill.name
-                )
+                document = self._operation_skill_files.read_operation_skill(project_skill)
             except SkillFileOwnershipError:
                 continue
             except SkillFileError:
@@ -169,7 +206,7 @@ class ScheduledTaskOptionService:
                     digest = hashlib.sha256(project_skill.path.read_bytes()).hexdigest()
                 except OSError:
                     digest = ""
-                options.append(
+                invalid_options.append(
                     OperationSkillOption(
                         name=project_skill.name,
                         source=str(project_skill.path),
@@ -179,17 +216,12 @@ class ScheduledTaskOptionService:
                         unavailable_reason="operation_skill_invalid",
                     )
                 )
-            else:
-                options.append(self._operation_skill_option(document))
-        return tuple(options)
-
-    def resolve_operation_skill(self, name: str) -> SkillDocument:
-        try:
-            return self._operation_skill_files.get_operation_skill(name)
-        except SkillFileError as exc:
-            raise ScheduledTaskOptionUnavailableError(
-                f"operation Skill {name}: operation_skill_unavailable"
-            ) from exc
+                continue
+            documents.setdefault(document.name, []).append(document)
+        return (
+            {name: tuple(matches) for name, matches in documents.items()},
+            tuple(invalid_options),
+        )
 
     def _runtime_option(self, route: RuntimeRoute) -> RuntimeOption:
         decision = AgentRuntimeRouter(

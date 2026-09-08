@@ -111,17 +111,21 @@ class SkillFileService:
             raw_bytes=raw_bytes,
         )
 
-    def get_operation_skill(self, name: str) -> SkillDocument:
-        """Read one installed operation Skill without requiring service ownership."""
-        path, raw_bytes, content = self._read_skill_file(name)
+    def read_operation_skill(self, project_skill: ProjectSkill) -> SkillDocument:
+        """Read one safely enumerated operation Skill using its declared identity."""
+        if not isinstance(project_skill, ProjectSkill):
+            raise SkillFileValidationError("operation Skill entry is invalid")
+        path, raw_bytes, content = self._read_skill_file(project_skill.name)
+        if path != project_skill.path:
+            raise SkillFileValidationError(
+                f"operation Skill entry does not match its controlled path: {path}"
+            )
         frontmatter = _parse_standard_skill_frontmatter(content, path)
         declared_name = frontmatter.get("name")
         description = frontmatter.get("description")
         metadata = frontmatter.get("metadata", {})
         if not isinstance(declared_name, str) or not declared_name.strip():
             raise SkillFileValidationError(f"Skill must have nonempty name: {path}")
-        if declared_name.strip() != name:
-            raise SkillFileValidationError(f"Skill name does not match directory: {path}")
         if not isinstance(description, str) or not description.strip():
             raise SkillFileValidationError(f"Skill must have nonempty description: {path}")
         if not isinstance(metadata, dict):
@@ -132,7 +136,7 @@ class SkillFileService:
                 f"service-managed Skill cannot be used as an operation Skill: {path}"
             )
         return SkillDocument(
-            name=name,
+            name=declared_name.strip(),
             description=description.strip(),
             managed_by=managed_by if isinstance(managed_by, str) else None,
             path=path,
