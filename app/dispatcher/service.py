@@ -5,8 +5,16 @@ from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 import os
 from threading import Event, Lock
+from time import monotonic
 
 from app.dispatcher.models import ClaimGuard, DispatchEnvelope, QueueAdapter
+
+
+DEFAULT_DISPATCHER_DRAIN_GRACE_SECONDS = 21 * 60
+
+
+class DispatcherDrainTimeout(RuntimeError):
+    """The dispatcher could not drain its admitted work before shutdown."""
 
 
 class AdapterWorkerPools:
@@ -108,6 +116,7 @@ class ConsumerDispatcher:
         ] = {name: {} for name in names}
         self._adapter_by_name = {adapter.name: adapter for adapter in adapters}
         self._capacity_lock = Lock()
+        self._completion_event = Event()
         self.owner = owner
         self.owner_pid = os.getpid() if owner_pid is None else owner_pid
         self.lease = lease
@@ -253,10 +262,10 @@ class ConsumerDispatcher:
                     now=now,
                 )
                 guard.mark_lost()
-            self.wake_event.set()
+            self._signal_future_completion()
             return
         if guard.resolved:
-            self.wake_event.set()
+            self._signal_future_completion()
             return
         future_error = future.exception()
         if future_error is None:
@@ -278,7 +287,52 @@ class ConsumerDispatcher:
                 now=now,
             )
             guard.mark_lost()
+        self._signal_future_completion()
+
+    def _signal_future_completion(self) -> None:
         self.wake_event.set()
+        self._completion_event.set()
+
+    def _active_count(self) -> int:
+        with self._capacity_lock:
+            return sum(len(active) for active in self._active.values())
+
+    def _cancel_pending_futures(self) -> None:
+        with self._capacity_lock:
+            futures = tuple(
+                future
+                for active in self._active.values()
+                for future in active
+            )
+        for future in futures:
+            future.cancel()
+
+    def drain(
+        self,
+        *,
+        timeout_seconds: float = DEFAULT_DISPATCHER_DRAIN_GRACE_SECONDS,
+    ) -> None:
+        """Renew admitted claims until completion or fail within a fixed grace."""
+        if timeout_seconds <= 0:
+            raise ValueError("dispatcher drain timeout must be positive")
+        deadline = monotonic() + timeout_seconds
+        renew_wait = self.lease.total_seconds() / 2
+        while True:
+            self.renew_in_flight(datetime.now(UTC))
+            if self._active_count() == 0:
+                return
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                self._cancel_pending_futures()
+                active = self._active_count()
+                raise DispatcherDrainTimeout(
+                    "timed out draining dispatcher work; "
+                    f"{active} running future(s) remain"
+                )
+            self._completion_event.clear()
+            if self._active_count() == 0:
+                return
+            self._completion_event.wait(timeout=min(remaining, renew_wait))
 
     def run(self, *, stop_event: Event, dispatch_limit: int = 100) -> None:
         while not stop_event.is_set():

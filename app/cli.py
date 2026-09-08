@@ -1135,6 +1135,7 @@ def run_agent_cron_dispatcher_loop(
             wake_event=wake_event,
         )
         dispatcher.run(stop_event=stop_event or threading.Event())
+        dispatcher.drain()
     except BaseException:
         worker_pools.shutdown(wait=False, cancel_futures=True)
         raise

@@ -7051,6 +7051,9 @@ def test_agent_cron_dispatcher_dry_run_leaves_todo_outbox_unclaimed(
 
         def run(self, *, stop_event):
             del stop_event
+
+        def drain(self):
+            captured["drained"] = True
             raise StopDispatcher
 
     fake_runtime = SimpleNamespace(
@@ -7084,6 +7087,7 @@ def test_agent_cron_dispatcher_dry_run_leaves_todo_outbox_unclaimed(
         adapter.name for adapter in captured["adapters"]
     }
     assert "task_todo_sync_outbox" not in captured["consumers"]
+    assert captured["drained"] is True
     assert set(captured["executors"]) == set(captured["consumers"])
     assert len({id(executor) for executor in captured["executors"].values()}) == 6
     assert captured["max_in_flight"]["meeting"] == 1

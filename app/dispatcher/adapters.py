@@ -1282,7 +1282,10 @@ def _lease_seconds(lease: timedelta) -> int:
 
 def _lease_expiry(now: datetime, lease: timedelta) -> str:
     _lease_seconds(lease)
-    return _sqlite_time(now + lease)
+    expires_at = now + lease
+    if expires_at.microsecond:
+        expires_at = expires_at.replace(microsecond=0) + timedelta(seconds=1)
+    return _sqlite_time(expires_at)
 
 
 def _acquire_lease(

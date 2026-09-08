@@ -1160,6 +1160,163 @@ def test_normal_dispatcher_stop_stops_claiming_then_drains_started_work():
     ]
 
 
+def test_bounded_drain_renews_real_reply_claim_until_terminal_completion(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    _reply(store)
+    assert store.enqueue_reply_task(
+        conversation_id="cid-2",
+        conversation_title="Second conversation",
+        single_chat=False,
+        trigger_message_id="msg-2",
+        trigger_create_time=NOW.isoformat(),
+        trigger_sender="Derek",
+        trigger_text="Do not claim during drain.",
+        execution_generation="generation-8",
+    )
+
+    class RecordingReplyAdapter(ReplyQueueAdapter):
+        def __init__(self, reply_store):
+            super().__init__(reply_store)
+            self.renewals = 0
+
+        def renew(self, envelope, *, owner, now, lease):
+            self.renewals += 1
+            return super().renew(
+                envelope, owner=owner, now=now, lease=lease
+            )
+
+    adapter = RecordingReplyAdapter(store)
+    started = Event()
+    pools = dispatcher_service.AdapterWorkerPools(
+        {adapter.name: 1},
+        thread_name_prefix="test-fenced-reply-drain",
+    )
+
+    def consume(envelope, guard):
+        started.set()
+        Event().wait(1.25)
+        task = store.get_reply_task(int(envelope.source_id))
+        assert task is not None
+        store.complete_reply_task(
+            task.id,
+            expected_execution_generation=task.execution_generation,
+        )
+        guard.complete(datetime.now(UTC))
+
+    dispatcher = ConsumerDispatcher(
+        adapters=(adapter,),
+        consumers={adapter.name: consume},
+        executors=pools.executors,
+        max_in_flight=pools.max_in_flight,
+        shared_capacity_adapters=frozenset({adapter.name}),
+        shared_max_in_flight=1,
+        owner="dispatcher-drain",
+        owner_pid=101,
+        lease=timedelta(seconds=1),
+    )
+
+    assert dispatcher.dispatch_available(datetime.now(UTC), limit=1) == 1
+    assert started.wait(timeout=1)
+    dispatcher.drain(timeout_seconds=3)
+    pools.shutdown(wait=True, cancel_futures=False)
+
+    first = store.get_reply_task_for_message("cid", "msg-1")
+    second = store.get_reply_task_for_message("cid-2", "msg-2")
+    assert adapter.renewals >= 1
+    assert first is not None and first.status == "done"
+    assert second is not None and second.status == "pending"
+    assert second.attempts == 0
+    with store._connect() as db:
+        lease = db.execute(
+            "select owner, terminal_at from dispatcher_claim_leases "
+            "where adapter_name='reply' and source_id=?",
+            (str(first.id),),
+        ).fetchone()
+    assert tuple(lease) == ("", lease["terminal_at"])
+    assert lease["terminal_at"]
+
+
+def test_drain_timeout_cancels_pending_claim_and_returns_with_running_work(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    _reply(store)
+    assert store.enqueue_reply_task(
+        conversation_id="cid-2",
+        conversation_title="Second conversation",
+        single_chat=False,
+        trigger_message_id="msg-2",
+        trigger_create_time=NOW.isoformat(),
+        trigger_sender="Derek",
+        trigger_text="Queued work.",
+        execution_generation="generation-8",
+    )
+    adapter = ReplyQueueAdapter(store)
+    first_task = store.get_reply_task_for_message("cid", "msg-1")
+    assert first_task is not None
+    first_started = Event()
+    release_first = Event()
+    second_started = Event()
+    pools = dispatcher_service.AdapterWorkerPools(
+        {adapter.name: 1},
+        thread_name_prefix="test-reply-drain-timeout",
+    )
+
+    def consume(envelope, guard):
+        if envelope.source_id == str(first_task.id):
+            first_started.set()
+            assert release_first.wait(timeout=10)
+            guard.release(datetime.now(UTC))
+        else:
+            second_started.set()
+
+    dispatcher = ConsumerDispatcher(
+        adapters=(adapter,),
+        consumers={adapter.name: consume},
+        executors=pools.executors,
+        max_in_flight={adapter.name: 2},
+        shared_capacity_adapters=frozenset({adapter.name}),
+        shared_max_in_flight=2,
+        owner="dispatcher-timeout",
+        owner_pid=101,
+        lease=timedelta(seconds=1),
+    )
+    assert dispatcher.dispatch_available(datetime.now(UTC), limit=2) == 2
+    assert first_started.wait(timeout=1)
+
+    started_at = dispatcher_service.monotonic()
+    with pytest.raises(
+        dispatcher_service.DispatcherDrainTimeout,
+        match="timed out draining",
+    ):
+        dispatcher.drain(timeout_seconds=0.15)
+    assert dispatcher_service.monotonic() - started_at < 1
+    pools.shutdown(wait=False, cancel_futures=True)
+
+    deadline = dispatcher_service.monotonic() + 1
+    second = store.get_reply_task_for_message("cid-2", "msg-2")
+    while second is not None and second.status == "processing":
+        assert dispatcher_service.monotonic() < deadline
+        Event().wait(0.01)
+        second = store.get_reply_task_for_message("cid-2", "msg-2")
+    assert second is not None and second.status == "pending"
+    assert second.attempts == 0
+    assert not second_started.is_set()
+
+    release_first.set()
+    pools.shutdown(wait=True, cancel_futures=False)
+    first = store.get_reply_task_for_message("cid", "msg-1")
+    assert first is not None and first.status == "pending"
+    assert not [
+        worker
+        for worker in enumerate_threads()
+        if worker.name.startswith("test-reply-drain-timeout")
+        and worker.is_alive()
+    ]
+
+
 def test_dispatcher_is_round_robin_and_does_not_wait_for_long_consumers():
     first = _FakeAdapter("first", 2)
     second = _FakeAdapter("second", 2)
