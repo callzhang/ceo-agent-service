@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --canvas: #f6f6f3;
   --panel: #fbfbf9;
   --surface: #ffffff;
@@ -41,7 +41,8 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  .scheduled-tasks-route {
+    color-scheme: dark;
     --canvas: #111411;
     --panel: #171b17;
     --surface: #1b1f1b;
@@ -75,6 +76,8 @@
     --status-danger-line: #854844;
     --status-danger-surface: #3b2021;
     --shadow: 0 18px 46px rgb(0 0 0 / 38%);
+    color: var(--ink);
+    background: var(--canvas);
   }
 }
 

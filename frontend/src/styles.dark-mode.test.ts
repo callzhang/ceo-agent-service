@@ -3,9 +3,10 @@ import { describe, expect, it } from "vitest";
 import workbenchStyles from "./styles.css?raw";
 
 describe("workbench dark color contract", () => {
-  it("advertises both color schemes and supplies explicit dark design tokens", () => {
-    expect(workbenchStyles).toMatch(/:root\s*\{[^}]*color-scheme:\s*light dark;/);
-    expect(workbenchStyles).toMatch(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*:root\s*\{[\s\S]*?--canvas:[^;]+;[\s\S]*?--surface:[^;]+;[\s\S]*?--ink:[^;]+;[\s\S]*?--ink-soft:[^;]+;[\s\S]*?--line-strong:[^;]+;/);
+  it("keeps global pages light and scopes explicit dark tokens to the scheduled-task route", () => {
+    expect(workbenchStyles).toMatch(/:root\s*\{[^}]*color-scheme:\s*light;/);
+    expect(workbenchStyles).not.toMatch(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*:root\s*\{/);
+    expect(workbenchStyles).toMatch(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*\.scheduled-tasks-route\s*\{[\s\S]*?color-scheme:\s*dark;[\s\S]*?--canvas:[^;]+;[\s\S]*?--surface:[^;]+;[\s\S]*?--ink:[^;]+;[\s\S]*?--ink-soft:[^;]+;[\s\S]*?--line-strong:[^;]+;/);
   });
 
   it("routes status, error, focus, and disabled colors through shared tokens", () => {

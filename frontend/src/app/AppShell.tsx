@@ -5,5 +5,8 @@ import { GlobalNav } from "../components/GlobalNav";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
-  return <div className="console-root"><GlobalNav activePath={location.pathname} />{children}</div>;
+  const className = location.pathname === "/scheduled-tasks"
+    ? "console-root scheduled-tasks-route"
+    : "console-root";
+  return <div className={className}><GlobalNav activePath={location.pathname} />{children}</div>;
 }

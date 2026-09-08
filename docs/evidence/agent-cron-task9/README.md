@@ -8,10 +8,10 @@ not restarted.
 
 ## Screenshots
 
-- `scheduled-tasks-dark-wide.png`: Google Chrome 1440 x 1000 with Chrome's
-  `--force-dark-mode` media emulation. Verifies dark canvas/surface separation,
-  primary and secondary text, card borders, active navigation, and the empty
-  state.
+- `scheduled-tasks-dark-wide.png`: Google Chrome with a 1440 x 1000 CSS
+  viewport and `prefers-color-scheme: dark`, both set through the Chrome
+  DevTools Protocol. It verifies dark canvas/surface separation, primary and
+  secondary text, card borders, active navigation, and the empty state.
 - `scheduled-tasks-dark-390.png`: Google Chrome with a 390 x 844 CSS viewport
   and `prefers-color-scheme: dark`, both set through the Chrome DevTools
   Protocol. It verifies the complete wrapped heading copy, the new-task
@@ -26,6 +26,7 @@ With an isolated server running, execute:
 cd frontend
 npm run verify:scheduled-tasks-viewport -- \
   --url http://127.0.0.1:62371/scheduled-tasks \
+  --width 390 --height 844 \
   --screenshot ../docs/evidence/agent-cron-task9/scheduled-tasks-dark-390.png
 ```
 
@@ -33,6 +34,15 @@ The real-browser check fails unless the document scroll width is at most the
 390 px viewport width and the header description, new-task button, and
 workspace all remain within the 12 px page gutters. It also rejects horizontal
 overflow clipping, so a passing result proves fit rather than masked content.
+The same check asserts that the Scheduled Tasks route computed the scoped dark
+color scheme. Other routes retain the existing light tokens even when the
+operating system is dark.
+
+The screenshot is first held in memory, then written to a temporary file in
+the evidence directory and atomically renamed only after every assertion
+passes. Chrome receives `SIGTERM` and must close before its temporary profile
+is removed; a bounded timeout escalates to `SIGKILL`. The helper behavior is
+covered by `npm run test:viewport-script --prefix frontend`.
 
 ## Interactive browser checks
 

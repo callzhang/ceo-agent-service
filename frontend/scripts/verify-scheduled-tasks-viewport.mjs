@@ -1,9 +1,15 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
-const VIEWPORT = { width: 390, height: 844 };
+import {
+  assertScheduledTasksGeometry,
+  cleanupBrowserSession,
+  commitScreenshotAfterValidation,
+  preservePrimaryError,
+} from "./scheduled-tasks-viewport-lib.mjs";
+
 const args = process.argv.slice(2);
 
 function option(name, fallback = "") {
@@ -13,8 +19,15 @@ function option(name, fallback = "") {
 
 const url = option("--url");
 const screenshotPath = option("--screenshot");
+const viewport = {
+  width: Number(option("--width", "390")),
+  height: Number(option("--height", "844")),
+};
 if (!url) {
-  throw new Error("Usage: node scripts/verify-scheduled-tasks-viewport.mjs --url <url> [--screenshot <path>]");
+  throw new Error("Usage: node scripts/verify-scheduled-tasks-viewport.mjs --url <url> [--width 390] [--height 844] [--screenshot <path>]");
+}
+if (!Number.isInteger(viewport.width) || !Number.isInteger(viewport.height) || viewport.width <= 0 || viewport.height <= 0) {
+  throw new Error("Viewport width and height must be positive integers.");
 }
 
 const chromeCandidates = [
@@ -32,7 +45,7 @@ const chrome = spawn(chromePath, [
   "--hide-scrollbars",
   "--remote-debugging-port=0",
   `--user-data-dir=${profileDirectory}`,
-  `--window-size=${VIEWPORT.width},${VIEWPORT.height}`,
+  `--window-size=${viewport.width},${viewport.height}`,
   "about:blank",
 ], { stdio: ["ignore", "ignore", "pipe"] });
 
@@ -102,13 +115,8 @@ async function pageTarget(debugPort) {
   throw new Error("Chrome did not expose a page target.");
 }
 
-function assertInsideViewport(name, rect, minimumInset = 0) {
-  if (rect.left < minimumInset || rect.right > VIEWPORT.width - minimumInset) {
-    throw new Error(`${name} exceeds the viewport: ${JSON.stringify(rect)}`);
-  }
-}
-
 let client;
+let primaryError = null;
 try {
   const browserUrl = await waitForDevtoolsUrl();
   const debugPort = new URL(browserUrl).port;
@@ -118,8 +126,8 @@ try {
   await client.call("Page.enable");
   await client.call("Runtime.enable");
   await client.call("Emulation.setDeviceMetricsOverride", {
-    width: VIEWPORT.width,
-    height: VIEWPORT.height,
+    width: viewport.width,
+    height: viewport.height,
     deviceScaleFactor: 1,
     mobile: false,
   });
@@ -166,37 +174,48 @@ try {
         workspace: box(elements.workspace),
         descriptionText: elements.description.textContent,
         pageOverflowX: getComputedStyle(document.querySelector('.scheduled-tasks-page')).overflowX,
+        colorScheme: getComputedStyle(document.querySelector('.scheduled-tasks-route')).colorScheme,
+        routeClassName: document.querySelector('.console-root').className,
         offenders,
       };
     })()`,
     returnByValue: true,
   });
   const geometry = result.result.value;
+  let screenshotData = null;
 
   if (screenshotPath) {
     const screenshot = await client.call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-    writeFileSync(resolve(screenshotPath), Buffer.from(screenshot.data, "base64"));
+    screenshotData = Buffer.from(screenshot.data, "base64");
   }
 
-  const expectedDescription = "配置 Cron、Agent Skills 与执行 Runtime。Connector 只提供连接能力。";
-  if (geometry.descriptionText !== expectedDescription) {
-    throw new Error(`Header description changed: ${JSON.stringify(geometry.descriptionText)}`);
+  if (screenshotPath) {
+    commitScreenshotAfterValidation({
+      geometry,
+      screenshotData,
+      screenshotPath,
+      viewportWidth: viewport.width,
+    });
+  } else {
+    assertScheduledTasksGeometry(geometry, viewport.width);
   }
-  if (geometry.pageOverflowX === "clip" || geometry.pageOverflowX === "hidden") {
-    throw new Error(`Page hides horizontal overflow instead of fitting its content: ${JSON.stringify(geometry)}`);
-  }
-  if (geometry.documentScrollWidth > geometry.innerWidth || geometry.bodyScrollWidth > geometry.innerWidth) {
-    throw new Error(`Page scrolls horizontally: ${JSON.stringify(geometry)}`);
-  }
-  assertInsideViewport("Header description", geometry.description, 12);
-  assertInsideViewport("New task button", geometry.newButton, 12);
-  assertInsideViewport("Workspace", geometry.workspace, 12);
   process.stdout.write(`${JSON.stringify(geometry, null, 2)}\n`);
 } catch (error) {
-  process.stderr.write(`${error.message}\n`);
-  process.exitCode = 1;
+  primaryError = error;
 } finally {
-  client?.close();
-  chrome.kill("SIGTERM");
-  rmSync(profileDirectory, { recursive: true, force: true });
+  try {
+    client?.close();
+  } catch (cleanupError) {
+    primaryError = preservePrimaryError(primaryError, cleanupError);
+  }
+  try {
+    await cleanupBrowserSession(chrome, profileDirectory);
+  } catch (cleanupError) {
+    primaryError = preservePrimaryError(primaryError, cleanupError);
+  }
+}
+
+if (primaryError) {
+  process.stderr.write(`${primaryError.message}\n`);
+  process.exitCode = 1;
 }
