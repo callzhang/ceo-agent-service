@@ -20985,6 +20985,12 @@ class AutoReplyStore:
         with self._connect() as db:
             return list(db.execute(f"{query} order by id", args).fetchall())
 
+    def get_task_todo_sync_outbox(self, outbox_id: int) -> sqlite3.Row | None:
+        with self._connect() as db:
+            return db.execute(
+                "select * from task_todo_sync_outbox where id=?", (outbox_id,)
+            ).fetchone()
+
     def claim_task_todo_sync_outbox(
         self, *, owner: str, now: str, lease_seconds: int = 300
     ) -> sqlite3.Row | None:
@@ -21016,11 +21022,18 @@ class AutoReplyStore:
             return row if changed.rowcount == 1 else None
 
     def finish_task_todo_sync_outbox(
-        self, *, outbox_id: int, owner: str, status: str, receipt_json: str = "{}", error: str = ""
+        self,
+        *,
+        outbox_id: int,
+        owner: str,
+        status: str,
+        receipt_json: str = "{}",
+        error: str = "",
+        _db: sqlite3.Connection | None = None,
     ) -> None:
         if status not in {"completed", "failed", "unknown"}:
             raise ValueError("task todo sync terminal status is invalid")
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             changed = db.execute(
                 "update task_todo_sync_outbox set status=?, receipt_json=?, error=?, "
                 "lease_owner='', lease_expires_at='', completed_at=current_timestamp, "
@@ -21031,9 +21044,15 @@ class AutoReplyStore:
                 raise ValueError("task todo sync receipt ownership lost")
 
     def retry_task_todo_sync_outbox(
-        self, *, outbox_id: int, owner: str, error: str, now: str
+        self,
+        *,
+        outbox_id: int,
+        owner: str,
+        error: str,
+        now: str,
+        _db: sqlite3.Connection | None = None,
     ) -> None:
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             row = db.execute("select attempt_count from task_todo_sync_outbox where id=?", (outbox_id,)).fetchone()
             if row is None:
                 raise ValueError("task todo sync outbox does not exist")

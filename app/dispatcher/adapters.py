@@ -996,6 +996,283 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
         )
 
 
+class TaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
+    """Claim durable DingTalk Todo effects for the shared internal Dispatcher."""
+
+    name = "task_todo_sync_outbox"
+
+    def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
+        self.store = store
+        self.owner_alive = owner_alive
+
+    def metrics(self, now: datetime) -> QueueMetrics:
+        now_text = _sqlite_time(now)
+        with self.store._connect() as db:
+            pending = db.execute(
+                "select count(*) from task_todo_sync_outbox "
+                "where status='queued' or (status='failed' and attempt_count<3)"
+            ).fetchone()[0]
+            due = db.execute(
+                "select count(*) from task_todo_sync_outbox item "
+                "left join dispatcher_claim_leases claim "
+                "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                "where (item.status='queued' or (item.status='failed' "
+                "and item.attempt_count<3 and item.next_attempt_at<=?)) "
+                "and (claim.owner is null or claim.owner='' "
+                "or claim.lease_expires_at<=?)",
+                (self.name, now_text, now_text),
+            ).fetchone()[0]
+            running = db.execute(
+                "select count(*) from task_todo_sync_outbox item "
+                "left join dispatcher_claim_leases claim "
+                "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                "where item.status='running' and claim.owner<>'' "
+                "and claim.lease_expires_at>?",
+                (self.name, now_text),
+            ).fetchone()[0]
+            oldest = db.execute(
+                "select min(case when item.status='failed' then item.next_attempt_at "
+                "else item.created_at end) from task_todo_sync_outbox item "
+                "left join dispatcher_claim_leases claim "
+                "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                "where (item.status='queued' or (item.status='failed' "
+                "and item.attempt_count<3 and item.next_attempt_at<=?)) "
+                "and (claim.owner is null or claim.owner='' "
+                "or claim.lease_expires_at<=?)",
+                (self.name, now_text, now_text),
+            ).fetchone()[0]
+            latest_error = _latest_claim_error(db, self.name) or _latest_error(
+                db, table="task_todo_sync_outbox", column="error"
+            )
+        return QueueMetrics(
+            pending=int(pending),
+            due=int(due),
+            oldest_available_at=(
+                _source_time(str(oldest), fallback=now) if oldest else None
+            ),
+            running=int(running),
+            latest_error=latest_error,
+        )
+
+    def claim(
+        self,
+        now: datetime,
+        *,
+        owner: str,
+        owner_pid: int | None = None,
+        lease: timedelta,
+    ) -> DispatchEnvelope | None:
+        owner_pid = os.getpid() if owner_pid is None else owner_pid
+        _validate_claim(owner, lease)
+        now_text = _sqlite_time(now)
+        lease_text = _lease_expiry(now, lease)
+        with self.store._immediate_write_transaction() as db:
+            expired = db.execute(
+                "select item.id, claim.owner as claim_owner, "
+                "claim.owner_pid as claim_owner_pid, "
+                "claim.lease_expires_at as claim_expires_at "
+                "from task_todo_sync_outbox item "
+                "left join dispatcher_claim_leases claim "
+                "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                "where item.status='running' and item.lease_expires_at<=?",
+                (self.name, now_text),
+            ).fetchall()
+            for stale in expired:
+                claim_owner = str(stale["claim_owner"] or "")
+                claim_active = (
+                    claim_owner
+                    and str(stale["claim_expires_at"] or "") > now_text
+                )
+                owner_alive = claim_owner and self.owner_alive(
+                    int(stale["claim_owner_pid"] or 0)
+                )
+                if claim_active or owner_alive:
+                    continue
+                db.execute(
+                    "update task_todo_sync_outbox set status='unknown', lease_owner='', "
+                    "lease_expires_at='', error='receipt_reconciliation_required', "
+                    "updated_at=? where id=? and status='running' "
+                    "and lease_expires_at<=?",
+                    (now_text, stale["id"], now_text),
+                )
+
+            def fetch_page(after: sqlite3.Row | None, limit: int):
+                after_id = 0 if after is None else int(after["id"])
+                return db.execute(
+                    "select item.*, claim.owner as claim_owner, "
+                    "claim.owner_pid as claim_owner_pid, "
+                    "claim.lease_expires_at as claim_expires_at "
+                    "from task_todo_sync_outbox item "
+                    "left join dispatcher_claim_leases claim "
+                    "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
+                    "where (item.status='queued' or (item.status='failed' "
+                    "and item.attempt_count<3 and item.next_attempt_at<=?)) "
+                    "and (claim.owner is null or claim.owner='' "
+                    "or claim.lease_expires_at<=?) and item.id>? "
+                    "order by item.id limit ?",
+                    (self.name, now_text, now_text, after_id, limit),
+                ).fetchall()
+
+            row = _scan_claimable_candidate(
+                fetch_page,
+                now=now_text,
+                owner_alive=self.owner_alive,
+            )
+            if row is None:
+                return None
+            cursor = db.execute(
+                "update task_todo_sync_outbox set status='running', lease_owner=?, "
+                "lease_expires_at=?, attempt_count=attempt_count+1, updated_at=? "
+                "where id=? and status in ('queued','failed')",
+                (owner, lease_text, now_text, row["id"]),
+            )
+            if cursor.rowcount != 1:
+                return None
+            generation = _acquire_lease(
+                db,
+                adapter_name=self.name,
+                source_id=str(row["id"]),
+                owner=owner,
+                owner_pid=owner_pid,
+                lease_expires_at=lease_text,
+                now=now_text,
+            )
+            claimed = db.execute(
+                "select * from task_todo_sync_outbox where id=?", (row["id"],)
+            ).fetchone()
+            assert claimed is not None
+        available_at = str(claimed["next_attempt_at"] or claimed["created_at"])
+        return DispatchEnvelope(
+            adapter_name=self.name,
+            source_id=str(claimed["id"]),
+            available_at=_source_time(available_at, fallback=now),
+            priority=0,
+            attempt=int(claimed["attempt_count"]),
+            generation=generation,
+        )
+
+    def release(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+    ) -> None:
+        _validate_release(self.name, envelope, owner, now)
+        now_text = _sqlite_time(now)
+        with self.store._immediate_write_transaction() as db:
+            _release_lease(db, envelope=envelope, owner=owner, now=now_text)
+            cursor = db.execute(
+                "update task_todo_sync_outbox set "
+                "status=case when attempt_count>1 then 'failed' else 'queued' end, "
+                "attempt_count=max(attempt_count-1,0), lease_owner='', "
+                "lease_expires_at='', updated_at=? "
+                "where id=? and status='running' and lease_owner=?",
+                (now_text, int(envelope.source_id), owner),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("task Todo outbox dispatch claim is no longer owned")
+
+    def renew(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        lease: timedelta,
+    ) -> None:
+        _validate_release(self.name, envelope, owner, now)
+        now_text = _sqlite_time(now)
+        lease_text = _lease_expiry(now, lease)
+        with self.store._immediate_write_transaction() as db:
+            _renew_lease_in_db(
+                db,
+                envelope=envelope,
+                owner=owner,
+                now=now_text,
+                lease_expires_at=lease_text,
+            )
+            cursor = db.execute(
+                "update task_todo_sync_outbox set lease_expires_at=?, updated_at=? "
+                "where id=? and status='running' and lease_owner=? "
+                "and lease_expires_at>?",
+                (lease_text, now_text, int(envelope.source_id), owner, now_text),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("task Todo outbox dispatch claim is no longer owned")
+
+    def finish(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        status: str,
+        reason: str = "",
+    ) -> None:
+        del reason
+        if status not in {"completed", "failed", "unknown"}:
+            raise ValueError("task Todo outbox terminal status is invalid")
+        with self.store._connect() as db:
+            row = db.execute(
+                "select status from task_todo_sync_outbox where id=?",
+                (int(envelope.source_id),),
+            ).fetchone()
+        if row is None or str(row["status"]) != status:
+            raise ValueError("task Todo outbox terminal status was not persisted")
+        _complete_ledger(
+            self.store,
+            envelope=envelope,
+            owner=owner,
+            now=now,
+        )
+
+    def finish_delivery(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        status: str,
+        receipt_json: str = "{}",
+        error: str = "",
+    ) -> None:
+        """Fence the source receipt and Dispatcher generation in one transaction."""
+        if status not in {"completed", "failed", "unknown"}:
+            raise ValueError("task Todo outbox terminal status is invalid")
+        now_text = _sqlite_time(now)
+        with self.store._immediate_write_transaction() as db:
+            _assert_ledger_current_in_db(
+                db,
+                envelope=envelope,
+                owner=owner,
+                now=now_text,
+            )
+            if status == "failed":
+                self.store.retry_task_todo_sync_outbox(
+                    outbox_id=int(envelope.source_id),
+                    owner=owner,
+                    error=error,
+                    now=now_text,
+                    _db=db,
+                )
+            else:
+                self.store.finish_task_todo_sync_outbox(
+                    outbox_id=int(envelope.source_id),
+                    owner=owner,
+                    status=status,
+                    receipt_json=receipt_json,
+                    error=error,
+                    _db=db,
+                )
+            _complete_ledger_in_db(
+                db,
+                envelope=envelope,
+                owner=owner,
+                now=now_text,
+            )
+
+
 def _lease_seconds(lease: timedelta) -> int:
     seconds = int(lease.total_seconds())
     if seconds <= 0:
@@ -1142,18 +1419,33 @@ def _assert_ledger_current(
     now: datetime,
 ) -> None:
     with store._connect() as db:
-        row = db.execute(
-            "select 1 from dispatcher_claim_leases where adapter_name=? "
-            "and source_id=? and owner=? and generation=? "
-            "and lease_expires_at>? and terminal_at=''",
-            (
-                envelope.adapter_name,
-                envelope.source_id,
-                owner,
-                envelope.generation,
-                _sqlite_time(now),
-            ),
-        ).fetchone()
+        _assert_ledger_current_in_db(
+            db,
+            envelope=envelope,
+            owner=owner,
+            now=_sqlite_time(now),
+        )
+
+
+def _assert_ledger_current_in_db(
+    db: sqlite3.Connection,
+    *,
+    envelope: DispatchEnvelope,
+    owner: str,
+    now: str,
+) -> None:
+    row = db.execute(
+        "select 1 from dispatcher_claim_leases where adapter_name=? "
+        "and source_id=? and owner=? and generation=? "
+        "and lease_expires_at>? and terminal_at=''",
+        (
+            envelope.adapter_name,
+            envelope.source_id,
+            owner,
+            envelope.generation,
+            now,
+        ),
+    ).fetchone()
     if row is None:
         raise ValueError("dispatcher source claim is no longer owned")
 
@@ -1167,26 +1459,41 @@ def _complete_ledger(
 ) -> None:
     now_text = _sqlite_time(now)
     with store._immediate_write_transaction() as db:
-        cursor = db.execute(
-            "update dispatcher_claim_leases set owner='', lease_expires_at='', "
-            "terminal_at=?, last_error='', updated_at=? where adapter_name=? "
-            "and source_id=? and owner=? and generation=?",
-            (
-                now_text,
-                now_text,
-                envelope.adapter_name,
-                envelope.source_id,
-                owner,
-                envelope.generation,
-            ),
+        _complete_ledger_in_db(
+            db,
+            envelope=envelope,
+            owner=owner,
+            now=now_text,
         )
-        if cursor.rowcount != 1:
-            raise ValueError("dispatcher source claim is no longer owned")
-        db.execute(
-            "delete from dispatcher_claim_leases where terminal_at<>'' and rowid not in ("
-            "select rowid from dispatcher_claim_leases where terminal_at<>'' "
-            "order by terminal_at desc, rowid desc limit 10000)"
-        )
+
+
+def _complete_ledger_in_db(
+    db: sqlite3.Connection,
+    *,
+    envelope: DispatchEnvelope,
+    owner: str,
+    now: str,
+) -> None:
+    cursor = db.execute(
+        "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+        "terminal_at=?, last_error='', updated_at=? where adapter_name=? "
+        "and source_id=? and owner=? and generation=?",
+        (
+            now,
+            now,
+            envelope.adapter_name,
+            envelope.source_id,
+            owner,
+            envelope.generation,
+        ),
+    )
+    if cursor.rowcount != 1:
+        raise ValueError("dispatcher source claim is no longer owned")
+    db.execute(
+        "delete from dispatcher_claim_leases where terminal_at<>'' and rowid not in ("
+        "select rowid from dispatcher_claim_leases where terminal_at<>'' "
+        "order by terminal_at desc, rowid desc limit 10000)"
+    )
 
 
 def _record_ledger_error(

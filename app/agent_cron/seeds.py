@@ -4,6 +4,7 @@ from datetime import datetime
 import hashlib
 from pathlib import Path
 import shlex
+import sys
 
 from app.agent_cron.models import ScheduledTask, ScheduledTaskSkillRef
 from app.agent_cron.options import RuntimeOption, ScheduledTaskOptionService
@@ -17,6 +18,28 @@ from app.store import AutoReplyStore
 
 MINUTES_SYNC_MIGRATION_KEY = "ceo-minutes-sync-daily-v1"
 DINGTALK_MESSAGE_MIGRATION_KEY = "dingtalk-message-check-v1"
+
+
+def _one_shot_command(
+    store: AutoReplyStore,
+    working_directory: Path,
+    command: str,
+    *,
+    module: str = "app.cli",
+    include_workspace: bool = True,
+) -> str:
+    service_root = shlex.quote(str(Path(__file__).resolve().parents[2]))
+    python = shlex.quote(str(Path(sys.executable).resolve()))
+    database_path = shlex.quote(str(store.path.expanduser().resolve()))
+    workspace_path = shlex.quote(str(working_directory.expanduser().resolve()))
+    invocation = (
+        f"cd {service_root} && {python} -m {module} {command} --db {database_path}"
+    )
+    return (
+        f"{invocation} --workspace {workspace_path}"
+        if include_workspace
+        else invocation
+    )
 
 
 def seed_scheduled_tasks(
@@ -102,10 +125,12 @@ def _seed_dingtalk_message_task(
         name="dingtalk-chat",
         position=1,
     )
+    command = _one_shot_command(store, working_directory, "produce-once")
     prompt = (
-        "检查新增的 DingTalk 消息，仅处理现有消息发现与分诊行为。"
-        "使用 $ceo-message-triage 判断是否需要 CEO 关注或回复，"
-        "并使用 $dingtalk-chat 读取所需上下文；不要新增复盘或摘要任务。"
+        "使用 $ceo-message-triage 与 $dingtalk-chat 理解现有消息发现边界。"
+        f"只执行一次确定性 producer 命令：`{command}`。"
+        "该命令负责增量读取、去重并写入 reply task，后续由统一 Dispatcher 消费；"
+        "不要直接回复、重复消费、新增复盘或摘要任务。"
     )
     reasons = tuple(
         reason
@@ -153,12 +178,13 @@ def _seed_dingtalk_meeting_task(
     calendar_ref, calendar_reason = _operation_ref(
         options=options, name="dingtalk-calendar", position=2
     )
+    command = _one_shot_command(store, working_directory, "scan-meetings-once")
     prompt = (
-        "检查 DingTalk 中新结束且尚未处理的会议；只有当前时间达到 "
-        "ended_at + 10 minutes（10 分钟）时才符合处理资格。"
-        "使用 $ceo-meeting-work 执行现有"
-        "会议处理流程，并按需使用 $dingtalk-minutes 与 $dingtalk-calendar；"
-        "同一会议只创建一次业务输入。"
+        "使用 $ceo-meeting-work、$dingtalk-minutes 与 $dingtalk-calendar 理解"
+        "会议发现边界。只执行一次确定性 producer 命令："
+        f"`{command}`。该命令仅为当前时间达到 ended_at + 10 minutes（10 分钟）"
+        "且资料可读取的会议去重创建 meeting alignment job，后续由统一 Dispatcher "
+        "消费；不要直接分析或发送会议结果。"
     )
     reasons = tuple(
         reason
@@ -205,10 +231,15 @@ def _seed_wechat_task(
         name="ceo-wechat",
         position=0,
     )
-    database_path = shlex.quote(str(store.path.expanduser().resolve()))
+    command = _one_shot_command(
+        store,
+        working_directory,
+        "produce-once",
+        module="app.wechat.cli",
+        include_workspace=False,
+    )
     prompt = (
-        "使用 $ceo-wechat 执行 `python -m app.wechat.cli produce-once --db "
-        f"{database_path}`，完成现有 producer "
+        f"使用 $ceo-wechat 执行 `{command}`，完成现有 producer "
         "的一次检查，并严格保留"
         "已配置联系人、群@、auto-confirm 和 sender 授权边界；投递及状态确认仍由"
         "内部机制处理。不要新增复盘或摘要。"
@@ -248,9 +279,12 @@ def _seed_oa_task(
     operation_ref, operation_reason = _operation_ref(
         options=options, name="dingtalk-oa-approval", position=0
     )
+    command = _one_shot_command(store, working_directory, "scan-oa-approvals")
     prompt = (
-        "使用 $dingtalk-oa-approval 检查新增或变化的 DingTalk OA 待审批事项，"
-        "沿用现有审批扫描与处理边界，只生成现有类型的业务输入。"
+        "使用 $dingtalk-oa-approval 理解现有 OA 扫描边界。"
+        f"只执行一次确定性 scanner 命令：`{command}`。"
+        "该命令负责按 revision 去重并写入既有业务输入；"
+        "不要直接审批或发送，后续处理交给统一 Dispatcher。"
     )
     reasons = tuple(
         reason
@@ -295,10 +329,12 @@ def _seed_work_source_task(
     minutes_ref, minutes_reason = _operation_ref(
         options=options, name="dingtalk-minutes", position=1
     )
+    command = _one_shot_command(store, working_directory, "scan-task-sources")
     prompt = (
-        "每天扫描现有工作来源：使用 $ceo-work-tracking 处理本地 transcripts，"
-        "并使用 $dingtalk-minutes 检查听记来源；仅创建尚未入队的工作摘要输入，"
-        "后续消费交给统一 Dispatcher。"
+        "使用 $ceo-work-tracking 与 $dingtalk-minutes 理解现有工作来源边界。"
+        f"只执行一次确定性 scanner 命令：`{command}`。"
+        "该命令扫描本地工作目录中的增量文件和 AI 听记，并仅创建尚未入队的"
+        "工作摘要输入；不要直接修改工作对象，后续消费交给统一 Dispatcher。"
     )
     reasons = tuple(
         reason
@@ -340,10 +376,14 @@ def _seed_weekly_okr_task(
     okr_ref, okr_reason = _operation_ref(
         options=options, name="dingtang-okr-review", position=1
     )
+    command = _one_shot_command(
+        store, working_directory, "weekly-okr-report --force"
+    )
     prompt = (
-        "使用 $ceo-weekly-report 与 $dingtang-okr-review 执行现有周报与 OKR "
-        "复核流程；调用 weekly-okr-report --force，使时间资格只由本 Cron 控制，"
-        "并保留原有业务证据与发送边界。"
+        "使用 $ceo-weekly-report 与 $dingtang-okr-review 理解现有周报边界。"
+        f"只执行一次确定性命令：`{command}`，使时间资格只由本 Cron 控制。"
+        "命令自身完成分析、发布和发送；不要在命令外重复读取 OKR、创建文档或"
+        "发送群消息，并以命令返回的结构化状态报告本次结果。"
     )
     reasons = tuple(
         reason

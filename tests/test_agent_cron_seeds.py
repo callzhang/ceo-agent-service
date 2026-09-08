@@ -3,9 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import hashlib
 from pathlib import Path
+import shlex
+import subprocess
+import sys
 
 import pytest
 
+from app.cli import build_parser
 import app.managed_skills as managed_skills_module
 from app.agent_cron.options import ScheduledTaskOptionService
 from app.agent_cron.consumer import ScheduledTaskTriggerConsumer
@@ -31,6 +35,27 @@ NOW = datetime(2026, 9, 8, 19, 0, tzinfo=UTC)
 
 def _task_by_key(tasks: tuple, migration_key: str):
     return next(task for task in tasks if task.migration_key == migration_key)
+
+
+def _cli_command(
+    store: AutoReplyStore, working_directory: Path, command: str
+) -> str:
+    service_root = Path(__file__).resolve().parents[1]
+    return (
+        f"cd {shlex.quote(str(service_root))} && "
+        f"{shlex.quote(str(Path(sys.executable).resolve()))} -m app.cli {command} "
+        f"--db {shlex.quote(str(store.path.resolve()))} "
+        f"--workspace {shlex.quote(str(working_directory.resolve()))}"
+    )
+
+
+def _wechat_cli_command(store: AutoReplyStore) -> str:
+    service_root = Path(__file__).resolve().parents[1]
+    return (
+        f"cd {shlex.quote(str(service_root))} && "
+        f"{shlex.quote(str(Path(sys.executable).resolve()))} -m app.wechat.cli "
+        f"produce-once --db {shlex.quote(str(store.path.resolve()))}"
+    )
 
 
 def _snapshot(route_name: str, *, healthy: bool) -> RuntimeCapabilitySnapshot:
@@ -113,6 +138,9 @@ def test_seed_creates_dingtalk_message_check_every_minute(tmp_path: Path) -> Non
     ]
     assert "$ceo-message-triage" in task.prompt
     assert "$dingtalk-chat" in task.prompt
+    assert f"`{_cli_command(store, tmp_path, 'produce-once')}`" in task.prompt
+    assert "只执行一次" in task.prompt
+    assert "不要直接回复" in task.prompt
 
 
 def test_seed_creates_meeting_check_with_fixed_ten_minute_eligibility(
@@ -142,6 +170,8 @@ def test_seed_creates_meeting_check_with_fixed_ten_minute_eligibility(
         ("operation", "dingtalk-calendar"),
     ]
     assert "ended_at + 10 minutes" in task.prompt
+    assert f"`{_cli_command(store, tmp_path, 'scan-meetings-once')}`" in task.prompt
+    assert "不要直接分析或发送" in task.prompt
     assert task.enabled is True
 
 
@@ -167,8 +197,7 @@ def test_seed_creates_wechat_existing_producer_every_fifteen_seconds(
     assert "联系人" in task.prompt
     assert "群@" in task.prompt
     assert "auto-confirm" in task.prompt
-    assert "produce-once" in task.prompt
-    assert str(store.path.resolve()) in task.prompt
+    assert f"`{_wechat_cli_command(store)}`" in task.prompt
     assert "不要新增复盘或摘要" in task.prompt
     assert task.enabled is True
 
@@ -198,6 +227,8 @@ def test_seed_creates_hourly_oa_check_with_real_operation_skill(
         ("operation", "dingtalk-oa-approval")
     ]
     assert "$dingtalk-oa-approval" in task.prompt
+    assert f"`{_cli_command(store, tmp_path, 'scan-oa-approvals')}`" in task.prompt
+    assert "不要直接审批或发送" in task.prompt
     assert task.enabled is True
 
 
@@ -224,7 +255,9 @@ def test_seed_creates_daily_work_source_scan(tmp_path: Path) -> None:
         ("managed", "ceo-work-tracking"),
         ("operation", "dingtalk-minutes"),
     ]
-    assert "本地 transcripts" in task.prompt
+    assert f"`{_cli_command(store, tmp_path, 'scan-task-sources')}`" in task.prompt
+    assert "本地工作目录中的增量文件" in task.prompt
+    assert "不要直接修改工作对象" in task.prompt
     assert task.enabled is True
 
 
@@ -252,6 +285,12 @@ def test_seed_creates_sunday_evening_weekly_okr_task(tmp_path: Path) -> None:
         ("operation", "dingtang-okr-review"),
     ]
     assert "--force" in task.prompt
+    assert (
+        f"`{_cli_command(store, tmp_path, 'weekly-okr-report --force')}`"
+        in task.prompt
+    )
+    assert "命令自身完成分析、发布和发送" in task.prompt
+    assert "不要在命令外重复" in task.prompt
     assert task.enabled is True
 
 
@@ -265,6 +304,70 @@ def test_proactive_seeds_do_not_include_lark_default(tmp_path: Path) -> None:
 
     assert all("lark" not in (task.migration_key or "").lower() for task in tasks)
     assert all(store.list_scheduled_task_runs(task.id) == () for task in tasks)
+
+
+def test_non_wechat_seed_commands_are_registered_one_shot_cli_entries(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "commands.sqlite3")
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes={"codex_oauth"},
+        operation_skills=(
+            "dingtalk-chat",
+            "dingtalk-minutes",
+            "dingtalk-calendar",
+            "dingtalk-oa-approval",
+            "ceo-weekly-report",
+            "dingtang-okr-review",
+        ),
+    )
+    tasks = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path, now=NOW
+    )
+    expected = {
+        "dingtalk-message-check-v1": "produce-once",
+        "dingtalk-meeting-check-v1": "scan-meetings-once",
+        "dingtalk-oa-check-v1": "scan-oa-approvals",
+        "work-source-scan-daily-v1": "scan-task-sources",
+        "weekly-okr-report-sunday-v1": "weekly-okr-report",
+    }
+
+    for migration_key, command_name in expected.items():
+        prompt = _task_by_key(tasks, migration_key).prompt
+        command = prompt.split("`", 2)[1]
+        argv = shlex.split(command)
+        assert argv[:3] == ["cd", str(Path(__file__).resolve().parents[1]), "&&"]
+        assert argv[3:6] == [str(Path(sys.executable).resolve()), "-m", "app.cli"]
+        parsed = build_parser().parse_args(argv[6:])
+        assert parsed.command == command_name
+        assert Path(parsed.db) == store.path.resolve()
+        assert Path(parsed.workspace) == tmp_path.resolve()
+
+
+def test_seeded_python_entrypoint_is_executable_from_business_workspace(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "commands.sqlite3")
+    for command, expected_usage in (
+        (_cli_command(store, tmp_path, "produce-once"), "usage: ceo-agent"),
+        (_wechat_cli_command(store), "usage:"),
+    ):
+        prefix, separator, _business_args = command.partition(" produce-once ")
+        assert separator
+        probe = subprocess.run(
+            f"{prefix} --help",
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin"},
+            shell=True,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert probe.returncode == 0, probe.stderr
+        assert expected_usage in probe.stdout
 
 
 def test_proactive_cron_triggers_create_snapshotted_business_inputs(

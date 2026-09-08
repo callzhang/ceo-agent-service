@@ -1068,6 +1068,15 @@ def test_parser_supports_check_follow_up_completions():
     assert args.command == "check-follow-up-completions"
 
 
+def test_parser_supports_single_meeting_scan_with_explicit_database(tmp_path):
+    args = build_parser().parse_args(
+        ["scan-meetings-once", "--db", str(tmp_path / "production.sqlite3")]
+    )
+
+    assert args.command == "scan-meetings-once"
+    assert args.db == str(tmp_path / "production.sqlite3")
+
+
 def test_parser_supports_daily_task_maintenance():
     args = build_parser().parse_args(["daily-task-maintenance", "--max-batches", "4"])
 
@@ -5777,6 +5786,42 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     assert calls[6] == ("sleep", 10)
 
 
+def test_scan_meetings_once_command_writes_one_job_with_fixed_ten_minute_window(
+    monkeypatch, tmp_path
+):
+    db_path = tmp_path / "production.sqlite3"
+    settings = WorkerSettings(db_path=db_path, workspace=tmp_path / "memory")
+    dws = object()
+    now = datetime.fromisoformat("2026-09-08T20:00:00+08:00")
+    calls = []
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: dws)
+
+    def produce(store, received_dws, *, now, settle_seconds):
+        calls.append((store.path, received_dws, now, settle_seconds))
+        store.upsert_meeting_alignment_job(
+            meeting_id="meeting-cron-1",
+            title="Cron meeting",
+            source_json="{}",
+            participants_json="[]",
+            ended_at="2026-09-08T19:40:00+08:00",
+            eligible_at="2026-09-08T19:50:00+08:00",
+            status="pending",
+        )
+        return 1
+
+    monkeypatch.setattr(cli, "produce_meeting_alignment_jobs", produce)
+
+    created = cli.scan_meetings_once_command(settings, now=now)
+
+    assert created == 1
+    assert calls == [(db_path, dws, now, 600)]
+    job = AutoReplyStore(db_path).get_meeting_alignment_job_by_meeting_id(
+        "meeting-cron-1"
+    )
+    assert job is not None
+    assert job.eligible_at == "2026-09-08T19:50:00+08:00"
+
+
 def test_meeting_loops_skip_when_network_not_ready(monkeypatch, tmp_path):
     calls = []
 
@@ -6337,12 +6382,12 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         "completion-check",
         (
             "health",
-            "task_maintenance.check_follow_up_completions",
+            "task_maintenance.confirm_external_todo_completions",
             {"state": "healthy"},
         ),
         (
             "resolve-kind",
-            "task_maintenance_check_follow_up_completions",
+            "task_maintenance_confirm_external_todo_completions",
             {"resolution": "recovered by a later successful maintenance cycle"},
         ),
     ]
@@ -6612,6 +6657,7 @@ def test_task_maintenance_loop_keeps_only_internal_recovery_checks(
         )
 
     assert calls == ["completion-check"]
+    assert not any("completion" in key and "interval" in key for key in vars(settings))
 
 
 def test_oa_pending_scan_loop_runs_on_its_own_interval(monkeypatch, tmp_path):
@@ -6917,7 +6963,7 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
 
     with pytest.raises(StopDispatcher):
         cli.run_agent_cron_dispatcher_loop(
-            WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=True),
+            WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False),
             object(),
             wake_event=threading.Event(),
         )
@@ -6929,6 +6975,7 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "meeting",
         "work_summary",
         "okr_review",
+        "task_todo_sync_outbox",
     ]
     assert set(captured["consumers"]) == {
         "scheduled",
@@ -6937,7 +6984,57 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "meeting",
         "work_summary",
         "okr_review",
+        "task_todo_sync_outbox",
     }
+
+
+def test_agent_cron_dispatcher_dry_run_leaves_todo_outbox_unclaimed(
+    monkeypatch, tmp_path
+):
+    captured = {}
+
+    class StopDispatcher(Exception):
+        pass
+
+    class FakeDispatcher:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def run(self, *, stop_event):
+            del stop_event
+            raise StopDispatcher
+
+    fake_runtime = SimpleNamespace(
+        config=SimpleNamespace(), refresh_runtime_capabilities=None
+    )
+    monkeypatch.setattr(cli, "ConsumerDispatcher", FakeDispatcher)
+    monkeypatch.setattr(cli, "_scheduled_task_option_service", lambda *_: object())
+    monkeypatch.setattr(cli, "_create_service_worker", lambda *_: object())
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda *_: object())
+    monkeypatch.setattr(cli, "MeetingAlignmentCodexRunner", lambda **_: object())
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", lambda **_: object())
+    monkeypatch.setattr(cli, "TaskAgentRunner", lambda *_: object())
+    monkeypatch.setattr(cli, "_build_okr_review_runner", lambda *_: object())
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_agent_runtime",
+        lambda **_: fake_runtime,
+    )
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **_: object(),
+    )
+
+    with pytest.raises(StopDispatcher):
+        cli.run_agent_cron_dispatcher_loop(
+            WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=True),
+            object(),
+            wake_event=threading.Event(),
+        )
+
+    assert "task_todo_sync_outbox" not in {
+        adapter.name for adapter in captured["adapters"]
+    }
+    assert "task_todo_sync_outbox" not in captured["consumers"]
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):

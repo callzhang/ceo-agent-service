@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import app.dispatcher.adapters as dispatcher_adapters
 from app.dispatcher.adapters import (
     MeetingQueueAdapter,
     OkrReviewQueueAdapter,
@@ -128,6 +129,160 @@ def _okr_review(store: AutoReplyStore, *, index: int = 1) -> int:
     )
 
 
+def _todo_outbox(store: AutoReplyStore, *, index: int = 1) -> int:
+    store.enqueue_task_todo_sync_outbox(
+        operation_key=f"task-agent:{index}:todo:{index}:create",
+        work_todo_id=index,
+        operation="create",
+    )
+    return int(store.list_task_todo_sync_outbox()[-1]["id"])
+
+
+def test_task_todo_outbox_adapter_claims_due_failed_work_without_new_input(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source_id = _todo_outbox(store)
+    with store._connect() as db:
+        db.execute(
+            "update task_todo_sync_outbox set status='failed', attempt_count=1, "
+            "next_attempt_at=? where id=?",
+            ((NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S"), source_id),
+        )
+    adapter = dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(store)
+
+    envelope = adapter.claim(
+        NOW,
+        owner="dispatcher-a",
+        owner_pid=101,
+        lease=timedelta(minutes=5),
+    )
+
+    assert envelope is not None
+    assert envelope.source_id == str(source_id)
+    assert envelope.attempt == 2
+    assert adapter.metrics(NOW).running == 1
+
+
+def test_task_todo_outbox_adapter_fences_owner_and_generation(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _todo_outbox(store)
+    adapter = dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(
+        store, owner_alive=lambda _pid: False
+    )
+    first = adapter.claim(
+        NOW,
+        owner="dispatcher-a",
+        owner_pid=101,
+        lease=timedelta(minutes=5),
+    )
+    assert first is not None
+
+    assert (
+        adapter.claim(
+            NOW,
+            owner="dispatcher-b",
+            owner_pid=202,
+            lease=timedelta(minutes=5),
+        )
+        is None
+    )
+    with pytest.raises(ValueError, match="no longer owned"):
+        adapter.release(first, owner="dispatcher-b", now=NOW)
+
+
+def test_task_todo_outbox_dispatcher_processes_due_retry_once(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source_id = _todo_outbox(store)
+    with store._connect() as db:
+        db.execute(
+            "update task_todo_sync_outbox set status='failed', attempt_count=1, "
+            "next_attempt_at=? where id=?",
+            ((NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S"), source_id),
+        )
+    wake = Event()
+    adapter = dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(store)
+    processed: list[str] = []
+    executor = ThreadPoolExecutor(max_workers=1)
+    def consume(envelope, guard):
+        processed.append(envelope.source_id)
+        store.finish_task_todo_sync_outbox(
+            outbox_id=int(envelope.source_id),
+            owner=guard.token.owner,
+            status="completed",
+        )
+        guard.finish_source(NOW, status="completed")
+
+    dispatcher = ConsumerDispatcher(
+        adapters=(adapter,),
+        consumers={"task_todo_sync_outbox": consume},
+        executors={"task_todo_sync_outbox": executor},
+        max_in_flight={"task_todo_sync_outbox": 1},
+        owner="dispatcher-a",
+        owner_pid=101,
+        lease=timedelta(minutes=5),
+        wake_event=wake,
+    )
+
+    assert dispatcher.dispatch_available(NOW, limit=2) == 1
+    for _ in range(100):
+        if store.get_task_todo_sync_outbox(source_id)["status"] == "completed":
+            break
+        Event().wait(0.01)
+    assert processed == [str(source_id)]
+    assert store.get_task_todo_sync_outbox(source_id)["status"] == "completed"
+    assert dispatcher.dispatch_available(NOW, limit=2) == 0
+    executor.shutdown()
+
+
+def test_task_todo_outbox_enqueue_wake_is_not_lost_after_empty_scan(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    wake = Event()
+    stop = Event()
+    processed = Event()
+    adapter = dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(store)
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    def consume(envelope, guard):
+        item = store.get_task_todo_sync_outbox(int(envelope.source_id))
+        assert item is not None
+        store.finish_task_todo_sync_outbox(
+            outbox_id=int(envelope.source_id),
+            owner=guard.token.owner,
+            status="completed",
+        )
+        guard.finish_source(datetime.now(UTC), status="completed")
+        processed.set()
+
+    dispatcher = ConsumerDispatcher(
+        adapters=(adapter,),
+        consumers={"task_todo_sync_outbox": consume},
+        executors={"task_todo_sync_outbox": executor},
+        max_in_flight={"task_todo_sync_outbox": 1},
+        owner="dispatcher-a",
+        lease=timedelta(minutes=5),
+        wake_event=wake,
+        fallback_wait_seconds=30,
+    )
+    thread = Thread(target=dispatcher.run, kwargs={"stop_event": stop})
+    thread.start()
+
+    source_id = _todo_outbox(store)
+    wake.set()
+
+    assert processed.wait(timeout=2)
+    stop.set()
+    wake.set()
+    thread.join(timeout=2)
+    assert store.get_task_todo_sync_outbox(source_id)["status"] == "completed"
+    assert not thread.is_alive()
+    executor.shutdown()
+
+
 def _two_due_sources(store: AutoReplyStore, adapter_name: str):
     return _many_due_sources(store, adapter_name, count=2)
 
@@ -179,6 +334,10 @@ def _many_due_sources(
     if adapter_name == "okr_review":
         return OkrReviewQueueAdapter, tuple(
             str(_okr_review(store, index=index)) for index in range(count)
+        )
+    if adapter_name == "task_todo_sync_outbox":
+        return dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter, tuple(
+            str(_todo_outbox(store, index=index + 1)) for index in range(count)
         )
     ids = tuple(
         str(store.enqueue_work_summary_input("reply_attempt", f"task-{index}", "{}"))
@@ -374,7 +533,15 @@ def test_legacy_source_leases_recover_with_fencing_and_monotonic_generation(
 
 
 @pytest.mark.parametrize(
-    "adapter_name", ("scheduled", "reply", "meeting", "work_summary", "okr_review")
+    "adapter_name",
+    (
+        "scheduled",
+        "reply",
+        "meeting",
+        "work_summary",
+        "okr_review",
+        "task_todo_sync_outbox",
+    ),
 )
 def test_claim_skips_expired_head_owned_by_live_process(
     tmp_path: Path, adapter_name: str
@@ -401,10 +568,23 @@ def test_claim_skips_expired_head_owned_by_live_process(
 
     assert second is not None
     assert second.source_id == source_ids[1]
+    if adapter_name == "task_todo_sync_outbox":
+        first_source = store.get_task_todo_sync_outbox(int(source_ids[0]))
+        assert first_source is not None
+        assert first_source["status"] == "running"
+        assert first_source["lease_owner"] == "owner-a"
 
 
 @pytest.mark.parametrize(
-    "adapter_name", ("scheduled", "reply", "meeting", "work_summary", "okr_review")
+    "adapter_name",
+    (
+        "scheduled",
+        "reply",
+        "meeting",
+        "work_summary",
+        "okr_review",
+        "task_todo_sync_outbox",
+    ),
 )
 def test_claim_scans_past_full_page_of_live_protected_sources(
     tmp_path: Path, adapter_name: str
@@ -498,6 +678,27 @@ def test_okr_review_source_cannot_be_claimed_twice_concurrently(tmp_path: Path):
 
     assert sum(item is not None for item in claims) == 1
     assert store.get_okr_review_request(request_id).status == "processing"
+
+
+def test_task_todo_outbox_source_cannot_be_claimed_twice_concurrently(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source_id = _todo_outbox(store)
+    adapter = dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(store)
+    start = Event()
+
+    def claim(owner: str):
+        assert start.wait(timeout=2)
+        return adapter.claim(NOW, owner=owner, lease=timedelta(minutes=5))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(claim, owner) for owner in ("one", "two")]
+        start.set()
+        claims = [future.result(timeout=2) for future in futures]
+
+    assert sum(item is not None for item in claims) == 1
+    assert store.get_task_todo_sync_outbox(source_id)["status"] == "running"
 
 
 def test_work_summary_claim_uses_dispatcher_time_for_due_boundary(tmp_path: Path):

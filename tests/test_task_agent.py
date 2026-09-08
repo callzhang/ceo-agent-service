@@ -4412,7 +4412,7 @@ def test_process_work_item_rolls_back_domain_changes_when_apply_is_interrupted(
     assert store.list_task_todo_sync_outbox() == []
 
 
-def test_process_work_item_delivers_task_todo_after_domain_commit(tmp_path):
+def test_process_work_item_leaves_committed_task_todo_for_shared_dispatcher(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     item = _work_item()
     store.enqueue_work_summary_input(
@@ -4465,8 +4465,8 @@ def test_process_work_item_delivers_task_todo_after_domain_commit(tmp_path):
         now="2026-06-27 10:00:00",
     )
 
-    assert dws.visible_todo_counts == [1]
-    assert store.list_task_todo_sync_outbox(statuses=("completed",))[0]["operation"] == "create"
+    assert dws.visible_todo_counts == []
+    assert store.list_task_todo_sync_outbox(statuses=("queued",))[0]["operation"] == "create"
 
 
 def test_process_work_item_repairs_unsupported_project_owner_evidence(tmp_path):

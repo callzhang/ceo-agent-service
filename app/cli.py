@@ -97,7 +97,7 @@ from app.task_owner_backfill import (
 )
 from app.todo_completion import enqueue_todo_completion_evidence_checks
 from app.todo_sync import (
-    dispatch_task_todo_sync_outbox,
+    dispatch_claimed_task_todo_sync_outbox,
     pull_dingtalk_todo_statuses,
     retry_failed_dingtalk_todo_links,
 )
@@ -317,6 +317,7 @@ def build_parser() -> argparse.ArgumentParser:
         "weekly-okr-report",
         "refresh-okr-archive",
         "scan-task-sources",
+        "scan-meetings-once",
         "scan-oa-approvals",
         "read-oa-approval-detail",
         "read-dingteam-okr",
@@ -933,6 +934,7 @@ def run_agent_cron_dispatcher_loop(
         ReplyQueueAdapter,
         ScheduledExecutionQueueAdapter,
         ScheduledTaskQueueAdapter,
+        TaskTodoSyncOutboxQueueAdapter,
         WorkSummaryQueueAdapter,
     )
     from app.agent_runtime_production import build_production_routed_codex_execution
@@ -1066,6 +1068,27 @@ def run_agent_cron_dispatcher_loop(
             claim_guard=guard,
         )
 
+    todo_dws = None if settings.dry_run else meeting_dws
+
+    def consume_task_todo_sync_outbox(envelope, guard) -> None:
+        if todo_dws is None:
+            guard.release(datetime.now(timezone.utc))
+            return
+        item = store.get_task_todo_sync_outbox(int(envelope.source_id))
+        if item is None:
+            raise ValueError("task Todo outbox dispatch source does not exist")
+        now = datetime.now(timezone.utc)
+        status = dispatch_claimed_task_todo_sync_outbox(
+            store,
+            todo_dws,
+            item=item,
+            owner=guard.token.owner,
+            now=now.strftime("%Y-%m-%d %H:%M:%S"),
+            claim_guard=guard,
+        )
+        if not guard.resolved:
+            guard.finish_source(now, status=status)
+
     executor = ThreadPoolExecutor(
         max_workers=max(1, settings.consumer_workers), thread_name_prefix="agent-dispatcher"
     )
@@ -1076,7 +1099,7 @@ def run_agent_cron_dispatcher_loop(
         MeetingQueueAdapter(store),
         WorkSummaryQueueAdapter(store),
         OkrReviewQueueAdapter(store),
-    )
+    ) + (() if settings.dry_run else (TaskTodoSyncOutboxQueueAdapter(store),))
     consumers = {
         "scheduled": trigger_consumer,
         "scheduled_execution": execution_consumer,
@@ -1085,6 +1108,8 @@ def run_agent_cron_dispatcher_loop(
         "work_summary": consume_work_summary,
         "okr_review": consume_okr_review,
     }
+    if not settings.dry_run:
+        consumers["task_todo_sync_outbox"] = consume_task_todo_sync_outbox
     dispatcher = ConsumerDispatcher(
         adapters=adapters,
         consumers=consumers,
@@ -1270,13 +1295,6 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             ding_receiver_user_id=settings.ding_receiver_user_id,
             transient_retry_attempts=settings.dws_transient_retry_attempts,
             transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
-        )
-        dispatch_task_todo_sync_outbox(
-            store,
-            dws,
-            owner="process-work-items-recovery",
-            now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-            limit=min(limit, 20),
         )
     processed = 0
     for _ in range(limit):
@@ -1921,6 +1939,7 @@ def check_follow_up_completions_command(
     *,
     limit: int = 1,
 ) -> int:
+    """Confirm follow-up completion evidence; never scan messages, meetings, or OA."""
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
         ding_robot_name=settings.ding_robot_name,
@@ -2818,6 +2837,24 @@ def _create_meeting_dws(settings: WorkerSettings) -> DwsClient:
     )
 
 
+def scan_meetings_once_command(
+    settings: WorkerSettings,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Discover eligible meetings once; Cron owns when this command runs."""
+    current = now or datetime.now().astimezone()
+    _initialize_meeting_discovery_on_service_start(settings, now=current)
+    created = produce_meeting_alignment_jobs(
+        AutoReplyStore(settings.db_path),
+        _create_meeting_dws(settings),
+        now=current,
+        settle_seconds=600,
+    )
+    print(f"scan-meetings-once queued={created}", flush=True)
+    return created
+
+
 def run_meeting_producer_loop(
     settings: WorkerSettings,
     poll_interval_seconds: int,
@@ -3034,7 +3071,9 @@ def run_task_maintenance_loop(
             ),
         )
         run_step(
-            "check_follow_up_completions",
+            # Delivery-state confirmation is an internal maintenance mechanism.
+            # It does not scan messages, meetings, OA, or other new work sources.
+            "confirm_external_todo_completions",
             lambda: check_follow_up_completions_command(settings, limit=1),
         )
         sleep(60)
@@ -3876,6 +3915,8 @@ def main() -> None:
         )
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
+    elif args.command == "scan-meetings-once":
+        scan_meetings_once_command(settings)
     elif args.command == "scan-oa-approvals":
         scan_oa_approvals_command(settings)
     elif args.command == "read-oa-approval-detail":
