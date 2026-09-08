@@ -5526,6 +5526,7 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     assert [event[0] for event in training_events] == ["created", "published"]
     assert training_events[1][1] == provider_observations
     assert isinstance(training_events[0][1]["store"], EmailStore)
+    assert observation_events[0][1]["batch_size"] == 50
     assert [event[0] for event in observation_events] == [
         "job-created",
         "coordinator-created",

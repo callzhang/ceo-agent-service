@@ -2757,6 +2757,7 @@ def build_email_worker_dependencies(
             state_path=registry.root / "provider-training-observations.json",
             source_factory=source_factory,
             email_store=email_store,
+            batch_size=50,
             include_folder=provider_training_folder_is_relevant,
         )
         snapshot_job = training_snapshot_job_factory(
