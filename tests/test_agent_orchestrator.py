@@ -1672,7 +1672,7 @@ def test_domain_continuations_do_not_consume_content_feedback_cycles(store):
     ]
 
 
-def test_real_feedback_exhaustion_becomes_needs_human_after_domain_continuation(store):
+def test_real_feedback_exhaustion_fails_after_domain_continuation(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -1702,10 +1702,10 @@ def test_real_feedback_exhaustion_becomes_needs_human_after_domain_continuation(
         refresh_context=lambda: _domain_context(task),
     )
 
-    assert result.status == "needs_human"
+    assert result.status == "failed_terminal"
     assert result.feedback_cycles == 3
     assert result.error.code == "audit_revision_exhausted"
-    assert result.feedback is not None
+    assert result.feedback is None
     assert orchestrator._feedback_cycles(task) == 4
 
 
@@ -1747,7 +1747,7 @@ def test_restart_rejects_consumer_materialized_after_feedback_quota_exhaustion(s
     recovered = orchestrator._derive_state(task)
 
     assert isinstance(recovered, OrchestrationResult)
-    assert recovered.status == "needs_human"
+    assert recovered.status == "failed_terminal"
     assert recovered.error.code == "audit_revision_exhausted"
 
 
@@ -2571,7 +2571,7 @@ def test_newer_context_stale_candidate_is_revised_without_write(store):
     assert audit_run is not None and audit_run.status == "completed"
 
 
-def test_fourth_revision_request_becomes_actionable_needs_human(store):
+def test_fourth_revision_request_is_failed_without_a_valid_human_decision(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -2592,12 +2592,12 @@ def test_fourth_revision_request_becomes_actionable_needs_human(store):
         AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
     )
 
-    assert result.status == "needs_human"
+    assert result.status == "failed_terminal"
     assert result.feedback_cycles == 3
     assert result.error.code == "audit_revision_exhausted"
     assert result.audit_result is not None
-    assert result.audit_result.outcome is AuditOutcome.FEEDBACK_PROVIDED
-    assert result.feedback is not None
+    assert result.audit_result.outcome is AuditOutcome.FAILED
+    assert result.feedback is None
     latest_audit = max(
         (
             run

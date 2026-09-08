@@ -1273,16 +1273,16 @@ class AgentOrchestrator:
         )
 
     def _feedback_exhausted(self, run: AgentRun) -> OrchestrationResult:
-        latest_feedback = _audit_result(run)
-        return OrchestrationResult(
-            status="needs_human",
-            final_run_id=run.id,
-            final_role=AgentRole.AUDIT,
-            summary=latest_feedback.summary,
-            error=AgentError(code="audit_revision_exhausted", retryable=False),
-            feedback_cycles=MAX_CONTENT_FEEDBACK_CYCLES,
-            feedback=latest_feedback.feedback,
-            audit_result=latest_feedback,
+        exhausted = _failed_audit_result(
+            run,
+            AuditOutcome.FAILED,
+            AgentError(code="audit_revision_exhausted", retryable=False),
+        )
+        return _audit_terminal(
+            "failed_terminal",
+            run,
+            exhausted,
+            MAX_CONTENT_FEEDBACK_CYCLES,
         )
 
     def _feedback_cycles(self, task: ReplyTask) -> int:

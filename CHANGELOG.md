@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-09-07: keep exhausted Audit feedback loops as explicit failures instead
+  of synthesizing `needs_human`; human escalation still requires Audit's valid
+  high-risk, low-confidence, Skill-gap result and actionable choices.
+
 - 2026-09-07: keep each Agent DingTalk feedback revision's corrected prepared
   message body distinct from earlier revisions, while retaining the stable
   external action identity that prevents duplicate provider effects.
