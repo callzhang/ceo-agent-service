@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-09-07: keep each Agent DingTalk feedback revision's corrected prepared
+  message body distinct from earlier revisions, while retaining the stable
+  external action identity that prevents duplicate provider effects.
+
 - 2026-09-07: keep an unresolved `needs_human` result visible after its queue
   task reaches `done`. The queue task is closed so workers do not re-execute it,
   while the latest reply-attempt projection remains actionable in Attention and

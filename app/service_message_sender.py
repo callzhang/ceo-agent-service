@@ -243,11 +243,20 @@ def agent_message_delivery_key(
     *,
     business_object_key: str,
     action_identity: str,
+    execution_generation: str,
+    proposal_revision: int,
 ) -> str:
-    """Return one delivery identity across revisions and Agent runs."""
+    """Return the immutable prepared-message identity for one proposal revision."""
     object_key = business_object_key.strip()
     identity = action_identity.strip()
-    if not object_key or not identity:
-        raise ValueError("business object and action identity are required")
-    digest = hashlib.sha256(f"{object_key}\0{identity}".encode("utf-8")).hexdigest()
+    generation = execution_generation.strip()
+    if not object_key or not identity or not generation:
+        raise ValueError(
+            "business object, action identity, and execution generation are required"
+        )
+    if proposal_revision < 0:
+        raise ValueError("proposal revision must not be negative")
+    digest = hashlib.sha256(
+        f"{object_key}\0{identity}\0{generation}\0{proposal_revision}".encode("utf-8")
+    ).hexdigest()
     return f"agent-message:{digest}"

@@ -171,6 +171,11 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
 原子写入 provider 结果、消息投影和 observer。稳定 provider ID 已足以表示发送完成，不以
 read-back、命令登记或未知工具检查作为投影条件。
 
+Agent 生成的钉钉候选正文在进入 Audit 前按 `execution_generation + proposal_revision` 持久化：
+同一 revision 的重试复用同一准备正文，反馈产生的下一 revision 则持久化修正后的正文，不能被
+第一版正文覆盖。这个准备键不替代跨 revision 稳定的 `external_action_key`；已有 provider 成功
+结果时仍直接复用，不得重复发送。
+
 启动修复只读取完成的 Audit result 及其 parent Consumer proposal。若历史 proposal 使用过旧的
 provider 字段名，修复过程先一次性迁移为当前 wire target，再使用与在线路径相同的动作键算法；
 重复运行不会新增第二条 provider 结果或消息记录。

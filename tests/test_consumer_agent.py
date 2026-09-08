@@ -1849,10 +1849,71 @@ def test_consumer_prepares_structured_dingtalk_message_postfix_before_audit(
         agent_message_delivery_key(
             business_object_key=task.business_object_key,
             action_identity=result.result.proposal.actions[0].action_identity,
+            execution_generation=task.execution_generation,
+            proposal_revision=0,
         ),
     )
     assert prepared is not None
     assert prepared.final_body == text
+
+
+def test_consumer_feedback_revision_prepares_its_corrected_dingtalk_body(
+    store,
+    task,
+    context,
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    first = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(
+            _proposal_jsonl(
+                {"content": "The whole application was approved."},
+                capability="dingtalk-chat",
+                operation="send_direct_message",
+                target={"open_dingtalk_id": "recipient-1"},
+            )
+        ),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=first.run_id,
+        operation_id="audit-revision-0",
+        owner="audit-test",
+    ).run
+    store.complete_agent_run(
+        audit.id,
+        {"outcome": "feedback_provided", "summary": "Correct the message."},
+        owner="audit-test",
+    )
+    revised = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(
+            _proposal_jsonl(
+                {"content": "Only the current node was approved; the application is pending."},
+                capability="dingtalk-chat",
+                operation="send_direct_message",
+                target={"open_dingtalk_id": "recipient-1"},
+            )
+        ),
+    ).run(task, context, proposal_revision=1, parent_agent_run_id=audit.id)
+
+    assert revised.result.proposal is not None
+    corrected = revised.result.proposal.actions[0].payload["content"]
+    assert isinstance(corrected, str)
+    assert corrected.startswith(
+        "Only the current node was approved; the application is pending."
+    )
+    assert "The whole application was approved." not in corrected
 
 
 def test_consumer_preserves_dash_prefixed_explicit_content_as_message_body(

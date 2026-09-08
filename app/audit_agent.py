@@ -132,6 +132,8 @@ class AuditAgentRunner:
             expected["delivery_key"] = agent_message_delivery_key(
                 business_object_key=task.business_object_key,
                 action_identity=action.action_identity,
+                execution_generation=task.execution_generation,
+                proposal_revision=context.proposal_revision,
             )
             expected_actions_list.append(expected)
         expected_actions = tuple(expected_actions_list)

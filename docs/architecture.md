@@ -167,6 +167,12 @@ agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显�
 会从 append-only Consumer/Audit typed results 修复缺失的 `external_action_results`、`sent_replies`
 与 observer；该修复不重放 provider 动作，也不改写历史 run/event。
 
+钉钉消息在交给 Audit 前生成带服务后缀的最终候选正文。这个准备记录按
+`execution_generation + proposal_revision` 区分：同一 revision 的进程重试复用同一正文，Audit
+要求修改后生成的下一 revision 使用修正后的新正文。外部动作的 `action_identity` 和
+`external_action_key` 仍跨 revision 保持稳定；如果 provider 成功结果已经存在，后续 revision
+复用该成功结果而不再次发送。
+
 `sent_replies` 和 provider 成功结果的优先级高于后来失败的 attempt current projection。即使
 结构化结果解析、服务重启或后续 Agent turn 失败，下一轮也会收到真实的已发送记录，并把该
 动作视为已经完成；不能因为 attempt 当前显示 failed 就再次发送。
