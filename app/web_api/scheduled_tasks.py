@@ -46,6 +46,14 @@ class ScheduledTaskSkillRefPayload(BaseModel):
         return self
 
 
+class ScheduledTaskRuntimeOptionsPayload(BaseModel):
+    """Non-sensitive per-run choices supported by the current Agent runners."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    thinking: Literal["low", "medium", "high", "xhigh"] | None = None
+
+
 class ScheduledTaskCreatePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -54,7 +62,9 @@ class ScheduledTaskCreatePayload(BaseModel):
     cron_expression: str = Field(min_length=1)
     timezone_name: str = Field(min_length=1)
     runtime_id: str = Field(min_length=1)
-    runtime_options: dict[str, object] = Field(default_factory=dict)
+    runtime_options: ScheduledTaskRuntimeOptionsPayload = Field(
+        default_factory=ScheduledTaskRuntimeOptionsPayload
+    )
     working_directory: str = ""
     enabled: bool = True
     skill_refs: list[ScheduledTaskSkillRefPayload] = Field(min_length=1)
@@ -120,7 +130,7 @@ def _run_payload(run: ScheduledTaskRun) -> dict[str, object]:
             "cron_expression": run.snapshot.cron_expression,
             "timezone_name": run.snapshot.timezone_name,
             "runtime_id": run.snapshot.runtime_id,
-            "runtime_options": run.snapshot.runtime_options,
+            "runtime_options": _safe_runtime_options(run.snapshot.runtime_options),
             "working_directory": run.snapshot.working_directory,
             "skill_refs": [
                 _skill_ref_payload(ref) for ref in run.snapshot.skill_refs
@@ -146,7 +156,7 @@ def _task_payload(
         "schedule_description": schedule.describe(),
         "next_run_at": _utc_text(schedule.next_after(now)) if task.enabled else None,
         "runtime_id": task.runtime_id,
-        "runtime_options": task.runtime_options,
+        "runtime_options": _safe_runtime_options(task.runtime_options),
         "working_directory": task.working_directory,
         "enabled": task.enabled,
         "version": task.version,
@@ -160,6 +170,14 @@ def _task_payload(
 
 def _item_envelope(item: object) -> dict[str, object]:
     return {"item": item, "meta": {"snapshot_at": snapshot_at()}}
+
+
+def _safe_runtime_options(value: object) -> dict[str, object]:
+    try:
+        options = ScheduledTaskRuntimeOptionsPayload.model_validate(value)
+    except ValidationError:
+        return {}
+    return options.model_dump(mode="json", exclude_none=True)
 
 
 def _refs(payload: ScheduledTaskCreatePayload) -> tuple[ScheduledTaskSkillRef, ...]:
@@ -234,19 +252,27 @@ def register_scheduled_task_routes(
             return _error("not_found", "scheduled task does not exist", 404)
         return task
 
-    def rendered_task(task: ScheduledTask) -> dict[str, object]:
-        runs = store_factory().list_scheduled_task_runs(task.id)
+    def rendered_task(
+        task: ScheduledTask,
+        recent_run: ScheduledTaskRun | None,
+    ) -> dict[str, object]:
         return _task_payload(
             task,
             now=current_time(),
-            recent_run=runs[-1] if runs else None,
+            recent_run=recent_run,
         )
+
+    def latest_run(task_id: int) -> ScheduledTaskRun | None:
+        return store_factory().latest_scheduled_task_runs((task_id,)).get(task_id)
 
     @app.get("/api/console/scheduled-tasks")
     def scheduled_tasks_list() -> dict[str, object]:
         tasks = store_factory().list_scheduled_tasks()
+        recent = store_factory().latest_scheduled_task_runs(
+            tuple(task.id for task in tasks)
+        )
         return {
-            "items": [rendered_task(task) for task in tasks],
+            "items": [rendered_task(task, recent.get(task.id)) for task in tasks],
             "meta": {
                 "snapshot_at": snapshot_at(),
                 "total": len(tasks),
@@ -274,7 +300,7 @@ def register_scheduled_task_routes(
                 cron_expression=schedule.expression,
                 timezone_name=schedule.timezone_name,
                 runtime_id=payload.runtime_id,
-                runtime_options=payload.runtime_options,
+                runtime_options=payload.runtime_options.model_dump(exclude_none=True),
                 working_directory=payload.working_directory,
                 skill_refs=_refs(payload),
                 enabled=payload.enabled,
@@ -282,14 +308,14 @@ def register_scheduled_task_routes(
             )
         except ValueError as exc:
             return _error("validation_error", str(exc), 422)
-        return _item_envelope(rendered_task(task))
+        return _item_envelope(rendered_task(task, None))
 
     @app.get("/api/console/scheduled-tasks/{task_id}", response_model=None)
     def scheduled_task_detail(task_id: int) -> dict[str, object] | JSONResponse:
         task = task_or_404(task_id)
         if isinstance(task, JSONResponse):
             return task
-        return _item_envelope(rendered_task(task))
+        return _item_envelope(rendered_task(task, latest_run(task.id)))
 
     @app.put("/api/console/scheduled-tasks/{task_id}", response_model=None)
     async def scheduled_task_update(
@@ -324,7 +350,7 @@ def register_scheduled_task_routes(
                 cron_expression=schedule.expression,
                 timezone_name=schedule.timezone_name,
                 runtime_id=payload.runtime_id,
-                runtime_options=payload.runtime_options,
+                runtime_options=payload.runtime_options.model_dump(exclude_none=True),
                 working_directory=payload.working_directory,
                 skill_refs=_refs(payload),
                 now=current_time(),
@@ -332,8 +358,10 @@ def register_scheduled_task_routes(
         except ScheduledTaskVersionConflictError as exc:
             return _error("conflict", str(exc), 409)
         except ValueError as exc:
+            if str(exc) == "scheduled task does not exist":
+                return _error("not_found", str(exc), 404)
             return _error("validation_error", str(exc), 422)
-        return _item_envelope(rendered_task(task))
+        return _item_envelope(rendered_task(task, latest_run(task.id)))
 
     def set_enabled(
         task_id: int,
@@ -352,7 +380,7 @@ def register_scheduled_task_routes(
             return _error("conflict", str(exc), 409)
         except ValueError as exc:
             return _error("not_found", str(exc), 404)
-        return _item_envelope(rendered_task(task))
+        return _item_envelope(rendered_task(task, latest_run(task.id)))
 
     @app.post(
         "/api/console/scheduled-tasks/{task_id}/enable", response_model=None
@@ -418,20 +446,32 @@ def register_scheduled_task_routes(
             return _error("conflict", str(exc), 409)
         except ValueError as exc:
             return _error("not_found", str(exc), 404)
-        return _item_envelope(rendered_task(task))
+        return _item_envelope(rendered_task(task, latest_run(task.id)))
 
     @app.get("/api/console/scheduled-tasks/{task_id}/runs", response_model=None)
-    def scheduled_task_runs(task_id: int) -> dict[str, Any] | JSONResponse:
+    def scheduled_task_runs(
+        task_id: int,
+        cursor: int | None = Query(default=None, gt=0),
+        page_size: int = Query(default=20, ge=1, le=100),
+    ) -> dict[str, Any] | JSONResponse:
         task = task_or_404(task_id, include_deleted=True)
         if isinstance(task, JSONResponse):
             return task
-        runs = store_factory().list_scheduled_task_runs(task_id)
+        page = store_factory().list_scheduled_task_runs_page(
+            task_id,
+            before_id=cursor,
+            limit=page_size + 1,
+        )
+        has_more = len(page) > page_size
+        runs = page[:page_size]
         return {
-            "scheduled_task": rendered_task(task),
+            "scheduled_task": rendered_task(task, latest_run(task.id)),
             "items": [_run_payload(run) for run in runs],
             "meta": {
                 "snapshot_at": snapshot_at(),
-                "total": len(runs),
+                "page_size": page_size,
+                "next_cursor": str(runs[-1].id) if has_more and runs else "",
+                "has_more": has_more,
             },
         }
 

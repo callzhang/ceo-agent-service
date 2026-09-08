@@ -13,6 +13,10 @@ from app.agent_cron.models import (
     ScheduledTaskSnapshot,
     ScheduledTaskVersionConflictError,
 )
+from app.agent_runtime_contracts import (
+    PROBE_VERIFIED_RUNTIME_CAPABILITIES,
+    RuntimeCapabilitySnapshot,
+)
 from app.store import AutoReplyStore
 
 
@@ -93,6 +97,7 @@ def test_schema_manifest_creates_scheduled_task_tables_and_indexes(
         "idx_scheduled_task_runs_scheduled_instant",
         "idx_scheduled_task_runs_dispatch",
         "idx_scheduled_task_runs_claim",
+        "idx_scheduled_task_runs_latest",
     } <= indexes
     assert store._schema_is_current() is True
 
@@ -689,6 +694,7 @@ def test_previous_schema_additively_creates_cron_tables_and_preserves_data(
         "idx_scheduled_task_runs_scheduled_instant",
         "idx_scheduled_task_runs_dispatch",
         "idx_scheduled_task_runs_claim",
+        "idx_scheduled_task_runs_latest",
     } <= indexes
     assert migrated._schema_is_current() is True
 
@@ -719,3 +725,87 @@ def test_claim_query_index_starts_with_status_schedule_and_id(tmp_path: Path) ->
 
     assert columns == ("dispatch_status", "scheduled_for", "id")
     assert any("idx_scheduled_task_runs_claim" in detail for detail in plan)
+
+
+def test_latest_runs_are_batched_and_page_query_uses_latest_index(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "latest-index.sqlite3")
+    first = _create_task(store)
+    existing_ref = first.skill_refs[0]
+    second = _create_task(
+        store,
+        skill_refs=(
+            ScheduledTaskSkillRef(
+                skill_source=existing_ref.skill_source,
+                skill_name=existing_ref.skill_name,
+                managed_skill_id=existing_ref.managed_skill_id,
+                managed_revision_id=existing_ref.managed_revision_id,
+                position=0,
+            ),
+        ),
+    )
+    for task in (first, second):
+        for offset in range(3):
+            store.create_scheduled_task_run(
+                task.id,
+                trigger_kind="manual",
+                scheduled_for=NOW + timedelta(seconds=offset),
+                now=NOW + timedelta(seconds=offset),
+            )
+
+    latest = store.latest_scheduled_task_runs((first.id, second.id))
+    page = store.list_scheduled_task_runs_page(first.id, before_id=None, limit=2)
+    next_page = store.list_scheduled_task_runs_page(
+        first.id,
+        before_id=page[-1].id,
+        limit=2,
+    )
+
+    assert {task_id: run.id for task_id, run in latest.items()} == {
+        first.id: 3,
+        second.id: 6,
+    }
+    assert [run.id for run in page] == [3, 2]
+    assert [run.id for run in next_page] == [1]
+    with store._connect() as db:
+        columns = tuple(
+            str(row["name"])
+            for row in db.execute(
+                "pragma index_info(idx_scheduled_task_runs_latest)"
+            )
+        )
+        plan = tuple(
+            str(row["detail"])
+            for row in db.execute(
+                """
+                explain query plan
+                select id from scheduled_task_runs
+                 where scheduled_task_id=? and id < ?
+                 order by id desc limit ?
+                """,
+                (first.id, 999, 20),
+            )
+        )
+    assert columns == ("scheduled_task_id", "id")
+    assert any("idx_scheduled_task_runs_latest" in detail for detail in plan)
+
+
+def test_runtime_capability_bridge_is_exactly_scoped_to_process_pid(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "runtime-capability.sqlite3")
+    snapshot = RuntimeCapabilitySnapshot(
+        route_name="codex_oauth",
+        capabilities=PROBE_VERIFIED_RUNTIME_CAPABILITIES,
+        healthy=True,
+        checked_at=NOW.isoformat(),
+        expires_at=(NOW + timedelta(minutes=5)).isoformat(),
+    )
+
+    store.record_runtime_capability_snapshot(snapshot, pid=701)
+
+    assert store.runtime_capability_snapshots_for_pid(
+        ("codex_oauth",), pid=701
+    ) == {"codex_oauth": snapshot}
+    assert store.runtime_capability_snapshots_for_pid(
+        ("codex_oauth",), pid=702
+    ) == {}

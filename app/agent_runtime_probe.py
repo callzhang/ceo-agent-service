@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime, timedelta
@@ -390,6 +391,10 @@ class RuntimeCapabilityRefresher:
                         ),
                     )
                 snapshots[route_name] = snapshot
+                self._store.record_runtime_capability_snapshot(
+                    snapshot,
+                    pid=os.getpid(),
+                )
                 if snapshot.healthy and snapshot.failure is None:
                     self._store.close_runtime_route_pause(route_name)
                 else:

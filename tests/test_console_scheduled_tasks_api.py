@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.agent_cron.options import ScheduledTaskOptionService
+from app.agent_cron.models import ScheduledTaskSkillRef
+import app.audit_web as audit_web_module
 from app.audit_web import create_audit_app
 from app.agent_runtime_contracts import (
     PROBE_VERIFIED_RUNTIME_CAPABILITIES,
@@ -116,7 +118,7 @@ def _create_payload(ids: dict[str, int]) -> dict[str, object]:
         "cron_expression": "0 * * * * *",
         "timezone_name": "Asia/Shanghai",
         "runtime_id": "codex_oauth",
-        "runtime_options": {"reasoning_effort": "high"},
+        "runtime_options": {"thinking": "high"},
         "working_directory": "/tmp/ceo-agent",
         "enabled": True,
         "skill_refs": [
@@ -166,7 +168,7 @@ def test_scheduled_task_crud_returns_derived_schedule_and_exact_refs(
     item = created.json()["item"]
     assert item["schedule_description"] == "0 * * * * * · Asia/Shanghai"
     assert item["next_run_at"] == "2026-09-08T12:01:00Z"
-    assert item["runtime_options"] == {"reasoning_effort": "high"}
+    assert item["runtime_options"] == {"thinking": "high"}
     assert item["recent_run"] is None
     assert item["skill_refs"] == [
         {
@@ -358,6 +360,17 @@ def test_scheduled_task_validation_rejects_bad_schedule_runtime_refs_and_extras(
     no_skills = _create_payload(ids)
     no_skills["skill_refs"] = []
     invalid_cases.append(no_skills)
+    for forbidden_options in (
+        {"api_key": "top-secret"},
+        {"token": "top-secret"},
+        {"secret": "top-secret"},
+        {"thinking": "ultra"},
+        {"thinking": {"nested": "high"}},
+        {"model": "unconfigured-model"},
+    ):
+        bad_options = _create_payload(ids)
+        bad_options["runtime_options"] = forbidden_options
+        invalid_cases.append(bad_options)
 
     with client:
         accepted = client.post(
@@ -368,11 +381,154 @@ def test_scheduled_task_validation_rejects_bad_schedule_runtime_refs_and_extras(
             client.post("/api/console/scheduled-tasks", json=payload)
             for payload in invalid_cases
         ]
+        forbidden_update = _create_payload(ids)
+        forbidden_update["version"] = accepted.json()["item"]["version"]
+        forbidden_update["runtime_options"] = {"token": "top-secret"}
+        rejected_update = client.put(
+            f"/api/console/scheduled-tasks/{accepted.json()['item']['id']}",
+            json=forbidden_update,
+        )
 
     assert accepted.status_code == 201
     assert all(response.status_code == 422 for response in rejected)
     assert all(response.json()["code"] == "validation_error" for response in rejected)
+    assert rejected_update.status_code == 422
+    assert rejected_update.json()["code"] == "validation_error"
     assert len(store.list_scheduled_tasks()) == 1
+
+
+def test_api_never_echoes_legacy_arbitrary_runtime_options_or_secrets(
+    tmp_path: Path,
+) -> None:
+    client, store, ids, _wakes = _client(tmp_path)
+    task = store.create_scheduled_task(
+        name="legacy",
+        prompt="legacy task",
+        cron_expression="0 * * * * *",
+        timezone_name="UTC",
+        runtime_id="codex_oauth",
+        runtime_options={
+            "thinking": "high",
+            "api_key": "top-secret",
+            "nested": {"token": "nested-secret"},
+        },
+        working_directory="",
+        skill_refs=(
+            ScheduledTaskSkillRef(
+                skill_source="managed",
+                skill_name="ceo-test",
+                managed_skill_id=ids["skill_id"],
+                managed_revision_id=ids["revision_id"],
+                position=0,
+            ),
+        ),
+        now=NOW,
+    )
+    store.create_scheduled_task_run(
+        task.id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+
+    with client:
+        detail = client.get(f"/api/console/scheduled-tasks/{task.id}")
+        history = client.get(f"/api/console/scheduled-tasks/{task.id}/runs")
+
+    rendered = detail.text + history.text
+    assert "top-secret" not in rendered
+    assert "nested-secret" not in rendered
+    assert detail.json()["item"]["runtime_options"] == {}
+    assert history.json()["items"][0]["snapshot"]["runtime_options"] == {}
+
+
+def test_list_uses_one_batched_latest_run_query_instead_of_full_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, store, ids, _wakes = _client(tmp_path)
+    for name in ("one", "two"):
+        payload = _create_payload(ids)
+        payload["name"] = name
+        response = client.post("/api/console/scheduled-tasks", json=payload)
+        store.create_scheduled_task_run(
+            response.json()["item"]["id"],
+            trigger_kind="manual",
+            scheduled_for=NOW,
+            now=NOW,
+        )
+    monkeypatch.setattr(
+        store,
+        "list_scheduled_task_runs",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("list endpoint loaded full run history")
+        ),
+    )
+
+    with client:
+        response = client.get("/api/console/scheduled-tasks")
+
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 2
+    assert all(item["recent_run"] is not None for item in response.json()["items"])
+
+
+def test_runs_are_bounded_and_cursor_paginated_newest_first(tmp_path: Path) -> None:
+    client, store, ids, _wakes = _client(tmp_path)
+    created = client.post("/api/console/scheduled-tasks", json=_create_payload(ids))
+    task_id = created.json()["item"]["id"]
+    for offset in range(3):
+        store.create_scheduled_task_run(
+            task_id,
+            trigger_kind="manual",
+            scheduled_for=NOW + timedelta(seconds=offset),
+            now=NOW + timedelta(seconds=offset),
+        )
+
+    with client:
+        first = client.get(
+            f"/api/console/scheduled-tasks/{task_id}/runs",
+            params={"page_size": 2},
+        )
+        second = client.get(
+            f"/api/console/scheduled-tasks/{task_id}/runs",
+            params={"page_size": 2, "cursor": first.json()["meta"]["next_cursor"]},
+        )
+
+    assert [item["id"] for item in first.json()["items"]] == [3, 2]
+    assert first.json()["meta"]["has_more"] is True
+    assert first.json()["meta"]["next_cursor"] == "2"
+    assert [item["id"] for item in second.json()["items"]] == [1]
+    assert second.json()["meta"]["has_more"] is False
+    assert second.json()["meta"]["next_cursor"] == ""
+
+
+def test_update_maps_concurrent_soft_delete_to_not_found(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, store, ids, _wakes = _client(tmp_path)
+    created = client.post("/api/console/scheduled-tasks", json=_create_payload(ids))
+    task_id = created.json()["item"]["id"]
+    version = created.json()["item"]["version"]
+    original_update = store.update_scheduled_task
+
+    def delete_then_update(*args, **kwargs):
+        store.delete_scheduled_task(task_id, expected_version=version, now=NOW)
+        return original_update(*args, **kwargs)
+
+    monkeypatch.setattr(store, "update_scheduled_task", delete_then_update)
+    payload = _create_payload(ids)
+    payload["version"] = version
+
+    with client:
+        response = client.put(
+            f"/api/console/scheduled-tasks/{task_id}",
+            json=payload,
+        )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "not_found"
 
 
 def test_audit_app_mounts_cron_api_without_fabricating_process_snapshots(
@@ -398,3 +554,78 @@ def test_audit_app_mounts_cron_api_without_fabricating_process_snapshots(
     assert {
         revision["unavailable_reason"] for revision in revisions
     } == {"runtime_skill_snapshot_missing"}
+
+
+def test_audit_app_reads_only_current_main_pid_runtime_and_skill_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "process-state.sqlite3"
+    store = AutoReplyStore(db_path)
+    skill = store.create_managed_skill("ceo-process-test", "Process Test")
+    revision = store.create_managed_skill_revision(
+        skill.id,
+        _managed_content(skill.name),
+        source="settings",
+    )
+    config = store.create_runtime_skill_config(
+        {skill.id: revision.id},
+        expected_parent_id=None,
+    )
+    store.record_runtime_skill_load(
+        config.id,
+        pid=701,
+        loaded={skill.id: revision.sha256},
+    )
+    store.record_runtime_capability_snapshot(
+        RuntimeCapabilitySnapshot(
+            route_name="codex_oauth",
+            capabilities=PROBE_VERIFIED_RUNTIME_CAPABILITIES,
+            healthy=True,
+            checked_at=NOW.isoformat(),
+            expires_at=(NOW + timedelta(minutes=5)).isoformat(),
+        ),
+        pid=701,
+    )
+    main_pid = 701
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda _label: {"ok": True, "pid": str(main_pid)},
+    )
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
+    monkeypatch.setenv("CEO_CODEX_MODEL", "gpt-5.6-sol")
+    client = TestClient(create_audit_app(db_path, scheduled_task_now=lambda: NOW))
+
+    current = client.get("/api/console/scheduled-task-options")
+    main_pid = 702
+    mismatched = client.get("/api/console/scheduled-task-options")
+    store.record_runtime_capability_snapshot(
+        RuntimeCapabilitySnapshot(
+            route_name="codex_oauth",
+            capabilities=PROBE_VERIFIED_RUNTIME_CAPABILITIES,
+            healthy=True,
+            checked_at=(NOW - timedelta(minutes=10)).isoformat(),
+            expires_at=(NOW - timedelta(minutes=5)).isoformat(),
+        ),
+        pid=702,
+    )
+    stale = client.get("/api/console/scheduled-task-options")
+
+    assert current.json()["runtime_options"][0]["available"] is True
+    current_skill = next(
+        item
+        for item in current.json()["managed_skill_options"]
+        if item["name"] == skill.name
+    )
+    assert current_skill["revisions"][0]["available"] is True
+    assert mismatched.json()["runtime_options"][0]["unavailable_reason"] == "snapshot_missing"
+    mismatched_skill = next(
+        item
+        for item in mismatched.json()["managed_skill_options"]
+        if item["name"] == skill.name
+    )
+    assert mismatched_skill["revisions"][0]["unavailable_reason"] == (
+        "runtime_skill_snapshot_missing"
+    )
+    assert stale.json()["runtime_options"][0]["unavailable_reason"] == "snapshot_expired"

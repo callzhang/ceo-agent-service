@@ -9898,6 +9898,7 @@ def create_audit_app(
     scheduled_task_runtime_skill_snapshot=None,
     scheduled_task_wake_callback=None,
     scheduled_task_environment=None,
+    scheduled_task_now=None,
 ) -> FastAPI:
     # The audit process is read-heavy. Reuse one initialized Store so requests do
     # not repeatedly contend with the worker for schema initialization writes.
@@ -10148,27 +10149,48 @@ def create_audit_app(
         return {"ok": True, "status": "ok"}
 
     from app.agent_cron.options import ScheduledTaskOptionService
-    from app.agent_runtime_production import PRODUCTION_RUNTIME_CAPABILITIES
-    from app.managed_skills import import_repository_managed_skills
+    from app.agent_runtime_config import load_runtime_config
+    from app.managed_skills import (
+        import_repository_managed_skills,
+        runtime_skill_snapshot_for_process,
+    )
     from app.skill_files import SkillFileService
     from app.web_api import register_console_routes
 
     def scheduled_task_option_service() -> ScheduledTaskOptionService:
         import_repository_managed_skills(audit_store)
+        environment = (
+            os.environ
+            if scheduled_task_environment is None
+            else scheduled_task_environment
+        )
+        service = _launchd_service_status("com.ceo-agent-service.main")
+        raw_pid = str(service.get("pid") or "") if service.get("ok") else ""
+        main_pid = int(raw_pid) if raw_pid.isdigit() and int(raw_pid) > 0 else None
+        runtime_config = load_runtime_config(environment)
+        runtime_snapshots = scheduled_task_runtime_snapshots
+        if runtime_snapshots is None:
+            runtime_snapshots = (
+                audit_store.runtime_capability_snapshots_for_pid(
+                    tuple(route.name for route in runtime_config.routes),
+                    pid=main_pid,
+                )
+                if main_pid is not None
+                else {}
+            )
+        runtime_skill_snapshot = scheduled_task_runtime_skill_snapshot
+        if runtime_skill_snapshot is None and main_pid is not None:
+            runtime_skill_snapshot = runtime_skill_snapshot_for_process(
+                audit_store,
+                pid=main_pid,
+            )
         return ScheduledTaskOptionService(
             store=audit_store,
-            environment=(
-                os.environ
-                if scheduled_task_environment is None
-                else scheduled_task_environment
-            ),
-            runtime_snapshots=(
-                PRODUCTION_RUNTIME_CAPABILITIES
-                if scheduled_task_runtime_snapshots is None
-                else scheduled_task_runtime_snapshots
-            ),
+            environment=environment,
+            runtime_snapshots=runtime_snapshots,
             operation_skill_files=SkillFileService(),
-            runtime_skill_snapshot=scheduled_task_runtime_skill_snapshot,
+            runtime_skill_snapshot=runtime_skill_snapshot,
+            now=scheduled_task_now,
         )
 
     if email_learning_factory is None:
@@ -10214,6 +10236,7 @@ def create_audit_app(
         ),
         scheduled_task_option_service_factory=scheduled_task_option_service,
         scheduled_task_wake_callback=scheduled_task_wake_callback,
+        scheduled_task_now=scheduled_task_now,
     )
 
     register_repository_upgrade_routes(

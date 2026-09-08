@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from app.agent_runtime_contracts import (
     CredentialMode,
+    RuntimeCapabilitySnapshot,
     RuntimeFailureClass,
     RuntimeKind,
 )
@@ -207,6 +208,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_scheduled_task_runs_scheduled_instant",
     "idx_scheduled_task_runs_dispatch",
     "idx_scheduled_task_runs_claim",
+    "idx_scheduled_task_runs_latest",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
     "idx_feedback_iteration_decisions_batch",
@@ -2123,6 +2125,8 @@ class AutoReplyStore:
                     );
                 create index if not exists idx_scheduled_task_runs_claim
                     on scheduled_task_runs(dispatch_status, scheduled_for, id);
+                create index if not exists idx_scheduled_task_runs_latest
+                    on scheduled_task_runs(scheduled_task_id, id desc);
                 create table if not exists runtime_skill_configs (
                     id integer primary key autoincrement,
                     parent_id integer,
@@ -5563,6 +5567,121 @@ class AutoReplyStore:
             ).fetchall()
         return tuple(self._scheduled_task_run_from_row(row) for row in rows)
 
+    def latest_scheduled_task_runs(
+        self,
+        task_ids: Sequence[int],
+    ) -> dict[int, ScheduledTaskRun]:
+        normalized_ids = tuple(task_ids)
+        if any(type(task_id) is not int or task_id <= 0 for task_id in normalized_ids):
+            raise ValueError("scheduled task ids must be positive integers")
+        if not normalized_ids:
+            return {}
+        placeholders = ",".join("?" for _ in normalized_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select {self._scheduled_task_run_columns()}
+                  from scheduled_task_runs as run
+                 where run.scheduled_task_id in ({placeholders})
+                   and run.id = (
+                       select max(latest.id)
+                         from scheduled_task_runs as latest
+                        where latest.scheduled_task_id=run.scheduled_task_id
+                   )
+                 order by run.scheduled_task_id
+                """,
+                normalized_ids,
+            ).fetchall()
+        runs = tuple(self._scheduled_task_run_from_row(row) for row in rows)
+        return {run.scheduled_task_id: run for run in runs}
+
+    def list_scheduled_task_runs_page(
+        self,
+        task_id: int,
+        *,
+        before_id: int | None,
+        limit: int,
+    ) -> tuple[ScheduledTaskRun, ...]:
+        if type(task_id) is not int or task_id <= 0:
+            raise ValueError("scheduled task id must be a positive integer")
+        if before_id is not None and (type(before_id) is not int or before_id <= 0):
+            raise ValueError("scheduled task run cursor must be a positive integer")
+        if type(limit) is not int or limit <= 0:
+            raise ValueError("scheduled task run page limit must be positive")
+        cursor_sql = " and id < ?" if before_id is not None else ""
+        parameters: tuple[object, ...] = (
+            (task_id, before_id, limit)
+            if before_id is not None
+            else (task_id, limit)
+        )
+        with self._connect() as db:
+            rows = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where scheduled_task_id=?"
+                f"{cursor_sql} order by id desc limit ?",
+                parameters,
+            ).fetchall()
+        return tuple(self._scheduled_task_run_from_row(row) for row in rows)
+
+    @staticmethod
+    def _runtime_capability_state_key(route_name: str) -> str:
+        if not isinstance(route_name, str) or not route_name.strip():
+            raise ValueError("runtime capability route name must be non-empty")
+        return f"agent-runtime-capability:{route_name}"
+
+    def record_runtime_capability_snapshot(
+        self,
+        snapshot: RuntimeCapabilitySnapshot,
+        *,
+        pid: int,
+    ) -> None:
+        if not isinstance(snapshot, RuntimeCapabilitySnapshot):
+            raise ValueError("runtime capability snapshot is invalid")
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("runtime capability snapshot pid must be positive")
+        self.set_service_state(
+            self._runtime_capability_state_key(snapshot.route_name),
+            json.dumps(
+                {
+                    "pid": pid,
+                    "snapshot": snapshot.model_dump(mode="json"),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+
+    def runtime_capability_snapshots_for_pid(
+        self,
+        route_names: Sequence[str],
+        *,
+        pid: int,
+    ) -> dict[str, RuntimeCapabilitySnapshot]:
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("runtime capability snapshot pid must be positive")
+        names = tuple(route_names)
+        keys = tuple(self._runtime_capability_state_key(name) for name in names)
+        if not keys:
+            return {}
+        placeholders = ",".join("?" for _ in keys)
+        with self._connect() as db:
+            rows = db.execute(
+                f"select key, value from service_state where key in ({placeholders})",
+                keys,
+            ).fetchall()
+        snapshots: dict[str, RuntimeCapabilitySnapshot] = {}
+        route_by_key = dict(zip(keys, names, strict=True))
+        for row in rows:
+            payload = json.loads(str(row["value"]))
+            if not isinstance(payload, dict) or payload.get("pid") != pid:
+                continue
+            route_name = route_by_key[str(row["key"])]
+            snapshot = RuntimeCapabilitySnapshot.model_validate(payload.get("snapshot"))
+            if snapshot.route_name != route_name:
+                raise ValueError("persisted runtime capability route mismatch")
+            snapshots[route_name] = snapshot
+        return snapshots
+
     @staticmethod
     def _managed_skill_export_receipt_from_row(
         row: sqlite3.Row,
@@ -5910,6 +6029,25 @@ class AutoReplyStore:
                 (config_id,),
             ).fetchall()
         return tuple(self._runtime_skill_load_receipt_from_row(row) for row in rows)
+
+    def latest_runtime_skill_load_receipt_for_pid(
+        self,
+        pid: int,
+    ) -> RuntimeSkillLoadReceipt | None:
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("runtime Skill load receipt pid must be positive")
+        with self._connect() as db:
+            row = db.execute(
+                """select id, config_id, pid, loaded_json, error, created_at
+                     from runtime_skill_load_receipts
+                    where pid=? order by id desc limit 1""",
+                (pid,),
+            ).fetchone()
+        return (
+            self._runtime_skill_load_receipt_from_row(row)
+            if row is not None
+            else None
+        )
 
     @staticmethod
     def _migrate_runtime_attempt_session_evidence(db: sqlite3.Connection) -> None:
