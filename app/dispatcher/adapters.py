@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import os
 from datetime import UTC, datetime, timedelta
 
 from app.agent_cron.models import ensure_utc_datetime
@@ -26,11 +27,54 @@ def _source_time(value: str, *, fallback: datetime) -> datetime:
     return parsed.astimezone(UTC)
 
 
-class ScheduledTaskQueueAdapter:
+def _process_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+class _LedgerClaimLifecycle:
+    store: AutoReplyStore
+
+    def assert_current(
+        self, envelope: DispatchEnvelope, *, owner: str, now: datetime
+    ) -> None:
+        _assert_ledger_current(self.store, envelope=envelope, owner=owner, now=now)
+
+    def complete(
+        self, envelope: DispatchEnvelope, *, owner: str, now: datetime
+    ) -> None:
+        _complete_ledger(self.store, envelope=envelope, owner=owner, now=now)
+
+    def record_lease_error(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        error: str,
+        now: datetime,
+    ) -> None:
+        _record_ledger_error(
+            self.store,
+            envelope=envelope,
+            owner=owner,
+            error=error,
+            now=now,
+        )
+
+
+class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
     name = "scheduled"
 
-    def __init__(self, store: AutoReplyStore) -> None:
+    def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
         self.store = store
+        self.owner_alive = owner_alive
 
     def metrics(self, now: datetime) -> QueueMetrics:
         now_text = ensure_utc_datetime(
@@ -61,7 +105,7 @@ class ScheduledTaskQueueAdapter:
                 "and (lease_owner='' or lease_expires_at<=?)",
                 (now_text, now_text),
             ).fetchone()[0]
-            latest_error = _latest_error(
+            latest_error = _latest_claim_error(db, self.name) or _latest_error(
                 db,
                 table="scheduled_task_runs",
                 column="skip_or_error_reason",
@@ -82,8 +126,27 @@ class ScheduledTaskQueueAdapter:
         now: datetime,
         *,
         owner: str,
+        owner_pid: int | None = None,
         lease: timedelta,
     ) -> DispatchEnvelope | None:
+        owner_pid = os.getpid() if owner_pid is None else owner_pid
+        now_value = ensure_utc_datetime(now, field="scheduled dispatcher claim time")
+        now_text = now_value.isoformat(timespec="seconds")
+        with self.store._connect() as db:
+            prior = db.execute(
+                "select owner, owner_pid, lease_expires_at from dispatcher_claim_leases "
+                "where adapter_name=? and source_id=(select cast(id as text) "
+                "from scheduled_task_runs where dispatch_status='pending' "
+                "and scheduled_for<=? order by scheduled_for,id limit 1)",
+                (self.name, now_text),
+            ).fetchone()
+        if (
+            prior is not None
+            and str(prior["owner"])
+            and str(prior["lease_expires_at"]) <= now_text
+            and self.owner_alive(int(prior["owner_pid"]))
+        ):
+            return None
         run = self.store.claim_scheduled_task_run(
             owner=owner,
             lease_seconds=_lease_seconds(lease),
@@ -91,13 +154,25 @@ class ScheduledTaskQueueAdapter:
         )
         if run is None:
             return None
+        with self.store._immediate_write_transaction() as db:
+            generation = _acquire_lease(
+                db,
+                adapter_name=self.name,
+                source_id=str(run.id),
+                owner=owner,
+                owner_pid=owner_pid,
+                lease_expires_at=ensure_utc_datetime(
+                    now + lease, field="scheduled dispatcher claim expiry"
+                ).isoformat(timespec="seconds"),
+                now=now_text,
+            )
         return DispatchEnvelope(
             adapter_name=self.name,
             source_id=str(run.id),
             available_at=run.scheduled_for,
             priority=0,
             attempt=1,
-            generation=run.id,
+            generation=generation,
         )
 
     def release(
@@ -109,6 +184,14 @@ class ScheduledTaskQueueAdapter:
     ) -> None:
         _validate_release(self.name, envelope, owner, now)
         with self.store._immediate_write_transaction() as db:
+            _release_lease(
+                db,
+                envelope=envelope,
+                owner=owner,
+                now=ensure_utc_datetime(
+                    now, field="scheduled dispatcher release time"
+                ).isoformat(timespec="seconds"),
+            )
             cursor = db.execute(
                 "update scheduled_task_runs set lease_owner='', lease_expires_at=null "
                 "where id=? and dispatch_status='pending' and lease_owner=?",
@@ -134,6 +217,13 @@ class ScheduledTaskQueueAdapter:
         ).isoformat(timespec="seconds")
         _lease_seconds(lease)
         with self.store._immediate_write_transaction() as db:
+            _renew_lease_in_db(
+                db,
+                envelope=envelope,
+                owner=owner,
+                now=now_text,
+                lease_expires_at=lease_text,
+            )
             cursor = db.execute(
                 "update scheduled_task_runs set lease_expires_at=? "
                 "where id=? and dispatch_status='pending' and lease_owner=? "
@@ -143,12 +233,30 @@ class ScheduledTaskQueueAdapter:
             if cursor.rowcount != 1:
                 raise ValueError("scheduled dispatch claim is no longer owned")
 
+    def assert_current(
+        self, envelope: DispatchEnvelope, *, owner: str, now: datetime
+    ) -> None:
+        super().assert_current(envelope, owner=owner, now=now)
+        now_text = ensure_utc_datetime(
+            now, field="scheduled dispatcher assertion time"
+        ).isoformat(timespec="seconds")
+        with self.store._connect() as db:
+            row = db.execute(
+                "select 1 from scheduled_task_runs where id=? "
+                "and dispatch_status='pending' and lease_owner=? "
+                "and lease_expires_at>?",
+                (int(envelope.source_id), owner, now_text),
+            ).fetchone()
+        if row is None:
+            raise ValueError("scheduled dispatch claim is no longer owned")
 
-class ReplyQueueAdapter:
+
+class ReplyQueueAdapter(_LedgerClaimLifecycle):
     name = "reply"
 
-    def __init__(self, store: AutoReplyStore) -> None:
+    def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
         self.store = store
+        self.owner_alive = owner_alive
 
     def metrics(self, now: datetime) -> QueueMetrics:
         now_text = _sqlite_time(now)
@@ -189,7 +297,9 @@ class ReplyQueueAdapter:
                 "and claim.lease_expires_at<=?)",
                 (self.name, now_text, now_text, now_text),
             ).fetchone()[0]
-            latest_error = _latest_error(db, table="reply_tasks", column="error")
+            latest_error = _latest_claim_error(db, self.name) or _latest_error(
+                db, table="reply_tasks", column="error"
+            )
         return QueueMetrics(
             pending=int(pending),
             due=int(due),
@@ -205,8 +315,10 @@ class ReplyQueueAdapter:
         now: datetime,
         *,
         owner: str,
+        owner_pid: int | None = None,
         lease: timedelta,
     ) -> DispatchEnvelope | None:
+        owner_pid = os.getpid() if owner_pid is None else owner_pid
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
         lease_text = _lease_expiry(now, lease)
@@ -214,6 +326,7 @@ class ReplyQueueAdapter:
             row = db.execute(
                 "select task.*, claim.owner as claim_owner, "
                 "claim.generation as claim_generation, "
+                "claim.owner_pid as claim_owner_pid, "
                 "claim.lease_expires_at as claim_expires_at "
                 "from reply_tasks task left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
@@ -226,6 +339,8 @@ class ReplyQueueAdapter:
                 (self.name, now_text, now_text, now_text),
             ).fetchone()
             if row is None:
+                return None
+            if _live_expired_owner(row, now_text, self.owner_alive):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
@@ -241,6 +356,7 @@ class ReplyQueueAdapter:
                 adapter_name=self.name,
                 source_id=source_id,
                 owner=owner,
+                owner_pid=owner_pid,
                 lease_expires_at=lease_text,
                 now=now_text,
             )
@@ -292,11 +408,12 @@ class ReplyQueueAdapter:
         )
 
 
-class MeetingQueueAdapter:
+class MeetingQueueAdapter(_LedgerClaimLifecycle):
     name = "meeting"
 
-    def __init__(self, store: AutoReplyStore) -> None:
+    def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
         self.store = store
+        self.owner_alive = owner_alive
 
     def metrics(self, now: datetime) -> QueueMetrics:
         now_text = _sqlite_time(now)
@@ -342,7 +459,7 @@ class MeetingQueueAdapter:
                 "and claim.lease_expires_at<=?)",
                 (self.name, now_text, now_text, now_text, now_text),
             ).fetchone()[0]
-            latest_error = _latest_error(
+            latest_error = _latest_claim_error(db, self.name) or _latest_error(
                 db, table="meeting_alignment_jobs", column="error"
             )
         return QueueMetrics(
@@ -360,14 +477,17 @@ class MeetingQueueAdapter:
         now: datetime,
         *,
         owner: str,
+        owner_pid: int | None = None,
         lease: timedelta,
     ) -> DispatchEnvelope | None:
+        owner_pid = os.getpid() if owner_pid is None else owner_pid
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
         with self.store._immediate_write_transaction() as db:
             row = db.execute(
                 "select job.*, claim.owner as claim_owner, "
                 "claim.generation as claim_generation, "
+                "claim.owner_pid as claim_owner_pid, "
                 "claim.lease_expires_at as claim_expires_at "
                 "from meeting_alignment_jobs job "
                 "left join dispatcher_claim_leases claim "
@@ -384,6 +504,8 @@ class MeetingQueueAdapter:
             ).fetchone()
             if row is None:
                 return None
+            if _live_expired_owner(row, now_text, self.owner_alive):
+                return None
             source_id = str(row["id"])
             cursor = db.execute(
                 "update meeting_alignment_jobs set status='processing', "
@@ -398,6 +520,7 @@ class MeetingQueueAdapter:
                 adapter_name=self.name,
                 source_id=source_id,
                 owner=owner,
+                owner_pid=owner_pid,
                 lease_expires_at=_lease_expiry(now, lease),
                 now=now_text,
             )
@@ -450,11 +573,12 @@ class MeetingQueueAdapter:
         )
 
 
-class WorkSummaryQueueAdapter:
+class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
     name = "work_summary"
 
-    def __init__(self, store: AutoReplyStore) -> None:
+    def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
         self.store = store
+        self.owner_alive = owner_alive
 
     def metrics(self, now: datetime) -> QueueMetrics:
         now_text = _sqlite_time(now)
@@ -495,7 +619,7 @@ class WorkSummaryQueueAdapter:
                 "and claim.lease_expires_at<=?)",
                 (self.name, now_text, now_text, now_text),
             ).fetchone()[0]
-            latest_error = _latest_error(
+            latest_error = _latest_claim_error(db, self.name) or _latest_error(
                 db, table="work_summary_inputs", column="error"
             )
         return QueueMetrics(
@@ -513,14 +637,17 @@ class WorkSummaryQueueAdapter:
         now: datetime,
         *,
         owner: str,
+        owner_pid: int | None = None,
         lease: timedelta,
     ) -> DispatchEnvelope | None:
+        owner_pid = os.getpid() if owner_pid is None else owner_pid
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
         with self.store._immediate_write_transaction() as db:
             row = db.execute(
                 "select item.*, claim.owner as claim_owner, "
                 "claim.generation as claim_generation, "
+                "claim.owner_pid as claim_owner_pid, "
                 "claim.lease_expires_at as claim_expires_at "
                 "from work_summary_inputs item "
                 "left join dispatcher_claim_leases claim "
@@ -534,6 +661,8 @@ class WorkSummaryQueueAdapter:
                 (self.name, now_text, now_text, now_text),
             ).fetchone()
             if row is None:
+                return None
+            if _live_expired_owner(row, now_text, self.owner_alive):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
@@ -549,6 +678,7 @@ class WorkSummaryQueueAdapter:
                 adapter_name=self.name,
                 source_id=source_id,
                 owner=owner,
+                owner_pid=owner_pid,
                 lease_expires_at=_lease_expiry(now, lease),
                 now=now_text,
             )
@@ -619,6 +749,7 @@ def _acquire_lease(
     adapter_name: str,
     source_id: str,
     owner: str,
+    owner_pid: int,
     lease_expires_at: str,
     now: str,
 ) -> int:
@@ -632,14 +763,23 @@ def _acquire_lease(
     generation = 1 if row is None else int(row["generation"]) + 1
     db.execute(
         "insert into dispatcher_claim_leases "
-        "(adapter_name, source_id, owner, generation, lease_expires_at, updated_at) "
-        "values (?, ?, ?, ?, ?, ?) "
+        "(adapter_name, source_id, owner, owner_pid, generation, lease_expires_at, updated_at) "
+        "values (?, ?, ?, ?, ?, ?, ?) "
         "on conflict(adapter_name, source_id) do update set "
-        "owner=excluded.owner, generation=excluded.generation, "
-        "lease_expires_at=excluded.lease_expires_at, updated_at=excluded.updated_at",
-        (adapter_name, source_id, owner, generation, lease_expires_at, now),
+        "owner=excluded.owner, owner_pid=excluded.owner_pid, generation=excluded.generation, "
+        "lease_expires_at=excluded.lease_expires_at, terminal_at='', last_error='', "
+        "updated_at=excluded.updated_at",
+        (adapter_name, source_id, owner, owner_pid, generation, lease_expires_at, now),
     )
     return generation
+
+
+def _live_expired_owner(row, now: str, owner_alive) -> bool:
+    return bool(
+        str(row["claim_owner"] or "")
+        and str(row["claim_expires_at"] or "") <= now
+        and owner_alive(int(row["claim_owner_pid"] or 0))
+    )
 
 
 def _release_lease(
@@ -675,22 +815,126 @@ def _renew_lease(
     _validate_release(envelope.adapter_name, envelope, owner, now)
     now_text = _sqlite_time(now)
     with store._immediate_write_transaction() as db:
-        cursor = db.execute(
-            "update dispatcher_claim_leases set lease_expires_at=?, updated_at=? "
-            "where adapter_name=? and source_id=? and owner=? and generation=? "
-            "and lease_expires_at>?",
+        _renew_lease_in_db(
+            db,
+            envelope=envelope,
+            owner=owner,
+            now=now_text,
+            lease_expires_at=_lease_expiry(now, lease),
+        )
+
+
+def _renew_lease_in_db(
+    db: sqlite3.Connection,
+    *,
+    envelope: DispatchEnvelope,
+    owner: str,
+    now: str,
+    lease_expires_at: str,
+) -> None:
+    cursor = db.execute(
+        "update dispatcher_claim_leases set lease_expires_at=?, last_error='', "
+        "updated_at=? where adapter_name=? and source_id=? and owner=? "
+        "and generation=? and lease_expires_at>? and terminal_at=''",
+        (
+            lease_expires_at,
+            now,
+            envelope.adapter_name,
+            envelope.source_id,
+            owner,
+            envelope.generation,
+            now,
+        ),
+    )
+    if cursor.rowcount != 1:
+        raise ValueError("dispatcher source claim is no longer owned")
+
+
+def _assert_ledger_current(
+    store: AutoReplyStore,
+    *,
+    envelope: DispatchEnvelope,
+    owner: str,
+    now: datetime,
+) -> None:
+    with store._connect() as db:
+        row = db.execute(
+            "select 1 from dispatcher_claim_leases where adapter_name=? "
+            "and source_id=? and owner=? and generation=? "
+            "and lease_expires_at>? and terminal_at=''",
             (
-                _lease_expiry(now, lease),
+                envelope.adapter_name,
+                envelope.source_id,
+                owner,
+                envelope.generation,
+                _sqlite_time(now),
+            ),
+        ).fetchone()
+    if row is None:
+        raise ValueError("dispatcher source claim is no longer owned")
+
+
+def _complete_ledger(
+    store: AutoReplyStore,
+    *,
+    envelope: DispatchEnvelope,
+    owner: str,
+    now: datetime,
+) -> None:
+    now_text = _sqlite_time(now)
+    with store._immediate_write_transaction() as db:
+        cursor = db.execute(
+            "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+            "terminal_at=?, last_error='', updated_at=? where adapter_name=? "
+            "and source_id=? and owner=? and generation=?",
+            (
+                now_text,
                 now_text,
                 envelope.adapter_name,
                 envelope.source_id,
                 owner,
                 envelope.generation,
-                now_text,
             ),
         )
         if cursor.rowcount != 1:
             raise ValueError("dispatcher source claim is no longer owned")
+        db.execute(
+            "delete from dispatcher_claim_leases where terminal_at<>'' and rowid not in ("
+            "select rowid from dispatcher_claim_leases where terminal_at<>'' "
+            "order by terminal_at desc, rowid desc limit 10000)"
+        )
+
+
+def _record_ledger_error(
+    store: AutoReplyStore,
+    *,
+    envelope: DispatchEnvelope,
+    owner: str,
+    error: str,
+    now: datetime,
+) -> None:
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update dispatcher_claim_leases set last_error=?, updated_at=? "
+            "where adapter_name=? and source_id=? and owner=? and generation=?",
+            (
+                error,
+                _sqlite_time(now),
+                envelope.adapter_name,
+                envelope.source_id,
+                owner,
+                envelope.generation,
+            ),
+        )
+
+
+def _latest_claim_error(db: sqlite3.Connection, adapter_name: str) -> str:
+    row = db.execute(
+        "select last_error from dispatcher_claim_leases where adapter_name=? "
+        "and last_error<>'' order by updated_at desc, rowid desc limit 1",
+        (adapter_name,),
+    ).fetchone()
+    return "" if row is None else str(row[0])
 
 
 def _latest_error(

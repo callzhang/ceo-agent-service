@@ -125,7 +125,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-08.3"
+STORE_SCHEMA_VERSION = "2026-09-08.5"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -240,6 +240,11 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "execution_id",
         "lease_owner",
         "lease_expires_at",
+    ),
+    "dispatcher_claim_leases": (
+        "terminal_at",
+        "last_error",
+        "owner_pid",
     ),
     "feedback_processing_items": ("current_round_id",),
     "feedback_processing_rounds": (
@@ -2146,8 +2151,11 @@ class AutoReplyStore:
                     adapter_name text not null,
                     source_id text not null,
                     owner text not null default '',
+                    owner_pid integer not null default 0,
                     generation integer not null default 0 check(generation >= 0),
                     lease_expires_at text not null default '',
+                    terminal_at text not null default '',
+                    last_error text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
                     primary key(adapter_name, source_id)
@@ -3975,6 +3983,22 @@ class AutoReplyStore:
                 if column not in work_summary_input_columns:
                     db.execute(
                         f"alter table work_summary_inputs add column {column} {definition}"
+                    )
+            dispatcher_lease_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(dispatcher_claim_leases)"
+                ).fetchall()
+            }
+            for column, definition in (
+                ("terminal_at", "text not null default ''"),
+                ("last_error", "text not null default ''"),
+                ("owner_pid", "integer not null default 0"),
+            ):
+                if column not in dispatcher_lease_columns:
+                    db.execute(
+                        f"alter table dispatcher_claim_leases "
+                        f"add column {column} {definition}"
                     )
             work_todo_columns = {
                 row["name"]

@@ -48,6 +48,7 @@ from app.config import (
     single_chat_read_recovery_window,
 )
 from app.corpus import MEDIA_OR_LINK_PATTERN, count_information_units
+from app.dispatcher.models import ClaimGuard
 from app.dws_client import (
     DINGTALK_MESSAGE_TIME_ZONE,
     DwsCalendarEvent,
@@ -2194,10 +2195,14 @@ class DingTalkAutoReplyWorker:
             prompt_context_messages,
         )
 
-    def process_claimed_reply_task(self, task: ReplyTask) -> bool:
+    def process_claimed_reply_task(
+        self, task: ReplyTask, *, claim_guard: ClaimGuard | None = None
+    ) -> bool:
         """Execute exactly one task that a queue owner already claimed."""
         if task.status != "processing":
             raise ValueError("reply task must be claimed before execution")
+        if claim_guard is not None:
+            claim_guard.assert_current(self._now().astimezone(timezone.utc))
         conversation = DingTalkConversation(
             open_conversation_id=task.conversation_id,
             title=task.conversation_title,

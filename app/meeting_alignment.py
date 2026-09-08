@@ -14,6 +14,7 @@ from app.codex_capacity import (
 from app.codex_failure import CODEX_PROCESS_FAILED, classify_codex_process_failure
 from app.config import codex_capacity_retry_duration, principal_display_name
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
+from app.dispatcher.models import ClaimGuard
 from app.external_retry import is_external_dependency_error
 from app.meeting_alignment_agent import (
     MeetingAlignmentAgent,
@@ -590,10 +591,13 @@ def consume_claimed_meeting_alignment_job(
     retry_delay: timedelta = DEFAULT_MEETING_RETRY_DELAY,
     max_attempts: int = DEFAULT_MEETING_MAX_ATTEMPTS,
     embedding_client: Callable[[list[str]], list[list[float]]] | None = None,
+    claim_guard: ClaimGuard | None = None,
 ) -> None:
     """Execute one already-claimed meeting fact without scanning the queue."""
     if job.status != "processing":
         raise ValueError("meeting job must be claimed before execution")
+    if claim_guard is not None:
+        claim_guard.assert_current(now.astimezone())
     _analyze_meeting_job(
         store,
         dws,

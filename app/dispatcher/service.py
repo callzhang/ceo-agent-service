@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Executor, Future
 from datetime import UTC, datetime, timedelta
+import os
 from threading import Event, Lock
 
-from app.dispatcher.models import DispatchEnvelope, QueueAdapter
+from app.dispatcher.models import ClaimGuard, DispatchEnvelope, QueueAdapter
 
 
 class ConsumerDispatcher:
@@ -15,10 +16,11 @@ class ConsumerDispatcher:
         self,
         *,
         adapters: Sequence[QueueAdapter],
-        consumers: Mapping[str, Callable[[DispatchEnvelope], object]],
+        consumers: Mapping[str, Callable[[DispatchEnvelope, ClaimGuard], object]],
         executors: Mapping[str, Executor],
         max_in_flight: Mapping[str, int],
         owner: str,
+        owner_pid: int | None = None,
         lease: timedelta,
         wake_event: Event | None = None,
         fallback_wait_seconds: float = 5.0,
@@ -50,11 +52,16 @@ class ConsumerDispatcher:
             raise ValueError("dispatcher worker capacity must be positive")
         self._in_flight = {name: 0 for name in names}
         self._active: dict[
-            str, dict[Future[object], tuple[DispatchEnvelope, datetime]]
+            str,
+            dict[
+                Future[object],
+                tuple[DispatchEnvelope, ClaimGuard, datetime | None],
+            ],
         ] = {name: {} for name in names}
         self._adapter_by_name = {adapter.name: adapter for adapter in adapters}
         self._capacity_lock = Lock()
         self.owner = owner
+        self.owner_pid = os.getpid() if owner_pid is None else owner_pid
         self.lease = lease
         self.wake_event = wake_event or Event()
         self.fallback_wait_seconds = fallback_wait_seconds
@@ -74,16 +81,22 @@ class ConsumerDispatcher:
             if not self._reserve_capacity(adapter.name):
                 empty_in_row += 1
                 continue
-            envelope = adapter.claim(now, owner=self.owner, lease=self.lease)
+            envelope = adapter.claim(
+                now,
+                owner=self.owner,
+                owner_pid=self.owner_pid,
+                lease=self.lease,
+            )
             if envelope is None:
                 self._release_capacity(adapter.name)
                 empty_in_row += 1
                 continue
             attempted += 1
             empty_in_row = 0
+            guard = ClaimGuard(adapter=adapter, envelope=envelope, owner=self.owner)
             try:
                 future = self.executors[adapter.name].submit(
-                    self.consumers[adapter.name], envelope
+                    self.consumers[adapter.name], envelope, guard
                 )
             except RuntimeError:
                 adapter.release(
@@ -96,6 +109,7 @@ class ConsumerDispatcher:
             with self._capacity_lock:
                 self._active[adapter.name][future] = (
                     envelope,
+                    guard,
                     now + self.lease / 2,
                 )
             future.add_done_callback(
@@ -107,26 +121,41 @@ class ConsumerDispatcher:
         return submitted
 
     def renew_in_flight(self, now: datetime) -> None:
-        due: list[tuple[str, Future[object], DispatchEnvelope]] = []
+        due: list[tuple[str, Future[object], DispatchEnvelope, ClaimGuard]] = []
         with self._capacity_lock:
             for name, active in self._active.items():
                 due.extend(
-                    (name, future, envelope)
-                    for future, (envelope, renew_at) in active.items()
-                    if not future.done() and renew_at <= now
+                    (name, future, envelope, guard)
+                    for future, (envelope, guard, renew_at) in active.items()
+                    if not future.done() and renew_at is not None and renew_at <= now
                 )
-        for name, future, envelope in due:
-            self._adapter_by_name[name].renew(
-                envelope,
-                owner=self.owner,
-                now=now,
-                lease=self.lease,
-            )
+        for name, future, envelope, guard in due:
+            try:
+                self._adapter_by_name[name].renew(
+                    envelope,
+                    owner=self.owner,
+                    now=now,
+                    lease=self.lease,
+                )
+            except Exception as exc:  # noqa: BLE001 - isolate one lost source lease
+                self._adapter_by_name[name].record_lease_error(
+                    envelope,
+                    owner=self.owner,
+                    error=str(exc),
+                    now=now,
+                )
+                guard.mark_lost()
+                with self._capacity_lock:
+                    current = self._active[name].get(future)
+                    if current is not None and current[0] == envelope:
+                        self._active[name][future] = (envelope, guard, None)
+                continue
             with self._capacity_lock:
                 current = self._active[name].get(future)
                 if current is not None and current[0] == envelope:
                     self._active[name][future] = (
                         envelope,
+                        guard,
                         now + self.lease / 2,
                     )
 
@@ -151,6 +180,27 @@ class ConsumerDispatcher:
             if removed is None:
                 return
             self._in_flight[adapter_name] -= 1
+        _envelope, guard, _renew_at = removed
+        now = datetime.now(UTC)
+        if future.exception() is None:
+            try:
+                guard.complete(now)
+            except Exception as exc:  # noqa: BLE001 - completion fencing is isolated
+                guard.adapter.record_lease_error(
+                    guard.envelope,
+                    owner=guard.token.owner,
+                    error=str(exc),
+                    now=now,
+                )
+                guard.mark_lost()
+        else:
+            guard.adapter.record_lease_error(
+                guard.envelope,
+                owner=guard.token.owner,
+                error=str(future.exception()),
+                now=now,
+            )
+            guard.mark_lost()
         self.wake_event.set()
 
     def run(self, *, stop_event: Event, dispatch_limit: int = 100) -> None:

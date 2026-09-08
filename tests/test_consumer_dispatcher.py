@@ -90,8 +90,11 @@ def test_dispatcher_lease_ledger_stores_only_claim_ownership(tmp_path: Path):
         "adapter_name",
         "source_id",
         "owner",
+        "owner_pid",
         "generation",
         "lease_expires_at",
+        "terminal_at",
+        "last_error",
         "created_at",
         "updated_at",
     }
@@ -186,7 +189,7 @@ def test_all_source_adapters_report_and_atomically_claim_due_facts(tmp_path: Pat
 def test_scheduled_claim_is_recoverable_after_lease_expiry(tmp_path: Path):
     store = _store(tmp_path)
     _scheduled_run(store)
-    adapter = ScheduledTaskQueueAdapter(store)
+    adapter = ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: False)
 
     first = adapter.claim(NOW, owner="dispatcher-a", lease=timedelta(seconds=1))
     assert first is not None
@@ -197,7 +200,8 @@ def test_scheduled_claim_is_recoverable_after_lease_expiry(tmp_path: Path):
         owner="dispatcher-b",
         lease=timedelta(seconds=2),
     )
-    assert recovered == first
+    assert recovered.source_id == first.source_id
+    assert recovered.generation > first.generation
 
 
 def test_legacy_source_leases_recover_with_fencing_and_monotonic_generation(
@@ -208,9 +212,9 @@ def test_legacy_source_leases_recover_with_fencing_and_monotonic_generation(
     _meeting(store)
     _work_summary(store)
     adapters = (
-        ReplyQueueAdapter(store),
-        MeetingQueueAdapter(store),
-        WorkSummaryQueueAdapter(store),
+        ReplyQueueAdapter(store, owner_alive=lambda _pid: False),
+        MeetingQueueAdapter(store, owner_alive=lambda _pid: False),
+        WorkSummaryQueueAdapter(store, owner_alive=lambda _pid: False),
     )
 
     for adapter in adapters:
@@ -338,7 +342,12 @@ class _FakeAdapter:
         )
 
     def claim(
-        self, now: datetime, *, owner: str, lease: timedelta
+        self,
+        now: datetime,
+        *,
+        owner: str,
+        owner_pid: int | None = None,
+        lease: timedelta,
     ) -> DispatchEnvelope | None:
         if self.remaining == 0:
             return None
@@ -372,13 +381,22 @@ class _FakeAdapter:
     ) -> None:
         return None
 
+    def assert_current(self, envelope, *, owner, now):
+        return None
+
+    def complete(self, envelope, *, owner, now):
+        return None
+
+    def record_lease_error(self, envelope, *, owner, error, now):
+        return None
+
 
 class _RecordingExecutor:
     def __init__(self) -> None:
         self.submissions: list[tuple[object, DispatchEnvelope]] = []
         self.futures: list[Future[None]] = []
 
-    def submit(self, fn, envelope: DispatchEnvelope) -> Future[None]:
+    def submit(self, fn, envelope: DispatchEnvelope, guard) -> Future[None]:
         self.submissions.append((fn, envelope))
         future: Future[None] = Future()
         self.futures.append(future)
@@ -391,7 +409,10 @@ def test_dispatcher_is_round_robin_and_does_not_wait_for_long_consumers():
     executor = _RecordingExecutor()
     dispatcher = ConsumerDispatcher(
         adapters=(first, second),
-        consumers={"first": lambda _item: None, "second": lambda _item: None},
+        consumers={
+            "first": lambda _item, _guard: None,
+            "second": lambda _item, _guard: None,
+        },
         executors={"first": executor, "second": executor},
         max_in_flight={"first": 2, "second": 2},
         owner="dispatcher-a",
@@ -416,7 +437,7 @@ def test_dispatcher_releases_claim_when_worker_pool_rejects_submission():
 
     dispatcher = ConsumerDispatcher(
         adapters=(adapter,),
-        consumers={"reply": lambda _item: None},
+        consumers={"reply": lambda _item, _guard: None},
         executors={"reply": RejectingExecutor()},
         max_in_flight={"reply": 1},
         owner="dispatcher-a",
@@ -434,7 +455,7 @@ def test_event_wakes_dispatcher_before_bounded_fallback_wait():
     executor = _RecordingExecutor()
     dispatcher = ConsumerDispatcher(
         adapters=(adapter,),
-        consumers={"scheduled": lambda _item: None},
+        consumers={"scheduled": lambda _item, _guard: None},
         executors={"scheduled": executor},
         max_in_flight={"scheduled": 1},
         owner="dispatcher-a",
@@ -466,7 +487,7 @@ def test_empty_dispatch_does_not_create_user_visible_runs(tmp_path: Path):
     executor = ThreadPoolExecutor(max_workers=1)
     dispatcher = ConsumerDispatcher(
         adapters=(adapter,),
-        consumers={"scheduled": lambda _item: None},
+        consumers={"scheduled": lambda _item, _guard: None},
         executors={"scheduled": executor},
         max_in_flight={"scheduled": 1},
         owner="dispatcher-a",
@@ -488,7 +509,7 @@ def test_dispatcher_claims_scheduled_source_only_when_worker_capacity_is_availab
     executor = _RecordingExecutor()
     dispatcher = ConsumerDispatcher(
         adapters=(adapter,),
-        consumers={"scheduled": lambda _item: None},
+        consumers={"scheduled": lambda _item, _guard: None},
         executors={"scheduled": executor},
         max_in_flight={"scheduled": 1},
         owner="dispatcher-a",
@@ -526,15 +547,21 @@ def test_dispatcher_heartbeats_in_flight_scheduled_claim_across_two_dispatchers(
 ):
     store = _store(tmp_path)
     _scheduled_run(store)
-    adapter_a = ScheduledTaskQueueAdapter(store)
-    adapter_b = ScheduledTaskQueueAdapter(store)
+    alive = {101: True}
+
+    def owner_alive(pid: int) -> bool:
+        return alive.get(pid, False)
+
+    adapter_a = ScheduledTaskQueueAdapter(store, owner_alive=owner_alive)
+    adapter_b = ScheduledTaskQueueAdapter(store, owner_alive=owner_alive)
     executor = _RecordingExecutor()
     dispatcher_a = ConsumerDispatcher(
         adapters=(adapter_a,),
-        consumers={"scheduled": lambda _item: None},
+        consumers={"scheduled": lambda _item, _guard: None},
         executors={"scheduled": executor},
         max_in_flight={"scheduled": 1},
         owner="owner-a",
+        owner_pid=101,
         lease=timedelta(seconds=2),
     )
 
@@ -549,9 +576,20 @@ def test_dispatcher_heartbeats_in_flight_scheduled_claim_across_two_dispatchers(
         is None
     )
 
+    assert (
+        adapter_b.claim(
+            NOW + timedelta(seconds=4),
+            owner="owner-b",
+            owner_pid=202,
+            lease=timedelta(seconds=2),
+        )
+        is None
+    )
+    alive[101] = False
     recovered = adapter_b.claim(
         NOW + timedelta(seconds=4),
         owner="owner-b",
+        owner_pid=202,
         lease=timedelta(seconds=2),
     )
     assert recovered is not None
@@ -577,8 +615,8 @@ def test_event_set_after_empty_scan_is_not_lost_before_wait():
     producer_done = Event()
 
     class InterleavedAdapter(_FakeAdapter):
-        def claim(self, now, *, owner, lease):
-            result = super().claim(now, owner=owner, lease=lease)
+        def claim(self, now, *, owner, owner_pid=None, lease):
+            result = super().claim(now, owner=owner, owner_pid=owner_pid, lease=lease)
             scan_entered.set()
             assert producer_done.wait(timeout=2)
             return result
@@ -587,7 +625,7 @@ def test_event_set_after_empty_scan_is_not_lost_before_wait():
     executor = _RecordingExecutor()
     dispatcher = ConsumerDispatcher(
         adapters=(adapter,),
-        consumers={"scheduled": lambda _item: None},
+        consumers={"scheduled": lambda _item, _guard: None},
         executors={"scheduled": executor},
         max_in_flight={"scheduled": 1},
         owner="owner-a",
