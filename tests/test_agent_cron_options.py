@@ -451,6 +451,30 @@ metadata:
         service.resolve_operation_skill("ceo-test")
 
 
+def test_operation_skill_accepts_standard_frontmatter_without_metadata(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "operation-skills"
+    path = root / "agent-browser-core" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        """---
+name: agent-browser-core
+description: OpenClaw skill for browser automation.
+---
+# Agent Browser Skill
+""",
+        encoding="utf-8",
+    )
+    service = _service(tmp_path, operation_root=root)
+
+    option = service.list_operation_skill_options()[0]
+
+    assert option.name == "agent-browser-core"
+    assert option.available is True
+    assert option.content_summary == "OpenClaw skill for browser automation."
+
+
 @pytest.mark.parametrize(
     "frontmatter",
     (

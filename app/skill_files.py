@@ -117,7 +117,7 @@ class SkillFileService:
         frontmatter = _parse_standard_skill_frontmatter(content, path)
         declared_name = frontmatter.get("name")
         description = frontmatter.get("description")
-        metadata = frontmatter.get("metadata")
+        metadata = frontmatter.get("metadata", {})
         if not isinstance(declared_name, str) or not declared_name.strip():
             raise SkillFileValidationError(f"Skill must have nonempty name: {path}")
         if declared_name.strip() != name:
