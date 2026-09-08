@@ -40,6 +40,14 @@ def test_default_oa_rules_trust_the_actual_applicant_statement():
     assert "is not a missing mandatory field and must not delay approval" in rules
 
 
+def test_default_rules_do_not_treat_consumer_audit_clock_progress_as_conflict():
+    rules = SEED_AUDIT_RULES_TEMPLATE.read_text(encoding="utf-8")
+
+    assert "Execution time is context for staleness checks" in rules
+    assert "normal passage of time between Consumer and Audit" in rules
+    assert "never reject an otherwise executable candidate solely" in rules
+
+
 def test_empty_custom_body_keeps_fixed_role_wrappers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

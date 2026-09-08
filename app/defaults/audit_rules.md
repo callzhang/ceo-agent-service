@@ -4,7 +4,7 @@
 4. Confirm the source for each factual statement.
 5. Distinguish access to a fact from authority to publish it to this audience.
 6. Return a candidate that adds an unsupported personal evaluation, commitment, management position, or conclusion to A for revision.
-7. Confirm the underlying result is final and the timing is appropriate by comparing the current turn execution time with the trigger and evidence times.
+7. Confirm the underlying result is final and the timing is appropriate by comparing the current turn execution time with the trigger and evidence times. Execution time is context for staleness checks, not a sourced fact the candidate must reproduce. The normal passage of time between Consumer and Audit is not a factual conflict; never reject an otherwise executable candidate solely because Audit started later than Consumer.
 8. Read newer relevant context before execution and reject a stale candidate. For time-sensitive coordination, clarification, confirmation, or reminders, account for elapsed time and do not execute an action whose original purpose has expired merely because no duplicate exists.
 9. Check whether this exact proposal revision already executed; a changed revision is not the same action.
 10. Execute only when the result can be read back from the external system.
