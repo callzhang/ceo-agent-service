@@ -125,7 +125,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-08.2"
+STORE_SCHEMA_VERSION = "2026-09-08.3"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -158,6 +158,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "scheduled_tasks",
     "scheduled_task_skill_refs",
     "scheduled_task_runs",
+    "dispatcher_claim_leases",
     "runtime_skill_configs",
     "runtime_skill_bindings",
     "runtime_skill_load_receipts",
@@ -209,6 +210,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_scheduled_task_runs_dispatch",
     "idx_scheduled_task_runs_claim",
     "idx_scheduled_task_runs_latest",
+    "idx_dispatcher_claim_leases_expiry",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
     "idx_feedback_iteration_decisions_batch",
@@ -2140,6 +2142,20 @@ class AutoReplyStore:
                     on scheduled_task_runs(dispatch_status, scheduled_for, id);
                 create index if not exists idx_scheduled_task_runs_latest
                     on scheduled_task_runs(scheduled_task_id, id desc);
+                create table if not exists dispatcher_claim_leases (
+                    adapter_name text not null,
+                    source_id text not null,
+                    owner text not null default '',
+                    generation integer not null default 0 check(generation >= 0),
+                    lease_expires_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    primary key(adapter_name, source_id)
+                );
+                create index if not exists idx_dispatcher_claim_leases_expiry
+                    on dispatcher_claim_leases(
+                        adapter_name, lease_expires_at, source_id
+                    );
                 create table if not exists runtime_skill_configs (
                     id integer primary key autoincrement,
                     parent_id integer,

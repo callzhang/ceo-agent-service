@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, Thread
 
+import pytest
+
 from app.dispatcher.adapters import (
     MeetingQueueAdapter,
     ReplyQueueAdapter,
@@ -72,6 +74,26 @@ def _work_summary(store: AutoReplyStore) -> int:
     return store.enqueue_work_summary_input("reply_attempt", "task-1", "{}")
 
 
+def test_dispatcher_lease_ledger_stores_only_claim_ownership(tmp_path: Path):
+    store = _store(tmp_path)
+
+    with store._connect() as db:
+        columns = {
+            row["name"]
+            for row in db.execute("pragma table_info(dispatcher_claim_leases)")
+        }
+
+    assert columns == {
+        "adapter_name",
+        "source_id",
+        "owner",
+        "generation",
+        "lease_expires_at",
+        "created_at",
+        "updated_at",
+    }
+
+
 def test_all_source_adapters_report_and_atomically_claim_due_facts(tmp_path: Path):
     store = _store(tmp_path)
     run = _scheduled_run(store)
@@ -85,7 +107,12 @@ def test_all_source_adapters_report_and_atomically_claim_due_facts(tmp_path: Pat
         WorkSummaryQueueAdapter(store),
     )
 
-    assert [adapter.metrics(NOW).due for adapter in adapters] == [1, 1, 1, 1]
+    metrics = [adapter.metrics(NOW) for adapter in adapters]
+    assert [item.pending for item in metrics] == [1, 1, 1, 1]
+    assert [item.due for item in metrics] == [1, 1, 1, 1]
+    assert all(item.oldest_available_at is not None for item in metrics)
+    assert [item.running for item in metrics] == [0, 0, 0, 0]
+    assert [item.latest_error for item in metrics] == ["", "", "", ""]
     claims = [
         adapter.claim(NOW, owner="dispatcher-a", lease=timedelta(minutes=5))
         for adapter in adapters
@@ -121,6 +148,54 @@ def test_scheduled_claim_is_recoverable_after_lease_expiry(tmp_path: Path):
         lease=timedelta(seconds=1),
     )
     assert recovered == first
+
+
+def test_legacy_source_leases_recover_with_fencing_and_monotonic_generation(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    _reply(store)
+    _meeting(store)
+    _work_summary(store)
+    adapters = (
+        ReplyQueueAdapter(store),
+        MeetingQueueAdapter(store),
+        WorkSummaryQueueAdapter(store),
+    )
+
+    for adapter in adapters:
+        first = adapter.claim(NOW, owner="owner-a", lease=timedelta(seconds=1))
+        assert first is not None
+        assert adapter.claim(NOW, owner="owner-b", lease=timedelta(seconds=1)) is None
+        second = adapter.claim(
+            NOW + timedelta(seconds=2),
+            owner="owner-b",
+            lease=timedelta(seconds=1),
+        )
+        assert second is not None
+        assert second.source_id == first.source_id
+        assert second.generation > first.generation
+
+        expired_metrics = adapter.metrics(NOW + timedelta(seconds=4))
+        assert expired_metrics.due == 1
+        assert expired_metrics.running == 0
+
+        with pytest.raises(ValueError, match="no longer owned"):
+            adapter.release(first, owner="owner-a", now=NOW + timedelta(seconds=2))
+        assert adapter.metrics(NOW + timedelta(seconds=2)).running == 1
+
+        adapter.release(
+            second,
+            owner="owner-b",
+            now=NOW + timedelta(seconds=2),
+        )
+        third = adapter.claim(
+            NOW + timedelta(seconds=2),
+            owner="owner-c",
+            lease=timedelta(seconds=1),
+        )
+        assert third is not None
+        assert third.generation > second.generation
 
 
 def test_reply_source_cannot_be_claimed_twice_concurrently(tmp_path: Path):
@@ -196,7 +271,13 @@ class _FakeAdapter:
         self.released: list[DispatchEnvelope] = []
 
     def metrics(self, now: datetime) -> QueueMetrics:
-        return QueueMetrics(due=self.remaining, claimed=self.claimed)
+        return QueueMetrics(
+            pending=self.remaining,
+            due=self.remaining,
+            oldest_available_at=now if self.remaining else None,
+            running=self.claimed,
+            latest_error="",
+        )
 
     def claim(
         self, now: datetime, *, owner: str, lease: timedelta
@@ -227,10 +308,13 @@ class _FakeAdapter:
 class _RecordingExecutor:
     def __init__(self) -> None:
         self.submissions: list[tuple[object, DispatchEnvelope]] = []
+        self.futures: list[Future[None]] = []
 
     def submit(self, fn, envelope: DispatchEnvelope) -> Future[None]:
         self.submissions.append((fn, envelope))
-        return Future()
+        future: Future[None] = Future()
+        self.futures.append(future)
+        return future
 
 
 def test_dispatcher_is_round_robin_and_does_not_wait_for_long_consumers():
@@ -241,6 +325,7 @@ def test_dispatcher_is_round_robin_and_does_not_wait_for_long_consumers():
         adapters=(first, second),
         consumers={"first": lambda _item: None, "second": lambda _item: None},
         executors={"first": executor, "second": executor},
+        max_in_flight={"first": 2, "second": 2},
         owner="dispatcher-a",
         lease=timedelta(minutes=5),
     )
@@ -265,6 +350,7 @@ def test_dispatcher_releases_claim_when_worker_pool_rejects_submission():
         adapters=(adapter,),
         consumers={"reply": lambda _item: None},
         executors={"reply": RejectingExecutor()},
+        max_in_flight={"reply": 1},
         owner="dispatcher-a",
         lease=timedelta(minutes=5),
     )
@@ -282,6 +368,7 @@ def test_event_wakes_dispatcher_before_bounded_fallback_wait():
         adapters=(adapter,),
         consumers={"scheduled": lambda _item: None},
         executors={"scheduled": executor},
+        max_in_flight={"scheduled": 1},
         owner="dispatcher-a",
         lease=timedelta(minutes=5),
         wake_event=wake,
@@ -313,6 +400,7 @@ def test_empty_dispatch_does_not_create_user_visible_runs(tmp_path: Path):
         adapters=(adapter,),
         consumers={"scheduled": lambda _item: None},
         executors={"scheduled": executor},
+        max_in_flight={"scheduled": 1},
         owner="dispatcher-a",
         lease=timedelta(minutes=5),
     )
@@ -321,3 +409,44 @@ def test_empty_dispatch_does_not_create_user_visible_runs(tmp_path: Path):
     with store._connect() as db:
         assert db.execute("select count(*) from scheduled_task_runs").fetchone()[0] == 0
     executor.shutdown()
+
+
+def test_dispatcher_claims_scheduled_source_only_when_worker_capacity_is_available(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    first_run = _scheduled_run(store)
+    adapter = ScheduledTaskQueueAdapter(store)
+    executor = _RecordingExecutor()
+    dispatcher = ConsumerDispatcher(
+        adapters=(adapter,),
+        consumers={"scheduled": lambda _item: None},
+        executors={"scheduled": executor},
+        max_in_flight={"scheduled": 1},
+        owner="dispatcher-a",
+        lease=timedelta(seconds=1),
+    )
+
+    assert dispatcher.dispatch_available(NOW, limit=2) == 1
+    # The unresolved Future keeps the only slot occupied past the source lease,
+    # so the expired source cannot be claimed a second time into a worker queue.
+    assert dispatcher.dispatch_available(NOW + timedelta(seconds=2), limit=2) == 0
+    assert len(executor.submissions) == 1
+
+    store.finish_scheduled_task_dispatch(
+        first_run.id,
+        owner="dispatcher-a",
+        status="failed",
+        reason="capacity test",
+        now=NOW,
+    )
+    store.create_scheduled_task_run(
+        first_run.scheduled_task_id,
+        trigger_kind="manual",
+        scheduled_for=NOW + timedelta(seconds=2),
+        now=NOW,
+    )
+
+    executor_future = executor.futures[0]
+    executor_future.set_result(None)
+    assert dispatcher.dispatch_available(NOW + timedelta(seconds=2), limit=2) == 1

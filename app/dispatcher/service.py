@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Executor
 from datetime import UTC, datetime, timedelta
-from threading import Event
+from threading import Event, Lock
 
 from app.dispatcher.models import DispatchEnvelope, QueueAdapter
 
@@ -17,6 +17,7 @@ class ConsumerDispatcher:
         adapters: Sequence[QueueAdapter],
         consumers: Mapping[str, Callable[[DispatchEnvelope], object]],
         executors: Mapping[str, Executor],
+        max_in_flight: Mapping[str, int],
         owner: str,
         lease: timedelta,
         wake_event: Event | None = None,
@@ -31,7 +32,11 @@ class ConsumerDispatcher:
         names = tuple(adapter.name for adapter in adapters)
         if len(set(names)) != len(names):
             raise ValueError("dispatcher adapter names must be unique")
-        missing = set(names) - set(consumers) | (set(names) - set(executors))
+        missing = (
+            set(names) - set(consumers)
+            | (set(names) - set(executors))
+            | (set(names) - set(max_in_flight))
+        )
         if missing:
             raise ValueError(
                 "dispatcher adapters require consumers and executors: "
@@ -40,6 +45,11 @@ class ConsumerDispatcher:
         self.adapters = tuple(adapters)
         self.consumers = dict(consumers)
         self.executors = dict(executors)
+        self.max_in_flight = dict(max_in_flight)
+        if any(self.max_in_flight[name] <= 0 for name in names):
+            raise ValueError("dispatcher worker capacity must be positive")
+        self._in_flight = {name: 0 for name in names}
+        self._capacity_lock = Lock()
         self.owner = owner
         self.lease = lease
         self.wake_event = wake_event or Event()
@@ -56,14 +66,18 @@ class ConsumerDispatcher:
             index = self._next_adapter
             adapter = self.adapters[index]
             self._next_adapter = (index + 1) % len(self.adapters)
+            if not self._reserve_capacity(adapter.name):
+                empty_in_row += 1
+                continue
             envelope = adapter.claim(now, owner=self.owner, lease=self.lease)
             if envelope is None:
+                self._release_capacity(adapter.name)
                 empty_in_row += 1
                 continue
             attempted += 1
             empty_in_row = 0
             try:
-                self.executors[adapter.name].submit(
+                future = self.executors[adapter.name].submit(
                     self.consumers[adapter.name], envelope
                 )
             except RuntimeError:
@@ -72,9 +86,25 @@ class ConsumerDispatcher:
                     owner=self.owner,
                     now=now,
                 )
+                self._release_capacity(adapter.name)
                 continue
+            future.add_done_callback(
+                lambda _future, name=adapter.name: self._release_capacity(name)
+            )
             submitted += 1
         return submitted
+
+    def _reserve_capacity(self, adapter_name: str) -> bool:
+        with self._capacity_lock:
+            if self._in_flight[adapter_name] >= self.max_in_flight[adapter_name]:
+                return False
+            self._in_flight[adapter_name] += 1
+            return True
+
+    def _release_capacity(self, adapter_name: str) -> None:
+        with self._capacity_lock:
+            self._in_flight[adapter_name] -= 1
+        self.wake_event.set()
 
     def run(self, *, stop_event: Event, dispatch_limit: int = 100) -> None:
         while not stop_event.is_set():

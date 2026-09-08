@@ -19,8 +19,15 @@ class DispatchEnvelope:
 
 @dataclass(frozen=True)
 class QueueMetrics:
+    pending: int
     due: int
-    claimed: int
+    oldest_available_at: datetime | None
+    running: int
+    latest_error: str
+
+    @property
+    def claimed(self) -> int:
+        return self.running
 
 
 class QueueAdapter(Protocol):
