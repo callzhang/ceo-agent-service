@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+import app.store as store_module
 from app.agent_cron.models import (
     ScheduledTaskSkillRef,
     ScheduledTaskSnapshot,
@@ -131,28 +133,63 @@ def test_managed_skill_ref_requires_exact_revision_belonging_to_skill(
     with pytest.raises(ValueError, match="revision does not belong"):
         _create_task(store, skill_refs=(wrong_revision,))
 
-    missing_revision = ScheduledTaskSkillRef(
-        skill_source="managed",
-        skill_name=first.skill_name,
-        managed_skill_id=first.managed_skill_id,
-        managed_revision_id=None,
-        position=0,
-    )
     with pytest.raises(ValueError, match="exact revision"):
-        _create_task(store, skill_refs=(missing_revision,))
+        ScheduledTaskSkillRef(
+            skill_source="managed",
+            skill_name=first.skill_name,
+            managed_skill_id=first.managed_skill_id,
+            managed_revision_id=None,
+            position=0,
+        )
 
 
-def test_operation_skill_ref_rejects_managed_identifiers(tmp_path: Path) -> None:
-    store = AutoReplyStore(tmp_path / "cron.sqlite3")
-    ref = ScheduledTaskSkillRef(
-        skill_source="operation",
-        skill_name="dingtalk-minutes",
-        managed_skill_id=1,
-        position=0,
-    )
-
+def test_operation_skill_ref_rejects_managed_identifiers() -> None:
     with pytest.raises(ValueError, match="must not include managed"):
-        _create_task(store, skill_refs=(ref,))
+        ScheduledTaskSkillRef(
+            skill_source="operation",
+            skill_name="dingtalk-minutes",
+            managed_skill_id=1,
+            position=0,
+        )
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    (
+        (
+            {"skill_source": "unknown", "skill_name": "x", "position": 0},
+            "source",
+        ),
+        (
+            {"skill_source": "managed", "skill_name": "x", "position": 0},
+            "exact revision",
+        ),
+        (
+            {
+                "skill_source": "managed",
+                "skill_name": "x",
+                "managed_skill_id": 0,
+                "managed_revision_id": 1,
+                "position": 0,
+            },
+            "positive",
+        ),
+        (
+            {"skill_source": "operation", "skill_name": " ", "position": 0},
+            "name",
+        ),
+        (
+            {"skill_source": "operation", "skill_name": "x", "position": -1},
+            "position",
+        ),
+    ),
+)
+def test_skill_ref_model_rejects_invalid_structure(
+    values: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        ScheduledTaskSkillRef(**values)  # type: ignore[arg-type]
 
 
 def test_migration_key_is_idempotent(tmp_path: Path) -> None:
@@ -388,3 +425,97 @@ def test_run_snapshot_rejects_corrupt_persisted_json(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="snapshot"):
         store.list_scheduled_task_runs(task.id)
+
+
+@pytest.mark.parametrize(
+    "tampering",
+    (
+        "managed_missing_revision",
+        "operation_with_managed_ids",
+        "task_mismatch",
+        "position_gap",
+        "unknown_source",
+    ),
+)
+def test_run_snapshot_rejects_semantically_tampered_skill_refs(
+    tmp_path: Path,
+    tampering: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / f"cron-{tampering}.sqlite3")
+    task = _create_task(store)
+    run = store.create_scheduled_task_run(
+        task.id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+    payload = json.loads(run.snapshot.to_json())
+    ref = payload["skill_refs"][0]
+    if tampering == "managed_missing_revision":
+        ref["managed_revision_id"] = None
+    elif tampering == "operation_with_managed_ids":
+        ref["skill_source"] = "operation"
+    elif tampering == "task_mismatch":
+        ref["scheduled_task_id"] = task.id + 1
+    elif tampering == "position_gap":
+        ref["position"] = 2
+    else:
+        ref["skill_source"] = "unknown"
+    tampered_json = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update scheduled_task_runs set snapshot_json=? where id=?",
+            (tampered_json, run.id),
+        )
+
+    with pytest.raises(ValueError, match="snapshot"):
+        store.list_scheduled_task_runs(task.id)
+
+
+def test_previous_schema_additively_creates_cron_tables_and_preserves_data(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "previous-schema.sqlite3"
+    previous = AutoReplyStore(db_path)
+    previous.set_service_state("cron-migration-marker", "keep-me")
+    skill = previous.create_managed_skill("legacy-skill", "Legacy Skill")
+    with previous._connect() as db:
+        db.execute("drop table scheduled_task_runs")
+        db.execute("drop table scheduled_task_skill_refs")
+        db.execute("drop table scheduled_tasks")
+        db.execute(
+            "update service_state set value='2026-09-07.4' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    migrated = AutoReplyStore(db_path)
+
+    assert migrated.get_service_state("cron-migration-marker") == "keep-me"
+    assert migrated.get_managed_skill(skill.id) == skill
+    with migrated._connect() as db:
+        tables = {
+            str(row["name"])
+            for row in db.execute(
+                "select name from sqlite_master where type='table'"
+            )
+        }
+        indexes = {
+            str(row["name"])
+            for row in db.execute(
+                "select name from sqlite_master where type='index'"
+            )
+        }
+    assert {
+        "scheduled_tasks",
+        "scheduled_task_skill_refs",
+        "scheduled_task_runs",
+    } <= tables
+    assert {
+        "idx_scheduled_tasks_migration_key",
+        "idx_scheduled_tasks_enabled",
+        "idx_scheduled_task_skill_refs_position",
+        "idx_scheduled_task_runs_scheduled_instant",
+        "idx_scheduled_task_runs_dispatch",
+    } <= indexes
+    assert migrated._schema_is_current() is True

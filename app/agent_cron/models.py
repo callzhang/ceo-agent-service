@@ -67,6 +67,43 @@ class ScheduledTaskSkillRef:
     managed_skill_id: int | None = None
     managed_revision_id: int | None = None
 
+    def __post_init__(self) -> None:
+        if self.skill_source not in {"managed", "operation"}:
+            raise ValueError("scheduled task Skill ref source is invalid")
+        if not isinstance(self.skill_name, str) or not self.skill_name.strip():
+            raise ValueError("scheduled task Skill ref name must be nonempty")
+        if (
+            not isinstance(self.position, int)
+            or isinstance(self.position, bool)
+            or self.position < 0
+        ):
+            raise ValueError(
+                "scheduled task Skill ref position must be a nonnegative integer"
+            )
+        if (
+            not isinstance(self.scheduled_task_id, int)
+            or isinstance(self.scheduled_task_id, bool)
+            or self.scheduled_task_id < 0
+        ):
+            raise ValueError(
+                "scheduled task Skill ref task id must be a nonnegative integer"
+            )
+        if self.skill_source == "managed":
+            managed_ids = (self.managed_skill_id, self.managed_revision_id)
+            if any(value is None for value in managed_ids):
+                raise ValueError("managed Skill ref requires an exact revision")
+            if any(
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value <= 0
+                for value in managed_ids
+            ):
+                raise ValueError("managed Skill ref identifiers must be positive")
+        elif self.managed_skill_id is not None or self.managed_revision_id is not None:
+            raise ValueError(
+                "operation Skill ref must not include managed identifiers"
+            )
+
     def to_dict(self) -> dict[str, object]:
         return {
             "scheduled_task_id": self.scheduled_task_id,
@@ -217,6 +254,8 @@ class ScheduledTaskSnapshot:
             payload["task_version"], int
         ):
             raise ValueError("scheduled task snapshot identity is invalid")
+        if payload["task_id"] <= 0 or payload["task_version"] <= 0:
+            raise ValueError("scheduled task snapshot identity is invalid")
         text_fields = (
             "name",
             "prompt",
@@ -236,6 +275,12 @@ class ScheduledTaskSnapshot:
         refs = tuple(
             ScheduledTaskSkillRef.from_dict(item) for item in payload["skill_refs"]
         )
+        if any(ref.scheduled_task_id != payload["task_id"] for ref in refs):
+            raise ValueError("scheduled task snapshot Skill ref task mismatch")
+        if tuple(ref.position for ref in refs) != tuple(range(len(refs))):
+            raise ValueError(
+                "scheduled task snapshot Skill ref positions must be contiguous"
+            )
         return cls(
             task_id=payload["task_id"],
             task_version=payload["task_version"],
