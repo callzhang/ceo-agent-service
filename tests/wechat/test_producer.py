@@ -101,7 +101,7 @@ def test_direct_replies_to_every_inbound_text(producer, reader, store):
     assert store.count_reply_tasks(channel="wechat") == 2
 
 
-def test_disabled_message_triage_does_not_create_wechat_tasks(
+def test_disabled_wechat_auto_reply_does_not_create_wechat_tasks(
     store, reader, account
 ):
     store.replace_wechat_reply_scopes(
@@ -120,7 +120,7 @@ def test_disabled_message_triage_does_not_create_wechat_tasks(
     )
     reader.messages = [direct_message("d1", text="hello")]
     registry = FeatureRegistry(state_path=store.path.parent / "skill-state.json")
-    registry.set_enabled("message_triage", False)
+    registry.set_enabled("wechat_auto_reply", False)
 
     producer = WechatReplyProducer(
         store,

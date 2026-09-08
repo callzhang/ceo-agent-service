@@ -44,7 +44,11 @@ class WechatReplyProducer:
         self.feature_registry = feature_registry or FeatureRegistry()
 
     def run_once(self) -> int:
-        if not self.feature_registry.feature_enabled("message_triage"):
+        # This is the user-facing automatic-reply switch.  It is deliberately
+        # independent from general message triage, so disabling WeChat reply
+        # creation neither disables other channels nor requires stopping the
+        # Reader that supplies the configured local account.
+        if not self.feature_registry.feature_enabled("wechat_auto_reply"):
             return 0
         scopes = self.store.list_wechat_reply_scopes(
             self.account.account_id, enabled_only=True

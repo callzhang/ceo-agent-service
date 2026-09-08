@@ -27,6 +27,11 @@ def _client(tmp_path: Path) -> tuple[TestClient, SkillFileService]:
     (skills_root / "ceo-message-triage").mkdir(parents=True)
     content = _skill_content("ceo-message-triage")
     (skills_root / "ceo-message-triage" / "SKILL.md").write_text(content, encoding="utf-8")
+    (skills_root / "ceo-wechat").mkdir()
+    (skills_root / "ceo-wechat" / "SKILL.md").write_text(
+        _skill_content("ceo-wechat", "Manage local WeChat automatic replies"),
+        encoding="utf-8",
+    )
     registry_path = tmp_path / "skill-features.json"
     registry_path.write_text(
         json.dumps(
@@ -38,7 +43,14 @@ def _client(tmp_path: Path) -> tuple[TestClient, SkillFileService]:
                         "description": "Handle messages",
                         "skills": ["ceo-message-triage"],
                         "default_enabled": True,
-                    }
+                    },
+                    {
+                        "feature_id": "wechat_auto_reply",
+                        "name": "WeChat Auto Reply",
+                        "description": "Manage local WeChat automatic replies",
+                        "skills": ["ceo-wechat"],
+                        "default_enabled": True,
+                    },
                 ]
             }
         ),
@@ -73,10 +85,20 @@ def test_skills_settings_list_exposes_features_skills_status_and_associations(tm
             "skills": ["ceo-message-triage"],
             "enabled": True,
             "status": "ready",
-        }
+        },
+        {
+            "feature_id": "wechat_auto_reply",
+            "name": "WeChat Auto Reply",
+            "description": "Manage local WeChat automatic replies",
+            "skills": ["ceo-wechat"],
+            "enabled": True,
+            "status": "ready",
+        },
     ]
     assert payload["skills"][0]["name"] == "ceo-message-triage"
     assert payload["skills"][0]["referenced_by"] == ["message_triage"]
+    wechat = next(item for item in payload["skills"] if item["name"] == "ceo-wechat")
+    assert wechat["referenced_by"] == ["wechat_auto_reply"]
 
 
 def test_skill_toggle_and_detail_round_trip(tmp_path: Path):

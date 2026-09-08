@@ -8,6 +8,13 @@
       "default_enabled": true
     },
     {
+      "feature_id": "wechat_auto_reply",
+      "name": "WeChat Auto Reply",
+      "description": "读取已选微信好友或群聊的新消息并创建回复；关闭后停止创建新的微信回复。",
+      "skills": ["ceo-wechat"],
+      "default_enabled": true
+    },
+    {
       "feature_id": "calendar_invite",
       "name": "Calendar Invite",
       "description": "处理日历邀请、参会决策和日程冲突。",
