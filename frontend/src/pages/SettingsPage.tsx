@@ -158,6 +158,9 @@ function WechatReplyScopePanel() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState("");
   const [searchError, setSearchError] = useState("");
+  const [autoReplyEnabled, setAutoReplyEnabled] = useState<boolean | null>(null);
+  const [autoReplyState, setAutoReplyState] = useState<"loading" | "ready" | "saving" | "error">("loading");
+  const [autoReplyError, setAutoReplyError] = useState("");
 
   async function loadScope(signal?: AbortSignal) {
     setLoadState("loading");
@@ -182,6 +185,22 @@ function WechatReplyScopePanel() {
   useEffect(() => {
     const controller = new AbortController();
     void loadScope(controller.signal);
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.resolve(getSkillFeatures(controller.signal)).then((response) => {
+      if (controller.signal.aborted) return;
+      const feature = response.features.find((item) => item.feature_id === "wechat_auto_reply");
+      if (!feature) throw new Error("微信自动回复功能不可用");
+      setAutoReplyEnabled(feature.enabled);
+      setAutoReplyState("ready");
+    }).catch((reason: unknown) => {
+      if (controller.signal.aborted) return;
+      setAutoReplyError(reason instanceof Error ? reason.message : "自动回复状态加载失败");
+      setAutoReplyState("error");
+    });
     return () => controller.abort();
   }, []);
 
@@ -236,8 +255,29 @@ function WechatReplyScopePanel() {
     }
   }
 
+  async function toggleAutoReply() {
+    if (autoReplyEnabled === null || autoReplyState === "saving") return;
+    const next = !autoReplyEnabled;
+    setAutoReplyState("saving");
+    setAutoReplyError("");
+    try {
+      const result = await toggleSkillFeature("wechat_auto_reply", next);
+      setAutoReplyEnabled(result.enabled);
+      setAutoReplyState("ready");
+    } catch (reason: unknown) {
+      setAutoReplyError(reason instanceof Error ? reason.message : "自动回复开关保存失败");
+      setAutoReplyState("error");
+    }
+  }
+
   return <div className="wechat-scope-panel" id="wechat-reply-scope-panel">
     <div className="wechat-scope-heading"><div><h3>微信自动回复对象</h3><p className="muted">只处理这里明确选中的好友和群聊。好友触发模式为接收任意消息，群聊触发模式为提及当前账号。</p></div><span className={`wechat-scope-state ${syncClass}`} role="status" aria-label="回复范围同步状态">{syncLabel}</span></div>
+    <section className="wechat-auto-reply-control" aria-labelledby="wechat-auto-reply-title">
+      <div><h4 id="wechat-auto-reply-title">自动回复</h4><p className="muted">关闭后仍会保留微信读取和已选对象，但不会从新消息创建回复任务。已生成的待发送消息保持原状态。</p></div>
+      <label className="email-account-switch"><span>{autoReplyEnabled ? "已开启" : "已关闭"}</span><input type="checkbox" role="switch" aria-label="启用微信自动回复" checked={autoReplyEnabled === true} disabled={autoReplyState === "loading" || autoReplyState === "saving" || autoReplyEnabled === null} onChange={() => void toggleAutoReply()} /></label>
+    </section>
+    {autoReplyState === "loading" && <p className="muted" role="status">正在读取自动回复状态…</p>}
+    {autoReplyError && <p className="field-error" role="alert">{autoReplyError}</p>}
     {loadState === "loading" && <div className="page-state" role="status">正在加载已保存的回复范围…</div>}
     {loadState === "error" && <div className="page-state page-state-error wechat-load-error" role="alert"><span>{error}</span><button type="button" className="secondary-button" onClick={() => void loadScope()}>重试加载回复范围</button></div>}
     {loadState === "ready" && <>

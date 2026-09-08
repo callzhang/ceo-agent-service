@@ -38,7 +38,8 @@ function renderSettings(path: string) {
 
 describe("SettingsPage", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    getSkillFeatures.mockResolvedValue({ features: [{ feature_id: "wechat_auto_reply", name: "WeChat Auto Reply", description: "", skills: ["ceo-wechat"], enabled: true, status: "ready" }], skills: [] });
     listAttention.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechat.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechatTargets.mockResolvedValue({ items: [], account_id: "", meta: { page: 1, page_size: 50, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
@@ -222,6 +223,7 @@ describe("SettingsPage", () => {
   });
 
   it("shows the WeChat reply scope editor inline instead of linking away", async () => {
+    getSkillFeatures.mockResolvedValueOnce({ features: [{ feature_id: "wechat_auto_reply", name: "WeChat Auto Reply", description: "", skills: ["ceo-wechat"], enabled: true, status: "ready" }], skills: [] });
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
 
@@ -232,6 +234,23 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("button", { name: "保存回复范围" })).toBeDisabled();
     expect(screen.queryByRole("link", { name: "打开回复范围" })).not.toBeInTheDocument();
     expect(screen.queryByText("unknown")).not.toBeInTheDocument();
+  });
+
+  it("keeps WeChat reading separate from the automatic-reply switch", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat.mockResolvedValueOnce({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    toggleSkillFeature.mockResolvedValueOnce({ feature_id: "wechat_auto_reply", enabled: false, status: "ready" });
+
+    renderSettings("/settings?tab=connectors&connector=wechat");
+
+    const toggle = await screen.findByRole("switch", { name: "启用微信自动回复" });
+    expect(toggle).toBeChecked();
+    expect(screen.getByText(/关闭后仍会保留微信读取和已选对象/)).toBeInTheDocument();
+    expect(screen.getByText(/已生成的待发送消息保持原状态/)).toBeInTheDocument();
+    await user.click(toggle);
+    expect(toggleSkillFeature).toHaveBeenCalledWith("wechat_auto_reply", false);
+    expect(await screen.findByRole("switch", { name: "启用微信自动回复" })).not.toBeChecked();
   });
 
   it("renders Email as an explicit Connector and lists multiple accounts without secrets", async () => {
