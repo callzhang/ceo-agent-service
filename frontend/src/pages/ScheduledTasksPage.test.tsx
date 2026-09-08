@@ -344,4 +344,12 @@ describe("ScheduledTasksPage", () => {
     expect(workbenchStyles).toMatch(/\.scheduled-task-workspace\s*\{[^}]*grid-template-columns:\s*minmax\([^)]*\)\s+minmax\(0,\s*1fr\)/);
     style.remove();
   });
+
+  it("keeps controls, Skill suggestions, and history readable around 390px", () => {
+    expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*760px\)[\s\S]*?\.scheduled-tasks-page\s*\{[^}]*max-width:\s*100vw;[^}]*overflow-x:\s*clip;[^}]*\}/);
+    expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*760px\)[\s\S]*?\.scheduled-tasks-page\s+\.console-page-header\s+\.muted\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*\}/);
+    expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-actions\s*\{[^}]*flex-wrap:\s*wrap;[^}]*\}/);
+    expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-suggestions\s+button\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;[^}]*\}/);
+    expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-history\s+li\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*\}/);
+  });
 });
