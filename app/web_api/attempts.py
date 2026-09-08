@@ -64,15 +64,23 @@ def _runtime_payload(attempts: list[Any]) -> list[dict[str, Any]]:
 
 
 def _feedback_payload(events: list[Any]) -> list[dict[str, str]]:
-    return [
-        {
-            "rating": normalize_display_value(getattr(event, "rating_label", "") or getattr(event, "rating", "")),
-            "comment": normalize_display_value(getattr(event, "comment", "")),
-            "source": normalize_display_value(getattr(event, "source", "")),
-            "received_at": normalize_display_value(getattr(event, "received_at", "") or getattr(event, "updated_at", "")),
-        }
-        for event in events
-    ]
+    from app.audit_web import _feedback_rating_stars_for_rating
+
+    payload = []
+    for event in events:
+        rating = str(getattr(event, "rating", "") or "")
+        rating_count = len(_feedback_rating_stars_for_rating(rating))
+        payload.append(
+            {
+                "rating": normalize_display_value(rating),
+                "rating_label": normalize_display_value(getattr(event, "rating_label", "") or rating),
+                "rating_stars": f"{'★' * rating_count}{'☆' * (5 - rating_count)} · {rating_count}/5" if rating_count else "",
+                "comment": normalize_display_value(getattr(event, "comment", "")),
+                "source": normalize_display_value(getattr(event, "source", "")),
+                "received_at": normalize_display_value(getattr(event, "received_at", "") or getattr(event, "updated_at", "")),
+            }
+        )
+    return payload
 
 
 def _action_links(

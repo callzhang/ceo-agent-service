@@ -21,6 +21,8 @@ export interface AttemptRuntimeEntry {
 
 export interface AttemptFeedbackEvent {
   rating: string;
+  rating_label: string;
+  rating_stars: string;
   comment: string;
   source: string;
   received_at: string;

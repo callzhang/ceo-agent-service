@@ -27,7 +27,12 @@ const detail = {
   trigger: { title: "Trigger", text: "Derek: 请跟进" },
   audit_explanation: { title: "审计说明", text: "已核验背景" },
   generated_reply: { title: "生成回复", text: "已完成跟进" },
-  feedback: { reviewer_feedback: "需要更具体", corrected_reply: "建议回复", feedback_url: "/api/console/history/8448/feedback", events: [] },
+  feedback: {
+    reviewer_feedback: "需要更具体",
+    corrected_reply: "建议回复",
+    feedback_url: "/api/console/history/8448/feedback",
+    events: [{ rating: "useful", rating_label: "很有用", rating_stars: "★★★★☆ · 4/5", comment: "回复已经解决问题", source: "dingtalk", received_at: "2026-09-08T10:01:00Z" }],
+  },
   decision_options: [],
   audit_summary: "审计摘要",
   draft_reply: "原始草稿",
@@ -84,7 +89,14 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByRole("heading", { name: "Trigger" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "审计说明" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "生成回复" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "内部反馈/建议修改" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "反馈迭代" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "内部反馈/建议修改" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("内部反馈意见")).toHaveAttribute("rows", "1");
+    expect(screen.getByLabelText("建议回复")).toHaveAttribute("rows", "1");
+    expect(screen.getByText("对方反馈（1-5星）")).toBeInTheDocument();
+    expect(screen.getByText("★★★★☆ · 4/5")).toBeInTheDocument();
+    expect(screen.getByText("对方反馈内容")).toBeInTheDocument();
+    expect(screen.getByText("回复已经解决问题")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Audit summary" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Draft reply (raw Codex reply)" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Runtime attempts" })).toBeInTheDocument();
@@ -100,7 +112,7 @@ describe("AttemptDetailPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    const feedback = await screen.findByLabelText("反馈意见");
+    const feedback = await screen.findByLabelText("内部反馈意见");
     await user.clear(feedback);
     await user.type(feedback, "补充来源");
     await user.click(screen.getByRole("button", { name: "保存反馈" }));
