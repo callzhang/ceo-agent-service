@@ -763,6 +763,21 @@ def test_weekly_window_rejects_invalid_hour():
         )
 
 
+def test_weekly_command_schedule_is_owned_by_cron_not_legacy_environment(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CEO_WEEKLY_OKR_REPORT_ENABLED", "false")
+    monkeypatch.setenv("CEO_WEEKLY_OKR_REPORT_HOUR", "0")
+
+    result = weekly_okr_report_module.weekly_okr_report_command(
+        SimpleNamespace(db_path=tmp_path / "worker.sqlite3"),
+        now=datetime(2026, 8, 2, 17, 0, tzinfo=SHANGHAI),
+        quiet_not_due=True,
+    )
+
+    assert result.status == "not_due"
+
+
 def test_resolve_wiki_lists_spaces_for_exact_emoji_name():
     dws = FakeDws(
         {

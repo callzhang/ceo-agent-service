@@ -10,6 +10,7 @@ import pytest
 
 from app.dispatcher.adapters import (
     MeetingQueueAdapter,
+    OkrReviewQueueAdapter,
     ReplyQueueAdapter,
     ScheduledTaskQueueAdapter,
     WorkSummaryQueueAdapter,
@@ -61,6 +62,41 @@ def _reply(store: AutoReplyStore, *, generation: str = "generation-7") -> None:
     )
 
 
+def test_reply_dispatcher_claims_only_dingtalk_and_wechat_channels(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    for channel in ("email", "dingtalk", "wechat"):
+        assert store.enqueue_reply_task(
+            conversation_id=f"{channel}-cid",
+            conversation_title=channel,
+            single_chat=True,
+            trigger_message_id=f"{channel}-message",
+            trigger_create_time=NOW.isoformat(),
+            trigger_sender="Derek",
+            trigger_text="Check",
+            channel=channel,
+        )
+    adapter = ReplyQueueAdapter(store, owner_alive=lambda _pid: False)
+
+    first = adapter.claim(
+        NOW, owner="dispatcher", owner_pid=42, lease=timedelta(minutes=5)
+    )
+    second = adapter.claim(
+        NOW, owner="dispatcher", owner_pid=42, lease=timedelta(minutes=5)
+    )
+    third = adapter.claim(
+        NOW, owner="dispatcher", owner_pid=42, lease=timedelta(minutes=5)
+    )
+
+    assert first is not None and second is not None
+    assert {
+        store.get_reply_task(int(first.source_id)).channel,
+        store.get_reply_task(int(second.source_id)).channel,
+    } == {"dingtalk", "wechat"}
+    assert third is None
+
+
 def _meeting(store: AutoReplyStore) -> int:
     return store.upsert_meeting_alignment_job(
         meeting_id="meeting-1",
@@ -75,6 +111,21 @@ def _meeting(store: AutoReplyStore) -> int:
 
 def _work_summary(store: AutoReplyStore) -> int:
     return store.enqueue_work_summary_input("reply_attempt", "task-1", "{}")
+
+
+def _okr_review(store: AutoReplyStore, *, index: int = 1) -> int:
+    return store.create_okr_review_request(
+        conversation_id=f"okr-cid-{index}",
+        conversation_title=f"OKR {index}",
+        trigger_message_id=f"okr-message-{index}",
+        trigger_sender="Derek",
+        trigger_sender_user_id="derek",
+        trigger_text="Review this OKR.",
+        period_label="2026 Q3",
+        period_start="2026-07-01",
+        period_end="2026-09-30",
+        okr_source_json="{}",
+    )
 
 
 def _two_due_sources(store: AutoReplyStore, adapter_name: str):
@@ -125,6 +176,10 @@ def _many_due_sources(
             )
             ids.append(str(source_id))
         return MeetingQueueAdapter, tuple(ids)
+    if adapter_name == "okr_review":
+        return OkrReviewQueueAdapter, tuple(
+            str(_okr_review(store, index=index)) for index in range(count)
+        )
     ids = tuple(
         str(store.enqueue_work_summary_input("reply_attempt", f"task-{index}", "{}"))
         for index in range(count)
@@ -208,19 +263,21 @@ def test_all_source_adapters_report_and_atomically_claim_due_facts(tmp_path: Pat
     _reply(store)
     meeting_id = _meeting(store)
     work_id = _work_summary(store)
+    okr_id = _okr_review(store)
     adapters = (
         ScheduledTaskQueueAdapter(store),
         ReplyQueueAdapter(store),
         MeetingQueueAdapter(store),
         WorkSummaryQueueAdapter(store),
+        OkrReviewQueueAdapter(store),
     )
 
     metrics = [adapter.metrics(NOW) for adapter in adapters]
-    assert [item.pending for item in metrics] == [1, 1, 1, 1]
-    assert [item.due for item in metrics] == [1, 1, 1, 1]
+    assert [item.pending for item in metrics] == [1, 1, 1, 1, 1]
+    assert [item.due for item in metrics] == [1, 1, 1, 1, 1]
     assert all(item.oldest_available_at is not None for item in metrics)
-    assert [item.running for item in metrics] == [0, 0, 0, 0]
-    assert [item.latest_error for item in metrics] == ["", "", "", ""]
+    assert [item.running for item in metrics] == [0, 0, 0, 0, 0]
+    assert [item.latest_error for item in metrics] == ["", "", "", "", ""]
     claims = [
         adapter.claim(NOW, owner="dispatcher-a", lease=timedelta(minutes=5))
         for adapter in adapters
@@ -231,10 +288,11 @@ def test_all_source_adapters_report_and_atomically_claim_due_facts(tmp_path: Pat
         "1",
         str(meeting_id),
         str(work_id),
+        str(okr_id),
     ]
     assert claims[1] is not None
     assert claims[1].generation > 0
-    assert [adapter.metrics(NOW).due for adapter in adapters] == [0, 0, 0, 0]
+    assert [adapter.metrics(NOW).due for adapter in adapters] == [0, 0, 0, 0, 0]
     assert all(
         adapter.claim(NOW, owner="dispatcher-b", lease=timedelta(minutes=5)) is None
         for adapter in adapters
@@ -316,7 +374,7 @@ def test_legacy_source_leases_recover_with_fencing_and_monotonic_generation(
 
 
 @pytest.mark.parametrize(
-    "adapter_name", ("scheduled", "reply", "meeting", "work_summary")
+    "adapter_name", ("scheduled", "reply", "meeting", "work_summary", "okr_review")
 )
 def test_claim_skips_expired_head_owned_by_live_process(
     tmp_path: Path, adapter_name: str
@@ -346,7 +404,7 @@ def test_claim_skips_expired_head_owned_by_live_process(
 
 
 @pytest.mark.parametrize(
-    "adapter_name", ("scheduled", "reply", "meeting", "work_summary")
+    "adapter_name", ("scheduled", "reply", "meeting", "work_summary", "okr_review")
 )
 def test_claim_scans_past_full_page_of_live_protected_sources(
     tmp_path: Path, adapter_name: str
@@ -423,6 +481,25 @@ def test_reply_source_cannot_be_claimed_twice_concurrently(tmp_path: Path):
     assert sum(item is not None for item in claims) == 1
 
 
+def test_okr_review_source_cannot_be_claimed_twice_concurrently(tmp_path: Path):
+    store = _store(tmp_path)
+    request_id = _okr_review(store)
+    adapter = OkrReviewQueueAdapter(store)
+    start = Event()
+
+    def claim(owner: str):
+        assert start.wait(timeout=2)
+        return adapter.claim(NOW, owner=owner, lease=timedelta(minutes=5))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(claim, owner) for owner in ("one", "two")]
+        start.set()
+        claims = [future.result(timeout=2) for future in futures]
+
+    assert sum(item is not None for item in claims) == 1
+    assert store.get_okr_review_request(request_id).status == "processing"
+
+
 def test_work_summary_claim_uses_dispatcher_time_for_due_boundary(tmp_path: Path):
     store = _store(tmp_path)
     source_id = _work_summary(store)
@@ -452,11 +529,13 @@ def test_release_returns_each_claim_to_its_fact_table_without_copying_payload(
     _reply(store)
     _meeting(store)
     _work_summary(store)
+    _okr_review(store)
     adapters = (
         ScheduledTaskQueueAdapter(store),
         ReplyQueueAdapter(store),
         MeetingQueueAdapter(store),
         WorkSummaryQueueAdapter(store),
+        OkrReviewQueueAdapter(store),
     )
 
     for adapter in adapters:

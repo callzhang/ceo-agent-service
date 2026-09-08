@@ -2,7 +2,7 @@ import json
 import sqlite3
 import sys
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,6 +43,7 @@ from app.cli import (
 )
 from app.corpus import CorpusRecord, append_records
 from app.dws_client import DwsError
+from app.dispatcher.adapters import OkrReviewQueueAdapter
 from app.external_retry import ExternalDependencyError
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_models import TaskAgentDecision, WorkItem
@@ -675,19 +676,23 @@ def test_run_service_probes_before_starting_shared_refresh_component(
 
     monkeypatch.setattr(cli, "doctor_mcp_command", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli, "_wechat_service_components", lambda _settings: ())
+    monkeypatch.setattr(
+        cli,
+        "_seed_scheduled_tasks_on_service_start",
+        lambda settings, snapshot: calls.append(("seed", snapshot is not None)),
+    )
 
     run_service(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
         host="127.0.0.1",
         port=8765,
-        producer_interval_seconds=60,
-        consumer_poll_interval_seconds=10,
         thread_factory=FakeThread,
         wait=lambda: calls.append(("wait",)),
         runtime_refresher=Refresher(),
     )
 
     assert calls[0] == ("refresh", True)
+    assert calls[1] == ("seed", True)
     assert ("start", "ceo-agent-service-runtime-probe", True) in calls
     assert calls[-1] == ("wait",)
 
@@ -720,8 +725,6 @@ def test_run_service_starts_components_when_initial_runtime_refresh_raises(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
         host="127.0.0.1",
         port=8765,
-        producer_interval_seconds=60,
-        consumer_poll_interval_seconds=10,
         thread_factory=FakeThread,
         wait=lambda: calls.append(("wait",)),
         runtime_refresher=Refresher(),
@@ -960,9 +963,6 @@ def test_parser_supports_scan_oa_approvals():
             "scan-oa-approvals",
             "--max-batches",
             "4",
-            "--no-oa-pending-scan-enabled",
-            "--oa-pending-scan-interval-seconds",
-            "7200",
             "--oa-pending-scan-lookback-days",
             "3",
         ]
@@ -970,8 +970,6 @@ def test_parser_supports_scan_oa_approvals():
 
     assert args.command == "scan-oa-approvals"
     assert args.max_batches == 4
-    assert args.oa_pending_scan_enabled is False
-    assert args.oa_pending_scan_interval_seconds == 7200
     assert args.oa_pending_scan_lookback_days == 3
 
 
@@ -1317,26 +1315,6 @@ def test_scan_oa_approvals_command_honors_enabled_and_lookback(
     assert capsys.readouterr().out == "scan-oa-approvals queued=7\n"
 
 
-def test_scan_oa_approvals_command_skips_when_disabled(
-    tmp_path, monkeypatch, capsys
-):
-    monkeypatch.setattr(
-        cli,
-        "DwsClient",
-        lambda **_: (_ for _ in ()).throw(AssertionError("DWS should not start")),
-    )
-
-    result = cli.scan_oa_approvals_command(
-        WorkerSettings(
-            db_path=tmp_path / "worker.sqlite3",
-            oa_pending_scan_enabled=False,
-        )
-    )
-
-    assert result == 0
-    assert capsys.readouterr().out == "scan-oa-approvals disabled\n"
-
-
 def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, capsys):
     calls = []
     db_path = tmp_path / "worker.sqlite3"
@@ -1532,6 +1510,64 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
     assert capsys.readouterr().out == "process-okr-reviews processed=1\n"
 
 
+def test_okr_review_single_item_boundary_processes_preclaimed_request_without_scanning(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    enqueue_trigger_task(
+        store,
+        conversation_id="cid-okr-boundary",
+        conversation_title="OKR boundary",
+        single_chat=True,
+        trigger_message_id="msg-okr-boundary",
+        trigger_sender="Derek",
+        trigger_text="帮我审核 OKR",
+        sender_open_dingtalk_id="open-derek",
+    )
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-okr-boundary",
+        conversation_title="OKR boundary",
+        trigger_message_id="msg-okr-boundary",
+        trigger_sender="Derek",
+        trigger_sender_user_id="derek",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q3",
+        period_start="2026-07-01",
+        period_end="2026-09-30",
+        okr_source_json="{}",
+    )
+    [request] = store.claim_okr_review_requests(1)
+    monkeypatch.setattr(
+        store,
+        "claim_okr_review_requests",
+        lambda *_args, **_kwargs: pytest.fail("single-item handler must not scan"),
+    )
+    seen = []
+
+    def fake_process(*, store, runner, request, single_chat):
+        seen.append((request.id, runner, single_chat))
+        store.mark_okr_review_request_done(request.id, codex_session_id="session-1")
+        return "done"
+
+    monkeypatch.setattr("app.okr_review.process_okr_review_request", fake_process)
+    guard = SimpleNamespace(
+        assert_current=lambda _now: seen.append("claim-current")
+    )
+
+    cli.process_claimed_okr_review_request(
+        WorkerSettings(db_path=db_path, dry_run=True),
+        store=store,
+        runner="runner",
+        dws=None,
+        request=request,
+        claim_guard=guard,
+    )
+
+    assert seen == ["claim-current", (request_id, "runner", True)]
+    assert store.get_okr_review_request(request_id).status == "done"
+
+
 def test_process_okr_reviews_command_dry_run_does_not_send_reply(
     tmp_path,
     monkeypatch,
@@ -1722,6 +1758,52 @@ def test_process_okr_reviews_command_marks_process_failure_and_reraises(
     assert request.error == "codex schema failed"
     assert errors[0].kind == "okr_review_process"
     assert errors[0].detail == "codex schema failed"
+
+
+def test_process_okr_reviews_command_does_not_reclaim_active_dispatcher_owner(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-owned",
+        conversation_title="Owned",
+        trigger_message_id="msg-owned",
+        trigger_sender="Derek",
+        trigger_sender_user_id="derek",
+        trigger_text="审核 OKR",
+        period_label="2026 Q3",
+        period_start="2026-07-01",
+        period_end="2026-09-30",
+        okr_source_json="{}",
+    )
+    adapter = OkrReviewQueueAdapter(store)
+    now = datetime.now().astimezone()
+    claimed = adapter.claim(
+        now,
+        owner="service-dispatcher",
+        owner_pid=1,
+        lease=timedelta(minutes=5),
+    )
+    assert claimed is not None
+    with store._connect() as db:
+        db.execute(
+            "update okr_review_requests set updated_at=datetime('now', '-31 minutes') "
+            "where id=?",
+            (request_id,),
+        )
+    monkeypatch.setattr(cli, "_build_okr_review_runner", lambda *_args: object())
+    monkeypatch.setattr(
+        "app.okr_review.process_okr_review_request",
+        lambda **_kwargs: pytest.fail("active Dispatcher claim must not run twice"),
+    )
+
+    processed = process_okr_reviews_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, dry_run=True, max_batches=1)
+    )
+
+    assert processed == 0
+    assert store.get_okr_review_request(request_id).status == "processing"
 
 
 def test_process_okr_reviews_command_requeues_stale_processing_request(
@@ -3613,8 +3695,6 @@ def test_scan_task_sources_command_scans_local_and_minutes(
 
 
 def test_parser_supports_single_service_command(monkeypatch):
-    monkeypatch.setenv("CEO_PRODUCER_INTERVAL_SECONDS", "60")
-    monkeypatch.setenv("CEO_CONSUMER_POLL_INTERVAL_SECONDS", "10")
     monkeypatch.setenv("CEO_CONSUMER_WORKERS", "2")
     parser = build_parser()
 
@@ -3625,42 +3705,31 @@ def test_parser_supports_single_service_command(monkeypatch):
             "127.0.0.1",
             "--port",
             "8765",
-            "--producer-interval-seconds",
-            "61",
-            "--consumer-poll-interval-seconds",
-            "11",
             "--consumer-workers",
             "3",
-            "--task-work-item-interval-seconds",
-            "31",
-            "--task-daily-interval-seconds",
-            "3600",
-            "--task-follow-up-interval-seconds",
-            "900",
         ]
     )
 
     assert args.command == "service"
     assert args.host == "127.0.0.1"
     assert args.port == 8765
-    assert args.producer_interval_seconds == 61
-    assert args.consumer_poll_interval_seconds == 11
     assert args.consumer_workers == 3
-    assert args.task_work_item_interval_seconds == 31
-    assert args.task_daily_interval_seconds == 3600
-    assert args.task_follow_up_interval_seconds == 900
 
 
-def test_service_parser_defaults_task_intervals_from_system_config(monkeypatch):
-    monkeypatch.setenv("CEO_TASK_WORK_ITEM_INTERVAL_SECONDS", "45")
-    monkeypatch.setenv("CEO_TASK_DAILY_INTERVAL_SECONDS", "7200")
-    monkeypatch.setenv("CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS", "1800")
-
-    args = build_parser().parse_args(["service"])
-
-    assert args.task_work_item_interval_seconds == 45
-    assert args.task_daily_interval_seconds == 7200
-    assert args.task_follow_up_interval_seconds == 1800
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "--producer-interval-seconds",
+        "--consumer-poll-interval-seconds",
+        "--task-work-item-interval-seconds",
+        "--task-daily-interval-seconds",
+        "--task-follow-up-interval-seconds",
+        "--oa-pending-scan-interval-seconds",
+    ],
+)
+def test_service_parser_rejects_removed_business_cadence_flags(flag):
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["service", flag, "60"])
 
 
 def test_parser_keeps_dry_run_as_not_send_message_alias():
@@ -3954,9 +4023,9 @@ def test_settings_defaults_point_to_memory_home(monkeypatch):
     assert settings.codex_idle_timeout_seconds == 900
     assert settings.task_codex_timeout_seconds == 1200
     assert settings.task_codex_idle_timeout_seconds == 900
-    assert settings.task_work_item_interval_seconds == 60
-    assert settings.task_daily_interval_seconds == 86_400
-    assert settings.task_follow_up_interval_seconds == 60
+    assert not hasattr(settings, "task_work_item_interval_seconds")
+    assert not hasattr(settings, "task_daily_interval_seconds")
+    assert not hasattr(settings, "task_follow_up_interval_seconds")
     assert settings.max_batches is None
 
 
@@ -5989,8 +6058,6 @@ def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_pat
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
             settings,
-            work_item_interval_seconds=60,
-            daily_interval_seconds=3600,
             sleep=sleep,
             network_ready=lambda: False,
         )
@@ -6030,22 +6097,11 @@ def test_task_maintenance_loop_does_not_preflight_codex_auth(
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
             settings,
-            work_item_interval_seconds=60,
-            daily_interval_seconds=3600,
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
-            monotonic=lambda: 10.0,
             network_ready=lambda: True,
-            wall_clock=lambda: datetime(2026, 8, 11, 10, 0).astimezone(),
         )
 
-    assert calls == [
-        "work-items",
-        "okr-reviews",
-        "scan-task-sources",
-        "work-items",
-        "okr-reviews",
-        "completion-check",
-    ]
+    assert calls == ["completion-check"]
 
 
 def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
@@ -6122,9 +6178,8 @@ def test_meeting_producer_success_recovers_prior_service_error(monkeypatch, tmp_
     assert health["meeting_alignment.producer"]["state"] == "healthy"
 
 
-def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_path):
+def test_task_maintenance_loop_processes_only_internal_steps(monkeypatch, tmp_path):
     calls = []
-    times = iter([10.0, 10.0])
 
     class StopLoop(Exception):
         pass
@@ -6180,22 +6235,13 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
             settings,
-            work_item_interval_seconds=31,
-            daily_interval_seconds=3600,
             sleep=sleep,
-            monotonic=lambda: next(times),
             network_ready=lambda: True,
-            wall_clock=lambda: datetime(2026, 8, 11, 10, 0).astimezone(),
         )
 
     assert calls == [
-        ("work", tmp_path / "worker.sqlite3"),
-        ("okr", tmp_path / "worker.sqlite3"),
-        ("scan", tmp_path / "worker.sqlite3", 4),
-        ("work", tmp_path / "worker.sqlite3"),
-        ("okr", tmp_path / "worker.sqlite3"),
         ("completion-check", tmp_path / "worker.sqlite3", 1),
-        ("sleep", 31),
+        ("sleep", 60),
     ]
 
 
@@ -6269,32 +6315,11 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
             settings,
-            work_item_interval_seconds=31,
-            daily_interval_seconds=3600,
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
-            monotonic=lambda: 10.0,
             network_ready=lambda: True,
-            wall_clock=lambda: datetime(2026, 8, 11, 10, 0).astimezone(),
         )
 
     assert calls == [
-        ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
-        (
-            "health",
-            "task_maintenance.process_work_items",
-            {"state": "degraded", "detail": "bad todo field"},
-        ),
-        "okr",
-        (
-            "health",
-            "task_maintenance.process_okr_reviews",
-            {"state": "healthy"},
-        ),
-        (
-            "resolve-kind",
-            "task_maintenance_process_okr_reviews",
-            {"resolution": "recovered by a later successful maintenance cycle"},
-        ),
         "resolve",
         "resolve-completed-task",
         "resolve-work-summary",
@@ -6307,45 +6332,6 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         (
             "resolve-kind",
             "task_maintenance_resolve_recovered_errors",
-            {"resolution": "recovered by a later successful maintenance cycle"},
-        ),
-        "weekly-okr",
-        (
-            "health",
-            "task_maintenance.weekly_okr_report",
-            {"state": "healthy"},
-        ),
-        (
-            "resolve-kind",
-            "task_maintenance_weekly_okr_report",
-            {"resolution": "recovered by a later successful maintenance cycle"},
-        ),
-        "scan",
-        (
-            "health",
-            "task_maintenance.scan_task_sources",
-            {"state": "healthy"},
-        ),
-        (
-            "resolve-kind",
-            "task_maintenance_scan_task_sources",
-            {"resolution": "recovered by a later successful maintenance cycle"},
-        ),
-        ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
-        (
-            "health",
-            "task_maintenance.process_work_items",
-            {"state": "degraded", "detail": "bad todo field"},
-        ),
-        "okr",
-        (
-            "health",
-            "task_maintenance.process_okr_reviews",
-            {"state": "healthy"},
-        ),
-        (
-            "resolve-kind",
-            "task_maintenance_process_okr_reviews",
             {"resolution": "recovered by a later successful maintenance cycle"},
         ),
         "completion-check",
@@ -6388,7 +6374,6 @@ def test_task_maintenance_loop_does_not_block_follow_up_delivery(
     monkeypatch, tmp_path
 ):
     calls = []
-    times = iter([0.0, 0.0, 31.0, 901.0])
 
     class StopLoop(Exception):
         pass
@@ -6445,28 +6430,17 @@ def test_task_maintenance_loop_does_not_block_follow_up_delivery(
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
             settings,
-            work_item_interval_seconds=31,
-            daily_interval_seconds=3600,
             sleep=sleep,
-            monotonic=lambda: next(times),
             network_ready=lambda: True,
-            wall_clock=lambda: datetime(2026, 8, 11, 10, 0).astimezone(),
         )
 
     assert calls == [
-        ("work", tmp_path / "worker.sqlite3"),
-        ("okr", tmp_path / "worker.sqlite3"),
-        ("scan", tmp_path / "worker.sqlite3", 4),
-        ("work", tmp_path / "worker.sqlite3"),
-        ("okr", tmp_path / "worker.sqlite3"),
         ("completion-check", tmp_path / "worker.sqlite3", 1),
-        ("sleep", 31),
-        ("work", tmp_path / "worker.sqlite3"),
-        ("okr", tmp_path / "worker.sqlite3"),
-        ("sleep", 31),
-        ("work", tmp_path / "worker.sqlite3"),
-        ("okr", tmp_path / "worker.sqlite3"),
-        ("sleep", 31),
+        ("sleep", 60),
+        ("completion-check", tmp_path / "worker.sqlite3", 1),
+        ("sleep", 60),
+        ("completion-check", tmp_path / "worker.sqlite3", 1),
+        ("sleep", 60),
     ]
 
 
@@ -6495,7 +6469,6 @@ def test_follow_up_delivery_loop_runs_independently_of_task_maintenance(
     with pytest.raises(StopLoop):
         run_follow_up_delivery_loop(
             settings,
-            interval_seconds=60,
             sleep=sleep,
             network_ready=lambda: True,
         )
@@ -6504,6 +6477,28 @@ def test_follow_up_delivery_loop_runs_independently_of_task_maintenance(
         (tmp_path / "worker.sqlite3", False, 50),
         ("sleep", 60),
     ]
+
+
+def test_meeting_delivery_loop_never_sends_in_dry_run(monkeypatch, tmp_path):
+    class StopLoop(Exception):
+        pass
+
+    calls = []
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda _settings: object())
+    monkeypatch.setattr(
+        cli,
+        "deliver_ready_meeting_alignment_jobs",
+        lambda *_args, **_kwargs: calls.append("delivered"),
+    )
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_delivery_loop(
+            WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=True),
+            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop(seconds)),
+            network_ready=lambda: True,
+        )
+
+    assert calls == []
 
 
 @pytest.mark.parametrize(
@@ -6519,7 +6514,7 @@ def test_follow_up_delivery_loop_runs_independently_of_task_maintenance(
             run_follow_up_delivery_loop,
             "process_follow_ups_command",
             "follow_up_delivery",
-            {"interval_seconds": 60},
+            {},
         ),
     ],
 )
@@ -6569,16 +6564,15 @@ def test_service_loop_records_only_persistent_sqlite_lock(
     assert error.detail == "database is locked"
 
 
-def test_task_maintenance_loop_skips_oa_scan_when_disabled(monkeypatch, tmp_path):
+def test_task_maintenance_loop_keeps_only_internal_recovery_checks(
+    monkeypatch, tmp_path
+):
     calls = []
 
     class StopLoop(Exception):
         pass
 
-    settings = WorkerSettings(
-        db_path=tmp_path / "worker.sqlite3",
-        oa_pending_scan_enabled=False,
-    )
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
         cli,
         "process_work_items_command",
@@ -6613,22 +6607,11 @@ def test_task_maintenance_loop_skips_oa_scan_when_disabled(monkeypatch, tmp_path
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
             settings,
-            work_item_interval_seconds=31,
-            daily_interval_seconds=3600,
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
-            monotonic=lambda: 10.0,
             network_ready=lambda: True,
-            wall_clock=lambda: datetime(2026, 8, 11, 10, 0).astimezone(),
         )
 
-    assert calls == [
-        "work",
-        "okr",
-        "scan",
-        "work",
-        "okr",
-        "completion-check",
-    ]
+    assert calls == ["completion-check"]
 
 
 def test_oa_pending_scan_loop_runs_on_its_own_interval(monkeypatch, tmp_path):
@@ -6637,10 +6620,7 @@ def test_oa_pending_scan_loop_runs_on_its_own_interval(monkeypatch, tmp_path):
     class StopLoop(Exception):
         pass
 
-    settings = WorkerSettings(
-        db_path=tmp_path / "worker.sqlite3",
-        oa_pending_scan_interval_seconds=60,
-    )
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
         cli,
         "scan_oa_approvals_command",
@@ -6704,7 +6684,9 @@ def test_meeting_discovery_activation_baselines_existing_unsent_history(tmp_path
     assert job.error == ""
 
 
-def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
+def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
+    monkeypatch, tmp_path
+):
     calls = []
     failures = []
     exits = []
@@ -6798,31 +6780,19 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         "_recover_meeting_alignment_jobs_on_service_start",
         lambda settings: calls.append(("meeting-recovery", settings.db_path)) or 0,
     )
-    def task_maintenance_loop(
-        settings,
-        work_item_interval_seconds,
-        daily_interval_seconds,
-        network_ready=None,
-    ):
+    def task_maintenance_loop(settings, network_ready=None):
         calls.append(
             (
                 "task-maintenance",
-                work_item_interval_seconds,
-                daily_interval_seconds,
                 network_ready is gate.ready,
             )
         )
         stop("task-maintenance")
 
-    def follow_up_delivery_loop(
-        settings,
-        interval_seconds,
-        network_ready=None,
-    ):
+    def follow_up_delivery_loop(settings, network_ready=None):
         calls.append(
             (
                 "follow-up-delivery",
-                interval_seconds,
                 network_ready is gate.ready,
             )
         )
@@ -6845,6 +6815,14 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         stop("oa-pending-scan")
 
     monkeypatch.setattr(cli, "run_task_maintenance_loop", task_maintenance_loop)
+    monkeypatch.setattr(
+        cli,
+        "run_meeting_delivery_loop",
+        lambda settings, network_ready=None: calls.append(
+            ("meeting-delivery", network_ready is gate.ready)
+        )
+        or stop("meeting-delivery"),
+    )
     monkeypatch.setattr(cli, "run_follow_up_delivery_loop", follow_up_delivery_loop)
     monkeypatch.setattr(cli, "run_oa_pending_scan_loop", oa_pending_scan_loop)
     monkeypatch.setattr(
@@ -6860,14 +6838,9 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
             db_path=tmp_path / "worker.sqlite3",
             max_batches=4,
             repository_upgrade_enabled=False,
-            task_work_item_interval_seconds=31,
-            task_daily_interval_seconds=3600,
-            task_follow_up_interval_seconds=900,
         ),
         host="127.0.0.1",
         port=8765,
-        producer_interval_seconds=60,
-        consumer_poll_interval_seconds=10,
         thread_factory=FakeThread,
         wait=lambda: calls.append(("wait",)),
         exit_process=lambda status: exits.append(status),
@@ -6887,38 +6860,84 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ),
         ("start", "ceo-agent-service-agent-cron-dispatcher", True),
         ("agent-cron-dispatcher", tmp_path / "worker.sqlite3", True, True, True),
-        ("start", "ceo-agent-service-producer", True),
-        ("producer", 60, 4, True),
-        ("start", "ceo-agent-service-consumer-1", True),
-        ("consumer", 10, 4, True),
-        ("start", "ceo-agent-service-consumer-2", True),
-        ("consumer", 10, 4, True),
-        ("start", "ceo-agent-service-meeting-producer", True),
-        ("meeting-producer", 60, 600, True),
-        ("start", "ceo-agent-service-meeting-consumer", True),
-        ("meeting-consumer", 10, 4, True),
         ("start", "ceo-agent-service-task-maintenance", True),
-        ("task-maintenance", 31, 3600, True),
+        ("task-maintenance", True),
+        ("start", "ceo-agent-service-meeting-delivery", True),
+        ("meeting-delivery", True),
         ("start", "ceo-agent-service-follow-up-delivery", True),
-        ("follow-up-delivery", 900, True),
-        ("start", "ceo-agent-service-oa-pending-scan", True),
-        ("oa-pending-scan", 3600, 4, True),
+        ("follow-up-delivery", True),
         ("wait",),
     ]
     assert failures == [
         ("database-backup", "stop database-backup"),
         ("agent-cron-scheduler", "stop agent-cron-scheduler"),
         ("agent-cron-dispatcher", "stop agent-cron-dispatcher"),
-        ("producer", "stop producer"),
-        ("consumer-1", "stop consumer"),
-        ("consumer-2", "stop consumer"),
-        ("meeting-producer", "stop meeting-producer"),
-        ("meeting-consumer", "stop meeting-consumer"),
         ("task-maintenance", "stop task-maintenance"),
+        ("meeting-delivery", "stop meeting-delivery"),
         ("follow-up-delivery", "stop follow-up-delivery"),
-        ("oa-pending-scan", "stop oa-pending-scan"),
     ]
-    assert exits == [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1]
+
+
+def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
+    monkeypatch, tmp_path
+):
+    captured = {}
+
+    class StopDispatcher(Exception):
+        pass
+
+    class FakeDispatcher:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def run(self, *, stop_event):
+            del stop_event
+            raise StopDispatcher
+
+    fake_runtime = SimpleNamespace(
+        config=SimpleNamespace(), refresh_runtime_capabilities=None
+    )
+    monkeypatch.setattr(cli, "ConsumerDispatcher", FakeDispatcher)
+    monkeypatch.setattr(cli, "_scheduled_task_option_service", lambda *_: object())
+    monkeypatch.setattr(cli, "_create_service_worker", lambda *_: object())
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda *_: object())
+    monkeypatch.setattr(cli, "MeetingAlignmentCodexRunner", lambda **_: object())
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", lambda **_: object())
+    monkeypatch.setattr(cli, "TaskAgentRunner", lambda *_: object())
+    monkeypatch.setattr(cli, "_build_okr_review_runner", lambda *_: object())
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_agent_runtime",
+        lambda **_: fake_runtime,
+    )
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **_: object(),
+    )
+
+    with pytest.raises(StopDispatcher):
+        cli.run_agent_cron_dispatcher_loop(
+            WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=True),
+            object(),
+            wake_event=threading.Event(),
+        )
+
+    assert [adapter.name for adapter in captured["adapters"]] == [
+        "scheduled",
+        "scheduled_execution",
+        "reply",
+        "meeting",
+        "work_summary",
+        "okr_review",
+    ]
+    assert set(captured["consumers"]) == {
+        "scheduled",
+        "scheduled_execution",
+        "reply",
+        "meeting",
+        "work_summary",
+        "okr_review",
+    }
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
@@ -6949,8 +6968,6 @@ def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
         WorkerSettings(db_path=db_path),
         host="127.0.0.1",
         port=8765,
-        producer_interval_seconds=60,
-        consumer_poll_interval_seconds=10,
         thread_factory=FakeThread,
         wait=lambda: calls.append(("wait",)),
         exit_process=lambda status: calls.append(("exit", status)),
@@ -7003,8 +7020,6 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path
         WorkerSettings(db_path=db_path),
         host="127.0.0.1",
         port=8765,
-        producer_interval_seconds=60,
-        consumer_poll_interval_seconds=10,
         thread_factory=FakeThread,
         wait=lambda: calls.append(("wait",)),
         exit_process=lambda status: calls.append(("exit", status)),
@@ -7063,8 +7078,6 @@ def test_run_service_keeps_terminal_user_rejected_wechat_delivery(tmp_path):
         WorkerSettings(db_path=db_path),
         host="127.0.0.1",
         port=8765,
-        producer_interval_seconds=60,
-        consumer_poll_interval_seconds=10,
         thread_factory=FakeThread,
         wait=lambda: calls.append(("wait",)),
         exit_process=lambda status: calls.append(("exit", status)),
@@ -7108,8 +7121,6 @@ def test_run_service_requeues_recoverable_okr_requests_on_startup(tmp_path):
         WorkerSettings(db_path=db_path),
         host="127.0.0.1",
         port=8765,
-        producer_interval_seconds=60,
-        consumer_poll_interval_seconds=10,
         thread_factory=FakeThread,
         wait=lambda: calls.append(("wait",)),
         exit_process=lambda status: calls.append(("exit", status)),
@@ -7307,7 +7318,7 @@ def test_wechat_service_components_present_when_reader_ready(monkeypatch, tmp_pa
     )
     monkeypatch.setenv("CEO_WECHAT_READER_ENABLED", "1")
     comps = cli._wechat_service_components(types.SimpleNamespace(db_path=db))
-    assert [name for name, _ in comps] == ["wechat-producer", "wechat-consumer"]
+    assert [name for name, _ in comps] == []
 
 
 def test_wechat_service_components_wait_when_ready_account_has_no_self_id(
@@ -7328,7 +7339,7 @@ def test_wechat_service_components_wait_when_ready_account_has_no_self_id(
 
     assert [name for name, _ in cli._wechat_service_components(
         types.SimpleNamespace(db_path=db)
-    )] == ["wechat-producer", "wechat-consumer", "wechat-sender"]
+    )] == ["wechat-sender"]
 
 
 def test_wechat_loop_stops_after_app_data_permission_denial(
@@ -7565,7 +7576,7 @@ def test_wechat_reader_restarts_helper_after_repeated_ipc_failures(
     )
 
 
-def test_wechat_loop_uses_default_interval_when_config_is_none(
+def test_wechat_internal_delivery_loop_uses_fixed_interval(
     monkeypatch,
     tmp_path,
 ):
@@ -7597,7 +7608,6 @@ def test_wechat_loop_uses_default_interval_when_config_is_none(
             RuntimeError("exercise interval boundary")
         ),
     )
-    monkeypatch.setattr("app.config.wechat_poll_interval_seconds", lambda: None)
     sleeps = []
 
     def sleep(seconds):

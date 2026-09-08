@@ -348,43 +348,11 @@ def env_int(name: str, default: int) -> int:
     return int(text)
 
 
-def producer_interval_seconds() -> int:
-    return env_int("CEO_PRODUCER_INTERVAL_SECONDS", 60)
-
-
-def consumer_poll_interval_seconds() -> int:
-    return env_int("CEO_CONSUMER_POLL_INTERVAL_SECONDS", 10)
-
-
 def consumer_worker_count() -> int:
     count = env_int("CEO_CONSUMER_WORKERS", 2)
     if not 1 <= count <= 4:
         raise ValueError("CEO_CONSUMER_WORKERS must be between 1 and 4")
     return count
-
-
-def meeting_producer_interval_seconds() -> int:
-    return env_int("CEO_MEETING_PRODUCER_INTERVAL_SECONDS", 60)
-
-
-def meeting_consumer_poll_interval_seconds() -> int:
-    return env_int("CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS", 10)
-
-
-def meeting_settle_seconds() -> int:
-    return env_int("CEO_MEETING_SETTLE_SECONDS", 600)
-
-
-def task_work_item_interval_seconds() -> int:
-    return env_int("CEO_TASK_WORK_ITEM_INTERVAL_SECONDS", 60)
-
-
-def task_daily_interval_seconds() -> int:
-    return env_int("CEO_TASK_DAILY_INTERVAL_SECONDS", 86_400)
-
-
-def task_follow_up_interval_seconds() -> int:
-    return env_int("CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS", 60)
 
 
 def repository_upgrade_remote() -> str:
@@ -496,10 +464,6 @@ def wechat_reader_enabled() -> bool:
 
 def wechat_sender_enabled() -> bool:
     return _wechat_truthy("CEO_WECHAT_SENDER_ENABLED")
-
-
-def wechat_poll_interval_seconds() -> int:
-    return env_int("CEO_WECHAT_POLL_INTERVAL_SECONDS", 15)
 
 
 def wechat_passphrase_file() -> Path:

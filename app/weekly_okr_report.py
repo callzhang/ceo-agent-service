@@ -1261,24 +1261,13 @@ def weekly_okr_report_command(
 
     current = now or datetime.now(WORK_TIME_ZONE)
     store = AutoReplyStore(settings.db_path)
-    if not force and not _env_bool("CEO_WEEKLY_OKR_REPORT_ENABLED", True):
-        result = WeeklyOkrReportResult(
-            status="disabled",
-            report_date=current.date().isoformat(),
-        )
-        if not quiet_not_due:
-            print(json.dumps(result.__dict__, ensure_ascii=False), flush=True)
-        return result
-    schedule_hour = _bounded_hour(
-        os.getenv("CEO_WEEKLY_OKR_REPORT_HOUR", str(DEFAULT_SCHEDULE_HOUR))
-    )
     retry_seconds = _positive_int(
         os.getenv("CEO_WEEKLY_OKR_RETRY_SECONDS", str(DEFAULT_RETRY_SECONDS))
     )
     if not force and not _scheduled_run_is_due(
         store,
         now=current,
-        schedule_hour=schedule_hour,
+        schedule_hour=DEFAULT_SCHEDULE_HOUR,
         retry_seconds=retry_seconds,
     ):
         result = WeeklyOkrReportResult(
@@ -1304,7 +1293,9 @@ def weekly_okr_report_command(
         report_end = (
             local_current.date()
             if force
-            else _scheduled_report_date(local_current, schedule_hour=schedule_hour)
+            else _scheduled_report_date(
+                local_current, schedule_hour=DEFAULT_SCHEDULE_HOUR
+            )
         )
         result = WeeklyOkrReportResult(
             status="analysis_in_progress",
@@ -1325,7 +1316,7 @@ def weekly_okr_report_command(
             current=current,
             force=force,
             period_label=period_label,
-            schedule_hour=schedule_hour,
+            schedule_hour=DEFAULT_SCHEDULE_HOUR,
             retry_seconds=retry_seconds,
         )
     finally:
@@ -2301,27 +2292,8 @@ def _contains_text(payload: object, marker: str) -> bool:
     return False
 
 
-def _bounded_hour(value: str) -> int:
-    hour = int(value)
-    if hour < 0 or hour > 23:
-        raise ValueError("CEO_WEEKLY_OKR_REPORT_HOUR must be between 0 and 23")
-    return hour
-
-
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise ValueError("weekly OKR retry seconds must be positive")
     return parsed
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    normalized = value.strip().casefold()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"{name} must be a boolean value")

@@ -11,10 +11,6 @@ import hashlib
 
 from app.wechat.models import WechatAccount
 
-PRODUCER_THREAD = "ceo-agent-service-wechat-producer"
-CONSUMER_THREAD = "ceo-agent-service-wechat-consumer"
-
-
 def account_from_state(state: dict) -> WechatAccount:
     return WechatAccount(
         account_id=state["account_id"],
@@ -39,8 +35,8 @@ def ready_account_state(store) -> dict | None:
 
 
 def wechat_loop_names(*, reader_enabled: bool, capability_ready: bool) -> list[str]:
-    if reader_enabled and capability_ready:
-        return [PRODUCER_THREAD, CONSUMER_THREAD]
+    """Legacy producer/consumer loops stay absent after Cron migration."""
+    del reader_enabled, capability_ready
     return []
 
 

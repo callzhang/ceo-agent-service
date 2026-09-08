@@ -560,16 +560,33 @@ def consume_meeting_alignment_jobs(
             embedding_client=embedding_client,
         )
 
-    delivery_jobs = (
-        store.claim_ready_to_send_meeting_alignment_jobs(
+    if deliver:
+        delivery_jobs = deliver_ready_meeting_alignment_jobs(
+            store,
+            dws,
+            now=now,
             limit=limit,
-            now=now.isoformat(),
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
         )
-        if deliver
-        else []
+        processed_ids.update(delivery_jobs)
+    return len(processed_ids)
+
+
+def deliver_ready_meeting_alignment_jobs(
+    store: AutoReplyStore,
+    dws: Any,
+    *,
+    now: datetime,
+    limit: int,
+    retry_delay: timedelta = DEFAULT_MEETING_RETRY_DELAY,
+    max_attempts: int = DEFAULT_MEETING_MAX_ATTEMPTS,
+) -> set[int]:
+    """Deliver only analyzed meeting facts; never claim the analysis queue."""
+    jobs = store.claim_ready_to_send_meeting_alignment_jobs(
+        limit=limit, now=now.isoformat()
     )
-    for job in delivery_jobs:
-        processed_ids.add(job.id)
+    for job in jobs:
         _deliver_meeting_job(
             store,
             dws,
@@ -578,7 +595,7 @@ def consume_meeting_alignment_jobs(
             retry_delay=retry_delay,
             max_attempts=max_attempts,
         )
-    return len(processed_ids)
+    return {job.id for job in jobs}
 
 
 def consume_claimed_meeting_alignment_job(

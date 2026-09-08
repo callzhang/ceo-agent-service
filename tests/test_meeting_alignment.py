@@ -15,6 +15,7 @@ from app.dws_client import (
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment import (
     consume_meeting_alignment_jobs,
+    deliver_ready_meeting_alignment_jobs,
     produce_meeting_alignment_jobs,
     queue_recent_meeting_alignment_replay,
     recover_meeting_alignment_jobs,
@@ -104,6 +105,35 @@ def test_disabled_feature_still_delivers_existing_ready_meeting_job(tmp_path, mo
         )
         == 1
     )
+    assert delivered == [job.id]
+
+
+def test_internal_delivery_pass_never_claims_pending_analysis_jobs(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    store.update_meeting_alignment_job(job.id, status="ready_to_send")
+    delivered: list[int] = []
+    monkeypatch.setattr(
+        store,
+        "claim_meeting_alignment_jobs",
+        lambda *_args, **_kwargs: pytest.fail("delivery must not claim analysis"),
+    )
+    monkeypatch.setattr(
+        meeting_alignment,
+        "_deliver_meeting_job",
+        lambda _store, _dws, claimed, **_kwargs: delivered.append(claimed.id),
+    )
+
+    result = deliver_ready_meeting_alignment_jobs(
+        store, dws, now=NOW, limit=1
+    )
+
+    assert result == {job.id}
     assert delivered == [job.id]
 
 

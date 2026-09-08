@@ -13565,12 +13565,19 @@ class AutoReplyStore:
     ) -> list[OkrReviewRequest]:
         with self._immediate_write_transaction() as db:
             params: list[object] = []
-            processing_clause = "status='processing'"
+            processing_clause = (
+                "status='processing' and not exists ("
+                "select 1 from dispatcher_claim_leases claim "
+                "where claim.adapter_name='okr_review' "
+                "and claim.source_id=cast(okr_review_requests.id as text) "
+                "and claim.owner<>'' and claim.terminal_at='' "
+                "and claim.lease_expires_at>current_timestamp)"
+            )
             if processing_max_age_seconds is not None:
                 if processing_max_age_seconds <= 0:
                     return []
                 processing_clause = (
-                    "status='processing' "
+                    processing_clause + " "
                     "and datetime(updated_at) <= datetime('now', ?)"
                 )
                 params.append(f"-{int(processing_max_age_seconds)} seconds")
@@ -20238,6 +20245,13 @@ class AutoReplyStore:
                 ids,
             ).fetchall()
             return [WorkSummaryInput.model_validate(dict(row)) for row in claimed]
+
+    def get_work_summary_input(self, input_id: int) -> WorkSummaryInput | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from work_summary_inputs where id=?", (input_id,)
+            ).fetchone()
+        return WorkSummaryInput.model_validate(dict(row)) if row is not None else None
 
     def reset_stale_processing_work_summary_inputs(self, max_age_seconds: int) -> int:
         if max_age_seconds <= 0:

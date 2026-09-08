@@ -310,14 +310,13 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
 
 class ReplyQueueAdapter(_LedgerClaimLifecycle):
     name = "reply"
-    channel_operator = "<>"
 
     def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
         self.store = store
         self.owner_alive = owner_alive
 
     def _channel_clause(self, alias: str = "task") -> str:
-        return f"{alias}.channel{self.channel_operator}'scheduled'"
+        return f"{alias}.channel in ('dingtalk','wechat')"
 
     def metrics(self, now: datetime) -> QueueMetrics:
         now_text = _sqlite_time(now)
@@ -481,7 +480,9 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
 
 class ScheduledExecutionQueueAdapter(ReplyQueueAdapter):
     name = "scheduled_execution"
-    channel_operator = "="
+
+    def _channel_clause(self, alias: str = "task") -> str:
+        return f"{alias}.channel='scheduled'"
 
 
 class MeetingQueueAdapter(_LedgerClaimLifecycle):
@@ -656,6 +657,161 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
             )
             if cursor.rowcount != 1:
                 raise ValueError("meeting dispatch claim is no longer owned")
+
+    def renew(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        lease: timedelta,
+    ) -> None:
+        _renew_lease(
+            self.store,
+            envelope=envelope,
+            owner=owner,
+            now=now,
+            lease=lease,
+        )
+
+
+class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
+    """Claim pending OKR review requests without running a second poll loop."""
+
+    name = "okr_review"
+
+    def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
+        self.store = store
+        self.owner_alive = owner_alive
+
+    def metrics(self, now: datetime) -> QueueMetrics:
+        now_text = _sqlite_time(now)
+        with self.store._connect() as db:
+            pending = db.execute(
+                "select count(*) from okr_review_requests where status='pending'"
+            ).fetchone()[0]
+            due = db.execute(
+                "select count(*) from okr_review_requests request "
+                "left join dispatcher_claim_leases claim "
+                "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
+                "where (request.status='pending' and (claim.owner is null "
+                "or claim.owner='' or claim.lease_expires_at<=?)) "
+                "or (request.status='processing' and claim.owner<>'' "
+                "and claim.lease_expires_at<=?)",
+                (self.name, now_text, now_text),
+            ).fetchone()[0]
+            claimed = db.execute(
+                "select count(*) from okr_review_requests request "
+                "left join dispatcher_claim_leases claim "
+                "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
+                "where request.status='processing' and (claim.owner is null "
+                "or claim.owner='' or claim.lease_expires_at>?)",
+                (self.name, now_text),
+            ).fetchone()[0]
+            oldest = db.execute(
+                "select min(request.created_at) from okr_review_requests request "
+                "left join dispatcher_claim_leases claim "
+                "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
+                "where (request.status='pending' and (claim.owner is null "
+                "or claim.owner='' or claim.lease_expires_at<=?)) "
+                "or (request.status='processing' and claim.owner<>'' "
+                "and claim.lease_expires_at<=?)",
+                (self.name, now_text, now_text),
+            ).fetchone()[0]
+            latest_error = _latest_claim_error(db, self.name) or _latest_error(
+                db, table="okr_review_requests", column="error"
+            )
+        return QueueMetrics(
+            pending=int(pending),
+            due=int(due),
+            oldest_available_at=(
+                _source_time(str(oldest), fallback=now) if oldest else None
+            ),
+            running=int(claimed),
+            latest_error=latest_error,
+        )
+
+    def claim(
+        self,
+        now: datetime,
+        *,
+        owner: str,
+        owner_pid: int | None = None,
+        lease: timedelta,
+    ) -> DispatchEnvelope | None:
+        owner_pid = os.getpid() if owner_pid is None else owner_pid
+        _validate_claim(owner, lease)
+        now_text = _sqlite_time(now)
+        with self.store._immediate_write_transaction() as db:
+
+            def fetch_page(after: sqlite3.Row | None, limit: int):
+                after_id = 0 if after is None else int(after["id"])
+                return db.execute(
+                    "select request.*, claim.owner as claim_owner, "
+                    "claim.owner_pid as claim_owner_pid, "
+                    "claim.lease_expires_at as claim_expires_at "
+                    "from okr_review_requests request "
+                    "left join dispatcher_claim_leases claim "
+                    "on claim.adapter_name=? "
+                    "and claim.source_id=cast(request.id as text) "
+                    "where ((request.status='pending' and (claim.owner is null "
+                    "or claim.owner='' or claim.lease_expires_at<=?)) "
+                    "or (request.status='processing' and claim.owner<>'' "
+                    "and claim.lease_expires_at<=?)) and request.id>? "
+                    "order by request.id limit ?",
+                    (self.name, now_text, now_text, after_id, limit),
+                ).fetchall()
+
+            row = _scan_claimable_candidate(
+                fetch_page,
+                now=now_text,
+                owner_alive=self.owner_alive,
+            )
+            if row is None:
+                return None
+            source_id = str(row["id"])
+            cursor = db.execute(
+                "update okr_review_requests set status='processing', error='', "
+                "updated_at=? where id=? and status in ('pending','processing')",
+                (now_text, row["id"]),
+            )
+            if cursor.rowcount != 1:
+                return None
+            generation = _acquire_lease(
+                db,
+                adapter_name=self.name,
+                source_id=source_id,
+                owner=owner,
+                owner_pid=owner_pid,
+                lease_expires_at=_lease_expiry(now, lease),
+                now=now_text,
+            )
+        return DispatchEnvelope(
+            adapter_name=self.name,
+            source_id=source_id,
+            available_at=_source_time(str(row["created_at"]), fallback=now),
+            priority=0,
+            attempt=generation,
+            generation=generation,
+        )
+
+    def release(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+    ) -> None:
+        _validate_release(self.name, envelope, owner, now)
+        with self.store._immediate_write_transaction() as db:
+            _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
+            cursor = db.execute(
+                "update okr_review_requests set status='pending', updated_at=? "
+                "where id=? and status='processing'",
+                (_sqlite_time(now), int(envelope.source_id)),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("OKR review dispatch claim is no longer owned")
 
     def renew(
         self,

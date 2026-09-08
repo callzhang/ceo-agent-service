@@ -11,12 +11,9 @@ def test_no_loops_by_default():
     assert wechat_loop_names(reader_enabled=True, capability_ready=False) == []
 
 
-def test_loops_only_when_reader_ready():
+def test_reader_ready_does_not_restore_legacy_producer_or_consumer_loops():
     names = wechat_loop_names(reader_enabled=True, capability_ready=True)
-    assert set(names) == {
-        "ceo-agent-service-wechat-producer",
-        "ceo-agent-service-wechat-consumer",
-    }
+    assert names == []
 
 
 def test_ready_account_requires_exactly_one(tmp_path):

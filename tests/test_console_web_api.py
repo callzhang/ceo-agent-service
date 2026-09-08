@@ -2228,7 +2228,6 @@ def test_console_email_accounts_are_registered_and_keep_classifier_config_global
         "smtp_secret_reference": "CEO_EMAIL_CONSOLE_MAIL_SMTP_SECRET",
         "enabled": True,
         "scan_folders": ["INBOX"],
-        "scan_interval_seconds": 60,
     }
 
     with _client(tmp_path) as client:

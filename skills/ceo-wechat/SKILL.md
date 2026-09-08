@@ -19,8 +19,8 @@ This is an executable capability package, not only an instruction file:
 
 - `capability.json` declares the two trusted runtime boundaries and their
   allowed operations.
-- `scripts/reader.py` is the agent-facing entrypoint for `status` and bounded
-  `read-recent` calls.
+- `scripts/reader.py` is the agent-facing entrypoint for `status`, bounded
+  `read-recent`, and the deterministic `produce-once` scan used by Agent Cron.
 - `scripts/sender.py` is the agent-facing entrypoint for pending deliveries and
   explicit `approve` / `reject` actions.
 
@@ -49,6 +49,14 @@ The delivery mode is separate: `confirm` leaves generated replies waiting for
 explicit approval; `auto` allows the sender to deliver them. Changing that
 mode is a persisted service configuration change and must be explicitly
 requested.
+
+For a scheduled message check, run
+`python -m app.wechat.cli produce-once --db <scheduled worker DB>` exactly once
+through the controlled reader entrypoint, using the absolute DB path supplied
+by the scheduled task. That operation reuses
+the existing producer's selected-target, group
+mention, settle-window, and watermark rules and only enqueues reply tasks;
+the internal Dispatcher and Sender retain execution and delivery ownership.
 
 ## Targets and reads
 
