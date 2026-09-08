@@ -241,6 +241,28 @@ def test_sales_weekly_report_contract_fails_without_artifact() -> None:
         assert required in text
 
 
+def test_sales_weekly_report_contract_separates_report_cutoff_from_target_period() -> None:
+    text = _normalized_skill_text()
+
+    for required in (
+        "Determine actual-data cutoff from the requested report interval, not the target period",
+        "For a completed prior-week report, preserve the Monday-exclusive end even when a quarterly or annual target is still open",
+        "Only truncate to actual query time when the requested report interval itself is unfinished/open",
+        "Score quarterly or annual elapsed-time normalization at the reporting cutoff, separately from interval selection",
+    ):
+        assert required in text
+
+
+def test_sales_weekly_report_contract_excludes_personal_data_from_artifact() -> None:
+    text = _normalized_skill_text()
+
+    for required in (
+        "Do not save customer or contact phone numbers",
+        "Do not save unrelated personal data",
+    ):
+        assert required in text
+
+
 def test_sales_weekly_report_contract_mutations_are_rejected() -> None:
     original = _skill_text()
     normalized = _normalized_skill_text()

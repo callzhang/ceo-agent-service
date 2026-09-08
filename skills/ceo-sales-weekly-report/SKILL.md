@@ -41,13 +41,19 @@ actuals are unavailable, return a failed outcome and do not create a report.
 ## Reporting Window
 
 Use `Asia/Shanghai`. Unless the request supplies an explicit interval, cover the
-preceding Monday 00:00 inclusive through the current Monday 00:00 exclusive. If
-the requested target period is still open, use the actual query time as cutoff
-and display it.
+preceding Monday 00:00 inclusive through the current Monday 00:00 exclusive.
+Determine actual-data cutoff from the requested report interval, not the target
+period. For a completed prior-week report, preserve the Monday-exclusive end
+even when a quarterly or annual target is still open. Only truncate to actual
+query time when the requested report interval itself is unfinished/open, and
+display that cutoff.
 
 Apply elapsed-time normalization only to additive period-to-date measures. Score
-a quarterly or annual additive target against elapsed time in that target's own
-period; a weekly actual does not become a full-period actual. ratio/snapshot
+quarterly or annual elapsed-time normalization for an additive target in that
+target's own
+period. Score quarterly or annual elapsed-time normalization at the reporting
+cutoff, separately from interval selection. A weekly
+actual does not become a full-period actual. ratio/snapshot
 metrics, including gross-margin percentage, are scored against their target or
 an approved dated trajectory without automatic elapsed-time division. If
 compatible target semantics are unavailable, mark the metric unscored and
@@ -195,7 +201,10 @@ already exists, fail with `sales_weekly_report_path_exists` and leave it
 unchanged.
 
 Save only the final Markdown report. Do not save raw CRM responses, debug logs,
-tokens, complete customer/contact records, or intermediate calculations.
+tokens, complete customer/contact records, customer or contact phone numbers,
+unrelated personal data, or intermediate calculations. Do not save customer or
+contact phone numbers in the report artifact. Do not save unrelated personal
+data in the report artifact.
 
 Reopen the saved file after writing and verify the reporting period, score,
 score coverage, twelve required sections, source definitions, and non-empty
