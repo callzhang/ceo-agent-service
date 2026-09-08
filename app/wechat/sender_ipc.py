@@ -15,7 +15,7 @@ from typing import Any
 from app.wechat.accessibility import AccessibilityResult, SenderExecutionError
 
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 DEFAULT_MAX_REQUEST_BYTES = 32 * 1024
 DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024
 LOGGER = logging.getLogger(__name__)
@@ -67,8 +67,6 @@ class WechatSenderRpcService:
             return {"status": "ready", "protocol_version": PROTOCOL_VERSION}
         if method == "check_readiness":
             return self.runner.check_readiness()
-        if method == "prepare_delivery":
-            return self.runner.prepare_delivery()
         if method == "request_accessibility":
             return self.runner.request_accessibility()
         if method == "open_and_identify":
@@ -239,10 +237,6 @@ class WechatSenderClient:
 
     def check_readiness(self) -> str:
         result = self._request("check_readiness")
-        return result if isinstance(result, str) else "unknown"
-
-    def prepare_delivery(self) -> str:
-        result = self._request("prepare_delivery")
         return result if isinstance(result, str) else "unknown"
 
     def request_accessibility(self) -> str:

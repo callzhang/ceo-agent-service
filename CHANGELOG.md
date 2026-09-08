@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-07: remove the foreground-capable WeChat Sender preparation RPC.
+  Actual delivery now owns the one bounded UI activation it needs; an unavailable
+  window can no longer leave a delivery queued and repeatedly activate WeChat
+  on each sender poll.
+
 - 2026-09-07: align hourly quality-check `needs_human` attention and the
   Workers reply-attempt summary with the stable-business-object current
   projection. Historical attempts remain queryable in History but stop

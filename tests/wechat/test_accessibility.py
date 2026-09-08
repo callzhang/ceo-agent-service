@@ -748,46 +748,6 @@ def test_passive_readiness_does_not_activate_wechat_when_ax_window_is_empty(
     assert activated == []
 
 
-def test_delivery_preparation_activates_wechat_when_ax_window_is_temporarily_empty(
-    monkeypatch,
-):
-    app = object()
-    ax_reads = iter([[], [object()]])
-    activated = []
-    monkeypatch.setitem(
-        sys.modules,
-        "ApplicationServices",
-        SimpleNamespace(
-            AXIsProcessTrusted=lambda: True,
-            AXUIElementCreateApplication=lambda _pid: app,
-            AXUIElementCopyAttributeValue=lambda _app, _attribute, _unused: (
-                0,
-                next(ax_reads),
-            ),
-        ),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "Quartz",
-        SimpleNamespace(
-            CGSessionCopyCurrentDictionary=lambda: {},
-            CGWindowListCopyWindowInfo=lambda _options, _window_id: [
-                {"kCGWindowOwnerPID": 500}
-            ],
-            kCGWindowListOptionAll=1,
-            kCGNullWindowID=0,
-        ),
-    )
-    runner = MacWechatAccessibility()
-    monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
-    monkeypatch.setattr(runner, "_wechat_app_ref", lambda _pid: "wechat-app")
-    monkeypatch.setattr(runner, "_reactivate", lambda app_ref: activated.append(app_ref))
-    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
-
-    assert runner.prepare_delivery() == "ready"
-    assert activated == ["wechat-app"]
-
-
 def test_reactivate_switches_wechat_to_current_space(monkeypatch):
     calls = []
 

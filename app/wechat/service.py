@@ -131,17 +131,6 @@ def _scope_for_delivery(store, delivery):
     )
 
 
-def _sender_is_prepared_for_delivery(sender) -> bool:
-    runner = getattr(sender, "runner", None)
-    prepare_delivery = getattr(runner, "prepare_delivery", None)
-    if prepare_delivery is None:
-        return True
-    try:
-        return prepare_delivery() == "ready"
-    except Exception:
-        return False
-
-
 def _refresh_direct_binding_evidence(delivery, reader, account):
     """Return a transient delivery carrying the current sidebar text evidence.
 
@@ -190,12 +179,7 @@ def process_ready_wechat_deliveries(
     if not sender_enabled or mode != "auto":
         return 0
     deliveries = pending_wechat_deliveries(store)
-    # Delivery preparation is intentionally delivery-scoped: it may need to
-    # bring WeChat to the foreground when its AX window is unavailable. Do not
-    # perform that UI operation merely because the periodic sender loop ran.
     if not deliveries:
-        return 0
-    if not _sender_is_prepared_for_delivery(sender):
         return 0
     sent = 0
     for delivery in deliveries:
@@ -238,8 +222,6 @@ def approve_wechat_delivery(store, sender, delivery_id: int) -> str:
     )
     if delivery is None:
         raise ValueError(f"no pending delivery {delivery_id}")
-    if not _sender_is_prepared_for_delivery(sender):
-        raise RuntimeError("WeChat sender is temporarily unavailable")
     scope = _scope_for_delivery(store, delivery)
     if scope is None:
         raise ValueError("no reply scope for delivery target")

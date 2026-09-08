@@ -178,9 +178,9 @@ identity. After first install, add the dedicated app once in System Settings →
 Privacy & Security → Accessibility and restart its LaunchAgent. The AX runner
 does not inspect or foreground WeChat during background health/status polling
 or Tutorial connection checks. On each periodic sender pass, the service reads
-the local `ready_to_send` queue before making any Sender delivery-preparation request; an
-empty queue makes no WeChat UI request. It checks and, when needed, activates
-the WeChat window only for an actual queued delivery. The AX runner
+the local `ready_to_send` queue first; an empty queue makes no WeChat UI
+request. An actual delivery owns the one bounded activation needed to navigate
+its target chat, then records a terminal or reconcilable outcome. The AX runner
 resolves the actual WeChat application by bundle ID, waits for asynchronous UI
 state, and navigates duplicate direct-chat names with the stable target ID before
 requiring the composer title to match the expected display name. Group navigation

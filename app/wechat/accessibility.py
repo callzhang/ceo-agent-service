@@ -527,14 +527,10 @@ class MacWechatAccessibility:
 
     def check_readiness(self) -> str:
         """Passively check whether the Sender can use the existing WeChat window."""
-        return self._readiness(activate=False)
+        return self._readiness()
 
-    def prepare_delivery(self) -> str:
-        """Prepare an actual delivery, activating WeChat only when its window is absent."""
-        return self._readiness(activate=True)
-
-    def _readiness(self, *, activate: bool) -> str:
-        """Shared window readiness probe; activation is private to delivery preparation."""
+    def _readiness(self) -> str:
+        """Read the current WeChat Accessibility window state without activation."""
         try:
             from ApplicationServices import (
                 AXIsProcessTrusted,
@@ -552,20 +548,15 @@ class MacWechatAccessibility:
         if not pid:
             return "wechat_not_running"
         app = AXUIElementCreateApplication(pid)
-        for attempt in range(3):
-            for w in Quartz.CGWindowListCopyWindowInfo(
-                Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID
-            ):
-                if w.get("kCGWindowOwnerPID") != pid:
-                    continue
-                error, windows = AXUIElementCopyAttributeValue(app, "AXWindows", None)
-                if error == 0 and windows:
-                    return "ready"
-                break
-            if activate and attempt < 2:
-                import time
-                self._reactivate(self._wechat_app_ref(pid))
-                time.sleep(1.0)
+        for w in Quartz.CGWindowListCopyWindowInfo(
+            Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID
+        ):
+            if w.get("kCGWindowOwnerPID") != pid:
+                continue
+            error, windows = AXUIElementCopyAttributeValue(app, "AXWindows", None)
+            if error == 0 and windows:
+                return "ready"
+            break
         return "wechat_window_unavailable"
 
     def request_accessibility(self) -> str:

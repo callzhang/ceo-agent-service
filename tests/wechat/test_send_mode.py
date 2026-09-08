@@ -74,12 +74,12 @@ def test_sender_disabled_holds_even_in_auto(tmp_path):
     assert sender.sent == []
 
 
-def test_auto_mode_with_no_delivery_does_not_preflight_sender(tmp_path):
+def test_auto_mode_with_no_delivery_does_not_touch_sender(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
 
     class Runner:
         @staticmethod
-        def prepare_delivery():
+        def send(*_args, **_kwargs):
             raise AssertionError("an empty delivery queue must not touch WeChat")
 
     sender = FakeSender()
@@ -283,23 +283,22 @@ def test_sender_round_does_not_retry_when_send_result_is_unknown(tmp_path):
     assert store.get_wechat_delivery_by_id(delivery.id).status == "send_unknown"
 
 
-def test_auto_mode_holds_delivery_while_sender_session_is_locked(tmp_path):
+def test_auto_mode_does_not_prepare_delivery_before_sending(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery = _seed(store)
 
     class Runner:
         @staticmethod
         def prepare_delivery():
-            return "screen_locked"
+            raise AssertionError("sending must not pre-activate WeChat")
 
     sender = FakeSender()
     sender.runner = Runner()
 
     assert service.process_ready_wechat_deliveries(
         store, sender, mode="auto", sender_enabled=True
-    ) == 0
-    assert sender.sent == []
-    assert store.get_wechat_delivery_for_task(delivery.task_id).status == "ready_to_send"
+    ) == 1
+    assert sender.sent == [delivery.id]
 
 
 def test_auto_mode_verifies_exact_direct_target_before_send(tmp_path):
