@@ -696,7 +696,7 @@ def build_versioned_email_action_plan(
 
     category = validate_email_category_key(category)
     copied_parameters = {
-        action: dict(parameters)
+        action: dict(sorted(parameters.items()))
         for action, parameters in sorted(
             action_parameters.items(), key=lambda item: item[0].value
         )

@@ -678,6 +678,7 @@ def test_worker_bootstrap_uses_agent_primary_without_online_activation(tmp_path)
 
     assert runtime.mode is EmailClassifierRuntimeMode.AGENT_PRIMARY
     assert runtime.model_predict is None
+    assert runtime._observability_store.path == settings.db_path
 
 
 def test_production_scan_account_model_primary_closure_persists_without_agent(
@@ -2034,7 +2035,11 @@ def test_v29_historical_queue_migration_securely_redacts_legacy_provider_record(
     }
     with sqlite3.connect(database) as db:
         db.execute("pragma secure_delete = on")
-        db.execute("update email_schema_migrations set version=29 where version=30")
+        db.execute("delete from email_schema_migrations")
+        db.execute(
+            "insert into email_schema_migrations(version, applied_at) "
+            "values (29, '2026-09-08T00:00:00+00:00')"
+        )
         db.execute(
             "update email_historical_candidates "
             "set normalized_text=?, provider_message_json=?",

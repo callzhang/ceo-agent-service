@@ -13,6 +13,7 @@ from email.parser import Parser
 from email.utils import getaddresses
 from hashlib import sha256
 import json
+import math
 import re
 import sqlite3
 from pathlib import Path
@@ -62,7 +63,8 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 30
+EMAIL_SCHEMA_VERSION = 32
+MAX_CLASSIFIER_RUNTIME_SAMPLES = 2048
 HISTORICAL_DEFER_RETRY_SECONDS = 60
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
@@ -97,6 +99,7 @@ _EMAIL_UNSUBSCRIBE_OUTCOMES = frozenset(
 _OPAQUE_PROVIDER_ID = re.compile(r"[A-Za-z0-9._:@<>\[\]{}/+=,!#$%&'*?^-]+")
 _UNSUBSCRIBE_OPAQUE_ID = re.compile(r"[A-Za-z0-9:_-]+")
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+_RUNTIME_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 _MAX_PROVIDER_IDENTIFIER_BYTES = 256
 _MAX_UNSUBSCRIBE_RESULT_TEXT_BYTES = 16 * 1024
 _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = """
@@ -407,6 +410,18 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "manifest_json": ("text", True, None),
         "frozen": ("integer", True, "1"),
         "created_at": ("text", True, None),
+        "folder_label_watermark": ("integer", True, "0"),
+        "important_label_watermark": ("integer", True, "0"),
+    },
+    "email_provider_observations": {
+        "account_id": ("text", True, None),
+        "stable_message_identity": ("text", True, None),
+        "state": ("text", True, None),
+        "provider_folder_id": ("text", False, None),
+        "provider_folder_name": ("text", False, None),
+        "category_key": ("text", False, None),
+        "important": ("integer", False, None),
+        "observed_at": ("text", True, None),
     },
     "email_training_snapshot_observations": {
         "snapshot_id": ("text", True, None),
@@ -440,6 +455,20 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "important": ("integer", False, None),
         "action_outcome": ("text", True, None),
         "created_at": ("text", True, None),
+    },
+    "email_classifier_runtime_samples": {
+        "id": ("integer", False, None),
+        "model_id": ("text", True, None),
+        "outcome": ("text", True, None),
+        "fallback_code": ("text", True, "''"),
+        "cache_hit": ("integer", True, None),
+        "runtime_warm": ("integer", True, None),
+        "queue_ms": ("real", True, None),
+        "http_ms": ("real", True, None),
+        "embedding_ms": ("real", True, None),
+        "head_ms": ("real", True, None),
+        "total_ms": ("real", True, None),
+        "recorded_at": ("text", True, None),
     },
 }
 _REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
@@ -597,6 +626,15 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "json_valid(manifest_json)",
         "frozen in (0, 1)",
         "trim(created_at) != ''",
+        "folder_label_watermark >= 0",
+        "important_label_watermark >= 0",
+    ),
+    "email_provider_observations": (
+        "trim(account_id) != ''",
+        "trim(stable_message_identity) != ''",
+        "state in ('available','unavailable','excluded')",
+        "important is null or important in (0, 1)",
+        "trim(observed_at) != ''",
     ),
     "email_training_snapshot_observations": (
         "trim(snapshot_id) != ''",
@@ -629,12 +667,26 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "trim(action_outcome) != ''",
         "trim(created_at) != ''",
     ),
+    "email_classifier_runtime_samples": (
+        "trim(model_id) != ''",
+        "outcome in ('success', 'rejected', 'failure')",
+        "length(fallback_code) <= 64",
+        "cache_hit in (0, 1)",
+        "runtime_warm in (0, 1)",
+        "queue_ms >= 0",
+        "http_ms >= 0",
+        "embedding_ms >= 0",
+        "head_ms >= 0",
+        "total_ms >= 0",
+        "trim(recorded_at) != ''",
+    ),
 }
 _REQUIRED_AUTOINCREMENT_COLUMNS = frozenset(
     {
         ("email_messages", "id"),
         ("email_action_attempts", "id"),
         ("email_unsubscribe_steps", "id"),
+        ("email_classifier_runtime_samples", "id"),
     }
 )
 _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
@@ -658,12 +710,14 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_unsubscribe_steps": ("id",),
     "email_unsubscribe_receipts": ("action_identity",),
     "email_training_snapshots": ("snapshot_id",),
+    "email_provider_observations": ("account_id", "stable_message_identity"),
     "email_training_snapshot_observations": (
         "snapshot_id",
         "account_id",
         "stable_message_identity",
     ),
     "email_historical_classification_history": ("event_id",),
+    "email_classifier_runtime_samples": ("id",),
 }
 _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
     "email_classifications": (("stable_message_identity",),),
@@ -778,6 +832,18 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
         "email_training_snapshot_observations",
         ("snapshot_id", "split", "category_key", "group_key"),
     ),
+    "idx_email_training_observations_provider_truth": (
+        "email_training_snapshot_observations",
+        ("account_id", "stable_message_identity", "observed_at", "snapshot_id"),
+    ),
+    "idx_email_provider_observations_lookup": (
+        "email_provider_observations",
+        ("account_id", "stable_message_identity", "observed_at"),
+    ),
+    "idx_email_classifier_runtime_model_id": (
+        "email_classifier_runtime_samples",
+        ("model_id", "id"),
+    ),
 }
 _REQUIRED_PARTIAL_UNIQUE_INDEXES: Mapping[
     str,
@@ -804,6 +870,8 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
             and old.snapshot_digest is new.snapshot_digest
             and old.manifest_json is new.manifest_json
             and old.created_at is new.created_at
+            and old.folder_label_watermark is new.folder_label_watermark
+            and old.important_label_watermark is new.important_label_watermark
         )
         begin
             select raise(abort, 'email training snapshot is immutable');
@@ -2080,7 +2148,45 @@ def _current_unsubscribe_task_lineage(
         """,
         (task["id"], task["execution_generation"]),
     ).fetchall()
-    return {
+    continuation_row = db.execute(
+        """
+        select continuation.controls_json, effects.operations_json
+        from email_unsubscribe_continuations as continuation
+        join email_unsubscribe_effects as effects
+          on effects.action_identity=continuation.action_identity
+         and effects.effect_digest=continuation.effect_digest
+        where continuation.action_identity=?
+        """,
+        (expected_action_identity,),
+    ).fetchone()
+    continuation: dict[str, object] | None = None
+    if continuation_row is not None:
+        controls = _json_load(
+            continuation_row["controls_json"],
+            field="controls_json",
+            expected_type=list,
+        )
+        operations = _json_load(
+            continuation_row["operations_json"],
+            field="operations_json",
+            expected_type=list,
+        )
+        control_kinds = sorted(
+            {
+                str(control["kind"])
+                for control in controls
+                if isinstance(control, dict) and "kind" in control
+            }
+        )
+        continuation = {
+            "state": "awaiting_audit",
+            "control_kinds": control_kinds,
+            "operation_count": len(operations),
+            "requires_human": bool(
+                {"captcha_handoff", "credential_handoff"} & set(control_kinds)
+            ),
+        }
+    result = {
         "kind": "unsubscribe",
         "operation": "unsubscribe",
         "lifecycle_version": "email_unsubscribe_audited_v2",
@@ -2093,6 +2199,9 @@ def _current_unsubscribe_task_lineage(
         "status": str(task["status"]),
         "_sort_created_at": str(task["created_at"] or ""),
     }
+    if continuation is not None:
+        result["continuation"] = continuation
+    return result
 
 
 def _validate_unsubscribe_operations(
@@ -2573,6 +2682,7 @@ class EmailStore:
             self._ensure_unsubscribe_audit_columns(db)
             self._ensure_unsubscribe_receipt_columns(db)
             self._ensure_training_snapshot_frozen_column(db)
+            self._ensure_training_snapshot_watermark_columns(db)
             if legacy_reply_claims:
                 self._finish_v8_reply_claim_migration(db)
             if legacy_unsubscribe_claims:
@@ -2647,6 +2757,12 @@ class EmailStore:
                 latest_version = 29
             if latest_version == 29:
                 self._migrate_v29_to_v30(db, replace_version=is_prototype)
+                latest_version = 30
+            if latest_version == 30:
+                self._migrate_v30_to_v31(db, replace_version=is_prototype)
+                latest_version = 31
+            if latest_version == 31:
+                self._migrate_v31_to_v32(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -3716,6 +3832,8 @@ class EmailStore:
                 and old.snapshot_digest is new.snapshot_digest
                 and old.manifest_json is new.manifest_json
                 and old.created_at is new.created_at
+                and old.folder_label_watermark is new.folder_label_watermark
+                and old.important_label_watermark is new.important_label_watermark
             )
             begin
                 select raise(abort, 'email training snapshot is immutable');
@@ -4106,6 +4224,57 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v30_to_v31(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Record the bounded cross-process classifier runtime evidence schema."""
+
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=31, applied_at=? "
+                "where version=30",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (31, ?)",
+                (self._now(),),
+            )
+
+    @classmethod
+    def _ensure_training_snapshot_watermark_columns(
+        cls, db: sqlite3.Connection
+    ) -> None:
+        columns = cls._table_columns(db, "email_training_snapshots")
+        if "folder_label_watermark" not in columns:
+            db.execute(
+                "alter table email_training_snapshots add column "
+                "folder_label_watermark integer not null default 0 "
+                "check(folder_label_watermark >= 0)"
+            )
+        if "important_label_watermark" not in columns:
+            db.execute(
+                "alter table email_training_snapshots add column "
+                "important_label_watermark integer not null default 0 "
+                "check(important_label_watermark >= 0)"
+            )
+
+    def _migrate_v31_to_v32(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Record current provider truth and frozen snapshot watermarks."""
+
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=32, applied_at=? "
+                "where version=31",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (32, ?)",
+                (self._now(),),
+            )
     @staticmethod
     def _create_task10_historical_tables(db: sqlite3.Connection) -> None:
         db.execute(
@@ -4641,7 +4810,26 @@ class EmailStore:
                     check(length(snapshot_digest) = 64),
                 manifest_json text not null check(json_valid(manifest_json)),
                 frozen integer not null default 1 check(frozen in (0, 1)),
-                created_at text not null check(trim(created_at) != '')
+                created_at text not null check(trim(created_at) != ''),
+                folder_label_watermark integer not null default 0
+                    check(folder_label_watermark >= 0),
+                important_label_watermark integer not null default 0
+                    check(important_label_watermark >= 0)
+            )
+            """,
+            """
+            create table if not exists email_provider_observations (
+                account_id text not null check(trim(account_id) != ''),
+                stable_message_identity text not null
+                    check(trim(stable_message_identity) != ''),
+                state text not null
+                    check(state in ('available','unavailable','excluded')),
+                provider_folder_id text,
+                provider_folder_name text,
+                category_key text,
+                important integer check(important is null or important in (0, 1)),
+                observed_at text not null check(trim(observed_at) != ''),
+                primary key(account_id, stable_message_identity)
             )
             """,
             """
@@ -4710,6 +4898,24 @@ class EmailStore:
                 created_at text not null check(trim(created_at) != '')
             )
             """,
+            """
+            create table if not exists email_classifier_runtime_samples (
+                id integer primary key autoincrement,
+                model_id text not null check(trim(model_id) != ''),
+                outcome text not null
+                    check(outcome in ('success', 'rejected', 'failure')),
+                fallback_code text not null default ''
+                    check(length(fallback_code) <= 64),
+                cache_hit integer not null check(cache_hit in (0, 1)),
+                runtime_warm integer not null check(runtime_warm in (0, 1)),
+                queue_ms real not null check(queue_ms >= 0),
+                http_ms real not null check(http_ms >= 0),
+                embedding_ms real not null check(embedding_ms >= 0),
+                head_ms real not null check(head_ms >= 0),
+                total_ms real not null check(total_ms >= 0),
+                recorded_at text not null check(trim(recorded_at) != '')
+            )
+            """,
         )
         for statement in statements:
             db.execute(statement)
@@ -4754,6 +4960,22 @@ class EmailStore:
             )
             """,
             """
+            create index if not exists idx_email_training_observations_provider_truth
+            on email_training_snapshot_observations(
+                account_id, stable_message_identity, observed_at desc, snapshot_id desc
+            )
+            """,
+            """
+            create index if not exists idx_email_provider_observations_lookup
+            on email_provider_observations(
+                account_id, stable_message_identity, observed_at desc
+            )
+            """,
+            """
+            create index if not exists idx_email_classifier_runtime_model_id
+            on email_classifier_runtime_samples(model_id, id desc)
+            """,
+            """
             create trigger if not exists trg_email_training_snapshots_immutable_update
             before update on email_training_snapshots
             when not (
@@ -4764,9 +4986,11 @@ class EmailStore:
                 and old.input_schema_version is new.input_schema_version
                 and old.seed is new.seed
                 and old.observed_at is new.observed_at
-                and old.snapshot_digest is new.snapshot_digest
-                and old.manifest_json is new.manifest_json
-                and old.created_at is new.created_at
+            and old.snapshot_digest is new.snapshot_digest
+            and old.manifest_json is new.manifest_json
+            and old.created_at is new.created_at
+            and old.folder_label_watermark is new.folder_label_watermark
+            and old.important_label_watermark is new.important_label_watermark
             )
             begin
                 select raise(abort, 'email training snapshot is immutable');
@@ -11194,14 +11418,57 @@ class EmailStore:
                 loaded = self._get_training_snapshot(db, snapshot.snapshot_id)
                 assert loaded is not None
                 return loaded
+            previous_snapshot = db.execute(
+                """
+                select snapshot_id, folder_label_watermark,
+                       important_label_watermark
+                from email_training_snapshots
+                where frozen=1
+                order by observed_at desc, snapshot_id desc
+                limit 1
+                """
+            ).fetchone()
+            previous_rows: dict[tuple[str, str], sqlite3.Row] = {}
+            folder_label_watermark = 0
+            important_label_watermark = 0
+            if previous_snapshot is not None:
+                folder_label_watermark = int(
+                    previous_snapshot["folder_label_watermark"]
+                )
+                important_label_watermark = int(
+                    previous_snapshot["important_label_watermark"]
+                )
+                previous_rows = {
+                    (str(row["account_id"]), str(row["stable_message_identity"])): row
+                    for row in db.execute(
+                        """
+                        select account_id, stable_message_identity,
+                               category_key, important
+                        from email_training_snapshot_observations
+                        where snapshot_id=?
+                        """,
+                        (previous_snapshot["snapshot_id"],),
+                    )
+                }
+            for row in snapshot.observations:
+                previous = previous_rows.get(
+                    (row.account_id, row.stable_message_identity)
+                )
+                if row.category_key is not None and (
+                    previous is None or previous["category_key"] != row.category_key
+                ):
+                    folder_label_watermark += 1
+                if previous is None or bool(previous["important"]) != row.important:
+                    important_label_watermark += 1
             try:
                 db.execute(
                     """
                     insert into email_training_snapshots (
                         snapshot_id, snapshot_version, description_version,
                         input_schema_version, seed, observed_at, snapshot_digest,
-                        manifest_json, frozen, created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                        manifest_json, frozen, created_at,
+                        folder_label_watermark, important_label_watermark
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                     """,
                     (
                         snapshot.snapshot_id,
@@ -11213,6 +11480,8 @@ class EmailStore:
                         snapshot.snapshot_digest,
                         manifest_json,
                         created_at,
+                        folder_label_watermark,
+                        important_label_watermark,
                     ),
                 )
                 db.executemany(
@@ -11309,55 +11578,216 @@ class EmailStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def record_classifier_runtime_sample(
+        self,
+        *,
+        model_id: str,
+        outcome: str,
+        fallback_code: str = "",
+        cache_hit: bool,
+        runtime_warm: bool,
+        queue_ms: float,
+        http_ms: float,
+        embedding_ms: float,
+        head_ms: float,
+        total_ms: float,
+    ) -> None:
+        """Persist one bounded, content-free runtime timing observation."""
+
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ValueError("model_id must be non-empty")
+        if outcome not in {"success", "rejected", "failure"}:
+            raise ValueError("runtime outcome is invalid")
+        if fallback_code and _RUNTIME_CODE.fullmatch(fallback_code) is None:
+            raise ValueError("fallback_code must be a controlled code")
+        if type(cache_hit) is not bool or type(runtime_warm) is not bool:
+            raise TypeError("runtime flags must be boolean")
+        values = (queue_ms, http_ms, embedding_ms, head_ms, total_ms)
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(float(value))
+            or float(value) < 0
+            for value in values
+        ):
+            raise ValueError("runtime timings must be finite and non-negative")
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into email_classifier_runtime_samples (
+                    model_id, outcome, fallback_code, cache_hit, runtime_warm,
+                    queue_ms, http_ms, embedding_ms, head_ms, total_ms, recorded_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    model_id.strip(),
+                    outcome,
+                    fallback_code,
+                    int(cache_hit),
+                    int(runtime_warm),
+                    *(float(value) for value in values),
+                    self._now(),
+                ),
+            )
+            db.execute(
+                """
+                delete from email_classifier_runtime_samples
+                where id not in (
+                    select id from email_classifier_runtime_samples
+                    order by id desc limit ?
+                )
+                """,
+                (MAX_CLASSIFIER_RUNTIME_SAMPLES,),
+            )
+
+    def record_classifier_runtime_fallback(
+        self, *, model_id: str, fallback_code: str
+    ) -> None:
+        """Persist a zero-time fallback when no model timing sample exists."""
+
+        self.record_classifier_runtime_sample(
+            model_id=model_id,
+            outcome="rejected",
+            fallback_code=fallback_code,
+            cache_hit=False,
+            runtime_warm=True,
+            queue_ms=0.0,
+            http_ms=0.0,
+            embedding_ms=0.0,
+            head_ms=0.0,
+            total_ms=0.0,
+        )
+
+    def classifier_runtime_observability(
+        self, *, model_id: str
+    ) -> dict[str, object]:
+        """Read bounded cross-process timing percentiles and fallback counters."""
+
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ValueError("model_id must be non-empty")
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select outcome, fallback_code, cache_hit, runtime_warm,
+                       queue_ms, http_ms, embedding_ms, head_ms, total_ms
+                from email_classifier_runtime_samples
+                where model_id=? order by id desc limit ?
+                """,
+                (model_id.strip(), MAX_CLASSIFIER_RUNTIME_SAMPLES),
+            ).fetchall()
+
+        def percentile(values: list[float], quantile: float) -> float:
+            if not values:
+                return 0.0
+            ordered = sorted(values)
+            position = (len(ordered) - 1) * quantile
+            lower = math.floor(position)
+            upper = math.ceil(position)
+            if lower == upper:
+                return ordered[lower]
+            weight = position - lower
+            return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+        def segment(selected: list[sqlite3.Row]) -> dict[str, object]:
+            return {
+                "sample_count": len(selected),
+                "stages": {
+                    stage: {
+                        key: percentile(
+                            [float(row[f"{stage}_ms"]) for row in selected], quantile
+                        )
+                        for key, quantile in (("p50", 0.5), ("p95", 0.95), ("p99", 0.99))
+                    }
+                    for stage in ("queue", "http", "embedding", "head", "total")
+                },
+            }
+
+        all_rows = list(rows)
+        warm_success = [
+            row
+            for row in rows
+            if row["runtime_warm"] == 1 and row["outcome"] == "success"
+        ]
+        timing = {
+            "all": segment(all_rows),
+            "warm_success": segment(warm_success),
+            "warm_success_cache": segment(
+                [row for row in warm_success if row["cache_hit"] == 1]
+            ),
+            "warm_success_remote": segment(
+                [row for row in warm_success if row["cache_hit"] == 0]
+            ),
+            "slo_status": (
+                "not_enough_data"
+                if not warm_success
+                else "compliant"
+                if percentile(
+                    [float(row["total_ms"]) for row in warm_success], 0.95
+                )
+                < 500.0
+                else "non_compliant"
+            ),
+        }
+        fallback_counts: dict[str, int] = {}
+        for row in rows:
+            code = str(row["fallback_code"] or "")
+            if code:
+                fallback_counts[code] = fallback_counts.get(code, 0) + 1
+        return {"timing": timing, "fallback_counts": fallback_counts}
+
     def latest_training_snapshot_state(self) -> dict[str, object] | None:
         """Return the latest frozen snapshot and cumulative label-change watermarks."""
 
         with self._connect() as db:
-            snapshots = db.execute(
+            latest = db.execute(
                 """
-                select snapshot_id, snapshot_digest, description_version,
-                       input_schema_version, observed_at
+                select snapshot_id, snapshot_version, snapshot_digest,
+                       description_version, input_schema_version, observed_at,
+                       folder_label_watermark, important_label_watermark
                 from email_training_snapshots
                 where frozen=1
-                order by observed_at, snapshot_id
+                order by observed_at desc, snapshot_id desc
+                limit 1
                 """
-            ).fetchall()
-            if not snapshots:
+            ).fetchone()
+            if latest is None:
                 return None
-            folder_watermark = 0
-            important_watermark = 0
-            previous: dict[tuple[str, str], tuple[str | None, bool]] = {}
-            latest_rows: list[sqlite3.Row] = []
-            for snapshot in snapshots:
-                rows = db.execute(
-                    """
-                    select account_id, stable_message_identity, category_key,
-                           important, split, selected_for_training, group_key
-                    from email_training_snapshot_observations
-                    where snapshot_id=?
-                    order by stable_message_identity
-                    """,
-                    (snapshot["snapshot_id"],),
-                ).fetchall()
-                for row in rows:
-                    identity = (row["account_id"], row["stable_message_identity"])
-                    current = (row["category_key"], bool(row["important"]))
-                    existed = identity in previous
-                    prior = previous.get(identity)
-                    if (not existed and current[0] is not None) or (
-                        existed and prior is not None and prior[0] != current[0]
-                    ):
-                        folder_watermark += 1
-                    if not existed or (prior is not None and prior[1] != current[1]):
-                        important_watermark += 1
-                    previous[identity] = current
-                latest_rows = rows
-            enabled_categories = {
-                row["category_key"]
-                for row in db.execute(
-                    "select category_key from email_category_configs where enabled=1"
-                )
-            }
+            aggregate = db.execute(
+                """
+                select count(*) as sample_count,
+                       count(distinct group_key) as group_count
+                from email_training_snapshot_observations
+                where snapshot_id=?
+                """,
+                (latest["snapshot_id"],),
+            ).fetchone()
+            category_rows = db.execute(
+                """
+                select category_key, count(*) as sample_count,
+                       count(distinct group_key) as group_count
+                from email_training_snapshot_observations
+                where snapshot_id=? and category_key is not null
+                group by category_key
+                order by category_key
+                """,
+                (latest["snapshot_id"],),
+            ).fetchall()
+            split_rows = db.execute(
+                """
+                select split,
+                       count(*) as sample_count,
+                       min(important) as minimum_important,
+                       max(important) as maximum_important,
+                       group_concat(distinct case
+                           when split != 'train' or selected_for_training=1
+                           then category_key end
+                       ) as categories
+                from email_training_snapshot_observations
+                where snapshot_id=?
+                group by split
+                """,
+                (latest["snapshot_id"],),
+            ).fetchall()
             description_rows = db.execute(
                 """
                 select category_key, core_description, include_json, exclude_json,
@@ -11366,6 +11796,7 @@ class EmailStore:
                 order by category_key
                 """
             ).fetchall()
+            enabled_categories = {row["category_key"] for row in description_rows}
             from app.email_description_optimizer import description_set_digest
             from app.email_embedding_classifier import CategoryDescription
 
@@ -11395,40 +11826,255 @@ class EmailStore:
                 if descriptions
                 else "description-set-unavailable"
             )
-            train = [
-                row
-                for row in latest_rows
-                if row["split"] == "train" and row["selected_for_training"] == 1
-            ]
-            validation = [row for row in latest_rows if row["split"] == "validation"]
-            test = [row for row in latest_rows if row["split"] == "test"]
-            important_train = [row for row in latest_rows if row["split"] == "train"]
-            train_categories = {row["category_key"] for row in train}
-            validation_categories = {row["category_key"] for row in validation}
-            test_categories = {row["category_key"] for row in test}
+            split_summary = {str(row["split"]): row for row in split_rows}
+
+            def split_categories(name: str) -> set[str]:
+                row = split_summary.get(name)
+                if row is None or not row["categories"]:
+                    return set()
+                return set(str(row["categories"]).split(","))
+
+            def split_has_both_important(name: str) -> bool:
+                row = split_summary.get(name)
+                return bool(
+                    row is not None
+                    and int(row["sample_count"]) > 0
+                    and row["minimum_important"] == 0
+                    and row["maximum_important"] == 1
+                )
+
+            train_categories = split_categories("train")
+            validation_categories = split_categories("validation")
+            test_categories = split_categories("test")
             minimum_ready = bool(
-                train
-                and validation
-                and test
+                train_categories
+                and validation_categories
+                and test_categories
                 and enabled_categories
                 and enabled_categories <= train_categories
                 and enabled_categories <= validation_categories
                 and enabled_categories <= test_categories
-                and all(
-                    {bool(row["important"]) for row in split_rows} == {False, True}
-                    for split_rows in (important_train, validation, test)
-                )
+                and all(split_has_both_important(name) for name in ("train", "validation", "test"))
             )
-            latest = snapshots[-1]
+            latest_category_counts = {
+                str(row["category_key"]): int(row["sample_count"])
+                for row in category_rows
+            }
+            latest_category_group_counts = {
+                str(row["category_key"]): int(row["group_count"])
+                for row in category_rows
+            }
             return {
                 "snapshot_id": latest["snapshot_id"],
+                "snapshot_version": latest["snapshot_version"],
                 "snapshot_sha": latest["snapshot_digest"],
                 "description_version": current_description_version,
                 "input_schema_version": latest["input_schema_version"],
-                "folder_label_watermark": folder_watermark,
-                "important_label_watermark": important_watermark,
+                "folder_label_watermark": int(latest["folder_label_watermark"]),
+                "important_label_watermark": int(
+                    latest["important_label_watermark"]
+                ),
                 "minimum_ready": minimum_ready,
+                "sample_count": int(aggregate["sample_count"]),
+                "group_count": int(aggregate["group_count"]),
+                "category_sample_counts": latest_category_counts,
+                "category_group_counts": latest_category_group_counts,
             }
+
+    def get_provider_classification_state(
+        self, classification_id: int
+    ) -> dict[str, object]:
+        """Project current provider-folder truth without provider network I/O."""
+
+        _require_positive_int(classification_id, field="classification_id")
+        with self._connect() as db:
+            classification = db.execute(
+                "select account_id, stable_message_identity "
+                "from email_classifications where id=?",
+                (classification_id,),
+            ).fetchone()
+            if classification is None:
+                return {"state": "unavailable", "reason": "classification_missing"}
+            row = db.execute(
+                """
+                select state, category_key, important, provider_folder_id,
+                       provider_folder_name, observed_at
+                from email_provider_observations
+                where account_id=? and stable_message_identity=?
+                """,
+                (
+                    classification["account_id"],
+                    classification["stable_message_identity"],
+                ),
+            ).fetchone()
+        if row is None:
+            return {"state": "unavailable", "reason": "provider_truth_not_observed"}
+        if row["state"] != "available":
+            return {
+                "state": str(row["state"]),
+                "reason": "provider_truth_" + str(row["state"]),
+                "observed_at": row["observed_at"],
+            }
+        category_key = row["category_key"]
+        state = (
+            "junk"
+            if category_key == "junk"
+            else "categorized"
+            if category_key is not None
+            else "unclassified"
+        )
+        return {
+            "state": state,
+            "category_key": category_key,
+            "important": bool(row["important"]),
+            "provider_folder_id": row["provider_folder_id"],
+            "provider_folder_name": row["provider_folder_name"],
+            "observed_at": row["observed_at"],
+        }
+
+    def record_current_provider_observations(
+        self,
+        observations: Sequence[Mapping[str, object]],
+        *,
+        unavailable_folders: Sequence[str],
+        authoritative_folders: Sequence[str] | None = None,
+        active_account_ids: Sequence[str] | None = None,
+        observed_at: str,
+    ) -> None:
+        """Publish one scan generation and reconcile its authoritative membership.
+
+        ``observed_at`` is the durable generation marker. Only folders explicitly
+        listed as authoritative may tombstone identities absent from this
+        generation; unavailable or still-partial folders retain an unknown row.
+        """
+
+        if not isinstance(observed_at, str) or not observed_at.strip():
+            raise ValueError("observed_at must be non-empty text")
+        rows: list[tuple[object, ...]] = []
+        for observation in observations:
+            account_id = str(observation.get("account_id") or "").strip()
+            identity = str(
+                observation.get("stable_message_identity") or ""
+            ).strip()
+            folder_id = str(observation.get("provider_folder_id") or "").strip()
+            folder_name = str(
+                observation.get("provider_folder_name") or ""
+            ).strip()
+            if not account_id or not identity or not folder_id or not folder_name:
+                raise ValueError("provider observation identity is incomplete")
+            role_value = observation.get("folder_role")
+            role = str(getattr(role_value, "value", role_value))
+            binding_status = str(
+                observation.get("folder_binding_status") or "unbound"
+            )
+            state = "excluded" if role in {"sent", "draft"} else "available"
+            category_key = observation.get("bound_category_key")
+            if role in {"spam", "trash"}:
+                category_key = "junk"
+            elif binding_status != "active":
+                category_key = None
+            signals = observation.get("important_signals")
+            important_value = getattr(signals, "provider_important", None)
+            if isinstance(signals, Mapping):
+                important_value = signals.get("provider_important")
+            if type(important_value) is not bool:
+                raise ValueError("provider important state is invalid")
+            rows.append(
+                (
+                    account_id,
+                    identity,
+                    state,
+                    folder_id,
+                    folder_name,
+                    category_key,
+                    int(important_value),
+                    observed_at,
+                )
+            )
+        unavailable = tuple(str(value) for value in unavailable_folders)
+        authoritative = tuple(str(value) for value in (authoritative_folders or ()))
+        active_accounts = (
+            None
+            if active_account_ids is None
+            else tuple(str(value) for value in active_account_ids)
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            db.executemany(
+                """
+                insert into email_provider_observations (
+                    account_id, stable_message_identity, state,
+                    provider_folder_id, provider_folder_name, category_key,
+                    important, observed_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(account_id, stable_message_identity) do update set
+                    state=excluded.state,
+                    provider_folder_id=excluded.provider_folder_id,
+                    provider_folder_name=excluded.provider_folder_name,
+                    category_key=excluded.category_key,
+                    important=excluded.important,
+                    observed_at=excluded.observed_at
+                """,
+                rows,
+            )
+            current_membership: dict[tuple[str, str], set[str]] = {}
+            for row in rows:
+                current_membership.setdefault((str(row[0]), str(row[3])), set()).add(
+                    str(row[1])
+                )
+            for value in authoritative:
+                account_id, separator, folder_id = value.partition(":")
+                if not separator or not account_id or not folder_id:
+                    raise ValueError("authoritative folder identity is invalid")
+                identities = current_membership.get((account_id, folder_id), set())
+                if identities:
+                    placeholders = ",".join("?" for _ in identities)
+                    db.execute(
+                        "update email_provider_observations set state='unavailable', "
+                        "provider_folder_id=null, provider_folder_name=null, "
+                        "category_key=null, important=null, observed_at=? "
+                        "where account_id=? and provider_folder_id=? and "
+                        f"stable_message_identity not in ({placeholders})",
+                        (observed_at, account_id, folder_id, *sorted(identities)),
+                    )
+                else:
+                    db.execute(
+                        "update email_provider_observations set state='unavailable', "
+                        "provider_folder_id=null, provider_folder_name=null, "
+                        "category_key=null, important=null, observed_at=? "
+                        "where account_id=? and provider_folder_id=?",
+                        (observed_at, account_id, folder_id),
+                    )
+            if active_accounts is not None:
+                if active_accounts:
+                    placeholders = ",".join("?" for _ in active_accounts)
+                    db.execute(
+                        "update email_provider_observations set state='unavailable', "
+                        "provider_folder_id=null, provider_folder_name=null, "
+                        "category_key=null, important=null, observed_at=? "
+                        f"where account_id not in ({placeholders})",
+                        (observed_at, *active_accounts),
+                    )
+                else:
+                    db.execute(
+                        "update email_provider_observations set state='unavailable', "
+                        "provider_folder_id=null, provider_folder_name=null, "
+                        "category_key=null, important=null, observed_at=?",
+                        (observed_at,),
+                    )
+            for value in unavailable:
+                account_id, separator, folder_id = value.partition(":")
+                if not separator or not account_id or not folder_id:
+                    raise ValueError("unavailable folder identity is invalid")
+                db.execute(
+                    """
+                    update email_provider_observations
+                    set state='unavailable', category_key=null, important=null,
+                        observed_at=?
+                    where account_id=? and provider_folder_id=?
+                    """,
+                    (observed_at, account_id, folder_id),
+                )
 
     @staticmethod
     def _get_training_snapshot(
@@ -11481,7 +12127,14 @@ class EmailStore:
             raise EmailPersistenceCorruption(
                 "persisted training snapshot does not match its manifest"
             ) from exc
-        return restored.to_dict()
+        result = restored.to_dict()
+        result["folder_label_watermark"] = int(
+            snapshot["folder_label_watermark"]
+        )
+        result["important_label_watermark"] = int(
+            snapshot["important_label_watermark"]
+        )
+        return result
 
     def list_unincluded_training_examples(self) -> list[dict[str, Any]]:
         return [

@@ -133,6 +133,11 @@ class CandidateCompatibility:
 @dataclass(frozen=True)
 class CandidateMaturityEvidence:
     model_id: str
+    source_snapshot_id: str
+    source_snapshot_digest: str
+    source_snapshot_observed_at: str
+    folder_label_watermark: int
+    important_label_watermark: int
     compatibility: CandidateCompatibility
     category_eligibility: Mapping[str, HistoricalEligibility]
     important_eligibility: HistoricalEligibility
@@ -140,6 +145,13 @@ class CandidateMaturityEvidence:
 
     def __post_init__(self) -> None:
         _text(self.model_id, "model_id")
+        _text(self.source_snapshot_id, "source_snapshot_id")
+        _digest(self.source_snapshot_digest)
+        _timestamp(self.source_snapshot_observed_at)
+        for name in ("folder_label_watermark", "important_label_watermark"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
         if tuple(self.category_eligibility) != self.compatibility.enabled_categories:
             raise ValueError(
                 "category eligibility must preserve enabled category order"
@@ -178,8 +190,43 @@ def assess_whole_model_readiness(
     previous, current = candidates[-2:]
     if previous.model_id == current.model_id:
         return WholeModelReadiness(False, (), "two_distinct_candidates_required")
+    if (
+        previous.source_snapshot_id == current.source_snapshot_id
+        or previous.source_snapshot_digest == current.source_snapshot_digest
+        or _timestamp(current.source_snapshot_observed_at)
+        <= _timestamp(previous.source_snapshot_observed_at)
+    ):
+        return WholeModelReadiness(False, (), "independent_snapshot_required")
     if previous.compatibility != current.compatibility:
         return WholeModelReadiness(False, (), "candidate_compatibility_changed")
+    if (
+        current.folder_label_watermark < previous.folder_label_watermark
+        or current.important_label_watermark < previous.important_label_watermark
+    ):
+        return WholeModelReadiness(False, (), "label_watermark_regressed")
+    if (
+        current.folder_label_watermark == previous.folder_label_watermark
+        and current.important_label_watermark == previous.important_label_watermark
+    ):
+        return WholeModelReadiness(False, (), "label_watermark_not_advanced")
+    previous_metrics = (*previous.category_eligibility.values(), previous.important_eligibility)
+    current_metrics = (*current.category_eligibility.values(), current.important_eligibility)
+    if any(
+        current_item.accepted_hits < previous_item.accepted_hits
+        or current_item.independent_groups < previous_item.independent_groups
+        for previous_item, current_item in zip(
+            previous_metrics, current_metrics, strict=True
+        )
+    ):
+        return WholeModelReadiness(False, (), "evaluation_evidence_regressed")
+    if not any(
+        current_item.accepted_hits > previous_item.accepted_hits
+        or current_item.independent_groups > previous_item.independent_groups
+        for previous_item, current_item in zip(
+            previous_metrics, current_metrics, strict=True
+        )
+    ):
+        return WholeModelReadiness(False, (), "evaluation_evidence_not_advanced")
     if not previous.passing or not current.passing:
         reason = (
             "historical_systematic_error_unresolved"
@@ -237,6 +284,22 @@ def candidate_maturity_from_mapping(
 
     return CandidateMaturityEvidence(
         model_id=_text(value.get("model_id"), "model_id"),
+        source_snapshot_id=_text(
+            value.get("source_snapshot_id"), "source_snapshot_id"
+        ),
+        source_snapshot_digest=_digest(
+            _text(value.get("source_snapshot_digest"), "source_snapshot_digest")
+        ),
+        source_snapshot_observed_at=_text(
+            value.get("source_snapshot_observed_at"),
+            "source_snapshot_observed_at",
+        ),
+        folder_label_watermark=_integer(
+            value.get("folder_label_watermark"), "folder_label_watermark"
+        ),
+        important_label_watermark=_integer(
+            value.get("important_label_watermark"), "important_label_watermark"
+        ),
         compatibility=CandidateCompatibility(
             enabled_categories=categories,
             description_version=_text(

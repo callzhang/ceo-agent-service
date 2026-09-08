@@ -29,8 +29,11 @@ from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_model_registry import (
     EmailModelMetadata,
     EmailModelRegistry,
+    build_embedding_model_id,
     build_model_id,
 )
+from app.email_embedding_client import DEFAULT_EMBEDDING_MODEL_ID
+from app.email_classifier_runtime import EmailClassifierRuntimeMode
 from app.email_store import (
     EmailFolderBindingConflict,
     EmailStore,
@@ -39,7 +42,17 @@ from app.email_store import (
 )
 from app.email_task_adapter import email_conversation_id
 from app.store import AgentRole, AutoReplyStore
-from app.web_api.email import register_email_routes
+from app.web_api.email import _project_legacy_model_inventory, register_email_routes
+
+
+_CANONICAL_EMBEDDING_MODEL_FIRST = build_embedding_model_id(
+    trained_at=datetime(2026, 9, 8, 8, 0, tzinfo=timezone.utc),
+    artifact_sha256="a" * 64,
+)
+_CANONICAL_EMBEDDING_MODEL_SECOND = build_embedding_model_id(
+    trained_at=datetime(2026, 9, 8, 8, 1, tzinfo=timezone.utc),
+    artifact_sha256="b" * 64,
+)
 
 
 def _client(tmp_path: Path) -> TestClient:
@@ -378,7 +391,7 @@ def test_email_learning_endpoint_exposes_real_lifecycle_evidence(
     assert by_id[active]["promotion_reason"] == "macro_f1_and_latency_passed"
     assert by_id[previous]["status"] == "previous"
     assert by_id[previous]["promotion_reason"] == "initial_validation_passed"
-    assert by_id[previous]["superseded_reason"] == f"superseded_by:{active}"
+    assert by_id[previous]["superseded_reason"] == "superseded"
     assert by_id[candidate]["status"] == "candidate"
     assert by_id[rejected]["rejection_reason"] == "subscription_precision_below_0.95"
     assert by_id[failed]["failure_reason"] == "artifact_reload_failed"
@@ -392,6 +405,60 @@ def test_email_learning_endpoint_exposes_real_lifecycle_evidence(
     serialized = json.dumps(models, sort_keys=True)
     assert "/private/" not in serialized
     assert "artifact_path" not in serialized
+
+
+def test_legacy_model_observability_redacts_every_reason_field() -> None:
+    private = (
+        "https://private.example/path?token=secret-token OTP 129944 "
+        "private body phrase browser/profile/session-reference"
+    )
+    metadata = {
+        "model_id": "email-tfidf-lr-safe",
+        "status": "failed",
+        "promotion_reason": private,
+        "failure_reason": private,
+        "per_category_metrics": {
+            "legal": {
+                "precision": 0.5,
+                "recall": 0.5,
+                "f1": 0.5,
+                "eligibility_reason": private,
+                "raw_embedding": [1.0, 2.0],
+            }
+        },
+    }
+    lifecycle = tuple(
+        SimpleNamespace(
+            event_id=f"event-{status}",
+            model_id=metadata["model_id"],
+            status=status,
+            occurred_at="2026-09-08T00:00:00+00:00",
+            reason=private,
+        )
+        for status in ("candidate", "active", "rejected", "failed", "previous")
+    )
+    entry = SimpleNamespace(
+        metadata=SimpleNamespace(to_dict=lambda: metadata),
+        status="failed",
+        status_reason=private,
+        lifecycle=lifecycle,
+        integrity_status="corrupt",
+        integrity_error=private,
+    )
+
+    serialized = json.dumps(_project_legacy_model_inventory(entry), sort_keys=True)
+
+    for fragment in (
+        "private.example",
+        "secret-token",
+        "129944",
+        "private body phrase",
+        "browser/profile/session-reference",
+        "raw_embedding",
+    ):
+        assert fragment not in serialized
+    assert '"status_reason": "unavailable"' in serialized
+    assert '"integrity_error": "registry_integrity_error"' in serialized
     assert "metadata_path" not in serialized
 
 
@@ -432,7 +499,7 @@ def test_email_learning_keeps_healthy_models_visible_when_history_is_corrupt(
     assert by_id[corrupt]["integrity_status"] == "corrupt"
     assert response.json()["learning"]["registry_issues"] == [
         {
-            "model_id": corrupt,
+            "model_id": "model-inventory-evidence",
             "integrity_status": "corrupt",
             "integrity_error": "artifact_digest_mismatch",
         }
@@ -539,10 +606,77 @@ def test_email_learning_does_not_serialize_wrong_metadata_identity(
     assert model_ids == [second]
     assert len(model_ids) == len(set(model_ids))
     assert {
-        "model_id": first,
+        "model_id": "model-inventory-evidence",
         "integrity_status": "corrupt",
         "integrity_error": "metadata_invalid",
     } in learning["registry_issues"]
+
+
+@pytest.mark.parametrize(
+    "corrupt_model_id",
+    (
+        "https://private.example/model?token=secret",
+        "847201",
+        "private full body phrase",
+        "private-browser-session",
+    ),
+)
+def test_email_learning_registry_issues_never_echo_corrupt_model_id(
+    tmp_path: Path, corrupt_model_id: str
+) -> None:
+    class Registry:
+        root = tmp_path / "models"
+
+        def active_manifest(self):
+            return None
+
+        def active_model_id_unverified(self):
+            return None
+
+        def list_model_inventory(self):
+            return [
+                SimpleNamespace(
+                    model_id=corrupt_model_id,
+                    integrity_status="corrupt",
+                    integrity_error="metadata_invalid",
+                    metadata=None,
+                )
+            ]
+
+        def list_staged_evidence(self):
+            return []
+
+    class LearningStore:
+        def list_unincluded_training_examples(self):
+            return []
+
+        def list_configs(self):
+            return []
+
+        def latest_training_snapshot_state(self):
+            return None
+
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: LearningStore(),
+        email_learning_factory=lambda: SimpleNamespace(
+            registry=Registry(),
+            retrain_state_path=tmp_path / "missing-state.json",
+        ),
+    )
+
+    response = TestClient(app).get("/api/console/email/learning")
+
+    assert response.status_code == 200
+    assert corrupt_model_id not in response.text
+    assert response.json()["learning"]["registry_issues"] == [
+        {
+            "model_id": "model-inventory-evidence",
+            "integrity_status": "corrupt",
+            "integrity_error": "metadata_invalid",
+        }
+    ]
 
 
 def test_email_classification_list_and_detail_expose_only_attachment_metadata(
@@ -611,7 +745,7 @@ def test_email_classification_list_and_detail_expose_only_attachment_metadata(
     assert detailed.status_code == 200
     assert listed.json()["items"][0]["attachment_metadata"] == expected_metadata
     assert detailed.json()["item"]["attachment_metadata"] == expected_metadata
-    assert detailed.json()["item"]["message_text"] == "正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容"
+    assert "message_text" not in detailed.json()["item"]
     assert detailed.json()["item"]["cc"] == "copy@example.com"
     assert detailed.json()["item"]["recipients"] == ["recipient@example.com"]
     assert "message_text" not in listed.json()["items"][0]
@@ -647,6 +781,17 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
                 }
             ]
 
+        def get_provider_classification_state(self, classification_id: int):
+            assert classification_id == 41
+            return {
+                "state": "categorized",
+                "category_key": "legal",
+                "important": True,
+                "provider_folder_id": "folder-legal",
+                "provider_folder_name": "Legal",
+                "observed_at": "2026-09-08T08:00:00+00:00",
+            }
+
     app = FastAPI()
     register_email_routes(app, lambda: DetailStore())
 
@@ -665,11 +810,704 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
             "result_text": "退订成功",
         }
     ]
+    assert payload["provider_classification"] == {
+        "state": "categorized",
+        "category_key": "legal",
+        "important": True,
+        "provider_folder_id": "folder-legal",
+        "provider_folder_name": "Legal",
+        "observed_at": "2026-09-08T08:00:00+00:00",
+    }
     assert payload["meta"]["snapshot_at"]
 
     missing = TestClient(app).get("/api/console/email/classifications/42")
     assert missing.status_code == 404
     assert missing.json()["code"] == "not_found"
+
+
+def test_email_folder_bindings_endpoint_is_read_only_and_provider_aware() -> None:
+    class BindingStore:
+        def list_category_configs(self):
+            return [
+                {
+                    "category_key": "legal",
+                    "display_name": "法务",
+                    "enabled": True,
+                    "description_version": "legal-v3",
+                }
+            ]
+
+        def list_account_folder_bindings(self):
+            return [
+                {
+                    "account_id": "account-1",
+                    "category_key": "legal",
+                    "provider_folder_id": "folder-legal",
+                    "provider_folder_name": "Legal",
+                    "binding_status": "active",
+                    "last_verified_at": "2026-09-08T08:00:00+00:00",
+                },
+                {
+                    "account_id": "account-2",
+                    "category_key": "legal",
+                    "provider_folder_id": "folder-legal-2",
+                    "provider_folder_name": "Legal",
+                    "binding_status": "unavailable",
+                    "last_verified_at": "2026-09-08T08:01:00+00:00",
+                },
+            ]
+
+    app = FastAPI()
+    register_email_routes(app, lambda: BindingStore())
+
+    response = TestClient(app).get("/api/console/email/folder-bindings")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [
+        {
+            "category_key": "legal",
+            "display_name": "法务",
+            "enabled": True,
+            "description_version": "legal-v3",
+            "accounts": [
+                {
+                    "account_id": "account-1",
+                    "provider_folder_id": "folder-legal",
+                    "provider_folder_name": "Legal",
+                    "binding_status": "active",
+                    "last_verified_at": "2026-09-08T08:00:00+00:00",
+                },
+                {
+                    "account_id": "account-2",
+                    "provider_folder_id": "folder-legal-2",
+                    "provider_folder_name": "Legal",
+                    "binding_status": "unavailable",
+                    "last_verified_at": "2026-09-08T08:01:00+00:00",
+                },
+            ],
+        }
+    ]
+
+
+def test_email_learning_and_model_version_expose_safe_modern_evidence(tmp_path) -> None:
+    secret_markers = {
+        "unsubscribe_url": "https://private.example/unsubscribe?token=secret",
+        "otp": "847201",
+        "raw_embedding": [0.1, 0.2],
+        "body": "private full body",
+        "browser_session": "private-browser-session",
+    }
+    evidence = {
+        "model_id": _CANONICAL_EMBEDDING_MODEL_SECOND,
+        "source_snapshot_id": "email-folder-snapshot-20260908T080100.000000Z-aaaaaaaaaaaa",
+        "source_snapshot_digest": "a" * 64,
+        "source_snapshot_observed_at": "2026-09-08T08:01:00+00:00",
+        "folder_label_watermark": 81,
+        "important_label_watermark": 41,
+        "status": "candidate",
+        "trained_at": "2026-09-08T08:02:00+00:00",
+        "compatibility": {
+            "enabled_categories": ["legal", "financing"],
+            "description_version": "description-set-sha256:" + "d" * 64,
+            "input_schema_version": "email-folder-model-input-v2",
+            "embedding_model_id": DEFAULT_EMBEDDING_MODEL_ID,
+            "embedding_revision": "release/2026-09-08+gpu4",
+            "head_format": "description-mlp-v1",
+            "parent_model_id": _CANONICAL_EMBEDDING_MODEL_FIRST,
+            "private_browser_data": "nested-private-browser",
+        },
+        "split_counts": {
+            "train": 240,
+            "validation": 40,
+            "test": 40,
+            "test_evaluations": 1,
+            "important": {"train": 240, "validation": 40, "test": 40},
+            "private_browser_data": "nested-split-private",
+        },
+        "metrics": {
+            "categories": {
+                "legal": {
+                    "accepted_precision": 0.97,
+                    "accepted_hits": 25,
+                    "independent_groups": 12,
+                },
+                "financing": {
+                    "accepted_precision": 0.96,
+                    "accepted_hits": 23,
+                    "independent_groups": 11,
+                },
+            },
+            "important": {
+                "accepted_precision": 0.98,
+                "accepted_hits": 24,
+                "independent_groups": 12,
+            },
+        },
+        "historical_eligibility": {
+            "categories": {
+                "legal": {
+                    "precision": 0.97,
+                    "accepted_hits": 25,
+                    "independent_groups": 12,
+                    "eligible": True,
+                },
+                "financing": {
+                    "precision": 0.96,
+                    "accepted_hits": 23,
+                    "independent_groups": 11,
+                    "eligible": True,
+                },
+            },
+            "important": {
+                "precision": 0.98,
+                "accepted_hits": 24,
+                "independent_groups": 12,
+                "eligible": True,
+            },
+            "raw_embedding": [9.0, 8.0],
+        },
+        "unresolved_historical_systematic_error": False,
+        "whole_model_readiness": {
+            "ready": True,
+            "passing_model_ids": [
+                _CANONICAL_EMBEDDING_MODEL_FIRST,
+                _CANONICAL_EMBEDDING_MODEL_SECOND,
+            ],
+            "reason": (
+                "https://private.example/status?token=reason-secret "
+                "OTP 129944 body phrase browser/profile/reference"
+            ),
+            "otp": "129944",
+        },
+        "latency_ms": {"p50": 8.0, "p95": 42.0, "p99": 70.0},
+        "hashes": {"snapshot_sha256": "a" * 64, "artifact_sha256": "b" * 64},
+        "failure_reason": (
+            "https://private.example/failure?token=reason-secret "
+            "OTP 847201 body phrase browser/profile/reference"
+        ),
+        **secret_markers,
+    }
+
+    class Registry:
+        root = tmp_path / "models"
+        embedding_artifacts = root / "embedding-artifacts"
+        staged_evidence = root / "staged-evidence"
+
+        def active_manifest(self):
+            return SimpleNamespace(model_id=_CANONICAL_EMBEDDING_MODEL_SECOND)
+
+        def active_model_id_unverified(self):
+            return _CANONICAL_EMBEDDING_MODEL_SECOND
+
+        def list_model_inventory(self):
+            return []
+
+        def list_staged_evidence(self):
+            first = json.loads(json.dumps(evidence))
+            first["model_id"] = _CANONICAL_EMBEDDING_MODEL_FIRST
+            first["source_snapshot_id"] = (
+                "email-folder-snapshot-20260908T080000.000000Z-cccccccccccc"
+            )
+            first["source_snapshot_digest"] = "c" * 64
+            first["source_snapshot_observed_at"] = "2026-09-08T08:00:00+00:00"
+            first["folder_label_watermark"] = 80
+            first["important_label_watermark"] = 40
+            for metrics in first["metrics"]["categories"].values():
+                metrics["accepted_hits"] -= 1
+                metrics["independent_groups"] -= 1
+            first["metrics"]["important"]["accepted_hits"] -= 1
+            first["metrics"]["important"]["independent_groups"] -= 1
+            first["whole_model_readiness"] = {
+                "ready": False,
+                "passing_model_ids": [],
+                "reason": "two_consecutive_candidates_required",
+            }
+            return [first, evidence]
+
+        def get_staged_evidence(self, model_id):
+            if model_id != evidence["model_id"]:
+                raise ValueError("unknown")
+            return evidence
+
+    class LearningStore:
+        def list_unincluded_training_examples(self):
+            return []
+
+        def list_configs(self):
+            return []
+
+        def latest_training_snapshot_state(self):
+            return {
+                "snapshot_id": "snapshot-2",
+                "snapshot_version": "email-folder-snapshot.v1",
+                "description_version": "description-set-sha256:abc",
+                "sample_count": 320,
+                "group_count": 80,
+                "category_sample_counts": {"legal": 40, "financing": 35},
+                "category_group_counts": {"legal": 15, "financing": 14},
+            }
+
+        def classifier_runtime_observability(self, *, model_id):
+            assert model_id == _CANONICAL_EMBEDDING_MODEL_SECOND
+            return {
+                "timing": runtime.latency.summary(),
+                "fallback_counts": {
+                    **runtime.latency.fallback_counts(),
+                    "token_secret_browser_profile_129944": 2,
+                },
+            }
+
+    runtime = SimpleNamespace(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        latency=SimpleNamespace(
+            summary=lambda: {
+                "warm_success_cache": {
+                    "sample_count": 30,
+                    "stages": {"total": {"p50": 5.0, "p95": 11.0, "p99": 18.0}},
+                },
+                "warm_success_remote": {
+                    "sample_count": 30,
+                    "stages": {"total": {"p50": 80.0, "p95": 340.0, "p99": 410.0}},
+                },
+                "slo_status": "compliant",
+                "raw_embedding": [7.0, 6.0],
+            },
+            fallback_counts=lambda: {"embedding_timeout": 3},
+        ),
+    )
+    registry = Registry()
+    registry.embedding_artifacts.mkdir(parents=True)
+    registry.staged_evidence.mkdir(parents=True)
+    artifact = b"safe-test-artifact"
+    artifact_digest = sha256(artifact).hexdigest()
+    (registry.embedding_artifacts / f"{_CANONICAL_EMBEDDING_MODEL_SECOND}.artifact").write_bytes(
+        artifact
+    )
+    evidence["hashes"]["artifact_sha256"] = artifact_digest
+    (registry.staged_evidence / f"{_CANONICAL_EMBEDDING_MODEL_SECOND}.json").write_text(
+        json.dumps(evidence), encoding="utf-8"
+    )
+    (registry.root / "online-active.json").write_text(
+        json.dumps(
+            {
+                "model_id": _CANONICAL_EMBEDDING_MODEL_SECOND,
+                "artifact_sha256": artifact_digest,
+                "compatibility": evidence["compatibility"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = SimpleNamespace(
+        registry=registry,
+        retrain_state_path=Path("/nonexistent/retrain-state.json"),
+    )
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: LearningStore(),
+        email_learning_factory=lambda: service,
+    )
+    client = TestClient(app)
+
+    learning = client.get("/api/console/email/learning")
+    detail = client.get(
+        f"/api/console/email/model-versions/{_CANONICAL_EMBEDDING_MODEL_SECOND}"
+    )
+
+    assert learning.status_code == 200
+    payload = learning.json()["learning"]
+    assert payload["active_mode"] == "model_primary"
+    assert payload["active_model_id"] == _CANONICAL_EMBEDDING_MODEL_SECOND
+    assert payload["training_snapshot"]["sample_count"] == 320
+    assert payload["historical_eligibility"]["categories"]["legal"]["eligible"] is True
+    assert payload["promotion_evidence"]["passing_model_ids"] == [
+        _CANONICAL_EMBEDDING_MODEL_FIRST,
+        _CANONICAL_EMBEDDING_MODEL_SECOND,
+    ]
+    assert payload["runtime_timing"]["warm_success_cache"]["stages"]["total"]["p95"] == 11.0
+    assert payload["fallback_counts"] == {
+        "embedding_timeout": 3,
+        "runtime_failure": 2,
+    }
+    assert detail.status_code == 200
+    model = detail.json()["model"]
+    assert model["model_id"] == _CANONICAL_EMBEDDING_MODEL_SECOND
+    assert model["training_snapshot_id"] == (
+        "email-folder-snapshot-20260908T080100.000000Z-aaaaaaaaaaaa"
+    )
+    assert model["training_snapshot_digest"] == "a" * 64
+    assert model["historical_eligibility"]["categories"]["legal"]["eligible"] is True
+    serialized = json.dumps({"learning": learning.json(), "detail": detail.json()})
+    for private in secret_markers.values():
+        assert json.dumps(private) not in serialized
+    assert "unsubscribe_url" not in serialized
+    assert "raw_embedding" not in serialized
+    assert "browser_session" not in serialized
+    assert "nested-private-browser" not in serialized
+    assert "nested-split-private" not in serialized
+    assert "129944" not in serialized
+    assert "[9.0, 8.0]" not in serialized
+    assert "[7.0, 6.0]" not in serialized
+    assert "reason-secret" not in serialized
+    assert "body phrase" not in serialized
+    assert "token_secret_browser_profile_129944" not in serialized
+
+
+@pytest.mark.parametrize(
+    "contents",
+    (
+        "{malformed-json",
+        json.dumps({"model_id": "email-embedding-mlp-corrupt"}),
+        json.dumps({"model_id": 42, "status": ["wrong"]}),
+    ),
+)
+def test_email_model_version_distinguishes_missing_from_corrupt_evidence(
+    tmp_path: Path, contents: str
+) -> None:
+    registry = EmailModelRegistry(tmp_path / "models")
+    model_id = "email-embedding-mlp-corrupt"
+    (registry.staged_evidence / f"{model_id}.json").write_text(
+        contents, encoding="utf-8"
+    )
+    service = SimpleNamespace(
+        registry=registry,
+        retrain_state_path=tmp_path / "models" / "retrain-state.json",
+    )
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "email.sqlite3"),
+        email_learning_factory=lambda: service,
+    )
+    client = TestClient(app)
+
+    corrupt = client.get(f"/api/console/email/model-versions/{model_id}")
+    missing = client.get(
+        "/api/console/email/model-versions/email-embedding-mlp-missing"
+    )
+    traversal = client.get(
+        "/api/console/email/model-versions/email-embedding-mlp-%2E%2E%2Fsecret"
+    )
+    backslash_traversal = client.get(
+        "/api/console/email/model-versions/email-embedding-mlp-%5Csecret"
+    )
+
+    assert corrupt.status_code == 409
+    assert corrupt.json()["code"] == "email_model_integrity_error"
+    assert "malformed" not in corrupt.text
+    assert missing.status_code == 404
+    assert traversal.status_code in {400, 404}
+    assert "secret" not in traversal.text
+    assert backslash_traversal.status_code == 400
+    assert backslash_traversal.json()["code"] == "invalid_email_model_id"
+    assert "secret" not in backslash_traversal.text
+
+
+def _valid_model_detail_evidence() -> dict[str, object]:
+    metric = {
+        "accepted_precision": 0.97,
+        "accepted_hits": 25,
+        "independent_groups": 12,
+    }
+    historical = {
+        "precision": 0.97,
+        "accepted_hits": 25,
+        "independent_groups": 12,
+        "eligible": True,
+    }
+    return {
+        "model_id": _CANONICAL_EMBEDDING_MODEL_SECOND,
+        "source_snapshot_id": "email-folder-snapshot-20260908T080000.000000Z-abcdef123456",
+        "source_snapshot_digest": "a" * 64,
+        "source_snapshot_observed_at": "2026-09-08T08:00:00+00:00",
+        "folder_label_watermark": 25,
+        "important_label_watermark": 20,
+        "status": "candidate",
+        "trained_at": "2026-09-08T08:01:00+00:00",
+        "compatibility": {
+            "enabled_categories": ["legal"],
+            "description_version": "description-set-sha256:" + "d" * 64,
+            "input_schema_version": "email-folder-model-input-v2",
+            "embedding_model_id": "jina-small",
+            "embedding_revision": "gpu4-r17",
+            "head_format": "description-mlp-v1",
+            "parent_model_id": _CANONICAL_EMBEDDING_MODEL_FIRST,
+        },
+        "split_counts": {
+            "train": 30,
+            "validation": 20,
+            "test": 20,
+            "test_evaluations": 1,
+            "important": {"train": 30, "validation": 20, "test": 20},
+        },
+        "metrics": {"categories": {"legal": metric}, "important": metric},
+        "historical_eligibility": {
+            "categories": {"legal": historical},
+            "important": historical,
+        },
+        "unresolved_historical_systematic_error": False,
+        "whole_model_readiness": {
+            "ready": True,
+            "passing_model_ids": [
+                _CANONICAL_EMBEDDING_MODEL_FIRST,
+                _CANONICAL_EMBEDDING_MODEL_SECOND,
+            ],
+            "reason": "two_consecutive_compatible_candidates_passed",
+        },
+        "latency_ms": {"p50": 10.0, "p95": 20.0, "p99": 30.0},
+        "hashes": {"snapshot_sha256": "a" * 64, "artifact_sha256": "b" * 64},
+        "failure_reason": "",
+    }
+
+
+def test_model_detail_accepts_canonical_production_model_and_opaque_external_refs(
+    tmp_path: Path,
+) -> None:
+    evidence = _valid_model_detail_evidence()
+    artifact_digest = "e" * 64
+    model_id = build_embedding_model_id(
+        trained_at=datetime(2026, 9, 8, 8, 1, tzinfo=timezone.utc),
+        artifact_sha256=artifact_digest,
+    )
+    evidence["model_id"] = model_id
+    evidence["compatibility"]["parent_model_id"] = None  # type: ignore[index]
+    evidence["whole_model_readiness"]["passing_model_ids"] = [model_id]  # type: ignore[index]
+    evidence["compatibility"]["embedding_model_id"] = DEFAULT_EMBEDDING_MODEL_ID  # type: ignore[index]
+    evidence["compatibility"]["embedding_revision"] = "release/2026-09-08+gpu4"  # type: ignore[index]
+
+    class Registry:
+        root = tmp_path / "models"
+        staged_evidence = root / "staged-evidence"
+
+        def get_staged_evidence(self, requested_model_id):
+            assert requested_model_id == model_id
+            return evidence
+
+    registry = Registry()
+    registry.staged_evidence.mkdir(parents=True)
+    (registry.staged_evidence / f"{model_id}.json").write_text("{}")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "email.sqlite3"),
+        email_learning_factory=lambda: SimpleNamespace(registry=registry),
+    )
+
+    response = TestClient(app).get(f"/api/console/email/model-versions/{model_id}")
+
+    assert response.status_code == 200
+    compatibility = response.json()["model"]["compatibility"]
+    assert compatibility["embedding_model_reference"] == "configured-external-model"
+    assert compatibility["embedding_revision_reference"] == (
+        "configured-external-revision"
+    )
+    assert DEFAULT_EMBEDDING_MODEL_ID not in response.text
+    assert "release/2026-09-08+gpu4" not in response.text
+
+
+def test_external_evidence_references_are_fixed_and_not_otp_derived(tmp_path: Path) -> None:
+    def project(model_value: str, revision_value: str) -> dict[str, object]:
+        evidence = _valid_model_detail_evidence()
+        evidence["compatibility"]["embedding_model_id"] = model_value  # type: ignore[index]
+        evidence["compatibility"]["embedding_revision"] = revision_value  # type: ignore[index]
+        model_id = str(evidence["model_id"])
+
+        class Registry:
+            root = tmp_path / model_value
+            staged_evidence = root / "staged-evidence"
+
+            def get_staged_evidence(self, _requested_model_id):
+                return evidence
+
+        registry = Registry()
+        registry.staged_evidence.mkdir(parents=True)
+        (registry.staged_evidence / f"{model_id}.json").write_text("{}")
+        app = FastAPI()
+        register_email_routes(
+            app,
+            lambda: EmailStore(tmp_path / f"{model_value}.sqlite3"),
+            email_learning_factory=lambda: SimpleNamespace(registry=registry),
+        )
+        response = TestClient(app).get(
+            f"/api/console/email/model-versions/{model_id}"
+        )
+        assert response.status_code == 200
+        assert model_value not in response.text
+        assert revision_value not in response.text
+        return response.json()["model"]["compatibility"]
+
+    first = project("847201", "129944")
+    second = project("731908", "650217")
+
+    assert first["embedding_model_reference"] == second["embedding_model_reference"]
+    assert first["embedding_revision_reference"] == second[
+        "embedding_revision_reference"
+    ]
+    assert first["embedding_model_reference"] == "configured-external-model"
+    assert first["embedding_revision_reference"] == "configured-external-revision"
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        ("model_id",),
+        ("source_snapshot_id",),
+        ("source_snapshot_observed_at",),
+        ("trained_at",),
+        ("status",),
+        ("compatibility", "description_version"),
+        ("compatibility", "input_schema_version"),
+        ("compatibility", "embedding_model_id"),
+        ("compatibility", "embedding_revision"),
+        ("compatibility", "head_format"),
+        ("compatibility", "parent_model_id"),
+        ("compatibility", "enabled_categories"),
+        ("whole_model_readiness", "passing_model_ids"),
+    ),
+)
+def test_model_detail_rejects_or_redacts_private_values_in_projected_strings(
+    tmp_path: Path, path: tuple[str, ...]
+) -> None:
+    private = (
+        "https://private.example/unsubscribe?token=secret OTP 847201 "
+        "full body browser/profile/session-reference"
+    )
+    evidence = _valid_model_detail_evidence()
+    target = evidence
+    for key in path[:-1]:
+        target = target[key]  # type: ignore[index,assignment]
+    target[path[-1]] = [private] if path[-1].endswith("categories") or path[-1].endswith("ids") else private  # type: ignore[index]
+    model_id = _CANONICAL_EMBEDDING_MODEL_SECOND
+
+    class Registry:
+        root = tmp_path / "models"
+        staged_evidence = root / "staged-evidence"
+
+        def get_staged_evidence(self, requested_model_id):
+            assert requested_model_id == model_id
+            return evidence
+
+    registry = Registry()
+    registry.staged_evidence.mkdir(parents=True)
+    (registry.staged_evidence / f"{model_id}.json").write_text("{}")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "email.sqlite3"),
+        email_learning_factory=lambda: SimpleNamespace(registry=registry),
+    )
+
+    response = TestClient(app).get(f"/api/console/email/model-versions/{model_id}")
+
+    if path in {
+        ("compatibility", "embedding_model_id"),
+        ("compatibility", "embedding_revision"),
+    }:
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 409
+        assert response.json()["code"] == "email_model_integrity_error"
+    assert "private.example" not in response.text
+    assert "847201" not in response.text
+    assert "full body" not in response.text
+    assert "browser/profile" not in response.text
+
+
+@pytest.mark.parametrize("private", ("847201", "private-browser-session", "token_abcdEFGH1234567890"))
+@pytest.mark.parametrize(
+    "path",
+    (
+        ("model_id",),
+        ("source_snapshot_id",),
+        ("compatibility", "description_version"),
+        ("compatibility", "input_schema_version"),
+        ("compatibility", "embedding_model_id"),
+        ("compatibility", "embedding_revision"),
+        ("compatibility", "head_format"),
+        ("compatibility", "parent_model_id"),
+        ("compatibility", "enabled_categories"),
+        ("whole_model_readiness", "passing_model_ids"),
+    ),
+)
+def test_model_detail_rejects_or_redacts_valid_syntax_secret_identifiers(
+    tmp_path: Path, path: tuple[str, ...], private: str
+) -> None:
+    evidence = _valid_model_detail_evidence()
+    target = evidence
+    for key in path[:-1]:
+        target = target[key]  # type: ignore[index,assignment]
+    target[path[-1]] = [private] if path[-1].endswith("categories") or path[-1].endswith("ids") else private  # type: ignore[index]
+    requested = _CANONICAL_EMBEDDING_MODEL_SECOND
+
+    class Registry:
+        root = tmp_path / "models"
+        staged_evidence = root / "staged-evidence"
+
+        def get_staged_evidence(self, _model_id):
+            return evidence
+
+    registry = Registry()
+    registry.staged_evidence.mkdir(parents=True)
+    (registry.staged_evidence / f"{requested}.json").write_text("{}")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "email.sqlite3"),
+        email_learning_factory=lambda: SimpleNamespace(registry=registry),
+    )
+    response = TestClient(app).get(f"/api/console/email/model-versions/{requested}")
+
+    if path in {
+        ("compatibility", "embedding_model_id"),
+        ("compatibility", "embedding_revision"),
+    }:
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 409
+    assert private not in response.text
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing_category_metrics",
+        "extreme_numeric_value",
+        "wrong_nested_structure",
+    ),
+)
+def test_model_detail_rejects_malformed_nested_evidence(
+    tmp_path: Path, mutation: str
+) -> None:
+    evidence = _valid_model_detail_evidence()
+    if mutation == "missing_category_metrics":
+        del evidence["metrics"]["categories"]["legal"]  # type: ignore[index]
+    elif mutation == "extreme_numeric_value":
+        evidence["latency_ms"]["p95"] = float("inf")  # type: ignore[index]
+    else:
+        evidence["historical_eligibility"] = ["wrong"]
+    model_id = str(evidence["model_id"])
+
+    class Registry:
+        root = tmp_path / "models"
+        staged_evidence = root / "staged-evidence"
+
+        def get_staged_evidence(self, _model_id):
+            return evidence
+
+    registry = Registry()
+    registry.staged_evidence.mkdir(parents=True)
+    (registry.staged_evidence / f"{model_id}.json").write_text("{}")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(tmp_path / "email.sqlite3"),
+        email_learning_factory=lambda: SimpleNamespace(registry=registry),
+    )
+
+    response = TestClient(app).get(f"/api/console/email/model-versions/{model_id}")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "email_model_integrity_error"
 
 
 def _audited_email_detail_fixture(
@@ -1034,6 +1872,84 @@ def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
     assert all(
         str(value) not in serialized for value in fixture.private_markers.values()
     )
+
+
+def test_email_detail_projects_safe_unsubscribe_continuation_state(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    with sqlite3.connect(fixture.database) as db:
+        db.execute("delete from email_unsubscribe_steps")
+        db.execute("delete from email_unsubscribe_receipts")
+        db.execute(
+            "update email_unsubscribe_claims set status='dispatching', "
+            "phase='navigating' where action_identity=?",
+            (fixture.action_identity,),
+        )
+        db.execute(
+            "update reply_tasks set status='processing' where id=?",
+            (fixture.task.id,),
+        )
+        db.execute(
+            "update agent_runs set status='running', completed_at='' where id=?",
+            (fixture.audit.id,),
+        )
+    fixture.store.persist_email_unsubscribe_continuation(
+        action_identity=fixture.action_identity,
+        effect_digest=fixture.effect_digest,
+        action_plan_id=fixture.plan.action_plan_id,
+        action_plan_version=fixture.plan.action_plan_version,
+        classification_id=fixture.classification_id,
+        account_id=fixture.account_id,
+        stable_message_identity=fixture.stable_message_identity,
+        thread_identity=fixture.thread_identity,
+        entry_reference="unsubscribe-entry:observability-1",
+        operations=(
+            {
+                "operation_reference": "step-observability-1",
+                "kind": "open_entry",
+                "target_reference": "unsubscribe-entry:observability-1",
+            },
+        ),
+        controls=(
+            {
+                "reference": "private-browser-control",
+                "kind": "captcha_handoff",
+                "intent": "confirm",
+            },
+        ),
+        observation_reference="private-browser-observation",
+        final_step={
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "action_required",
+            "reference": "private-browser-step",
+        },
+        owner={
+            "owner_id": "email-audit-worker",
+            "generation": 1,
+            "lease_token": "unsubscribe-observability-lease",
+        },
+        network_policy_reference="network-policy:observability-1",
+        network_policy_origin_references=("network-origin:observability-1",),
+    )
+
+    response = fixture.client.get(
+        f"/api/console/email/classifications/{fixture.classification_id}"
+    )
+
+    assert response.status_code == 200
+    event = response.json()["observability"][0]
+    assert event["continuation"] == {
+        "state": "awaiting_audit",
+        "control_kinds": ["captcha_handoff"],
+        "operation_count": 1,
+        "requires_human": True,
+    }
+    serialized = json.dumps(event, sort_keys=True)
+    assert "private-browser-control" not in serialized
+    assert "private-browser-observation" not in serialized
+    assert "private-browser-step" not in serialized
 
 
 @pytest.mark.parametrize(

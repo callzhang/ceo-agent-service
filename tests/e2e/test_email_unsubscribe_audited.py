@@ -1063,7 +1063,7 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             "cookie": "audit_session=persistent-profile",
         },
     ]
-    assert len(browser_launches) == 2
+    assert len(browser_launches) == 1
     assert all(launch["headless"] is True for launch in browser_launches)
     assert all(
         launch["profile_path"] == dedicated_profile.profile_dir

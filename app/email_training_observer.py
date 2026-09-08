@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
@@ -67,6 +68,7 @@ class ProviderTrainingObservationJob:
             bindings = tuple(self.email_store.list_account_folder_bindings())
             more_available = False
             unavailable: list[str] = []
+            authoritative_folders: set[str] = set()
             active_account_ids: set[str] = set()
             for account in accounts:
                 account_id = _required_text(account.get("account_id"), "account_id")
@@ -81,13 +83,11 @@ class ProviderTrainingObservationJob:
                     current_ids = {
                         _required_text(folder.provider_folder_id, "provider_folder_id")
                         for folder in inventory
-                        if folder.role not in {FolderRole.SENT, FolderRole.DRAFT}
                     }
                     for deleted in set(folder_states) - current_ids:
+                        authoritative_folders.add(f"{account_id}:{deleted}")
                         del folder_states[deleted]
                     for folder in inventory:
-                        if folder.role in {FolderRole.SENT, FolderRole.DRAFT}:
-                            continue
                         folder_id = _required_text(
                             folder.provider_folder_id, "provider_folder_id"
                         )
@@ -224,6 +224,11 @@ class ProviderTrainingObservationJob:
                         folder_state["uidvalidity"] = uidvalidity
                         folder_state["highest_uid"] = highest_uid
                         folder_state["status"] = "ready"
+                        if (
+                            int(folder_state["reconcile_after_uid"]) == 0
+                            and len(messages) < self.batch_size
+                        ):
+                            authoritative_folders.add(key)
                         more_available = (
                             more_available or len(messages) == self.batch_size
                         )
@@ -238,6 +243,17 @@ class ProviderTrainingObservationJob:
                             folder_state["fingerprint_migration"] = "complete"
             _write_state_atomic(self.state_path, updated)
             observations = _state_observations(updated)
+            recorder = getattr(
+                self.email_store, "record_current_provider_observations", None
+            )
+            if callable(recorder):
+                recorder(
+                    observations,
+                    unavailable_folders=tuple(sorted(unavailable)),
+                    authoritative_folders=tuple(sorted(authoritative_folders)),
+                    active_account_ids=tuple(sorted(active_account_ids)),
+                    observed_at=datetime.now(timezone.utc).isoformat(),
+                )
             return ProviderTrainingObservationResult(
                 observations=observations,
                 more_available=more_available,

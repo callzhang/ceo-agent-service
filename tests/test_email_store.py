@@ -160,6 +160,19 @@ def _unsigned_time_legacy_manifest(snapshot, *, include_counts: bool):
     return legacy_manifest, legacy_digest, legacy_record_digests
 
 
+def _rewind_email_schema(db: sqlite3.Connection, *, version: int) -> None:
+    """Remove migration records and objects introduced after a fixture version."""
+
+    db.execute("drop index if exists idx_email_training_observations_provider_truth")
+    db.execute("drop table if exists email_classifier_runtime_samples")
+    db.execute("delete from email_schema_migrations where version > ?", (version,))
+    db.execute(
+        "insert or ignore into email_schema_migrations(version, applied_at) "
+        "values (?, '2026-09-08T00:00:00+00:00')",
+        (version,),
+    )
+
+
 def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     database = tmp_path / "training-snapshot-migration.sqlite3"
     store = EmailStore(database)
@@ -171,7 +184,7 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     with sqlite3.connect(database) as db:
         db.execute("drop table email_training_snapshot_observations")
         db.execute("drop table email_training_snapshots")
-        db.execute("update email_schema_migrations set version=22 where version=30")
+        _rewind_email_schema(db, version=22)
 
     EmailStore(database)
 
@@ -193,8 +206,8 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     assert "email_training_snapshots" in tables
     assert "email_training_snapshot_observations" in tables
     assert preserved_model_text == "__subject__preserved migration row"
-    assert versions == list(range(22, 31))
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 30
+    assert versions == list(range(22, 33))
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 32
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select frozen from email_training_snapshots").fetchall() == []
@@ -217,11 +230,15 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
         ):
             db.execute(f"drop trigger {trigger}")
         db.execute("alter table email_training_snapshots drop column frozen")
-        db.execute("update email_schema_migrations set version=23 where version=30")
+        _rewind_email_schema(db, version=23)
 
     reopened = EmailStore(database)
 
-    assert reopened.get_training_snapshot(snapshot.snapshot_id) == snapshot.to_dict()
+    assert reopened.get_training_snapshot(snapshot.snapshot_id) == {
+        **snapshot.to_dict(),
+        "folder_label_watermark": 1,
+        "important_label_watermark": 1,
+    }
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select frozen from email_training_snapshots").fetchone()[0] == 1
@@ -231,7 +248,7 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == list(range(23, 31))
+        ] == list(range(23, 33))
 
 
 def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path):
@@ -274,7 +291,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             ],
         )
         db.execute("alter table email_training_snapshots drop column frozen")
-        db.execute("update email_schema_migrations set version=23 where version=30")
+        _rewind_email_schema(db, version=23)
 
     reopened = EmailStore(database)
     restored = reopened.get_training_snapshot(snapshot.snapshot_id)
@@ -288,7 +305,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == list(range(23, 31))
+    ] == list(range(23, 33))
 
 
 def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
@@ -3199,8 +3216,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_30() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 30
+def test_email_schema_version_is_32() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 32
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:
@@ -3208,14 +3225,7 @@ def _downgrade_task10_schema(database: Path, *, version: int) -> None:
         raise ValueError("Task10 downgrade fixture only supports v26 through v29")
     with sqlite3.connect(database) as db:
         db.execute("pragma foreign_keys=off")
-        db.execute(
-            "delete from email_schema_migrations where version > ?", (version,)
-        )
-        db.execute(
-            "insert or ignore into email_schema_migrations(version, applied_at) "
-            "values (?, '2026-09-08T00:00:00+00:00')",
-            (version,),
-        )
+        _rewind_email_schema(db, version=version)
         if version < 27:
             db.execute("drop table email_historical_classification_history")
         if version < 28:
@@ -3274,7 +3284,7 @@ def test_task10_schema_migrations_replay_full_chain_from_each_version(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == list(range(starting_version, 31))
+        ] == list(range(starting_version, 33))
         tables_after = {
             row[0]
             for row in db.execute("select name from sqlite_master where type='table'")
@@ -3973,6 +3983,8 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             28,
             29,
             30,
+            31,
+            32,
         ]
         assert {
             row[1]
@@ -4227,6 +4239,8 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
         28,
         29,
         30,
+        31,
+        32,
     ]
 
     EmailStore(database)
@@ -4307,6 +4321,8 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
         28,
         29,
         30,
+        31,
+        32,
     ]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
@@ -4726,6 +4742,8 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
         28,
         29,
         30,
+        31,
+        32,
     ]
 
 
@@ -6796,7 +6814,7 @@ def test_v21_schema_migrates_to_allow_flag_important_actions(tmp_path: Path):
         )
         assert (
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 30
+            == 32
         )
     assert (
         migrated.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
@@ -8933,7 +8951,7 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
 
     migrated = EmailStore(database)
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 30
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 32
     assert (
         migrated.list_account_folder_bindings("junk")[0]["provider_folder_id"]
         == "Deleted"

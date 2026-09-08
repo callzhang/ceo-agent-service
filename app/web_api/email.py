@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import imaplib
 import json
+import math
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any
 
@@ -34,7 +36,17 @@ from app.email_category_config import (
 )
 from app.email_connector_config import EmailAccountPayload, resolve_secret
 from app.email_classifier_retrain import load_retrain_state
-from app.email_model_registry import ModelRegistryError
+from app.email_classifier_runtime import (
+    ONLINE_ACTIVATION_FILENAME,
+    EmailClassifierRuntimeMode,
+    derive_runtime_mode,
+)
+from app.email_model_registry import (
+    EMBEDDING_MODEL_ID_PREFIX,
+    MODEL_ID_PREFIX,
+    ModelRegistryError,
+    candidate_maturity_from_mapping,
+)
 from app.email_pipeline import apply_human_confirmation
 from app.email_store import (
     EmailAccountConflict,
@@ -53,6 +65,521 @@ class _EmailStoreAvailability:
 
 class _EmailStoreUnavailable(RuntimeError):
     pass
+
+
+_MODEL_REASON_CODES = frozenset(
+    {
+        "two_consecutive_candidates_required",
+        "two_distinct_candidates_required",
+        "candidate_compatibility_changed",
+        "historical_systematic_error_unresolved",
+        "maturity_gate_not_met",
+        "two_consecutive_compatible_candidates_passed",
+        "candidate_evidence_invalid",
+        "independent_snapshot_required",
+        "label_watermark_not_advanced",
+        "label_watermark_regressed",
+        "evaluation_evidence_not_advanced",
+        "evaluation_evidence_regressed",
+        "no_staged_candidate",
+        "training_not_ready",
+        "candidate_validation_pending",
+        "macro_f1_and_latency_passed",
+        "initial_validation_passed",
+        "subscription_precision_below_0.95",
+        "artifact_reload_failed",
+        "eligible",
+        "insufficient_validation_samples",
+        "precision_below_threshold",
+    }
+)
+_MODEL_INTEGRITY_CODES = frozenset(
+    {
+        "artifact_digest_mismatch",
+        "metadata_invalid",
+        "artifact_missing",
+        "metadata_missing",
+        "lifecycle_invalid",
+        "manifest_invalid",
+    }
+)
+_RUNTIME_FALLBACK_CODES = frozenset(
+    {
+        "model_rejected",
+        "embedding_timeout",
+        "OnlineEmbeddingBatchTimeout",
+        "OnlineEmbeddingBatchError",
+        "OnlineEmbeddingBatchClosed",
+        "EmailClassifierUnavailable",
+        "runtime_failure",
+    }
+)
+
+
+def _controlled_model_reason(value: object) -> str:
+    reason = str(value or "")
+    if not reason:
+        return ""
+    return reason if reason in _MODEL_REASON_CODES else "unavailable"
+
+
+def _controlled_integrity_error(value: object) -> str:
+    code = str(value or "")
+    return code if code in _MODEL_INTEGRITY_CODES else "registry_integrity_error"
+
+
+_MODEL_EVIDENCE_ID = re.compile(
+    r"email-embedding-mlp-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}"
+)
+_SNAPSHOT_EVIDENCE_ID = re.compile(
+    r"email-folder-snapshot-[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{12}"
+)
+_DESCRIPTION_EVIDENCE_VERSION = re.compile(r"description-set-sha256:[0-9a-f]{64}")
+
+
+def _safe_evidence_identifier(
+    value: object, field: str, pattern: re.Pattern[str]
+) -> str:
+    if not isinstance(value, str) or pattern.fullmatch(value) is None:
+        raise ValueError(f"{field} is invalid")
+    return value
+
+
+def _safe_exact_evidence_value(value: object, field: str, expected: str) -> str:
+    if value != expected:
+        raise ValueError(f"{field} is invalid")
+    return expected
+
+
+def _safe_external_reference(value: object, field: str, placeholder: str) -> str:
+    if not isinstance(value, str) or not value or len(value) > 512:
+        raise ValueError(f"{field} is invalid")
+    return placeholder
+
+
+def _safe_evidence_timestamp(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value or len(value) > 64 or any(
+        character.isspace() for character in value
+    ):
+        raise ValueError(f"{field} is invalid")
+    text = value
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(f"{field} is invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field} is invalid")
+    return text
+
+
+def _safe_evidence_count(value: object, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 1_000_000_000:
+        raise ValueError(f"{field} is invalid")
+    return value
+
+
+def _safe_evidence_float(value: object, field: str, *, unit: bool = False) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} is invalid")
+    result = float(value)
+    if not math.isfinite(result) or result < 0 or (unit and result > 1):
+        raise ValueError(f"{field} is invalid")
+    return result
+
+
+def _safe_digest(value: object, field: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise ValueError(f"{field} is invalid")
+    return value
+
+
+def _safe_evidence_status(value: object) -> str:
+    if value not in {"candidate", "active", "previous", "rejected", "failed"}:
+        raise ValueError("status is invalid")
+    return str(value)
+
+
+def _project_staged_model_evidence(
+    evidence: Any,
+) -> dict[str, object]:
+    """Return only reviewed, non-sensitive model evidence fields."""
+
+    if not isinstance(evidence, dict):
+        raise ValueError("model evidence must be an object")
+    maturity = candidate_maturity_from_mapping(evidence)
+    hashes_value = evidence.get("hashes")
+    if (
+        not isinstance(hashes_value, dict)
+        or not isinstance(hashes_value.get("artifact_sha256"), str)
+        or len(hashes_value["artifact_sha256"]) != 64
+    ):
+        raise ValueError("model evidence artifact digest is invalid")
+    compatibility = evidence.get("compatibility")
+    historical = evidence.get("historical_eligibility")
+    readiness = evidence.get("whole_model_readiness")
+    latency = evidence.get("latency_ms")
+    split_counts = evidence.get("split_counts")
+    hashes = evidence.get("hashes")
+    if not isinstance(compatibility, dict) or not isinstance(historical, dict):
+        raise ValueError("model evidence nested structure is invalid")
+    safe_categories = [
+        validate_email_category_key(category)
+        for category in maturity.compatibility.enabled_categories
+    ]
+    projected_compatibility = {
+        "enabled_categories": safe_categories,
+        "description_version": _safe_evidence_identifier(
+            maturity.compatibility.description_version,
+            "description_version",
+            _DESCRIPTION_EVIDENCE_VERSION,
+        ),
+        "input_schema_version": _safe_exact_evidence_value(
+            maturity.compatibility.input_schema_version,
+            "input_schema_version",
+            "email-folder-model-input-v2",
+        ),
+        "embedding_model_reference": _safe_external_reference(
+            maturity.compatibility.embedding_model_id,
+            "embedding_model_id",
+            "configured-external-model",
+        ),
+        "embedding_revision_reference": _safe_external_reference(
+            maturity.compatibility.embedding_revision,
+            "embedding_revision",
+            "configured-external-revision",
+        ),
+        "head_format": _safe_exact_evidence_value(
+            maturity.compatibility.head_format,
+            "head_format",
+            "description-mlp-v1",
+        ),
+        "parent_model_id": (
+            None
+            if maturity.compatibility.parent_model_id is None
+            else _safe_evidence_identifier(
+                maturity.compatibility.parent_model_id,
+                "parent_model_id",
+                _MODEL_EVIDENCE_ID,
+            )
+        ),
+    }
+
+    def eligibility(value: object, field: str) -> dict[str, object]:
+        if not isinstance(value, dict):
+            raise ValueError(f"{field} is invalid")
+        eligible = value.get("eligible")
+        if type(eligible) is not bool:
+            raise ValueError(f"{field}.eligible is invalid")
+        return {
+            "precision": _safe_evidence_float(
+                value.get("precision"), f"{field}.precision", unit=True
+            ),
+            "accepted_hits": _safe_evidence_count(
+                value.get("accepted_hits"), f"{field}.accepted_hits"
+            ),
+            "independent_groups": _safe_evidence_count(
+                value.get("independent_groups"), f"{field}.independent_groups"
+            ),
+            "eligible": eligible,
+        }
+
+    categories = historical.get("categories")
+    if not isinstance(categories, dict) or set(categories) != set(
+        maturity.compatibility.enabled_categories
+    ):
+        raise ValueError("historical categories are invalid")
+    projected_historical = {
+        "categories": {
+            category: eligibility(categories[category], f"categories.{category}")
+            for category in maturity.compatibility.enabled_categories
+        },
+        "important": eligibility(historical.get("important"), "important"),
+    }
+    if not isinstance(readiness, dict) or type(readiness.get("ready")) is not bool:
+        raise ValueError("whole model readiness is invalid")
+    passing_model_ids = readiness.get("passing_model_ids")
+    if not isinstance(passing_model_ids, list) or len(passing_model_ids) > 2:
+        raise ValueError("passing model ids are invalid")
+    projected_readiness = {
+        "ready": readiness["ready"],
+        "passing_model_ids": [
+            _safe_evidence_identifier(item, "passing_model_id", _MODEL_EVIDENCE_ID)
+            for item in passing_model_ids
+        ],
+        "reason": _controlled_model_reason(readiness.get("reason")),
+    }
+    if not isinstance(latency, dict):
+        raise ValueError("latency evidence is invalid")
+    projected_latency = {
+        key: _safe_evidence_float(latency.get(key), f"latency.{key}")
+        for key in ("p50", "p95", "p99")
+    }
+    projected_split_counts = None
+    if isinstance(split_counts, dict):
+        important = split_counts.get("important")
+        projected_split_counts = {
+            key: _safe_evidence_count(split_counts.get(key), f"split_counts.{key}")
+            for key in ("train", "validation", "test", "test_evaluations")
+        }
+        if isinstance(important, dict):
+            projected_split_counts["important"] = {
+                key: _safe_evidence_count(
+                    important.get(key), f"split_counts.important.{key}"
+                )
+                for key in ("train", "validation", "test")
+            }
+        else:
+            raise ValueError("important split counts are invalid")
+    else:
+        raise ValueError("split counts are invalid")
+    return {
+        "model_id": _safe_evidence_identifier(
+            evidence["model_id"], "model_id", _MODEL_EVIDENCE_ID
+        ),
+        "status": _safe_evidence_status(evidence.get("status")),
+        "trained_at": _safe_evidence_timestamp(evidence.get("trained_at"), "trained_at"),
+        "training_snapshot_id": _safe_evidence_identifier(
+            maturity.source_snapshot_id,
+            "source_snapshot_id",
+            _SNAPSHOT_EVIDENCE_ID,
+        ),
+        "training_snapshot_digest": _safe_digest(
+            maturity.source_snapshot_digest, "source_snapshot_digest"
+        ),
+        "training_snapshot_observed_at": _safe_evidence_timestamp(
+            maturity.source_snapshot_observed_at, "source_snapshot_observed_at"
+        ),
+        "folder_label_watermark": _safe_evidence_count(
+            maturity.folder_label_watermark, "folder_label_watermark"
+        ),
+        "important_label_watermark": _safe_evidence_count(
+            maturity.important_label_watermark, "important_label_watermark"
+        ),
+        "compatibility": projected_compatibility,
+        "split_counts": projected_split_counts,
+        "historical_eligibility": projected_historical,
+        "promotion_evidence": projected_readiness,
+        "timing_percentiles_ms": projected_latency,
+        "artifact_sha256": (
+            _safe_digest(hashes.get("artifact_sha256"), "artifact_sha256")
+            if isinstance(hashes, dict)
+            else None
+        ),
+        "failure_reason": _controlled_model_reason(evidence.get("failure_reason")),
+    }
+
+
+def _safe_staged_evidence(
+    registry: Any, registry_issues: list[dict[str, str]]
+) -> list[dict[str, object]]:
+    try:
+        rows = registry.list_staged_evidence()
+    except (OSError, TypeError, ValueError, ModelRegistryError):
+        registry_issues.append(
+            {
+                "model_id": "staged-evidence",
+                "integrity_status": "corrupt",
+                "integrity_error": "staged_evidence_invalid",
+            }
+        )
+        return []
+    valid: list[dict[str, object]] = []
+    for row in rows:
+        try:
+            _project_staged_model_evidence(row)
+        except (KeyError, OverflowError, TypeError, ValueError):
+            registry_issues.append(
+                {
+                    "model_id": "staged-evidence",
+                    "integrity_status": "corrupt",
+                    "integrity_error": "staged_evidence_invalid",
+                }
+            )
+            continue
+        valid.append(dict(row))
+    return valid
+
+
+def _project_legacy_model_inventory(entry: object) -> dict[str, object] | None:
+    metadata_value = getattr(entry, "metadata", None)
+    if metadata_value is None:
+        return None
+    metadata = metadata_value.to_dict()
+    projected = {
+        key: metadata.get(key)
+        for key in (
+            "model_id",
+            "parent_model_id",
+            "model_family",
+            "tokenizer_version",
+            "feature_version",
+            "training_dataset_version",
+            "trained_at",
+            "training_started_at",
+            "training_finished_at",
+            "sample_count",
+            "new_sample_count",
+            "category_counts",
+            "account_counts",
+            "validation_method",
+            "accuracy",
+            "macro_f1",
+            "prediction_latency_p50_ms",
+            "prediction_latency_p95_ms",
+            "artifact_sha256",
+        )
+    }
+    per_category_metrics = metadata.get("per_category_metrics")
+    projected["per_category_metrics"] = {
+        str(category): {
+            key: values.get(key)
+            for key in (
+                "precision",
+                "recall",
+                "f1",
+                "validation_sample_count",
+                "validation_positive_support",
+                "automatic_candidate_count",
+                "evaluated_threshold",
+                "configured_threshold",
+                "minimum_precision",
+                "minimum_validation_samples",
+                "auto_action_eligible",
+            )
+        }
+        | {
+            "eligibility_reason": _controlled_model_reason(
+                values.get("eligibility_reason")
+            )
+        }
+        for category, values in (
+            per_category_metrics.items()
+            if isinstance(per_category_metrics, dict)
+            else ()
+        )
+        if isinstance(values, dict)
+    }
+    lifecycle = tuple(getattr(entry, "lifecycle", ()))
+
+    def latest_reason(status: str) -> str:
+        return next(
+            (
+                _controlled_model_reason(event.reason)
+                for event in reversed(lifecycle)
+                if event.status == status
+            ),
+            "",
+        )
+
+    projected.update(
+        {
+            "model_version": metadata.get("model_id"),
+            "status": getattr(entry, "status", None) or metadata.get("status"),
+            "status_reason": _controlled_model_reason(
+                getattr(entry, "status_reason", "")
+            ),
+            "candidate_reason": latest_reason("candidate")
+            or _controlled_model_reason(metadata.get("promotion_reason")),
+            "promotion_reason": latest_reason("active"),
+            "rejection_reason": latest_reason("rejected"),
+            "failure_reason": latest_reason("failed")
+            or _controlled_model_reason(metadata.get("failure_reason")),
+            "superseded_reason": (
+                "superseded" if latest_reason("previous") else ""
+            ),
+            "integrity_status": getattr(entry, "integrity_status", "corrupt"),
+            "integrity_error": (
+                _controlled_integrity_error(getattr(entry, "integrity_error", ""))
+                if getattr(entry, "integrity_error", "")
+                else ""
+            ),
+            "lifecycle": [
+                {
+                    "event_id": event.event_id,
+                    "model_id": event.model_id,
+                    "status": event.status,
+                    "occurred_at": event.occurred_at,
+                }
+                for event in lifecycle
+            ],
+        }
+    )
+    return projected
+
+
+def _active_runtime_mode(registry: Any):
+    return derive_runtime_mode(registry)
+
+
+def _active_embedding_model_id(
+    registry: Any, mode: EmailClassifierRuntimeMode
+) -> str | None:
+    if mode is not EmailClassifierRuntimeMode.MODEL_PRIMARY:
+        return None
+    try:
+        payload = json.loads(
+            (Path(registry.root) / ONLINE_ACTIVATION_FILENAME).read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        try:
+            value = registry.active_model_id_unverified()
+        except (AttributeError, OSError, TypeError, ValueError, ModelRegistryError):
+            return None
+        return str(value) if value else None
+    if not isinstance(payload, dict) or not payload.get("model_id"):
+        return None
+    return str(payload["model_id"])
+
+
+def _project_runtime_observability(
+    value: object,
+) -> tuple[dict[str, object], dict[str, int]]:
+    if not isinstance(value, dict):
+        return {"state": "unavailable"}, {}
+    summary = value.get("timing")
+    fallback_counts = value.get("fallback_counts")
+    if not isinstance(summary, dict) or not isinstance(fallback_counts, dict):
+        return {"state": "unavailable"}, {}
+    slo_status = str(summary.get("slo_status") or "")
+    projected_summary: dict[str, object] = {
+        "slo_status": (
+            slo_status
+            if slo_status in {"compliant", "non_compliant", "not_enough_data"}
+            else "unavailable"
+        )
+    }
+    for segment_name in (
+        "all",
+        "warm_success",
+        "warm_success_cache",
+        "warm_success_remote",
+    ):
+        segment = summary.get(segment_name)
+        if not isinstance(segment, dict):
+            continue
+        stages = segment.get("stages")
+        projected_stages: dict[str, object] = {}
+        if isinstance(stages, dict):
+            for stage_name in ("queue", "http", "embedding", "head", "total"):
+                percentiles = stages.get(stage_name)
+                if isinstance(percentiles, dict):
+                    projected_stages[stage_name] = {
+                        key: percentiles.get(key) for key in ("p50", "p95", "p99")
+                    }
+        projected_summary[segment_name] = {
+            "sample_count": segment.get("sample_count"),
+            "stages": projected_stages,
+        }
+    projected_fallbacks: dict[str, int] = {}
+    for key, value in fallback_counts.items():
+        code = str(key)
+        safe_code = code if code in _RUNTIME_FALLBACK_CODES else "runtime_failure"
+        projected_fallbacks[safe_code] = projected_fallbacks.get(safe_code, 0) + int(
+            value
+        )
+    return projected_summary, projected_fallbacks
 
 
 def _initialization_diagnostic(exc: BaseException) -> str:
@@ -481,12 +1008,24 @@ def register_email_routes(
         item = email_store.get_classification(classification_id)
         if item is None:
             return error_response("not_found", "Email classification not found", 404)
+        safe_item = {
+            key: value for key, value in item.items() if key != "message_text"
+        }
+        provider_state_reader = getattr(
+            email_store, "get_provider_classification_state", None
+        )
+        provider_state = (
+            provider_state_reader(classification_id)
+            if callable(provider_state_reader)
+            else {"state": "unavailable", "reason": "provider_truth_not_supported"}
+        )
         return {
             "ok": True,
-            "item": {**item, "id": str(item["id"])},
+            "item": {**safe_item, "id": str(item["id"])},
             "observability": email_store.list_email_classification_observability(
                 classification_id
             ),
+            "provider_classification": provider_state,
             "meta": meta(),
         }
 
@@ -652,55 +1191,76 @@ def register_email_routes(
             if entry.integrity_status != "verified":
                 registry_issues.append(
                     {
-                        "model_id": entry.model_id,
+                        "model_id": "model-inventory-evidence",
                         "integrity_status": entry.integrity_status,
-                        "integrity_error": entry.integrity_error,
+                        "integrity_error": _controlled_integrity_error(
+                            entry.integrity_error
+                        ),
                     }
                 )
-            if entry.metadata is None:
-                continue
-            metadata = entry.metadata.to_dict()
-            lifecycle = [event.__dict__ for event in entry.lifecycle]
-
-            def latest_reason(status: str) -> str:
-                return next(
-                    (
-                        event["reason"]
-                        for event in reversed(lifecycle)
-                        if event["status"] == status
-                    ),
-                    "",
-                )
-
-            models.append(
-                {
-                    **metadata,
-                    "model_version": metadata["model_id"],
-                    "status": entry.status or metadata["status"],
-                    "status_reason": entry.status_reason,
-                    "candidate_reason": latest_reason("candidate")
-                    or metadata["promotion_reason"],
-                    "promotion_reason": latest_reason("active"),
-                    "rejection_reason": latest_reason("rejected"),
-                    "failure_reason": latest_reason("failed")
-                    or metadata["failure_reason"],
-                    "superseded_reason": latest_reason("previous"),
-                    "integrity_status": entry.integrity_status,
-                    "integrity_error": entry.integrity_error,
-                    "lifecycle": lifecycle,
-                }
+            projected = _project_legacy_model_inventory(entry)
+            if projected is not None:
+                models.append(projected)
+        staged_evidence = _safe_staged_evidence(service.registry, registry_issues)
+        latest_evidence = staged_evidence[-1] if staged_evidence else None
+        latest_projection = (
+            _project_staged_model_evidence(latest_evidence)
+            if latest_evidence is not None
+            else None
+        )
+        active_mode = _active_runtime_mode(service.registry)
+        modern_active_model_id = _active_embedding_model_id(
+            service.registry, active_mode
+        )
+        if modern_active_model_id is not None:
+            active_model_id = modern_active_model_id
+        persisted_runtime = (
+            email_store.classifier_runtime_observability(
+                model_id=modern_active_model_id
             )
+            if modern_active_model_id is not None
+            and hasattr(email_store, "classifier_runtime_observability")
+            else None
+        )
+        runtime_timing, fallback_counts = _project_runtime_observability(
+            persisted_runtime
+        )
         pending_examples = len(email_store.list_unincluded_training_examples())
         return {
             "ok": True,
             "learning": {
                 "active_model_id": active_model_id,
+                "active_mode": active_mode.value,
                 "pending_examples": pending_examples,
                 "last_trained_feedback_count": state.last_trained_feedback_count,
                 "last_trained_at": state.last_trained_at,
                 "last_feedback_at": state.last_feedback_at,
                 "active_run_id": state.active_run_id,
                 "models": models,
+                "staged_models": [
+                    _project_staged_model_evidence(row) for row in staged_evidence
+                ],
+                "training_snapshot": (
+                    email_store.latest_training_snapshot_state()
+                    if hasattr(email_store, "latest_training_snapshot_state")
+                    else None
+                ),
+                "historical_eligibility": (
+                    latest_projection.get("historical_eligibility")
+                    if latest_projection is not None
+                    else None
+                ),
+                "promotion_evidence": (
+                    latest_projection.get("promotion_evidence")
+                    if latest_projection is not None
+                    else {
+                        "ready": False,
+                        "passing_model_ids": [],
+                        "reason": "no_staged_candidate",
+                    }
+                ),
+                "runtime_timing": runtime_timing,
+                "fallback_counts": fallback_counts,
                 "registry_issues": registry_issues,
                 "category_thresholds": {
                     row["category"]: row["threshold"]
@@ -708,6 +1268,82 @@ def register_email_routes(
                 },
             },
             "meta": {"snapshot_at": datetime.now(timezone.utc).isoformat()},
+        }
+
+    @app.get("/api/console/email/folder-bindings")
+    def email_folder_bindings():
+        email_store = require_store()
+        bindings = email_store.list_account_folder_bindings()
+        by_category: dict[str, list[dict[str, object]]] = {}
+        for binding in bindings:
+            by_category.setdefault(str(binding["category_key"]), []).append(
+                {
+                    key: binding[key]
+                    for key in (
+                        "account_id",
+                        "provider_folder_id",
+                        "provider_folder_name",
+                        "binding_status",
+                        "last_verified_at",
+                    )
+                }
+            )
+        items = []
+        for config in email_store.list_category_configs():
+            category_key = str(config["category_key"])
+            items.append(
+                {
+                    "category_key": category_key,
+                    "display_name": config["display_name"],
+                    "enabled": config["enabled"],
+                    "description_version": config["description_version"],
+                    "accounts": by_category.get(category_key, []),
+                }
+            )
+        return {"ok": True, "items": items, "meta": meta()}
+
+    @app.get("/api/console/email/model-versions/{model_id}")
+    def email_model_version(model_id: str):
+        if email_learning_factory is None:
+            return error_response(
+                "email_learning_unavailable",
+                "Email learning is unavailable",
+                503,
+            )
+        service = email_learning_factory()
+        if (
+            not model_id.startswith((MODEL_ID_PREFIX, EMBEDDING_MODEL_ID_PREFIX))
+            or Path(model_id).name != model_id
+            or "/" in model_id
+            or "\\" in model_id
+        ):
+            return error_response(
+                "invalid_email_model_id", "Email model ID is invalid", 400
+            )
+        staged_root = Path(
+            getattr(
+                service.registry,
+                "staged_evidence",
+                Path(service.registry.root) / "staged-evidence",
+            )
+        )
+        if not (staged_root / f"{model_id}.json").is_file():
+            return error_response("not_found", "Email model version not found", 404)
+        try:
+            evidence = service.registry.get_staged_evidence(model_id)
+            if evidence.get("model_id") != model_id:
+                raise ValueError("model identity mismatch")
+            projected = _project_staged_model_evidence(evidence)
+        except (KeyError, OSError, OverflowError, TypeError, ValueError, ModelRegistryError):
+            return error_response(
+                "email_model_integrity_error",
+                "Email model evidence failed integrity validation",
+                409,
+            )
+        return {
+            "ok": True,
+            "model": projected,
+            "meta": meta(),
         }
 
     def category_response(email_store: EmailStore, row: dict[str, Any]):

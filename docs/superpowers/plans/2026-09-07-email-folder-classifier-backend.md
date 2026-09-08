@@ -603,7 +603,8 @@ Expected: zero lint errors and the entire suite passes.
 With the configured test mailbox and GPU4 embedding endpoint, run the live tests selected by:
 
 ```bash
-pytest -q -m live tests/test_email_folder_classifier_e2e.py tests/test_email_embedding_client.py
+CEO_LIVE_EMAIL_FOLDER_CLASSIFIER_E2E=1 CEO_LIVE_EMAIL_EMBEDDING_E2E=1 \
+pytest --run-live -q -m live tests/test_email_folder_classifier_e2e.py tests/test_email_embedding_client.py
 ```
 
 Verify no reply/send call occurred; verify one controlled test message was moved and flagged with provider readback; verify folder truth changes after a manual provider move; verify cached P95 <100ms and warm GPU-path P95 <500ms. Use a designated reversible test message and restore its original folder/flag state afterward.

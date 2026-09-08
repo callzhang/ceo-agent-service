@@ -30,15 +30,33 @@ from app.email_model_registry import (
 TRAINED_AT = datetime(2026, 8, 29, 21, 45, 30, tzinfo=timezone.utc)
 
 
-def _maturity(model_id: str, *, parent: str = "active-v1", passing: bool = True):
+def _maturity(
+    model_id: str,
+    *,
+    parent: str = "active-v1",
+    passing: bool = True,
+    snapshot_number: int | None = None,
+    accepted_hits: int | None = None,
+):
+    if snapshot_number is None:
+        snapshot_number = 2 if model_id.endswith("2") else 1
+    if accepted_hits is None:
+        accepted_hits = 20 + snapshot_number - 1
     categories = ("work", "legal")
     metric = HistoricalEligibility(
         precision=0.96 if passing else 0.94,
-        accepted_hits=20,
-        independent_groups=10,
+        accepted_hits=accepted_hits,
+        independent_groups=10 + snapshot_number - 1,
     )
     return CandidateMaturityEvidence(
         model_id=model_id,
+        source_snapshot_id=f"snapshot-{snapshot_number}",
+        source_snapshot_digest=str(snapshot_number) * 64,
+        source_snapshot_observed_at=(
+            TRAINED_AT + timedelta(minutes=snapshot_number)
+        ).isoformat(),
+        folder_label_watermark=100 + snapshot_number,
+        important_label_watermark=40 + snapshot_number,
         compatibility=CandidateCompatibility(
             enabled_categories=categories,
             description_version="descriptions-v3",
@@ -94,6 +112,53 @@ def test_whole_model_does_not_count_same_candidate_twice() -> None:
 
     assert result.ready is False
     assert result.reason == "two_distinct_candidates_required"
+
+
+def test_whole_model_rejects_two_candidates_from_same_frozen_snapshot() -> None:
+    first = _maturity("candidate-1")
+    retrained = CandidateMaturityEvidence(
+        **{
+            **_maturity("candidate-2").__dict__,
+            "source_snapshot_id": first.source_snapshot_id,
+            "source_snapshot_digest": first.source_snapshot_digest,
+            "source_snapshot_observed_at": first.source_snapshot_observed_at,
+            "folder_label_watermark": first.folder_label_watermark,
+            "important_label_watermark": first.important_label_watermark,
+        }
+    )
+
+    result = assess_whole_model_readiness((first, retrained))
+
+    assert result.ready is False
+    assert result.reason == "independent_snapshot_required"
+
+
+def test_whole_model_requires_advanced_label_and_evaluation_evidence() -> None:
+    first = _maturity("candidate-1")
+    no_label_advance = CandidateMaturityEvidence(
+        **{
+            **_maturity("candidate-2").__dict__,
+            "folder_label_watermark": first.folder_label_watermark,
+            "important_label_watermark": first.important_label_watermark,
+        }
+    )
+    no_evaluation_advance = _maturity(
+        "candidate-2", accepted_hits=first.important_eligibility.accepted_hits
+    )
+    no_evaluation_advance = CandidateMaturityEvidence(
+        **{
+            **no_evaluation_advance.__dict__,
+            "category_eligibility": first.category_eligibility,
+            "important_eligibility": first.important_eligibility,
+        }
+    )
+
+    assert assess_whole_model_readiness((first, no_label_advance)).reason == (
+        "label_watermark_not_advanced"
+    )
+    assert assess_whole_model_readiness((first, no_evaluation_advance)).reason == (
+        "evaluation_evidence_not_advanced"
+    )
 
 
 def test_staged_evidence_is_immutable_and_never_changes_active_manifest(
@@ -158,6 +223,11 @@ def _maturity_mapping(model_id: str) -> dict[str, object]:
     }
     return {
         "model_id": model_id,
+        "source_snapshot_id": maturity.source_snapshot_id,
+        "source_snapshot_digest": maturity.source_snapshot_digest,
+        "source_snapshot_observed_at": maturity.source_snapshot_observed_at,
+        "folder_label_watermark": maturity.folder_label_watermark,
+        "important_label_watermark": maturity.important_label_watermark,
         "compatibility": {
             **compatibility.__dict__,
             "enabled_categories": list(compatibility.enabled_categories),

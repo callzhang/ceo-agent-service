@@ -323,6 +323,11 @@ def train_frozen_embedding_candidate(
     )
     maturity = CandidateMaturityEvidence(
         model_id=model_id,
+        source_snapshot_id=snapshot_id,
+        source_snapshot_digest=str(snapshot["snapshot_digest"]),
+        source_snapshot_observed_at=str(snapshot["observed_at"]),
+        folder_label_watermark=int(snapshot["folder_label_watermark"]),
+        important_label_watermark=int(snapshot["important_label_watermark"]),
         compatibility=compatibility,
         category_eligibility={
             category: HistoricalEligibility(
@@ -347,6 +352,11 @@ def train_frozen_embedding_candidate(
     }
     current_readiness_evidence = {
         "model_id": model_id,
+        "source_snapshot_id": snapshot_id,
+        "source_snapshot_digest": str(snapshot["snapshot_digest"]),
+        "source_snapshot_observed_at": str(snapshot["observed_at"]),
+        "folder_label_watermark": int(snapshot["folder_label_watermark"]),
+        "important_label_watermark": int(snapshot["important_label_watermark"]),
         "compatibility": compatibility_evidence,
         "metrics": {
             "categories": category_metrics,
@@ -373,6 +383,10 @@ def train_frozen_embedding_candidate(
     evidence = {
         "model_id": model_id,
         "source_snapshot_id": snapshot_id,
+        "source_snapshot_digest": str(snapshot["snapshot_digest"]),
+        "source_snapshot_observed_at": str(snapshot["observed_at"]),
+        "folder_label_watermark": int(snapshot["folder_label_watermark"]),
+        "important_label_watermark": int(snapshot["important_label_watermark"]),
         "status": "candidate",
         "training_never_activates": True,
         "compatibility": compatibility_evidence,

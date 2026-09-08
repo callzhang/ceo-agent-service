@@ -45,6 +45,7 @@ def _agent_classification_action_plan(
     from app.email_classifier_contracts import (
         ACTION_DEPENDENCY_PARAMETER,
         EmailAction,
+        EmailActionAuthorization,
         build_email_action_plan,
     )
 
@@ -109,6 +110,21 @@ def _agent_classification_action_plan(
             parameters[EmailAction.MARK_READ] = {
                 ACTION_DEPENDENCY_PARAMETER: dependencies
             }
+    action_authorizations = None
+    if classification_source == "model":
+        action_authorizations = tuple(
+            EmailActionAuthorization(
+                action_type=action,
+                parameters=dict(sorted(parameters.get(action, {}).items())),
+                authorization_source="model_eligibility",
+                eligibility_evidence_reference=f"email-model-promotion:{model_id}",
+                authorized=True,
+                ineligible_reason="",
+                source_model_id=model_id,
+                config_version=config_version,
+            )
+            for action in actions
+        )
     return build_email_action_plan(
         classification_id=classification_id,
         account_id=account_id,
@@ -120,6 +136,7 @@ def _agent_classification_action_plan(
         actions=actions,
         action_parameters=parameters,
         created_at=created_at,
+        action_authorizations=action_authorizations,
     )
 
 
@@ -2251,7 +2268,11 @@ def build_email_worker_dependencies(
         )
 
     def load_active_model():
-        return PromotedEmailClassifierRuntime(registry, learning_service=learning)
+        return PromotedEmailClassifierRuntime(
+            registry,
+            learning_service=learning,
+            observability_store=email_store,
+        )
 
     def record_health(scope: str, payload: Mapping[str, object]):
         task_store.set_service_state(

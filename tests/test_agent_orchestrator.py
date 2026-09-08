@@ -710,7 +710,8 @@ def _audited_email_task(
         action_type="unsubscribe",
         action_plan_version=1,
     )
-    entry_reference = "unsubscribe-entry:" + sha256(b"entry").hexdigest()
+    entry_digest = sha256(b"entry").hexdigest()
+    entry_reference = "unsubscribe-entry:" + entry_digest
     operation_reference = "unsubscribe-operation:" + sha256(b"open").hexdigest()
     control_reference = "unsubscribe-control:" + sha256(b"confirm").hexdigest()
     network_policy_reference = "network-policy:" + sha256(b"policy").hexdigest()
@@ -746,14 +747,19 @@ def _audited_email_task(
         "action_plan_id": "email-plan:subscription:1",
         "action_plan_version": 1,
         "classification_id": 41,
-        "category": "subscription",
+        "category": "junk",
         "classification_source": "user",
         "confidence": 1.0,
         "model_id": "email-model:test",
         "config_version": "email-config:test",
         "action_parameters": {},
         "unsubscribe_entries": [
-            {"source": "header_https", "reference": entry_reference, "priority": 10}
+            {
+                "index": 0,
+                "source": "header_https",
+                "digest": entry_digest,
+                "reference": entry_reference,
+            }
         ],
         "unsubscribe_authentication": None,
         "unsubscribe_network_policy_reference": network_policy_reference,

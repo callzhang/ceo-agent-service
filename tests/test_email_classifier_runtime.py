@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pickle
@@ -274,11 +275,37 @@ class _ActivationRegistry:
         self.embedding_artifacts.mkdir(parents=True)
         self._evidence = evidence
 
+    def _project_evidence(self):
+        projected = []
+        for index, item in enumerate(self._evidence, start=1):
+            value = deepcopy(item)
+            value.update(
+                {
+                    "source_snapshot_id": f"runtime-snapshot-{index}",
+                    "source_snapshot_digest": str(index) * 64,
+                    "source_snapshot_observed_at": (
+                        f"2026-09-07T00:00:0{index}+00:00"
+                    ),
+                    "folder_label_watermark": 100 + index,
+                    "important_label_watermark": 40 + index,
+                }
+            )
+            for metrics in (
+                *value["metrics"]["categories"].values(),
+                value["metrics"]["important"],
+            ):
+                metrics["accepted_hits"] += index
+                metrics["independent_groups"] += index
+            projected.append(value)
+        return projected
+
     def list_staged_evidence(self):
-        return list(self._evidence)
+        return self._project_evidence()
 
     def get_staged_evidence(self, model_id):
-        return next(item for item in self._evidence if item["model_id"] == model_id)
+        return next(
+            item for item in self._project_evidence() if item["model_id"] == model_id
+        )
 
 
 class _LoadedOnlineModel:

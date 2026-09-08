@@ -148,7 +148,10 @@ Feedback API 是现有本地后端边界内的操作接口，供 Workbench 和�
 
 > **实现与部署状态：** Email audited-v2 lifecycle 已在本分支实现并通过开发/loopback 验证；实际 launchd 仍运行 main checkout，因此尚未部署，也未在生产启用。
 
-Email 的分类确认不是 Agent 运行。确定性 Email 动作清单是
+Email 的分类确认不是 Agent 运行，也不会创建通用 `reply_task`。邮箱服务器中的当前文件夹是
+类别的唯一事实来源：业务文件夹映射为相应类别，Inbox 表示未分类，Spam/Trash 映射为内部
+`junk`，Sent/Draft 排除。`important` 是与类别正交的标记，由 provider Starred/Important/Flagged
+与成熟模型信号取并集；junk 不允许 important。确定性 Email 动作清单是
 `label`、`mark_read`、`archive`、`move`、`trash`；独立 Email worker 领取并执行这些动作，
 随后读取 provider 状态确认结果。这些确定性动作
 不创建 CEO Agent task，也不创建 Consumer/Audit run。`trash` 只能执行可恢复的 move-to-Trash；
@@ -184,6 +187,66 @@ policy 和当前 readback。多步骤页面每轮在已接受 prefix 后只追�
 新 operation，不重放已接受的 operation prefix。仍需继续页面流程时持久化 `awaiting_audit`
 continuation；`awaiting_audit` 是 effect/claim 的领域状态，
 不是顶层 task 状态。历史 run、session、step、receipt 和失败事实保持不可变。
+
+冷启动期间，实时主路径是 Agent，且只处理服务观察到的未读 Inbox/未绑定来源邮件；Agent 不处理
+已读邮件，也不因分类而改成已读。冻结训练 snapshot 直接采用 provider 文件夹和 important 信号，
+训练与 shadow 评估均为离线、阶段性作业，不在收信路径实时训练或并行推理。某一类别满足
+precision/support/group 门槛后，只获得显式历史批次的资格；全量线上模型仍需连续两个兼容版本对
+全部类别和 important 都达标且没有未解决的系统性错误。整个模型晋升后，主路径严格按
+`model -> Agent fallback` 顺序执行：模型接受时不调用 Agent；embedding 超时、失败或拒绝时才调用
+一次 Agent。两个连续候选必须分别绑定不同且时间递增的冻结 snapshot；snapshot digest 必须不同，
+folder/important 累计标签水位以及至少一项独立评估样本或组证据必须前进。同一 snapshot 的重复训练
+不能满足晋升。
+
+业务类别移动完成后在变更后的 locator 上执行 flag/read 动作并回读；用户在 provider 中再次移动
+邮件时，下一份 snapshot 立即以该文件夹作为训练标签。历史任务按小批次、显式触发并保存游标，
+不会自动扫描全部邮箱。`junk` 先由代码发现标准退订候选；只有 unsubscribe 进入 Consumer/Audit
+网页流程，最终再移动到系统 Trash。连接邮箱 OTP 仅允许站点、收件人、挑战上下文和时间窗全部
+匹配的临时读取；普通 CAPTCHA 在隔离 profile 中有限尝试，不能完成的密码/MFA/CAPTCHA 保存不含
+秘密的有界 continuation 并交给用户，恢复时不重放已经审计的 operation prefix。
+
+只读 Console API 提供当前 provider-derived category 或 unavailable、文件夹绑定、描述/训练 snapshot
+版本、样本与组数量、逐类别历史资格、连续晋升证据、active mode/model、时延与 fallback、动作回读
+和退订 continuation。API 不暴露完整退订 URL、OTP、secret、raw embedding、完整正文、附件字节或
+浏览器 session 私密数据。外部配置的 embedding model/revision 不原样投影，也不返回可被离线枚举的
+摘要；API 仅返回固定受控占位符。canonical model/snapshot ID 则按生产构造格式校验。当前 category
+来自扫描进程持续写入的 latest-provider-observation 投影，
+不读取冻结 snapshot，API 也不会额外连接邮箱；冻结数据只以 training snapshot 字段展示。SMTP、
+自动回复和所有 reply/send 路径继续不可达。
+
+### Email folder classifier live verification
+
+Live checks are opt-in and excluded from normal test runs. The mailbox check requires a
+designated reversible message plus `CEO_LIVE_EMAIL_FOLDER_CLASSIFIER_E2E=1`,
+`CEO_LIVE_EMAIL_IMAP_HOST`, `CEO_LIVE_EMAIL_IMAP_PORT` (default 993),
+`CEO_LIVE_EMAIL_IMAP_USERNAME`, `CEO_LIVE_EMAIL_IMAP_PASSWORD`,
+`CEO_LIVE_EMAIL_ACCOUNT_ID`, `CEO_LIVE_EMAIL_MESSAGE_UID`,
+`CEO_LIVE_EMAIL_MESSAGE_UIDVALIDITY`, `CEO_LIVE_EMAIL_MESSAGE_ID`,
+`CEO_LIVE_EMAIL_LOCATOR_FOLDER`, and `CEO_LIVE_EMAIL_TEST_FOLDER`. UID/folder variables are only
+locator hints: before any write, the test freezes the provider-derived folder, UIDVALIDITY, UID,
+Message-ID, and the complete persistent IMAP FLAGS set, including keywords/provider labels (the
+non-persistent `\\Recent` session flag is excluded). The test simulates a provider/user-side move with
+a raw IMAP operation outside the service executor, then freezes an observation snapshot and proves the
+new folder-derived category. In `finally` it re-locates the designated message by stable Message-ID
+across allowed folders, restores the folder and exact persistent flag set, and verifies every property
+again through a fresh connection. A MOVE whose returned locator/readback fails is treated as possibly
+applied: compensation re-locates before any further write. If exact restoration cannot be proved, it
+fails with the stable identity and current locator for manual recovery. It never configures SMTP or
+calls send/reply.
+
+The GPU4 check requires `CEO_LIVE_EMAIL_EMBEDDING_E2E=1` plus the normal
+`EmailEmbeddingClient.from_environment` endpoint and authentication variables. The cached check
+runs the same normalized message through the warmed production `PromotedEmailClassifierRuntime`,
+including normalization, cache lookup, description-aware MLP head, and result validation, and proves
+cache hits before requiring P95 below 100 ms. Distinct uncached GPU requests require P95 below 500 ms.
+Without explicit opt-in, both live checks skip without external mutation.
+
+Run both opt-in checks only with a designated reversible message and GPU4 configured:
+
+```bash
+CEO_LIVE_EMAIL_FOLDER_CLASSIFIER_E2E=1 CEO_LIVE_EMAIL_EMBEDDING_E2E=1 \
+pytest --run-live -q -m live tests/test_email_folder_classifier_e2e.py tests/test_email_embedding_client.py
+```
 
 ## DingTalk / WeChat 统一外发后缀
 

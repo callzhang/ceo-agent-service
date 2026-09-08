@@ -569,6 +569,9 @@ class OnlineEmbeddingPredictor:
                     if timed.prediction.category_accepted
                     else "rejected"
                 ),
+                fallback_reason=(
+                    "" if timed.prediction.category_accepted else "model_rejected"
+                ),
                 cache_hit=cache_hit,
                 runtime_warm=runtime_warm,
             )
@@ -721,6 +724,7 @@ class PromotedEmailClassifierRuntime:
         embedding_client_owned: bool | None = None,
         cache_factory: Callable[[object], object] | None = None,
         latency: StageLatencyRecorder | None = None,
+        observability_store: EmailStore | None = None,
     ) -> None:
         self.registry = registry
         self.learning_service = learning_service
@@ -737,6 +741,7 @@ class PromotedEmailClassifierRuntime:
             )
         )
         self.latency = latency or StageLatencyRecorder()
+        self._observability_store = observability_store
         self._lock = threading.RLock()
         self._snapshot = RuntimeSnapshot.agent_primary()
         self._generation: _RuntimeGeneration | None = None
@@ -822,6 +827,26 @@ class PromotedEmailClassifierRuntime:
             client = self._embedding_client_factory(classifier)
             cache = self._cache_factory(classifier)
             batcher = OnlineEmbeddingMicrobatcher(client)
+            generation_latency = (
+                self.latency
+                if self._observability_store is None
+                else StageLatencyRecorder(
+                    sample_sink=lambda sample: (
+                        self._observability_store.record_classifier_runtime_sample(
+                            model_id=model_id,
+                            outcome=str(sample["outcome"]),
+                            fallback_code=str(sample["fallback_reason"]),
+                            cache_hit=bool(sample["cache_hit"]),
+                            runtime_warm=bool(sample["runtime_warm"]),
+                            queue_ms=float(sample["queue_ms"]),
+                            http_ms=float(sample["http_ms"]),
+                            embedding_ms=float(sample["embedding_ms"]),
+                            head_ms=float(sample["head_ms"]),
+                            total_ms=float(sample["total_ms"]),
+                        )
+                    )
+                )
+            )
             predictor = OnlineEmbeddingPredictor(
                 model_id=model_id,
                 classifier=classifier,
@@ -833,7 +858,7 @@ class PromotedEmailClassifierRuntime:
                     f"{classifier.input_schema_version}:"
                     f"{classifier.embedding_revision}"
                 ),
-                latency=self.latency,
+                latency=generation_latency,
             )
         except Exception:
             if batcher is not None:
@@ -863,6 +888,7 @@ class PromotedEmailClassifierRuntime:
             if publish:
                 self._snapshot = promoted
                 self._generation = generation
+                self.latency = generation_latency
         if not publish:
             generation.retire()
             return
@@ -1015,6 +1041,9 @@ class StageLatencyRecorder:
     )
     _raw: list[dict[str, object]] = field(default_factory=list)
     _fallback_reasons: dict[str, int] = field(default_factory=dict)
+    sample_sink: Callable[[Mapping[str, object]], None] | None = field(
+        default=None, repr=False
+    )
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def record(
@@ -1039,18 +1068,23 @@ class StageLatencyRecorder:
             if not isinstance(value, float) or not math.isfinite(value) or value < 0:
                 raise ValueError("latency samples must be finite non-negative floats")
             validated[f"{stage}_ms"] = value
+        sample = {
+            **validated,
+            "outcome": outcome,
+            "fallback_reason": fallback_reason,
+            "cache_hit": cache_hit,
+            "runtime_warm": runtime_warm,
+        }
         with self._lock:
             for stage in self._values:
                 self._values[stage].append(validated[f"{stage}_ms"])
-            self._raw.append(
-                {
-                    **validated,
-                    "outcome": outcome,
-                    "fallback_reason": fallback_reason,
-                    "cache_hit": cache_hit,
-                    "runtime_warm": runtime_warm,
-                }
-            )
+            self._raw.append(sample)
+        if self.sample_sink is not None:
+            try:
+                self.sample_sink(MappingProxyType(dict(sample)))
+            except Exception:
+                # Observability is best effort and must never alter routing.
+                pass
 
     def record_fallback(self, reason: str) -> None:
         normalized = str(reason or "unknown")

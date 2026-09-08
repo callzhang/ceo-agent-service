@@ -38,12 +38,32 @@ def _folder(folder_id="inbox", *, role=FolderRole.INBOX):
 class _Store:
     def __init__(self, bindings=()):
         self.bindings = bindings
+        self.current_observation_calls = []
 
     def list_account_folder_bindings(self):
         return self.bindings
 
     def has_stable_classification(self, _identity):
         return False
+
+    def record_current_provider_observations(
+        self,
+        observations,
+        *,
+        unavailable_folders,
+        authoritative_folders,
+        active_account_ids,
+        observed_at,
+    ):
+        self.current_observation_calls.append(
+            (
+                tuple(observations),
+                tuple(unavailable_folders),
+                tuple(authoritative_folders),
+                tuple(active_account_ids),
+                observed_at,
+            )
+        )
 
 
 def test_observer_uses_bounded_uid_watermark_and_resumes_after_restart(tmp_path):
@@ -78,10 +98,11 @@ def test_observer_uses_bounded_uid_watermark_and_resumes_after_restart(tmp_path)
         def logout(self):
             return None
 
+    store = _Store()
     arguments = dict(
         state_path=tmp_path / "observer.json",
         source_factory=lambda _account: Source(),
-        email_store=_Store(),
+        email_store=store,
         batch_size=2,
     )
     first = ProviderTrainingObservationJob(**arguments).run_once(
@@ -99,6 +120,9 @@ def test_observer_uses_bounded_uid_watermark_and_resumes_after_restart(tmp_path)
         "three",
         "two",
     ]
+    assert len(store.current_observation_calls) == 2
+    assert store.current_observation_calls[-1][0] == second.observations
+    assert store.current_observation_calls[-1][1] == ()
 
 
 def test_uidvalidity_reset_is_bounded_and_replaces_old_folder_cache(tmp_path):
@@ -514,6 +538,59 @@ def test_bounded_membership_tombstone_removes_source_after_move_and_resumes(
     assert len(moved.observations) == 1
     assert moved.observations[0]["provider_folder_id"] == "legal"
     assert moved.observations[0]["bound_category_key"] == "legal"
+    assert store.current_observation_calls[-1][2] == (
+        "account-1:legal",
+        "account-1:work",
+    )
+
+
+def test_observer_publishes_excluded_folders_and_removed_accounts(tmp_path) -> None:
+    from app.email_training_observer import ProviderTrainingObservationJob
+
+    phase = ["inbox"]
+
+    class Source:
+        def list_folders(self):
+            if phase[0] == "sent":
+                return (_folder("sent", role=FolderRole.SENT),)
+            return (_folder("inbox"),)
+
+        def fetch_uid_membership(self, _folder, *, cursor_uidvalidity, uids):
+            return SimpleNamespace(
+                uidvalidity=cursor_uidvalidity,
+                existing_uids=frozenset(),
+                important_signals_by_uid={},
+            )
+
+        def fetch_uid_batch(self, folder, **_kwargs):
+            if folder == phase[0]:
+                return SimpleNamespace(
+                    uidvalidity=10, messages=(_message(1, "message-1"),)
+                )
+            return SimpleNamespace(uidvalidity=10, messages=())
+
+        def logout(self):
+            return None
+
+    store = _Store()
+    job = ProviderTrainingObservationJob(
+        state_path=tmp_path / "observer.json",
+        source_factory=lambda _account: Source(),
+        email_store=store,
+        batch_size=10,
+    )
+    job.run_once(({"account_id": "account-1"},))
+    phase[0] = "sent"
+    result = job.run_once(({"account_id": "account-1"},))
+
+    assert result.observations[0]["folder_role"] == FolderRole.SENT
+    assert store.current_observation_calls[-1][2] == (
+        "account-1:inbox",
+        "account-1:sent",
+    )
+
+    job.run_once(())
+    assert store.current_observation_calls[-1][3] == ()
 
 
 def test_membership_reconciliation_cursor_is_bounded_and_resumes_after_restart(
