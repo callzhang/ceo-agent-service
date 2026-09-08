@@ -2750,12 +2750,14 @@ def build_email_worker_dependencies(
             ProviderTrainingChangeDetector,
             ProviderTrainingObservationJob,
             TrainingObservationCoordinator,
+            provider_training_folder_is_relevant,
         )
 
         observation_job = ProviderTrainingObservationJob(
             state_path=registry.root / "provider-training-observations.json",
             source_factory=source_factory,
             email_store=email_store,
+            include_folder=provider_training_folder_is_relevant,
         )
         snapshot_job = training_snapshot_job_factory(
             store=email_store,

@@ -24,6 +24,17 @@ _STATE_VERSION = 2
 _PROCESS_LOCK = threading.RLock()
 
 
+def provider_training_folder_is_relevant(
+    folder: object, binding: Mapping[str, object] | None
+) -> bool:
+    """Limit provider-body reads to folders that can supply training labels."""
+
+    return binding is not None or getattr(folder, "role", None) in {
+        FolderRole.JUNK,
+        FolderRole.TRASH,
+    }
+
+
 @dataclass(frozen=True)
 class ProviderTrainingObservationResult:
     observations: tuple[dict[str, object], ...]
@@ -42,6 +53,8 @@ class ProviderTrainingObservationJob:
         email_store: object,
         batch_size: int = 200,
         reconciliation_batch_size: int = 50,
+        include_folder: Callable[[object, Mapping[str, object] | None], bool]
+        | None = None,
     ) -> None:
         if isinstance(batch_size, bool) or not isinstance(batch_size, int):
             raise TypeError("batch_size must be an integer")
@@ -58,6 +71,7 @@ class ProviderTrainingObservationJob:
         self.email_store = email_store
         self.batch_size = batch_size
         self.reconciliation_batch_size = reconciliation_batch_size
+        self.include_folder = include_folder or (lambda _folder, _binding: True)
 
     def run_once(
         self, accounts: Sequence[Mapping[str, object]]
@@ -76,6 +90,21 @@ class ProviderTrainingObservationJob:
                 source = self.source_factory(account)
                 try:
                     inventory = tuple(source.list_folders())
+                    inventory = tuple(
+                        folder
+                        for folder in inventory
+                        if self.include_folder(
+                            folder,
+                            _active_binding(
+                                bindings,
+                                account_id,
+                                _required_text(
+                                    folder.provider_folder_id,
+                                    "provider_folder_id",
+                                ),
+                            ),
+                        )
+                    )
                     account_state = updated["accounts"].setdefault(
                         account_id, {"folders": {}}
                     )

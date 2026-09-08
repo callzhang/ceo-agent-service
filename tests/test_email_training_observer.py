@@ -125,6 +125,50 @@ def test_observer_uses_bounded_uid_watermark_and_resumes_after_restart(tmp_path)
     assert store.current_observation_calls[-1][1] == ()
 
 
+def test_production_training_scope_reads_only_bound_categories_and_system_junk(
+    tmp_path,
+):
+    from app.email_training_observer import (
+        ProviderTrainingObservationJob,
+        provider_training_folder_is_relevant,
+    )
+
+    folders = (
+        _folder("inbox", role=FolderRole.INBOX),
+        _folder("unbound", role=FolderRole.UNBOUND),
+        _folder("work", role=FolderRole.UNBOUND),
+        _folder("spam", role=FolderRole.JUNK),
+        _folder("sent", role=FolderRole.SENT),
+    )
+    binding = {
+        "account_id": "account-1",
+        "provider_folder_id": "work",
+        "category_key": "work",
+        "binding_status": "active",
+    }
+    fetched = []
+
+    class Source:
+        def list_folders(self):
+            return folders
+
+        def fetch_uid_batch(self, folder, **_kwargs):
+            fetched.append(folder)
+            return SimpleNamespace(uidvalidity=10, messages=())
+
+        def logout(self):
+            return None
+
+    ProviderTrainingObservationJob(
+        state_path=tmp_path / "observer.json",
+        source_factory=lambda _account: Source(),
+        email_store=_Store((binding,)),
+        include_folder=provider_training_folder_is_relevant,
+    ).run_once(({"account_id": "account-1"},))
+
+    assert fetched == ["work", "spam"]
+
+
 def test_uidvalidity_reset_is_bounded_and_replaces_old_folder_cache(tmp_path):
     from app.email_training_observer import ProviderTrainingObservationJob
 
