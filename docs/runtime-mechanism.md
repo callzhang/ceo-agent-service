@@ -45,7 +45,7 @@ pending -> running -> done
 ## Runtime-managed Skill 修订与启动配置
 
 Settings 不再直接编辑项目目录或 `~/.agents/skills`。每次保存会在 SQLite 中创建一条不可变的
-managed Skill revision，保存原始 `SKILL.md`、精确 SHA-256、父修订和来源。项目内七个
+managed Skill revision，保存原始 `SKILL.md`、精确 SHA-256、父修订和来源。项目内八个
 service-owned 业务 Skill 只在首次初始化时导入为基线；导入不扫描、不覆盖用户、插件、系统或
 operation Skill，也不会把 Settings 编辑同步回任意运行时目录。
 

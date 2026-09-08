@@ -72,11 +72,13 @@ trigger/context/material references
 Service 不解释业务材料，不替 Agent 选择文件或猜测 OA 对象，也不维护平行 Skill audit DB。详细工具
 轨迹使用 Codex session JSONL；SQLite 只保存现有恢复状态和 receipt 指针。
 
-七个随服务安装、按需加载的业务 Skill 是 `ceo-message-triage`、`ceo-calendar-invite`、
+八个随服务安装、按需加载的业务 Skill 是 `ceo-message-triage`、`ceo-calendar-invite`、
 `ceo-document-review`、`ceo-meeting-work`、`ceo-mail-review`、
-`ceo-personnel-communication` 和 `ceo-work-tracking`。OA、面试和 OKR 继续委派给现有专业 Skill，
+`ceo-personnel-communication`、`ceo-work-tracking` 和 `ceo-sales-weekly-report`。OA、面试和 OKR 继续委派给现有专业 Skill，
 不把专业规则复制进通用 prompt。Task extraction 与 follow-up 由 `ceo-work-tracking` 作为一个从
 提取、建项、催办、验证到关闭的生命周期处理，不建立第二套回复路径。
+
+`ceo-sales-weekly-report` 仅在明确请求时读取当前目标与纷享销客实际数据，生成公司及业务线销售进度评分并把最终 Markdown 保存到 `CEO_WORKSPACE`；它不创建定时任务，也不执行 CRM 写入。
 
 Agent Workbench 的运行协议与模型提供商无关：SQLite 是任务、回合、确认和产物的权威状态，SSE 只流式传送可重放的事件，不成为第二份状态。需要外部效果的操作必须先生成持久化确认，只有当前回合的确认可以被消费。首个生产 runtime 是 Codex；Claude 和 Pi 尚未实现专用 adapter，未来只需实现同一事件、停止、恢复和确认契约即可接入。
 
@@ -222,7 +224,7 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 scripts/bootstrap-local-components.sh --format json
 ```
 
-该脚本会安装 `terminal-notifier`，检查 Codex CLI 与 Nvwa skill，并把七个 CEO 业务 Skill 安装到
+该脚本会安装 `terminal-notifier`，检查 Codex CLI 与 Nvwa skill，并把八个 CEO 业务 Skill 安装到
 当前用户的 `~/.agents/skills`。它不会向 `~/.codex/skills` 安装用户 Skill，也不会覆盖同名的用户自有
 Skill。只修复业务 Skill 时可运行：
 
@@ -237,7 +239,7 @@ Lark 可通过 `LARK_CLI_INSTALL_COMMAND` 覆盖默认 npm 安装命令。
 
 每个安装者应部署自己的一套 service，使用自己的 Codex、DWS/Lark 登录、SQLite、workspace 和可选
 反馈服务。其他同事、HR、审批申请人和项目 owner 不需要安装代码，只需在原工作会话中与 Agent
-交互。安装程序只管理带 `managed_by: ceo-agent-service` 标记的七个 Skill，升级时保留其他用户 Skill。
+交互。安装程序只管理带 `managed_by: ceo-agent-service` 标记的八个 Skill，升级时保留其他用户 Skill。
 
 不要让使用者逐条复制终端命令完成安装。agent 应该自己执行命令、检查输出、编辑本机配置，只在需要用户完成
 登录授权、扫码确认、macOS 权限点击、安装来源确认或 live-send 决策时打断用户。
