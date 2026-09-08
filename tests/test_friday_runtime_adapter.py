@@ -1,3 +1,5 @@
+from dataclasses import fields
+
 import pytest
 
 from app.agent_runtime_config import load_runtime_config
@@ -44,6 +46,26 @@ def test_contract_requires_project_and_maps_execution_input():
     assert contract.create_thread_payload(execution)["project_id"] == "ceo-project"
     with pytest.raises(FridayRuntimeContractError, match="project_id"):
         FridayExecutionInput(project_id="", prompt="x", auth_disabled=True)
+
+
+def test_contract_does_not_claim_local_execution_environment_transport():
+    contract = FridayRuntimeContract.from_documented_api()
+    execution = FridayExecutionInput(
+        project_id="ceo-project", prompt="produce result", auth_disabled=True
+    )
+
+    assert {field.name for field in fields(FridayExecutionInput)} == {
+        "project_id",
+        "prompt",
+        "runtime_ticket",
+        "friday_session_token",
+        "auth_disabled",
+    }
+    assert contract.create_thread_payload(execution) == {
+        "project_id": "ceo-project",
+        "title": "CEO Agent task",
+        "dispatch_mode": "wait",
+    }
 
 
 def test_contract_supports_runtime_ticket_or_session_token_auth():

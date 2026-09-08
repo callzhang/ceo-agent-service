@@ -12,6 +12,7 @@ from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
     RuntimeKind,
     RuntimeRoute,
+    runtime_route_surface_capabilities,
 )
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.managed_skills import ManagedSkillRevision, RuntimeSkillSnapshot
@@ -37,6 +38,7 @@ class RuntimeOption:
     available: bool
     unavailable_reason: str | None
     supported_thinking: tuple[str, ...]
+    capabilities: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -96,12 +98,22 @@ class ScheduledTaskOptionService:
     def runtime_config(self) -> AgentRuntimeConfig:
         return self._runtime_config
 
-    def list_runtime_options(self) -> tuple[RuntimeOption, ...]:
+    def list_runtime_options(
+        self,
+        *,
+        required_capabilities: frozenset[str] = frozenset(),
+    ) -> tuple[RuntimeOption, ...]:
         return tuple(
-            self._runtime_option(route) for route in self._runtime_config.routes
+            self._runtime_option(route, required_capabilities=required_capabilities)
+            for route in self._runtime_config.routes
         )
 
-    def resolve_runtime_route(self, route_name: str) -> RuntimeRoute:
+    def resolve_runtime_route(
+        self,
+        route_name: str,
+        *,
+        required_capabilities: frozenset[str] = frozenset(),
+    ) -> RuntimeRoute:
         route = next(
             (
                 configured
@@ -114,10 +126,47 @@ class ScheduledTaskOptionService:
             raise ScheduledTaskOptionUnavailableError(
                 f"runtime route {route_name}: runtime_not_configured"
             )
-        option = self._runtime_option(route)
+        option = self._runtime_option(
+            route,
+            required_capabilities=required_capabilities,
+        )
         if not option.available:
             raise ScheduledTaskOptionUnavailableError(
                 f"runtime route {route_name}: {option.unavailable_reason}"
+            )
+        return route
+
+    def validate_runtime_capabilities(
+        self,
+        route_name: str,
+        *,
+        required_capabilities: frozenset[str],
+    ) -> RuntimeRoute:
+        route = next(
+            (
+                configured
+                for configured in self._runtime_config.routes
+                if configured.name == route_name
+            ),
+            None,
+        )
+        if route is None:
+            raise ScheduledTaskOptionUnavailableError(
+                f"runtime route {route_name}: runtime_not_configured"
+            )
+        if not required_capabilities:
+            return route
+        snapshot = self._runtime_snapshots.get(route.name)
+        capabilities = (
+            snapshot.capabilities
+            if snapshot is not None and snapshot.route_name == route.name
+            else frozenset()
+        ) | runtime_route_surface_capabilities(route)
+        missing = sorted(required_capabilities - capabilities)
+        if missing:
+            raise ScheduledTaskOptionUnavailableError(
+                f"runtime route {route_name}: missing_capabilities:"
+                + ",".join(missing)
             )
         return route
 
@@ -224,18 +273,31 @@ class ScheduledTaskOptionService:
             tuple(invalid_options),
         )
 
-    def _runtime_option(self, route: RuntimeRoute) -> RuntimeOption:
+    def _runtime_option(
+        self,
+        route: RuntimeRoute,
+        *,
+        required_capabilities: frozenset[str] = frozenset(),
+    ) -> RuntimeOption:
+        all_required = PROBE_VERIFIED_RUNTIME_CAPABILITIES | required_capabilities
         decision = AgentRuntimeRouter(
             routes=(route,),
             store=self._store,
             snapshots=self._runtime_snapshots,
             now=self._now,
         ).first_route_decision(
-            required_capabilities=PROBE_VERIFIED_RUNTIME_CAPABILITIES
+            required_capabilities=all_required
         )
         available = decision.route is not None
         reason = (
             None if available else _single_route_reason(decision.reason, route.name)
+        )
+        snapshot = self._runtime_snapshots.get(route.name)
+        reported_capabilities = runtime_route_surface_capabilities(route)
+        if snapshot is not None and snapshot.route_name == route.name:
+            reported_capabilities |= snapshot.capabilities
+        capabilities = tuple(
+            sorted(reported_capabilities)
         )
         return RuntimeOption(
             route_name=route.name,
@@ -249,6 +311,7 @@ class ScheduledTaskOptionService:
                 if route.runtime_kind is RuntimeKind.CODEX_CLI
                 else ()
             ),
+            capabilities=capabilities,
         )
 
     def _managed_revision_option(

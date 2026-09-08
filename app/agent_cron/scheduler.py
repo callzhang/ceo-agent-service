@@ -21,7 +21,12 @@ OPERATION_SKILL_UNAVAILABLE = "scheduled_task_operation_skill_unavailable"
 
 
 class ScheduledTaskOptions(Protocol):
-    def resolve_runtime_route(self, route_name: str) -> object: ...
+    def resolve_runtime_route(
+        self,
+        route_name: str,
+        *,
+        required_capabilities: frozenset[str] = frozenset(),
+    ) -> object: ...
 
     def resolve_managed_skill_revision(
         self, *, skill_id: int, revision_id: int, skill_name: str
@@ -215,7 +220,12 @@ class AgentCronScheduler:
         overlap_run_id = prior.id if prior is not None else None
 
         try:
-            self._option_service.resolve_runtime_route(task.runtime_id)
+            self._option_service.resolve_runtime_route(
+                task.runtime_id,
+                required_capabilities=frozenset(
+                    task.required_runtime_capabilities
+                ),
+            )
         except ValueError as exc:
             return RUNTIME_UNAVAILABLE, str(exc), overlap_run_id
 

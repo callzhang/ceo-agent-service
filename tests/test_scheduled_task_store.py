@@ -14,6 +14,7 @@ from app.agent_cron.models import (
     ScheduledTaskVersionConflictError,
 )
 from app.agent_runtime_contracts import (
+    LOCAL_SERVICE_RUNTIME_CAPABILITIES,
     PROBE_VERIFIED_RUNTIME_CAPABILITIES,
     RuntimeCapabilitySnapshot,
 )
@@ -49,6 +50,7 @@ def _create_task(
     *,
     migration_key: str | None = None,
     skill_refs: tuple[ScheduledTaskSkillRef, ...] | None = None,
+    required_runtime_capabilities: tuple[str, ...] = (),
 ):
     refs = skill_refs if skill_refs is not None else (_managed_ref(store),)
     return store.create_scheduled_task(
@@ -59,6 +61,7 @@ def _create_task(
         timezone_name="Asia/Shanghai",
         runtime_id="codex_oauth",
         runtime_options={"model": "gpt-5.5", "reasoning_effort": "high"},
+        required_runtime_capabilities=required_runtime_capabilities,
         working_directory="/tmp/ceo-agent-service",
         skill_refs=refs,
         enabled=True,
@@ -120,6 +123,65 @@ def test_create_and_read_task_preserves_structured_refs_and_utc_contract(
     assert task.skill_refs[0].skill_source == "managed"
     assert store.get_scheduled_task(task.id) == task
     assert store.list_scheduled_tasks() == (task,)
+
+
+def test_task_and_run_snapshot_preserve_required_runtime_capabilities(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "cron-capabilities.sqlite3")
+    task = _create_task(
+        store,
+        required_runtime_capabilities=tuple(
+            sorted(LOCAL_SERVICE_RUNTIME_CAPABILITIES)
+        ),
+    )
+    run = store.create_scheduled_task_run(
+        task.id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+
+    assert task.required_runtime_capabilities == tuple(
+        sorted(LOCAL_SERVICE_RUNTIME_CAPABILITIES)
+    )
+    assert run.snapshot.required_runtime_capabilities == (
+        task.required_runtime_capabilities
+    )
+
+
+def test_previous_scheduled_tasks_gain_empty_runtime_requirements(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "previous-capabilities.sqlite3"
+    previous = AutoReplyStore(db_path)
+    task = _create_task(previous)
+    run = previous.create_scheduled_task_run(
+        task.id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+    with previous._connect() as db:
+        snapshot = json.loads(run.snapshot.to_json())
+        snapshot.pop("required_runtime_capabilities")
+        db.execute(
+            "update scheduled_task_runs set snapshot_json=? where id=?",
+            (json.dumps(snapshot), run.id),
+        )
+        db.execute(
+            "alter table scheduled_tasks drop column required_runtime_capabilities_json"
+        )
+        db.execute(
+            "update service_state set value='2026-09-08.5' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    migrated = AutoReplyStore(db_path)
+
+    assert migrated.get_scheduled_task(task.id).required_runtime_capabilities == ()
+    assert migrated.get_scheduled_task_run(run.id).snapshot.required_runtime_capabilities == ()
 
 
 def test_managed_skill_ref_requires_exact_revision_belonging_to_skill(

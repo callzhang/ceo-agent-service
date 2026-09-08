@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from collections.abc import Iterable
 from typing import Any, Mapping
 
 
@@ -56,6 +57,34 @@ def decode_json_object(value: str, *, field: str) -> dict[str, Any]:
     if not isinstance(decoded, dict):
         raise ValueError(f"{field} must be a JSON object")
     return decoded
+
+
+def canonical_capabilities_json(value: Iterable[str], *, field: str) -> str:
+    if isinstance(value, (str, bytes)):
+        raise ValueError(f"{field} must be a collection of capability names")
+    try:
+        values = tuple(value)
+    except TypeError as exc:
+        raise ValueError(
+            f"{field} must be a collection of capability names"
+        ) from exc
+    if any(not isinstance(item, str) or not item.strip() for item in values):
+        raise ValueError(f"{field} contains an invalid capability name")
+    normalized = tuple(item.strip() for item in values)
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"{field} contains duplicate capability names")
+    return json.dumps(sorted(normalized), ensure_ascii=False, separators=(",", ":"))
+
+
+def decode_capabilities_json(value: str, *, field: str) -> tuple[str, ...]:
+    try:
+        decoded = json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{field} must be a capability array") from exc
+    if not isinstance(decoded, list):
+        raise ValueError(f"{field} must be a capability array")
+    canonical = canonical_capabilities_json(decoded, field=field)
+    return tuple(json.loads(canonical))
 
 
 @dataclass(frozen=True)
@@ -159,6 +188,7 @@ class ScheduledTask:
     timezone_name: str
     runtime_id: str
     runtime_options_json: str
+    required_runtime_capabilities_json: str
     working_directory: str
     enabled: bool
     version: int
@@ -174,6 +204,13 @@ class ScheduledTask:
             field="scheduled task runtime options",
         )
 
+    @property
+    def required_runtime_capabilities(self) -> tuple[str, ...]:
+        return decode_capabilities_json(
+            self.required_runtime_capabilities_json,
+            field="scheduled task required runtime capabilities",
+        )
+
 
 @dataclass(frozen=True)
 class ScheduledTaskSnapshot:
@@ -185,6 +222,7 @@ class ScheduledTaskSnapshot:
     timezone_name: str
     runtime_id: str
     runtime_options_json: str
+    required_runtime_capabilities_json: str
     working_directory: str
     skill_refs: tuple[ScheduledTaskSkillRef, ...]
 
@@ -193,6 +231,13 @@ class ScheduledTaskSnapshot:
         return decode_json_object(
             self.runtime_options_json,
             field="scheduled task snapshot runtime options",
+        )
+
+    @property
+    def required_runtime_capabilities(self) -> tuple[str, ...]:
+        return decode_capabilities_json(
+            self.required_runtime_capabilities_json,
+            field="scheduled task snapshot required runtime capabilities",
         )
 
     @classmethod
@@ -206,6 +251,9 @@ class ScheduledTaskSnapshot:
             timezone_name=task.timezone_name,
             runtime_id=task.runtime_id,
             runtime_options_json=task.runtime_options_json,
+            required_runtime_capabilities_json=(
+                task.required_runtime_capabilities_json
+            ),
             working_directory=task.working_directory,
             skill_refs=task.skill_refs,
         )
@@ -220,6 +268,9 @@ class ScheduledTaskSnapshot:
             "timezone_name": self.timezone_name,
             "runtime_id": self.runtime_id,
             "runtime_options": self.runtime_options,
+            "required_runtime_capabilities": list(
+                self.required_runtime_capabilities
+            ),
             "working_directory": self.working_directory,
             "skill_refs": [ref.to_dict() for ref in self.skill_refs],
         }
@@ -245,6 +296,7 @@ class ScheduledTaskSnapshot:
             "timezone_name",
             "runtime_id",
             "runtime_options",
+            "required_runtime_capabilities",
             "working_directory",
             "skill_refs",
         }
@@ -271,6 +323,10 @@ class ScheduledTaskSnapshot:
             payload["runtime_options"],
             field="scheduled task snapshot runtime options",
         )
+        required_runtime_capabilities_json = canonical_capabilities_json(
+            payload["required_runtime_capabilities"],
+            field="scheduled task snapshot required runtime capabilities",
+        )
         if not isinstance(payload["skill_refs"], list):
             raise ValueError("scheduled task snapshot Skill refs must be a list")
         refs = tuple(
@@ -291,6 +347,9 @@ class ScheduledTaskSnapshot:
             timezone_name=payload["timezone_name"],
             runtime_id=payload["runtime_id"],
             runtime_options_json=runtime_options_json,
+            required_runtime_capabilities_json=(
+                required_runtime_capabilities_json
+            ),
             working_directory=payload["working_directory"],
             skill_refs=refs,
         )

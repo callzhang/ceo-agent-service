@@ -12,6 +12,7 @@ from app.agent_cron.models import ScheduledTaskSkillRef
 import app.audit_web as audit_web_module
 from app.audit_web import create_audit_app
 from app.agent_runtime_contracts import (
+    LOCAL_SERVICE_RUNTIME_CAPABILITIES,
     PROBE_VERIFIED_RUNTIME_CAPABILITIES,
     RuntimeCapabilitySnapshot,
 )
@@ -130,6 +131,7 @@ def _create_payload(ids: dict[str, int]) -> dict[str, object]:
         "timezone_name": "Asia/Shanghai",
         "runtime_id": "codex_oauth",
         "runtime_options": {"thinking": "high"},
+        "required_runtime_capabilities": [],
         "working_directory": "/tmp/ceo-agent",
         "enabled": True,
         "skill_refs": [
@@ -147,6 +149,77 @@ def _create_payload(ids: dict[str, int]) -> dict[str, object]:
             },
         ],
     }
+
+
+def test_api_rejects_friday_for_local_service_task_on_create_update_and_enable(
+    tmp_path: Path,
+) -> None:
+    client, store, ids, _wakes = _client(
+        tmp_path,
+        runtime_id="friday_runtime",
+    )
+    required = sorted(LOCAL_SERVICE_RUNTIME_CAPABILITIES)
+    payload = _create_payload(ids)
+    payload.update(
+        {
+            "runtime_id": "friday_runtime",
+            "runtime_options": {},
+            "required_runtime_capabilities": required,
+        }
+    )
+    managed_seed = store.create_scheduled_task(
+        migration_key="managed-local-producer-v1",
+        name="Managed local producer",
+        prompt="Run the exact local producer.",
+        cron_expression="0 * * * * *",
+        timezone_name="Asia/Shanghai",
+        runtime_id="friday_runtime",
+        runtime_options={},
+        required_runtime_capabilities=required,
+        working_directory=str(tmp_path),
+        skill_refs=(
+            ScheduledTaskSkillRef(
+                skill_source="managed",
+                skill_name="ceo-test",
+                managed_skill_id=ids["skill_id"],
+                managed_revision_id=ids["revision_id"],
+                position=0,
+            ),
+        ),
+        enabled=False,
+        now=NOW,
+    )
+    update = {
+        **payload,
+        "name": managed_seed.name,
+        "prompt": managed_seed.prompt,
+        "enabled": False,
+        "version": managed_seed.version,
+        "skill_refs": [
+            {
+                "skill_source": "managed",
+                "skill_name": "ceo-test",
+                "managed_skill_id": ids["skill_id"],
+                "managed_revision_id": ids["revision_id"],
+                "position": 0,
+            }
+        ],
+    }
+
+    with client:
+        created = client.post("/api/console/scheduled-tasks", json=payload)
+        updated = client.put(
+            f"/api/console/scheduled-tasks/{managed_seed.id}", json=update
+        )
+        enabled = client.post(
+            f"/api/console/scheduled-tasks/{managed_seed.id}/enable",
+            json={"version": managed_seed.version},
+        )
+
+    for response in (created, updated, enabled):
+        assert response.status_code == 422
+        assert response.json()["code"] == "validation_error"
+        assert "missing_capabilities" in response.json()["message"]
 
 
 def test_scheduled_task_crud_returns_derived_schedule_and_exact_refs(
@@ -316,6 +389,11 @@ def test_options_expose_runtime_and_skill_availability_without_fabrication(
             "available": False,
             "unavailable_reason": "snapshot_missing",
             "supported_thinking": ["low", "medium", "high", "xhigh"],
+            "capabilities": [
+                "local_process_execution",
+                "local_service_database_access",
+                "local_workspace_access",
+            ],
         }
     ]
     assert payload["managed_skill_options"][0]["revisions"] == [
@@ -420,6 +498,15 @@ def test_scheduled_task_validation_rejects_bad_schedule_runtime_refs_and_extras(
     no_skills = _create_payload(ids)
     no_skills["skill_refs"] = []
     invalid_cases.append(no_skills)
+    duplicate_capabilities = _create_payload(ids)
+    duplicate_capabilities["required_runtime_capabilities"] = ["local", "local"]
+    invalid_cases.append(duplicate_capabilities)
+    unsorted_capabilities = _create_payload(ids)
+    unsorted_capabilities["required_runtime_capabilities"] = ["z", "a"]
+    invalid_cases.append(unsorted_capabilities)
+    invalid_capability_type = _create_payload(ids)
+    invalid_capability_type["required_runtime_capabilities"] = [1]
+    invalid_cases.append(invalid_capability_type)
     for forbidden_options in (
         {"api_key": "top-secret"},
         {"token": "top-secret"},

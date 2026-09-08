@@ -20,12 +20,13 @@ const run = {
   id: 11, event_id: "manual:11", scheduled_task_id: 7, trigger_kind: "manual" as const,
   scheduled_for: "2026-09-08T12:00:00Z", dispatch_status: "dispatched", skip_or_error_reason: "",
   execution_kind: "reply_task", execution_id: "91", created_at: "2026-09-08T12:00:00Z", dispatched_at: "2026-09-08T12:00:01Z",
-  snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", prompt: "检查新的钉钉消息 $dingtalk-chat", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, working_directory: "/tmp/ceo-agent", skill_refs: [operationRef] },
+  snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", prompt: "检查新的钉钉消息 $dingtalk-chat", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, required_runtime_capabilities: [], working_directory: "/tmp/ceo-agent", skill_refs: [operationRef] },
 };
 const task = {
   id: 7, migration_key: null, name: "检查钉钉消息", prompt: "检查新的钉钉消息 $dingtalk-chat",
   cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", schedule_description: "每分钟 · Asia/Shanghai",
-  next_run_at: "2026-09-08T12:01:00Z", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const },
+  next_run_at: "2026-09-08T12:01:00Z", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const } as { thinking?: "low" | "medium" | "high" | "xhigh" },
+  required_runtime_capabilities: [] as string[],
   working_directory: "/tmp/ceo-agent", enabled: true, version: 3, skill_refs: [operationRef], recent_run: run,
   created_at: "2026-09-08T10:00:00Z", updated_at: "2026-09-08T11:00:00Z", deleted_at: null,
 };
@@ -33,9 +34,9 @@ type TestTask = Omit<typeof task, "recent_run" | "deleted_at"> & { recent_run: t
 const taskB: TestTask = { ...task, id: 8, name: "检查飞书消息", prompt: "检查飞书消息 $dingtalk-chat", version: 5, recent_run: null };
 const options = {
   runtime_options: [
-    { route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", available: true, unavailable_reason: null, supported_thinking: ["low", "medium", "high", "xhigh"] },
-    { route_name: "claude_cloud", runtime_kind: "claude_cli", credential_mode: "oauth", model: "claude", available: false, unavailable_reason: "snapshot_missing", supported_thinking: [] },
-    { route_name: "friday_runtime", runtime_kind: "friday_runtime", credential_mode: "service_api", model: "default", available: true, unavailable_reason: null, supported_thinking: [] },
+    { route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", available: true, unavailable_reason: null, supported_thinking: ["low", "medium", "high", "xhigh"], capabilities: ["local_process_execution", "local_service_database_access", "local_workspace_access"] },
+    { route_name: "claude_cloud", runtime_kind: "claude_cli", credential_mode: "oauth", model: "claude", available: false, unavailable_reason: "snapshot_missing", supported_thinking: [], capabilities: [] },
+    { route_name: "friday_runtime", runtime_kind: "friday_runtime", credential_mode: "service_api", model: "default", available: true, unavailable_reason: null, supported_thinking: [], capabilities: [] },
   ],
   managed_skill_options: [{ skill_id: 2, name: "ceo-minutes-sync", display_name: "每天听记同步", revisions: [
     { revision_id: 22, revision_number: 1, sha256: "old", source: "seed", available: false, unavailable_reason: "managed_revision_not_loaded" },
@@ -228,6 +229,29 @@ describe("ScheduledTasksPage", () => {
       runtime_id: "friday_runtime",
       runtime_options: {},
     }));
+  });
+
+  it("keeps Friday unavailable for a task that requires the local service surface", async () => {
+    setup([{ ...task, required_runtime_capabilities: ["local_process_execution", "local_service_database_access", "local_workspace_access"] }]);
+    renderPage();
+
+    const runtime = await screen.findByLabelText("Runtime");
+    expect(within(runtime).getByRole("option", { name: /friday_runtime.*缺少能力/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存更改" })).not.toBeDisabled();
+  });
+
+  it("blocks an existing local-service draft whose saved Runtime is Friday", async () => {
+    setup([{
+      ...task,
+      runtime_id: "friday_runtime",
+      runtime_options: {},
+      required_runtime_capabilities: ["local_process_execution", "local_service_database_access", "local_workspace_access"],
+    }]);
+    renderPage();
+
+    expect(await screen.findByText(/当前 Runtime 缺少任务所需能力/)).toHaveTextContent("local_process_execution");
+    expect(screen.getByRole("button", { name: "保存更改" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "立即运行" })).toBeDisabled();
   });
 
   it("defaults a new draft from the first available Runtime capability", async () => {

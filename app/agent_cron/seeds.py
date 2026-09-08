@@ -8,6 +8,7 @@ import sys
 
 from app.agent_cron.models import ScheduledTask, ScheduledTaskSkillRef
 from app.agent_cron.options import RuntimeOption, ScheduledTaskOptionService
+from app.agent_runtime_contracts import LOCAL_SERVICE_RUNTIME_CAPABILITIES
 from app.managed_skills import (
     MINUTES_SYNC_SKILL_NAME,
     REPOSITORY_IMPORT_SOURCE,
@@ -18,6 +19,7 @@ from app.store import AutoReplyStore
 
 MINUTES_SYNC_MIGRATION_KEY = "ceo-minutes-sync-daily-v1"
 DINGTALK_MESSAGE_MIGRATION_KEY = "dingtalk-message-check-v1"
+PRODUCER_RUNTIME_CAPABILITIES = LOCAL_SERVICE_RUNTIME_CAPABILITIES
 
 
 def _one_shot_command(
@@ -110,10 +112,17 @@ def _seed_dingtalk_message_task(
     working_directory: Path,
     now: datetime | None,
 ) -> ScheduledTask:
-    existing = _existing_task(store, DINGTALK_MESSAGE_MIGRATION_KEY)
+    existing = _existing_task(
+        store,
+        DINGTALK_MESSAGE_MIGRATION_KEY,
+        options=options,
+        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    )
     if existing is not None:
         return existing
-    runtime, runtime_reason = _select_runtime(options)
+    runtime, runtime_reason = _select_runtime(
+        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
+    )
     managed_ref, managed_reason = _managed_ref(
         store=store,
         options=options,
@@ -147,6 +156,7 @@ def _seed_dingtalk_message_task(
         timezone_name="Asia/Shanghai",
         runtime_id=runtime.route_name,
         runtime_options={"model": runtime.model},
+        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
         working_directory=str(working_directory.expanduser().resolve()),
         skill_refs=(managed_ref, operation_ref),
         enabled=not reasons,
@@ -162,10 +172,17 @@ def _seed_dingtalk_meeting_task(
     now: datetime | None,
 ) -> ScheduledTask:
     migration_key = "dingtalk-meeting-check-v1"
-    existing = _existing_task(store, migration_key)
+    existing = _existing_task(
+        store,
+        migration_key,
+        options=options,
+        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    )
     if existing is not None:
         return existing
-    runtime, runtime_reason = _select_runtime(options)
+    runtime, runtime_reason = _select_runtime(
+        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
+    )
     managed_ref, managed_reason = _managed_ref(
         store=store,
         options=options,
@@ -206,6 +223,7 @@ def _seed_dingtalk_meeting_task(
         timezone_name="Asia/Shanghai",
         runtime_id=runtime.route_name,
         runtime_options={"model": runtime.model},
+        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
         working_directory=str(working_directory.expanduser().resolve()),
         skill_refs=(managed_ref, minutes_ref, calendar_ref),
         enabled=not reasons,
@@ -221,10 +239,17 @@ def _seed_wechat_task(
     now: datetime | None,
 ) -> ScheduledTask:
     migration_key = "wechat-message-check-v1"
-    existing = _existing_task(store, migration_key)
+    existing = _existing_task(
+        store,
+        migration_key,
+        options=options,
+        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    )
     if existing is not None:
         return existing
-    runtime, runtime_reason = _select_runtime(options)
+    runtime, runtime_reason = _select_runtime(
+        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
+    )
     managed_ref, managed_reason = _managed_ref(
         store=store,
         options=options,
@@ -257,6 +282,7 @@ def _seed_wechat_task(
         timezone_name="Asia/Shanghai",
         runtime_id=runtime.route_name,
         runtime_options={"model": runtime.model},
+        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
         working_directory=str(working_directory.expanduser().resolve()),
         skill_refs=(managed_ref,),
         enabled=not reasons,
@@ -272,10 +298,17 @@ def _seed_oa_task(
     now: datetime | None,
 ) -> ScheduledTask:
     migration_key = "dingtalk-oa-check-v1"
-    existing = _existing_task(store, migration_key)
+    existing = _existing_task(
+        store,
+        migration_key,
+        options=options,
+        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    )
     if existing is not None:
         return existing
-    runtime, runtime_reason = _select_runtime(options)
+    runtime, runtime_reason = _select_runtime(
+        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
+    )
     operation_ref, operation_reason = _operation_ref(
         options=options, name="dingtalk-oa-approval", position=0
     )
@@ -301,6 +334,7 @@ def _seed_oa_task(
         timezone_name="Asia/Shanghai",
         runtime_id=runtime.route_name,
         runtime_options={"model": runtime.model},
+        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
         working_directory=str(working_directory.expanduser().resolve()),
         skill_refs=(operation_ref,),
         enabled=not reasons,
@@ -316,10 +350,17 @@ def _seed_work_source_task(
     now: datetime | None,
 ) -> ScheduledTask:
     migration_key = "work-source-scan-daily-v1"
-    existing = _existing_task(store, migration_key)
+    existing = _existing_task(
+        store,
+        migration_key,
+        options=options,
+        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    )
     if existing is not None:
         return existing
-    runtime, runtime_reason = _select_runtime(options)
+    runtime, runtime_reason = _select_runtime(
+        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
+    )
     managed_ref, managed_reason = _managed_ref(
         store=store,
         options=options,
@@ -351,6 +392,7 @@ def _seed_work_source_task(
         timezone_name="Asia/Shanghai",
         runtime_id=runtime.route_name,
         runtime_options={"model": runtime.model},
+        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
         working_directory=str(working_directory.expanduser().resolve()),
         skill_refs=(managed_ref, minutes_ref),
         enabled=not reasons,
@@ -366,10 +408,17 @@ def _seed_weekly_okr_task(
     now: datetime | None,
 ) -> ScheduledTask:
     migration_key = "weekly-okr-report-sunday-v1"
-    existing = _existing_task(store, migration_key)
+    existing = _existing_task(
+        store,
+        migration_key,
+        options=options,
+        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    )
     if existing is not None:
         return existing
-    runtime, runtime_reason = _select_runtime(options)
+    runtime, runtime_reason = _select_runtime(
+        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
+    )
     report_ref, report_reason = _operation_ref(
         options=options, name="ceo-weekly-report", position=0
     )
@@ -400,6 +449,7 @@ def _seed_weekly_okr_task(
         timezone_name="Asia/Shanghai",
         runtime_id=runtime.route_name,
         runtime_options={"model": runtime.model},
+        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
         working_directory=str(working_directory.expanduser().resolve()),
         skill_refs=(report_ref, okr_ref),
         enabled=not reasons,
@@ -503,9 +553,13 @@ def _seed_minutes_task(
 
 
 def _existing_task(
-    store: AutoReplyStore, migration_key: str
+    store: AutoReplyStore,
+    migration_key: str,
+    *,
+    options: ScheduledTaskOptionService | None = None,
+    required_capabilities: frozenset[str] = frozenset(),
 ) -> ScheduledTask | None:
-    return next(
+    existing = next(
         (
             task
             for task in store.list_scheduled_tasks(include_deleted=True)
@@ -513,12 +567,44 @@ def _existing_task(
         ),
         None,
     )
+    if existing is None or not required_capabilities:
+        return existing
+    merged = tuple(
+        sorted(
+            set(existing.required_runtime_capabilities)
+            | required_capabilities
+        )
+    )
+    updated = existing
+    if merged != existing.required_runtime_capabilities:
+        updated = store.update_scheduled_task(
+            existing.id,
+            expected_version=existing.version,
+            required_runtime_capabilities=merged,
+        )
+    if options is not None and updated.enabled:
+        try:
+            options.validate_runtime_capabilities(
+                updated.runtime_id,
+                required_capabilities=frozenset(merged),
+            )
+        except ValueError:
+            updated = store.set_scheduled_task_enabled(
+                updated.id,
+                enabled=False,
+                expected_version=updated.version,
+            )
+    return updated
 
 
 def _select_runtime(
     options: ScheduledTaskOptionService,
+    *,
+    required_capabilities: frozenset[str] = frozenset(),
 ) -> tuple[RuntimeOption, str | None]:
-    runtime_options = options.list_runtime_options()
+    runtime_options = options.list_runtime_options(
+        required_capabilities=required_capabilities
+    )
     selected = next((option for option in runtime_options if option.available), None)
     if selected is not None:
         return selected, None

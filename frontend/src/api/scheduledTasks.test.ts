@@ -22,6 +22,7 @@ const task = {
   next_run_at: "2026-09-08T12:01:00Z",
   runtime_id: "codex_oauth",
   runtime_options: { thinking: "high" },
+  required_runtime_capabilities: [],
   working_directory: "/tmp/ceo-agent",
   enabled: true,
   version: 3,
@@ -35,10 +36,10 @@ const validRun = {
   id: 11, event_id: "manual:11", scheduled_task_id: 7, trigger_kind: "manual",
   scheduled_for: "2026-09-08T12:00:00Z", dispatch_status: "pending", skip_or_error_reason: "",
   execution_kind: "", execution_id: "", created_at: "2026-09-08T12:00:00Z", dispatched_at: null,
-  snapshot: { task_id: 7, task_version: 3, name: task.name, prompt: task.prompt, cron_expression: task.cron_expression, timezone_name: task.timezone_name, runtime_id: task.runtime_id, runtime_options: task.runtime_options, working_directory: task.working_directory, skill_refs: task.skill_refs },
+  snapshot: { task_id: 7, task_version: 3, name: task.name, prompt: task.prompt, cron_expression: task.cron_expression, timezone_name: task.timezone_name, runtime_id: task.runtime_id, runtime_options: task.runtime_options, required_runtime_capabilities: task.required_runtime_capabilities, working_directory: task.working_directory, skill_refs: task.skill_refs },
 } as const;
 const validOptions = {
-  runtime_options: [{ route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt", available: true, unavailable_reason: null, supported_thinking: ["low", "medium", "high", "xhigh"] }],
+  runtime_options: [{ route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt", available: true, unavailable_reason: null, supported_thinking: ["low", "medium", "high", "xhigh"], capabilities: ["local_process_execution"] }],
   managed_skill_options: [{ skill_id: 2, name: "managed", display_name: "Managed", revisions: [{ revision_id: 3, revision_number: 1, sha256: "abc", source: "settings", available: true, unavailable_reason: null }] }],
   operation_skill_options: [{ name: "operation", source: "/skills/operation/SKILL.md", content_summary: "Operation", sha256: "def", available: true, unavailable_reason: null }],
   meta: { snapshot_at: "now" },
@@ -87,6 +88,9 @@ describe("scheduled tasks API", () => {
     ["wrong task runtime option type", { ...task, runtime_options: { thinking: 3 } }],
     ["unknown snapshot runtime option", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, runtime_options: { thinking: "high", model: "other" } } } }],
     ["invalid snapshot thinking", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, runtime_options: { thinking: "ultra" } } } }],
+    ["duplicate task runtime capabilities", { ...task, required_runtime_capabilities: ["local", "local"] }],
+    ["unsorted task runtime capabilities", { ...task, required_runtime_capabilities: ["z", "a"] }],
+    ["invalid snapshot runtime capabilities", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, required_runtime_capabilities: [""] } } }],
   ])("rejects %s", async (_label, invalidTask) => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [invalidTask], meta: { total: 1, snapshot_at: "now" } }), { headers: { "Content-Type": "application/json" } })));
 
@@ -99,6 +103,7 @@ describe("scheduled tasks API", () => {
     ["unavailable runtime with a blank reason", { ...validOptions.runtime_options[0], available: false, unavailable_reason: " " }],
     ["runtime with an invalid thinking capability", { ...validOptions.runtime_options[0], supported_thinking: ["ultra"] }],
     ["runtime with duplicate thinking capabilities", { ...validOptions.runtime_options[0], supported_thinking: ["high", "high"] }],
+    ["runtime with duplicate capabilities", { ...validOptions.runtime_options[0], capabilities: ["local", "local"] }],
   ])("rejects %s", async (_label, runtimeOption) => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ runtime_options: [runtimeOption], managed_skill_options: [], operation_skill_options: [], meta: { snapshot_at: "now" } }), { headers: { "Content-Type": "application/json" } })));
 
@@ -129,6 +134,7 @@ describe("scheduled tasks API", () => {
       name: task.name, prompt: task.prompt, cron_expression: task.cron_expression,
       timezone_name: task.timezone_name, runtime_id: task.runtime_id,
       runtime_options: task.runtime_options, working_directory: task.working_directory,
+      required_runtime_capabilities: [...task.required_runtime_capabilities],
       enabled: task.enabled, skill_refs: [...task.skill_refs],
     };
 

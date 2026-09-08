@@ -21,6 +21,7 @@ from app.agent_orchestrator import AgentOrchestrator
 from app.agent_result import AgentError
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
+from app.agent_runtime_contracts import LOCAL_SERVICE_RUNTIME_CAPABILITIES
 from app.agent_turn_runner import AgentTurnRunResult
 from app.dispatcher.adapters import (
     ReplyQueueAdapter, ScheduledExecutionQueueAdapter, ScheduledTaskQueueAdapter,
@@ -39,9 +40,14 @@ class Options:
         self.managed_available = True
         self.operation_available = True
 
-    def resolve_runtime_route(self, name):
+    def resolve_runtime_route(self, name, **_kwargs):
         if not self.available:
             raise ValueError("runtime unavailable")
+        if (
+            self.kind is RuntimeKind.FRIDAY_RUNTIME
+            and _kwargs.get("required_capabilities")
+        ):
+            raise ValueError("runtime missing local service capabilities")
         return RuntimeRoute(
             name=name, runtime_kind=self.kind,
             credential_mode=CredentialMode.LOCAL_OAUTH, model="configured",
@@ -58,7 +64,13 @@ class Options:
         return self.operation
 
 
-def fixture(tmp_path, *, kind=RuntimeKind.CODEX_CLI, runtime_options=None):
+def fixture(
+    tmp_path,
+    *,
+    kind=RuntimeKind.CODEX_CLI,
+    runtime_options=None,
+    required_runtime_capabilities=(),
+):
     store = AutoReplyStore(tmp_path / "cron.sqlite3")
     skill = store.create_managed_skill("managed-check", "Managed Check")
     revision = store.create_managed_skill_revision(
@@ -81,6 +93,7 @@ def fixture(tmp_path, *, kind=RuntimeKind.CODEX_CLI, runtime_options=None):
         name="Check", prompt="Only snapshot", cron_expression="0 * * * * *",
         timezone_name="UTC", runtime_id="runtime",
         runtime_options=runtime_options or {"model": "saved", "reasoning_effort": "high"},
+        required_runtime_capabilities=required_runtime_capabilities,
         working_directory=str(workspace), enabled=True,
         skill_refs=(
             ScheduledTaskSkillRef(
@@ -187,6 +200,20 @@ def test_context_uses_exact_snapshot_and_rejects_unsupported_thinking(tmp_path):
         )
         with pytest.raises(ValueError, match="does not support reasoning effort"):
             ScheduledAgentContextBuilder(options).build(run, reply_task_id=7)
+
+
+def test_context_rejects_remote_runtime_for_local_service_task(tmp_path):
+    _store, run, options = fixture(
+        tmp_path,
+        kind=RuntimeKind.FRIDAY_RUNTIME,
+        runtime_options={"model": "saved"},
+        required_runtime_capabilities=tuple(
+            sorted(LOCAL_SERVICE_RUNTIME_CAPABILITIES)
+        ),
+    )
+
+    with pytest.raises(ValueError, match="missing local service capabilities"):
+        ScheduledAgentContextBuilder(options).build(run, reply_task_id=7)
 
 
 @pytest.mark.parametrize(

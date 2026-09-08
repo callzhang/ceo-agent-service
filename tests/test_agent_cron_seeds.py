@@ -16,6 +16,7 @@ from app.agent_cron.consumer import ScheduledTaskTriggerConsumer
 from app.agent_cron.scheduler import AgentCronScheduler, ExecutionTerminalResolverRegistry
 from app.agent_cron.seeds import seed_scheduled_tasks
 from app.agent_runtime_contracts import (
+    LOCAL_SERVICE_RUNTIME_CAPABILITIES,
     PROBE_VERIFIED_RUNTIME_CAPABILITIES,
     RuntimeCapabilitySnapshot,
 )
@@ -61,7 +62,14 @@ def _wechat_cli_command(store: AutoReplyStore) -> str:
 def _snapshot(route_name: str, *, healthy: bool) -> RuntimeCapabilitySnapshot:
     return RuntimeCapabilitySnapshot(
         route_name=route_name,
-        capabilities=PROBE_VERIFIED_RUNTIME_CAPABILITIES,
+        capabilities=(
+            PROBE_VERIFIED_RUNTIME_CAPABILITIES
+            | (
+                frozenset()
+                if route_name == "friday_runtime"
+                else LOCAL_SERVICE_RUNTIME_CAPABILITIES
+            )
+        ),
         healthy=healthy,
         checked_at=NOW.isoformat(),
         expires_at=(NOW + timedelta(minutes=5)).isoformat(),
@@ -74,6 +82,7 @@ def _options(
     *,
     healthy_routes: set[str],
     operation_skills: tuple[str, ...] = (),
+    runtime_routes: tuple[str, ...] = ("claude_api", "codex_oauth"),
 ) -> ScheduledTaskOptionService:
     import_repository_managed_skills(store)
     skill = store.get_managed_skill_by_name("ceo-minutes-sync")
@@ -93,21 +102,164 @@ def _options(
             f"---\nname: {name}\ndescription: Test operation Skill {name}\n---\n\n# {name}\n",
             encoding="utf-8",
         )
+    environment = {
+        "CEO_AGENT_RUNTIME_ROUTES": ",".join(runtime_routes),
+        "CEO_CLAUDE_API_KEY": "test-secret",
+        "CEO_CLAUDE_MODEL": "sonnet",
+        "CEO_CODEX_MODEL": "gpt-5.6-sol",
+    }
+    if "friday_runtime" in runtime_routes:
+        environment.update(
+            {
+                "CEO_FRIDAY_RUNTIME_PROJECT_ID": "project-1",
+                "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1",
+            }
+        )
     return ScheduledTaskOptionService(
         store=store,
-        environment={
-            "CEO_AGENT_RUNTIME_ROUTES": "claude_api,codex_oauth",
-            "CEO_CLAUDE_API_KEY": "test-secret",
-            "CEO_CLAUDE_MODEL": "sonnet",
-            "CEO_CODEX_MODEL": "gpt-5.6-sol",
-        },
+        environment=environment,
         runtime_snapshots={
             route: _snapshot(route, healthy=route in healthy_routes)
-            for route in ("claude_api", "codex_oauth")
+            for route in runtime_routes
         },
         operation_skill_files=SkillFileService(operation_root),
         runtime_skill_snapshot=RuntimeSkillSnapshot(config.id, revisions),
         now=lambda: NOW,
+    )
+
+
+LOCAL_PRODUCER_KEYS = frozenset(
+    {
+        "dingtalk-message-check-v1",
+        "dingtalk-meeting-check-v1",
+        "wechat-message-check-v1",
+        "dingtalk-oa-check-v1",
+        "work-source-scan-daily-v1",
+        "weekly-okr-report-sunday-v1",
+    }
+)
+
+
+@pytest.mark.parametrize("runtime_id", ("codex_oauth", "claude_api"))
+def test_local_producer_seeds_require_local_runtime_surface(
+    tmp_path: Path, runtime_id: str
+) -> None:
+    store = AutoReplyStore(tmp_path / f"local-{runtime_id}.sqlite3")
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes={runtime_id},
+        runtime_routes=(runtime_id,),
+        operation_skills=(
+            "dingtalk-chat",
+            "dingtalk-minutes",
+            "dingtalk-calendar",
+            "dingtalk-oa-approval",
+            "ceo-weekly-report",
+            "dingtang-okr-review",
+        ),
+    )
+
+    tasks = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path, now=NOW
+    )
+    producers = tuple(
+        task for task in tasks if task.migration_key in LOCAL_PRODUCER_KEYS
+    )
+
+    assert len(producers) == 6
+    assert all(task.enabled for task in producers)
+    assert {task.runtime_id for task in producers} == {runtime_id}
+    assert all(
+        frozenset(task.required_runtime_capabilities)
+        == LOCAL_SERVICE_RUNTIME_CAPABILITIES
+        for task in producers
+    )
+
+
+def test_friday_only_keeps_local_producer_seeds_visible_and_disabled(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "friday-only.sqlite3")
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes={"friday_runtime"},
+        runtime_routes=("friday_runtime",),
+        operation_skills=(
+            "dingtalk-chat",
+            "dingtalk-minutes",
+            "dingtalk-calendar",
+            "dingtalk-oa-approval",
+            "ceo-weekly-report",
+            "dingtang-okr-review",
+        ),
+    )
+
+    tasks = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path, now=NOW
+    )
+    producers = tuple(
+        task for task in tasks if task.migration_key in LOCAL_PRODUCER_KEYS
+    )
+
+    assert len(producers) == 6
+    assert all(not task.enabled for task in producers)
+    assert {task.runtime_id for task in producers} == {"friday_runtime"}
+    assert all("missing_capabilities" in task.prompt for task in producers)
+
+
+def test_reseeding_preserves_edits_but_disables_existing_friday_producer(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "friday-reseed.sqlite3")
+    operation_skills = (
+        "dingtalk-chat",
+        "dingtalk-minutes",
+        "dingtalk-calendar",
+        "dingtalk-oa-approval",
+        "ceo-weekly-report",
+        "dingtang-okr-review",
+    )
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes={"codex_oauth", "friday_runtime"},
+        runtime_routes=("codex_oauth", "friday_runtime"),
+        operation_skills=operation_skills,
+    )
+    original = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "dingtalk-message-check-v1",
+    )
+    edited = store.update_scheduled_task(
+        original.id,
+        expected_version=original.version,
+        name="我的消息 producer",
+        prompt="保留我的精确执行描述 $ceo-message-triage $dingtalk-chat",
+        runtime_id="friday_runtime",
+        runtime_options={"model": "default"},
+        now=NOW + timedelta(minutes=1),
+    )
+
+    repeated = _task_by_key(
+        seed_scheduled_tasks(
+            store=store,
+            options=options,
+            working_directory=tmp_path / "different",
+            now=NOW + timedelta(minutes=2),
+        ),
+        "dingtalk-message-check-v1",
+    )
+
+    assert repeated.name == edited.name
+    assert repeated.prompt == edited.prompt
+    assert repeated.runtime_id == "friday_runtime"
+    assert repeated.enabled is False
+    assert frozenset(repeated.required_runtime_capabilities) == (
+        LOCAL_SERVICE_RUNTIME_CAPABILITIES
     )
 
 

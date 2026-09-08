@@ -22,7 +22,7 @@ NOW = datetime(2026, 9, 8, 12, 0, 0, tzinfo=UTC)
 
 
 class AvailableOptions:
-    def resolve_runtime_route(self, route_name: str) -> object:
+    def resolve_runtime_route(self, route_name: str, **_kwargs: object) -> object:
         assert route_name == "codex_oauth"
         return object()
 
@@ -35,7 +35,7 @@ class AvailableOptions:
 
 
 class MissingRuntime(AvailableOptions):
-    def resolve_runtime_route(self, route_name: str) -> object:
+    def resolve_runtime_route(self, route_name: str, **_kwargs: object) -> object:
         raise ValueError(f"{route_name} is not healthy")
 
 
@@ -54,11 +54,11 @@ class FirstResolutionBarrier(AvailableOptions):
         self._barrier = threading.Barrier(parties)
         self._local = threading.local()
 
-    def resolve_runtime_route(self, route_name: str) -> object:
+    def resolve_runtime_route(self, route_name: str, **kwargs: object) -> object:
         if not getattr(self._local, "resolved", False):
             self._local.resolved = True
             self._barrier.wait(timeout=5)
-        return super().resolve_runtime_route(route_name)
+        return super().resolve_runtime_route(route_name, **kwargs)
 
 
 class PausedResolution(AvailableOptions):
@@ -66,10 +66,10 @@ class PausedResolution(AvailableOptions):
         self.reached = threading.Event()
         self.release = threading.Event()
 
-    def resolve_runtime_route(self, route_name: str) -> object:
+    def resolve_runtime_route(self, route_name: str, **kwargs: object) -> object:
         self.reached.set()
         assert self.release.wait(timeout=5)
-        return super().resolve_runtime_route(route_name)
+        return super().resolve_runtime_route(route_name, **kwargs)
 
 
 def _task(

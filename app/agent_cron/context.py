@@ -13,7 +13,12 @@ from app.skill_files import SkillDocument
 
 
 class ScheduledContextOptions(Protocol):
-    def resolve_runtime_route(self, route_name: str) -> RuntimeRoute: ...
+    def resolve_runtime_route(
+        self,
+        route_name: str,
+        *,
+        required_capabilities: frozenset[str] = frozenset(),
+    ) -> RuntimeRoute: ...
 
     def resolve_managed_skill_revision(
         self, *, skill_id: int, revision_id: int, skill_name: str
@@ -26,7 +31,17 @@ def validate_scheduled_execution_availability(
     options: ScheduledContextOptions, built: ScheduledAgentContext
 ) -> None:
     """Validate saved identities without rebuilding any saved execution content."""
-    current_route = options.resolve_runtime_route(built.route.name)
+    required = built.context.trigger_raw_payload.get(
+        "required_runtime_capabilities", []
+    )
+    if not isinstance(required, list) or any(
+        not isinstance(item, str) or not item for item in required
+    ):
+        raise ValueError("scheduled execution runtime requirements are invalid")
+    current_route = options.resolve_runtime_route(
+        built.route.name,
+        required_capabilities=frozenset(required),
+    )
     if (
         current_route.runtime_kind != built.route.runtime_kind
         or current_route.credential_mode != built.route.credential_mode
@@ -127,7 +142,12 @@ class ScheduledAgentContextBuilder:
         self, run: ScheduledTaskRun, *, reply_task_id: int
     ) -> ScheduledAgentContext:
         snapshot = run.snapshot
-        route = self._options.resolve_runtime_route(snapshot.runtime_id)
+        route = self._options.resolve_runtime_route(
+            snapshot.runtime_id,
+            required_capabilities=frozenset(
+                snapshot.required_runtime_capabilities
+            ),
+        )
         runtime_options = snapshot.runtime_options
         model = runtime_options.get("model")
         if model is not None:
@@ -216,6 +236,9 @@ class ScheduledAgentContextBuilder:
                 "scheduled_task_run_id": run.id,
                 "trigger_kind": run.trigger_kind,
                 "scheduled_for": run.scheduled_for.isoformat(),
+                "required_runtime_capabilities": list(
+                    snapshot.required_runtime_capabilities
+                ),
                 "skills": skill_facts,
             },
         )

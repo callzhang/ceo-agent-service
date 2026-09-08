@@ -30,6 +30,7 @@ export interface ScheduledTaskDraft {
   timezone_name: string;
   runtime_id: string;
   runtime_options: { thinking?: "low" | "medium" | "high" | "xhigh" };
+  required_runtime_capabilities: string[];
   working_directory: string;
   enabled: boolean;
   skill_refs: ScheduledTaskSkillRef[];
@@ -73,6 +74,7 @@ interface RuntimeOptionBase {
   credential_mode: string;
   model: string;
   supported_thinking: Array<"low" | "medium" | "high" | "xhigh">;
+  capabilities: string[];
 }
 
 type Availability = (
@@ -135,6 +137,13 @@ function positiveInteger(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) > 0;
 }
 
+function validStringSet(value: unknown): value is string[] {
+  return Array.isArray(value)
+    && value.every((item) => typeof item === "string" && Boolean(item.trim()))
+    && new Set(value).size === value.length
+    && [...value].sort().every((item, index) => item === value[index]);
+}
+
 function validRuntimeOptions(value: unknown): value is ScheduledTaskDraft["runtime_options"] {
   const item = record(value);
   if (!item || Object.keys(item).some((key) => key !== "thinking")) return false;
@@ -180,6 +189,7 @@ function validRun(value: unknown): value is ScheduledTaskRun {
     && typeof snapshot.name === "string" && typeof snapshot.prompt === "string"
     && typeof snapshot.cron_expression === "string" && typeof snapshot.timezone_name === "string"
     && typeof snapshot.runtime_id === "string" && validRuntimeOptions(snapshot.runtime_options)
+    && validStringSet(snapshot.required_runtime_capabilities)
     && typeof snapshot.working_directory === "string" && validSkillRefs(snapshot.skill_refs));
 }
 
@@ -190,6 +200,7 @@ function validTask(value: unknown): value is ScheduledTask {
     && typeof item.cron_expression === "string" && typeof item.timezone_name === "string"
     && typeof item.schedule_description === "string" && nullableString(item.next_run_at)
     && typeof item.runtime_id === "string" && validRuntimeOptions(item.runtime_options)
+    && validStringSet(item.required_runtime_capabilities)
     && typeof item.working_directory === "string" && typeof item.enabled === "boolean"
     && positiveInteger(item.version) && validSkillRefs(item.skill_refs)
     && (item.recent_run === null || validRun(item.recent_run))
@@ -206,10 +217,12 @@ function parseItem<T>(value: unknown, predicate: (item: unknown) => item is T, l
 function validRuntimeOption(value: unknown): value is RuntimeOption {
   const item = record(value);
   const supported = item?.supported_thinking;
+  const capabilities = item?.capabilities;
   return Boolean(item && typeof item.route_name === "string" && typeof item.runtime_kind === "string"
     && typeof item.credential_mode === "string" && typeof item.model === "string"
     && Array.isArray(supported) && supported.every((thinking) => thinking === "low" || thinking === "medium" || thinking === "high" || thinking === "xhigh")
     && new Set(supported).size === supported.length
+    && validStringSet(capabilities)
     && ((item.available === true && item.unavailable_reason === null)
       || (item.available === false && typeof item.unavailable_reason === "string" && Boolean(item.unavailable_reason.trim()))));
 }

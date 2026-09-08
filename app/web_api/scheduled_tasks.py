@@ -65,6 +65,7 @@ class ScheduledTaskCreatePayload(BaseModel):
     runtime_options: ScheduledTaskRuntimeOptionsPayload = Field(
         default_factory=ScheduledTaskRuntimeOptionsPayload
     )
+    required_runtime_capabilities: list[str] = Field(default_factory=list)
     working_directory: str = ""
     enabled: bool = True
     skill_refs: list[ScheduledTaskSkillRefPayload] = Field(min_length=1)
@@ -73,6 +74,12 @@ class ScheduledTaskCreatePayload(BaseModel):
     def validate_ref_positions(self) -> "ScheduledTaskCreatePayload":
         if [ref.position for ref in self.skill_refs] != list(range(len(self.skill_refs))):
             raise ValueError("Skill ref positions must be contiguous")
+        if any(not capability.strip() for capability in self.required_runtime_capabilities):
+            raise ValueError("Runtime capability names must be nonempty")
+        if self.required_runtime_capabilities != sorted(
+            set(self.required_runtime_capabilities)
+        ):
+            raise ValueError("Runtime capabilities must be sorted and unique")
         return self
 
 
@@ -131,6 +138,9 @@ def _run_payload(run: ScheduledTaskRun) -> dict[str, object]:
             "timezone_name": run.snapshot.timezone_name,
             "runtime_id": run.snapshot.runtime_id,
             "runtime_options": _safe_runtime_options(run.snapshot.runtime_options),
+            "required_runtime_capabilities": list(
+                run.snapshot.required_runtime_capabilities
+            ),
             "working_directory": run.snapshot.working_directory,
             "skill_refs": [
                 _skill_ref_payload(ref) for ref in run.snapshot.skill_refs
@@ -157,6 +167,9 @@ def _task_payload(
         "next_run_at": _utc_text(schedule.next_after(now)) if task.enabled else None,
         "runtime_id": task.runtime_id,
         "runtime_options": _safe_runtime_options(task.runtime_options),
+        "required_runtime_capabilities": list(
+            task.required_runtime_capabilities
+        ),
         "working_directory": task.working_directory,
         "enabled": task.enabled,
         "version": task.version,
@@ -200,8 +213,12 @@ def _validate_choices(
     runtime_options = {
         option.route_name: option for option in service.list_runtime_options()
     }
-    if payload.runtime_id not in runtime_options:
-        raise ValueError(f"runtime route {payload.runtime_id}: runtime_not_configured")
+    service.validate_runtime_capabilities(
+        payload.runtime_id,
+        required_capabilities=frozenset(
+            payload.required_runtime_capabilities
+        ),
+    )
     thinking = payload.runtime_options.thinking
     if thinking is not None and thinking not in runtime_options[payload.runtime_id].supported_thinking:
         raise ValueError(
@@ -308,6 +325,9 @@ def register_scheduled_task_routes(
                 timezone_name=schedule.timezone_name,
                 runtime_id=payload.runtime_id,
                 runtime_options=payload.runtime_options.model_dump(exclude_none=True),
+                required_runtime_capabilities=(
+                    payload.required_runtime_capabilities
+                ),
                 working_directory=payload.working_directory,
                 skill_refs=_refs(payload),
                 enabled=payload.enabled,
@@ -343,6 +363,16 @@ def register_scheduled_task_routes(
                 "use the enable or disable endpoint to change enabled state",
                 422,
             )
+        if (
+            current.migration_key is not None
+            and tuple(payload.required_runtime_capabilities)
+            != current.required_runtime_capabilities
+        ):
+            return _error(
+                "validation_error",
+                "repository managed task runtime requirements are immutable",
+                422,
+            )
         try:
             schedule = CronSchedule.parse(
                 payload.cron_expression,
@@ -358,6 +388,9 @@ def register_scheduled_task_routes(
                 timezone_name=schedule.timezone_name,
                 runtime_id=payload.runtime_id,
                 runtime_options=payload.runtime_options.model_dump(exclude_none=True),
+                required_runtime_capabilities=(
+                    payload.required_runtime_capabilities
+                ),
                 working_directory=payload.working_directory,
                 skill_refs=_refs(payload),
                 now=current_time(),
@@ -376,6 +409,19 @@ def register_scheduled_task_routes(
         *,
         enabled: bool,
     ) -> dict[str, object] | JSONResponse:
+        current = task_or_404(task_id)
+        if isinstance(current, JSONResponse):
+            return current
+        if enabled:
+            try:
+                option_service_factory().validate_runtime_capabilities(
+                    current.runtime_id,
+                    required_capabilities=frozenset(
+                        current.required_runtime_capabilities
+                    ),
+                )
+            except ValueError as exc:
+                return _error("validation_error", str(exc), 422)
         try:
             task = store_factory().set_scheduled_task_enabled(
                 task_id,

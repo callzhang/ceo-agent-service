@@ -93,6 +93,26 @@ PROBE_VERIFIED_RUNTIME_CAPABILITIES = frozenset(
     }
 )
 
+# Codex CLI and Claude CLI execute on the CEO Agent Service host. These
+# capabilities describe that static runtime surface; they are not inferred
+# from a provider health probe. Friday Runtime executes behind its HTTP API
+# and does not expose this local service surface.
+LOCAL_SERVICE_RUNTIME_CAPABILITIES = frozenset(
+    {
+        "local_process_execution",
+        "local_workspace_access",
+        "local_service_database_access",
+    }
+)
+
+
+def runtime_route_surface_capabilities(
+    route: RuntimeRoute,
+) -> frozenset[str]:
+    if route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}:
+        return LOCAL_SERVICE_RUNTIME_CAPABILITIES
+    return frozenset()
+
 
 class RuntimeSelectionRequest(BaseModel):
     model_config = ConfigDict(frozen=True)

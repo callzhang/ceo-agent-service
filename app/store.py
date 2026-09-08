@@ -31,7 +31,9 @@ from app.agent_cron.models import (
     ScheduledTaskSkillRef,
     ScheduledTaskSnapshot,
     ScheduledTaskVersionConflictError,
+    canonical_capabilities_json,
     canonical_json_object,
+    decode_capabilities_json,
     decode_json_object,
     ensure_utc_datetime,
     parse_utc_datetime,
@@ -125,7 +127,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-08.5"
+STORE_SCHEMA_VERSION = "2026-09-08.6"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -224,6 +226,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "scheduled_tasks": (
         "migration_key",
         "runtime_options_json",
+        "required_runtime_capabilities_json",
         "version",
         "deleted_at",
     ),
@@ -2086,6 +2089,7 @@ class AutoReplyStore:
                     timezone text not null,
                     runtime_id text not null,
                     runtime_options_json text not null default '{}',
+                    required_runtime_capabilities_json text not null default '[]',
                     working_directory text not null default '',
                     enabled integer not null check(enabled in (0, 1)),
                     version integer not null default 1 check(version > 0),
@@ -4365,6 +4369,33 @@ class AutoReplyStore:
                     "alter table wechat_deliveries add column "
                     "pre_action_failure integer not null default 0"
                 )
+            scheduled_task_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(scheduled_tasks)").fetchall()
+            }
+            if "required_runtime_capabilities_json" not in scheduled_task_columns:
+                db.execute(
+                    "alter table scheduled_tasks add column "
+                    "required_runtime_capabilities_json text not null default '[]'"
+                )
+            for snapshot_row in db.execute(
+                "select id, snapshot_json from scheduled_task_runs"
+            ).fetchall():
+                snapshot_payload = json.loads(str(snapshot_row["snapshot_json"]))
+                if "required_runtime_capabilities" not in snapshot_payload:
+                    snapshot_payload["required_runtime_capabilities"] = []
+                    db.execute(
+                        "update scheduled_task_runs set snapshot_json=? where id=?",
+                        (
+                            json.dumps(
+                                snapshot_payload,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            int(snapshot_row["id"]),
+                        ),
+                    )
             error_columns = {
                 row["name"] for row in db.execute("pragma table_info(errors)").fetchall()
             }
@@ -4924,6 +4955,13 @@ class AutoReplyStore:
             ),
             field="scheduled task runtime options",
         )
+        required_runtime_capabilities_json = canonical_capabilities_json(
+            decode_capabilities_json(
+                str(row["required_runtime_capabilities_json"]),
+                field="scheduled task required runtime capabilities",
+            ),
+            field="scheduled task required runtime capabilities",
+        )
         return ScheduledTask(
             id=task_id,
             migration_key=(
@@ -4937,6 +4975,9 @@ class AutoReplyStore:
             timezone_name=str(row["timezone"]),
             runtime_id=str(row["runtime_id"]),
             runtime_options_json=runtime_options_json,
+            required_runtime_capabilities_json=(
+                required_runtime_capabilities_json
+            ),
             working_directory=str(row["working_directory"]),
             enabled=bool(row["enabled"]),
             version=int(row["version"]),
@@ -4959,6 +5000,7 @@ class AutoReplyStore:
         return (
             "id, migration_key, name, prompt, cron_expression, timezone, "
             "runtime_id, runtime_options_json, working_directory, enabled, "
+            "required_runtime_capabilities_json, "
             "version, created_at, updated_at, deleted_at"
         )
 
@@ -5007,6 +5049,7 @@ class AutoReplyStore:
         timezone_name: str,
         runtime_id: str,
         runtime_options: Mapping[str, object],
+        required_runtime_capabilities: Sequence[str] = (),
         working_directory: str,
         skill_refs: Sequence[ScheduledTaskSkillRef],
         enabled: bool = True,
@@ -5038,6 +5081,10 @@ class AutoReplyStore:
             runtime_options,
             field="scheduled task runtime options",
         )
+        required_runtime_capabilities_json = canonical_capabilities_json(
+            required_runtime_capabilities,
+            field="scheduled task required runtime capabilities",
+        )
         now_value = ensure_utc_datetime(
             now or datetime.now(timezone.utc),
             field="scheduled task now",
@@ -5058,8 +5105,9 @@ class AutoReplyStore:
                 insert into scheduled_tasks (
                     migration_key, name, prompt, cron_expression, timezone,
                     runtime_id, runtime_options_json, working_directory,
-                    enabled, version, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    required_runtime_capabilities_json, enabled, version,
+                    created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 """,
                 (
                     migration_key,
@@ -5070,6 +5118,7 @@ class AutoReplyStore:
                     runtime_id,
                     runtime_options_json,
                     working_directory,
+                    required_runtime_capabilities_json,
                     int(enabled),
                     now_text,
                     now_text,
@@ -5124,6 +5173,7 @@ class AutoReplyStore:
         timezone_name: str | None = None,
         runtime_id: str | None = None,
         runtime_options: Mapping[str, object] | None = None,
+        required_runtime_capabilities: Sequence[str] | None = None,
         working_directory: str | None = None,
         skill_refs: Sequence[ScheduledTaskSkillRef] | None = None,
         now: datetime | None = None,
@@ -5190,6 +5240,14 @@ class AutoReplyStore:
                     if runtime_options is not None
                     else current.runtime_options_json
                 ),
+                "required_runtime_capabilities_json": (
+                    canonical_capabilities_json(
+                        required_runtime_capabilities,
+                        field="scheduled task required runtime capabilities",
+                    )
+                    if required_runtime_capabilities is not None
+                    else current.required_runtime_capabilities_json
+                ),
                 "working_directory": (
                     working_directory
                     if working_directory is not None
@@ -5209,6 +5267,7 @@ class AutoReplyStore:
                 update scheduled_tasks
                    set name=?, prompt=?, cron_expression=?, timezone=?,
                        runtime_id=?, runtime_options_json=?, working_directory=?,
+                       required_runtime_capabilities_json=?,
                        version=version + 1, updated_at=?
                  where id=? and version=? and deleted_at is null
                 """,
@@ -5220,6 +5279,7 @@ class AutoReplyStore:
                     updates["runtime_id"],
                     updates["runtime_options_json"],
                     updates["working_directory"],
+                    updates["required_runtime_capabilities_json"],
                     now_text,
                     task_id,
                     expected_version,
