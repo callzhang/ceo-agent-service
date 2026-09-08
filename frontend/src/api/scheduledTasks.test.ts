@@ -57,10 +57,44 @@ describe("scheduled tasks API", () => {
     ["operation ref carrying managed ids", { ...task, skill_refs: [{ ...task.skill_refs[0], managed_skill_id: 2, managed_revision_id: 3 }] }],
     ["operation ref without identity", { ...task, skill_refs: [{ ...task.skill_refs[0], skill_name: "" }] }],
     ["unknown dispatch state", { ...task, recent_run: { ...validRun, dispatch_status: "completed" } }],
+    ["zero task id", { ...task, id: 0 }],
+    ["negative task id", { ...task, id: -1 }],
+    ["fractional task id", { ...task, id: 1.5 }],
+    ["zero task version", { ...task, version: 0 }],
+    ["negative task version", { ...task, version: -1 }],
+    ["fractional task version", { ...task, version: 1.5 }],
+    ["zero run id", { ...task, recent_run: { ...validRun, id: 0 } }],
+    ["fractional run id", { ...task, recent_run: { ...validRun, id: 1.5 } }],
+    ["negative run task id", { ...task, recent_run: { ...validRun, scheduled_task_id: -1 } }],
+    ["zero snapshot task id", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, task_id: 0 } } }],
+    ["fractional snapshot task id", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, task_id: 1.5 } } }],
+    ["negative snapshot version", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, task_version: -1 } } }],
+    ["empty task refs", { ...task, skill_refs: [] }],
+    ["empty snapshot refs", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, skill_refs: [] } } }],
+    ["duplicate ref positions", { ...task, skill_refs: [task.skill_refs[0], { ...task.skill_refs[0], skill_name: "lark-im", position: 0 }] }],
+    ["skipped ref position", { ...task, skill_refs: [task.skill_refs[0], { ...task.skill_refs[0], skill_name: "lark-im", position: 2 }] }],
+    ["out-of-order ref positions", { ...task, skill_refs: [{ ...task.skill_refs[0], position: 1 }, { ...task.skill_refs[0], skill_name: "lark-im", position: 0 }] }],
+    ["fractional ref position", { ...task, skill_refs: [{ ...task.skill_refs[0], position: 0.5 }] }],
+    ["negative ref position", { ...task, skill_refs: [{ ...task.skill_refs[0], position: -1 }] }],
+    ["unknown task runtime option", { ...task, runtime_options: { thinking: "high", model: "other" } }],
+    ["invalid task thinking", { ...task, runtime_options: { thinking: "ultra" } }],
+    ["wrong task runtime option type", { ...task, runtime_options: { thinking: 3 } }],
+    ["unknown snapshot runtime option", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, runtime_options: { thinking: "high", model: "other" } } } }],
+    ["invalid snapshot thinking", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, runtime_options: { thinking: "ultra" } } } }],
   ])("rejects %s", async (_label, invalidTask) => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [invalidTask], meta: { total: 1, snapshot_at: "now" } }), { headers: { "Content-Type": "application/json" } })));
 
     await expect(listScheduledTasks()).rejects.toThrow("invalid scheduled tasks response");
+  });
+
+  it.each([
+    ["available runtime with a reason", { route_name: "codex", runtime_kind: "codex_cli", credential_mode: "oauth", model: "gpt", available: true, unavailable_reason: "unexpected" }],
+    ["unavailable runtime without a reason", { route_name: "codex", runtime_kind: "codex_cli", credential_mode: "oauth", model: "gpt", available: false, unavailable_reason: null }],
+    ["unavailable runtime with a blank reason", { route_name: "codex", runtime_kind: "codex_cli", credential_mode: "oauth", model: "gpt", available: false, unavailable_reason: " " }],
+  ])("rejects %s", async (_label, runtimeOption) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ runtime_options: [runtimeOption], managed_skill_options: [], operation_skill_options: [], meta: { snapshot_at: "now" } }), { headers: { "Content-Type": "application/json" } })));
+
+    await expect(getScheduledTaskOptions()).rejects.toThrow("invalid scheduled task options response");
   });
 
   it("uses exact versions for update, enable state, and delete mutations", async () => {

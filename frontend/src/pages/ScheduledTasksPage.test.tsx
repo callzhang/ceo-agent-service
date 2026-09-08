@@ -170,6 +170,41 @@ describe("ScheduledTasksPage", () => {
     expect(api.listScheduledTasks).toHaveBeenCalledTimes(2);
   });
 
+  it("does not select or submit an unavailable Runtime for a new task", async () => {
+    const unavailableOptions = {
+      ...options,
+      runtime_options: options.runtime_options.map((runtime) => ({
+        ...runtime,
+        available: false,
+        unavailable_reason: runtime.unavailable_reason || "probe_unavailable",
+      })),
+    };
+    setup([]);
+    api.getScheduledTaskOptions.mockResolvedValueOnce(unavailableOptions);
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "创建第一个任务" }));
+
+    expect(screen.getByLabelText("Runtime")).toHaveValue("");
+    expect(screen.getByText("当前没有可用的 Runtime，暂时无法创建任务。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建任务" })).toBeDisabled();
+    expect(document.body.textContent).not.toContain("不可用：null");
+  });
+
+  it("blocks saving when the exact Runtime of an existing draft becomes unavailable", async () => {
+    api.getScheduledTaskOptions.mockResolvedValueOnce({
+      ...options,
+      runtime_options: options.runtime_options.map((runtime) => runtime.route_name === task.runtime_id
+        ? { ...runtime, available: false, unavailable_reason: "oauth_expired" }
+        : runtime),
+    });
+    renderPage();
+
+    expect(await screen.findByText("当前 Runtime 不可用：oauth_expired")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存更改" })).toBeDisabled();
+    expect(api.updateScheduledTask).not.toHaveBeenCalled();
+  });
+
   it("renders loading, empty, and recoverable error states", async () => {
     let resolve!: (value: unknown) => void;
     api.listScheduledTasks.mockReturnValueOnce(new Promise((done) => { resolve = done; }));

@@ -67,14 +67,17 @@ export interface ScheduledTask extends ScheduledTaskDraft {
   deleted_at: string | null;
 }
 
-export interface RuntimeOption {
+interface RuntimeOptionBase {
   route_name: string;
   runtime_kind: string;
   credential_mode: string;
   model: string;
-  available: boolean;
-  unavailable_reason: string | null;
 }
+
+export type RuntimeOption = RuntimeOptionBase & (
+  | { available: true; unavailable_reason: null }
+  | { available: false; unavailable_reason: string }
+);
 
 export interface ManagedSkillRevisionOption {
   revision_id: number;
@@ -124,6 +127,20 @@ function nullableString(value: unknown): value is string | null {
   return typeof value === "string" || value === null;
 }
 
+function positiveInteger(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) > 0;
+}
+
+function validRuntimeOptions(value: unknown): value is ScheduledTaskDraft["runtime_options"] {
+  const item = record(value);
+  if (!item || Object.keys(item).some((key) => key !== "thinking")) return false;
+  return !("thinking" in item)
+    || item.thinking === "low"
+    || item.thinking === "medium"
+    || item.thinking === "high"
+    || item.thinking === "xhigh";
+}
+
 function validSkillRef(value: unknown): value is ScheduledTaskSkillRef {
   const item = record(value);
   if (!item || typeof item.skill_name !== "string" || !item.skill_name.trim()
@@ -137,35 +154,40 @@ function validSkillRef(value: unknown): value is ScheduledTaskSkillRef {
     && item.managed_revision_id === null;
 }
 
+function validSkillRefs(value: unknown): value is ScheduledTaskSkillRef[] {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((ref, position) => validSkillRef(ref) && ref.position === position);
+}
+
 function validRun(value: unknown): value is ScheduledTaskRun {
   const item = record(value);
   const snapshot = record(item?.snapshot);
   return Boolean(item && snapshot
-    && typeof item.id === "number" && typeof item.event_id === "string"
-    && typeof item.scheduled_task_id === "number"
+    && positiveInteger(item.id) && typeof item.event_id === "string"
+    && positiveInteger(item.scheduled_task_id)
     && (item.trigger_kind === "scheduled" || item.trigger_kind === "manual")
     && typeof item.scheduled_for === "string"
     && (item.dispatch_status === "pending" || item.dispatch_status === "dispatched" || item.dispatch_status === "skipped" || item.dispatch_status === "failed")
     && typeof item.skip_or_error_reason === "string" && typeof item.execution_kind === "string"
     && typeof item.execution_id === "string" && typeof item.created_at === "string"
     && nullableString(item.dispatched_at)
-    && typeof snapshot.task_id === "number" && typeof snapshot.task_version === "number"
+    && positiveInteger(snapshot.task_id) && positiveInteger(snapshot.task_version)
     && typeof snapshot.name === "string" && typeof snapshot.prompt === "string"
     && typeof snapshot.cron_expression === "string" && typeof snapshot.timezone_name === "string"
-    && typeof snapshot.runtime_id === "string" && record(snapshot.runtime_options)
-    && typeof snapshot.working_directory === "string" && Array.isArray(snapshot.skill_refs)
-    && snapshot.skill_refs.every(validSkillRef));
+    && typeof snapshot.runtime_id === "string" && validRuntimeOptions(snapshot.runtime_options)
+    && typeof snapshot.working_directory === "string" && validSkillRefs(snapshot.skill_refs));
 }
 
 function validTask(value: unknown): value is ScheduledTask {
   const item = record(value);
-  return Boolean(item && typeof item.id === "number" && nullableString(item.migration_key)
+  return Boolean(item && positiveInteger(item.id) && nullableString(item.migration_key)
     && typeof item.name === "string" && typeof item.prompt === "string"
     && typeof item.cron_expression === "string" && typeof item.timezone_name === "string"
     && typeof item.schedule_description === "string" && nullableString(item.next_run_at)
-    && typeof item.runtime_id === "string" && record(item.runtime_options)
+    && typeof item.runtime_id === "string" && validRuntimeOptions(item.runtime_options)
     && typeof item.working_directory === "string" && typeof item.enabled === "boolean"
-    && typeof item.version === "number" && Array.isArray(item.skill_refs) && item.skill_refs.every(validSkillRef)
+    && positiveInteger(item.version) && validSkillRefs(item.skill_refs)
     && (item.recent_run === null || validRun(item.recent_run))
     && typeof item.created_at === "string" && typeof item.updated_at === "string" && nullableString(item.deleted_at));
 }
@@ -181,7 +203,8 @@ function validRuntimeOption(value: unknown): value is RuntimeOption {
   const item = record(value);
   return Boolean(item && typeof item.route_name === "string" && typeof item.runtime_kind === "string"
     && typeof item.credential_mode === "string" && typeof item.model === "string"
-    && typeof item.available === "boolean" && nullableString(item.unavailable_reason));
+    && ((item.available === true && item.unavailable_reason === null)
+      || (item.available === false && typeof item.unavailable_reason === "string" && Boolean(item.unavailable_reason.trim()))));
 }
 
 function validRevision(value: unknown): value is ManagedSkillRevisionOption {

@@ -39,7 +39,7 @@ function emptyDraft(options: ScheduledTaskOptions | null): ScheduledTaskDraft {
     prompt: "",
     cron_expression: "0 0 9 * * *",
     timezone_name: "Asia/Shanghai",
-    runtime_id: options?.runtime_options.find((item) => item.available)?.route_name || options?.runtime_options[0]?.route_name || "",
+    runtime_id: options?.runtime_options.find((item) => item.available)?.route_name || "",
     runtime_options: { thinking: "high" },
     working_directory: "",
     enabled: true,
@@ -194,6 +194,17 @@ export function ScheduledTasksPage() {
 
   const selected = tasks.find((item) => item.id === selectedId) || null;
   const choices = useMemo(() => skillChoices(options), [options]);
+  const selectedRuntime = options?.runtime_options.find((runtime) => runtime.route_name === draft.runtime_id);
+  const hasAvailableRuntime = Boolean(options?.runtime_options.some((runtime) => runtime.available));
+  const runtimeBlockReason = !options ? "" : draft.runtime_id
+    ? !selectedRuntime
+      ? "当前 Runtime 已不在配置中，请选择其他可用 Runtime。"
+      : selectedRuntime.available
+        ? ""
+        : `当前 Runtime 不可用：${selectedRuntime.unavailable_reason}`
+    : hasAvailableRuntime
+      ? "请选择一个可用的 Runtime。"
+      : "当前没有可用的 Runtime，暂时无法创建任务。";
   const query = activeSkillQuery(draft.prompt);
   const suggestions = !skillMenuOpen || query === null ? [] : choices.filter((choice) => choice.name.toLocaleLowerCase().includes(query.query) || choice.label.toLocaleLowerCase().includes(query.query));
 
@@ -276,6 +287,9 @@ export function ScheduledTasksPage() {
   }
 
   async function save() {
+    if (runtimeBlockReason) {
+      setError(runtimeBlockReason); return;
+    }
     if (!draft.name.trim() || !draft.prompt.trim() || !draft.cron_expression.trim() || !draft.timezone_name.trim() || !draft.runtime_id || draft.skill_refs.length === 0) {
       setError("请填写名称、描述、Cron、时区、Runtime，并至少选择一个 Skill。"); return;
     }
@@ -353,13 +367,13 @@ export function ScheduledTasksPage() {
           <form className="scheduled-task-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
             <label><span>任务名称</span><input aria-label="任务名称" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} /></label>
             <div className="scheduled-task-form-row"><label><span>Cron（秒 分 时 日 月 周）</span><input aria-label="Cron 表达式" value={draft.cron_expression} onChange={(event) => updateDraft("cron_expression", event.target.value)} /></label><label><span>时区</span><input aria-label="时区" value={draft.timezone_name} onChange={(event) => updateDraft("timezone_name", event.target.value)} /></label></div>
-            <div className="scheduled-task-form-row"><label><span>Runtime</span><select aria-label="Runtime" value={draft.runtime_id} onChange={(event) => updateDraft("runtime_id", event.target.value)}>{options?.runtime_options.map((runtime) => <option key={runtime.route_name} value={runtime.route_name} disabled={!runtime.available}>{runtime.route_name} · {runtime.model}{runtime.available ? "" : ` · 不可用：${runtime.unavailable_reason}`}</option>)}</select></label><label><span>Reasoning</span><select aria-label="Reasoning" value={draft.runtime_options.thinking || ""} onChange={(event) => updateDraft("runtime_options", { thinking: event.target.value as ScheduledTaskDraft["runtime_options"]["thinking"] })}><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option></select></label></div>
+            <div className="scheduled-task-form-row"><label><span>Runtime</span><select aria-label="Runtime" value={draft.runtime_id} disabled={!hasAvailableRuntime} onChange={(event) => updateDraft("runtime_id", event.target.value)}>{!draft.runtime_id && <option value="">暂无可用 Runtime</option>}{draft.runtime_id && !selectedRuntime && <option value={draft.runtime_id} disabled>{draft.runtime_id} · 已不在配置中</option>}{options?.runtime_options.map((runtime) => <option key={runtime.route_name} value={runtime.route_name} disabled={!runtime.available}>{runtime.route_name} · {runtime.model}{runtime.available ? "" : ` · 不可用：${runtime.unavailable_reason}`}</option>)}</select>{runtimeBlockReason && <small className="field-error">{runtimeBlockReason}</small>}</label><label><span>Reasoning</span><select aria-label="Reasoning" value={draft.runtime_options.thinking || ""} onChange={(event) => updateDraft("runtime_options", { thinking: event.target.value as ScheduledTaskDraft["runtime_options"]["thinking"] })}><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option></select></label></div>
             <label><span>工作目录（可选）</span><input aria-label="工作目录" value={draft.working_directory} onChange={(event) => updateDraft("working_directory", event.target.value)} placeholder="使用服务默认目录" /></label>
             <label className="scheduled-task-prompt-field"><span>任务描述</span><textarea aria-label="任务描述" rows={7} value={draft.prompt} onChange={(event) => { updatePrompt(event.target.value); setSkillMenuOpen(activeSkillQuery(event.target.value) !== null); }} placeholder="描述 Agent 每次触发要完成什么；输入 $ 引用 Skill" />
               {skillMenuOpen && query !== null && <div className="scheduled-task-suggestions" role="listbox" aria-label="Skill 建议">{suggestions.length ? suggestions.map((choice) => <button type="button" role="option" aria-selected="false" disabled={!choice.available} key={choice.key} onClick={() => selectSkill(choice)}><strong>{choice.label}</strong><small>{choice.description}{choice.available ? "" : ` · 不可用：${choice.unavailableReason}`}</small></button>) : <p>没有匹配的 Skill</p>}</div>}
             </label>
             <div className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>Agent Skills</h3><span>由结构化引用执行，不从描述文字推断</span></div>{draft.skill_refs.length ? <div className="scheduled-task-skill-chips">{draft.skill_refs.map((ref, index) => { const choice = choices.find((item) => item.key === refKey(ref)); const label = choice?.label || ref.skill_name; return <button type="button" key={`${refKey(ref)}:${index}`} aria-label={`移除${label}`} onClick={() => removeSkill(index)}><span>{label}</span><small>{ref.skill_source === "managed" ? "Managed" : "Operation"}</small><b aria-hidden="true">×</b></button>; })}</div> : <p className="scheduled-task-empty-copy">输入 <code>$</code> 搜索并选择至少一个 Skill。</p>}</div>
-            <button type="submit" className="primary-button" disabled={mutationState === "saving"}>{mutationState === "saving" ? "保存中…" : creating ? "创建任务" : "保存更改"}</button>
+            <button type="submit" className="primary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)}>{mutationState === "saving" ? "保存中…" : creating ? "创建任务" : "保存更改"}</button>
           </form>
           {!creating && <RunHistory runs={runs} hasMore={historyHasMore} loading={historyLoading} onMore={() => void loadMoreRuns()} />}
         </> : <div className="scheduled-task-empty"><strong>选择或新建一个任务</strong><p>右侧会显示 Cron、Skills、Runtime 与运行记录。</p></div>}
