@@ -37,6 +37,12 @@ const validRun = {
   execution_kind: "", execution_id: "", created_at: "2026-09-08T12:00:00Z", dispatched_at: null,
   snapshot: { task_id: 7, task_version: 3, name: task.name, prompt: task.prompt, cron_expression: task.cron_expression, timezone_name: task.timezone_name, runtime_id: task.runtime_id, runtime_options: task.runtime_options, working_directory: task.working_directory, skill_refs: task.skill_refs },
 } as const;
+const validOptions = {
+  runtime_options: [{ route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt", available: true, unavailable_reason: null, supported_thinking: ["low", "medium", "high", "xhigh"] }],
+  managed_skill_options: [{ skill_id: 2, name: "managed", display_name: "Managed", revisions: [{ revision_id: 3, revision_number: 1, sha256: "abc", source: "settings", available: true, unavailable_reason: null }] }],
+  operation_skill_options: [{ name: "operation", source: "/skills/operation/SKILL.md", content_summary: "Operation", sha256: "def", available: true, unavailable_reason: null }],
+  meta: { snapshot_at: "now" },
+} as const;
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -88,11 +94,30 @@ describe("scheduled tasks API", () => {
   });
 
   it.each([
-    ["available runtime with a reason", { route_name: "codex", runtime_kind: "codex_cli", credential_mode: "oauth", model: "gpt", available: true, unavailable_reason: "unexpected" }],
-    ["unavailable runtime without a reason", { route_name: "codex", runtime_kind: "codex_cli", credential_mode: "oauth", model: "gpt", available: false, unavailable_reason: null }],
-    ["unavailable runtime with a blank reason", { route_name: "codex", runtime_kind: "codex_cli", credential_mode: "oauth", model: "gpt", available: false, unavailable_reason: " " }],
+    ["available runtime with a reason", { ...validOptions.runtime_options[0], available: true, unavailable_reason: "unexpected" }],
+    ["unavailable runtime without a reason", { ...validOptions.runtime_options[0], available: false, unavailable_reason: null }],
+    ["unavailable runtime with a blank reason", { ...validOptions.runtime_options[0], available: false, unavailable_reason: " " }],
+    ["runtime with an invalid thinking capability", { ...validOptions.runtime_options[0], supported_thinking: ["ultra"] }],
+    ["runtime with duplicate thinking capabilities", { ...validOptions.runtime_options[0], supported_thinking: ["high", "high"] }],
   ])("rejects %s", async (_label, runtimeOption) => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ runtime_options: [runtimeOption], managed_skill_options: [], operation_skill_options: [], meta: { snapshot_at: "now" } }), { headers: { "Content-Type": "application/json" } })));
+
+    await expect(getScheduledTaskOptions()).rejects.toThrow("invalid scheduled task options response");
+  });
+
+  it.each([
+    ["zero managed skill id", { ...validOptions, managed_skill_options: [{ ...validOptions.managed_skill_options[0], skill_id: 0 }] }],
+    ["blank managed identity", { ...validOptions, managed_skill_options: [{ ...validOptions.managed_skill_options[0], name: " " }] }],
+    ["zero revision id", { ...validOptions, managed_skill_options: [{ ...validOptions.managed_skill_options[0], revisions: [{ ...validOptions.managed_skill_options[0].revisions[0], revision_id: 0 }] }] }],
+    ["fractional revision number", { ...validOptions, managed_skill_options: [{ ...validOptions.managed_skill_options[0], revisions: [{ ...validOptions.managed_skill_options[0].revisions[0], revision_number: 1.5 }] }] }],
+    ["blank revision identity", { ...validOptions, managed_skill_options: [{ ...validOptions.managed_skill_options[0], revisions: [{ ...validOptions.managed_skill_options[0].revisions[0], source: "" }] }] }],
+    ["unavailable revision without reason", { ...validOptions, managed_skill_options: [{ ...validOptions.managed_skill_options[0], revisions: [{ ...validOptions.managed_skill_options[0].revisions[0], available: false, unavailable_reason: null }] }] }],
+    ["available revision with reason", { ...validOptions, managed_skill_options: [{ ...validOptions.managed_skill_options[0], revisions: [{ ...validOptions.managed_skill_options[0].revisions[0], unavailable_reason: "unexpected" }] }] }],
+    ["blank operation identity", { ...validOptions, operation_skill_options: [{ ...validOptions.operation_skill_options[0], source: " " }] }],
+    ["unavailable operation without reason", { ...validOptions, operation_skill_options: [{ ...validOptions.operation_skill_options[0], available: false, unavailable_reason: null }] }],
+    ["available operation with reason", { ...validOptions, operation_skill_options: [{ ...validOptions.operation_skill_options[0], unavailable_reason: "unexpected" }] }],
+  ])("rejects malformed Skill option: %s", async (_label, invalidOptions) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(invalidOptions), { headers: { "Content-Type": "application/json" } })));
 
     await expect(getScheduledTaskOptions()).rejects.toThrow("invalid scheduled task options response");
   });

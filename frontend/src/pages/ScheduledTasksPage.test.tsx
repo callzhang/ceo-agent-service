@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,10 +29,13 @@ const task = {
   working_directory: "/tmp/ceo-agent", enabled: true, version: 3, skill_refs: [operationRef], recent_run: run,
   created_at: "2026-09-08T10:00:00Z", updated_at: "2026-09-08T11:00:00Z", deleted_at: null,
 };
+type TestTask = Omit<typeof task, "recent_run" | "deleted_at"> & { recent_run: typeof run | null; deleted_at: string | null };
+const taskB: TestTask = { ...task, id: 8, name: "检查飞书消息", prompt: "检查飞书消息 $dingtalk-chat", version: 5, recent_run: null };
 const options = {
   runtime_options: [
-    { route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", available: true, unavailable_reason: null },
-    { route_name: "claude_cloud", runtime_kind: "claude_cloud", credential_mode: "oauth", model: "claude", available: false, unavailable_reason: "snapshot_missing" },
+    { route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", available: true, unavailable_reason: null, supported_thinking: ["low", "medium", "high", "xhigh"] },
+    { route_name: "claude_cloud", runtime_kind: "claude_cli", credential_mode: "oauth", model: "claude", available: false, unavailable_reason: "snapshot_missing", supported_thinking: [] },
+    { route_name: "friday_runtime", runtime_kind: "friday_runtime", credential_mode: "service_api", model: "default", available: true, unavailable_reason: null, supported_thinking: [] },
   ],
   managed_skill_options: [{ skill_id: 2, name: "ceo-minutes-sync", display_name: "每天听记同步", revisions: [
     { revision_id: 22, revision_number: 1, sha256: "old", source: "seed", available: false, unavailable_reason: "managed_revision_not_loaded" },
@@ -45,7 +48,7 @@ const options = {
   meta: { snapshot_at: "2026-09-08T12:00:00Z" },
 };
 
-function setup(items = [task]) {
+function setup(items: TestTask[] = [task]) {
   api.listScheduledTasks.mockResolvedValue({ items, meta: { total: items.length, snapshot_at: "now" } });
   api.getScheduledTaskOptions.mockResolvedValue(options);
   api.listScheduledTaskRuns.mockResolvedValue({ scheduled_task: task, items: [run], meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false } });
@@ -60,6 +63,12 @@ beforeEach(() => { vi.clearAllMocks(); setup(); });
 
 function renderPage() { return render(<MemoryRouter><ScheduledTasksPage /></MemoryRouter>); }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 describe("ScheduledTasksPage", () => {
   it("shows a compact master-detail with readable schedule and execution state", async () => {
     renderPage();
@@ -73,7 +82,7 @@ describe("ScheduledTasksPage", () => {
     expect(screen.getByText("codex_oauth · gpt-5.6-sol")).toBeInTheDocument();
     expect(screen.getByText("claude_cloud · claude · 不可用：snapshot_missing")).toBeInTheDocument();
     expect(screen.getAllByText("dingtalk-chat").length).toBeGreaterThan(0);
-    expect(screen.queryByRole("listbox", { name: "Skill 建议" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Skill 建议" })).not.toBeInTheDocument();
   });
 
   it("selects Skills through $ suggestions without inferring extra refs from arbitrary text", async () => {
@@ -82,8 +91,8 @@ describe("ScheduledTasksPage", () => {
     const prompt = await screen.findByLabelText("任务描述");
     await user.clear(prompt);
     await user.type(prompt, "同步听记 $ceo");
-    const suggestions = screen.getByRole("listbox", { name: "Skill 建议" });
-    await user.click(within(suggestions).getByRole("option", { name: /每天听记同步.*revision 2/ }));
+    const suggestions = screen.getByRole("region", { name: "Skill 建议" });
+    await user.click(within(suggestions).getByRole("button", { name: /每天听记同步.*revision 2/ }));
 
     expect(prompt).toHaveValue("同步听记 $ceo-minutes-sync ");
     const chip = screen.getByRole("button", { name: /移除每天听记同步.*revision 2/ });
@@ -107,13 +116,13 @@ describe("ScheduledTasksPage", () => {
     expect(screen.queryByRole("button", { name: "移除dingtalk-chat" })).not.toBeInTheDocument();
 
     await user.type(prompt, " $ceo");
-    await user.click(screen.getByRole("option", { name: /每天听记同步.*revision 2/ }));
+    await user.click(screen.getByRole("button", { name: /每天听记同步.*revision 2/ }));
     expect(screen.getByRole("button", { name: /移除每天听记同步.*revision 2/ })).toBeInTheDocument();
     fireEvent.change(prompt, { target: { value: "只保留普通描述" } });
     expect(screen.queryByRole("button", { name: /移除每天听记同步.*revision 2/ })).not.toBeInTheDocument();
 
     await user.type(prompt, " $dingtalk");
-    await user.click(screen.getByRole("option", { name: /dingtalk-chat/ }));
+    await user.click(screen.getByRole("button", { name: /dingtalk-chat/ }));
     expect(prompt).toHaveValue("只保留普通描述 $dingtalk-chat ");
     await user.click(screen.getByRole("button", { name: "移除dingtalk-chat" }));
     expect(prompt).toHaveValue("只保留普通描述  ");
@@ -128,7 +137,7 @@ describe("ScheduledTasksPage", () => {
     expect(screen.getByRole("heading", { name: "新建定时任务" })).toBeInTheDocument();
     await user.type(screen.getByLabelText("任务名称"), "飞书消息检查");
     await user.type(screen.getByLabelText("任务描述"), "检查飞书消息 $dingtalk");
-    await user.click(screen.getByRole("option", { name: /dingtalk-chat/ }));
+    await user.click(screen.getByRole("button", { name: /dingtalk-chat/ }));
     await user.click(screen.getByRole("button", { name: "创建任务" }));
     expect(api.createScheduledTask).toHaveBeenCalledWith(expect.objectContaining({ name: "飞书消息检查", skill_refs: [operationRef] }));
 
@@ -203,6 +212,115 @@ describe("ScheduledTasksPage", () => {
     expect(await screen.findByText("当前 Runtime 不可用：oauth_expired")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存更改" })).toBeDisabled();
     expect(api.updateScheduledTask).not.toHaveBeenCalled();
+  });
+
+  it("clears thinking when switching to a Runtime that does not support it", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const runtime = await screen.findByLabelText("Runtime");
+    expect(screen.getByLabelText("Reasoning")).toHaveValue("high");
+
+    await user.selectOptions(runtime, "friday_runtime");
+    expect(screen.queryByLabelText("Reasoning")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "保存更改" }));
+
+    expect(api.updateScheduledTask).toHaveBeenCalledWith(7, expect.objectContaining({
+      runtime_id: "friday_runtime",
+      runtime_options: {},
+    }));
+  });
+
+  it("defaults a new draft from the first available Runtime capability", async () => {
+    setup([]);
+    api.getScheduledTaskOptions.mockResolvedValueOnce({
+      ...options,
+      runtime_options: [options.runtime_options[2]],
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "创建第一个任务" }));
+
+    expect(screen.getByLabelText("Runtime")).toHaveValue("friday_runtime");
+    expect(screen.queryByLabelText("Reasoning")).not.toBeInTheDocument();
+  });
+
+  it("keeps a newer task context clean when save and toggle results for task A arrive late", async () => {
+    const user = userEvent.setup();
+    const save = deferred<{ item: TestTask; meta: { snapshot_at: string } }>();
+    const toggle = deferred<{ item: TestTask; meta: { snapshot_at: string } }>();
+    setup([task, taskB]);
+    api.updateScheduledTask.mockReturnValueOnce(save.promise);
+    api.setScheduledTaskEnabled.mockReturnValueOnce(toggle.promise);
+    renderPage();
+    await screen.findByLabelText("任务名称");
+
+    await user.click(screen.getByRole("button", { name: "保存更改" }));
+    await user.click(screen.getByRole("button", { name: /检查飞书消息/ }));
+    expect(screen.getByLabelText("任务名称")).toHaveValue("检查飞书消息");
+    expect(screen.getByRole("button", { name: "保存更改" })).toBeEnabled();
+    await act(async () => save.resolve({ item: { ...task, name: "A 已保存" }, meta: { snapshot_at: "now" } }));
+    expect(screen.getByLabelText("任务名称")).toHaveValue("检查飞书消息");
+    expect(screen.queryByText("定时任务已保存")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /A 已保存/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /A 已保存/ }));
+    await user.click(screen.getByRole("button", { name: "暂停任务" }));
+    await user.click(screen.getByRole("button", { name: /检查飞书消息/ }));
+    await act(async () => toggle.resolve({ item: { ...task, name: "A 已保存", enabled: false, version: 4 }, meta: { snapshot_at: "now" } }));
+    expect(screen.getByLabelText("任务名称")).toHaveValue("检查飞书消息");
+    expect(screen.getByRole("button", { name: /A 已保存已暂停/ })).toBeInTheDocument();
+  });
+
+  it("does not let late delete or history results replace task B state", async () => {
+    const user = userEvent.setup();
+    const deletion = deferred<{ item: TestTask; meta: { snapshot_at: string } }>();
+    const more = deferred<{ scheduled_task: TestTask; items: (typeof run)[]; meta: { snapshot_at: string; page_size: number; next_cursor: string; has_more: boolean } }>();
+    setup([task, taskB]);
+    api.deleteScheduledTask.mockReturnValueOnce(deletion.promise);
+    api.listScheduledTaskRuns
+      .mockResolvedValueOnce({ scheduled_task: task, items: [run], meta: { snapshot_at: "now", page_size: 20, next_cursor: "11", has_more: true } })
+      .mockReturnValueOnce(more.promise)
+      .mockResolvedValueOnce({ scheduled_task: taskB, items: [], meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false } });
+    renderPage();
+    await screen.findByText("reply_task #91");
+    await user.click(screen.getByRole("button", { name: "加载更多运行记录" }));
+    await user.click(screen.getByRole("button", { name: "删除任务" }));
+    await user.click(screen.getByRole("button", { name: "确认删除" }));
+    await user.click(screen.getByRole("button", { name: /检查飞书消息/ }));
+    await act(async () => more.resolve({ scheduled_task: task, items: [{ ...run, id: 10, execution_id: "stale-90" }], meta: { snapshot_at: "now", page_size: 20, next_cursor: "10", has_more: true } }));
+    await act(async () => deletion.resolve({ item: { ...task, deleted_at: "now" }, meta: { snapshot_at: "now" } }));
+
+    expect(screen.getByLabelText("任务名称")).toHaveValue("检查飞书消息");
+    expect(screen.queryByText("reply_task #stale-90")).not.toBeInTheDocument();
+    expect(screen.queryByText("定时任务已删除，历史记录仍保留")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /检查钉钉消息/ })).not.toBeInTheDocument();
+  });
+
+  it("provides a focus-contained delete dialog and keyboard-usable button suggestions", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const deleteTrigger = await screen.findByRole("button", { name: "删除任务" });
+    await user.click(deleteTrigger);
+    const dialog = screen.getByRole("alertdialog", { name: "确认删除定时任务" });
+    expect(dialog).toHaveAttribute("aria-describedby", "scheduled-task-delete-description");
+    const cancel = within(dialog).getByRole("button", { name: "取消" });
+    const confirm = within(dialog).getByRole("button", { name: "确认删除" });
+    await waitFor(() => expect(cancel).toHaveFocus());
+    await user.tab();
+    expect(confirm).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(cancel).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(dialog).not.toBeInTheDocument();
+    expect(deleteTrigger).toHaveFocus();
+
+    const prompt = screen.getByLabelText("任务描述");
+    await user.type(prompt, " $ceo");
+    const suggestions = screen.getByRole("region", { name: "Skill 建议" });
+    const suggestion = within(suggestions).getByRole("button", { name: /每天听记同步.*revision 2/ });
+    suggestion.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: /移除每天听记同步.*revision 2/ })).toBeInTheDocument();
   });
 
   it("renders loading, empty, and recoverable error states", async () => {

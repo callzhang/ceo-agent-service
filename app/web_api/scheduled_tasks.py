@@ -197,9 +197,16 @@ def _validate_choices(
     payload: ScheduledTaskCreatePayload,
     service: ScheduledTaskOptionService,
 ) -> None:
-    runtime_names = {option.route_name for option in service.list_runtime_options()}
-    if payload.runtime_id not in runtime_names:
+    runtime_options = {
+        option.route_name: option for option in service.list_runtime_options()
+    }
+    if payload.runtime_id not in runtime_options:
         raise ValueError(f"runtime route {payload.runtime_id}: runtime_not_configured")
+    thinking = payload.runtime_options.thinking
+    if thinking is not None and thinking not in runtime_options[payload.runtime_id].supported_thinking:
+        raise ValueError(
+            f"runtime route {payload.runtime_id}: thinking_not_supported"
+        )
 
     managed_options = {
         (skill.skill_id, skill.name, revision.revision_id)

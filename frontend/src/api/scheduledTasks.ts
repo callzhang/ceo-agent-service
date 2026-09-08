@@ -72,21 +72,24 @@ interface RuntimeOptionBase {
   runtime_kind: string;
   credential_mode: string;
   model: string;
+  supported_thinking: Array<"low" | "medium" | "high" | "xhigh">;
 }
 
-export type RuntimeOption = RuntimeOptionBase & (
+type Availability = (
   | { available: true; unavailable_reason: null }
   | { available: false; unavailable_reason: string }
 );
 
-export interface ManagedSkillRevisionOption {
+export type RuntimeOption = RuntimeOptionBase & Availability;
+
+interface ManagedSkillRevisionOptionBase {
   revision_id: number;
   revision_number: number;
   sha256: string;
   source: string;
-  available: boolean;
-  unavailable_reason: string | null;
 }
+
+export type ManagedSkillRevisionOption = ManagedSkillRevisionOptionBase & Availability;
 
 export interface ManagedSkillOption {
   skill_id: number;
@@ -95,14 +98,15 @@ export interface ManagedSkillOption {
   revisions: ManagedSkillRevisionOption[];
 }
 
-export interface OperationSkillOption {
+interface OperationSkillOptionBase {
   name: string;
   source: string;
   content_summary: string;
   sha256: string;
-  available: boolean;
-  unavailable_reason: string | null;
 }
+
+
+export type OperationSkillOption = OperationSkillOptionBase & Availability;
 
 export interface ScheduledTaskOptions {
   runtime_options: RuntimeOption[];
@@ -201,30 +205,42 @@ function parseItem<T>(value: unknown, predicate: (item: unknown) => item is T, l
 
 function validRuntimeOption(value: unknown): value is RuntimeOption {
   const item = record(value);
+  const supported = item?.supported_thinking;
   return Boolean(item && typeof item.route_name === "string" && typeof item.runtime_kind === "string"
     && typeof item.credential_mode === "string" && typeof item.model === "string"
+    && Array.isArray(supported) && supported.every((thinking) => thinking === "low" || thinking === "medium" || thinking === "high" || thinking === "xhigh")
+    && new Set(supported).size === supported.length
     && ((item.available === true && item.unavailable_reason === null)
       || (item.available === false && typeof item.unavailable_reason === "string" && Boolean(item.unavailable_reason.trim()))));
 }
 
+function validAvailability(item: Record<string, unknown>) {
+  return (item.available === true && item.unavailable_reason === null)
+    || (item.available === false && typeof item.unavailable_reason === "string" && Boolean(item.unavailable_reason.trim()));
+}
+
 function validRevision(value: unknown): value is ManagedSkillRevisionOption {
   const item = record(value);
-  return Boolean(item && typeof item.revision_id === "number" && typeof item.revision_number === "number"
-    && typeof item.sha256 === "string" && typeof item.source === "string"
-    && typeof item.available === "boolean" && nullableString(item.unavailable_reason));
+  return Boolean(item && positiveInteger(item.revision_id) && positiveInteger(item.revision_number)
+    && typeof item.sha256 === "string" && Boolean(item.sha256.trim())
+    && typeof item.source === "string" && Boolean(item.source.trim())
+    && validAvailability(item));
 }
 
 function validManagedSkill(value: unknown): value is ManagedSkillOption {
   const item = record(value);
-  return Boolean(item && typeof item.skill_id === "number" && typeof item.name === "string"
-    && typeof item.display_name === "string" && Array.isArray(item.revisions) && item.revisions.every(validRevision));
+  return Boolean(item && positiveInteger(item.skill_id) && typeof item.name === "string" && Boolean(item.name.trim())
+    && typeof item.display_name === "string" && Boolean(item.display_name.trim())
+    && Array.isArray(item.revisions) && item.revisions.every(validRevision));
 }
 
 function validOperationSkill(value: unknown): value is OperationSkillOption {
   const item = record(value);
-  return Boolean(item && typeof item.name === "string" && typeof item.source === "string"
-    && typeof item.content_summary === "string" && typeof item.sha256 === "string"
-    && typeof item.available === "boolean" && nullableString(item.unavailable_reason));
+  return Boolean(item && typeof item.name === "string" && Boolean(item.name.trim())
+    && typeof item.source === "string" && Boolean(item.source.trim())
+    && typeof item.content_summary === "string"
+    && typeof item.sha256 === "string" && Boolean(item.sha256.trim())
+    && validAvailability(item));
 }
 
 export async function listScheduledTasks(signal?: AbortSignal): Promise<TaskList> {

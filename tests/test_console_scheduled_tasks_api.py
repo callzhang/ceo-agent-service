@@ -41,6 +41,7 @@ def _client(
     *,
     runtime_healthy: bool = True,
     include_runtime_snapshot: bool = True,
+    runtime_id: str = "codex_oauth",
 ) -> tuple[TestClient, AutoReplyStore, dict[str, int], list[str]]:
     store = AutoReplyStore(tmp_path / "cron-api.sqlite3")
     skill = store.create_managed_skill("ceo-test", "CEO Test")
@@ -67,8 +68,8 @@ def _client(
     )
     snapshots = (
         {
-            "codex_oauth": RuntimeCapabilitySnapshot(
-                route_name="codex_oauth",
+            runtime_id: RuntimeCapabilitySnapshot(
+                route_name=runtime_id,
                 capabilities=PROBE_VERIFIED_RUNTIME_CAPABILITIES,
                 healthy=runtime_healthy,
                 checked_at=NOW.isoformat(),
@@ -78,12 +79,22 @@ def _client(
         if include_runtime_snapshot
         else {}
     )
+    runtime_environment = {
+        "CEO_AGENT_RUNTIME_ROUTES": runtime_id,
+        "CEO_CODEX_MODEL": "gpt-5.6-sol",
+    }
+    if runtime_id == "claude_api":
+        runtime_environment["CEO_CLAUDE_API_KEY"] = "secret"
+    elif runtime_id == "friday_runtime":
+        runtime_environment.update(
+            {
+                "CEO_FRIDAY_RUNTIME_PROJECT_ID": "project-1",
+                "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1",
+            }
+        )
     option_service = ScheduledTaskOptionService(
         store=store,
-        environment={
-            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
-            "CEO_CODEX_MODEL": "gpt-5.6-sol",
-        },
+        environment=runtime_environment,
         runtime_snapshots=snapshots,
         operation_skill_files=SkillFileService(operation_root),
         runtime_skill_snapshot=RuntimeSkillSnapshot(config.id, (revision,)),
@@ -304,6 +315,7 @@ def test_options_expose_runtime_and_skill_availability_without_fabrication(
             "model": "gpt-5.6-sol",
             "available": False,
             "unavailable_reason": "snapshot_missing",
+            "supported_thinking": ["low", "medium", "high", "xhigh"],
         }
     ]
     assert payload["managed_skill_options"][0]["revisions"] == [
@@ -317,6 +329,54 @@ def test_options_expose_runtime_and_skill_availability_without_fabrication(
         }
     ]
     assert payload["operation_skill_options"][0]["name"] == "dingtalk-chat"
+
+
+@pytest.mark.parametrize(
+    ("runtime_id", "supported_thinking", "thinking_status", "empty_status"),
+    (
+        ("codex_oauth", ["low", "medium", "high", "xhigh"], 201, 201),
+        ("claude_api", [], 422, 201),
+        ("friday_runtime", [], 422, 201),
+    ),
+)
+def test_runtime_thinking_capability_is_explicit_and_enforced_without_fallback(
+    tmp_path: Path,
+    runtime_id: str,
+    supported_thinking: list[str],
+    thinking_status: int,
+    empty_status: int,
+) -> None:
+    client, _store, ids, _wakes = _client(tmp_path, runtime_id=runtime_id)
+    with_thinking = _create_payload(ids)
+    with_thinking["runtime_id"] = runtime_id
+    without_thinking = _create_payload(ids)
+    without_thinking.update(
+        {
+            "name": "without thinking",
+            "runtime_id": runtime_id,
+            "runtime_options": {},
+        }
+    )
+
+    with client:
+        options = client.get("/api/console/scheduled-task-options")
+        thinking = client.post("/api/console/scheduled-tasks", json=with_thinking)
+        empty = client.post("/api/console/scheduled-tasks", json=without_thinking)
+        update_with_thinking = {
+            **with_thinking,
+            "version": empty.json()["item"]["version"],
+        }
+        updated = client.put(
+            f"/api/console/scheduled-tasks/{empty.json()['item']['id']}",
+            json=update_with_thinking,
+        )
+
+    assert options.json()["runtime_options"][0]["supported_thinking"] == supported_thinking
+    assert thinking.status_code == thinking_status
+    assert empty.status_code == empty_status
+    assert updated.status_code == (200 if thinking_status == 201 else 422)
+    if thinking_status == 422:
+        assert thinking.json()["code"] == "validation_error"
 
 
 def test_scheduled_task_validation_rejects_bad_schedule_runtime_refs_and_extras(

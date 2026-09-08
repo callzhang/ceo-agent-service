@@ -36,6 +36,7 @@ class RuntimeOption:
     model: str
     available: bool
     unavailable_reason: str | None
+    supported_thinking: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -243,6 +244,11 @@ class ScheduledTaskOptionService:
             model=route.model,
             available=available,
             unavailable_reason=reason,
+            supported_thinking=(
+                ("low", "medium", "high", "xhigh")
+                if route.runtime_kind is RuntimeKind.CODEX_CLI
+                else ()
+            ),
         )
 
     def _managed_revision_option(
