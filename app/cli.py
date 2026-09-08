@@ -951,6 +951,40 @@ def _resolve_service_runtime_skills(
         AutoReplyStore(settings.db_path), pid=os.getpid() if pid is None else pid
     )
 
+
+def run_agent_cron_scheduler_loop(
+    settings: WorkerSettings,
+    runtime_skill_snapshot,
+    *,
+    wake_event: threading.Event,
+) -> None:
+    """Run the Cron trigger producer with the service's immutable capabilities."""
+    from app.agent_cron.options import ScheduledTaskOptionService
+    from app.agent_cron.scheduler import (
+        AgentCronScheduler,
+        ExecutionTerminalResolverRegistry,
+    )
+    from app.agent_runtime_production import PRODUCTION_RUNTIME_CAPABILITIES
+    from app.skill_files import SkillFileService
+
+    store = AutoReplyStore(settings.db_path)
+    option_service = ScheduledTaskOptionService(
+        store=store,
+        environment=os.environ,
+        runtime_snapshots=PRODUCTION_RUNTIME_CAPABILITIES,
+        operation_skill_files=SkillFileService(),
+        runtime_skill_snapshot=runtime_skill_snapshot,
+    )
+    scheduler = AgentCronScheduler(
+        store=store,
+        option_service=option_service,
+        # Task 7 registers the scheduled execution fact resolver. Until then,
+        # an unknown linked source is conservatively treated as still active.
+        terminal_resolver=ExecutionTerminalResolverRegistry({}),
+        dispatcher_wake=wake_event.set,
+    )
+    scheduler.run_forever(wake_event=wake_event)
+
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()
     if value not in {"dingteam_web", "agoal"}:
@@ -3099,6 +3133,7 @@ def run_service(
     runtime_refresher=None,
 ) -> None:
     runtime_skill_snapshot = _resolve_service_runtime_skills(settings)
+    scheduled_task_wake_event = threading.Event()
     if runtime_refresher is not None:
         try:
             runtime_refresher.refresh_expired(force=True)
@@ -3126,6 +3161,14 @@ def run_service(
         (
             "database-backup",
             lambda: run_database_backup_loop(settings.db_path),
+        ),
+        (
+            "agent-cron-scheduler",
+            lambda: run_agent_cron_scheduler_loop(
+                settings,
+                runtime_skill_snapshot,
+                wake_event=scheduled_task_wake_event,
+            ),
         ),
         (
             "producer",
@@ -3184,7 +3227,7 @@ def run_service(
         )
         for index in range(settings.consumer_workers)
     )
-    components = components[:2] + consumer_components + components[2:]
+    components = components[:3] + consumer_components + components[3:]
     if runtime_refresher is not None:
         components = (
             (

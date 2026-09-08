@@ -5330,8 +5330,64 @@ class AutoReplyStore:
         now: datetime | None = None,
         event_id: str | None = None,
     ) -> ScheduledTaskRun:
+        run, _created = self._create_scheduled_task_run(
+            task_id,
+            trigger_kind=trigger_kind,
+            scheduled_for=scheduled_for,
+            now=now,
+            event_id=event_id,
+            dispatch_status="pending",
+            reason="",
+        )
+        return run
+
+    def create_scheduled_task_run_if_absent(
+        self,
+        task_id: int,
+        *,
+        scheduled_for: datetime,
+        now: datetime | None = None,
+        event_id: str | None = None,
+        dispatch_status: str = "pending",
+        reason: str = "",
+    ) -> ScheduledTaskRun | None:
+        """Atomically create one scheduled trigger for a planned instant.
+
+        Unlike ``create_scheduled_task_run``, a duplicate is reported as
+        ``None`` so only the process that inserted the row may wake or mutate
+        it.  This is the scheduler leader-election boundary.
+        """
+        run, created = self._create_scheduled_task_run(
+            task_id,
+            trigger_kind="scheduled",
+            scheduled_for=scheduled_for,
+            now=now,
+            event_id=event_id,
+            dispatch_status=dispatch_status,
+            reason=reason,
+        )
+        return run if created else None
+
+    def _create_scheduled_task_run(
+        self,
+        task_id: int,
+        *,
+        trigger_kind: str,
+        scheduled_for: datetime,
+        now: datetime | None,
+        event_id: str | None,
+        dispatch_status: str,
+        reason: str,
+    ) -> tuple[ScheduledTaskRun, bool]:
         if trigger_kind not in {"scheduled", "manual"}:
             raise ValueError("scheduled task trigger kind is invalid")
+        if dispatch_status not in {"pending", "skipped"}:
+            raise ValueError("initial scheduled task dispatch status is invalid")
+        if not isinstance(reason, str):
+            raise ValueError("initial scheduled task dispatch reason must be text")
+        reason = reason.strip()
+        if (dispatch_status == "skipped") != bool(reason):
+            raise ValueError("initial skipped status requires exactly one reason")
         scheduled_for_text = self._scheduled_task_time_text(
             scheduled_for,
             field="scheduled task run scheduled_for",
@@ -5362,16 +5418,20 @@ class AutoReplyStore:
                     """
                     insert into scheduled_task_runs (
                         event_id, scheduled_task_id, trigger_kind, scheduled_for,
-                        snapshot_json, created_at
-                    ) values (?, ?, ?, ?, ?, ?)
+                        dispatch_status, skip_or_error_reason, snapshot_json,
+                        created_at, dispatched_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         event_id,
                         task_id,
                         trigger_kind,
                         scheduled_for_text,
+                        dispatch_status,
+                        reason,
                         snapshot_json,
                         now_text,
+                        now_text if dispatch_status == "skipped" else None,
                     ),
                 )
             except sqlite3.IntegrityError:
@@ -5386,14 +5446,14 @@ class AutoReplyStore:
                 ).fetchone()
                 if existing is None:
                     raise
-                return self._scheduled_task_run_from_row(existing)
+                return self._scheduled_task_run_from_row(existing), False
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
                 "from scheduled_task_runs where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
             assert row is not None
-            return self._scheduled_task_run_from_row(row)
+            return self._scheduled_task_run_from_row(row), True
 
     def claim_scheduled_task_run(
         self,
@@ -5566,6 +5626,22 @@ class AutoReplyStore:
                 (task_id,),
             ).fetchall()
         return tuple(self._scheduled_task_run_from_row(row) for row in rows)
+
+    def latest_scheduled_task_overlap_candidate(
+        self,
+        task_id: int,
+    ) -> ScheduledTaskRun | None:
+        """Return the latest pending trigger or linked execution fact."""
+        with self._connect() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where scheduled_task_id=? and ("
+                "dispatch_status='pending' or "
+                "(execution_kind<>'' and execution_id<>'')) "
+                "order by id desc limit 1",
+                (task_id,),
+            ).fetchone()
+        return self._scheduled_task_run_from_row(row) if row is not None else None
 
     def latest_scheduled_task_runs(
         self,

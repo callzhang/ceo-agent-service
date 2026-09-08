@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import sys
+import threading
 from datetime import datetime
 from importlib import import_module
 from pathlib import Path
@@ -6772,6 +6773,19 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         cli,
+        "run_agent_cron_scheduler_loop",
+        lambda settings, runtime_skill_snapshot, *, wake_event: calls.append(
+            (
+                "agent-cron-scheduler",
+                settings.db_path,
+                runtime_skill_snapshot is not None,
+                isinstance(wake_event, threading.Event),
+            )
+        )
+        or stop("agent-cron-scheduler"),
+    )
+    monkeypatch.setattr(
+        cli,
         "_recover_meeting_alignment_jobs_on_service_start",
         lambda settings: calls.append(("meeting-recovery", settings.db_path)) or 0,
     )
@@ -6854,6 +6868,13 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("meeting-recovery", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-database-backup", True),
         ("database-backup", tmp_path / "worker.sqlite3"),
+        ("start", "ceo-agent-service-agent-cron-scheduler", True),
+        (
+            "agent-cron-scheduler",
+            tmp_path / "worker.sqlite3",
+            True,
+            True,
+        ),
         ("start", "ceo-agent-service-producer", True),
         ("producer", 60, 4, True),
         ("start", "ceo-agent-service-consumer-1", True),
@@ -6874,6 +6895,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     ]
     assert failures == [
         ("database-backup", "stop database-backup"),
+        ("agent-cron-scheduler", "stop agent-cron-scheduler"),
         ("producer", "stop producer"),
         ("consumer-1", "stop consumer"),
         ("consumer-2", "stop consumer"),
@@ -6883,7 +6905,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("follow-up-delivery", "stop follow-up-delivery"),
         ("oa-pending-scan", "stop oa-pending-scan"),
     ]
-    assert exits == [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
