@@ -5719,6 +5719,70 @@ def test_email_dependency_builder_resolves_one_snapshot_for_agent_orchestrator(
     assert captured["snapshot"] is snapshot
 
 
+def test_email_dependency_builder_applies_classifier_model_override_only(
+    tmp_path, monkeypatch
+):
+    module = _module()
+    classifier_skill = "---\nname: ceo-email-classifier\ndescription: Use when testing\nmetadata:\n  managed_by: ceo-agent-service\n---\n"
+    snapshot = SimpleNamespace(
+        revisions=(
+            SimpleNamespace(
+                skill_id=17,
+                revision_number=1,
+                sha256=sha256(classifier_skill.encode("utf-8")).hexdigest(),
+                content=classifier_skill,
+                source="repository:skills",
+            ),
+        )
+    )
+    monkeypatch.setenv("CEO_EMAIL_CLASSIFIER_MODEL", "gpt-5.6-luna")
+    monkeypatch.setattr(
+        "app.managed_skills.resolve_pending_runtime_skills",
+        lambda _store, *, pid: snapshot,
+    )
+    routed_calls = []
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **kwargs: routed_calls.append(kwargs) or object(),
+    )
+    description_agents = []
+
+    class DescriptionOrchestrator:
+        def __init__(self, *, agent, **_kwargs):
+            description_agents.append(agent)
+
+    monkeypatch.setattr(
+        "app.email_description_optimizer.DescriptionOptimizationOrchestrator",
+        DescriptionOrchestrator,
+    )
+    monkeypatch.setattr(
+        "app.email_description_optimizer.RoutedDescriptionOptimizerAgent",
+        lambda _execution: lambda payload: payload,
+    )
+    monkeypatch.setattr(
+        module,
+        "_build_agent_orchestrator",
+        lambda *_args, **_kwargs: object(),
+    )
+    settings = SimpleNamespace(
+        db_path=tmp_path / "worker.sqlite3", workspace=tmp_path, dry_run=False
+    )
+
+    bootstrap = module.build_email_worker_dependencies(settings)
+    bootstrap.build_dependencies(
+        ({"account_id": "account-1", "enabled": True},),
+        SimpleNamespace(
+            loaded=SimpleNamespace(model_id="email-model:test", classifier=object()),
+            tick=lambda: None,
+        ),
+    )
+    assert description_agents[0]({"candidate": "test"}) == {"candidate": "test"}
+
+    assert len(routed_calls) == 2
+    assert routed_calls[0]["codex_oauth_model"] == "gpt-5.6-luna"
+    assert "codex_oauth_model" not in routed_calls[1]
+
+
 def test_worker_startup_isolates_legacy_before_agent_claim_and_starts_components(
     tmp_path,
 ):

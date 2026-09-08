@@ -2334,6 +2334,7 @@ def build_email_worker_dependencies(
                     workspace=Path(settings.workspace),
                     total_timeout_seconds=900.0,
                     idle_timeout_seconds=120.0,
+                    codex_oauth_model=os.getenv("CEO_EMAIL_CLASSIFIER_MODEL"),
                 )
             ),
             runtime_skill_snapshot=runtime_skill_snapshot,
