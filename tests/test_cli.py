@@ -6305,6 +6305,22 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
     ]
 
 
+def test_maintenance_error_detail_hides_okr_command_and_traceback():
+    detail = cli._maintenance_error_detail(
+        RuntimeError(
+            "dws command failed; command=/private/tool --user-id 123; "
+            "stderr=Traceback: okr_headless_session_expired: dedicated session"
+        )
+    )
+
+    assert detail == (
+        "okr_headless_session_expired: Dedicated Dingteam OKR browser "
+        "session requires login."
+    )
+    assert "command=" not in detail
+    assert "Traceback" not in detail
+
+
 def test_task_maintenance_loop_does_not_block_follow_up_delivery(
     monkeypatch, tmp_path
 ):

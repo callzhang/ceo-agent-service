@@ -89,9 +89,9 @@ def test_unmounted_okr_shell_is_checked_only_after_auth_wait():
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 
     wait_marker = 'deadline = time.monotonic() + HEADLESS_REFRESH_SECONDS'
-    state_check = 'if app_state.get("root") and not app_state.get("mounted"):'
+    state_check = "page_error = _unmounted_page_error("
 
-    assert source.index(wait_marker) < source.index(state_check)
+    assert source.index(wait_marker) < source.rindex(state_check)
 
 
 def test_headless_cdp_launch_uses_playwright_browser_binary_and_loopback_only():
@@ -187,6 +187,30 @@ def test_missing_captured_session_is_reported_as_expired(monkeypatch):
 
     source = SCRIPT_PATH.read_text(encoding="utf-8")
     assert "could not capture Dingteam auth token" not in source
+
+
+def test_login_redirect_is_reported_as_expired_session():
+    module = load_module()
+
+    error = module._unmounted_page_error(
+        page_url="https://login.dingtalk.com/oauth2/challenge.htm",
+        app_state={"root": True, "mounted": False},
+    )
+
+    assert isinstance(error, RuntimeError)
+    assert str(error).startswith("okr_headless_session_expired:")
+
+
+def test_unmounted_okr_application_is_reported_as_website_failure():
+    module = load_module()
+
+    error = module._unmounted_page_error(
+        page_url="https://dingokr.dingteam.com/personal",
+        app_state={"root": True, "mounted": False},
+    )
+
+    assert isinstance(error, RuntimeError)
+    assert str(error).startswith("okr_website_unavailable:")
 
 
 def test_headless_browser_uses_process_lock():

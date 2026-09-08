@@ -52,6 +52,22 @@ def _validate_captured_headers(headers: dict[str, str]) -> dict[str, str]:
     return headers
 
 
+def _unmounted_page_error(
+    *, page_url: str, app_state: dict[str, bool]
+) -> RuntimeError | None:
+    """Classify an unmounted page without confusing login expiry with site health."""
+    normalized_url = page_url.casefold()
+    if "login.dingtalk.com/" in normalized_url or "/oauth2/" in normalized_url:
+        return RuntimeError(
+            "okr_headless_session_expired: dedicated Dingteam session requires login"
+        )
+    if app_state.get("root") and not app_state.get("mounted"):
+        return RuntimeError(
+            "okr_website_unavailable: Dingteam OKR website did not render"
+        )
+    return None
+
+
 def _headless_cdp_command(playwright, *, port: int, profile_dir: str) -> list[str]:
     """Launch an isolated Chrome process that Playwright connects to over loopback."""
     return [
@@ -176,8 +192,12 @@ def _capture_stable_headless_headers() -> dict[str, str]:
                             mounted: !!document.querySelector('#root-master > * > *'),
                         })"""
                     )
-                    if app_state.get("root") and not app_state.get("mounted"):
-                        raise RuntimeError("okr_website_unavailable: Dingteam OKR website did not render")
+                    page_error = _unmounted_page_error(
+                        page_url=page.url,
+                        app_state=app_state,
+                    )
+                    if page_error is not None:
+                        raise page_error
             finally:
                 context.close()
     return _validate_captured_headers(captured)

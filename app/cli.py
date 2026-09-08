@@ -2746,6 +2746,19 @@ def replay_recent_meetings_command(
     return results
 
 
+def _maintenance_error_detail(exc: Exception) -> str:
+    """Project a concrete maintenance failure without exposing command internals."""
+    detail = str(exc).strip()
+    if "okr_headless_session_expired" in detail:
+        return (
+            "okr_headless_session_expired: Dedicated Dingteam OKR browser "
+            "session requires login."
+        )
+    if "okr_website_unavailable" in detail:
+        return "okr_website_unavailable: Dingteam OKR website did not render."
+    return detail
+
+
 def run_task_maintenance_loop(
     settings: WorkerSettings,
     *,
@@ -2764,7 +2777,7 @@ def run_task_maintenance_loop(
         try:
             step()
         except Exception as exc:
-            detail = str(exc)
+            detail = _maintenance_error_detail(exc)
             store.record_error("", "", error_kind, detail)
             store.set_service_health_component(
                 health_component,
