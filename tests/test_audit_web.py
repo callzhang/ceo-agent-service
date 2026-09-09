@@ -5328,7 +5328,7 @@ def test_browser_notifications_page_shows_only_current_unresolved_problems(
     assert f"Attempt #{superseded_failure}" not in response.text
 
 
-def test_attention_api_keeps_needs_human_visible_after_queue_task_closes(
+def test_attention_api_excludes_needs_human_after_queue_task_closes(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -5361,18 +5361,8 @@ def test_attention_api_keeps_needs_human_visible_after_queue_task_closes(
     response = TestClient(create_audit_app(store.path)).get("/api/attention/status")
 
     assert response.status_code == 200
-    assert response.json()["count"] == 1
-    assert response.json()["rows"] == [
-        {
-            "category": "Reply",
-            "id": str(attempt_id),
-            "status": "needs_human",
-            "context": "Management",
-            "summary": "Choose the strategy",
-            "updated_at": store.get_reply_attempt(attempt_id).updated_at,
-            "error": "",
-        }
-    ]
+    assert response.json()["count"] == 0
+    assert response.json()["rows"] == []
 
 
 def test_browser_notifications_exclude_active_and_provider_recovery_tasks(
@@ -7376,6 +7366,28 @@ def test_attention_includes_recent_unresolved_service_errors(tmp_path: Path):
     assert service_rows[0]["status"] == "failed"
     assert service_rows[0]["context"] == "runtime_route_unavailable"
     assert service_rows[0]["summary"] == "runtime route is unavailable"
+
+
+def test_attention_excludes_needs_human_attempts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="needs-human-conversation",
+        conversation_title="Needs human decision",
+        trigger_message_id="needs-human-trigger",
+        trigger_sender="Sender",
+        trigger_text="Needs a decision",
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="requires a human decision",
+        send_status="needs_human",
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert not any(
+        row["category"] == "Reply" and row["id"] == str(attempt_id)
+        for row in rows
+    )
 
 
 def test_attention_excludes_open_global_service_error(tmp_path: Path):

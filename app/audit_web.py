@@ -3157,10 +3157,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
     for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
-        if str(attempt["send_status"] or "").casefold() not in {
-            "failed",
-            "needs_human",
-        }:
+        if str(attempt["send_status"] or "").casefold() != "failed":
             continue
         trigger_key = (
             attempt["channel"],
@@ -3629,7 +3626,7 @@ def _render_attention_content(
     return (
         '<section class="card worker-section compact-card">'
         "<h2>Attention</h2>"
-        '<p class="muted">需要关注的排队、处理中和失败运行项；此页面只提供诊断入口，不自动执行重试或发送。</p>'
+        '<p class="muted">只显示未解决的服务和任务错误；处理中、待处理和 needs_human 另行统计。</p>'
         f"{_worker_attention_table(rows)}"
         "</section>"
     )
