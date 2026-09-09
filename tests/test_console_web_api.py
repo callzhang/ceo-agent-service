@@ -6,6 +6,8 @@ from pathlib import Path
 import threading
 import time
 from types import SimpleNamespace
+from contextlib import contextmanager
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -58,6 +60,7 @@ class NonExecutingExecutor:
         return True
 
 
+@contextmanager
 def _client(
     tmp_path: Path,
     *,
@@ -68,7 +71,9 @@ def _client(
     assets = tmp_path / "assets"
     assets.mkdir()
     (assets / "index.html").write_bytes(asset)
-    return TestClient(
+    # Settings writes intentionally update os.environ as well as the test file.
+    # Their process-local effects must end with this isolated test server.
+    with patch.dict(os.environ), TestClient(
         create_audit_app(
             tmp_path / "worker.sqlite3",
             workbench_asset_dir=assets,
@@ -79,7 +84,22 @@ def _client(
         ),
         client=("127.0.0.1", 50000),
         headers={"Host": "127.0.0.1:8765"},
-    )
+    ) as client:
+        yield client
+
+
+def test_console_client_restores_settings_environment_after_close(tmp_path: Path):
+    updates = {
+        "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
+        "CEO_CODEX_API_KEY": "test-only-token",
+    }
+    before = {key: os.environ.get(key) for key in updates}
+    path = tmp_path / "test-settings.env"
+    with _client(tmp_path):
+        app_config_module.write_env_values(updates, path)
+        assert {key: os.environ.get(key) for key in updates} == updates
+    assert {key: os.environ.get(key) for key in updates} == before
+    assert app_config_module.read_env_file(path) == updates
 
 
 def _project(store: AutoReplyStore, title: str) -> int:

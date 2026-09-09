@@ -1584,19 +1584,28 @@ def test_watchdog_kills_owned_group_when_runtime_parent_dies(tmp_path: Path):
         [sys.executable, str(parent_script), str(tmp_path), str(child_pid_path)],
         env=env,
     )
-    deadline = time.monotonic() + 3
-    while not child_pid_path.exists() and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert child_pid_path.exists()
-    child_pid = int(child_pid_path.read_text())
-
-    parent.kill()
-    parent.wait(timeout=2)
-
+    child_pid = None
     try:
+        # Cold imports compete with the full suite; startup is not the watchdog
+        # deadline under test. Begin the four-second exit check only when ready.
+        deadline = time.monotonic() + 30
+        while (
+            not child_pid_path.exists()
+            and parent.poll() is None
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+        assert child_pid_path.exists(), "runtime parent exited or did not become ready"
+        child_pid = int(child_pid_path.read_text())
+        parent.kill()
+        parent.wait(timeout=2)
         assert _wait_for_pid_exit(child_pid, timeout=4)
     finally:
-        _kill_test_child_if_alive(child_pid)
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=2)
+        if child_pid is not None:
+            _kill_test_child_if_alive(child_pid)
 
 
 def test_wait_releases_owner_after_failure(tmp_path: Path):

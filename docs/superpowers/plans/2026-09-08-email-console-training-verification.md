@@ -86,6 +86,20 @@ Fixture messages and models are synthetic; every API operation is in memory.
   the worker issue above and two test fixtures (missing category CAS version,
   ambient runtime route). All three focused regressions now pass; a fresh full
   run is in progress. Test-only fixture changes do not change WeChat behavior.
+- The next full run completed with 7,158 passed, six failed and 86 skipped.
+  Five failures shared a reproducible cross-test environment leak: the Console
+  settings API test wrote runtime routes into `os.environ`, leaving subsequent
+  tests with an API route but no key. A two-test sequence reproduced the failure.
+  The test-client context now restores the environment at shutdown; the real
+  settings writer and its file output are still exercised. A dedicated regression
+  checks both restoration and preservation of the written test file.
+- The sixth failure was cold subprocess startup exceeding a test-only three-second
+  wait. The test now waits for readiness separately from the unchanged four-second
+  watchdog exit requirement and cleans up the parent on early failure. The seven
+  targeted reproductions passed, followed by all 150 tests in the affected files.
+  No production runtime, authorization or unsubscribe behavior changed.
+- Integrated main `5024bbe6` (separate Connector and worker channel inventories),
+  and reverted the earlier test-only three-channel expectation adjustment.
 
 Feedback `ok=true` acknowledges the persisted classification feedback, not the
 completion of asynchronously executed mailbox actions. The page may advance to
