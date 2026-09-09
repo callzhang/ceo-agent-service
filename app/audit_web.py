@@ -2252,11 +2252,11 @@ def _system_health_snapshot(
 
 
 def _connector_status_snapshots() -> dict[str, object]:
-    from app.channel_gate import default_channel_gates
+    from app.channel_gate import default_connector_gates
 
     return {
         key: gate.check()
-        for key, gate in default_channel_gates().items()
+        for key, gate in default_connector_gates().items()
     }
 
 
