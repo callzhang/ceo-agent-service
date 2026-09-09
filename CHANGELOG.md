@@ -1,5 +1,15 @@
 # Changelog
 
+- 2026-09-09: add Settings → MCP. The page lists every MCP server Codex would
+  load for a run (from `codex mcp list --json`, URLs shown without query
+  tokens) with a per-server "available to background agents" switch, plus the
+  service manifest's own servers with add/remove. The switch writes
+  `disabled_servers` into the selected service manifest; service Codex
+  commands disable those servers with a whole-table `enabled = false`
+  override, effective from the next Agent turn. `cua_repl` (the desktop
+  computer-use REPL, which had leaked into audited email turns) is disabled by
+  default.
+
 - 2026-09-09: remove the dead WeChat producer/consumer loop roles. The
   internal loop now only runs the sender (`_run_wechat_sender_loop`); reading
   is the `wechat-produce-once` scheduled service command and replies are

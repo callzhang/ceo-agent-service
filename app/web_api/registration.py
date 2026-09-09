@@ -1475,6 +1475,78 @@ def register_console_routes(
             status_code=410,
         )
 
+    def mcp_settings_payload() -> dict[str, Any]:
+        from app.codex_mcp_inventory import (
+            CodexMcpInventoryError,
+            list_codex_mcp_servers,
+        )
+        from app.service_codex_config import (
+            read_service_mcp_manifest_document,
+            service_mcp_config_path,
+        )
+
+        document = read_service_mcp_manifest_document()
+        disabled = set(document["disabled_servers"])
+        codex_servers: list[dict[str, Any]] = []
+        inventory_error = ""
+        try:
+            inventory = list_codex_mcp_servers()
+        except CodexMcpInventoryError as exc:
+            inventory = ()
+            inventory_error = str(exc)
+        for server in inventory:
+            codex_servers.append(
+                {
+                    "name": server.name,
+                    "transport_type": server.transport_type,
+                    "location": server.location,
+                    "enabled": server.enabled,
+                    "auth_status": server.auth_status,
+                    "agent_enabled": server.enabled and server.name not in disabled,
+                }
+            )
+        return {
+            "manifest_path": str(service_mcp_config_path()),
+            "servers": document["servers"],
+            "disabled_servers": document["disabled_servers"],
+            "codex_servers": codex_servers,
+            "codex_inventory_error": inventory_error,
+        }
+
+    @app.get("/api/console/settings/mcp")
+    def console_settings_mcp():
+        from app.service_codex_config import ServiceMcpConfigError
+
+        try:
+            return item_envelope(mcp_settings_payload())
+        except ServiceMcpConfigError as exc:
+            return JSONResponse(
+                {"ok": False, "code": "validation_error", "message": exc.reason, "details": {}},
+                status_code=500,
+            )
+
+    @app.post("/api/console/settings/mcp")
+    async def console_settings_mcp_command(request: Request):
+        from app.service_codex_config import (
+            ServiceMcpConfigError,
+            write_service_mcp_manifest,
+        )
+
+        payload = await json_object(request)
+        try:
+            write_service_mcp_manifest(
+                {
+                    "servers": payload.get("servers", {}),
+                    "disabled_servers": payload.get("disabled_servers", []),
+                }
+            )
+        except ServiceMcpConfigError as exc:
+            return JSONResponse(
+                {"ok": False, "code": "validation_error", "message": exc.reason, "details": {}},
+                status_code=400,
+            )
+        return command_result(item=mcp_settings_payload(), message="MCP 清单已保存")
+
     @app.get("/api/console/settings/{section}")
     def console_settings(section: str):
         payload: Any = None

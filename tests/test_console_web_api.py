@@ -2453,3 +2453,69 @@ def test_console_email_manual_training_returns_only_sanitized_durable_decision(
             "training_status": "running",
         },
     }
+
+
+def test_console_mcp_settings_lists_codex_servers_and_saves_disabled_list(
+    monkeypatch, tmp_path: Path
+):
+    from app.codex_mcp_inventory import CodexMcpServer
+
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps({"servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+    monkeypatch.setattr(
+        "app.codex_mcp_inventory.list_codex_mcp_servers",
+        lambda **_kwargs: (
+            CodexMcpServer(
+                name="cua_repl",
+                transport_type="stdio",
+                location="/Applications/ChatGPT.app/node",
+                enabled=True,
+                auth_status="unsupported",
+            ),
+            CodexMcpServer(
+                name="brightdata",
+                transport_type="streamable_http",
+                location="https://mcp.brightdata.com/mcp",
+                enabled=True,
+                auth_status="unknown",
+            ),
+        ),
+    )
+
+    with _client(tmp_path) as client:
+        listed = client.get("/api/console/settings/mcp")
+        assert listed.status_code == 200
+        item = listed.json()["item"]
+        assert item["servers"] == {"exa": {"url": "https://mcp.exa.ai/mcp"}}
+        assert item["disabled_servers"] == []
+        assert [server["name"] for server in item["codex_servers"]] == ["cua_repl", "brightdata"]
+        assert all(server["agent_enabled"] for server in item["codex_servers"])
+        assert "token" not in json.dumps(item)
+
+        saved = client.post(
+            "/api/console/settings/mcp",
+            json={"servers": item["servers"], "disabled_servers": ["cua_repl"]},
+        )
+        assert saved.status_code == 200
+        saved_item = saved.json()["item"]
+        assert saved_item["disabled_servers"] == ["cua_repl"]
+        assert {server["name"]: server["agent_enabled"] for server in saved_item["codex_servers"]} == {
+            "cua_repl": False,
+            "brightdata": True,
+        }
+
+        rejected = client.post(
+            "/api/console/settings/mcp",
+            json={"servers": {"exa": {"url": "not a url"}}, "disabled_servers": []},
+        )
+        assert rejected.status_code == 400
+        assert rejected.json()["code"] == "validation_error"
+
+    assert json.loads(manifest.read_text(encoding="utf-8")) == {
+        "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}},
+        "disabled_servers": ["cua_repl"],
+    }

@@ -5,8 +5,11 @@ import pytest
 
 from app.service_codex_config import (
     ServiceMcpConfigError,
+    load_service_mcp_manifest,
     load_service_mcp_servers,
+    read_service_mcp_manifest_document,
     service_mcp_config_options,
+    write_service_mcp_manifest,
 )
 
 
@@ -542,3 +545,82 @@ def test_invalid_utf8_manifest_raises_typed_error_without_echoing_bytes(
     assert exc_info.value.server_name == "service_mcp_config"
     assert exc_info.value.reason == "service MCP manifest is not valid UTF-8"
     assert "must-not-appear" not in str(exc_info.value)
+
+
+def test_disabled_servers_emit_inert_disabled_overrides(tmp_path: Path) -> None:
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}},
+                "disabled_servers": ["cua_repl"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_service_mcp_manifest(path=manifest, env={})
+    options = service_mcp_config_options(path=manifest, env={})
+
+    assert loaded.disabled_servers == ("cua_repl",)
+    assert [server.name for server in loaded.servers] == ["exa"]
+    assert (
+        'mcp_servers.cua_repl={"enabled" = false, "command" = "/usr/bin/false"}'
+        in options
+    )
+
+
+@pytest.mark.parametrize(
+    ("disabled", "reason"),
+    [
+        ("cua_repl", "service MCP manifest disabled_servers must be a list of server names"),
+        (["bad name"], "service MCP manifest disabled_servers must be a list of server names"),
+        (["cua_repl", "cua_repl"], "service MCP manifest disabled_servers must not repeat a server"),
+        (["exa"], "service MCP manifest cannot both configure and disable a server"),
+    ],
+)
+def test_invalid_disabled_servers_fail_closed(tmp_path: Path, disabled, reason) -> None:
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {"servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}, "disabled_servers": disabled}
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        load_service_mcp_manifest(path=manifest, env={})
+
+    assert exc_info.value.reason == reason
+
+
+def test_write_service_mcp_manifest_validates_then_persists(tmp_path: Path) -> None:
+    manifest = tmp_path / "service-mcp.json"
+
+    written = write_service_mcp_manifest(
+        {
+            "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}},
+            "disabled_servers": ["cua_repl"],
+        },
+        path=manifest,
+        env={},
+    )
+
+    assert written.disabled_servers == ("cua_repl",)
+    assert json.loads(manifest.read_text(encoding="utf-8")) == {
+        "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}},
+        "disabled_servers": ["cua_repl"],
+    }
+    assert read_service_mcp_manifest_document(path=manifest, env={}) == {
+        "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}},
+        "disabled_servers": ["cua_repl"],
+    }
+
+    with pytest.raises(ServiceMcpConfigError):
+        write_service_mcp_manifest(
+            {"servers": {"exa": {"url": "not a url"}}},
+            path=manifest,
+            env={},
+        )
+    # A rejected document never replaces the persisted manifest.
+    assert json.loads(manifest.read_text(encoding="utf-8"))["disabled_servers"] == ["cua_repl"]

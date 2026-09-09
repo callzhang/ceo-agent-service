@@ -16,6 +16,11 @@ SERVICE_MCP_CONFIG_PATH_ENV = "CEO_SERVICE_MCP_CONFIG_PATH"
 DEFAULT_SERVICE_MCP_CONFIG_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "service-mcp.json"
 )
+_MANIFEST_FIELDS = frozenset({"servers", "disabled_servers"})
+# Codex only accepts a whole-table override for a server, and every server
+# table must carry a transport. A disabled server never launches, so this
+# placeholder is inert; it exists only to satisfy the config schema.
+DISABLED_SERVER_PLACEHOLDER_COMMAND = "/usr/bin/false"
 _SERVER_FIELDS = frozenset(
     {
         "url",
@@ -56,6 +61,20 @@ class ServiceMcpServer:
     bearer_token_env_var: str | None = None
     http_headers: tuple[tuple[str, str], ...] = ()
     env_http_headers: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class ServiceMcpManifest:
+    """The service MCP manifest: service transports plus disabled Codex servers.
+
+    Codex merges the servers from the user's own ``$CODEX_HOME/config.toml``
+    into every run. ``disabled_servers`` names the ones that background Agent
+    turns must not see; ``servers`` adds the service-owned transports.
+    """
+
+    path: Path
+    servers: tuple[ServiceMcpServer, ...]
+    disabled_servers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -110,12 +129,82 @@ def load_service_mcp_servers(
     *,
     env: Mapping[str, str] = os.environ,
 ) -> tuple[ServiceMcpServer, ...]:
+    return load_service_mcp_manifest(path, env=env).servers
+
+
+def load_service_mcp_manifest(
+    path: Path | str | None = None,
+    *,
+    env: Mapping[str, str] = os.environ,
+) -> ServiceMcpManifest:
     config_path = service_mcp_config_path(path, env=env)
     payload = _read_manifest(config_path)
-    if set(payload) != {"servers"}:
+    return _resolve_manifest(config_path, payload, env=env)
+
+
+def read_service_mcp_manifest_document(
+    path: Path | str | None = None,
+    *,
+    env: Mapping[str, str] = os.environ,
+) -> dict[str, object]:
+    """Return the validated manifest as written: env variable names, no values."""
+
+    config_path = service_mcp_config_path(path, env=env)
+    payload = _read_manifest(config_path)
+    _resolve_manifest(config_path, payload, env=env)
+    return {
+        "servers": dict(payload["servers"]),
+        "disabled_servers": list(payload.get("disabled_servers", [])),
+    }
+
+
+def write_service_mcp_manifest(
+    payload: Mapping[str, object],
+    *,
+    path: Path | str | None = None,
+    env: Mapping[str, str] = os.environ,
+) -> ServiceMcpManifest:
+    """Validate a manifest document exactly like the loader, then persist it."""
+
+    config_path = service_mcp_config_path(path, env=env)
+    document = _normalized_manifest_document(config_path, payload)
+    manifest = _resolve_manifest(config_path, document, env=env)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    rendered = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+    temporary = config_path.with_name(config_path.name + ".tmp")
+    temporary.write_text(rendered, encoding="utf-8")
+    os.replace(temporary, config_path)
+    return manifest
+
+
+def _normalized_manifest_document(
+    config_path: Path, payload: Mapping[str, object]
+) -> dict[str, object]:
+    if not isinstance(payload, Mapping):
+        raise _manifest_error(config_path, "service MCP manifest root must be an object")
+    document: dict[str, object] = {"servers": payload.get("servers", {})}
+    disabled = payload.get("disabled_servers", [])
+    if disabled:
+        document["disabled_servers"] = disabled
+    unknown = set(payload) - _MANIFEST_FIELDS
+    if unknown:
         raise _manifest_error(
             config_path,
-            "service MCP manifest must contain only the servers object",
+            "service MCP manifest must contain only servers and disabled_servers",
+        )
+    return document
+
+
+def _resolve_manifest(
+    config_path: Path,
+    payload: Mapping[str, object],
+    *,
+    env: Mapping[str, str],
+) -> ServiceMcpManifest:
+    if not set(payload) <= _MANIFEST_FIELDS or "servers" not in payload:
+        raise _manifest_error(
+            config_path,
+            "service MCP manifest must contain only servers and disabled_servers",
         )
     entries = payload["servers"]
     if not isinstance(entries, dict):
@@ -123,6 +212,9 @@ def load_service_mcp_servers(
             config_path,
             "service MCP manifest servers must be an object",
         )
+    disabled_servers = _resolve_disabled_servers(
+        config_path, payload.get("disabled_servers", []), configured=entries
+    )
 
     servers: list[ServiceMcpServer] = []
     issues: list[ServiceMcpConfigIssue] = []
@@ -151,7 +243,37 @@ def load_service_mcp_servers(
             issues=tuple(issues),
             valid_servers=tuple(servers),
         )
-    return tuple(servers)
+    return ServiceMcpManifest(
+        path=config_path,
+        servers=tuple(servers),
+        disabled_servers=disabled_servers,
+    )
+
+
+def _resolve_disabled_servers(
+    config_path: Path,
+    value: object,
+    *,
+    configured: Mapping[str, object],
+) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(_valid_server_name(name) for name in value):
+        raise _manifest_error(
+            config_path,
+            "service MCP manifest disabled_servers must be a list of server names",
+        )
+    names = tuple(str(name) for name in value)
+    if len(set(names)) != len(names):
+        raise _manifest_error(
+            config_path,
+            "service MCP manifest disabled_servers must not repeat a server",
+        )
+    overlap = set(names) & set(configured)
+    if overlap:
+        raise _manifest_error(
+            config_path,
+            "service MCP manifest cannot both configure and disable a server",
+        )
+    return names
 
 
 def service_mcp_config_options(
@@ -161,11 +283,13 @@ def service_mcp_config_options(
     servers: Iterable[ServiceMcpServer] | None = None,
 ) -> list[str]:
     options: list[str] = []
-    configured_servers = (
-        tuple(servers)
-        if servers is not None
-        else load_service_mcp_servers(path, env=env)
-    )
+    disabled_servers: tuple[str, ...] = ()
+    if servers is not None:
+        configured_servers = tuple(servers)
+    else:
+        manifest = load_service_mcp_manifest(path, env=env)
+        configured_servers = manifest.servers
+        disabled_servers = manifest.disabled_servers
     for server in configured_servers:
         prefix = f"mcp_servers.{server.name}"
         if server.url is not None:
@@ -188,6 +312,12 @@ def service_mcp_config_options(
                 f"{prefix}.env_http_headers",
                 dict(server.env_http_headers),
             )
+    for name in disabled_servers:
+        _append_option(
+            options,
+            f"mcp_servers.{name}",
+            {"enabled": False, "command": DISABLED_SERVER_PLACEHOLDER_COMMAND},
+        )
     return options
 
 

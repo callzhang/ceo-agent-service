@@ -12,13 +12,14 @@ import { StatusBadge } from "../components/status/StatusBadge";
 import { AttentionPanel } from "./AttentionPage";
 import { StatusPanel } from "./StatusPage";
 import { ManagedSkillsPanel } from "../components/settings/ManagedSkillsPanel";
+import { McpPanel } from "../components/settings/McpPanel";
 
 type RecordValue = Record<string, unknown>;
-type SettingsSection = "status" | "info" | "configuration" | "agent-runtime" | "prompts" | "connectors" | "audit-rules" | "skills" | "attention";
+type SettingsSection = "status" | "info" | "configuration" | "agent-runtime" | "prompts" | "connectors" | "audit-rules" | "skills" | "mcp" | "attention";
 
 const sections: Array<[SettingsSection, string]> = [
   ["status", "Status"], ["info", "Info"], ["configuration", "Configuration"], ["agent-runtime", "Agent Runtime"],
-  ["prompts", "Prompts"], ["connectors", "Connectors"], ["audit-rules", "Audit Rules"], ["skills", "Skills"], ["attention", "Attention"],
+  ["prompts", "Prompts"], ["connectors", "Connectors"], ["audit-rules", "Audit Rules"], ["skills", "Skills"], ["mcp", "MCP"], ["attention", "Attention"],
 ];
 
 function record(value: unknown): RecordValue {
@@ -701,6 +702,7 @@ function SettingsContent({ section, payload, draft, setDraft, prompt, view, conn
   if (section === "status") return <StatusPanel />;
   if (section === "attention") return <AttentionPanel onCountChange={onAttentionCountChange} />;
   if (section === "skills") return <ManagedSkillsPanel />;
+  if (section === "mcp") return <SettingsCard><McpPanel /></SettingsCard>;
   if (section === "prompts") return <PromptPanel payload={payload} prompt={prompt} view={view} draft={draft} setDraft={setDraft} saveState={saveState} />;
   if (section === "connectors") return <ConnectorPanel payload={payload} connector={connector} />;
   if (section === "agent-runtime") return <RuntimePanel payload={payload} draft={draft} setDraft={setDraft} saveState={saveState} saveError={saveError} />;
@@ -746,13 +748,13 @@ export function SettingsPage() {
     return () => { active = false; };
   }, [section]);
   useEffect(() => {
-    if (section === "skills") { setState("ready"); setPayload(null); setError(""); return; }
+    if (section === "skills" || section === "mcp") { setState("ready"); setPayload(null); setError(""); return; }
     if (section === "status" || section === "attention") return;
     const controller = new AbortController(); setState("loading"); setSaveState("idle"); setSaveError("");
     getSettings(section, controller.signal).then((response) => { setPayload(response.item); setDraft(fieldsOf(response.item)); setState("ready"); setError(""); }).catch((reason: unknown) => { if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
     return () => controller.abort();
   }, [section]);
   async function save() { if (!payload) return; setSaveState("saving"); setSaveError(""); try { const fields = section === "prompts" ? { template: displayValue(draft[`${prompt}_template`]) } : section === "audit-rules" ? { template: displayValue(draft.template) } : draft; await saveSettings(section, fields, section === "prompts" ? { prompt } : {}); setSaveState("saved"); } catch (reason: unknown) { setSaveState("error"); setSaveError(reason instanceof Error && reason.message ? reason.message : "保存失败，草稿仍保留"); } }
-  const content = state === "error" ? <SettingsCard><div className="page-state page-state-error" role="alert">{error}</div></SettingsCard> : state === "loading" && !payload && section !== "status" && section !== "attention" && section !== "skills" ? <SettingsCard><div className="page-state" role="status">正在加载…</div></SettingsCard> : <SettingsContent section={section} payload={payload || {}} draft={draft} setDraft={setDraft} prompt={prompt} view={view} connector={connector} auditRule={auditRule} saveState={saveState} saveError={saveError} onAttentionCountChange={setAttentionCount} />;
+  const content = state === "error" ? <SettingsCard><div className="page-state page-state-error" role="alert">{error}</div></SettingsCard> : state === "loading" && !payload && section !== "status" && section !== "attention" && section !== "skills" && section !== "mcp" ? <SettingsCard><div className="page-state" role="status">正在加载…</div></SettingsCard> : <SettingsContent section={section} payload={payload || {}} draft={draft} setDraft={setDraft} prompt={prompt} view={view} connector={connector} auditRule={auditRule} saveState={saveState} saveError={saveError} onAttentionCountChange={setAttentionCount} />;
   return <main className="console-page settings-page" aria-labelledby="settings-page-title"><h1 id="settings-page-title" className="sr-only">Settings</h1><div className="settings-layout-react"><SectionNav section={section} attentionCount={attentionCount} /><div className="settings-content" onSubmit={(event) => { const form = event.target as HTMLFormElement; if (form.tagName === "FORM" && form.elements.namedItem("settings-save")) { event.preventDefault(); void save(); } }}>{content}</div></div></main>;
 }

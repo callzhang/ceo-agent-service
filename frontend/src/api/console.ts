@@ -892,6 +892,40 @@ export function saveSkill(name: string, content: string, expectedSha256: string)
   return request<SkillDetail>(`/api/console/settings/skills/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ content, expected_sha256: expectedSha256 }) });
 }
 
+export interface McpServerEntry {
+  url?: string;
+  url_env?: string;
+  command?: string;
+  command_env?: string;
+  args?: string[];
+  args_env?: string;
+  bearer_token_env_var?: string;
+  http_headers?: Record<string, string>;
+  env_http_headers?: Record<string, string>;
+}
+export interface CodexMcpServer {
+  name: string;
+  transport_type: string;
+  location: string;
+  enabled: boolean;
+  auth_status: string;
+  agent_enabled: boolean;
+}
+export interface McpSettings {
+  manifest_path: string;
+  servers: Record<string, McpServerEntry>;
+  disabled_servers: string[];
+  codex_servers: CodexMcpServer[];
+  codex_inventory_error: string;
+}
+
+export function getMcpSettings(signal?: AbortSignal) {
+  return request<ConsoleResource<McpSettings>>("/api/console/settings/mcp", { signal });
+}
+export function saveMcpSettings(servers: Record<string, McpServerEntry>, disabledServers: string[]) {
+  return request<{ ok: boolean; item: McpSettings; message: string }>("/api/console/settings/mcp", { method: "POST", body: JSON.stringify({ servers, disabled_servers: disabledServers }) });
+}
+
 export function getResource(path: string, signal?: AbortSignal) {
   return request<ConsoleResource<Record<string, unknown>>>(path, { signal });
 }

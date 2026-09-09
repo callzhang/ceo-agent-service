@@ -2,7 +2,12 @@
 
 `service-mcp.json` is the committed service MCP seed. Runtime resolves only the
 manifest selected by `CEO_SERVICE_MCP_CONFIG_PATH`; it never copies transports
-from `~/.codex/config.toml`. Setup creates an editable local copy at
+from `~/.codex/config.toml`. Codex itself still merges every server from
+`$CODEX_HOME/config.toml` into a run, so the manifest's `disabled_servers` list
+names the personal servers that background Agent turns must not see (each is
+overridden with `enabled = false` and an inert placeholder transport, because
+Codex only accepts whole-table server overrides). Settings → MCP edits the
+selected manifest; changes apply from the next Agent turn. Setup creates an editable local copy at
 `data/config/service-mcp.json`. Delete optional server entries from that copy
 when they are not used. A present entry must resolve to one complete URL or
 command transport, otherwise runtime and MCP doctor fail closed.

@@ -6,5 +6,8 @@
     "xiaoqing_interview": {
       "url": "https://interview.hr.startask.net/api/mcp"
     }
-  }
+  },
+  "disabled_servers": [
+    "cua_repl"
+  ]
 }

@@ -27,8 +27,10 @@ const getFeedbackIterationCapability = vi.hoisted(() => vi.fn());
 const setFeedbackIterationCapability = vi.hoisted(() => vi.fn());
 const exportManagedSkillRevision = vi.hoisted(() => vi.fn());
 const startConnectorLogin = vi.hoisted(() => vi.fn());
+const getMcpSettings = vi.hoisted(() => vi.fn());
+const saveMcpSettings = vi.hoisted(() => vi.fn());
 
-vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, listEmailAccounts, createEmailAccount, updateEmailAccount, testEmailAccount, getSkillFeatures, toggleSkillFeature, startConnectorLogin, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
+vi.mock("../api/console", () => ({ getMcpSettings, saveMcpSettings, getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, listEmailAccounts, createEmailAccount, updateEmailAccount, testEmailAccount, getSkillFeatures, toggleSkillFeature, startConnectorLogin, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
 vi.mock("../api/skills", () => ({ listManagedSkills, createManagedSkill, listManagedSkillRevisions, createManagedSkillRevision, getCurrentRuntimeSkillConfig, createRuntimeSkillConfig, listRuntimeSkillLoadReceipts, getFeedbackIterationCapability, setFeedbackIterationCapability, exportManagedSkillRevision }));
 
 import { SettingsPage } from "./SettingsPage";
@@ -668,5 +670,38 @@ describe("SettingsPage", () => {
     expect(configuration).not.toBeNull();
     expect(within(configuration!).getByRole("switch", { name: "启用微信自动回复" })).toBeChecked();
     expect(within(configuration!).getByRole("link", { name: "管理自动回复对象" })).toHaveAttribute("href", "/settings?tab=connectors&connector=wechat");
+  });
+});
+
+describe("SettingsPage MCP", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    listAttention.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-09-09T00:00:00Z" } });
+  });
+
+  it("lists Codex servers and disables one for background agents", async () => {
+    const item = {
+      manifest_path: "data/config/service-mcp.json",
+      servers: { exa: { url: "https://mcp.exa.ai/mcp" } },
+      disabled_servers: [],
+      codex_servers: [
+        { name: "cua_repl", transport_type: "stdio", location: "/Applications/ChatGPT.app/node", enabled: true, auth_status: "unsupported", agent_enabled: true },
+        { name: "brightdata", transport_type: "streamable_http", location: "https://mcp.brightdata.com/mcp", enabled: true, auth_status: "unknown", agent_enabled: true },
+      ],
+      codex_inventory_error: "",
+    };
+    getMcpSettings.mockResolvedValueOnce({ item, meta: { snapshot_at: "2026-09-09T00:00:00Z" } });
+    saveMcpSettings.mockResolvedValueOnce({ ok: true, message: "MCP 清单已保存", item: { ...item, disabled_servers: ["cua_repl"], codex_servers: item.codex_servers.map((server) => ({ ...server, agent_enabled: server.name !== "cua_repl" })) } });
+
+    renderSettings("/settings?tab=mcp");
+
+    const toggle = await screen.findByLabelText("cua_repl 后台 Agent 可用");
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText("exa")).toBeInTheDocument();
+    await userEvent.click(toggle);
+
+    await waitFor(() => expect(saveMcpSettings).toHaveBeenCalledWith({ exa: { url: "https://mcp.exa.ai/mcp" } }, ["cua_repl"]));
+    await waitFor(() => expect((screen.getByLabelText("cua_repl 后台 Agent 可用") as HTMLInputElement).checked).toBe(false));
+    expect(getSettings).not.toHaveBeenCalled();
   });
 });
