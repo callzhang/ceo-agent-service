@@ -299,6 +299,31 @@ continuation；`awaiting_audit` 是 effect/claim 的领域状态，
 - 周 OKR 分析任务每次获得新的租约时使用新的 runtime 执行代次。单次执行中的结果格式修正保持有界；已终态的旧代次不得阻断同一分析任务在后续租约中的重新执行。
 - 所有需要 `BEGIN IMMEDIATE` 的 Store 写路径统一经过同一个有界重试事务。短暂的 SQLite 写锁在 Store 内等待并重试；只有超过上限的持续锁才上升为服务错误。队列 claim、反馈批处理和恢复路径不得绕过这一规则。
 
+### Cron trigger 与 Consumer Dispatcher
+
+Agent Cron 保存任务定义及其结构化 Skill refs、固定 Runtime route/model/options、工作目录、Cron
+和时区。Scheduler 每次只计算当前时间之后的最近触发点，不枚举停机窗口，所以没有 catch-up。
+手动运行只追加一次 manual trigger，不改变 `next_run_at`。若上一轮关联 execution 尚未终态，
+本轮以 `skipped` 和稳定原因结束，不等待后补。
+
+一次正常到期分为两个可恢复阶段：`scheduled` adapter 领取 `scheduled_task_runs.pending`，在一个
+事务中创建或复用唯一 `reply_tasks.channel=scheduled` 输入、保存 execution link，并把 trigger
+标记 `dispatched`；`scheduled_execution` adapter 再领取该 execution source，按派发时冻结的
+prompt、Skill protocol、route、model、thinking 和 workdir 启动 Agent。managed Skill 使用精确
+revision；执行前若指定 Runtime、该 revision 或工作目录已经不可用，execution 以 `skipped`
+收口并产生 Attention，绝不 fallback，也不把业务结果写回 trigger。
+
+同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review 和
+DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
+公平性和容量；Consumer 保持领域边界。主动唤醒之外的有界等待只用于跨进程写入和异常恢复，不是
+用户配置。Status 为每个实际 adapter 展示 pending、oldest、running 和 latest error；scheduler
+进程/扫描健康与 scheduled run 的业务结果分别展示，空队列不会制造 Agent run。
+
+默认业务生产任务通过稳定 migration key 幂等 seed。钉钉消息、会议、微信 reader、OA、每日工作
+来源和每周 OKR 的旧 producer timing loops 已移除；它们由对应 Agent Cron 形成 one-shot 输入。
+Lark 没有默认 seed。内部投递、发送状态确认、错误恢复及 Todo completion follow-up 仍是内部机制，
+不外化为 Cron。
+
 ### 应用层边界
 
 应用层不审核 Agent 使用的命令、MCP 工具、Skill、读写模式或工具名称，也不维护

@@ -284,9 +284,6 @@ cp .env.example .env
 | `CEO_NOT_SEND_MESSAGE` | `1` 表示只记录不发送，`0` 表示允许发送 |
 | `CEO_LIVE_SEND_BLOCKERS_ACCEPTED` | live send 的显式确认开关 |
 | `CEO_CORPUS_DIR` | 本地风格语料目录 |
-| `CEO_MEETING_PRODUCER_INTERVAL_SECONDS` | 会议信息发现周期，默认 60 秒 |
-| `CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS` | 会后对齐队列消费周期，默认 10 秒 |
-| `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
 | `CEO_REPOSITORY_UPGRADE_REMOTE` / `CEO_REPOSITORY_UPGRADE_BRANCH` | repository-upgrade 检查的 Git remote 和目标分支，默认 `origin` / `main` |
 | `CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS` | 自动检查远端更新的周期，默认 21600 秒（6 小时） |
 | `CEO_REPOSITORY_UPGRADE_DISABLED` | 设为 `1` 禁用周期检查；History 页面仍可手动查看已保存状态 |
@@ -458,6 +455,7 @@ http://127.0.0.1:8765/
 - `/`：Agent Workbench，用于创建和继续 agent 任务、查看流式进度、产物与待确认操作；工作区高度由 SPA 外层布局扣除顶部导航的实际高度，桌面单行导航和移动端双行导航都不使用固定像素猜测
 - `/history`：React SPA 回复与执行历史；“检索对象”可分别筛选普通钉钉回复、微信、审批、task 和 meeting，状态筛选支持 sent、reacted、skipped、blocked、failed 和 done。详情页统一显示业务结果，Runtime details 默认折叠。
 - Attention 中的运行错误使用 `/history/errors/{error_id}` 只读详情页；错误记录 ID 属于 `errors` 表，不会再被误当成 `reply_attempts` 的 Attempt ID。
+- `/scheduled-tasks`：顶部导航中的 Agent Cron 管理页。任务定义包含描述、结构化 `$Skill` 引用、Cron/时区和固定 Runtime；`/scheduled-tasks?id=<task_id>` 可从 Attention 直接定位任务。Runtime 或精确 Skill revision 不可用时不会 fallback，相关 trigger/execution 会显示跳过原因并进入 Attention。
 - History 的状态筛选按当前可处理性展示：同一触发消息或同一会后任务已经有后续结果时，旧 `failed` / `blocked` / `ready_to_send` 行保留为审计证据，但不再进入 active failed/blocked/pending 筛选；尚无后续结果的 blocked 统一显示为可恢复的 `Blocked`。
 - `/tasks`：work projects、状态、category filter、Priority/Risk 排序、TODO checklist、实时全文检索和分页
 - `/tasks` 页面中的 `Sent TODOs` 通过 `/api/console/tasks/sent-todos` 加载结构化的 DingTalk Todo 与 follow-up 发送记录；该 API 必须放在 `/api/console/tasks/{project_id}` 动态路由之前，避免 `sent-todos` 被当成项目 ID 解析。
@@ -488,16 +486,14 @@ management, strategy, projects, marketing, research, dev, product,
 recruiting, sales, finance, admin, HR, other
 ```
 
-主服务会自动运行 task maintenance：
-
-- 每 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 秒消费一次 reply worker 写入的 Work Item，默认 60 秒。
-- 每 `CEO_TASK_DAILY_INTERVAL_SECONDS` 秒扫描 AI 听记、本地新增文件、拉取钉钉 Todo 完成状态并处理到期 follow-up，默认 86400 秒。
+主服务使用统一 Dispatcher 消费 reply worker 写入的 Work Item、会议、OKR、scheduled execution
+和 Todo outbox。业务发现由 Agent Cron 产生 one-shot 输入；错误恢复、投递确认、钉钉 Todo 完成
+状态和到期 follow-up 等后续机制仍由内部 maintenance 处理，不提供用户可编辑的检查频率。
 - `refresh-okr-archive --period-label '2026 Q3'` 会只读拉取 CEO-2 管理群成员的实时叮当 OKR，
   写入 `CEO_WORKSPACE/OKR档案/<period>/company_okr_<period>_raw.json` 和
   `CEO_WORKSPACE/OKR档案/latest_company_okr_index.md`。task agent 会把 latest index 作为公司目标参照，
   用于判断事项是否和 OKR/KR、关键项目或管理风险有关；该索引不是 TODO 完成证据。
-- 钉钉 OA 待审批扫描默认开启，由 `CEO_OA_PENDING_SCAN_ENABLED` 控制；扫描间隔由
-  `CEO_OA_PENDING_SCAN_INTERVAL_SECONDS` 控制，默认 3600 秒；每次扫描查询最近
+- 钉钉 OA 待审批由默认 Agent Cron 每小时触发一次 one-shot 扫描；每次扫描查询最近
   `CEO_OA_PENDING_SCAN_LOOKBACK_DAYS` 天的待审批，默认 365 天。扫描只会在审批详情中
   确认当前登录用户存在 RUNNING 审批节点时入队，避免猜测 task id；同一审批仅在首次到达
   当前用户、任务 ID 变化或申请方产生新的审批操作/留言时再次入队；服务自身写入的审批
@@ -586,16 +582,18 @@ scripts/install-auto-reply-agents.sh
 运行模型只有一个 launchd job。它的 supervisor 运行 worker 和审计 Web 两个独立子进程；它们共享 SQLite，但不共享 Python 解释器。任一子进程退出时，supervisor 只退避重启该子进程，另一方继续服务；不会创建 meeting crontab 或第二个 plist：
 
 - `com.ceo-agent-service.main`：唯一 launchd job，托管队列 worker 与本地审计页面。
-- producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。
+- Agent Cron scheduler：按任务自己的 Cron 和时区创建 trigger；停机不补跑，重叠轮次跳过，手动运行不移动计划。
 - Agent 执行容量：单一 launchd 服务内按 `CEO_CONSUMER_WORKERS` 限制所有 Agent 队列合计并发，默认 2；各队列独立调度，Meeting 单类最多 1 个，同一会话仍串行。无需 Agent 的 trigger 和 Todo outbox 不占用 Agent 容量。
-- meeting producer loop：读取 AI 听记与日历参会证据，只为 Derek 参会且明确结束至少 `CEO_MEETING_SETTLE_SECONDS` 的会议建队列；日历只用于确认参会名单。没有匹配日程时，逐字稿中识别到的说话者只能证明这些人发言过，不能证明会议是两人会议；没有触发条件的会议保持安静。
-- meeting consumer loop：先按讨论内容决定投递范围，再处理参会名单。客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动均为业务内容：Agent 使用 DWS 搜索、排序并自行选择有明确业务承接关系的团队群；议题相似、参会人重合或近期活跃本身不构成投递证据。多个合理群时由 Agent 选择证据最强的群；没有有证据且可发送的群时返回 `no_action`，绝不私信会议创建人或参会人。只有个人、非业务内容，且完整日历名单明确为 Derek 与另一位参会人时，才可以私信该另一位参会人。所选群不可发送时重试验证或选择下一候选群，不回退为私信。发送正文固定以 `【会议跟进】会议标题（会议时间）` 开头，便于收件人识别来源会议；真实 @ 默认限于参会人，非参会人只有会议转写明确说到是他的任务、由他负责、交给他确认或跟进时才 @。确认发送成功后复用 reply agent 的本地/Chrome notification 和钉钉会话点击跳转。dry-run 只分析到 `ready_to_send`，不会 claim 发送。
+- 会议发现 Cron：读取 AI 听记与日历参会证据，只为 Derek 参会且 `ended_at + 10 minutes` 已到的会议建队列；日历只用于确认参会名单。没有匹配日程时，逐字稿中识别到的说话者只能证明这些人发言过，不能证明会议是两人会议；没有触发条件的会议保持安静。
+- Meeting Consumer：先按讨论内容决定投递范围，再处理参会名单。客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动均为业务内容：Agent 使用 DWS 搜索、排序并自行选择有明确业务承接关系的团队群；议题相似、参会人重合或近期活跃本身不构成投递证据。多个合理群时由 Agent 选择证据最强的群；没有有证据且可发送的群时返回 `no_action`，绝不私信会议创建人或参会人。只有个人、非业务内容，且完整日历名单明确为 Derek 与另一位参会人时，才可以私信该另一位参会人。所选群不可发送时重试验证或选择下一候选群，不回退为私信。发送正文固定以 `【会议跟进】会议标题（会议时间）` 开头，便于收件人识别来源会议；真实 @ 默认限于参会人，非参会人只有会议转写明确说到是他的任务、由他负责、交给他确认或跟进时才 @。确认发送成功后复用 reply agent 的本地/Chrome notification 和钉钉会话点击跳转。dry-run 只分析到 `ready_to_send`，不会 claim 发送。
 - `replay-recent-meetings` 会重新读取日历和听记证据，并只重开没有任何发送回执的 `no_action` 或 `failed` 会议任务；已发送或存在发送回执的任务保持终态，避免重复外发。
-- task maintenance loop：按 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 处理 Work Item，并按 `CEO_TASK_DAILY_INTERVAL_SECONDS` 扫描 AI 听记、`CEO_WORKSPACE` 文件和到期 follow-up。
+- Consumer Dispatcher：直接从 scheduled trigger/execution、reply、meeting、work summary、OKR 和 Todo outbox 的既有事实来源领取；内部唤醒/等待、租约和 recovery 没有用户设置。
 
-这些周期参数统一在审计页 `Settings → Configuration → Scheduling` 中维护，保存到 `.env` 后由 Python 服务启动时读取；launchd 模板不再在 shell 命令里写死或覆盖这些周期值。
-
-meeting producer 首次启用时会持久化激活时间。服务启动恢复队列前，会把激活时间以前且从未尝试发送的历史任务统一标记为 `no_action`；因此切换瞬间已被旧进程领取的历史会议也不会在重启后重新进入分析或发送。
+默认 seed 使用稳定 migration key 幂等创建钉钉消息、会议、微信 reader、OA、每日工作来源和每周
+OKR 任务；已有用户修改不会被启动过程覆盖，Lark 不创建默认 seed。对应的旧 producer timing
+入口已移除，避免旧循环和 Cron 双触发。Status 只展示 Scheduler 组件健康及每个 Dispatcher adapter
+的 pending/oldest/running/latest error，不提供 polling 或 settle 配置；业务 run 结果在定时任务与
+History 中独立展示。
 
 实际时长小于 5 分钟的听记在日历匹配和建队列前跳过；实际候选人面试由 agent 根据标题、摘要、参会人和完整转写识别并终止为 `no_action`。招聘站会、招聘计划、人才讨论和招聘需求对齐仍按普通业务会议处理。
 
