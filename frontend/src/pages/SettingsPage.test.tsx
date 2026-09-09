@@ -26,8 +26,9 @@ const createManagedSkill = vi.hoisted(() => vi.fn());
 const getFeedbackIterationCapability = vi.hoisted(() => vi.fn());
 const setFeedbackIterationCapability = vi.hoisted(() => vi.fn());
 const exportManagedSkillRevision = vi.hoisted(() => vi.fn());
+const startConnectorLogin = vi.hoisted(() => vi.fn());
 
-vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, listEmailAccounts, createEmailAccount, updateEmailAccount, testEmailAccount, getSkillFeatures, toggleSkillFeature, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
+vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, listEmailAccounts, createEmailAccount, updateEmailAccount, testEmailAccount, getSkillFeatures, toggleSkillFeature, startConnectorLogin, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
 vi.mock("../api/skills", () => ({ listManagedSkills, createManagedSkill, listManagedSkillRevisions, createManagedSkillRevision, getCurrentRuntimeSkillConfig, createRuntimeSkillConfig, listRuntimeSkillLoadReceipts, getFeedbackIterationCapability, setFeedbackIterationCapability, exportManagedSkillRevision }));
 
 import { SettingsPage } from "./SettingsPage";
@@ -257,6 +258,17 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("heading", { name: "纷享销客 CLI" })).toBeInTheDocument();
     expect(screen.getByText("已登录纷享销客：章磊；CLI 1.1.12")).toBeInTheDocument();
     expect(screen.getByText("sharecrm auth status")).toBeInTheDocument();
+  });
+
+  it("offers one-click login when a CLI Connector is not ready", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fxiaoke: { state: "needs_login", reason_code: "status_auth_invalid", commands: [["sharecrm", "auth", "status"]] } }, meta: { snapshot_at: "2026-09-08T00:00:00Z" } });
+    startConnectorLogin.mockResolvedValueOnce({ ok: true, item: { connector: "fxiaoke", command: ["sharecrm", "auth", "login"], pid: 123, started: true }, message: "登录窗口已启动，请完成网页授权后刷新状态。" });
+    const user = userEvent.setup();
+    renderSettings("/settings?tab=connectors&connector=fxiaoke");
+    const button = await screen.findByRole("button", { name: "一键登录 / 启动" });
+    await user.click(button);
+    expect(await screen.findByRole("button", { name: "已启动，完成授权后刷新" })).toBeInTheDocument();
+    expect(startConnectorLogin).toHaveBeenCalledWith("fxiaoke");
   });
 
   it("keeps WeChat reading separate from the automatic-reply switch", async () => {

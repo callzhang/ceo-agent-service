@@ -695,6 +695,18 @@ def start_lark_auth_login(binary: str = "lark-cli") -> subprocess.Popen[str]:
     )
 
 
+def start_connector_auth_login(connector: str) -> tuple[list[str], subprocess.Popen[str]]:
+    commands = {
+        "dingtalk": ["dws", "auth", "login"],
+        "lark": ["lark-cli", "auth", "login"],
+        "fxiaoke": ["sharecrm", "auth", "login"],
+    }
+    if connector not in commands:
+        raise ValueError(f"Unsupported connector: {connector}")
+    command = commands[connector]
+    return command, subprocess.Popen(command, text=True, start_new_session=True, env=os.environ.copy())
+
+
 def _run_command(
     *,
     channel: str,

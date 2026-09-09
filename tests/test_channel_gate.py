@@ -20,6 +20,7 @@ from app.channel_gate import (
     classify_cli_read_failure,
     default_channel_gates,
     default_connector_gates,
+    start_connector_auth_login,
     start_lark_auth_login,
 )
 from app.store import AutoReplyStore
@@ -488,6 +489,22 @@ def test_default_connector_gates_adds_fxiaoke_without_changing_worker_channels()
     assert set(connector_gates) == {"dingtalk", "lark", "fxiaoke"}
     assert isinstance(connector_gates["fxiaoke"], FxiaokeCliGate)
     assert set(channel_gates) == {"dingtalk", "lark"}
+
+
+def test_start_connector_auth_login_launches_native_command(monkeypatch):
+    calls = []
+
+    class Process:
+        pid = 123
+
+    monkeypatch.setattr("app.channel_gate.subprocess.Popen", lambda command, **kwargs: calls.append((command, kwargs)) or Process())
+
+    command, process = start_connector_auth_login("fxiaoke")
+
+    assert command == ["sharecrm", "auth", "login"]
+    assert process.pid == 123
+    assert calls[0][0] == command
+    assert calls[0][1]["start_new_session"] is True
 
 
 @pytest.mark.parametrize(

@@ -153,8 +153,6 @@ export interface EmailClassificationItem {
   sender: string;
   subject: string;
   preview: string;
-  message_text?: string;
-  quoted_text?: string;
   important?: boolean | null;
   provider_classification?: EmailProviderClassification | null;
   description_version?: string;
@@ -175,6 +173,11 @@ export interface EmailClassificationItem {
   confirmed_at: string;
   created_at: string;
   updated_at: string;
+}
+export type EmailClassificationStatus = "all" | "pending_feedback" | "processed";
+export interface EmailClassificationDetailItem extends EmailClassificationItem {
+  message_text: string;
+  quoted_text?: string;
 }
 export interface EmailObservabilityAttempt {
   attempt_number: number;
@@ -412,7 +415,7 @@ function emailText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function mapEmailClassification(value: unknown): EmailClassificationItem {
+function mapEmailClassification(value: unknown, includeBody = false): EmailClassificationItem | EmailClassificationDetailItem {
   const row = asRecord(value);
   const confirmedCategory = emailText(row.confirmed_category);
   const predictedCategory = emailText(row.predicted_category);
@@ -424,7 +427,7 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
       inline: attachment.inline === true,
     }))
     : [];
-  return {
+  const item: EmailClassificationItem = {
     id: emailText(row.id),
     provider: emailText(row.provider),
     mailbox: emailText(row.mailbox || row.folder),
@@ -433,8 +436,6 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
     sender: emailText(row.sender),
     subject: emailText(row.subject),
     preview: emailText(row.preview),
-    message_text: emailText(row.message_text),
-    quoted_text: emailText(row.quoted_text),
     important: typeof row.important === "boolean" ? row.important : null,
     provider_classification: isRecord(row.provider_classification) ? row.provider_classification as unknown as EmailProviderClassification : null,
     description_version: emailText(row.description_version),
@@ -458,6 +459,8 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
     created_at: emailText(row.created_at),
     updated_at: emailText(row.updated_at),
   };
+  if (!includeBody) return item;
+  return { ...item, message_text: emailText(row.message_text), quoted_text: emailText(row.quoted_text) };
 }
 
 function resolveOwnerDisplay(project: Record<string, unknown>, todos: Array<Record<string, unknown>> = []): string {
@@ -574,7 +577,7 @@ export function listHistory(params: Record<string, string | number | undefined> 
 }
 
 export function listEmailClassifications(
-  status: "processed" | "pending_feedback",
+  status: EmailClassificationStatus,
   params: Record<string, string | number | undefined> = {},
   signal?: AbortSignal,
 ) {
@@ -589,7 +592,7 @@ export function getEmailClassification(id: string, signal?: AbortSignal) {
     const payload = asRecord(value);
     return {
       ok: payload.ok === true,
-      item: mapEmailClassification(payload.item),
+      item: mapEmailClassification(payload.item, true) as EmailClassificationDetailItem,
       observability: Array.isArray(payload.observability) ? payload.observability as EmailObservabilityEvent[] : [],
       provider_classification: isRecord(payload.provider_classification) ? payload.provider_classification as unknown as EmailProviderClassification : null,
       meta: asRecord(payload.meta) as { snapshot_at: string },
@@ -779,6 +782,9 @@ export function saveSettings(section: string, fields: Record<string, unknown>, e
   return command(`/api/console/settings/${encodeURIComponent(section)}`, { ...extras, fields });
 }
 export function getTutorial(signal?: AbortSignal) { return getResource("/api/console/tutorial", signal); }
+export function startConnectorLogin(connector: string) {
+  return request<{ ok: boolean; item: { connector: string; command: string[]; pid: number; started: boolean }; message: string }>(`/api/console/connectors/${encodeURIComponent(connector)}/login`, { method: "POST" });
+}
 export function runTutorialAction(actionId: string) { return command(`/api/console/tutorial/run/${encodeURIComponent(actionId)}`); }
 export function checkTutorialStep(stepId: string) { return command(`/api/console/tutorial/check/${encodeURIComponent(stepId)}`); }
 export function confirmTutorialStep(stepId: string, evidence: Record<string, unknown> = {}) { return command(`/api/console/tutorial/confirm/${encodeURIComponent(stepId)}`, { evidence }); }

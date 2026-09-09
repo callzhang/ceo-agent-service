@@ -1570,6 +1570,18 @@ def register_console_routes(
         from app.audit_web import build_wizard_status
         return item_envelope(json_safe(build_wizard_status(store_factory())))
 
+    @app.post("/api/console/connectors/{connector}/login")
+    def console_connector_login(connector: str):
+        from app.channel_gate import start_connector_auth_login
+        try:
+            command, process = start_connector_auth_login(connector)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return command_result(
+            item={"connector": connector, "command": command, "pid": process.pid, "started": True},
+            message="登录窗口已启动，请完成网页授权后刷新状态。",
+        )
+
     @app.post("/api/console/tutorial/check/{step_id}")
     async def console_tutorial_check(step_id: str, request: Request):
         from app.audit_web import _require_available_setup_action, _repo_root, check_setup_step, get_step_definition
