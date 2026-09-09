@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 import json
+import re
+import shlex
+import subprocess
 from typing import Protocol
 
 from app.agent_cron.context import (
@@ -33,6 +36,36 @@ class ScheduledTaskTriggerConsumer:
         run = self._store.get_scheduled_task_run(int(envelope.source_id))
         if run is None:
             raise ValueError("scheduled task run does not exist")
+        task = self._store.get_scheduled_task(run.scheduled_task_id)
+        if task is not None and task.migration_key in {
+            "dingtalk-message-check-v1",
+            "wechat-message-check-v1",
+        }:
+            # These Cron entries are service producers: the service performs the
+            # deterministic incremental read, and only newly queued business
+            # messages reach an Agent through the normal Dispatcher.
+            match = re.search(r"`([^`]+)`", task.prompt)
+            if match is None:
+                raise ValueError("producer command is missing")
+            command = match.group(1)
+            completed = subprocess.run(
+                shlex.split(command), cwd=task.working_directory,
+                capture_output=True, text=True, timeout=300, check=False,
+            )
+            if completed.returncode != 0:
+                reason = f"producer_failed:{completed.returncode}"
+                self._store.finish_scheduled_task_dispatch(
+                    run.id, owner=guard.token.owner,
+                    status="failed", reason=reason, now=now,
+                )
+                guard.accept_atomic_source_completion()
+                return
+            self._store.finish_scheduled_task_dispatch(
+                run.id, owner=guard.token.owner,
+                status="skipped", reason="producer_completed", now=now,
+            )
+            guard.accept_atomic_source_completion()
+            return
         try:
             built = self._builder.build(run, reply_task_id=0)
         except ValueError as exc:
