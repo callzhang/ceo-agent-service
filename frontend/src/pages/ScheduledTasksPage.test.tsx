@@ -398,7 +398,7 @@ describe("service command tasks", () => {
     renderPage("/scheduled-tasks?id=9");
 
     expect(await screen.findByLabelText("服务命令")).toHaveValue("produce-once");
-    expect(screen.getByLabelText("服务命令")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("服务命令")).toHaveValue("produce-once");
     expect(screen.getByText("增量读取 DingTalk 未读消息，去重后写入 reply task。")).toBeInTheDocument();
     expect(screen.queryByLabelText("Runtime")).toBeNull();
     expect(screen.queryByLabelText("任务描述")).toBeNull();

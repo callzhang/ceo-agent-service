@@ -236,6 +236,19 @@ export function ScheduledTasksPage() {
   const query = activeSkillQuery(draft.prompt);
   const suggestions = !skillMenuOpen || query === null ? [] : choices.filter((choice) => choice.name.toLocaleLowerCase().includes(query.query) || choice.label.toLocaleLowerCase().includes(query.query));
 
+  function selectCommand(command: string) {
+    setDraft((current) => ({
+      ...current,
+      command,
+      prompt: command ? "" : current.prompt,
+      runtime_id: command ? "" : current.runtime_id,
+      runtime_options: command ? {} : current.runtime_options,
+      required_runtime_capabilities: command ? [] : current.required_runtime_capabilities,
+      working_directory: "",
+      skill_refs: command ? [] : current.skill_refs,
+    }));
+  }
+
   async function load(signal?: AbortSignal) {
     const generation = ++contextGeneration.current;
     setLoadState("loading"); setError(""); setConflict(false);
@@ -465,9 +478,10 @@ export function ScheduledTasksPage() {
           <form className="scheduled-task-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
             <label><span>任务名称</span><input aria-label="任务名称" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} /></label>
             <div className="scheduled-task-form-row"><label><span>Cron（秒 分 时 日 月 周）</span><input aria-label="Cron 表达式" value={draft.cron_expression} onChange={(event) => updateDraft("cron_expression", event.target.value)} /></label><label><span>时区</span><input aria-label="时区" value={draft.timezone_name} onChange={(event) => updateDraft("timezone_name", event.target.value)} /></label></div>
-            {commandTask ? <div className="scheduled-task-command-field"><label><span>服务命令</span><input aria-label="服务命令" value={draft.command} readOnly /></label><small>{commandOption?.description || "由服务进程直接执行的确定性命令，不经过 Agent、Runtime 或 Skill。"}</small></div> : <>
+            <div className="scheduled-task-command-field"><label><span>执行类型</span><select aria-label="服务命令" value={draft.command} onChange={(event) => selectCommand(event.target.value)}><option value="">Agent 任务（使用下方提示词）</option>{options?.service_command_options.map((option) => <option key={option.name} value={option.name}>{option.name}</option>)}</select></label>{commandTask && <small>{commandOption?.description || "由服务进程直接执行的确定性命令，不经过 Agent、Runtime 或 Skill。"}</small>}</div>
+            {commandTask ? <></> : <>
             <div className="scheduled-task-form-row"><label><span>Runtime</span><select aria-label="Runtime" value={draft.runtime_id} disabled={!hasAvailableRuntime} onChange={(event) => selectRuntime(event.target.value)}>{!draft.runtime_id && <option value="">暂无可用 Runtime</option>}{draft.runtime_id && !selectedRuntime && <option value={draft.runtime_id} disabled>{draft.runtime_id} · 已不在配置中</option>}{options?.runtime_options.map((runtime) => { const missing = missingCapabilities(runtime); return <option key={runtime.route_name} value={runtime.route_name} disabled={!runtimeCanExecuteDraft(runtime)}>{runtime.route_name} · {runtime.model}{!runtime.available ? ` · 不可用：${runtime.unavailable_reason}` : missing.length ? ` · 缺少能力：${missing.join("、")}` : ""}</option>; })}</select>{runtimeBlockReason && <small className="field-error">{runtimeBlockReason}</small>}</label>{selectedRuntime?.supported_thinking.length ? <label><span>Reasoning</span><select aria-label="Reasoning" value={draft.runtime_options.thinking || ""} onChange={(event) => updateDraft("runtime_options", { thinking: event.target.value as ScheduledTaskDraft["runtime_options"]["thinking"] })}>{selectedRuntime.supported_thinking.map((thinking) => <option key={thinking} value={thinking}>{thinking}</option>)}</select></label> : null}</div>
-            <label><span>工作目录（可选）</span><input aria-label="工作目录" value={draft.working_directory} onChange={(event) => updateDraft("working_directory", event.target.value)} placeholder="使用服务默认目录" /></label>
+            <p className="scheduled-task-inherited-setting">工作目录：使用 Settings 中配置的服务工作区（无需在定时任务中重复配置）。</p>
             <div className="scheduled-task-prompt-field"><label htmlFor="scheduled-task-prompt">任务描述</label><textarea id="scheduled-task-prompt" aria-label="任务描述" rows={7} value={draft.prompt} onChange={(event) => { updatePrompt(event.target.value); setSkillMenuOpen(activeSkillQuery(event.target.value) !== null); }} placeholder="描述 Agent 每次触发要完成什么；输入 $ 引用 Skill" />
               {skillMenuOpen && query !== null && <section className="scheduled-task-suggestions" aria-label="Skill 建议">{suggestions.length ? suggestions.map((choice) => <button type="button" disabled={!choice.available} key={choice.key} onClick={() => selectSkill(choice)}><strong>{choice.label}</strong><small>{choice.description}{choice.available ? "" : ` · 不可用：${choice.unavailableReason}`}</small></button>) : <p>没有匹配的 Skill</p>}</section>}
             </div>
