@@ -7,7 +7,7 @@ const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "co
 vi.mock("../api/console", async importOriginal => ({ ...await importOriginal<object>(), ...api }));
 import { EmailPage } from "./EmailPage";
 const config = { category_key: "work", display_name: "工作", core_description: "工作定义", include: ["项目"], exclude: ["私人"], threshold: .9, actions: ["move"], action_parameters: {}, enabled: true, config_version: "c1", description_version: "d1", updated_at: "", bindings: [] };
-const row = (id: string) => ({ id, sender: "sender@example.com", subject: "邮件" + id, preview: "摘要", category: "work", confidence: .7, margin: .2, probabilities: {work:.7}, status: "pending_feedback", classification_source: "agent", model_version: "model-full-v1", config_version: "c1", attachment_metadata: [], action_plan: {}, current_action_plan_id: null, received_at: "", updated_at: "" });
+const row = (id: string, status = "pending_feedback") => ({ id, sender: "sender@example.com", subject: "邮件" + id, preview: "生成的摘要不应出现在列表", message_text: "原始邮件正文前段 " + id, category: "work", confidence: .7, margin: .2, probabilities: {work:.7}, status, classification_source: "agent", model_version: "model-full-v1", config_version: "c1", attachment_metadata: [], action_plan: {}, current_action_plan_id: null, received_at: "", updated_at: "" });
 const runtime = {mode:"agent_primary", active_model_id:null, candidate_model_id:"model-v2", candidate_ready:true, toggle_enabled:true};
 const gateConfig = {macro_f1_min:.95, category_precision_min:.95, category_validation_samples_min:20, p95_latency_max_ms:500, config_version:"p1"};
 function learning(overrides = {}) { return {runtime, promotion_gate:{config:gateConfig, promotion_eligible:true, checks:[]}, mode_transitions:[], models:[], staged_models:[], registry_issues:[], pending_examples:2, ...overrides}; }
@@ -21,15 +21,34 @@ beforeEach(() => {
   api.getEmailClassification.mockImplementation(async (id:string)=>({item:{...row(id),message_text:"完整正文\n> 引用邮件",recipients:["to@example.com"],cc:"cc@example.com",attachment_metadata:[{filename:"a.pdf",size_bytes:1024,mime_type:"application/pdf",content:"SECRET"}]},observability:[]}));
   api.listEmailLearning.mockResolvedValue({learning:learning()});
 });
-it("uses shared rows, 50 default, URL pagination and page sizes", async()=>{
+it("uses one shared all-status list, 50 default, URL pagination and page sizes", async()=>{
   const user=userEvent.setup();show();
   await screen.findByRole("button",{name:"打开邮件 邮件1"});
-  expect(api.listEmailClassifications).toHaveBeenCalledWith("processed",{page:1,page_size:50},expect.any(AbortSignal));
+  expect(api.listEmailClassifications).toHaveBeenCalledWith("all",{page:1,page_size:50},expect.any(AbortSignal));
   await user.selectOptions(screen.getByLabelText("每页邮件数"),"20");
-  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("processed",{page:1,page_size:20},expect.any(AbortSignal)));
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:20},expect.any(AbortSignal)));
   await user.click(screen.getByRole("button",{name:"下一页"}));
   expect(screen.getByLabelText("URL")).toHaveTextContent("page=2");
-  expect(screen.getByRole("tab",{name:/模型训练/})).toBeInTheDocument();
+  expect(screen.getByRole("tab",{name:"邮件分类"})).toHaveAttribute("aria-selected","true");
+});
+it("filters the shared list by all, pending feedback, or processed and preserves filter URL state", async()=>{
+  const user=userEvent.setup();show("/email?filter=all&page=2&page_size=20&selected=1");
+  await screen.findByRole("button",{name:"打开邮件 邮件1"});
+  expect(screen.getByRole("button",{name:"全部"})).toHaveAttribute("aria-pressed","true");
+  await user.click(screen.getByRole("button",{name:"待确认"}));
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("pending_feedback",{page:1,page_size:20},expect.any(AbortSignal)));
+  expect(screen.getByLabelText("URL")).toHaveTextContent("filter=pending_feedback");
+  expect(screen.getByLabelText("URL")).toHaveTextContent("page=1");
+  expect(screen.getByLabelText("URL")).toHaveTextContent("page_size=20");
+  expect(screen.getByLabelText("URL")).toHaveTextContent("selected=1");
+  await user.click(screen.getByRole("button",{name:"已处理"}));
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("processed",{page:1,page_size:20},expect.any(AbortSignal)));
+});
+it("renders the original body prefix in the shared row and never uses preview as its body", async()=>{
+  show();
+  const trigger=await screen.findByRole("button",{name:"打开邮件 邮件1"});
+  expect(trigger).toHaveTextContent("原始邮件正文前段 1");
+  expect(trigger).not.toHaveTextContent("生成的摘要不应出现在列表");
 });
 it("requests the unified all status and keeps message text out of list items",async()=>{
   const params: EmailClassificationListParams = { page: 1, page_size: 20 };
@@ -44,7 +63,7 @@ it("requests the unified all status and keeps message text out of list items",as
   fetchMock.mockRestore();
 });
 it("opens readonly body and metadata drawer and restores focus without losing selection",async()=>{
-  const user=userEvent.setup();show("/email?page=1&page_size=50");const trigger=await screen.findByRole("button",{name:"打开邮件 邮件1"});await user.click(trigger);
+  const user=userEvent.setup();show("/email?filter=processed&page=1&page_size=50");const trigger=await screen.findByRole("button",{name:"打开邮件 邮件1"});await user.click(trigger);
   const drawer=await screen.findByRole("dialog",{name:"邮件详情"});
   expect(await within(drawer).findByText(/完整正文/)).toHaveTextContent("> 引用邮件");
   expect(drawer).toHaveTextContent("a.pdf");expect(drawer).not.toHaveTextContent("SECRET");
@@ -52,13 +71,13 @@ it("opens readonly body and metadata drawer and restores focus without losing se
   await user.keyboard("{Escape}");expect(trigger).toHaveFocus();expect(screen.getByLabelText("URL")).toHaveTextContent("selected=1");
 });
 it("labels the pending decision bar for keyboard and assistive navigation",async()=>{
-  const user=userEvent.setup();show("/email?tab=pending_feedback&selected=1");
+  const user=userEvent.setup();show("/email?filter=pending_feedback&selected=1");
   const drawer=await screen.findByRole("dialog",{name:"邮件详情"});
   expect(within(drawer).getByRole("form",{name:"分类确认"})).toHaveTextContent("建议：工作");
 });
 it("shows an explicit inbox fallback when the agent leaves a message unclassified",async()=>{
   api.getEmailClassification.mockResolvedValueOnce({item:{...row("1"),category:null,message_text:"Hi"},observability:[]});
-  show("/email?tab=pending_feedback&selected=1");
+  show("/email?filter=pending_feedback&selected=1");
   expect(await screen.findByText(/未分类（留在收件箱）/)).toBeInTheDocument();
 });
 it("cancels stale detail requests when selection changes",async()=>{
@@ -70,7 +89,7 @@ it("cancels stale detail requests when selection changes",async()=>{
   expect(screen.getByRole("dialog")).not.toHaveTextContent("STALE");
 });
 it("locks feedback, preserves failure and advances only after success",async()=>{
-  const user=userEvent.setup();const saving=deferred<unknown>();api.confirmEmailClassification.mockReturnValueOnce(saving.promise);show("/email?tab=pending_feedback&selected=1");
+  const user=userEvent.setup();const saving=deferred<unknown>();api.confirmEmailClassification.mockReturnValueOnce(saving.promise);show("/email?filter=pending_feedback&selected=1");
   await user.click(await screen.findByRole("button",{name:"工作"}));await user.click(screen.getByRole("button",{name:"保存分类并继续"}));
   expect(screen.getByRole("button",{name:"关闭详情"})).toBeDisabled();expect(screen.getByRole("button",{name:"打开邮件 邮件2"})).toBeDisabled();
   await act(async()=>saving.reject(new Error("文件夹移动失败，请重试")));
@@ -126,14 +145,14 @@ it("keeps 64-bit string IDs intact and blocks duplicate form submissions",async(
   const id="8423079112545370123",user=userEvent.setup(),saving=deferred<unknown>();
   api.listEmailClassifications.mockResolvedValue({items:[row(id)],meta:{total:1,page:1,page_size:50}});
   api.confirmEmailClassification.mockReturnValue(saving.promise);
-  show("/email?tab=pending_feedback&selected="+id);
+  show("/email?filter=pending_feedback&selected="+id);
   await user.click(await screen.findByRole("button",{name:"工作"}));
   const submit=screen.getByRole("button",{name:"保存分类并继续"});
   fireEvent.submit(submit.closest("form")!);fireEvent.submit(submit.closest("form")!);
   expect(api.confirmEmailClassification).toHaveBeenCalledTimes(1);
   expect(api.confirmEmailClassification.mock.calls[0][0]).toBe(id);
   expect(api.getEmailClassification).toHaveBeenCalledWith(id,expect.any(AbortSignal));
-  expect(screen.getByRole("tab",{name:"已处理"})).toBeDisabled();
+  expect(screen.getByRole("button",{name:"已处理"})).toBeDisabled();
   await act(async()=>saving.reject(new Error("可重试")));
 });
 it("retains existing list while paging and ignores late page results",async()=>{
@@ -143,7 +162,7 @@ it("retains existing list while paging and ignores late page results",async()=>{
   await user.click(screen.getByRole("button",{name:"下一页"}));
   const signal=api.listEmailClassifications.mock.calls.at(-1)![2] as AbortSignal;
   expect(screen.getByRole("button",{name:"打开邮件 邮件1"})).toBeInTheDocument();
-  await user.click(screen.getByRole("tab",{name:"待反馈"}));
+  await user.click(screen.getByRole("button",{name:"待确认"}));
   await act(async()=>late.resolve({items:[row("STALE")],meta:{total:1,page:2,page_size:50}}));
   expect(signal.aborted).toBe(true);expect(screen.queryByRole("button",{name:"打开邮件 邮件STALE"})).not.toBeInTheDocument();
 });
@@ -151,7 +170,7 @@ it("retains selection on failed response envelopes and retries body without usin
   const user=userEvent.setup();
   api.getEmailClassification.mockRejectedValueOnce(new Error("正文连接失败"));
   api.getEmailClassification.mockResolvedValue({item:{...row("1"),message_text:"",recipients:[],attachment_metadata:[]},observability:[]});
-  show("/email?tab=pending_feedback&selected=1");
+  show("/email?filter=pending_feedback&selected=1");
   expect(await screen.findByRole("alert")).toHaveTextContent("正文连接失败");
   await user.click(screen.getByRole("button",{name:"重试正文"}));
   expect(await screen.findByText("这封邮件没有已保存的正文，请查看原邮件后分类。")).toBeInTheDocument();
@@ -165,7 +184,7 @@ it("returns to a legal previous page after removing the last item",async()=>{
   const user=userEvent.setup();
   api.listEmailClassifications.mockResolvedValueOnce({items:[row("1")],meta:{total:51,page:2,page_size:50}});
   api.confirmEmailClassification.mockResolvedValue({ok:true,message:"已保存"});
-  show("/email?tab=pending_feedback&page=2&page_size=50&selected=1");
+  show("/email?filter=pending_feedback&page=2&page_size=50&selected=1");
   await user.click(await screen.findByRole("button",{name:"工作"}));await user.click(screen.getByRole("button",{name:"保存分类并继续"}));
   await waitFor(()=>expect(screen.getByLabelText("URL")).toHaveTextContent("page=1"));
 });
@@ -183,9 +202,10 @@ it("preserves provider observations, unknown important state and rich action evi
 });
 it("supports keyboard tabs and drawer tab traversal",async()=>{
   const user=userEvent.setup();show();
-  const processed=screen.getByRole("tab",{name:"已处理"});processed.focus();await user.keyboard("{ArrowRight}");
-  expect(screen.getByRole("tab",{name:"待反馈"})).toHaveFocus();
-  expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby","email-tab-pending_feedback");
+  const list=screen.getByRole("tab",{name:"邮件分类"});list.focus();await user.keyboard("{ArrowRight}");
+  expect(screen.getByRole("tab",{name:"邮件配置"})).toHaveFocus();
+  expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby","email-tab-config");
+  await user.click(screen.getByRole("tab",{name:"邮件分类"}));
   await user.click(await screen.findByRole("button",{name:"打开邮件 邮件1"}));
   expect(screen.getByRole("button",{name:"关闭详情"})).toHaveFocus();
   await user.keyboard("{Shift>}{Tab}{/Shift}");expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
@@ -226,7 +246,7 @@ it("renders rich model detail on demand and keeps healthy inventory visible on d
   expect(drawer).toHaveTextContent("37");expect(drawer).toHaveTextContent("99.0%");expect(drawer).toHaveTextContent("200.0 ms");expect(drawer).toHaveTextContent("digest-9");expect(drawer).toHaveTextContent("emb-7");expect(drawer).toHaveTextContent("a".repeat(64));
 });
 it("keeps junk confirmable as Trash while excluding it from business configuration",async()=>{
-  const user=userEvent.setup();api.listEmailConfigs.mockResolvedValue({items:[config,{...config,category_key:"junk",display_name:"垃圾"}]});show("/email?tab=pending_feedback&selected=1");
+  const user=userEvent.setup();api.listEmailConfigs.mockResolvedValue({items:[config,{...config,category_key:"junk",display_name:"垃圾"}]});show("/email?filter=pending_feedback&selected=1");
   await user.click(await screen.findByRole("button",{name:"垃圾（Trash）"}));
   api.confirmEmailClassification.mockResolvedValue({ok:true,message:"已保存"});
   await user.click(screen.getByRole("button",{name:"保存分类并继续"}));
@@ -270,7 +290,7 @@ it("ignores an aborted learning rejection after a newer tab request succeeds",as
   expect(screen.queryByText("STALE learning error")).not.toBeInTheDocument();expect(screen.queryByRole("button",{name:"重新加载模型训练"})).not.toBeInTheDocument();
 });
 it("includes evidence summaries in drawer keyboard traversal",async()=>{
-  const user=userEvent.setup();show("/email?selected=1");await screen.findByText(/完整正文/);
+  const user=userEvent.setup();show("/email?filter=processed&selected=1");await screen.findByText(/完整正文/);
   const distribution=screen.getByRole("region",{name:"候选分布"});expect(distribution).toHaveTextContent("工作");expect(distribution).toHaveTextContent("70.0%");expect(distribution.querySelector(".email-probability-bar")).toBeTruthy();
 });
 it("reconciles a lost switch response from server mode before claiming current state",async()=>{
