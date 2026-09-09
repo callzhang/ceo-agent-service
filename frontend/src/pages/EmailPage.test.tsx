@@ -79,6 +79,18 @@ it("never enables a switch from client metric estimates",async()=>{
   api.listEmailLearning.mockResolvedValue({learning:learning({runtime:{...runtime,toggle_enabled:false,candidate_ready:false}})});show("/email?tab=learning");
   expect(await screen.findByRole("switch",{name:"主模型"})).toBeDisabled();
 });
+it("does not present a legacy registry active model as the realtime primary",async()=>{
+  const user=userEvent.setup();
+  api.listEmailLearning.mockResolvedValue({learning:learning({runtime:{...runtime,candidate_ready:false,toggle_enabled:false},models:[{model_id:"legacy-tfidf",status:"active",trained_at:"",sample_count:54,new_sample_count:9,integrity_status:"verified"}]})});
+  show("/email?tab=learning");
+  const table=await screen.findByRole("table",{name:"模型版本"});
+  expect(table).toHaveTextContent("历史版本");
+  expect(table).not.toHaveTextContent("主模型");
+  await user.click(screen.getByRole("button",{name:"历史证据 legacy-tfidf"}));
+  const detail=screen.getByRole("dialog",{name:"历史模型证据"});
+  expect(detail).toHaveTextContent("历史登记状态：active");
+  expect(detail).toHaveTextContent("不代表当前新邮件的主模型");
+});
 it("saves all four thresholds with server version and displays missing metrics as unmeasured",async()=>{
   const user=userEvent.setup();api.listEmailLearning.mockResolvedValue({learning:learning({staged_models:[{model_id:"model-v1",status:"candidate",trained_at:"",metrics:null,evaluation:null,split_counts:{train:4,validation:2,test:1},end_to_end_latency_ms:null}]})});
   api.saveEmailPromotionConfig.mockResolvedValue({ok:true});show("/email?tab=learning");
