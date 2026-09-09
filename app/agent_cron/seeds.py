@@ -20,6 +20,8 @@ from app.store import AutoReplyStore
 MINUTES_SYNC_MIGRATION_KEY = "ceo-minutes-sync-daily-v1"
 DINGTALK_MESSAGE_MIGRATION_KEY = "dingtalk-message-check-v1"
 DINGTALK_MESSAGE_SERVICE_COMMAND = "produce-once"
+WECHAT_MESSAGE_MIGRATION_KEY = "wechat-message-check-v1"
+WECHAT_MESSAGE_SERVICE_COMMAND = "wechat-produce-once"
 PRODUCER_RUNTIME_CAPABILITIES = LOCAL_SERVICE_RUNTIME_CAPABILITIES
 
 
@@ -124,6 +126,7 @@ def _seed_dingtalk_message_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
         command=DINGTALK_MESSAGE_SERVICE_COMMAND,
+        seed_enabled=True,
         now=now,
     )
     if adopted is not None:
@@ -214,55 +217,30 @@ def _seed_wechat_task(
     working_directory: Path,
     now: datetime | None,
 ) -> ScheduledTask:
-    migration_key = "wechat-message-check-v1"
-    existing = _existing_task(
-        store,
-        migration_key,
-        options=options,
-        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    """Seed the WeChat message check as a service command, not an Agent task.
+
+    The check is one deterministic producer pass over the ready WeChat
+    account, so it runs in-process without a runtime or Skills. A task seeded
+    earlier in the Agent form is moved to the command form in place; an
+    untouched seed becomes enabled because its disabled state only reflected
+    the Agent form's missing Skill revision.
+    """
+    del options, working_directory
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key=WECHAT_MESSAGE_MIGRATION_KEY,
+        command=WECHAT_MESSAGE_SERVICE_COMMAND,
+        seed_enabled=True,
         now=now,
     )
-    if existing is not None:
-        return existing
-    runtime, runtime_reason = _select_runtime(
-        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
-    )
-    managed_ref, managed_reason = _managed_ref(
-        store=store,
-        options=options,
-        name="ceo-wechat",
-        position=0,
-    )
-    command = _one_shot_command(
-        store,
-        working_directory,
-        "produce-once",
-        module="app.wechat.cli",
-        include_workspace=False,
-    )
-    prompt = (
-        f"使用 $ceo-wechat 执行 `{command}`，完成现有 producer "
-        "的一次检查，并严格保留"
-        "已配置联系人、群@、auto-confirm 和 sender 授权边界；投递及状态确认仍由"
-        "内部机制处理。不要新增复盘或摘要。"
-    )
-    reasons = tuple(
-        reason for reason in (runtime_reason, managed_reason) if reason is not None
-    )
-    if reasons:
-        prompt += "\n\n未启用：" + "；".join(reasons) + "。"
+    if adopted is not None:
+        return adopted
     return store.create_scheduled_task(
-        migration_key=migration_key,
+        migration_key=WECHAT_MESSAGE_MIGRATION_KEY,
         name="检查微信消息",
-        prompt=prompt,
+        command=WECHAT_MESSAGE_SERVICE_COMMAND,
         cron_expression="*/15 * * * * *",
         timezone_name="Asia/Shanghai",
-        runtime_id=runtime.route_name,
-        runtime_options={"model": runtime.model},
-        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
-        working_directory=str(working_directory.expanduser().resolve()),
-        skill_refs=(managed_ref,),
-        enabled=not reasons,
+        enabled=True,
         now=now,
     )
 

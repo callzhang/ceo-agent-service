@@ -1,5 +1,17 @@
 # Changelog
 
+- 2026-09-09: run the WeChat message check as a service command too. The
+  catalog gains `wechat-produce-once` (the same pass as
+  `app.wechat.cli produce-once`), bound in-process with the legacy loop's
+  reader-health semantics: no ready account or an unreachable Reader app
+  returns a summary, reports once through the `wechat.reader` health
+  component and the error log, requests one Reader restart after three IPC
+  failures, and clears on the next successful pass; only other exceptions
+  fail the trigger. The seeded `wechat-message-check-v1` task is converted in
+  place; an untouched legacy seed (version 1) becomes enabled because its
+  disabled state only reflected the Agent form's missing Skill revision,
+  while an edited task keeps the user's enabled state.
+
 - 2026-09-09: run the DingTalk message check as a service command instead of an
   Agent task. A scheduled task now has a `command` field (schema adds
   `scheduled_tasks.command` and backfills persisted run snapshots). A command

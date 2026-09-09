@@ -1105,7 +1105,7 @@ def test_adopting_a_service_command_moves_the_seed_in_place_once(
     )
 
     adopted = store.adopt_scheduled_task_service_command(
-        migration_key="producer-v1", command="produce-once",
+        migration_key="producer-v1", command="produce-once", seed_enabled=True,
         now=NOW + timedelta(minutes=1),
     )
 
@@ -1128,13 +1128,25 @@ def test_adopting_a_service_command_moves_the_seed_in_place_once(
     assert refs == 0
 
     again = store.adopt_scheduled_task_service_command(
-        migration_key="producer-v1", command="produce-once",
+        migration_key="producer-v1", command="produce-once", seed_enabled=True,
         now=NOW + timedelta(minutes=2),
     )
     assert again == adopted
     assert store.adopt_scheduled_task_service_command(
-        migration_key="unknown-v1", command="produce-once", now=NOW
+        migration_key="unknown-v1", command="produce-once", seed_enabled=True, now=NOW
     ) is None
+
+    untouched = store.create_scheduled_task(
+        migration_key="untouched-v1", name="Untouched", prompt="Agent form",
+        cron_expression="0 * * * * *", timezone_name="UTC", runtime_id="codex_oauth",
+        skill_refs=(_managed_ref(store, skill_name="ceo-untouched"),),
+        enabled=False, now=NOW,
+    )
+    converted = store.adopt_scheduled_task_service_command(
+        migration_key="untouched-v1", command="produce-once", seed_enabled=True, now=NOW
+    )
+    assert untouched.version == 1 and converted.enabled is True
+    assert converted.version == 2 and converted.command == "produce-once"
 
     deleted_legacy = _create_task(
         store,
@@ -1145,5 +1157,5 @@ def test_adopting_a_service_command_moves_the_seed_in_place_once(
         deleted_legacy.id, expected_version=deleted_legacy.version, now=NOW
     )
     assert store.adopt_scheduled_task_service_command(
-        migration_key="deleted-v1", command="produce-once", now=NOW
+        migration_key="deleted-v1", command="produce-once", seed_enabled=True, now=NOW
     ) == deleted

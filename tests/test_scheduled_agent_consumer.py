@@ -125,7 +125,10 @@ def claim(adapter, source_id, owner):
 
 
 def commands(produce_once=lambda: "produce-once queued=0"):
-    return ServiceCommandRegistry({"produce-once": produce_once})
+    return ServiceCommandRegistry({
+        "produce-once": produce_once,
+        "wechat-produce-once": lambda: "wechat produce-once queued=0",
+    })
 
 
 def dispatch(store, run, options, *, registry=None):
@@ -390,7 +393,12 @@ def test_command_registry_rejects_bindings_that_do_not_match_the_catalog():
     with pytest.raises(ValueError, match="match the catalog exactly"):
         ServiceCommandRegistry({})
     with pytest.raises(ValueError, match="match the catalog exactly"):
-        ServiceCommandRegistry({"produce-once": lambda: "", "extra": lambda: ""})
+        ServiceCommandRegistry({"produce-once": lambda: ""})
+    with pytest.raises(ValueError, match="match the catalog exactly"):
+        ServiceCommandRegistry({
+            "produce-once": lambda: "", "wechat-produce-once": lambda: "",
+            "extra": lambda: "",
+        })
     with pytest.raises(ValueError, match="service_command_not_registered"):
         commands().run("scan-oa-approvals")
 

@@ -818,15 +818,9 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
     assert run.status_code == 201 and wakes == ["wake"]
     assert run.json()["item"]["snapshot"]["command"] == "produce-once"
     assert detail.json()["item"]["recent_run"]["snapshot"]["command"] == "produce-once"
-    assert options.json()["service_command_options"] == [
-        {
-            "name": "produce-once",
-            "description": (
-                "增量读取 DingTalk 未读消息，去重后写入 reply task，"
-                "由统一 Dispatcher 继续消费。"
-            ),
-        }
-    ]
+    catalog = options.json()["service_command_options"]
+    assert [entry["name"] for entry in catalog] == ["produce-once", "wechat-produce-once"]
+    assert all(entry["description"].strip() for entry in catalog)
     assert store.get_scheduled_task(task_id).command == "produce-once"
 
 

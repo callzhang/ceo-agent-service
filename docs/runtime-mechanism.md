@@ -444,6 +444,12 @@ revision；执行前若指定 Runtime、该 revision 或工作目录已经不可
 `scheduled_task_service_command_unavailable` 跳过。服务命令任务不经过 Runtime、Skill、
 Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
 
+`wechat-produce-once` 每 15 秒对唯一就绪的微信账号跑一次 producer。Reader 的可用性是
+`wechat.reader` 健康事实而不是 trigger 失败：没有就绪账号时命令返回跳过摘要；Reader IPC 连续
+失败 3 次时请求一次 Reader 重启、把健康标为 degraded 并只记录一条
+`wechat_reader_unavailable`；App Data 权限缺失只记录一条 `wechat_data_permission_required`；
+下一次成功读取恢复 healthy 并清除上述报告。其他异常才是命令失败，trigger 记 `failed`。
+
 同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review 和
 DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
 公平性和容量；Consumer 保持领域边界。主动唤醒之外的有界等待只用于跨进程写入和异常恢复，不是
@@ -452,9 +458,10 @@ DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 cla
 
 默认业务生产任务通过稳定 migration key 幂等 seed。钉钉消息、会议、微信 reader、OA、每日工作来源、
 每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）的 `ceo-minutes-sync` 共七项；旧的 producer
-timing loops 已移除。钉钉消息检查是服务命令任务；以 Agent 形式创建的旧
-`dingtalk-message-check-v1` 在启动时原地转换为命令形式（保留名称、Cron、时区、启用状态，
-已删除的不动），其余五项由对应 Agent Cron 形成 one-shot 输入。Lark 没有默认 seed。
+timing loops 已移除。钉钉消息检查和微信消息检查是服务命令任务；以 Agent 形式创建的旧
+`dingtalk-message-check-v1` 与 `wechat-message-check-v1` 在启动时原地转换为命令形式（保留
+名称、Cron、时区，未编辑过的旧 seed 转换后启用，已编辑的保留用户的启用状态，已删除的不动），
+其余四项由对应 Agent Cron 形成 one-shot 输入。Lark 没有默认 seed。
 内部投递、发送状态确认、错误恢复及 Todo completion follow-up 仍是内部机制，不外化为 Cron。
 
 ### 应用层边界

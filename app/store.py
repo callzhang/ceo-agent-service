@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
-from types import MappingProxyType
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -5454,13 +5453,17 @@ class AutoReplyStore:
         *,
         migration_key: str,
         command: str,
+        seed_enabled: bool,
         now: datetime | None = None,
     ) -> ScheduledTask | None:
         """Move a repository seed from its Agent prompt to one service command.
 
-        Name, Cron, timezone, and enabled state are the user's and stay as they
-        are; the Agent prompt, runtime, Skill refs, and working directory are
-        replaced by the command because the seed no longer has an Agent form.
+        Name, Cron, and timezone are the user's and stay as they are; the Agent
+        prompt, runtime, Skill refs, and working directory are replaced by the
+        command because the seed no longer has an Agent form. A seed nobody has
+        edited (version 1) takes the command form's ``seed_enabled`` state,
+        because its current state was the Agent seed's own availability
+        decision; an edited task keeps the state the user chose.
         """
         migration_key = self._require_scheduled_task_text(
             migration_key, field="scheduled task migration key"
@@ -5468,6 +5471,8 @@ class AutoReplyStore:
         command = self._require_scheduled_task_text(
             command, field="scheduled task command"
         )
+        if not isinstance(seed_enabled, bool):
+            raise ValueError("scheduled task seed enabled must be a boolean")
         now_text = self._scheduled_task_time_text(
             now or datetime.now(timezone.utc), field="scheduled task now"
         )
@@ -5482,15 +5487,16 @@ class AutoReplyStore:
             current = self._scheduled_task_from_row(db, row)
             if current.deleted_at is not None or current.command == command:
                 return current
+            enabled = seed_enabled if current.version == 1 else current.enabled
             db.execute(
                 """
                 update scheduled_tasks
                    set command=?, prompt='', runtime_id='', runtime_options_json='{}',
                        required_runtime_capabilities_json='[]', working_directory='',
-                       version=version + 1, updated_at=?
+                       enabled=?, version=version + 1, updated_at=?
                  where id=?
                 """,
-                (command, now_text, current.id),
+                (command, int(enabled), now_text, current.id),
             )
             db.execute(
                 "delete from scheduled_task_skill_refs where scheduled_task_id=?",

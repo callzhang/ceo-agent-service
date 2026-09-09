@@ -136,7 +136,6 @@ def _options(
 LOCAL_PRODUCER_KEYS = frozenset(
     {
         "dingtalk-meeting-check-v1",
-        "wechat-message-check-v1",
         "dingtalk-oa-check-v1",
         "work-source-scan-daily-v1",
         "weekly-okr-report-sunday-v1",
@@ -171,7 +170,7 @@ def test_local_producer_seeds_require_local_runtime_surface(
         task for task in tasks if task.migration_key in LOCAL_PRODUCER_KEYS
     )
 
-    assert len(producers) == 5
+    assert len(producers) == 4
     assert all(task.enabled for task in producers)
     assert {task.runtime_id for task in producers} == {runtime_id}
     assert all(
@@ -207,7 +206,7 @@ def test_friday_only_keeps_local_producer_seeds_visible_and_disabled(
         task for task in tasks if task.migration_key in LOCAL_PRODUCER_KEYS
     )
 
-    assert len(producers) == 5
+    assert len(producers) == 4
     assert all(not task.enabled for task in producers)
     assert {task.runtime_id for task in producers} == {"friday_runtime"}
     assert all("missing_capabilities" in task.prompt for task in producers)
@@ -395,14 +394,16 @@ def test_seed_creates_dingtalk_message_check_every_minute(tmp_path: Path) -> Non
     assert task.working_directory == ""
 
 
-def _legacy_message_agent_task(store, options, tmp_path, *, enabled=True):
+def _legacy_message_agent_task(
+    store, options, tmp_path, *, migration_key="dingtalk-message-check-v1", enabled=True
+):
     dingtalk_chat = next(
         item for item in options.list_operation_skill_options()
         if item.name == "dingtalk-chat"
     )
     assert dingtalk_chat.available
     return store.create_scheduled_task(
-        migration_key="dingtalk-message-check-v1",
+        migration_key=migration_key,
         name="用户改名的消息检查",
         prompt=(
             "使用 $dingtalk-chat 理解现有消息发现边界。只执行一次确定性 producer 命令："
@@ -449,7 +450,9 @@ def test_startup_seed_moves_legacy_agent_message_check_to_the_service_command(
     assert seeded.working_directory == ""
     assert seeded.name == legacy.name
     assert seeded.cron_expression == "0 */2 * * * *"
-    assert seeded.enabled is False
+    # Nobody edited the legacy seed, so its disabled state was the Agent form's
+    # own availability decision and the command form starts enabled.
+    assert seeded.enabled is True
     assert store.list_scheduled_tasks(include_deleted=True).count(seeded) == 1
     again = _task_by_key(
         seed_scheduled_tasks(
@@ -537,15 +540,43 @@ def test_seed_creates_wechat_existing_producer_every_fifteen_seconds(
 
     assert task.name == "检查微信消息"
     assert task.cron_expression == "*/15 * * * * *"
-    assert [(ref.skill_source, ref.skill_name) for ref in task.skill_refs] == [
-        ("managed", "ceo-wechat")
-    ]
-    assert "联系人" in task.prompt
-    assert "群@" in task.prompt
-    assert "auto-confirm" in task.prompt
-    assert f"`{_wechat_cli_command(store)}`" in task.prompt
-    assert "不要新增复盘或摘要" in task.prompt
+    assert task.timezone_name == "Asia/Shanghai"
+    assert task.command == "wechat-produce-once"
     assert task.enabled is True
+    assert task.prompt == "" and task.runtime_id == "" and task.skill_refs == ()
+    assert task.runtime_options == {} and task.required_runtime_capabilities == ()
+
+
+def test_startup_seed_enables_untouched_legacy_wechat_agent_task_as_a_command(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "legacy-wechat-agent.sqlite3")
+    options = _options(
+        tmp_path, store, healthy_routes={"codex_oauth"}, operation_skills=("dingtalk-chat",)
+    )
+    untouched = _legacy_message_agent_task(
+        store, options, tmp_path, migration_key="wechat-message-check-v1", enabled=False
+    )
+    edited_seed = _legacy_message_agent_task(
+        store, options, tmp_path, migration_key="dingtalk-message-check-v1", enabled=True
+    )
+    edited = store.set_scheduled_task_enabled(
+        edited_seed.id, enabled=False, expected_version=edited_seed.version, now=NOW
+    )
+
+    seeded = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path,
+        now=NOW + timedelta(minutes=1),
+    )
+
+    wechat = _task_by_key(seeded, "wechat-message-check-v1")
+    assert wechat.id == untouched.id and untouched.version == 1
+    assert wechat.command == "wechat-produce-once"
+    assert wechat.enabled is True
+    assert wechat.cron_expression == untouched.cron_expression
+    message = _task_by_key(seeded, "dingtalk-message-check-v1")
+    assert message.id == edited.id and message.command == "produce-once"
+    assert message.enabled is False
 
 
 def test_seed_creates_hourly_oa_check_with_real_operation_skill(
@@ -757,7 +788,12 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
     consumer = ScheduledTaskTriggerConsumer(
         store=store, option_service=options, now=lambda: due_at,
         commands=ServiceCommandRegistry(
-            {"produce-once": lambda: produced.append("produce-once") or "queued=0"}
+            {
+                "produce-once": lambda: produced.append("produce-once") or "queued=0",
+                "wechat-produce-once": (
+                    lambda: produced.append("wechat-produce-once") or "queued=0"
+                ),
+            }
         ),
     )
     for _task in tasks:
@@ -772,7 +808,7 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
             adapter=adapter, envelope=envelope, owner="seed-dispatch"
         )
         consumer(envelope, guard)
-    assert produced == ["produce-once"]
+    assert sorted(produced) == ["produce-once", "wechat-produce-once"]
     for task in tasks:
         runs = store.list_scheduled_task_runs(task.id)
         assert len(runs) == 1
@@ -789,7 +825,7 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         assert reply.channel == "scheduled"
         assert reply.trigger_text == task.prompt
         assert task.name in reply.trigger_message_json
-    assert len(store.list_reply_tasks(channel="scheduled")) == len(tasks) - 1
+    assert len(store.list_reply_tasks(channel="scheduled")) == len(tasks) - 2
 
 
 def test_seed_creates_daily_minutes_task_with_healthy_runtime_and_exact_revision(
@@ -988,10 +1024,11 @@ def test_all_proactive_seeds_stay_visible_and_disabled_without_healthy_runtime(
 
     assert len(tasks) == 7
     agent_tasks = [task for task in tasks if not task.command]
-    assert len(agent_tasks) == 6
+    assert len(agent_tasks) == 5
     assert all(not task.enabled for task in agent_tasks)
     assert all("没有健康且已配置的 Runtime" in task.prompt for task in agent_tasks)
     assert _task_by_key(tasks, "dingtalk-message-check-v1").enabled is True
+    assert _task_by_key(tasks, "wechat-message-check-v1").enabled is True
     assert all(store.list_scheduled_task_runs(task.id) == () for task in tasks)
 
 

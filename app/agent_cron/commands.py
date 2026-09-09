@@ -30,6 +30,13 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
             "由统一 Dispatcher 继续消费。"
         ),
     ),
+    ServiceCommandOption(
+        name="wechat-produce-once",
+        description=(
+            "读取已就绪微信账号的新消息，按已配置联系人和群@边界去重后写入 reply task；"
+            "Reader 不可用时只记录健康状态。"
+        ),
+    ),
 )
 
 

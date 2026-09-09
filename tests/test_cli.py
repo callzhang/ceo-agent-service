@@ -8083,7 +8083,11 @@ def test_wechat_loop_pauses_after_reader_reports_app_data_denial(
     assert sleeps == [3600]
 
 
-def test_service_command_registry_binds_produce_once_to_the_reply_worker() -> None:
+def test_service_command_registry_binds_the_catalog_to_service_operations(
+    tmp_path: Path,
+) -> None:
+    from app.wechat.scheduled_command import WechatProduceOnceCommand
+
     calls: list[object] = []
 
     class Worker:
@@ -8091,7 +8095,16 @@ def test_service_command_registry_binds_produce_once_to_the_reply_worker() -> No
             calls.append(max_tasks)
             return 3
 
-    registry = cli._service_command_registry(Worker(), SimpleNamespace(max_batches=7))
+    store = AutoReplyStore(tmp_path / "registry.sqlite3")
+    registry = cli._service_command_registry(
+        store, Worker(), SimpleNamespace(max_batches=7)
+    )
 
     assert registry.run("produce-once") == "produce-once queued=3"
     assert calls == [7]
+    wechat = registry._implementations["wechat-produce-once"]
+    assert isinstance(wechat, WechatProduceOnceCommand)
+    assert wechat._restart_reader is cli._restart_wechat_reader_service
+    assert registry.run("wechat-produce-once") == (
+        "wechat produce-once skipped: no ready WeChat account"
+    )

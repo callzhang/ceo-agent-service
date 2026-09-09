@@ -882,15 +882,19 @@ def _create_service_worker(settings: WorkerSettings, runtime_refresher, runtime_
     )
 
 
-def _service_command_registry(reply_worker, settings: WorkerSettings):
+def _service_command_registry(store: AutoReplyStore, reply_worker, settings: WorkerSettings):
     """Bind scheduled service commands to the same operations the CLI runs."""
     from app.agent_cron.commands import ServiceCommandRegistry
+    from app.wechat.scheduled_command import WechatProduceOnceCommand
 
     return ServiceCommandRegistry(
         {
             "produce-once": lambda: (
                 f"produce-once queued="
                 f"{reply_worker.produce_once(max_tasks=settings.max_batches)}"
+            ),
+            "wechat-produce-once": WechatProduceOnceCommand(
+                store, restart_reader=_restart_wechat_reader_service
             ),
         }
     )
@@ -983,7 +987,7 @@ def run_agent_cron_dispatcher_loop(
     )
     trigger_consumer = ScheduledTaskTriggerConsumer(
         store=store, option_service=options,
-        commands=_service_command_registry(reply_worker, settings),
+        commands=_service_command_registry(store, reply_worker, settings),
     )
     execution_consumer = ScheduledAgentConsumer(
         store=store, option_service=options,
