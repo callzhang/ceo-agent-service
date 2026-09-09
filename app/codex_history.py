@@ -662,7 +662,7 @@ def _render_event_msg(
             },
         )
     if item_type == "CommandExecution":
-        command = _string(item.get("command")) or "command"
+        command = _command_text(item.get("command")) or "command"
         cwd = _string(item.get("cwd"))
         output_text = _truncate(
             _string(item.get("aggregated_output"))
@@ -738,6 +738,14 @@ def _json_argument_text(value: Any) -> str:
         return _pretty_json_string(value)
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False, indent=2)
+    return ""
+
+
+def _command_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(part, str) for part in value):
+        return " ".join(part for part in value if part)
     return ""
 
 

@@ -302,6 +302,42 @@ def test_render_local_codex_session_renders_completed_mcp_event_as_one_trace(tmp
     }
 
 
+def test_render_local_codex_session_uses_command_argv_for_trace_name_and_input(tmp_path: Path):
+    session_id = "019e2c00-command-trace-session"
+    session_path = write_session(tmp_path, session_id)
+    completed_command = {
+        "timestamp": "2026-05-14T12:00:06Z",
+        "type": "event_msg",
+        "payload": {
+            "type": "item_completed",
+            "item": {
+                "type": "CommandExecution",
+                "id": "command-1",
+                "command": ["/bin/zsh", "-lc", "rg --files app"],
+                "cwd": "file:///workspace",
+                "aggregated_output": "app/codex_history.py",
+            },
+        },
+    }
+    session_path.write_text(
+        session_path.read_text(encoding="utf-8")
+        + "\n"
+        + json.dumps(completed_command, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    rendered = render_local_codex_session(session_id, codex_home=tmp_path)
+
+    tool_event = rendered.events[-1]
+    assert tool_event.title == "Command: /bin/zsh -lc rg --files app"
+    assert tool_event.trace == {
+        "call_id": "command-1",
+        "name": "/bin/zsh -lc rg --files app",
+        "input": '{\n  "command": "/bin/zsh -lc rg --files app",\n  "cwd": "file:///workspace"\n}',
+        "output": "app/codex_history.py",
+    }
+
+
 def test_extract_codex_audit_events_from_session_respects_line_range(tmp_path: Path):
     session_id = "019e2c00-test-session"
     write_session(tmp_path, session_id)
