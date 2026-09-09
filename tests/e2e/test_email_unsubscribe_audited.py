@@ -42,12 +42,11 @@ from app.email_task_adapter import (
     EmailThreadMessage,
 )
 from app.email_unsubscribe import (
-    BrowserNetworkPolicy,
+    PlaywrightUnsubscribeBrowser,
+    extract_unsubscribe_entries,
     UnsubscribeOperationKind,
-    browser_network_policy_for_entries,
     browser_unsubscribe_entries,
     execute_unsubscribe_in_dedicated_profile,
-    extract_unsubscribe_entries,
 )
 from app.email_unsubscribe_audit import EmailUnsubscribeAuditOperation
 from app.email_unsubscribe_continuation import EmailUnsubscribeContinuationDriver
@@ -311,12 +310,6 @@ class _AuditedTurnExecutor:
                 "stable_message_identity": task_payload["stable_message_identity"],
                 "thread_identity": task_payload["thread_identity"],
                 "entry_reference": task_payload["unsubscribe_entries"][0]["reference"],
-                "network_policy_reference": task_payload[
-                    "unsubscribe_network_policy_reference"
-                ],
-                "network_policy_origin_references": task_payload[
-                    "unsubscribe_network_policy_origin_references"
-                ],
             },
             "payload": {"operations": operations},
         }
@@ -486,14 +479,6 @@ def _persist_confirmed_subscription(
         received_at="2026-09-03T08:00:00+00:00",
     )
     private_url = f"{origin}/manage?token=loopback-private"
-    entries = extract_unsubscribe_entries(
-        list_unsubscribe=f"<{private_url}>",
-        allow_loopback_for_tests=True,
-    )
-    policy = browser_network_policy_for_entries(
-        entries,
-        allow_loopback_for_tests=True,
-    )
     task_input = EmailAgentTaskInput(
         stable_message_identity=MESSAGE_IDENTITY,
         thread_identity=THREAD_IDENTITY,
@@ -507,8 +492,6 @@ def _persist_confirmed_subscription(
         attachments=(attachment,),
         list_unsubscribe=f"<{private_url}>",
         body_text="Manage subscription",
-        unsubscribe_network_policy_reference=policy.reference,
-        unsubscribe_network_policy_origin_references=policy.origin_references,
         unsubscribe_allow_loopback_for_tests=True,
     )
     return plan, task_input
@@ -703,13 +686,6 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             allow_loopback_for_tests=True,
         ),
     )
-    monkeypatch.setattr(
-        "app.email_unsubscribe_audit.browser_network_policy_for_entries",
-        lambda entries: browser_network_policy_for_entries(
-            entries,
-            allow_loopback_for_tests=True,
-        ),
-    )
 
     with _loopback_unsubscribe_server() as origin:
         parsed_origin = urlsplit(origin)
@@ -726,10 +702,10 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             sentinel_path=sentinel_path,
             allowed_socket_destination=allowed_browser_destination,
         )
-        original_validate_url = BrowserNetworkPolicy.validate_url
+        original_validate_target = PlaywrightUnsubscribeBrowser._validate_navigation_target
 
-        def guarded_validate_url(
-            browser_policy: BrowserNetworkPolicy,
+        def guarded_validate_target(
+            browser: PlaywrightUnsubscribeBrowser,
             value: str,
         ) -> str:
             parsed = urlsplit(value)
@@ -741,12 +717,12 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
                 blocked_browser_requests.append(value)
                 raise AssertionError(f"browser left exact fixture destination: {value}")
             browser_requests.append(destination)
-            return original_validate_url(browser_policy, value)
+            return original_validate_target(browser, value)
 
         monkeypatch.setattr(
-            BrowserNetworkPolicy,
-            "validate_url",
-            guarded_validate_url,
+            PlaywrightUnsubscribeBrowser,
+            "_validate_navigation_target",
+            guarded_validate_target,
         )
         plan, task_input = _persist_confirmed_subscription(
             email_store,
@@ -758,10 +734,6 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
         payload = json.loads(route.task.trigger_message_json)
         entries = extract_unsubscribe_entries(
             list_unsubscribe=task_input.list_unsubscribe,
-            allow_loopback_for_tests=True,
-        )
-        policy = browser_network_policy_for_entries(
-            entries,
             allow_loopback_for_tests=True,
         )
 
@@ -777,7 +749,6 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
                 tuple(resolved_entries),
                 store=email_store,
                 profile=dedicated_profile,
-                network_policy=policy,
                 owner=owner,
                 executed_prefix_length=executed_prefix_length,
                 timeout_ms=3_000,
@@ -959,11 +930,6 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             "thread_identity",
             "entry_reference",
         )
-    } | {
-        "network_policy_reference": payload["unsubscribe_network_policy_reference"],
-        "network_policy_origin_references": payload[
-            "unsubscribe_network_policy_origin_references"
-        ],
     }
     assert all(
         proposal["target"] == expected_target_binding
@@ -1040,16 +1006,6 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
         first_effect["effect_digest"],
         second_effect["effect_digest"],
     ]
-    assert all(
-        row["network_policy_reference"]
-        == payload["unsubscribe_network_policy_reference"]
-        for row in effect_rows
-    )
-    assert all(
-        json.loads(row["network_policy_origins_json"])
-        == payload["unsubscribe_network_policy_origin_references"]
-        for row in effect_rows
-    )
     assert _UnsubscribeHandler.requests == [
         {
             "method": "GET",

@@ -111,9 +111,7 @@ class EmailContextSource:
             for receipt in receipt_values
             if isinstance(receipt, Mapping)
         )
-        authentication, policy_reference, origin_references = (
-            _immutable_unsubscribe_bindings(payload)
-        )
+        authentication = _immutable_unsubscribe_authentication(payload)
         return EmailAgentTaskInput(
             stable_message_identity=stable_identity,
             thread_identity=thread_identity,
@@ -141,8 +139,6 @@ class EmailContextSource:
                 else ""
             ),
             unsubscribe_authentication=authentication,
-            unsubscribe_network_policy_reference=policy_reference,
-            unsubscribe_network_policy_origin_references=origin_references,
         )
 
     def _read_current_provider_message(
@@ -247,35 +243,9 @@ def _message_text(message: Mapping[str, object]) -> str:
     return str(message.get("markdownBody") or message.get("textBody") or "")
 
 
-def _immutable_unsubscribe_bindings(
+def _immutable_unsubscribe_authentication(
     payload: Mapping[str, object],
-) -> tuple[
-    UnsubscribeAuthenticationEvidence | None,
-    str,
-    tuple[str, ...],
-]:
-    has_bindings = any(
-        name in payload
-        for name in (
-            "unsubscribe_authentication",
-            "unsubscribe_network_policy_reference",
-            "unsubscribe_network_policy_origin_references",
-        )
-    )
-    if not has_bindings:
-        return None, "network-policy:legacy", ("network-origin:legacy",)
-    policy_reference = _required_text(
-        payload,
-        "unsubscribe_network_policy_reference",
-    )
-    raw_origins = payload.get("unsubscribe_network_policy_origin_references")
-    if not isinstance(raw_origins, list) or not raw_origins:
-        raise ValueError("email unsubscribe network policy is invalid")
-    origin_references = tuple(
-        _required_text({"origin": value}, "origin") for value in raw_origins
-    )
-    if len(set(origin_references)) != len(origin_references):
-        raise ValueError("email unsubscribe network policy is invalid")
+) -> UnsubscribeAuthenticationEvidence | None:
     raw_authentication = payload.get("unsubscribe_authentication")
     if raw_authentication is None:
         authentication = None
@@ -296,4 +266,4 @@ def _immutable_unsubscribe_bindings(
                 "evidence_reference",
             ),
         )
-    return authentication, policy_reference, origin_references
+    return authentication

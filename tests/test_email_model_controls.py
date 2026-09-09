@@ -217,7 +217,7 @@ def test_v33_migration_backup_and_restart(tmp_path):
     with sqlite3.connect(path) as db:
         assert db.execute(
             "select version from email_schema_migrations order by version"
-        ).fetchall() == [(33,), (34,)]
+        ).fetchall() == [(33,), (34,), (35,)]
         assert db.execute("pragma foreign_key_check").fetchall() == []
     with sqlite3.connect(tmp_path / "before.sqlite3") as db:
         assert db.execute("pragma integrity_check").fetchone()[0] == "ok"

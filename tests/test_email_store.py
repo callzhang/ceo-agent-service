@@ -206,8 +206,8 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     assert "email_training_snapshots" in tables
     assert "email_training_snapshot_observations" in tables
     assert preserved_model_text == "__subject__preserved migration row"
-    assert versions == list(range(22, 35))
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 34
+    assert versions == list(range(22, 36))
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 35
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select frozen from email_training_snapshots").fetchall() == []
@@ -248,7 +248,7 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == list(range(23, 35))
+        ] == list(range(23, 36))
 
 
 def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path):
@@ -305,7 +305,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == list(range(23, 35))
+    ] == list(range(23, 36))
 
 
 def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
@@ -2713,10 +2713,6 @@ def test_exact_v14_unsubscribe_schema_migrates_with_nullable_positive_audit_run(
                 previous_effect_digest text not null default ''
                     check(previous_effect_digest = '' or length(previous_effect_digest) = 64),
                 operations_json text not null check(json_valid(operations_json)),
-                network_policy_reference text not null
-                    check(trim(network_policy_reference) != ''),
-                network_policy_origins_json text not null
-                    check(json_valid(network_policy_origins_json)),
                 created_at text not null check(trim(created_at) != ''),
                 primary key(action_identity, effect_digest),
                 foreign key(action_identity)
@@ -2725,12 +2721,10 @@ def test_exact_v14_unsubscribe_schema_migrates_with_nullable_positive_audit_run(
             );
             insert into email_unsubscribe_effects_v14 (
                 action_identity, effect_digest, previous_effect_digest,
-                operations_json, network_policy_reference,
-                network_policy_origins_json, created_at
+                operations_json, created_at
             )
             select action_identity, effect_digest, previous_effect_digest,
-                   operations_json, network_policy_reference,
-                   network_policy_origins_json, created_at
+                   operations_json, created_at
             from email_unsubscribe_effects;
 
             drop table email_unsubscribe_effects;
@@ -2808,8 +2802,7 @@ def test_v11_unsubscribe_schema_migrates_missing_phase_and_receipt_evidence(
             """
             create table email_unsubscribe_effects_pre_v14 as
             select action_identity, effect_digest, previous_effect_digest,
-                operations_json, network_policy_reference,
-                network_policy_origins_json, created_at
+                operations_json, created_at
             from email_unsubscribe_effects
             """
         )
@@ -3216,8 +3209,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_34() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 34
+def test_email_schema_version_is_35() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 35
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:
@@ -3284,7 +3277,7 @@ def test_task10_schema_migrations_replay_full_chain_from_each_version(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == list(range(starting_version, 35))
+        ] == list(range(starting_version, 36))
         tables_after = {
             row[0]
             for row in db.execute("select name from sqlite_master where type='table'")
@@ -3990,6 +3983,7 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             32,
             33,
             34,
+            35,
         ]
         assert {
             row[1]
@@ -4248,6 +4242,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
         32,
         33,
         34,
+        35,
     ]
 
     EmailStore(database)
@@ -4332,6 +4327,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
         32,
         33,
         34,
+        35,
     ]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
@@ -4755,6 +4751,7 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
         32,
         33,
         34,
+        35,
     ]
 
 
@@ -6825,7 +6822,7 @@ def test_v21_schema_migrates_to_allow_flag_important_actions(tmp_path: Path):
         )
         assert (
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 34
+            == 35
         )
     assert (
         migrated.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
@@ -7869,10 +7866,8 @@ def test_unsubscribe_state_snapshot_rejects_row_33_before_effect_decoding(
             """
             insert into email_unsubscribe_effects (
                 action_identity, effect_digest, previous_effect_digest,
-                operations_json, network_policy_reference,
-                network_policy_origins_json, audit_agent_run_id, created_at
-            ) values (?, ?, '', '{}', 'network-policy:legacy',
-                      '["network-origin:legacy"]', null, ?)
+                operations_json, audit_agent_run_id, created_at
+            ) values (?, ?, '', '{}', null, ?)
             """,
             (
                 (
@@ -9044,7 +9039,7 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
 
     migrated = EmailStore(database)
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 34
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 35
     assert migrated.get_account("primary")["imap_move_mode"] == "copy_as_move"
     assert (
         migrated.list_account_folder_bindings("junk")[0]["provider_folder_id"]

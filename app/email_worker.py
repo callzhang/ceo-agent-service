@@ -3038,7 +3038,6 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
     from app.email_unsubscribe import (
         EmailUnsubscribeEffect,
         UnsubscribeAuthenticationEvidence,
-        browser_network_policy_for_entries,
         browser_unsubscribe_entries,
         execute_unsubscribe_in_dedicated_profile,
         extract_unsubscribe_entries,
@@ -3059,8 +3058,6 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
         locator: EmailProviderLocator,
         expected_reference: str,
         authentication: UnsubscribeAuthenticationEvidence | None = None,
-        network_policy_reference: str = "",
-        network_policy_origin_references: tuple[str, ...] = (),
     ):
         account = email_store.get_account(locator.account_id)
         if not isinstance(account, Mapping):
@@ -3105,12 +3102,6 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
             )
             if len(entries) != 1:
                 raise ValueError("email unsubscribe entry changed")
-            policy = browser_network_policy_for_entries(entries)
-            if (
-                policy.reference != network_policy_reference
-                or policy.origin_references != network_policy_origin_references
-            ):
-                raise ValueError("email unsubscribe network policy changed")
             return entries
         finally:
             _close_email_source(source)
@@ -3135,18 +3126,11 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
         connected_recipient = str(account.get("email_address") or "").strip()
         if not connected_recipient:
             raise ValueError("email unsubscribe recipient is unavailable")
-        policy = browser_network_policy_for_entries(entries)
-        if (
-            policy.reference != effect.network_policy_reference
-            or policy.origin_references != effect.network_policy_origin_references
-        ):
-            raise ValueError("email unsubscribe network policy changed")
         return execute_unsubscribe_in_dedicated_profile(
             effect,
             entries,
             store=email_store,
             profile=browser_profile,
-            network_policy=policy,
             owner=owner,
             executed_prefix_length=executed_prefix_length,
             connected_recipient=connected_recipient,

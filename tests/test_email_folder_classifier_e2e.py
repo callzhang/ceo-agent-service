@@ -72,7 +72,7 @@ from app.email_task_producer import EmailActionTaskProducer
 from app.email_training_snapshot import build_folder_training_snapshot
 from app.email_training_observer import ProviderTrainingObservationJob
 from app.email_category_config import VerifiedEmailFolderBinding
-from app.email_unsubscribe import BrowserNetworkPolicy, extract_unsubscribe_entries
+from app.email_unsubscribe import extract_unsubscribe_entries
 from app.email_worker import (
     _finalize_email_task,
     _run_next_direct_action,
@@ -1023,7 +1023,6 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
     task = queued_task
     payload = json.loads(task.trigger_message_json)
     [projected_entry] = payload["unsubscribe_entries"]
-    policy = BrowserNetworkPolicy(frozenset({"https://news.example.test"}))
     accepted_action = ProposedAction.model_validate(
         {
             "description": "Unsubscribe the classified junk source",
@@ -1036,8 +1035,6 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
                 "stable_message_identity": provider_message["stableMessageIdentity"],
                 "thread_identity": "junk-e2e",
                 "entry_reference": projected_entry["reference"],
-                "network_policy_reference": policy.reference,
-                "network_policy_origin_references": list(policy.origin_references),
             },
             "payload": {
                 "operations": [

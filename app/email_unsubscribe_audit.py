@@ -29,7 +29,6 @@ from app.email_unsubscribe import (
     UnsubscribeEntry,
     UnsubscribeExecutionResult,
     UnsubscribeOperation,
-    browser_network_policy_for_entries,
     browser_unsubscribe_entries,
 )
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
@@ -162,24 +161,11 @@ class EmailUnsubscribeAuditOperation:
                         locator,
                         effect.entry_reference,
                         _authentication_from_payload(payload),
-                        network_policy_reference=str(
-                            identity["network_policy_reference"]
-                        ),
-                        network_policy_origin_references=tuple(
-                            identity["network_policy_origin_references"]
-                        ),
                     )
                 )
             )
             if not entries:
                 return self._failed("unsubscribe_entry_changed")
-            current_policy = browser_network_policy_for_entries(entries)
-            if (
-                current_policy.reference != effect.network_policy_reference
-                or current_policy.origin_references
-                != effect.network_policy_origin_references
-            ):
-                return self._failed("unsubscribe_network_policy_changed")
             entry = next(
                 (
                     candidate
@@ -496,10 +482,6 @@ def _terminal_expected_effect(
         "thread_identity": initial_effect.thread_identity,
         "entry_reference": initial_effect.entry_reference,
         "operations": operation_mappings,
-        "network_policy_reference": initial_effect.network_policy_reference,
-        "network_policy_origin_references": list(
-            initial_effect.network_policy_origin_references
-        ),
     }
 
 
@@ -550,16 +532,6 @@ def _validate_task_identity(
         ),
         "thread_identity": _required_text(payload, "thread_identity"),
         "entry_references": _projected_entry_references(payload),
-        "network_policy_reference": _required_text(
-            payload,
-            "unsubscribe_network_policy_reference",
-        ),
-        "network_policy_origin_references": tuple(
-            _required_texts(
-                payload,
-                "unsubscribe_network_policy_origin_references",
-            )
-        ),
     }
 
 
@@ -654,10 +626,6 @@ def _continuation_from_store(
         controls=tuple(
             UnsubscribeDiscoveredControl(**item) for item in value["controls"]
         ),
-        network_policy_reference=str(value["network_policy_reference"]),
-        network_policy_origin_references=tuple(
-            str(item) for item in value["network_policy_origin_references"]
-        ),
     )
 
 
@@ -691,8 +659,6 @@ def _store_arguments(effect: EmailUnsubscribeEffect) -> dict[str, object]:
         "entry_reference": effect.entry_reference,
         "operations": effect.operation_mappings,
         "previous_effect_digest": effect.previous_effect_digest,
-        "network_policy_reference": effect.network_policy_reference,
-        "network_policy_origin_references": effect.network_policy_origin_references,
     }
 
 
@@ -795,9 +761,6 @@ def _resolve_entries_with_authentication(
     locator: EmailProviderLocator,
     entry_reference: str,
     authentication: UnsubscribeAuthenticationEvidence | None,
-    *,
-    network_policy_reference: str,
-    network_policy_origin_references: tuple[str, ...],
 ) -> Sequence[UnsubscribeEntry]:
     try:
         parameters = inspect.signature(callback).parameters.values()
@@ -807,11 +770,7 @@ def _resolve_entries_with_authentication(
         parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters
     )
     kwargs: dict[str, object] = {}
-    optional = {
-        "authentication": authentication,
-        "network_policy_reference": network_policy_reference,
-        "network_policy_origin_references": network_policy_origin_references,
-    }
+    optional = {"authentication": authentication}
     names = {parameter.name for parameter in parameters}
     for name, value in optional.items():
         if accepts_kwargs or name in names:

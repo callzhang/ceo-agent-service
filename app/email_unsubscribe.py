@@ -13,10 +13,8 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from hashlib import sha256
 from html.parser import HTMLParser
-import ipaddress
 import json
 import re
-import socket
 from typing import Callable, Literal, Mapping, Protocol, Sequence
 from urllib.parse import unquote, urlencode, urljoin, urlsplit
 
@@ -61,8 +59,6 @@ _AUDIT_SESSION_FIELDS = frozenset(
         "effect_digest",
         "entry_reference",
         "control_references",
-        "network_policy_reference",
-        "network_policy_origin_references",
     }
 )
 
@@ -320,15 +316,8 @@ class UnsubscribeAuthenticationControlsError(UnsubscribeBrowserError):
 
 _BROWSER_FAILURE_CODES = {
     "browser operation timed out": "email_unsubscribe_browser_timeout",
-    "browser network request rejected": "email_unsubscribe_browser_network_rejected",
     "unsubscribe page state is unknown": "email_unsubscribe_page_state_unknown",
     "unsubscribe page has no visible state": "email_unsubscribe_page_state_missing",
-}
-
-_TRUSTED_UNSUBSCRIBE_REDIRECT_FAMILIES = ("google.com",)
-_TRUSTED_UNSUBSCRIBE_REDIRECT_BRIDGES = {"c.gle": "google.com"}
-_TRUSTED_UNSUBSCRIBE_RESOURCE_FAMILIES = {
-    "google.com": ("google.com", "gstatic.com")
 }
 
 
@@ -487,9 +476,6 @@ def _validated_restored_audit_session(
         or payload.get("action_identity") != effect.action_identity
         or payload.get("effect_digest") != effect.previous_effect_digest
         or payload.get("entry_reference") != effect.entry_reference
-        or payload.get("network_policy_reference") != effect.network_policy_reference
-        or payload.get("network_policy_origin_references")
-        != list(effect.network_policy_origin_references)
     ):
         raise invalid
     session_reference = payload.get("session_reference")
@@ -593,211 +579,6 @@ def _validated_audit_session_cookies(
 
 class UnsubscribeProviderAuthError(RuntimeError):
     """The provider could not authenticate a read or write operation."""
-
-
-def _canonical_origin(value: str) -> str:
-    parsed = urlsplit(value)
-    if (
-        parsed.scheme.casefold() not in {"http", "https"}
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in {"", "/"}
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ValueError("browser network policy origin is invalid")
-    scheme = parsed.scheme.casefold()
-    try:
-        port = parsed.port or (443 if scheme == "https" else 80)
-    except ValueError:
-        raise ValueError("browser network policy origin is invalid") from None
-    host = parsed.hostname.casefold().rstrip(".")
-    rendered_host = f"[{host}]" if ":" in host else host
-    return f"{scheme}://{rendered_host}:{port}"
-
-
-def _url_origin(value: str) -> str:
-    parsed = urlsplit(value)
-    return _canonical_origin(f"{parsed.scheme}://{parsed.netloc}")
-
-
-def _default_resolve_host(host: str, port: int) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            {
-                str(item[4][0])
-                for item in socket.getaddrinfo(
-                    host,
-                    port,
-                    type=socket.SOCK_STREAM,
-                )
-            }
-        )
-    )
-
-
-def _is_forbidden_production_address(value: str) -> bool:
-    try:
-        address = ipaddress.ip_address(value)
-    except ValueError:
-        return True
-    return not address.is_global
-
-
-@dataclass(frozen=True)
-class BrowserNetworkPolicy:
-    """Fail-closed exact-origin policy for every browser network request."""
-
-    allowed_origins: frozenset[str]
-    allow_loopback_for_tests: bool = False
-    resolver: Callable[[str, int], tuple[str, ...]] = field(
-        default=_default_resolve_host,
-        repr=False,
-        compare=False,
-    )
-
-    def __post_init__(self) -> None:
-        if not self.allowed_origins:
-            raise ValueError("browser network policy requires allowed origins")
-        canonical: set[str] = set()
-        for value in self.allowed_origins:
-            origin = _canonical_origin(value)
-            parsed = urlsplit(origin)
-            host = parsed.hostname or ""
-            if host in {"metadata.google.internal", "metadata.internal"} or (
-                not self.allow_loopback_for_tests
-                and (host == "localhost" or host.endswith(".localhost"))
-            ):
-                raise ValueError("browser network policy origin is rejected")
-            try:
-                literal = ipaddress.ip_address(host)
-            except ValueError:
-                literal = None
-            if (
-                literal is not None
-                and (not self.allow_loopback_for_tests or not literal.is_loopback)
-                and _is_forbidden_production_address(str(literal))
-            ):
-                raise ValueError("browser network policy origin is rejected")
-            if not self.allow_loopback_for_tests and parsed.scheme != "https":
-                raise ValueError("browser network policy origin is rejected")
-            canonical.add(origin)
-        object.__setattr__(self, "allowed_origins", frozenset(canonical))
-
-    def validate_url(self, value: str) -> str:
-        try:
-            parsed = urlsplit(value)
-            origin = _canonical_origin(f"{parsed.scheme}://{parsed.netloc}")
-            if origin not in self.allowed_origins:
-                raise ValueError
-            host = parsed.hostname or ""
-            port = parsed.port or (443 if parsed.scheme.casefold() == "https" else 80)
-            if host in {"metadata.google.internal", "metadata.internal"} or (
-                not self.allow_loopback_for_tests
-                and (host == "localhost" or host.endswith(".localhost"))
-            ):
-                raise ValueError
-            addresses = self.resolver(host, port)
-            if not addresses:
-                raise ValueError
-            for address in addresses:
-                parsed_address = ipaddress.ip_address(address)
-                if parsed_address.is_loopback and self.allow_loopback_for_tests:
-                    continue
-                if _is_forbidden_production_address(address):
-                    raise ValueError
-        except Exception:
-            raise UnsubscribeBrowserError("browser network request rejected") from None
-        return value
-
-    def validate_provider_redirect(self, source_url: str, target_url: str) -> str:
-        """Allow a public HTTPS redirect only within a known provider family."""
-
-        self.validate_url(source_url)
-        source_host = (urlsplit(source_url).hostname or "").casefold()
-        target = urlsplit(target_url)
-        target_host = (target.hostname or "").casefold()
-        same_family = any(
-            (source_host == family or source_host.endswith("." + family))
-            and (target_host == family or target_host.endswith("." + family))
-            for family in _TRUSTED_UNSUBSCRIBE_REDIRECT_FAMILIES
-        )
-        bridged_family = _TRUSTED_UNSUBSCRIBE_REDIRECT_BRIDGES.get(source_host)
-        trusted_bridge = bridged_family is not None and (
-            target_host == bridged_family
-            or target_host.endswith("." + bridged_family)
-        )
-        try:
-            if target.scheme.casefold() != "https" or not (
-                same_family or trusted_bridge
-            ):
-                raise ValueError
-            port = target.port or 443
-            addresses = self.resolver(target_host, port)
-            if not addresses or any(
-                _is_forbidden_production_address(address) for address in addresses
-            ):
-                raise ValueError
-        except Exception:
-            raise UnsubscribeBrowserError("browser network request rejected") from None
-        return target_url
-
-    def validate_provider_resource(self, source_url: str, target_url: str) -> str:
-        """Allow public HTTPS resources from an exact provider dependency family."""
-
-        source_host = (urlsplit(source_url).hostname or "").casefold()
-        source_family = _TRUSTED_UNSUBSCRIBE_REDIRECT_BRIDGES.get(source_host)
-        if source_family is None:
-            source_family = next(
-                (
-                    family
-                    for family in _TRUSTED_UNSUBSCRIBE_REDIRECT_FAMILIES
-                    if source_host == family or source_host.endswith("." + family)
-                ),
-                None,
-            )
-        target = urlsplit(target_url)
-        target_host = (target.hostname or "").casefold()
-        allowed_resources = _TRUSTED_UNSUBSCRIBE_RESOURCE_FAMILIES.get(
-            source_family or "",
-            (),
-        )
-        trusted_resource = any(
-            target_host == family or target_host.endswith("." + family)
-            for family in allowed_resources
-        )
-        try:
-            if target.scheme.casefold() != "https" or not trusted_resource:
-                raise ValueError
-            addresses = self.resolver(target_host, target.port or 443)
-            if not addresses or any(
-                _is_forbidden_production_address(address) for address in addresses
-            ):
-                raise ValueError
-        except Exception:
-            raise UnsubscribeBrowserError("browser network request rejected") from None
-        return target_url
-
-    @property
-    def reference(self) -> str:
-        canonical = json.dumps(
-            {
-                "allow_loopback_for_tests": self.allow_loopback_for_tests,
-                "allowed_origins": sorted(self.allowed_origins),
-                "policy_version": 1,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        return "network-policy:" + sha256(canonical.encode()).hexdigest()
-
-    @property
-    def origin_references(self) -> tuple[str, ...]:
-        return tuple(
-            "network-origin:" + sha256(origin.encode()).hexdigest()
-            for origin in sorted(self.allowed_origins)
-        )
 
 
 @dataclass(frozen=True)
@@ -984,29 +765,6 @@ def browser_unsubscribe_entries(
     return tuple(replace(entry, index=index) for index, entry in enumerate(ordered))
 
 
-def browser_network_policy_for_entries(
-    entries: Sequence[UnsubscribeEntry],
-    *,
-    allow_loopback_for_tests: bool = False,
-) -> BrowserNetworkPolicy:
-    """Derive the minimal exact-origin policy for current browser candidates."""
-
-    browser_entries = browser_unsubscribe_entries(
-        entries,
-        allow_loopback_for_tests=allow_loopback_for_tests,
-    )
-    origins = frozenset(
-        f"{parsed.scheme.casefold()}://{parsed.netloc}"
-        for parsed in (urlsplit(entry.private_url) for entry in browser_entries)
-    )
-    if not origins:
-        raise ValueError("unsubscribe has no HTTPS browser candidate")
-    return BrowserNetworkPolicy(
-        origins,
-        allow_loopback_for_tests=allow_loopback_for_tests,
-    )
-
-
 @dataclass(frozen=True)
 class UnsubscribeOperation:
     operation_reference: str
@@ -1057,8 +815,6 @@ class EmailUnsubscribeEffect:
     entry_reference: str
     operations: tuple[UnsubscribeOperation, ...]
     previous_effect_digest: str = ""
-    network_policy_reference: str = "network-policy:legacy"
-    network_policy_origin_references: tuple[str, ...] = ("network-origin:legacy",)
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -1091,21 +847,6 @@ class EmailUnsubscribeEffect:
             and re.fullmatch(r"[0-9a-f]{64}", self.previous_effect_digest) is None
         ):
             raise ValueError("previous_effect_digest must be canonical sha256 hex")
-        _assert_strict_opaque_reference(
-            self.network_policy_reference,
-            field_name="network_policy_reference",
-        )
-        if not self.network_policy_origin_references:
-            raise ValueError("network policy origins must be non-empty")
-        for reference in self.network_policy_origin_references:
-            _assert_strict_opaque_reference(
-                reference,
-                field_name="network_policy_origin_reference",
-            )
-        if len(set(self.network_policy_origin_references)) != len(
-            self.network_policy_origin_references
-        ):
-            raise ValueError("network policy origin references must be unique")
 
     @property
     def operation_mappings(self) -> tuple[dict[str, str], ...]:
@@ -1131,8 +872,6 @@ class EmailUnsubscribeEffect:
             entry_reference=self.entry_reference,
             operations=self.operation_mappings,
             previous_effect_digest=self.previous_effect_digest,
-            network_policy_reference=self.network_policy_reference,
-            network_policy_origin_references=self.network_policy_origin_references,
         )
 
 
@@ -1314,8 +1053,6 @@ class EmailUnsubscribeContinuation:
     previous_effect_digest: str
     executed_operations: tuple[UnsubscribeOperation, ...]
     controls: tuple[UnsubscribeDiscoveredControl, ...]
-    network_policy_reference: str
-    network_policy_origin_references: tuple[str, ...]
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -1329,14 +1066,10 @@ class EmailUnsubscribeContinuation:
                 str(getattr(self, field_name)),
                 field_name=field_name,
             )
-        for field_name in (
-            "entry_reference",
-            "network_policy_reference",
-        ):
-            _assert_strict_opaque_reference(
-                str(getattr(self, field_name)),
-                field_name=field_name,
-            )
+        _assert_strict_opaque_reference(
+            self.entry_reference,
+            field_name="entry_reference",
+        )
         if self.action_plan_version <= 0 or self.classification_id <= 0:
             raise ValueError("continuation plan and classification must be positive")
         if re.fullmatch(r"[0-9a-f]{64}", self.effect_digest) is None:
@@ -1355,13 +1088,6 @@ class EmailUnsubscribeContinuation:
             not isinstance(item, UnsubscribeDiscoveredControl) for item in self.controls
         ):
             raise TypeError("continuation contains invalid typed values")
-        if not self.network_policy_origin_references:
-            raise ValueError("continuation requires network policy origins")
-        for reference in self.network_policy_origin_references:
-            _assert_strict_opaque_reference(
-                reference,
-                field_name="network_policy_origin_reference",
-            )
 
     @property
     def requires_human(self) -> bool:
@@ -1480,7 +1206,6 @@ class PlaywrightUnsubscribeBrowser:
         page: object,
         *,
         timeout_ms: int = 5_000,
-        network_policy: BrowserNetworkPolicy | None = None,
         restored_document_url: str = "",
         confirmation_receipt_resolver: Callable[
             [EmailUnsubscribeEffect], UnsubscribeTerminalReceipt | None
@@ -1499,11 +1224,8 @@ class PlaywrightUnsubscribeBrowser:
     ) -> None:
         if timeout_ms <= 0:
             raise ValueError("timeout_ms must be positive")
-        if network_policy is None:
-            raise ValueError("browser network policy is required")
         self.page = page
         self.timeout_ms = timeout_ms
-        self.network_policy = network_policy
         self.confirmation_receipt_resolver = confirmation_receipt_resolver
         self.confirmation_target_resolver = confirmation_target_resolver
         self.connected_recipient = connected_recipient.strip()
@@ -1511,11 +1233,8 @@ class PlaywrightUnsubscribeBrowser:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._challenge_bindings: dict[str, datetime] = {}
         self._external_challenge_generation = 0
-        self._blocked_request = False
         self._blocked_popup = False
         self._blocked_download = False
-        self._provider_redirect_origins: dict[str, str] = {}
-        self._provider_root_source = ""
         self._document_url = ""
         self._context = self.page.context
         try:
@@ -1523,13 +1242,8 @@ class PlaywrightUnsubscribeBrowser:
         except Exception:
             cdp_session = None
         self._trusted_world = _ChromiumIsolatedWorld(cdp_session)
-        if getattr(self._context, "service_workers", []):
-            raise ValueError("browser network policy requires a clean context")
         self._context.set_default_timeout(timeout_ms)
         self._context.set_default_navigation_timeout(timeout_ms)
-        self._context.route_web_socket("**/*", self._reject_websocket)
-        self._context.route("**/*", self._guard_request)
-        self.page.route("**/*", self._guard_request)
         self._context.on("page", self._reject_new_page)
         self.page.on("download", self._reject_download)
         self.page.add_init_script(
@@ -1566,81 +1280,6 @@ class PlaywrightUnsubscribeBrowser:
                 raise ValueError("restored browser page must start isolated")
             self._document_url = self._validate_navigation_target(restored_document_url)
 
-    def _guard_request(self, route: object, request: object) -> None:
-        try:
-            request_origin = _url_origin(request.url)
-            redirect_source = self._provider_redirect_origins.get(request_origin)
-            is_navigation = request.is_navigation_request()
-            provider_resource = False
-            if redirect_source is not None:
-                if is_navigation:
-                    self.network_policy.validate_provider_redirect(
-                        redirect_source,
-                        request.url,
-                    )
-                else:
-                    self.network_policy.validate_provider_resource(
-                        self._provider_root_source,
-                        request.url,
-                    )
-                    provider_resource = True
-            else:
-                try:
-                    self.network_policy.validate_url(request.url)
-                except UnsubscribeBrowserError:
-                    if not self._provider_root_source:
-                        raise
-                    self.network_policy.validate_provider_resource(
-                        self._provider_root_source,
-                        request.url,
-                    )
-                    provider_resource = True
-            response = route.fetch(max_redirects=0, timeout=self.timeout_ms)
-            if provider_resource:
-                self.network_policy.validate_provider_resource(
-                    self._provider_root_source,
-                    response.url,
-                )
-            elif redirect_source is None:
-                self.network_policy.validate_url(response.url)
-            elif not is_navigation:
-                self.network_policy.validate_provider_resource(
-                    self._provider_root_source,
-                    response.url,
-                )
-            else:
-                self.network_policy.validate_provider_redirect(
-                    redirect_source,
-                    response.url,
-                )
-            location = response.headers.get("location")
-            if location:
-                target = urljoin(request.url, location)
-                try:
-                    self.network_policy.validate_url(target)
-                except UnsubscribeBrowserError:
-                    root_source = redirect_source or request.url
-                    self.network_policy.validate_provider_redirect(root_source, target)
-                    self._provider_redirect_origins[
-                        _url_origin(target)
-                    ] = root_source
-                    self._provider_root_source = root_source
-        except Exception:
-            self._blocked_request = True
-            route.abort()
-            return
-        route.fulfill(response=response)
-
-    def _reject_websocket(self, websocket_route: object) -> None:
-        """Reject every WebSocket before Chromium connects to its server."""
-
-        # Returning without connect_to_server() keeps Playwright's route fully
-        # local: the page side is opened virtually, but no server handshake is
-        # made. WebSocketRoute.close() cannot be called synchronously from this
-        # callback because it waits on the same Playwright event dispatcher.
-        self._blocked_request = True
-        del websocket_route
-
     def _reject_new_page(self, page: object) -> None:
         if page is self.page:
             return
@@ -1658,15 +1297,17 @@ class PlaywrightUnsubscribeBrowser:
             pass
 
     def _raise_if_blocked(self) -> None:
-        if self._blocked_request:
-            raise UnsubscribeBrowserError("browser network request rejected")
         if self._blocked_popup:
             raise UnsubscribeBrowserError("browser popup rejected")
         if self._blocked_download:
             raise UnsubscribeBrowserError("browser download rejected")
 
     def _validate_navigation_target(self, value: str) -> str:
-        return self.network_policy.validate_url(value)
+        """Accept any absolute http(s) navigation target."""
+        parsed = urlsplit(value)
+        if parsed.scheme.casefold() not in {"http", "https"} or not parsed.netloc:
+            raise UnsubscribeBrowserError("browser navigation target invalid")
+        return value
 
     def _visible_text(self) -> str:
         text = self.page.locator("body").inner_text(timeout=self.timeout_ms).strip()
@@ -1736,7 +1377,6 @@ class PlaywrightUnsubscribeBrowser:
             "kind": "link",
             "method": "GET",
             "page_identity": page_identity,
-            "policy_reference": self.network_policy.reference,
             "resolved_target": target_url,
             "successful_controls": [],
             "submitter": {
@@ -1795,7 +1435,6 @@ class PlaywrightUnsubscribeBrowser:
             "kind": "form",
             "method": method,
             "page_identity": page_identity,
-            "policy_reference": self.network_policy.reference,
             "resolved_target": target_url,
             "successful_controls": [
                 {"name": name, "type": field_type, "value": value}
@@ -1889,8 +1528,7 @@ class PlaywrightUnsubscribeBrowser:
                 "kind": authentication_kind.value,
                 "method": authentication["method"],
                 "page_identity": page_identity,
-                "policy_reference": self.network_policy.reference,
-                "resolved_target": target_url,
+                    "resolved_target": target_url,
                 "successful_controls": authentication["successfulControls"],
                 "submitter": authentication["submitter"],
                 "submitter_selector": authentication["submitterSelector"],
@@ -2575,10 +2213,6 @@ class PlaywrightUnsubscribeBrowser:
             "effect_digest": effect.effect_digest,
             "entry_reference": effect.entry_reference,
             "control_references": [control.reference for control in discovery.controls],
-            "network_policy_reference": effect.network_policy_reference,
-            "network_policy_origin_references": list(
-                effect.network_policy_origin_references
-            ),
         }
 
     def validate_restored_audit_session(
@@ -2621,13 +2255,6 @@ class PlaywrightUnsubscribeBrowser:
         ):
             raise UnsubscribeBrowserError("browser session control changed")
 
-    def _verify_effect_network_policy(self, effect: EmailUnsubscribeEffect) -> None:
-        if effect.network_policy_reference != self.network_policy.reference or (
-            effect.network_policy_origin_references
-            != self.network_policy.origin_references
-        ):
-            raise UnsubscribeBrowserError("browser network policy binding rejected")
-
     def find_confirmation_receipt(
         self,
         effect: EmailUnsubscribeEffect,
@@ -2649,7 +2276,6 @@ class PlaywrightUnsubscribeBrowser:
         private_url: str,
     ) -> UnsubscribeObservation:
         try:
-            self._verify_effect_network_policy(effect)
             if not self._document_url and getattr(self.page, "url") == "about:blank":
                 if not effect.operations:
                     raise UnsubscribeBrowserError(
@@ -2842,7 +2468,6 @@ class PlaywrightUnsubscribeBrowser:
         operation: UnsubscribeOperation,
     ) -> UnsubscribeObservation:
         try:
-            self._verify_effect_network_policy(effect)
             if operation.kind is UnsubscribeOperationKind.POST_ONE_CLICK:
                 self._validate_navigation_target(private_url)
                 isolated = self._context.browser.new_context(accept_downloads=False)
@@ -3011,7 +2636,6 @@ def execute_unsubscribe_in_dedicated_profile(
     *,
     store: EmailStore,
     profile: object,
-    network_policy: BrowserNetworkPolicy,
     owner: Mapping[str, object],
     timeout_ms: int = 5_000,
     executed_prefix_length: int | None = None,
@@ -3087,7 +2711,6 @@ def execute_unsubscribe_in_dedicated_profile(
             browser = PlaywrightUnsubscribeBrowser(
                 page,
                 timeout_ms=timeout_ms,
-                network_policy=network_policy,
                 connected_recipient=connected_recipient,
                 email_otp_resolver=email_otp_resolver,
             )
@@ -3568,8 +3191,6 @@ class UnsubscribeExecutor:
             "entry_reference": effect.entry_reference,
             "operations": effect.operation_mappings,
             "previous_effect_digest": effect.previous_effect_digest,
-            "network_policy_reference": effect.network_policy_reference,
-            "network_policy_origin_references": effect.network_policy_origin_references,
         }
 
     def _continuation_result(
@@ -3598,10 +3219,6 @@ class UnsubscribeExecutor:
                 ),
                 controls=tuple(
                     UnsubscribeDiscoveredControl(**item) for item in durable["controls"]
-                ),
-                network_policy_reference=durable["network_policy_reference"],
-                network_policy_origin_references=tuple(
-                    durable["network_policy_origin_references"]
                 ),
             ),
             journal=tuple(journal),
@@ -3779,10 +3396,6 @@ class UnsubscribeExecutor:
             or durable_effect.get("operations") != operations
             or durable_effect.get("previous_effect_digest")
             != effect.previous_effect_digest
-            or durable_effect.get("network_policy_reference")
-            != effect.network_policy_reference
-            or durable_effect.get("network_policy_origin_references")
-            != list(effect.network_policy_origin_references)
             or durable_effect.get("audit_agent_run_id")
             != claim.get("audit_agent_run_id")
         ):

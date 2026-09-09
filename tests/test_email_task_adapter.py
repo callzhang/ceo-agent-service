@@ -38,7 +38,6 @@ from app.email_task_adapter import (
 )
 from app.email_task_producer import EmailActionTaskProducer
 from app.email_unsubscribe import (
-    BrowserNetworkPolicy,
     EmailUnsubscribeEffect,
     UnsubscribeAuthenticationEvidence,
     UnsubscribeOperation,
@@ -97,7 +96,6 @@ def _task_input(
         "https://example.com/unsubscribe?token=private-token "
         "以及 password=do-not-persist /Users/derek/private/attachment.bin"
     )
-    policy = BrowserNetworkPolicy(frozenset({"https://example.com"}))
     return EmailAgentTaskInput(
         stable_message_identity=stable_identity,
         thread_identity="thread-customer-41",
@@ -133,8 +131,6 @@ def _task_input(
             ),
         ),
         body_text=body_text,
-        unsubscribe_network_policy_reference=policy.reference,
-        unsubscribe_network_policy_origin_references=policy.origin_references,
     )
 
 
@@ -1245,11 +1241,6 @@ def test_task_producer_projects_html_only_unsubscribe_as_opaque_reference(
     assert payload["unsubscribe_entries"][0]["reference"].startswith(
         "unsubscribe-entry:"
     )
-    policy = BrowserNetworkPolicy(frozenset({"https://news.example.com"}))
-    assert payload["unsubscribe_network_policy_reference"] == policy.reference
-    assert payload["unsubscribe_network_policy_origin_references"] == list(
-        policy.origin_references
-    )
     assert private_url not in route.task.trigger_message_json
     assert "html-only-private" not in route.task.trigger_message_json
     assert private_url not in repr(route.context)
@@ -1287,19 +1278,7 @@ def test_task_producer_policy_is_exact_deterministic_https_candidate_origin_set(
         email_store,
     ).produce(plan, message)
     payload = json.loads(route.task.trigger_message_json)
-    policy = BrowserNetworkPolicy(
-        frozenset(
-            {
-                "https://news.example.com",
-                "https://preferences.example.net",
-            }
-        )
-    )
 
-    assert payload["unsubscribe_network_policy_reference"] == policy.reference
-    assert payload["unsubscribe_network_policy_origin_references"] == list(
-        policy.origin_references
-    )
     assert len(payload["unsubscribe_entries"]) == 2
     encoded = route.task.trigger_message_json
     for forbidden in (first, second, "first-private", "second-private", "mailto:"):
@@ -1486,12 +1465,6 @@ def test_unsubscribe_task_projects_only_redacted_real_entry_references(
             dkim_covers_list_unsubscribe_post=True,
             evidence_reference="dkim-evidence:mail-41",
         ),
-        unsubscribe_network_policy_reference=BrowserNetworkPolicy(
-            frozenset({"https://news.example.com"})
-        ).reference,
-        unsubscribe_network_policy_origin_references=BrowserNetworkPolicy(
-            frozenset({"https://news.example.com"})
-        ).origin_references,
     )
 
     route = _authorized_adapter(tmp_path, plan, task_input).ensure_action_plan_tasks(
@@ -1528,12 +1501,6 @@ def test_unsubscribe_task_projects_only_redacted_real_entry_references(
                 "stable_message_identity": payload["stable_message_identity"],
                 "thread_identity": payload["thread_identity"],
                 "entry_reference": entries[0]["reference"],
-                "network_policy_reference": payload[
-                    "unsubscribe_network_policy_reference"
-                ],
-                "network_policy_origin_references": payload[
-                    "unsubscribe_network_policy_origin_references"
-                ],
             },
             "payload": {
                 "operations": [
@@ -1579,12 +1546,6 @@ def test_accepted_unsubscribe_rejects_opening_mailto_entry(tmp_path: Path) -> No
                 "stable_message_identity": payload["stable_message_identity"],
                 "thread_identity": payload["thread_identity"],
                 "entry_reference": entry["reference"],
-                "network_policy_reference": payload[
-                    "unsubscribe_network_policy_reference"
-                ],
-                "network_policy_origin_references": payload[
-                    "unsubscribe_network_policy_origin_references"
-                ],
             },
             "payload": {
                 "operations": [
@@ -1623,12 +1584,6 @@ def test_non_junk_unsubscribe_is_rejected_before_task_creation(
             dkim_covers_list_unsubscribe_post=True,
             evidence_reference="dkim-evidence:mail-41",
         ),
-        unsubscribe_network_policy_reference=BrowserNetworkPolicy(
-            frozenset({"https://news.example.com"})
-        ).reference,
-        unsubscribe_network_policy_origin_references=BrowserNetworkPolicy(
-            frozenset({"https://news.example.com"})
-        ).origin_references,
     )
 
     adapter = _authorized_adapter(tmp_path, plan, task_input)
@@ -1749,8 +1704,6 @@ def test_email_context_contains_text_metadata_receipts_and_no_image_inputs(
         "stable_message_identity",
         "thread_identity",
         "entry_reference",
-        "network_policy_reference",
-        "network_policy_origin_references",
     }
     assert "classification_id" not in json.dumps(action)
 
@@ -1794,10 +1747,6 @@ def test_refreshed_email_context_contains_one_opaque_continuation_receipt(
         thread_identity=payload["thread_identity"],
         entry_reference=entry_reference,
         operations=(UnsubscribeOperation.from_mapping(operations[0]),),
-        network_policy_reference=payload["unsubscribe_network_policy_reference"],
-        network_policy_origin_references=tuple(
-            payload["unsubscribe_network_policy_origin_references"]
-        ),
     ).effect_digest
     claim = {
         "action_identity": payload["action_identity"],
@@ -1826,10 +1775,6 @@ def test_refreshed_email_context_contains_one_opaque_continuation_receipt(
             }
         ],
         "observation_reference": "unsubscribe-state:" + "d" * 64,
-        "network_policy_reference": payload["unsubscribe_network_policy_reference"],
-        "network_policy_origin_references": payload[
-            "unsubscribe_network_policy_origin_references"
-        ],
     }
     monkeypatch.setattr(
         email_store,
@@ -1912,10 +1857,6 @@ def test_refreshed_email_context_rejects_private_continuation_evidence(
             }
         ],
         "observation_reference": "unsubscribe-state:" + "d" * 64,
-        "network_policy_reference": payload["unsubscribe_network_policy_reference"],
-        "network_policy_origin_references": payload[
-            "unsubscribe_network_policy_origin_references"
-        ],
     }
     monkeypatch.setattr(
         email_store,

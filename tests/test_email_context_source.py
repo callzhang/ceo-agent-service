@@ -192,10 +192,6 @@ def test_context_source_reloads_ephemeral_html_and_immutable_unsubscribe_binding
                 "evidence_reference": "dkim-evidence:current-message",
                 "one_click_verified": True,
             },
-            "unsubscribe_network_policy_reference": "network-policy:immutable",
-            "unsubscribe_network_policy_origin_references": [
-                "network-origin:immutable"
-            ],
         }
     )
 
@@ -260,10 +256,4 @@ def test_context_source_reloads_ephemeral_html_and_immutable_unsubscribe_binding
         dkim_covers_list_unsubscribe=True,
         dkim_covers_list_unsubscribe_post=True,
         evidence_reference="dkim-evidence:current-message",
-    )
-    assert task_input.unsubscribe_network_policy_reference == (
-        "network-policy:immutable"
-    )
-    assert task_input.unsubscribe_network_policy_origin_references == (
-        "network-origin:immutable",
     )

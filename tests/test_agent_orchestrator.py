@@ -488,20 +488,12 @@ class MutableEmailContinuationStore:
                     UnsubscribeOperation.from_mapping(item) for item in operations
                 ),
                 previous_effect_digest=previous["effect_digest"],
-                network_policy_reference=previous["network_policy_reference"],
-                network_policy_origin_references=tuple(
-                    previous["network_policy_origin_references"]
-                ),
             )
             self.effect = {
                 "action_identity": self.claim["action_identity"],
                 "effect_digest": typed.effect_digest,
                 "previous_effect_digest": previous["effect_digest"],
                 "operations": operations,
-                "network_policy_reference": previous["network_policy_reference"],
-                "network_policy_origin_references": list(
-                    previous["network_policy_origin_references"]
-                ),
                 "audit_agent_run_id": audit_run_id,
             }
             self.effects[typed.effect_digest] = self.effect
@@ -548,8 +540,6 @@ def _audited_email_task(
     entry_reference = "unsubscribe-entry:" + entry_digest
     operation_reference = "unsubscribe-operation:" + sha256(b"open").hexdigest()
     control_reference = "unsubscribe-control:" + sha256(b"confirm").hexdigest()
-    network_policy_reference = "network-policy:" + sha256(b"policy").hexdigest()
-    network_origin_reference = "network-origin:" + sha256(b"origin").hexdigest()
     operations = [
         {
             "operation_reference": operation_reference,
@@ -567,8 +557,6 @@ def _audited_email_task(
         thread_identity=thread_identity,
         entry_reference=entry_reference,
         operations=(UnsubscribeOperation.from_mapping(operations[0]),),
-        network_policy_reference=network_policy_reference,
-        network_policy_origin_references=(network_origin_reference,),
     )
     payload = {
         "schema": "email_agent_action.v1",
@@ -596,8 +584,6 @@ def _audited_email_task(
             }
         ],
         "unsubscribe_authentication": None,
-        "unsubscribe_network_policy_reference": network_policy_reference,
-        "unsubscribe_network_policy_origin_references": [network_origin_reference],
     }
     conversation_id = email_conversation_id(account_id, thread_identity)
     store.enqueue_reply_task(
@@ -646,16 +632,12 @@ def _audited_email_task(
             }
         ],
         "observation_reference": "unsubscribe-state:" + sha256(b"state").hexdigest(),
-        "network_policy_reference": network_policy_reference,
-        "network_policy_origin_references": [network_origin_reference],
     }
     durable_effect = {
         "action_identity": action_identity,
         "effect_digest": effect.effect_digest,
         "previous_effect_digest": "",
         "operations": operations,
-        "network_policy_reference": network_policy_reference,
-        "network_policy_origin_references": [network_origin_reference],
         "audit_agent_run_id": None,
     }
     return task, MutableEmailContinuationStore(claim, continuation, durable_effect)

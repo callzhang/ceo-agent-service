@@ -310,7 +310,7 @@ generation 或运行历史。新的计划版本获得新的动作身份，因此
 形成与动作类型匹配的新生命周期。
 
 任务的 `trigger_message_json` 只保存可追溯的动作身份、账户/邮件/thread 身份、
-ActionPlan、分类、模型和配置版本，以及 opaque unsubscribe entry 和网络策略 reference。
+ActionPlan、分类、模型和配置版本，以及 opaque unsubscribe entry。
 它不复制邮箱凭证、附件字节、本地附件路径、邮件正文、完整私密 URL 或 query token。
 
 运行时 `AgentTaskContext` 从 Email 数据源提供当前邮件和 thread 的纯文本正文。附件是
@@ -322,7 +322,7 @@ metadata-only，没有 image/content material；只投影文件名、MIME、字�
 在 `email_unsubscribe_audited_v2` 中，Consumer A 是只读判断角色，每个 revision 只提出
 一个与 task 和 ActionPlan 绑定的精确下一步 operation。Audit Agent B 是唯一拥有 task-bound
 unsubscribe 写能力的角色；它校验 task、plan、账户、邮件和 thread 身份，已接受 operation
-prefix、previous effect digest、exact-origin network policy 以及页面/provider readback。
+prefix、previous effect digest 以及页面/provider readback。
 多步骤页面每轮只追加一个新 operation，Audit 只执行该新 operation，不重放已接受的
 operation prefix。需要下一步页面操作时保存 `awaiting_audit` continuation；`awaiting_audit` 是退订
 effect/claim 的领域状态，不是顶层 task 状态。

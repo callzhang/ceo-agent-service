@@ -64,7 +64,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 34
+EMAIL_SCHEMA_VERSION = 35
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -391,8 +391,6 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "effect_digest": ("text", True, None),
         "previous_effect_digest": ("text", True, "''"),
         "operations_json": ("text", True, None),
-        "network_policy_reference": ("text", True, None),
-        "network_policy_origins_json": ("text", True, None),
         "audit_agent_run_id": ("integer", False, None),
         "created_at": ("text", True, None),
     },
@@ -641,8 +639,6 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "trim(effect_digest) != ''",
         "previous_effect_digest = '' or length(previous_effect_digest) = 64",
         "json_valid(operations_json)",
-        "trim(network_policy_reference) != ''",
-        "json_valid(network_policy_origins_json)",
         "audit_agent_run_id is null or audit_agent_run_id > 0",
         "trim(created_at) != ''",
     ),
@@ -2353,8 +2349,6 @@ def _validate_terminal_expected_effect(
         "thread_identity",
         "entry_reference",
         "operations",
-        "network_policy_reference",
-        "network_policy_origin_references",
     }
     if not isinstance(value, Mapping) or set(value) != required:
         raise ValueError("expected terminal effect fields are invalid")
@@ -2370,24 +2364,9 @@ def _validate_terminal_expected_effect(
         entry_reference=value["entry_reference"],
     )
     operations = _validate_unsubscribe_operations(value["operations"])
-    network_policy_reference = _validate_unsubscribe_opaque(
-        value["network_policy_reference"],
-        field="network_policy_reference",
-    )
-    origins = [
-        _validate_unsubscribe_opaque(
-            origin,
-            field="network_policy_origin_reference",
-        )
-        for origin in value["network_policy_origin_references"]
-    ]
-    if not origins:
-        raise ValueError("expected terminal effect needs network policy origins")
     return {
         **{key: binding[key] for key in binding if key != "effect_digest"},
         "operations": operations,
-        "network_policy_reference": network_policy_reference,
-        "network_policy_origin_references": origins,
     }
 
 
@@ -2546,8 +2525,6 @@ def email_unsubscribe_effect_digest(
     entry_reference: str,
     operations: Sequence[Mapping[str, object]],
     previous_effect_digest: str = "",
-    network_policy_reference: str = "network-policy:legacy",
-    network_policy_origin_references: Sequence[str] = ("network-origin:legacy",),
 ) -> str:
     """Hash the complete immutable, Audit-accepted unsubscribe effect."""
 
@@ -2569,32 +2546,12 @@ def email_unsubscribe_effect_digest(
         and re.fullmatch(r"[0-9a-f]{64}", previous_effect_digest) is None
     ):
         raise ValueError("previous_effect_digest must be canonical sha256 hex")
-    network_policy_reference = _validate_unsubscribe_opaque(
-        network_policy_reference,
-        field="network_policy_reference",
-    )
-    origin_references = [
-        _validate_unsubscribe_opaque(value, field="network_policy_origin_reference")
-        for value in network_policy_origin_references
-    ]
-    if not origin_references or len(origin_references) != len(set(origin_references)):
-        raise ValueError("network policy origin references are invalid")
     digest_payload: dict[str, object] = {
         **binding,
         "operations": validated_operations,
     }
-    if (
-        previous_effect_digest
-        or network_policy_reference != "network-policy:legacy"
-        or origin_references != ["network-origin:legacy"]
-    ):
-        digest_payload.update(
-            {
-                "previous_effect_digest": previous_effect_digest,
-                "network_policy_reference": network_policy_reference,
-                "network_policy_origin_references": origin_references,
-            }
-        )
+    if previous_effect_digest:
+        digest_payload["previous_effect_digest"] = previous_effect_digest
     canonical = _json_dump(digest_payload)
     return sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -2861,6 +2818,9 @@ class EmailStore:
                 latest_version = 33
             if latest_version == 33:
                 self._migrate_v33_to_v34(db, replace_version=is_prototype)
+                latest_version = 34
+            if latest_version == 34:
+                self._migrate_v34_to_v35(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -2994,11 +2954,9 @@ class EmailStore:
             """
             insert into email_unsubscribe_effects (
                 action_identity, effect_digest, previous_effect_digest,
-                operations_json, network_policy_reference,
-                network_policy_origins_json, audit_agent_run_id, created_at
+                operations_json, audit_agent_run_id, created_at
             )
             select action_identity, effect_digest, '', operations_json,
-                   'network-policy:legacy', '["network-origin:legacy"]',
                    {audit_run_expression}, claimed_at
             from email_unsubscribe_claims_v10
             """.format(audit_run_expression=audit_run_expression)
@@ -3115,12 +3073,10 @@ class EmailStore:
                 """
                 insert into email_unsubscribe_effects (
                     action_identity, effect_digest, previous_effect_digest,
-                    operations_json, network_policy_reference,
-                    network_policy_origins_json, created_at
+                    operations_json, created_at
                 )
                 select action_identity, effect_digest, previous_effect_digest,
-                    operations_json, network_policy_reference,
-                    network_policy_origins_json, created_at
+                    operations_json, created_at
                 from email_unsubscribe_effects_pre_v14
                 """
             )
@@ -4471,6 +4427,141 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v34_to_v35(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Drop the browser network policy from unsubscribe effect identity.
+
+        Effect digests no longer cover the policy reference, so every persisted
+        effect is re-hashed (parents before children) and the rows that point at
+        it by digest follow the new value. Email task payloads lose the policy
+        keys so the audited lifecycle validator keeps accepting them.
+        """
+
+        digest_by_old: dict[tuple[str, str], str] = {}
+        rewritten: list[dict[str, object]] = []
+        for row in db.execute(
+            """
+            select effects.*, claims.action_plan_id, claims.action_plan_version,
+                   claims.classification_id, claims.account_id,
+                   claims.stable_message_identity, claims.thread_identity,
+                   claims.entry_reference
+            from email_unsubscribe_effects as effects
+            join email_unsubscribe_claims as claims
+              on claims.action_identity=effects.action_identity
+            order by effects.created_at, effects.rowid
+            """
+        ).fetchall():
+            previous_old = str(row["previous_effect_digest"] or "")
+            previous_new = (
+                digest_by_old.get((row["action_identity"], previous_old), previous_old)
+                if previous_old
+                else ""
+            )
+            new_digest = email_unsubscribe_effect_digest(
+                action_identity=row["action_identity"],
+                action_plan_id=row["action_plan_id"],
+                action_plan_version=row["action_plan_version"],
+                classification_id=row["classification_id"],
+                account_id=row["account_id"],
+                stable_message_identity=row["stable_message_identity"],
+                thread_identity=row["thread_identity"],
+                entry_reference=row["entry_reference"],
+                operations=_json_load(
+                    row["operations_json"], field="operations_json", expected_type=list
+                ),
+                previous_effect_digest=previous_new,
+            )
+            digest_by_old[(row["action_identity"], row["effect_digest"])] = new_digest
+            rewritten.append(
+                {
+                    "action_identity": row["action_identity"],
+                    "effect_digest": new_digest,
+                    "previous_effect_digest": previous_new,
+                    "operations_json": row["operations_json"],
+                    "audit_agent_run_id": row["audit_agent_run_id"],
+                    "created_at": row["created_at"],
+                }
+            )
+        db.execute("drop table email_unsubscribe_effects")
+        db.execute(
+            """
+            create table email_unsubscribe_effects (
+                action_identity text not null check(trim(action_identity) != ''),
+                effect_digest text not null check(trim(effect_digest) != ''),
+                previous_effect_digest text not null default ''
+                    check(previous_effect_digest = '' or length(previous_effect_digest) = 64),
+                operations_json text not null check(json_valid(operations_json)),
+                audit_agent_run_id integer
+                    check(audit_agent_run_id is null or audit_agent_run_id > 0),
+                created_at text not null check(trim(created_at) != ''),
+                primary key(action_identity, effect_digest),
+                foreign key(action_identity)
+                    references email_unsubscribe_claims(action_identity)
+                    on delete restrict
+            )
+            """
+        )
+        for effect in rewritten:
+            db.execute(
+                """
+                insert into email_unsubscribe_effects (
+                    action_identity, effect_digest, previous_effect_digest,
+                    operations_json, audit_agent_run_id, created_at
+                ) values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    effect["action_identity"],
+                    effect["effect_digest"],
+                    effect["previous_effect_digest"],
+                    effect["operations_json"],
+                    effect["audit_agent_run_id"],
+                    effect["created_at"],
+                ),
+            )
+        for (action_identity, old_digest), new_digest in digest_by_old.items():
+            if old_digest == new_digest:
+                continue
+            for table in (
+                "email_unsubscribe_claims",
+                "email_unsubscribe_continuations",
+                "email_unsubscribe_steps",
+                "email_unsubscribe_receipts",
+            ):
+                db.execute(
+                    f"update {table} set effect_digest=? "
+                    "where action_identity=? and effect_digest=?",
+                    (new_digest, action_identity, old_digest),
+                )
+        if db.execute(
+            "select 1 from sqlite_master where type='table' and name='reply_tasks'"
+        ).fetchone():
+            db.execute(
+                """
+                update reply_tasks
+                set trigger_message_json=json_remove(
+                    trigger_message_json,
+                    '$.unsubscribe_network_policy_reference',
+                    '$.unsubscribe_network_policy_origin_references'
+                )
+                where channel='email'
+                  and json_valid(trigger_message_json)
+                  and json_extract(
+                      trigger_message_json, '$.unsubscribe_network_policy_reference'
+                  ) is not null
+                """
+            )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=35, applied_at=? where version=34",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (35, ?)",
+                (self._now(),),
+            )
+
     def _next_model_control_timestamp(self, db: sqlite3.Connection, table: str) -> str:
         """Allocate insertion order while the caller holds BEGIN IMMEDIATE."""
         previous = db.execute(f"select max(created_at) from {table}").fetchone()[0]
@@ -5117,10 +5208,6 @@ class EmailStore:
                 previous_effect_digest text not null default ''
                     check(previous_effect_digest = '' or length(previous_effect_digest) = 64),
                 operations_json text not null check(json_valid(operations_json)),
-                network_policy_reference text not null
-                    check(trim(network_policy_reference) != ''),
-                network_policy_origins_json text not null
-                    check(json_valid(network_policy_origins_json)),
                 audit_agent_run_id integer
                     check(audit_agent_run_id is null or audit_agent_run_id > 0),
                 created_at text not null check(trim(created_at) != ''),
@@ -6555,11 +6642,6 @@ class EmailStore:
                         expected_type=list,
                     )
                 )
-                origins = _json_load(
-                    row["network_policy_origins_json"],
-                    field="network_policy_origins_json",
-                    expected_type=list,
-                )
                 expected = email_unsubscribe_effect_digest(
                     action_identity=row["action_identity"],
                     action_plan_id=effect_claim["action_plan_id"],
@@ -6571,8 +6653,6 @@ class EmailStore:
                     entry_reference=effect_claim["entry_reference"],
                     operations=operations,
                     previous_effect_digest=row["previous_effect_digest"],
-                    network_policy_reference=row["network_policy_reference"],
-                    network_policy_origin_references=origins,
                 )
             except (IndexError, TypeError, ValueError) as exc:
                 raise EmailPersistenceCorruption(
@@ -6585,31 +6665,17 @@ class EmailStore:
             unsubscribe_effects[(row["action_identity"], row["effect_digest"])] = {
                 "operations": operations,
                 "previous_effect_digest": row["previous_effect_digest"],
-                "network_policy_reference": row["network_policy_reference"],
-                "network_policy_origin_references": origins,
             }
 
         for (action_identity, _), effect in unsubscribe_effects.items():
             previous_digest = effect["previous_effect_digest"]
             if not previous_digest:
-                if effect["network_policy_reference"] != "network-policy:legacy" and (
-                    len(effect["operations"]) != 1
-                    or effect["operations"][0]["kind"]
-                    not in {"open_entry", "post_one_click"}
-                ):
-                    raise EmailPersistenceCorruption(
-                        "unsubscribe initial effect prefix is invalid"
-                    )
                 continue
             previous = unsubscribe_effects.get((action_identity, previous_digest))
             if (
                 previous is None
                 or effect["operations"][:-1] != previous["operations"]
                 or len(effect["operations"]) != len(previous["operations"]) + 1
-                or effect["network_policy_reference"]
-                != previous["network_policy_reference"]
-                or effect["network_policy_origin_references"]
-                != previous["network_policy_origin_references"]
             ):
                 raise EmailPersistenceCorruption(
                     "unsubscribe effect prefix chain is not append-only"
@@ -8794,8 +8860,6 @@ class EmailStore:
         operations: Sequence[Mapping[str, object]],
         owner: Mapping[str, object],
         previous_effect_digest: str = "",
-        network_policy_reference: str = "network-policy:legacy",
-        network_policy_origin_references: Sequence[str] = ("network-origin:legacy",),
         task_id: int | None = None,
         task_execution_generation: str | None = None,
         task_lifecycle_version: str | None = None,
@@ -8851,21 +8915,12 @@ class EmailStore:
             **{key: binding[key] for key in binding if key != "effect_digest"},
             operations=validated_operations,
             previous_effect_digest=previous_effect_digest,
-            network_policy_reference=network_policy_reference,
-            network_policy_origin_references=network_policy_origin_references,
         )
         if effect_digest != expected_digest:
             raise EmailUnsubscribeClaimConflict(
                 "unsubscribe effect digest does not match accepted operations"
             )
         owner = _validate_email_unsubscribe_owner(owner)
-        network_policy_reference = _validate_unsubscribe_opaque(
-            network_policy_reference, field="network_policy_reference"
-        )
-        network_policy_origin_references = tuple(
-            _validate_unsubscribe_opaque(value, field="network_policy_origin_reference")
-            for value in network_policy_origin_references
-        )
         operations_json = _json_dump(validated_operations)
         claimed_at = self._now()
         with self._connect() as db:
@@ -9060,16 +9115,6 @@ class EmailStore:
                         raise EmailUnsubscribeClaimConflict(
                             "unsubscribe continuation prefix is not append-only"
                         )
-                    if network_policy_reference != prior_effect[
-                        "network_policy_reference"
-                    ] or list(network_policy_origin_references) != _json_load(
-                        prior_effect["network_policy_origins_json"],
-                        field="network_policy_origins_json",
-                        expected_type=list,
-                    ):
-                        raise EmailUnsubscribeClaimConflict(
-                            "unsubscribe continuation network policy changed"
-                        )
                     next_operation = validated_operations[-1]
                     control = next(
                         (
@@ -9171,17 +9216,14 @@ class EmailStore:
                         """
                         insert into email_unsubscribe_effects (
                             action_identity, effect_digest, previous_effect_digest,
-                            operations_json, network_policy_reference,
-                            network_policy_origins_json, audit_agent_run_id, created_at
-                        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                            operations_json, audit_agent_run_id, created_at
+                        ) values (?, ?, ?, ?, ?, ?)
                         """,
                         (
                             action_identity,
                             effect_digest,
                             previous_effect_digest,
                             operations_json,
-                            network_policy_reference,
-                            _json_dump(list(network_policy_origin_references)),
                             audit_agent_run_id,
                             claimed_at,
                         ),
@@ -9266,16 +9308,13 @@ class EmailStore:
                     """
                     insert into email_unsubscribe_effects (
                         action_identity, effect_digest, previous_effect_digest,
-                        operations_json, network_policy_reference,
-                        network_policy_origins_json, audit_agent_run_id, created_at
-                    ) values (?, ?, '', ?, ?, ?, ?, ?)
+                        operations_json, audit_agent_run_id, created_at
+                    ) values (?, ?, '', ?, ?, ?)
                     """,
                     (
                         action_identity,
                         effect_digest,
                         operations_json,
-                        network_policy_reference,
-                        _json_dump(list(network_policy_origin_references)),
                         audit_agent_run_id,
                         claimed_at,
                     ),
@@ -9324,8 +9363,7 @@ class EmailStore:
             continuation_row = db.execute(
                 """
                 select continuation.*, effect.previous_effect_digest,
-                       effect.operations_json, effect.network_policy_reference,
-                       effect.network_policy_origins_json
+                       effect.operations_json
                 from email_unsubscribe_continuations as continuation
                 join email_unsubscribe_effects as effect
                   on effect.action_identity=continuation.action_identity
@@ -9595,13 +9633,6 @@ class EmailStore:
         for digest, effect in effects.items():
             try:
                 operations = _validate_unsubscribe_operations(effect["operations"])
-                origins = tuple(
-                    _validate_unsubscribe_opaque(
-                        value,
-                        field="network_policy_origin_reference",
-                    )
-                    for value in effect["network_policy_origin_references"]
-                )
                 expected_digest = email_unsubscribe_effect_digest(
                     action_identity=str(claim["action_identity"]),
                     action_plan_id=str(claim["action_plan_id"]),
@@ -9613,8 +9644,6 @@ class EmailStore:
                     entry_reference=str(claim["entry_reference"]),
                     operations=operations,
                     previous_effect_digest=str(effect["previous_effect_digest"]),
-                    network_policy_reference=str(effect["network_policy_reference"]),
-                    network_policy_origin_references=origins,
                 )
             except (KeyError, TypeError, ValueError, OverflowError) as exc:
                 raise EmailPersistenceCorruption(
@@ -9627,7 +9656,6 @@ class EmailStore:
             validated_effects[digest] = {
                 **effect,
                 "operations": operations,
-                "network_policy_origin_references": list(origins),
             }
         head = validated_effects.get(effect_digest)
         if head is None or head["operations"] != claim.get("operations"):
@@ -9649,10 +9677,6 @@ class EmailStore:
                 )
             )
             or head["operations"] != expected_effect.get("operations")
-            or head["network_policy_reference"]
-            != expected_effect.get("network_policy_reference")
-            or head["network_policy_origin_references"]
-            != expected_effect.get("network_policy_origin_references")
         ):
             raise EmailPersistenceCorruption(
                 "unsubscribe terminal effect does not match accepted action"
@@ -9676,10 +9700,6 @@ class EmailStore:
                 previous is None
                 or current["operations"][:-1] != previous["operations"]
                 or len(current["operations"]) != len(previous["operations"]) + 1
-                or current["network_policy_reference"]
-                != previous["network_policy_reference"]
-                or current["network_policy_origin_references"]
-                != previous["network_policy_origin_references"]
             ):
                 raise EmailPersistenceCorruption(
                     "unsubscribe terminal effect lineage is not append-only"
@@ -9863,12 +9883,6 @@ class EmailStore:
                 "account_id": claim["account_id"],
                 "stable_message_identity": claim["stable_message_identity"],
                 "thread_identity": claim["thread_identity"],
-                "unsubscribe_network_policy_reference": effect[
-                    "network_policy_reference"
-                ],
-                "unsubscribe_network_policy_origin_references": effect[
-                    "network_policy_origin_references"
-                ],
             }
             if (
                 row is None
@@ -9998,12 +10012,6 @@ class EmailStore:
                 field="operations_json",
                 expected_type=list,
             ),
-            "network_policy_reference": row["network_policy_reference"],
-            "network_policy_origin_references": _json_load(
-                row["network_policy_origins_json"],
-                field="network_policy_origins_json",
-                expected_type=list,
-            ),
             "audit_agent_run_id": row["audit_agent_run_id"],
             "created_at": row["created_at"],
         }
@@ -10054,8 +10062,6 @@ class EmailStore:
         final_step: Mapping[str, object],
         owner: Mapping[str, object],
         previous_effect_digest: str = "",
-        network_policy_reference: str = "network-policy:legacy",
-        network_policy_origin_references: Sequence[str] = ("network-origin:legacy",),
     ) -> dict[str, Any]:
         del action_plan_id, action_plan_version, classification_id, account_id
         del stable_message_identity, thread_identity, entry_reference
@@ -10114,13 +10120,6 @@ class EmailStore:
                 )
                 != validated_operations
                 or effect_row["previous_effect_digest"] != previous_effect_digest
-                or effect_row["network_policy_reference"] != network_policy_reference
-                or _json_load(
-                    effect_row["network_policy_origins_json"],
-                    field="network_policy_origins_json",
-                    expected_type=list,
-                )
-                != list(network_policy_origin_references)
             ):
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe continuation effect binding changed"
@@ -10203,8 +10202,7 @@ class EmailStore:
             row = db.execute(
                 """
                 select continuation.*, effect.previous_effect_digest,
-                       effect.operations_json, effect.network_policy_reference,
-                       effect.network_policy_origins_json
+                       effect.operations_json
                 from email_unsubscribe_continuations as continuation
                 join email_unsubscribe_effects as effect
                   on effect.action_identity=continuation.action_identity
@@ -10230,12 +10228,6 @@ class EmailStore:
                 row["controls_json"], field="controls_json", expected_type=list
             ),
             "observation_reference": row["observation_reference"],
-            "network_policy_reference": row["network_policy_reference"],
-            "network_policy_origin_references": _json_load(
-                row["network_policy_origins_json"],
-                field="network_policy_origins_json",
-                expected_type=list,
-            ),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -10636,8 +10628,6 @@ class EmailStore:
         entry_reference: str,
         operations: Sequence[Mapping[str, object]],
         previous_effect_digest: str = "",
-        network_policy_reference: str = "network-policy:legacy",
-        network_policy_origin_references: Sequence[str] = ("network-origin:legacy",),
         outcome: str,
         receipt_id: str,
         evidence: str,
@@ -10666,8 +10656,6 @@ class EmailStore:
             **{key: binding[key] for key in binding if key != "effect_digest"},
             operations=validated_operations,
             previous_effect_digest=previous_effect_digest,
-            network_policy_reference=network_policy_reference,
-            network_policy_origin_references=network_policy_origin_references,
         )
         if effect_digest != expected_digest:
             raise EmailUnsubscribeReceiptConflict(
@@ -10840,17 +10828,14 @@ class EmailStore:
                     """
                     insert into email_unsubscribe_effects (
                         action_identity, effect_digest, previous_effect_digest,
-                        operations_json, network_policy_reference,
-                        network_policy_origins_json, created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?)
+                        operations_json, created_at
+                    ) values (?, ?, ?, ?, ?)
                     """,
                     (
                         action_identity,
                         effect_digest,
                         previous_effect_digest,
                         _json_dump(validated_operations),
-                        network_policy_reference,
-                        _json_dump(list(network_policy_origin_references)),
                         created_at,
                     ),
                 )

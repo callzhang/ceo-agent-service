@@ -30,7 +30,6 @@ from app.email_task_adapter import (
     email_conversation_id,
 )
 from app.email_unsubscribe import (
-    BrowserNetworkPolicy,
     UnsubscribeExecutor,
     UnsubscribeExecutionResult,
     UnsubscribeObservation,
@@ -71,7 +70,6 @@ ACTION_IDENTITY = email_action_identity(
     action_plan_version=PLAN.action_plan_version,
 )
 ENTRY = extract_unsubscribe_entries(list_unsubscribe=f"<{PRIVATE_URL}>")[0]
-NETWORK_POLICY = BrowserNetworkPolicy(frozenset({"https://news.example.com"}))
 SECONDARY_ENTRY = extract_unsubscribe_entries(
     list_unsubscribe="<https://news.example.com/preferences>"
 )[0]
@@ -117,10 +115,6 @@ def _payload() -> dict[str, object]:
             }
         ],
         "unsubscribe_authentication": None,
-        "unsubscribe_network_policy_reference": NETWORK_POLICY.reference,
-        "unsubscribe_network_policy_origin_references": list(
-            NETWORK_POLICY.origin_references
-        ),
     }
 
 
@@ -137,10 +131,6 @@ def _accepted_action() -> dict[str, object]:
                 "stable_message_identity": MESSAGE_IDENTITY,
                 "thread_identity": THREAD_IDENTITY,
                 "entry_reference": ENTRY.reference,
-                "network_policy_reference": NETWORK_POLICY.reference,
-                "network_policy_origin_references": list(
-                    NETWORK_POLICY.origin_references
-                ),
             },
             "payload": {
                 "operations": [
@@ -733,24 +723,17 @@ def test_two_step_terminal_snapshot_rejects_orphan_effect_branch(
             entry_reference=ENTRY.reference,
             operations=branch_operations,
             previous_effect_digest=root["effect_digest"],
-            network_policy_reference=root["network_policy_reference"],
-            network_policy_origin_references=json.loads(
-                root["network_policy_origins_json"]
-            ),
         )
         db.execute(
             "insert into email_unsubscribe_effects ("
             "action_identity, effect_digest, previous_effect_digest, "
-            "operations_json, network_policy_reference, "
-            "network_policy_origins_json, audit_agent_run_id, created_at"
-            ") values (?, ?, ?, ?, ?, ?, ?, ?)",
+            "operations_json, audit_agent_run_id, created_at"
+            ") values (?, ?, ?, ?, ?, ?)",
             (
                 ACTION_IDENTITY,
                 branch_digest,
                 root["effect_digest"],
                 json.dumps(branch_operations, sort_keys=True),
-                root["network_policy_reference"],
-                root["network_policy_origins_json"],
                 second_consumer.id,
                 "2026-09-02T08:00:03+00:00",
             ),
@@ -1625,7 +1608,6 @@ def test_audit_parent_must_be_the_current_completed_consumer(tmp_path: Path) -> 
         "message",
         "thread",
         "entry",
-        "origin",
     ),
 )
 def test_identity_tampering_is_rejected_before_browser_execution(
@@ -1654,9 +1636,8 @@ def test_identity_tampering_is_rejected_before_browser_execution(
             "message": "stable_message_identity",
             "thread": "thread_identity",
             "entry": "entry_reference",
-            "origin": "network_policy_origin_references",
         }[mutation]
-        target[field] = ["origin:tampered"] if mutation == "origin" else "tampered"
+        target[field] = "tampered"
 
     result = fixture.operation.execute(
         fixture.task.id,
@@ -1688,30 +1669,6 @@ def test_current_provider_entry_is_re_resolved_before_browser_execution(
     assert fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY) is None
 
 
-def test_current_provider_policy_drift_fails_before_claim_or_browser(
-    tmp_path: Path,
-) -> None:
-    fixture = _make_fixture(tmp_path)
-    changed_origin_entry = extract_unsubscribe_entries(
-        list_unsubscribe="<https://changed.example.net/unsubscribe>"
-    )[0]
-    fixture.operation.resolve_entries = lambda *_args, **_kwargs: (
-        ENTRY,
-        changed_origin_entry,
-    )
-
-    result = fixture.operation.execute(
-        fixture.task.id,
-        fixture.task.execution_generation,
-        audit_agent_run_id=fixture.audit_run.id,
-        accepted_action=_accepted_action(),
-    )
-
-    assert _error_code(result) == "unsubscribe_network_policy_changed"
-    assert fixture.executed == []
-    assert fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY) is None
-
-
 def test_unbound_historical_claim_and_effect_rows_keep_null_audit_run_id(
     tmp_path: Path,
 ) -> None:
@@ -1733,8 +1690,6 @@ def test_unbound_historical_claim_and_effect_rows_keep_null_audit_run_id(
                 "target_reference": ENTRY.reference,
             }
         ],
-        "network_policy_reference": "network-policy:test",
-        "network_policy_origin_references": ("origin:test",),
     }
     from app.email_store import email_unsubscribe_effect_digest
 

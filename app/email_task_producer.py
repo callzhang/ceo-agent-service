@@ -25,7 +25,6 @@ from app.email_task_adapter import (
     EmailThreadMessage,
 )
 from app.email_unsubscribe import (
-    browser_network_policy_for_entries,
     browser_unsubscribe_entries,
     extract_unsubscribe_entries,
     select_exact_unsubscribe_entry,
@@ -164,7 +163,6 @@ class EmailActionTaskProducer:
         selection = dict(action_plan.action_parameters.get(EmailAction.UNSUBSCRIBE, {}))
         if selection:
             entries = (select_exact_unsubscribe_entry(entries, selection),)
-        policy = browser_network_policy_for_entries(entries)
         return EmailAgentTaskInput(
             stable_message_identity=stable_identity,
             thread_identity=thread_identity,
@@ -177,8 +175,6 @@ class EmailActionTaskProducer:
             body_text=body_text,
             body_html=body_html,
             unsubscribe_authentication=authentication,
-            unsubscribe_network_policy_reference=policy.reference,
-            unsubscribe_network_policy_origin_references=policy.origin_references,
         )
 
     @staticmethod

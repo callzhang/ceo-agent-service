@@ -17,6 +17,16 @@
   replaces the migration-key special case that ran the prompt's backtick
   command as a subprocess and recorded success as `skipped`.
 
+- 2026-09-09: remove the email unsubscribe browser network policy. The
+  exact-origin allowlist, private/loopback address resolution checks, provider
+  redirect/resource family rules and WebSocket rejection are gone; the browser
+  only requires absolute http(s) navigation targets. The policy reference and
+  origin references leave the effect identity, task payload, proposal target,
+  continuation record and audit binding; email schema v35 re-hashes persisted
+  effects without them (updating the claims, continuations, steps and receipts
+  that point at those digests) and strips the two policy keys from queued
+  email task payloads.
+
 - 2026-09-09: accept `null` as the wire `error_code` for results without an
   error (normalized to the empty string). The fallback model kept returning
   `"error_code": null` even after a correction turn, so the strict string

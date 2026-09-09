@@ -59,8 +59,6 @@ def _payload(**overrides: object) -> dict[str, object]:
         "action_parameters": {},
         "unsubscribe_entries": [],
         "unsubscribe_authentication": None,
-        "unsubscribe_network_policy_reference": "network-policy:test",
-        "unsubscribe_network_policy_origin_references": ["network-origin:test"],
     }
     value.update(overrides)
     return value
@@ -223,8 +221,6 @@ def test_unknown_top_level_payload_key_fails_closed():
     (
         "unsubscribe_entries",
         "unsubscribe_authentication",
-        "unsubscribe_network_policy_reference",
-        "unsubscribe_network_policy_origin_references",
     ),
 )
 def test_missing_unsubscribe_specific_field_fails_closed(missing_field: str):
@@ -508,51 +504,6 @@ def test_unsubscribe_authentication_contract_fails_closed(
     invalid_authentication,
 ):
     payload = _payload(unsubscribe_authentication=invalid_authentication)
-
-    assert (
-        validate_audited_email_task(
-            _task(payload),
-            _context(payload),
-        )
-        is False
-    )
-
-
-@pytest.mark.parametrize(
-    "invalid_reference",
-    (
-        "",
-        "https://example.com/private-policy",
-        "file:///Users/derek/private/policy",
-        ["network-policy:test"],
-    ),
-)
-def test_unsubscribe_network_policy_reference_fails_closed(invalid_reference):
-    payload = _payload(unsubscribe_network_policy_reference=invalid_reference)
-
-    assert (
-        validate_audited_email_task(
-            _task(payload),
-            _context(payload),
-        )
-        is False
-    )
-
-
-@pytest.mark.parametrize(
-    "invalid_references",
-    (
-        "network-origin:test",
-        [],
-        ["network-origin:test", "network-origin:test"],
-        [""],
-        ["https://example.com/private-origin"],
-        ["file:///Users/derek/private/origin"],
-        [42],
-    ),
-)
-def test_unsubscribe_network_policy_origins_fail_closed(invalid_references):
-    payload = _payload(unsubscribe_network_policy_origin_references=invalid_references)
 
     assert (
         validate_audited_email_task(

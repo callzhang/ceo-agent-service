@@ -30,8 +30,6 @@ ACTION_IDENTITY = email_action_identity(
 ENTRY_REFERENCE = "unsubscribe-entry:" + sha256(b"entry").hexdigest()
 OPERATION_REFERENCE = "unsubscribe-operation:" + sha256(b"open-entry").hexdigest()
 CONTROL_REFERENCE = "unsubscribe-control:" + sha256(b"confirm").hexdigest()
-NETWORK_POLICY_REFERENCE = "network-policy:" + sha256(b"policy").hexdigest()
-NETWORK_ORIGIN_REFERENCE = "network-origin:" + sha256(b"origin").hexdigest()
 EFFECT_DIGEST = EmailUnsubscribeEffect(
     action_identity=ACTION_IDENTITY,
     action_plan_id="email-plan:subscription:1",
@@ -50,8 +48,6 @@ EFFECT_DIGEST = EmailUnsubscribeEffect(
             }
         ),
     ),
-    network_policy_reference=NETWORK_POLICY_REFERENCE,
-    network_policy_origin_references=(NETWORK_ORIGIN_REFERENCE,),
 ).effect_digest
 
 
@@ -86,8 +82,6 @@ def _payload() -> dict[str, object]:
             }
         ],
         "unsubscribe_authentication": None,
-        "unsubscribe_network_policy_reference": NETWORK_POLICY_REFERENCE,
-        "unsubscribe_network_policy_origin_references": [NETWORK_ORIGIN_REFERENCE],
     }
 
 
@@ -237,8 +231,6 @@ def _continuation() -> dict[str, object]:
             }
         ],
         "observation_reference": "unsubscribe-state:" + sha256(b"state").hexdigest(),
-        "network_policy_reference": NETWORK_POLICY_REFERENCE,
-        "network_policy_origin_references": [NETWORK_ORIGIN_REFERENCE],
     }
 
 
@@ -248,8 +240,6 @@ def _effect() -> dict[str, object]:
         "effect_digest": EFFECT_DIGEST,
         "previous_effect_digest": "",
         "operations": _operations(),
-        "network_policy_reference": NETWORK_POLICY_REFERENCE,
-        "network_policy_origin_references": [NETWORK_ORIGIN_REFERENCE],
         "audit_agent_run_id": 23,
     }
 
@@ -270,8 +260,6 @@ def _replace_recomputed_root_effect(
         operations=tuple(
             UnsubscribeOperation.from_mapping(operation) for operation in operations
         ),
-        network_policy_reference=NETWORK_POLICY_REFERENCE,
-        network_policy_origin_references=(NETWORK_ORIGIN_REFERENCE,),
     )
     mappings = [dict(operation) for operation in typed.operation_mappings]
     store.effect.update(
@@ -531,7 +519,6 @@ def test_recomputed_open_entry_root_rejects_mailto_source(terminal):
         "wrong_operations",
         "wrong_effect_digest",
         "wrong_entry",
-        "wrong_network_policy",
         "wrong_phase",
         "unexpected_continuation",
     ),
@@ -571,10 +558,6 @@ def test_terminal_done_claim_requires_full_audit_and_effect_identity(mutation):
     elif mutation == "wrong_entry":
         store.claim["entry_reference"] = (
             "unsubscribe-entry:" + sha256(b"wrong-entry").hexdigest()
-        )
-    elif mutation == "wrong_network_policy":
-        store.effect["network_policy_reference"] = (
-            "network-policy:" + sha256(b"wrong-policy").hexdigest()
         )
     elif mutation == "wrong_phase":
         store.claim["phase"] = "navigating"
@@ -965,8 +948,6 @@ def test_durable_unsubscribe_operation_limit_is_independent_and_bounded():
         thread_identity=THREAD_IDENTITY,
         entry_reference=ENTRY_REFERENCE,
         operations=operations[:-1],
-        network_policy_reference=NETWORK_POLICY_REFERENCE,
-        network_policy_origin_references=(NETWORK_ORIGIN_REFERENCE,),
     )
     assert len(accepted.operations) == MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS
 
@@ -981,6 +962,4 @@ def test_durable_unsubscribe_operation_limit_is_independent_and_bounded():
             thread_identity=THREAD_IDENTITY,
             entry_reference=ENTRY_REFERENCE,
             operations=operations,
-            network_policy_reference=NETWORK_POLICY_REFERENCE,
-            network_policy_origin_references=(NETWORK_ORIGIN_REFERENCE,),
         )

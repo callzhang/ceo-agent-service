@@ -34,7 +34,6 @@ from app.email_task_adapter import (
     accepted_email_unsubscribe_effect,
 )
 from app.email_unsubscribe import (
-    BrowserNetworkPolicy,
     ConfirmationNavigationTarget,
     EmailUnsubscribeEffect,
     PlaywrightUnsubscribeBrowser,
@@ -597,10 +596,6 @@ def test_dedicated_profile_resumes_live_page_across_audit_invocations_without_re
             private_url,
             (initial_operation,),
         )
-        policy = BrowserNetworkPolicy(
-            allowed_origins=frozenset({origin}),
-            allow_loopback_for_tests=True,
-        )
         profile = EmailBrowserProfile(tmp_path / "dedicated-browser-runtime")
         initial_claim = store.claim_email_unsubscribe_write(
             **UnsubscribeExecutor._store_arguments(effect),
@@ -614,7 +609,6 @@ def test_dedicated_profile_resumes_live_page_across_audit_invocations_without_re
             (entry,),
             store=store,
             profile=profile,
-            network_policy=policy,
             owner=_BROWSER_OWNER,
             executed_prefix_length=0,
         )
@@ -667,7 +661,6 @@ def test_dedicated_profile_resumes_live_page_across_audit_invocations_without_re
             (entry,),
             store=store,
             profile=profile,
-            network_policy=policy,
             owner=_RESTART_OWNER,
             executed_prefix_length=1,
         )
@@ -716,10 +709,6 @@ def test_dedicated_profile_projects_authentication_controls_without_secret_snaps
             private_url,
             (_operations(UnsubscribeOperationKind.OPEN_ENTRY)[0],),
         )
-        policy = BrowserNetworkPolicy(
-            allowed_origins=frozenset({origin}),
-            allow_loopback_for_tests=True,
-        )
         profile = EmailBrowserProfile(tmp_path / f"runtime-{path.rsplit('-', 1)[-1]}")
         claim = store.claim_email_unsubscribe_write(
             **UnsubscribeExecutor._store_arguments(effect),
@@ -732,7 +721,6 @@ def test_dedicated_profile_projects_authentication_controls_without_secret_snaps
             (entry,),
             store=store,
             profile=profile,
-            network_policy=policy,
             owner=_BROWSER_OWNER,
             executed_prefix_length=0,
         )
@@ -777,10 +765,6 @@ def test_dedicated_profile_projects_hostile_authentication_pages_in_isolated_wor
             private_url,
             (_operations(UnsubscribeOperationKind.OPEN_ENTRY)[0],),
         )
-        policy = BrowserNetworkPolicy(
-            allowed_origins=frozenset({origin}),
-            allow_loopback_for_tests=True,
-        )
         profile = EmailBrowserProfile(tmp_path / f"runtime-{path.rsplit('-', 1)[-1]}")
         claim = store.claim_email_unsubscribe_write(
             **UnsubscribeExecutor._store_arguments(effect),
@@ -793,7 +777,6 @@ def test_dedicated_profile_projects_hostile_authentication_pages_in_isolated_wor
             (entry,),
             store=store,
             profile=profile,
-            network_policy=policy,
             owner=_BROWSER_OWNER,
             executed_prefix_length=0,
         )
@@ -839,29 +822,6 @@ def _operations(
         )
         for index, kind in enumerate(kinds, start=1)
     )
-
-
-def test_browser_requires_mandatory_exact_origin_policy(chrome_browser) -> None:
-    context = chrome_browser.new_context()
-    page = context.new_page()
-    try:
-        with pytest.raises(ValueError, match="network policy"):
-            PlaywrightUnsubscribeBrowser(page, timeout_ms=500)
-    finally:
-        context.close()
-
-
-def test_production_policy_rejects_private_and_loopback_origins() -> None:
-    for origin in (
-        "http://127.0.0.1:8080",
-        "https://localhost:443",
-        "https://10.0.0.4:443",
-        "https://169.254.169.254:443",
-        "https://metadata.google.internal:443",
-    ):
-        with pytest.raises(ValueError, match="network policy") as error:
-            BrowserNetworkPolicy(allowed_origins=frozenset({origin}))
-        assert origin not in str(error.value)
 
 
 def _setup(
@@ -948,10 +908,6 @@ def _setup(
         f"{parsed.scheme}://{parsed.hostname}:"
         f"{parsed.port or (443 if parsed.scheme == 'https' else 80)}"
     )
-    policy = BrowserNetworkPolicy(
-        allowed_origins=frozenset({origin}),
-        allow_loopback_for_tests=True,
-    )
     effect = EmailUnsubscribeEffect(
         action_identity=email_action_identity(
             account_id="fixture-account",
@@ -967,8 +923,6 @@ def _setup(
         thread_identity="fixture-thread",
         entry_reference=entry.reference,
         operations=operations,
-        network_policy_reference=policy.reference,
-        network_policy_origin_references=policy.origin_references,
     )
     return store, effect, entry
 
@@ -1022,10 +976,6 @@ def _run(
         browser = PlaywrightUnsubscribeBrowser(
             page,
             timeout_ms=3_000,
-            network_policy=BrowserNetworkPolicy(
-                allowed_origins=frozenset({origin}),
-                allow_loopback_for_tests=True,
-            ),
             confirmation_target_resolver=(
                 (
                     lambda candidate: ConfirmationNavigationTarget(
@@ -1121,16 +1071,11 @@ def _open_then_execute_discovered_control(
         private_url = f"{origin}{path}?opaque=private-fixture-token"
         initial_operation = _operations(UnsubscribeOperationKind.OPEN_ENTRY)[0]
         store, effect, entry = _setup(tmp_path, private_url, (initial_operation,))
-        policy = BrowserNetworkPolicy(
-            allowed_origins=frozenset({origin}),
-            allow_loopback_for_tests=True,
-        )
         context = chrome_browser.new_context()
         page = context.new_page()
         browser = PlaywrightUnsubscribeBrowser(
             page,
             timeout_ms=3_000,
-            network_policy=policy,
         )
         try:
             first = UnsubscribeExecutor(
@@ -1313,10 +1258,6 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
 ) -> None:
     with _loopback_server() as origin:
         private_url = f"{origin}/two-step?opaque=private-fixture-token"
-        policy = BrowserNetworkPolicy(
-            allowed_origins=frozenset({origin}),
-            allow_loopback_for_tests=True,
-        )
         initial_operation = UnsubscribeOperation(
             operation_reference="step-1",
             kind=UnsubscribeOperationKind.OPEN_ENTRY,
@@ -1354,8 +1295,6 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
                 create_time="2026-08-30T08:00:00+00:00",
             ),
             list_unsubscribe=f"<{private_url}>",
-            unsubscribe_network_policy_reference=policy.reference,
-            unsubscribe_network_policy_origin_references=policy.origin_references,
             unsubscribe_allow_loopback_for_tests=True,
         )
         route = EmailAgentTaskAdapter(
@@ -1377,12 +1316,6 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
                         "thread_identity": metadata["thread_identity"],
                         "entry_reference": metadata["unsubscribe_entries"][0][
                             "reference"
-                        ],
-                        "network_policy_reference": metadata[
-                            "unsubscribe_network_policy_reference"
-                        ],
-                        "network_policy_origin_references": metadata[
-                            "unsubscribe_network_policy_origin_references"
                         ],
                     },
                     "payload": {
@@ -1406,7 +1339,6 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
         browser = PlaywrightUnsubscribeBrowser(
             context.new_page(),
             timeout_ms=3_000,
-            network_policy=policy,
         )
         try:
             first = UnsubscribeExecutor(
@@ -1487,10 +1419,6 @@ def test_read_only_discovery_returns_only_ordinary_opaque_controls(
         browser = PlaywrightUnsubscribeBrowser(
             context.new_page(),
             timeout_ms=2_000,
-            network_policy=BrowserNetworkPolicy(
-                allowed_origins=frozenset({origin}),
-                allow_loopback_for_tests=True,
-            ),
         )
         try:
             browser.execute_operation(
@@ -1536,10 +1464,6 @@ def test_snapshot_sanitizer_rechecks_authentication_before_any_state_read(
         browser = PlaywrightUnsubscribeBrowser(
             context.new_page(),
             timeout_ms=2_000,
-            network_policy=BrowserNetworkPolicy(
-                allowed_origins=frozenset({origin}),
-                allow_loopback_for_tests=True,
-            ),
         )
         monkeypatch.setattr(
             browser,
@@ -1596,9 +1520,6 @@ def test_authentication_predicate_parses_credential_autocomplete_token_lists(
     browser = PlaywrightUnsubscribeBrowser(
         context.new_page(),
         timeout_ms=2_000,
-        network_policy=BrowserNetworkPolicy(
-            allowed_origins=frozenset({"https://example.com"}),
-        ),
     )
     try:
         browser.page.set_content(
@@ -1632,10 +1553,6 @@ def test_authentication_control_binding_rejects_same_selector_and_request_mutati
         restored_document_url="https://accounts.example.com/verify",
         connected_recipient="derek@stardust.ai",
         timeout_ms=2_000,
-        network_policy=BrowserNetworkPolicy(
-            allowed_origins=frozenset({"https://accounts.example.com"}),
-            resolver=lambda _host, _port: ("93.184.216.34",),
-        ),
     )
     try:
         page.set_content(
@@ -1789,81 +1706,6 @@ def test_uncertain_claim_on_fresh_blank_page_never_navigates(
         "/malicious-image",
     ),
 )
-def test_unapproved_redirect_and_subresources_are_blocked_before_request(
-    tmp_path: Path,
-    chrome_browser,
-    path: str,
-) -> None:
-    with _loopback_server_pair() as (allowed_origin, _blocked_origin):
-        private_url = f"{allowed_origin}{path}"
-        store, effect, entry = _setup(
-            tmp_path,
-            private_url,
-            _operations(UnsubscribeOperationKind.OPEN_ENTRY),
-        )
-        context = chrome_browser.new_context()
-        browser = PlaywrightUnsubscribeBrowser(
-            context.new_page(),
-            timeout_ms=2_000,
-            network_policy=BrowserNetworkPolicy(
-                allowed_origins=frozenset({allowed_origin}),
-                allow_loopback_for_tests=True,
-            ),
-        )
-        try:
-            result = UnsubscribeExecutor(store, browser, owner=_BROWSER_OWNER).execute(
-                effect, (entry,)
-            )
-        finally:
-            context.close()
-
-    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
-    assert result.error_code == "email_unsubscribe_browser_network_rejected"
-    assert _BlockedHandler.requests == []
-
-
-def test_unapproved_websocket_is_blocked_before_chromium_handshake(
-    tmp_path: Path,
-    chrome_browser,
-) -> None:
-    with _loopback_server_pair() as (allowed_origin, blocked_origin):
-        private_url = f"{allowed_origin}/direct"
-        store, effect, _entry = _setup(
-            tmp_path,
-            private_url,
-            _operations(UnsubscribeOperationKind.OPEN_ENTRY),
-        )
-        del store
-        context = chrome_browser.new_context()
-        browser = PlaywrightUnsubscribeBrowser(
-            context.new_page(),
-            timeout_ms=2_000,
-            network_policy=BrowserNetworkPolicy(
-                allowed_origins=frozenset({allowed_origin}),
-                allow_loopback_for_tests=True,
-            ),
-        )
-        try:
-            browser.page.goto(private_url, wait_until="domcontentloaded")
-            websocket_url = blocked_origin.replace("http://", "ws://", 1)
-            browser.page.evaluate(
-                "url => { window.__blockedSocket = new WebSocket(url); }",
-                f"{websocket_url}/socket",
-            )
-            browser.page.wait_for_timeout(500)
-
-            assert _BlockedHandler.request_received.is_set() is False
-            with pytest.raises(
-                UnsubscribeBrowserError,
-                match="browser network request rejected",
-            ):
-                browser.discover_current_page(effect)
-        finally:
-            context.close()
-
-    assert _BlockedHandler.requests == []
-
-
 @pytest.mark.parametrize(
     "path",
     ("/malicious-form", "/malicious-popup", "/malicious-download"),
@@ -1881,10 +1723,6 @@ def test_unapproved_form_popup_and_download_have_zero_external_effect(
         browser = PlaywrightUnsubscribeBrowser(
             context.new_page(),
             timeout_ms=2_000,
-            network_policy=BrowserNetworkPolicy(
-                allowed_origins=frozenset({allowed_origin}),
-                allow_loopback_for_tests=True,
-            ),
         )
         try:
             result = UnsubscribeExecutor(store, browser, owner=_BROWSER_OWNER).execute(
@@ -1921,10 +1759,6 @@ def test_verified_one_click_posts_exact_body_without_cookie(
         browser = PlaywrightUnsubscribeBrowser(
             context.new_page(),
             timeout_ms=2_000,
-            network_policy=BrowserNetworkPolicy(
-                allowed_origins=frozenset({origin}),
-                allow_loopback_for_tests=True,
-            ),
         )
         try:
             result = UnsubscribeExecutor(store, browser, owner=_BROWSER_OWNER).execute(

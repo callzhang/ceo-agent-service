@@ -267,8 +267,7 @@ image/content material，只包含文件名、MIME、字节大小、数量和 in
 Consumer A 是只读判断角色；它读取当前邮件、thread、安全 prior receipt 和 ActionPlan，每个
 revision 只提出一个与当前 task/ActionPlan 绑定的新 operation，不执行浏览器 effect。
 Audit Agent B 是唯一拥有 task-bound unsubscribe 写能力的角色；它校验 task、plan、账户、
-邮件、thread 身份，已接受 operation prefix、previous effect digest、exact-origin network
-policy 和当前 readback。多步骤页面每轮在已接受 prefix 后只追加一个 operation，Audit 只执行
+邮件、thread 身份，已接受 operation prefix、previous effect digest 和当前 readback。多步骤页面每轮在已接受 prefix 后只追加一个 operation，Audit 只执行
 新 operation，不重放已接受的 operation prefix。仍需继续页面流程时持久化 `awaiting_audit`
 continuation；`awaiting_audit` 是 effect/claim 的领域状态，
 不是顶层 task 状态。历史 run、session、step、receipt 和失败事实保持不可变。
@@ -394,9 +393,7 @@ Consumer 修订版可以原样复用上一 revision 中已持久化的服务反�
 审计 `proposal_revision` 只表示反馈修订轮次，退订 `operations` 的长度只表示浏览器步骤；两者独立计数。首步动作经过审计反馈后仍可在更高 revision 执行，不能被误判为缺少后续浏览器步骤。
 旧版本若在浏览器预检查阶段失败并错误留下 `uncertain/effect_uncertain` claim，可通过显式恢复命令释放，但必须精确绑定失败 Audit，且确认没有浏览器步骤、完成记录、续跑记录或多个 effect；释放后仍需单独发起正式任务重试。
 当前退订执行只投影明确成功或失败。浏览器动作返回失败且没有持久化步骤、完成记录或续跑记录时，释放本轮 claim 并交给统一重试；不得先写入不可重试的中间状态再让下一次 Audit 撞上 claim 冲突。
-退订浏览器仅把固定的内部失败类别投影到错误码；已识别的导航超时、网络策略拒绝和页面状态缺失必须与兜底 `email_unsubscribe_browser_failed` 区分，同时不得写入 URL、页面文本或凭证。
-首个退订页面导航若因重定向到未授权 origin 而由路由策略中断，异常处理必须先读取本地阻断标记并投影 `email_unsubscribe_browser_network_rejected`；不能让 Playwright 的导航异常覆盖真正根因。
-Google Workspace 退订入口允许在 `google.com` provider family 内进行 HTTPS 顶层重定向，但目标仍须实时解析为公网地址；该例外不允许跨 provider、非 HTTPS、私网或本地地址，其他重定向继续在发出目标请求前拒绝。
+退订浏览器仅把固定的内部失败类别投影到错误码；已识别的导航超时和页面状态缺失必须与兜底 `email_unsubscribe_browser_failed` 区分，同时不得写入 URL、页面文本或凭证。退订浏览器不再对页面发出的网络请求做 origin 白名单、跳转或资源家族限制。
 Google Workspace 邮件使用的 `c.gle` 短入口只允许桥接到 `google.com` provider family；该精确映射不能作为通用短链放行规则。
 Google 退订页面只允许从 `google.com` 和 `gstatic.com` provider dependency family 加载 HTTPS 公网资源；页面中的普通跨站链接不进入许可集合，仍在请求发出前拒绝。
 Consumer 或 Audit 在同一 proposal revision 内耗尽统一重试 ceiling 后，编排结果必须进入 `failed_terminal`，保留最后一个 run 的真实根因但将其标记为不可继续重试；不得返回 `failed_retryable` 让外层重新进入同一 generation 并无限增加 `turn_attempt`。

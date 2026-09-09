@@ -48,8 +48,6 @@ _AUDITED_UNSUBSCRIBE_PAYLOAD_KEYS = frozenset(
         "action_parameters",
         "unsubscribe_entries",
         "unsubscribe_authentication",
-        "unsubscribe_network_policy_reference",
-        "unsubscribe_network_policy_origin_references",
     }
 )
 _UNSUBSCRIBE_ENTRY_KEYS = frozenset({"index", "source", "digest", "reference"})
@@ -182,21 +180,6 @@ def _has_valid_unsubscribe_selection(
     )
 
 
-def _has_valid_network_policy_references(payload: dict[str, object]) -> bool:
-    policy_reference = payload.get("unsubscribe_network_policy_reference")
-    origin_references = payload.get("unsubscribe_network_policy_origin_references")
-    return (
-        is_valid_unsubscribe_opaque_reference(policy_reference)
-        and type(origin_references) is list
-        and bool(origin_references)
-        and all(
-            is_valid_unsubscribe_opaque_reference(reference)
-            for reference in origin_references
-        )
-        and len(origin_references) == len(set(origin_references))
-    )
-
-
 def _is_audited_unsubscribe_task_payload(payload: dict[str, object]) -> bool:
     confidence = payload.get("confidence")
     classification_source = payload.get("classification_source")
@@ -227,7 +210,6 @@ def _is_audited_unsubscribe_task_payload(payload: dict[str, object]) -> bool:
         and _has_valid_unsubscribe_authentication(
             payload.get("unsubscribe_authentication")
         )
-        and _has_valid_network_policy_references(payload)
     )
 
 

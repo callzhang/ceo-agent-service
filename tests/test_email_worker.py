@@ -37,7 +37,6 @@ from app.email_task_adapter import (
 )
 from app.email_task_producer import EmailActionTaskProducer
 from app.email_unsubscribe import (
-    BrowserNetworkPolicy,
     ConnectedMailboxOtp,
     EmailOtpChallenge,
     UnsubscribeAuthenticationEvidence,
@@ -4135,28 +4134,16 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
         rfc_message_id="<mail-7@example.com>",
         thread_id="thread-7",
     )
-    policy = BrowserNetworkPolicy(frozenset({"https://news.example.com"}))
     assert operation.resolve_entries(
         locator,
         entry.reference,
-        network_policy_reference=policy.reference,
-        network_policy_origin_references=policy.origin_references,
     ) == (entry,)
     assert source_events == [("fetch", "INBOX", 42, 6, 2), "logout"]
-    with pytest.raises(ValueError, match="network policy changed"):
-        operation.resolve_entries(
-            locator,
-            entry.reference,
-            network_policy_reference="network-policy:stale",
-            network_policy_origin_references=("network-origin:stale",),
-        )
     assert execution_calls == []
 
     effect = SimpleNamespace(
         account_id="account-1",
         entry_reference=entry.reference,
-        network_policy_reference=policy.reference,
-        network_policy_origin_references=policy.origin_references,
     )
     owner = {"owner_id": "audit", "generation": 1, "lease_token": "lease"}
     assert (
@@ -4179,7 +4166,7 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
     assert execution_calls[0][2]["executed_prefix_length"] == 0
 
 
-def test_execution_resolves_selected_candidate_before_verifying_network_policy(
+def test_execution_resolves_selected_candidate_before_executing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4232,7 +4219,6 @@ def test_execution_resolves_selected_candidate_before_verifying_network_policy(
     assert selection["candidate_digest"] == selected.reference.removeprefix(
         "unsubscribe-entry:"
     )
-    selected_policy = BrowserNetworkPolicy(frozenset({"https://selected.example.com"}))
     execution_calls: list[tuple[object, tuple[object, ...]]] = []
     sentinel_result = object()
 
@@ -4280,15 +4266,11 @@ def test_execution_resolves_selected_candidate_before_verifying_network_policy(
     resolved = operation.resolve_entries(
         locator,
         str(selection["candidate_reference"]),
-        network_policy_reference=selected_policy.reference,
-        network_policy_origin_references=selected_policy.origin_references,
     )
     assert resolved == (selected,)
     effect = SimpleNamespace(
         account_id="account-1",
         entry_reference=selected.reference,
-        network_policy_reference=selected_policy.reference,
-        network_policy_origin_references=selected_policy.origin_references,
     )
     assert (
         operation.execute_effect(
@@ -4328,7 +4310,6 @@ def test_audited_unsubscribe_resolves_html_only_provider_entry_in_memory(
     entry = extract_unsubscribe_entries(
         body_html=ephemeral_body_html(provider_message)
     )[0]
-    policy = BrowserNetworkPolicy(frozenset({"https://news.example.com"}))
 
     class Source:
         def fetch_uid_batch(self, folder, *, cursor_uidvalidity, last_seen_uid, limit):
@@ -4364,8 +4345,6 @@ def test_audited_unsubscribe_resolves_html_only_provider_entry_in_memory(
     assert operation.resolve_entries(
         locator,
         entry.reference,
-        network_policy_reference=policy.reference,
-        network_policy_origin_references=policy.origin_references,
     ) == (entry,)
     assert private_url not in repr(provider_message)
 
@@ -4532,11 +4511,6 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
         provider_message,
     )
     payload = json.loads(route.task.trigger_message_json)
-    policy = BrowserNetworkPolicy(frozenset({"https://news.example.com"}))
-    assert payload["unsubscribe_network_policy_reference"] == policy.reference
-    assert payload["unsubscribe_network_policy_origin_references"] == list(
-        policy.origin_references
-    )
     expected_authentication = (
         None
         if provider_shape == "html_only"
@@ -4582,8 +4556,6 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
                 "stable_message_identity": stable_identity,
                 "thread_identity": thread_identity,
                 "entry_reference": projected_entry["reference"],
-                "network_policy_reference": policy.reference,
-                "network_policy_origin_references": list(policy.origin_references),
             },
             "payload": {
                 "operations": [
@@ -4649,10 +4621,6 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
 
     def fake_dedicated_profile(effect, entries, **kwargs):
         execution_calls.append((effect, entries, kwargs))
-        assert kwargs["network_policy"].reference == policy.reference
-        assert kwargs["network_policy"].origin_references == policy.origin_references
-        assert effect.network_policy_reference == policy.reference
-        assert effect.network_policy_origin_references == policy.origin_references
         assert "automatic" not in kwargs
         return {
             "status": "done",
@@ -5309,7 +5277,6 @@ def test_unsubscribe_task_uses_consumer_audit_orchestrator():
     entry = extract_unsubscribe_entries(
         list_unsubscribe="<https://news.example.com/unsubscribe?token=private>"
     )[0]
-    policy = BrowserNetworkPolicy(frozenset({"https://news.example.com"}))
     payload = {
         "schema": "email_agent_action.v1",
         "lifecycle_version": "email_unsubscribe_audited_v2",
@@ -5336,8 +5303,6 @@ def test_unsubscribe_task_uses_consumer_audit_orchestrator():
             }
         ],
         "unsubscribe_authentication": None,
-        "unsubscribe_network_policy_reference": policy.reference,
-        "unsubscribe_network_policy_origin_references": list(policy.origin_references),
     }
     task = SimpleNamespace(
         id=7,

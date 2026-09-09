@@ -1839,8 +1839,6 @@ def _audited_email_detail_fixture(
         "thread_identity": thread_identity,
         "entry_reference": "unsubscribe-entry:observability-1",
         "operations": operations,
-        "network_policy_reference": "network-policy:observability-1",
-        "network_policy_origin_references": ("network-origin:observability-1",),
     }
     effect_digest = email_unsubscribe_effect_digest(**binding)
     claim_owner = {
@@ -2100,8 +2098,6 @@ def test_email_detail_projects_safe_unsubscribe_continuation_state(
             "generation": 1,
             "lease_token": "unsubscribe-observability-lease",
         },
-        network_policy_reference="network-policy:observability-1",
-        network_policy_origin_references=("network-origin:observability-1",),
     )
 
     response = fixture.client.get(

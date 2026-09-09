@@ -380,10 +380,6 @@ def _validated_snapshot(
             or not isinstance(previous_operations, list)
             or len(current_operations) != len(previous_operations) + 1
             or current_operations[:-1] != previous_operations
-            or current.get("network_policy_reference")
-            != previous.get("network_policy_reference")
-            or current.get("network_policy_origin_references")
-            != previous.get("network_policy_origin_references")
         ):
             raise EmailPersistenceCorruption(
                 "unsubscribe effect lineage is not append-only"
@@ -532,10 +528,6 @@ def _validated_lineage_effect(
         not isinstance(effect, dict)
         or effect.get("action_identity") != payload.get("action_identity")
         or effect.get("effect_digest") != expected_digest
-        or effect.get("network_policy_reference")
-        != payload.get("unsubscribe_network_policy_reference")
-        or effect.get("network_policy_origin_references")
-        != payload.get("unsubscribe_network_policy_origin_references")
         or not isinstance(effect.get("operations"), list)
         or not effect["operations"]
         or not isinstance(effect.get("audit_agent_run_id"), int)
@@ -544,9 +536,6 @@ def _validated_lineage_effect(
     ):
         return None
     operations_value = effect["operations"]
-    origins = effect["network_policy_origin_references"]
-    if not isinstance(origins, list) or not origins:
-        return None
     try:
         operations = tuple(
             UnsubscribeOperation.from_mapping(item)
@@ -566,8 +555,6 @@ def _validated_lineage_effect(
             entry_reference=str(claim["entry_reference"]),
             operations=operations,
             previous_effect_digest=str(effect.get("previous_effect_digest") or ""),
-            network_policy_reference=str(effect["network_policy_reference"]),
-            network_policy_origin_references=tuple(str(item) for item in origins),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -602,16 +589,11 @@ def _valid_terminal_effect(
         or effect.get("action_identity") != payload.get("action_identity")
         or effect.get("effect_digest") != claim.get("effect_digest")
         or effect.get("operations") != claim.get("operations")
-        or effect.get("network_policy_reference")
-        != payload.get("unsubscribe_network_policy_reference")
-        or effect.get("network_policy_origin_references")
-        != payload.get("unsubscribe_network_policy_origin_references")
     ):
         return False
     entries = payload.get("unsubscribe_entries")
     entry_reference = claim.get("entry_reference")
     operations_value = claim.get("operations")
-    origins = effect.get("network_policy_origin_references")
     if (
         not isinstance(entries, list)
         or not isinstance(entry_reference, str)
@@ -621,8 +603,6 @@ def _valid_terminal_effect(
         )
         or not isinstance(operations_value, list)
         or not operations_value
-        or not isinstance(origins, list)
-        or not origins
     ):
         return False
     try:
@@ -644,8 +624,6 @@ def _valid_terminal_effect(
             entry_reference=entry_reference,
             operations=operations,
             previous_effect_digest=str(effect.get("previous_effect_digest") or ""),
-            network_policy_reference=str(effect["network_policy_reference"]),
-            network_policy_origin_references=tuple(str(item) for item in origins),
         )
     except (KeyError, TypeError, ValueError):
         return False

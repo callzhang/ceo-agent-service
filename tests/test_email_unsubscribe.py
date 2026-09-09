@@ -34,7 +34,6 @@ from app.email_browser_profile import (
 )
 from app.store import ReplyTask
 from app.email_unsubscribe import (
-    BrowserNetworkPolicy,
     ConnectedMailboxOtp,
     EmailOtpChallenge,
     EmailUnsubscribeEffect,
@@ -291,14 +290,6 @@ def test_authentication_binding_requires_explicit_email_delivery_proof_and_is_ex
         browser = object.__new__(PlaywrightUnsubscribeBrowser)
         browser._trusted_world = World(snapshots)
         browser.connected_recipient = "derek@stardust.ai"
-        browser.network_policy = type(
-            "Policy",
-            (),
-            {
-                "reference": "policy:test",
-                "validate_url": lambda self, value: value,
-            },
-        )()
         browser._page_identity = lambda: "https://accounts.example.com/verify"
         browser._challenge_bindings = {}
         browser._clock = lambda: opened_at
@@ -414,11 +405,6 @@ def test_email_otp_resend_creates_a_new_challenge_generation_and_window() -> Non
     browser = object.__new__(PlaywrightUnsubscribeBrowser)
     browser._trusted_world = World()
     browser.connected_recipient = "derek@stardust.ai"
-    browser.network_policy = type(
-        "Policy",
-        (),
-        {"reference": "policy:test", "validate_url": lambda self, value: value},
-    )()
     browser._page_identity = lambda: "https://accounts.example.com/verify"
     browser._challenge_bindings = {}
     browser._clock = lambda: now[0]
@@ -636,8 +622,6 @@ def _effect(
         entry_reference=unsubscribe_entry_reference(TOKEN_URL),
         operations=operations or _operations(UnsubscribeOperationKind.OPEN_ENTRY),
         previous_effect_digest=previous_effect_digest,
-        network_policy_reference="network-policy:test",
-        network_policy_origin_references=("origin:test",),
     )
 
 
@@ -663,8 +647,6 @@ def _task() -> ReplyTask:
             }
         ],
         "unsubscribe_authentication": None,
-        "unsubscribe_network_policy_reference": "network-policy:test",
-        "unsubscribe_network_policy_origin_references": ["origin:test"],
     }
     return ReplyTask(
         id=9,
@@ -699,8 +681,6 @@ def _accepted_action() -> ProposedAction:
                 ),
                 "thread_identity": "thread-41",
                 "entry_reference": unsubscribe_entry_reference(TOKEN_URL),
-                "network_policy_reference": "network-policy:test",
-                "network_policy_origin_references": ["origin:test"],
             },
             "payload": {
                 "operations": [
@@ -726,38 +706,6 @@ def test_unsubscribe_outcome_contract_is_exact() -> None:
         "FAILED_BROWSER": "failed_browser",
         "FAILED_PROVIDER_AUTH": "failed_provider_auth",
     }
-
-
-def test_network_policy_is_exact_origin_and_rejects_private_dns_resolution() -> None:
-    public = BrowserNetworkPolicy(
-        allowed_origins=frozenset({"https://mail.example.com"}),
-        resolver=lambda _host, _port: ("93.184.216.34",),
-    )
-    private = BrowserNetworkPolicy(
-        allowed_origins=frozenset({"https://mail.example.com:443"}),
-        resolver=lambda _host, _port: ("10.0.0.7",),
-    )
-
-    assert public.validate_url("https://mail.example.com/unsubscribe")
-    with pytest.raises(UnsubscribeBrowserError, match="request rejected"):
-        public.validate_url("https://mail.example.com:444/unsubscribe")
-    with pytest.raises(UnsubscribeBrowserError, match="request rejected"):
-        private.validate_url("https://mail.example.com/unsubscribe")
-
-
-def test_network_policy_reference_binds_test_only_loopback_mode() -> None:
-    origins = frozenset({"https://mail.example.com"})
-    production = BrowserNetworkPolicy(
-        allowed_origins=origins,
-        resolver=lambda _host, _port: ("93.184.216.34",),
-    )
-    test_only = BrowserNetworkPolicy(
-        allowed_origins=origins,
-        allow_loopback_for_tests=True,
-        resolver=lambda _host, _port: ("93.184.216.34",),
-    )
-
-    assert production.reference != test_only.reference
 
 
 def test_extracts_candidates_in_offline_semantic_order_with_ephemeral_metadata(
@@ -1366,105 +1314,6 @@ def test_technical_failures_use_fixed_redacted_errors(
     assert "token=" not in json.dumps(result.redacted, sort_keys=True)
 
 
-def test_network_policy_allows_only_same_google_provider_redirect() -> None:
-    addresses = lambda _host, _port: ("142.250.72.14",)
-    policy = BrowserNetworkPolicy(
-        allowed_origins=frozenset({"https://workspace.google.com"}),
-        resolver=addresses,
-    )
-
-    assert policy.validate_provider_redirect(
-        "https://workspace.google.com/unsubscribe",
-        "https://accounts.google.com/continue",
-    ) == "https://accounts.google.com/continue"
-    short_link_policy = BrowserNetworkPolicy(
-        allowed_origins=frozenset({"https://c.gle"}),
-        resolver=addresses,
-    )
-    assert short_link_policy.validate_provider_redirect(
-        "https://c.gle/workspace-unsubscribe",
-        "https://workspace.google.com/continue",
-    ) == "https://workspace.google.com/continue"
-    assert short_link_policy.validate_provider_resource(
-        "https://c.gle/workspace-unsubscribe",
-        "https://ssl.gstatic.com/account.css",
-    ) == "https://ssl.gstatic.com/account.css"
-    assert short_link_policy.validate_provider_resource(
-        "https://c.gle/workspace-unsubscribe",
-        "https://accounts.google.com/account.js",
-    ) == "https://accounts.google.com/account.js"
-    with pytest.raises(UnsubscribeBrowserError, match="network request rejected"):
-        short_link_policy.validate_provider_resource(
-            "https://c.gle/workspace-unsubscribe",
-            "https://www.apple.com/account.css",
-        )
-    with pytest.raises(UnsubscribeBrowserError, match="network request rejected"):
-        policy.validate_provider_redirect(
-            "https://workspace.google.com/unsubscribe",
-            "https://example.com/continue",
-        )
-
-
-def test_redirected_google_resources_are_not_checked_as_document_navigation() -> None:
-    addresses = lambda _host, _port: ("142.250.72.14",)
-    policy = BrowserNetworkPolicy(
-        allowed_origins=frozenset({"https://c.gle"}),
-        resolver=addresses,
-    )
-
-    class Request:
-        def __init__(self, url: str, navigation: bool) -> None:
-            self.url = url
-            self._navigation = navigation
-
-        def is_navigation_request(self) -> bool:
-            return self._navigation
-
-    class Response:
-        def __init__(self, url: str) -> None:
-            self.url = url
-            self.headers = {}
-
-    class Route:
-        def __init__(self, response: Response) -> None:
-            self.response = response
-            self.fulfilled = False
-            self.aborted = False
-
-        def fetch(self, **_kwargs):
-            return self.response
-
-        def fulfill(self, **_kwargs):
-            self.fulfilled = True
-
-        def abort(self):
-            self.aborted = True
-
-    browser = object.__new__(PlaywrightUnsubscribeBrowser)
-    browser.network_policy = policy
-    browser.timeout_ms = 500
-    browser._provider_redirect_origins = {
-        "https://myaccount.google.com:443": "https://c.gle/workspace-unsubscribe"
-    }
-    browser._provider_root_source = "https://c.gle/workspace-unsubscribe"
-
-    resource_route = Route(Response("https://ssl.gstatic.com/account.css"))
-    browser._guard_request(
-        resource_route,
-        Request("https://myaccount.google.com/account.css", navigation=False),
-    )
-    assert resource_route.fulfilled is True
-    assert resource_route.aborted is False
-
-    navigation_route = Route(Response("https://myaccount.google.com/continue"))
-    browser._guard_request(
-        navigation_route,
-        Request("https://myaccount.google.com/continue", navigation=True),
-    )
-    assert navigation_route.fulfilled is True
-    assert navigation_route.aborted is False
-
-
 def test_no_reliable_browser_entry_is_skipped_without_calling_browser(
     tmp_path: Path,
 ) -> None:
@@ -1979,8 +1828,6 @@ def test_action_required_persists_typed_continuation_without_executing_control(
     assert result.continuation.previous_effect_digest == ""
     assert result.continuation.executed_operations == initial.operations
     assert result.continuation.controls == (discovered,)
-    assert result.continuation.network_policy_reference == "network-policy:test"
-    assert result.continuation.network_policy_origin_references == ("origin:test",)
     durable = store.get_email_unsubscribe_continuation(ACTION_IDENTITY)
     assert durable is not None
     assert durable["controls"] == [
@@ -2466,24 +2313,6 @@ def test_awaiting_audit_matching_terminal_receipt_completes_without_new_write(
             "prefix",
         ),
         (
-            lambda effect: EmailUnsubscribeEffect(
-                **{
-                    **effect.__dict__,
-                    "previous_effect_digest": effect.effect_digest,
-                    "network_policy_reference": "network-policy:changed",
-                    "operations": effect.operations
-                    + (
-                        UnsubscribeOperation(
-                            operation_reference="step-2",
-                            kind=UnsubscribeOperationKind.SUBMIT_FORM,
-                            target_reference="control-form",
-                        ),
-                    ),
-                }
-            ),
-            "policy",
-        ),
-        (
             lambda effect: _effect(
                 effect.operations
                 + (
@@ -2780,8 +2609,6 @@ def test_email_browser_audit_session_is_owner_only_atomic_and_action_scoped(
         "effect_digest": "a" * 64,
         "entry_reference": unsubscribe_entry_reference(private_url),
         "control_references": ["unsubscribe-control:" + "b" * 64],
-        "network_policy_reference": "network-policy:test",
-        "network_policy_origin_references": ["origin:test"],
     }
 
     profile.save_audit_session(ACTION_IDENTITY, payload)
@@ -2929,10 +2756,6 @@ def test_dedicated_profile_continuation_reuses_live_browser_without_replaying_pr
                 "effect_digest": effect.effect_digest,
                 "entry_reference": effect.entry_reference,
                 "control_references": [control.reference],
-                "network_policy_reference": effect.network_policy_reference,
-                "network_policy_origin_references": list(
-                    effect.network_policy_origin_references
-                ),
             }
 
         def validate_restored_audit_session(self, *_args, **_kwargs):
@@ -2983,9 +2806,6 @@ def test_dedicated_profile_continuation_reuses_live_browser_without_replaying_pr
         (_entry(),),
         store=store,
         profile=profile,
-        network_policy=BrowserNetworkPolicy(
-            frozenset({"https://news.example.com"})
-        ),
         owner=UNSUBSCRIBE_OWNER,
         session_manager=manager,
     )
@@ -3023,9 +2843,6 @@ def test_dedicated_profile_continuation_reuses_live_browser_without_replaying_pr
         (_entry(),),
         store=EmailStore(store.path),
         profile=profile,
-        network_policy=BrowserNetworkPolicy(
-            frozenset({"https://news.example.com"})
-        ),
         owner=RESTART_OWNER,
         executed_prefix_length=1,
         session_manager=manager,
@@ -3050,7 +2867,6 @@ def test_dedicated_profile_continuation_reuses_live_browser_without_replaying_pr
         "effect_digest",
         "entry_reference",
         "control_reference",
-        "network_policy",
     ),
 )
 def test_restored_audit_session_is_bound_to_exact_effect_and_appended_control(
@@ -3076,19 +2892,13 @@ def test_restored_audit_session_is_bound_to_exact_effect_and_appended_control(
         "effect_digest": initial.effect_digest,
         "entry_reference": extension.entry_reference,
         "control_references": [control_reference],
-        "network_policy_reference": extension.network_policy_reference,
-        "network_policy_origin_references": list(
-            extension.network_policy_origin_references
-        ),
     }
     if tamper == "effect_digest":
         payload["effect_digest"] = "0" * 64
     elif tamper == "entry_reference":
         payload["entry_reference"] = "unsubscribe-entry:wrong"
-    elif tamper == "control_reference":
-        payload["control_references"] = ["unsubscribe-control:" + "c" * 64]
     else:
-        payload["network_policy_reference"] = "network-policy:wrong"
+        payload["control_references"] = ["unsubscribe-control:" + "c" * 64]
 
     with pytest.raises(UnsubscribeBrowserError, match="browser session") as error:
         _validated_restored_audit_session(
@@ -3121,10 +2931,6 @@ def test_restored_credential_handoff_accepts_only_readback_resume_operation() ->
         "effect_digest": initial.effect_digest,
         "entry_reference": extension.entry_reference,
         "control_references": [control_reference],
-        "network_policy_reference": extension.network_policy_reference,
-        "network_policy_origin_references": list(
-            extension.network_policy_origin_references
-        ),
     }
 
     restored = _validated_restored_audit_session(
@@ -3159,10 +2965,6 @@ def test_user_handoff_reconciliation_allows_the_live_page_to_reach_terminal_stat
             "effect_digest": initial.effect_digest,
             "entry_reference": extension.entry_reference,
             "control_references": [control_reference],
-            "network_policy_reference": extension.network_policy_reference,
-            "network_policy_origin_references": list(
-                extension.network_policy_origin_references
-            ),
         },
         extension,
         executed_prefix_length=1,
