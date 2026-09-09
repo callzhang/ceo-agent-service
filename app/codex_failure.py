@@ -2,8 +2,19 @@
 from __future__ import annotations
 
 CODEX_PROVIDER_UNAVAILABLE = "codex_provider_unavailable"
+CODEX_PROVIDER_OVERLOADED = "codex_provider_overloaded"
 CODEX_PROVIDER_AUTH_FAILED = "codex_provider_auth_failed"
 CODEX_PROCESS_FAILED = "codex_process_failed"
+
+# Codex reports `server_overloaded` when the selected model is temporarily at
+# capacity. The exec JSON stream only carries the human-readable message.
+_CODEX_PROVIDER_OVERLOADED_MARKERS = ("selected model is at capacity",)
+
+
+def is_codex_provider_overloaded(value: str) -> bool:
+    """Return whether Codex reported that the selected model is at capacity."""
+    detail = value.casefold()
+    return any(marker in detail for marker in _CODEX_PROVIDER_OVERLOADED_MARKERS)
 
 
 def is_codex_provider_auth_error(value: str) -> bool:
@@ -41,6 +52,8 @@ def classify_codex_process_failure(stdout: str, stderr: str) -> str:
         and "/v1/responses" in detail
     ):
         return CODEX_PROVIDER_AUTH_FAILED
+    if is_codex_provider_overloaded(detail):
+        return CODEX_PROVIDER_OVERLOADED
     if any(
         marker in detail
         for marker in (

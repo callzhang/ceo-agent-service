@@ -17,7 +17,12 @@ from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
 from app.agent_runtime_router import AgentRuntimeRouter
-from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
+from app.agent_turn_runner import (
+    AgentTurnProcess,
+    AgentTurnRunResult,
+    ProcessExecutor,
+    result_correction_prompt,
+)
 from app.agent_wire_contracts import (
     AuditAgentWireResult,
     ConsumerAgentWireResult,
@@ -482,6 +487,12 @@ class ConsumerAgentRunner:
                 "继续。请在当前原有会话中接着完成上一轮尚未完成的工作，"
                 "不要重新开始一个新的业务判断。"
             )
+        continuation_prompt += result_correction_prompt(
+            self.store,
+            task,
+            role=AgentRole.CONSUMER,
+            proposal_revision=proposal_revision,
+        )
 
         result = process.execute(
                 run=claim.run,

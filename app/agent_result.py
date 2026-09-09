@@ -74,6 +74,7 @@ def parse_typed_agent_result(
     model_type: type[ResultModelT],
 ) -> ResultModelT:
     payloads = _primary_turn_payloads(_parse_jsonl_payloads(raw))
+    schema_error: ValidationError | None = None
     for payload in reversed(payloads):
         candidate = _agent_message_candidate(payload)
         if candidate is None:
@@ -81,11 +82,26 @@ def parse_typed_agent_result(
         try:
             normalized = _normalize_result_text(candidate)
             return model_type.model_validate_json(normalized)
-        except (json.JSONDecodeError, ResultParseError, ValidationError):
+        except ResultParseError:
+            continue
+        except ValidationError as exc:
             # Codex can emit more than one assistant message in a turn. A later
             # malformed candidate must not hide an earlier valid typed result.
+            # A JSON object that exists but violates the typed contract is
+            # remembered so the caller can report where it failed instead of
+            # claiming that no result was returned at all.
+            if schema_error is None and not _is_json_syntax_error(exc):
+                schema_error = exc
             continue
+    if schema_error is not None:
+        raise ResultParseError(
+            "typed result JSON failed schema validation"
+        ) from schema_error
     raise ResultParseError("no valid typed result JSON found in Codex JSONL")
+
+
+def _is_json_syntax_error(exc: ValidationError) -> bool:
+    return all(error.get("type") == "json_invalid" for error in exc.errors())
 
 
 def parse_agent_text_result(raw: str) -> str:

@@ -11300,6 +11300,8 @@ def _failure_code_explanation(code: str) -> str:
         return "Agent 运行没有输出可验证的结果 JSON。"
     if code == "codex_process_failed":
         return "Agent 执行进程未成功完成，因此本轮没有得到可验证结果。"
+    if code == "codex_provider_overloaded":
+        return "Agent 模型暂时过载；运行时已切换到备用路由并延期重试。"
     if code == "execution_failed":
         return "Agent 执行失败；请查看关联 run 的阶段和原始错误码。"
     return f"处理未完成，失败代码：{code or 'unknown'}。"

@@ -19,6 +19,7 @@ _READABLE_FAILURE_REASONS = {
         "Agent 执行审计连续重试后仍未得到可验证结果，已达到本轮重试上限。"
     ),
     "codex_process_failed": "Agent 执行进程未成功完成，因此本轮没有得到可验证结果。",
+    "codex_provider_overloaded": "Agent 模型暂时过载；运行时已切换到备用路由并延期重试。",
     "codex_result_invalid": "Agent 已返回结果，但结果不符合当前校验契约。",
     "codex_result_missing": "Agent 运行结束，但没有输出可验证结果。",
     "execution_failed": "Agent 执行失败；请查看关联 run 的具体阶段和原始错误码。",

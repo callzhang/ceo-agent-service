@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -273,6 +274,32 @@ def test_provider_capacity_is_typed_and_allows_failover(adapter):
 
     assert failure.code == "codex_provider_capacity_exhausted"
     assert failure.failure_class.value == "capacity"
+    assert failure.failover_permitted is True
+    assert failure.route_pause_required is True
+
+
+def test_model_at_capacity_fails_over_and_pauses_route(adapter):
+    stdout = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": (
+                        "Selected model is at capacity. Please try a different model."
+                    ),
+                }
+            ),
+            json.dumps({"type": "turn.failed"}),
+        )
+    )
+
+    failure = adapter.classify_failure(stdout=stdout, stderr="", returncode=1)
+
+    assert failure.code == "codex_provider_overloaded"
+    assert failure.failure_class.value == "capacity"
+    assert failure.retryable_on_same_route is True
     assert failure.failover_permitted is True
     assert failure.route_pause_required is True
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.codex_failure import CODEX_PROVIDER_OVERLOADED
 
 CODEX_PROVIDER_UNAVAILABLE = "codex_provider_unavailable"
 CODEX_PROVIDER_CAPACITY_EXHAUSTED = "codex_provider_capacity_exhausted"
@@ -37,6 +38,11 @@ def is_codex_provider_recovery_code(value: object) -> bool:
     return code in {
         CODEX_PROVIDER_UNAVAILABLE,
         CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+        CODEX_PROVIDER_OVERLOADED,
     } or code.startswith(
-        (f"{CODEX_PROVIDER_UNAVAILABLE}:", f"{CODEX_PROVIDER_CAPACITY_EXHAUSTED}:")
+        (
+            f"{CODEX_PROVIDER_UNAVAILABLE}:",
+            f"{CODEX_PROVIDER_CAPACITY_EXHAUSTED}:",
+            f"{CODEX_PROVIDER_OVERLOADED}:",
+        )
     )

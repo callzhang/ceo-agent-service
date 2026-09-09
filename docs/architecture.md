@@ -719,6 +719,17 @@ Consumer 或 Audit 的运行、依赖、解析和外部系统错误统一进入 
 服务重启后，仍有有效租约的 run 不会被 stale recovery 抢占；租约过期且没有活动进程的
 run 才能被持久队列恢复。
 
+两类运行时失败有明确的结构化处理，而不是落入通用重试：
+
+- **模型过载**：Codex 报告所选模型 `server_overloaded`（"Selected model is at capacity"）时，
+  adapter 把它归为 `capacity` 类 `codex_provider_overloaded`：允许在同一个 Agent run 内切到下一条
+  已配置路由，并暂停过载路由（健康探测通过后自动解除）。所有路由都过载时，任务按 provider
+  恢复等待延期重试，不进入终态失败。
+- **结果不合契约**：Agent 返回了 JSON 但不满足 wire schema 时，解析器报 `codex_result_invalid`
+  并保留失败字段位置（不保留模型原文）；同一角色、同一 revision 的下一次 turn 会收到
+  `## Result Correction`，把这些位置反馈给模型，要求只返回修正后的结果。只有完全没有 JSON
+  对象时才是 `codex_result_missing`。
+
 ## 统一外发消息后缀
 
 服务向人员发送的 DingTalk 或 WeChat 文本，必须先通过

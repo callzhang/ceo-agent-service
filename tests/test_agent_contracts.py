@@ -15,7 +15,7 @@ from app.agent_contracts import (
     ProposedAction,
     RiskLevel,
 )
-from app.agent_result import parse_typed_agent_result
+from app.agent_result import ResultParseError, parse_typed_agent_result
 from app.agent_wire_contracts import (
     AuditAgentWireResult,
     ConsumerAgentWireResult,
@@ -766,6 +766,42 @@ def test_parse_typed_agent_result_uses_current_codex_output_shape():
     result = parse_typed_agent_result(raw, ConsumerAgentResult)
 
     assert result.outcome is ConsumerOutcome.PROPOSAL
+
+
+def test_parse_typed_agent_result_reports_schema_violation_locations():
+    payload = {
+        "outcome": "proposal",
+        "summary": "Prepare the notice.",
+        "proposal": _proposal(),
+        "error": {**_error(), "code": None},
+    }
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": json.dumps(payload)},
+        }
+    )
+
+    with pytest.raises(ResultParseError, match="failed schema validation") as info:
+        parse_typed_agent_result(raw, ConsumerAgentResult)
+
+    assert isinstance(info.value.__cause__, ValidationError)
+    assert any(
+        "error" in error["loc"] and "code" in error["loc"]
+        for error in info.value.__cause__.errors()
+    )
+
+
+def test_parse_typed_agent_result_still_reports_missing_when_no_object_exists():
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": "I could not decide."},
+        }
+    )
+
+    with pytest.raises(ResultParseError, match="no valid typed result JSON found"):
+        parse_typed_agent_result(raw, ConsumerAgentResult)
 
 
 def test_parse_typed_agent_result_ignores_later_hook_turn_result():

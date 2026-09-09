@@ -545,6 +545,7 @@ The initial routing matrix is:
 | Local Codex OAuth expired or invalidated | No | `codex_api` | Safe only before effect start |
 | ChatGPT Codex backend rejects local session | No | `codex_api` | Safe only before effect start |
 | Local Codex subscription capacity exhausted | No immediate retry | `codex_api` | Pause OAuth route |
+| Selected Codex model at capacity (`server_overloaded`) | Bounded, after pause | `codex_api` | Pause route until probe is healthy; defer the task when every route is overloaded |
 | OpenAI API key missing or rejected | No | `claude_api` | Pause API route; alert once |
 | OpenAI API capacity exhausted | Delayed | `claude_api` | Pause API route |
 | OpenAI transport failure before effect start | Bounded | `claude_api` | Switch after retry budget |

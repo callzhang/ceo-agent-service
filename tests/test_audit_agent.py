@@ -184,6 +184,67 @@ def test_external_action_identity_is_stable_without_run_or_revision_state():
     assert "argv" not in first
 
 
+def test_audit_retry_after_invalid_result_carries_validation_locations(
+    setup, monkeypatch
+):
+    store, task, audit_context, parent = setup
+    failed = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=audit_context.operation_id,
+        owner="audit-test",
+    )
+    assert failed.claimed
+    store.fail_agent_run(
+        failed.run.id,
+        {
+            "code": "codex_result_invalid",
+            "retryable": True,
+            "authorization_required": False,
+            "detail": "executed.error_code: string_type",
+            "session_continuable": True,
+        },
+        owner="audit-test",
+    )
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=1,
+        parent_agent_run_id=parent.id,
+        operation_id=audit_context.operation_id,
+        owner="audit-test",
+    )
+    assert claim.claimed
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        @classmethod
+        def __class_getitem__(cls, _item):
+            return cls
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def execute(self, **kwargs):
+            captured.update(kwargs)
+            return "executed"
+
+    monkeypatch.setattr(audit_agent, "AgentTurnProcess", FakeProcess)
+    runner = AuditAgentRunner(store=store, workspace=Path("/workspace"), owner="audit-test")
+
+    runner._execute_claimed(task, audit_context, run=claim.run, rendered_rules="rules")
+
+    prompt = str(captured["prompt"])
+    assert "## Result Correction" in prompt
+    assert "executed.error_code: string_type" in prompt
+
+
 def test_audit_runner_adds_stable_action_identity_without_command_authorization(
     setup, monkeypatch
 ):

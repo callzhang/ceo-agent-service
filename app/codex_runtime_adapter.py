@@ -22,6 +22,7 @@ from app.codex_capacity import (
 from app.codex_failure import (
     CODEX_PROCESS_FAILED,
     CODEX_PROVIDER_AUTH_FAILED,
+    CODEX_PROVIDER_OVERLOADED,
     classify_codex_process_failure,
 )
 from app.codex_failure import (
@@ -196,6 +197,18 @@ class CodexRuntimeAdapter:
                 failure_class=RuntimeFailureClass.AUTHENTICATION,
                 code=CODEX_PROVIDER_AUTH_FAILED,
                 detail="Codex provider authentication failed.",
+                failover_permitted=True,
+                route_pause_required=True,
+            )
+        if process_code == CODEX_PROVIDER_OVERLOADED:
+            # A model at capacity is a transient provider condition: let the
+            # router move this turn to the configured fallback route and keep
+            # new work off the overloaded route until the probe sees it healthy.
+            return RuntimeFailure(
+                failure_class=RuntimeFailureClass.CAPACITY,
+                code=CODEX_PROVIDER_OVERLOADED,
+                detail="Codex provider reports the selected model is at capacity.",
+                retryable_on_same_route=True,
                 failover_permitted=True,
                 route_pause_required=True,
             )

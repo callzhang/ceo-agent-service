@@ -44,6 +44,7 @@ from app.codex_capacity import (
 )
 from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
+    CODEX_PROVIDER_OVERLOADED,
     CODEX_PROVIDER_UNAVAILABLE,
     classify_codex_process_failure,
 )
@@ -409,13 +410,61 @@ def _agent_process_error_code(exc: Exception) -> str:
         return explicit_code
     if code.startswith(CODEX_PROVIDER_AUTH_FAILED):
         return code
-    if code in {CODEX_PROVIDER_UNAVAILABLE, CODEX_PROVIDER_CAPACITY_EXHAUSTED}:
+    if code in {
+        CODEX_PROVIDER_UNAVAILABLE,
+        CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+        CODEX_PROVIDER_OVERLOADED,
+    }:
         return code
     if isinstance(exc, ResultParseError):
         if code == "no valid typed result JSON found in Codex JSONL":
             return "codex_result_missing"
         return "codex_result_invalid"
     return "codex_process_failed"
+
+
+RESULT_INVALID_ERROR_CODE = "codex_result_invalid"
+
+
+def result_correction_prompt(
+    store: AutoReplyStore,
+    task: ReplyTask,
+    *,
+    role: AgentRole,
+    proposal_revision: int,
+) -> str:
+    """Return the correction block for a role retry after a schema-invalid result.
+
+    The retry re-enters the same typed contract, so the model is told where its
+    previous result failed validation instead of receiving the identical
+    prompt again and repeating the same wire defect.
+    """
+    failed_runs = [
+        run
+        for run in store.list_agent_runs_for_task_generation(
+            task.id,
+            task.execution_generation,
+        )
+        if run.role is role
+        and run.proposal_revision == proposal_revision
+        and run.status == "failed"
+    ]
+    if not failed_runs:
+        return ""
+    latest = max(failed_runs, key=lambda run: (run.turn_attempt, run.id))
+    try:
+        error = json.loads(latest.structured_error_json or "{}")
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(error, dict) or error.get("code") != RESULT_INVALID_ERROR_CODE:
+        return ""
+    locations = str(error.get("detail") or "").strip() or "result"
+    return (
+        "\n\n## Result Correction\n"
+        f"上一轮返回的结果未通过 wire schema 校验：{locations}。"
+        "请只返回一个修正后的、严格匹配 schema 的 JSON 对象，"
+        "不要重新开始新的业务判断。"
+    )
 
 
 def _result_parse_error_detail(exc: ResultParseError) -> str:
@@ -1194,6 +1243,7 @@ class AgentTurnProcess(Generic[ResultT]):
             if provider_recovery in {
                 CODEX_PROVIDER_UNAVAILABLE,
                 CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+                CODEX_PROVIDER_OVERLOADED,
             }:
                 raise RuntimeError(code) from exc
             raise

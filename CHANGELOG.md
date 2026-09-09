@@ -1,5 +1,17 @@
 # Changelog
 
+- 2026-09-09: classify Codex `server_overloaded` ("Selected model is at
+  capacity") as a `capacity` runtime failure (`codex_provider_overloaded`).
+  The turn now fails over to the next configured route inside the same Agent
+  run, pauses the overloaded route until the probe sees it healthy, and defers
+  the task when every route is overloaded instead of exhausting same-route
+  retries into `codex_process_failed`.
+
+- 2026-09-09: report a schema-violating typed result as `codex_result_invalid`
+  with its field locations instead of `codex_result_missing`, and feed those
+  locations back to the same role's next turn as `## Result Correction` so the
+  retry can repair the wire result rather than repeat it.
+
 - 2026-09-08: register the installed Fxiaoke `sharecrm` CLI in Settings →
   Connectors. The page now reports executable/authentication readiness, current
   CRM user, CLI version, and the read-only status check used by the service.

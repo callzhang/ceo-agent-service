@@ -1014,6 +1014,55 @@ def test_consumer_service_restart_recovery_continues_existing_session(
     assert "继续" in executor.prompts[0]
 
 
+def test_consumer_retry_after_invalid_result_carries_validation_locations(
+    store, task, context
+):
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer-test",
+    )
+    assert claim.claimed
+    store.fail_agent_run(
+        claim.run.id,
+        {
+            "code": "codex_result_invalid",
+            "retryable": True,
+            "authorization_required": False,
+            "detail": "proposal.error_code: string_type",
+            "session_continuable": True,
+        },
+        owner="consumer-test",
+    )
+    executor = CapturingExecutor(_result_jsonl())
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert "## Result Correction" in executor.prompts[0]
+    assert "proposal.error_code: string_type" in executor.prompts[0]
+
+
+def test_consumer_first_turn_has_no_result_correction(store, task, context):
+    executor = CapturingExecutor(_result_jsonl())
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert "## Result Correction" not in executor.prompts[0]
+
+
 def test_consumer_accepts_read_only_session_handoff(store, task, context):
     result = {
         "outcome": "no_action",
@@ -1874,7 +1923,7 @@ def test_consumer_rejects_malformed_nested_output_locally(
         )
     )
 
-    with pytest.raises(ResultParseError, match="no valid typed result JSON found in Codex JSONL"):
+    with pytest.raises(ResultParseError, match="failed schema validation"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),

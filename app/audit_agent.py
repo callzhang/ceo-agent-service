@@ -15,6 +15,7 @@ from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
     ProcessExecutor,
+    result_correction_prompt,
 )
 from app.agent_wire_contracts import parse_audit_agent_wire_result
 from app.audit_rules import render_audit_rules
@@ -129,7 +130,12 @@ class AuditAgentRunner:
         run: AgentRun,
         rendered_rules: str,
     ) -> AgentTurnRunResult[AuditAgentResult]:
-        prompt = context.render()
+        prompt = context.render() + result_correction_prompt(
+            self.store,
+            task,
+            role=AgentRole.AUDIT,
+            proposal_revision=context.proposal_revision,
+        )
         expected_actions_list: list[dict[str, object]] = []
         for index, action in enumerate(context.proposal.actions):
             expected = expected_external_action(
