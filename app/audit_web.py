@@ -2906,7 +2906,7 @@ def _clean_work_item_attention_summary(summary: str) -> str:
     return " ".join(lines) or " ".join((summary or "").split())
 
 
-def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dict[str, str]]:
+def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) -> list[dict[str, str]]:
     specs = [
         (
             "Work item",
@@ -2970,8 +2970,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
     with store._connect() as db:
         if _sqlite_table_exists(db, "reply_tasks"):
-            reply_task_rows = db.execute(
-                """
+            reply_task_sql = """
                 select reply_tasks.id, reply_tasks.channel,
                        reply_tasks.conversation_id, reply_tasks.trigger_message_id,
                        reply_tasks.status,
@@ -2989,10 +2988,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                 order by
                     reply_tasks.updated_at desc,
                     reply_tasks.id desc
-                limit ?
-                """,
-                (limit,),
-            ).fetchall()
+            """
+            reply_task_params: tuple[object, ...] = ()
+            if limit is not None:
+                reply_task_sql += " limit ?"
+                reply_task_params = (limit,)
+            reply_task_rows = db.execute(reply_task_sql, reply_task_params).fetchall()
             for row in reply_task_rows:
                 active_reply_task_triggers.add(
                     (
@@ -3039,9 +3040,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                     end,
                     {updated_column} desc,
                     id desc
-                limit ?
             """
-            for row in db.execute(sql, (*statuses, limit)).fetchall():
+            params: tuple[object, ...] = (*statuses,)
+            if limit is not None:
+                sql += " limit ?"
+                params += (limit,)
+            for row in db.execute(sql, params).fetchall():
                 summary = str(row["summary"] or "")
                 if category == "Work item":
                     summary = _clean_work_item_attention_summary(summary)
@@ -3080,9 +3084,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                       and lower(recovery.send_status) in ({recovered_placeholders})
                   )
                 order by error_event.created_at desc, error_event.id desc
-                limit ?
                 """,
-                (*recovered_statuses, limit),
+                recovered_statuses,
             ).fetchall():
                 detail = str(row["detail"] or row["kind"] or "unresolved service error")
                 rows.append(
@@ -3122,7 +3125,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
             }
         )
     rows.sort(key=lambda row: row["updated_at"], reverse=True)
-    return rows[:limit]
+    return rows if limit is None else rows[:limit]
 
 
 def _sqlite_table_exists(db: sqlite3.Connection, table: str) -> bool:

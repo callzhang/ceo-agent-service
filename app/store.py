@@ -17934,12 +17934,11 @@ class AutoReplyStore:
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
     def list_current_unresolved_problem_attempt_summaries(
-        self, *, limit: int = 50
+        self, *, limit: int | None = 50
     ) -> list[dict[str, str]]:
         """Return list-view fields without loading large attempt payloads."""
         with self._connect() as db:
-            rows = db.execute(
-                """
+            sql = """
                 select attempts.id, attempts.channel, attempts.conversation_id,
                        attempts.trigger_message_id, attempts.send_status,
                        attempts.conversation_title, attempts.trigger_text,
@@ -17986,12 +17985,14 @@ class AutoReplyStore:
                       from reply_attempts as latest
                       where latest.conversation_id=attempts.conversation_id
                         and latest.trigger_message_id=attempts.trigger_message_id
-                  )
+                )
                 order by attempts.id desc
-                limit ?
-                """,
-                (max(1, limit),),
-            ).fetchall()
+            """
+            params: tuple[object, ...] = ()
+            if limit is not None:
+                sql += " limit ?"
+                params = (max(1, limit),)
+            rows = db.execute(sql, params).fetchall()
             return [
                 {
                     "id": str(row["id"] or ""),
