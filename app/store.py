@@ -23453,6 +23453,10 @@ class AutoReplyStore:
         *,
         state: str,
         detail: str = "",
+        status: str | None = None,
+        latest_tick_at: str | None = None,
+        latest_error: str | None = None,
+        latest_error_at: str | None = None,
     ) -> None:
         """Persist the current health of a service component, not a task."""
         normalized_component = component.strip()
@@ -23461,17 +23465,41 @@ class AutoReplyStore:
             raise ValueError("service health component must be non-empty")
         if normalized_state not in SERVICE_HEALTH_STATES:
             raise ValueError("invalid service health state")
-        self.set_service_state(
-            f"{SERVICE_HEALTH_STATE_PREFIX}{normalized_component}",
-            json.dumps(
-                {
-                    "state": normalized_state,
-                    "detail": detail.strip()[:500],
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-        )
+        key = f"{SERVICE_HEALTH_STATE_PREFIX}{normalized_component}"
+        with self._immediate_write_transaction() as db:
+            existing_row = db.execute(
+                "select value from service_state where key=?", (key,)
+            ).fetchone()
+            try:
+                existing = json.loads(str(existing_row["value"] or "")) if existing_row else {}
+            except json.JSONDecodeError:
+                existing = {}
+            if not isinstance(existing, dict):
+                existing = {}
+            payload = {
+                "state": normalized_state,
+                "status": (status or normalized_state).strip().lower(),
+                "detail": detail.strip()[:500],
+                "latest_tick_at": (
+                    latest_tick_at if latest_tick_at is not None
+                    else str(existing.get("latest_tick_at") or "")
+                ),
+                "latest_error": (
+                    latest_error.strip()[:500] if latest_error is not None
+                    else str(existing.get("latest_error") or "")
+                ),
+                "latest_error_at": (
+                    latest_error_at if latest_error_at is not None
+                    else str(existing.get("latest_error_at") or "")
+                ),
+            }
+            db.execute(
+                """insert into service_state (key, value, updated_at)
+                   values (?, ?, current_timestamp)
+                   on conflict(key) do update set
+                     value=excluded.value, updated_at=current_timestamp""",
+                (key, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+            )
 
     def list_service_health_components(self) -> list[dict[str, str]]:
         """Return the current health projection for each service component."""
@@ -23502,7 +23530,11 @@ class AutoReplyStore:
                         SERVICE_HEALTH_STATE_PREFIX
                     ),
                     "state": state,
+                    "status": str(payload.get("status") or state),
                     "detail": str(payload.get("detail") or ""),
+                    "latest_tick_at": str(payload.get("latest_tick_at") or ""),
+                    "latest_error": str(payload.get("latest_error") or ""),
+                    "latest_error_at": str(payload.get("latest_error_at") or ""),
                     "updated_at": str(row["updated_at"] or ""),
                 }
             )

@@ -2160,7 +2160,7 @@ def build_worker_status_payload(
     )
     payload: dict[str, object] = {
         "service": service,
-        "components": _service_component_snapshots(),
+        "components": _service_component_snapshots(store),
         # Connector probes have their own cache so a slow CLI/live probe never
         # delays the queue/status snapshot used by /workers and /attention.
         "connectors": {},
@@ -2317,8 +2317,14 @@ def _worker_metric_card(label: str, value: str, detail: str, *, ok: bool | None 
     )
 
 
-def _service_component_snapshots() -> list[dict[str, str]]:
-    return [
+def _service_component_snapshots(
+    store: AutoReplyStore | None = None,
+) -> list[dict[str, str]]:
+    persisted = {
+        item["component"]: item
+        for item in (store.list_service_health_components() if store else ())
+    }
+    components = [
         {"name": "audit-web", "role": "UI/API", "cadence": "always on"},
         {"name": "email-worker", "role": "IMAP scan and email actions", "cadence": "account configured"},
         {"name": "database-backup", "role": "sqlite backup", "cadence": "periodic"},
@@ -2326,6 +2332,16 @@ def _service_component_snapshots() -> list[dict[str, str]]:
         {"name": "agent-cron-dispatcher", "role": f"queue dispatch x{consumer_worker_count()}", "cadence": "internal"},
         {"name": "task-maintenance", "role": "error recovery and completion checks", "cadence": "internal"},
         {"name": "follow-up-delivery", "role": "scheduled follow-up delivery", "cadence": "internal"},
+    ]
+    return [
+        {
+            **component,
+            "status": persisted.get(component["name"], {}).get("status", "unknown"),
+            "latest_tick_at": persisted.get(component["name"], {}).get("latest_tick_at", ""),
+            "latest_error": persisted.get(component["name"], {}).get("latest_error", ""),
+            "latest_error_at": persisted.get(component["name"], {}).get("latest_error_at", ""),
+        }
+        for component in components
     ]
 
 

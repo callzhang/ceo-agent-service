@@ -87,7 +87,7 @@ export function StatusPanel() {
       <StatusMetric label="Failed" value={displayValue(summary.failed)} detail="current queue status" tone={Number(summary.failed || 0) ? "bad" : "good"} />
     </section>
     <StatusSection title="Runtime Monitor">
-      <StatusTable headers={["Worker", "Role", "Cadence"]} mobileLabels={["Worker", "Role", "Cadence"]} rows={components.map((item) => [displayValue(item.name), displayValue(item.role), displayValue(item.cadence)])} />
+      <StatusTable headers={["Worker", "Status", "Role", "Cadence", "Latest tick", "Latest error"]} mobileLabels={["Worker", "Status", "Role", "Cadence", "Latest tick", "Latest error"]} rows={components.map((item) => [displayValue(item.name), <StatusBadge value={displayValue(item.status)} key="status" />, displayValue(item.role), displayValue(item.cadence), displayValue(item.latest_tick_at || "-"), displayValue(item.latest_error ? `${item.latest_error}${item.latest_error_at ? ` · ${item.latest_error_at}` : ""}` : "-")])} />
     </StatusSection>
     <StatusSection title="Connector health">
       <StatusTable headers={["Connector", "Status", "Reason"]} mobileLabels={["Connector", "Status", "Reason"]} rows={connectorRows} />

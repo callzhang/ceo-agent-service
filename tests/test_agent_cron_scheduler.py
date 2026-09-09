@@ -98,13 +98,30 @@ def _scheduler(
     options: object | None = None,
     resolver: ExecutionTerminalResolverRegistry | None = None,
     wakes: list[str] | None = None,
+    ticks: list[datetime] | None = None,
 ) -> AgentCronScheduler:
     return AgentCronScheduler(
         store=store,
         option_service=options or AvailableOptions(),
         terminal_resolver=resolver or ExecutionTerminalResolverRegistry({}),
         dispatcher_wake=(lambda: wakes.append("wake")) if wakes is not None else None,
+        tick_observer=(lambda now: ticks.append(now)) if ticks is not None else None,
     )
+
+
+def test_scheduler_reports_successful_start_and_each_scan_without_creating_runs(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _task(store)
+    ticks: list[datetime] = []
+    scheduler = _scheduler(store, ticks=ticks)
+
+    scheduler.start(NOW)
+    scheduler.tick(NOW + timedelta(seconds=30))
+
+    assert ticks == [NOW, NOW + timedelta(seconds=30)]
+    assert store.list_scheduled_task_runs(task.id) == ()
 
 
 def test_start_tracks_only_the_first_future_instant_and_never_backfills(

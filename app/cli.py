@@ -912,6 +912,12 @@ def run_agent_cron_scheduler_loop(
             )
         }),
         dispatcher_wake=(dispatcher_wake_event or wake_event).set,
+        tick_observer=lambda tick_at: store.set_service_health_component(
+            "agent-cron-scheduler",
+            state="healthy",
+            status="running",
+            latest_tick_at=tick_at.isoformat(),
+        ),
     )
     scheduler.run_forever(wake_event=wake_event)
 
@@ -2168,7 +2174,17 @@ def _record_service_failure(
     exc: Exception,
 ) -> None:
     message = str(exc)
-    AutoReplyStore(settings.db_path).record_error(None, None, component, message)
+    store = AutoReplyStore(settings.db_path)
+    store.record_error(None, None, component, message)
+    failed_at = datetime.now(timezone.utc).isoformat()
+    store.set_service_health_component(
+        component,
+        state="degraded",
+        status="failed",
+        detail=message,
+        latest_error=message,
+        latest_error_at=failed_at,
+    )
     send_macos_notification(
         title=f"CEO {component} failed",
         message=message[:120],

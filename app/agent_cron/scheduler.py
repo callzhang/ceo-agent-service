@@ -71,11 +71,13 @@ class AgentCronScheduler:
         option_service: ScheduledTaskOptions,
         terminal_resolver: ExecutionTerminalResolverRegistry,
         dispatcher_wake: Callable[[], None] | None = None,
+        tick_observer: Callable[[datetime], None] | None = None,
     ) -> None:
         self._store = store
         self._option_service = option_service
         self._terminal_resolver = terminal_resolver
         self._dispatcher_wake = dispatcher_wake or (lambda: None)
+        self._tick_observer = tick_observer or (lambda _now: None)
         self._planned: dict[int, _PlannedInstant] = {}
         self._lock = RLock()
 
@@ -83,6 +85,7 @@ class AgentCronScheduler:
         with self._lock:
             self._planned = {}
         self.reload(now)
+        self._tick_observer(_utc(now))
 
     def reload(self, now: datetime) -> None:
         current = _utc(now)
@@ -168,6 +171,7 @@ class AgentCronScheduler:
                     )
                 continue
             self._dispatcher_wake()
+        self._tick_observer(current)
         return created_count
 
     def seconds_until_next(self, now: datetime, *, maximum: float = 60.0) -> float:

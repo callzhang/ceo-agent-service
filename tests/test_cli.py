@@ -6926,6 +6926,24 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
     assert exits == [1, 1, 1, 1, 1, 1]
 
 
+def test_service_component_failure_persists_scheduler_error_health(
+    monkeypatch, tmp_path
+):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(cli, "send_macos_notification", lambda **_kwargs: None)
+
+    cli._record_service_failure(
+        settings, "agent-cron-scheduler", RuntimeError("scheduler scan failed")
+    )
+
+    [component] = AutoReplyStore(settings.db_path).list_service_health_components()
+    assert component["component"] == "agent-cron-scheduler"
+    assert component["state"] == "degraded"
+    assert component["status"] == "failed"
+    assert component["latest_error"] == "scheduler scan failed"
+    assert component["latest_error_at"]
+
+
 def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
     monkeypatch, tmp_path
 ):

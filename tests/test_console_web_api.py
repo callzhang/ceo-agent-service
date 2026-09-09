@@ -1040,6 +1040,44 @@ def test_worker_status_exposes_each_dispatcher_adapter_without_creating_runs(
     assert store.list_reply_tasks() == []
 
 
+def test_worker_status_shows_unknown_scheduler_then_persisted_tick_and_error(
+    monkeypatch, tmp_path: Path
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(
+        audit_web_module, "_launchd_service_status",
+        lambda _label: {"ok": True, "state": "running"},
+    )
+
+    initial = audit_web_module.build_worker_status_payload(store)
+    scheduler = next(
+        item for item in initial["components"]
+        if item["name"] == "agent-cron-scheduler"
+    )
+    assert scheduler["status"] == "unknown"
+    assert scheduler["latest_tick_at"] == ""
+    assert store.list_reply_tasks() == []
+
+    store.set_service_health_component(
+        "agent-cron-scheduler", state="degraded", status="failed",
+        detail="scan failed", latest_error="scan failed",
+        latest_error_at="2026-09-08T12:00:00+00:00",
+    )
+    store.set_service_health_component(
+        "agent-cron-scheduler", state="healthy", status="running",
+        latest_tick_at="2026-09-08T12:01:00+00:00",
+    )
+    recovered = audit_web_module.build_worker_status_payload(store)
+    scheduler = next(
+        item for item in recovered["components"]
+        if item["name"] == "agent-cron-scheduler"
+    )
+    assert scheduler["status"] == "running"
+    assert scheduler["latest_tick_at"] == "2026-09-08T12:01:00+00:00"
+    assert scheduler["latest_error"] == "scan failed"
+    assert scheduler["latest_error_at"] == "2026-09-08T12:00:00+00:00"
+
+
 def test_worker_status_projects_email_health_and_queues_without_double_counting(
     monkeypatch, tmp_path: Path
 ):

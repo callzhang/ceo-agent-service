@@ -319,10 +319,10 @@ DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 cla
 用户配置。Status 为每个实际 adapter 展示 pending、oldest、running 和 latest error；scheduler
 进程/扫描健康与 scheduled run 的业务结果分别展示，空队列不会制造 Agent run。
 
-默认业务生产任务通过稳定 migration key 幂等 seed。钉钉消息、会议、微信 reader、OA、每日工作
-来源和每周 OKR 的旧 producer timing loops 已移除；它们由对应 Agent Cron 形成 one-shot 输入。
-Lark 没有默认 seed。内部投递、发送状态确认、错误恢复及 Todo completion follow-up 仍是内部机制，
-不外化为 Cron。
+默认业务生产任务通过稳定 migration key 幂等 seed。钉钉消息、会议、微信 reader、OA、每日工作来源、
+每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）的 `ceo-minutes-sync` 共七项；前六项的旧
+producer timing loops 已移除，由对应 Agent Cron 形成 one-shot 输入。Lark 没有默认 seed。
+内部投递、发送状态确认、错误恢复及 Todo completion follow-up 仍是内部机制，不外化为 Cron。
 
 ### 应用层边界
 

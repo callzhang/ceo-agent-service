@@ -83,6 +83,10 @@ DingTalk Todo outbox。统一层只处理唤醒、公平领取、租约、全局
 继续负责自己的生命周期和外部事实。Dispatcher 的有界等待是跨进程恢复机制，不是用户 Cron，
 也没有用户可编辑的 polling/settle 设置。空队列只显示零指标，不生成 run。
 
+启动时以稳定 migration key 幂等创建七个默认任务：钉钉消息、会议、微信 reader、OA、每日工作来源、
+每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）运行的 `ceo-minutes-sync`。Lark 不创建默认
+seed；已有任务的用户修改不会被 seed 覆盖。
+
 ### Runtime-managed Skill 生命周期
 
 业务行为的可配置部分使用运行时托管的不可变 Skill 修订，而不是 Settings 对项目文件或

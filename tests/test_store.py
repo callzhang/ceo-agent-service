@@ -7380,6 +7380,26 @@ def test_service_health_components_hold_current_component_state(tmp_path: Path):
     assert store.list_service_health_components()[0]["state"] == "healthy"
 
 
+def test_scheduler_health_keeps_recent_error_when_a_new_tick_succeeds(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.set_service_health_component(
+        "agent-cron-scheduler", state="degraded", status="failed",
+        detail="scheduler scan failed", latest_error="scheduler scan failed",
+        latest_error_at="2026-09-08T12:00:00+00:00",
+    )
+    store.set_service_health_component(
+        "agent-cron-scheduler", state="healthy", status="running",
+        latest_tick_at="2026-09-08T12:01:00+00:00",
+    )
+
+    [component] = store.list_service_health_components()
+    assert component["state"] == "healthy"
+    assert component["status"] == "running"
+    assert component["latest_tick_at"] == "2026-09-08T12:01:00+00:00"
+    assert component["latest_error"] == "scheduler scan failed"
+    assert component["latest_error_at"] == "2026-09-08T12:00:00+00:00"
+
+
 def test_resolve_unresolved_errors_by_kind_after_successful_service_cycle(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("", "", "task_maintenance_weekly_okr_report", "session expired")

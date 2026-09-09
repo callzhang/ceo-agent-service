@@ -589,8 +589,9 @@ scripts/install-auto-reply-agents.sh
 - `replay-recent-meetings` 会重新读取日历和听记证据，并只重开没有任何发送回执的 `no_action` 或 `failed` 会议任务；已发送或存在发送回执的任务保持终态，避免重复外发。
 - Consumer Dispatcher：直接从 scheduled trigger/execution、reply、meeting、work summary、OKR 和 Todo outbox 的既有事实来源领取；内部唤醒/等待、租约和 recovery 没有用户设置。
 
-默认 seed 使用稳定 migration key 幂等创建钉钉消息、会议、微信 reader、OA、每日工作来源和每周
-OKR 任务；已有用户修改不会被启动过程覆盖，Lark 不创建默认 seed。对应的旧 producer timing
+默认 seed 使用稳定 migration key 幂等创建钉钉消息、会议、微信 reader、OA、每日工作来源和每周 OKR
+任务，以及每天 `20:00`（`Asia/Shanghai`）运行的 `ceo-minutes-sync`；共七项。已有用户修改
+不会被启动过程覆盖，Lark 不创建默认 seed。对应的旧 producer timing
 入口已移除，避免旧循环和 Cron 双触发。Status 只展示 Scheduler 组件健康及每个 Dispatcher adapter
 的 pending/oldest/running/latest error，不提供 polling 或 settle 配置；业务 run 结果在定时任务与
 History 中独立展示。
