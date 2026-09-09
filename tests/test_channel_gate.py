@@ -460,6 +460,27 @@ def test_fxiaoke_cli_gate_requires_normal_user_session():
     assert result.reason_code == "status_auth_invalid"
 
 
+def test_fxiaoke_cli_gate_refreshes_access_token_with_read_only_probe():
+    runner = ScriptedRunner(
+        [
+            completed(0, '{"identity":"user","tokenStatus":"needs_refresh","userName":"章磊"}'),
+            completed(0, '{"api_name":"AccountObj","display_name":"客户"}'),
+            completed(0, '{"identity":"user","tokenStatus":"normal","userName":"章磊","cliVersion":"1.1.12"}'),
+        ]
+    )
+
+    result = FxiaokeCliGate(runner=runner).check()
+
+    assert result.state is ChannelGateState.READY
+    assert result.reason_code == "ready"
+    assert "access token 已刷新" in result.detail
+    assert runner.commands == [
+        ["sharecrm", "auth", "status"],
+        ["sharecrm", "data", "describe", "get", "-d", '{"apiName":"AccountObj"}'],
+        ["sharecrm", "auth", "status"],
+    ]
+
+
 def test_default_connector_gates_adds_fxiaoke_without_changing_worker_channels():
     connector_gates = default_connector_gates()
     channel_gates = default_channel_gates()

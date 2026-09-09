@@ -577,7 +577,72 @@ class FxiaokeCliGate:
             return _invalid_json(self.channel_name, "status", status, commands)
 
         payload = payloads[0]
-        if payload.get("identity") != "user" or payload.get("tokenStatus") != "normal":
+        if payload.get("identity") != "user":
+            return _result(
+                self.channel_name,
+                ChannelGateState.NEEDS_LOGIN,
+                "status_auth_invalid",
+                commands,
+            )
+        if payload.get("tokenStatus") == "needs_refresh":
+            refresh_probe = _run_command(
+                channel=self.channel_name,
+                phase="refresh_probe",
+                command=[
+                    self.binary,
+                    "data",
+                    "describe",
+                    "get",
+                    "-d",
+                    '{"apiName":"AccountObj"}',
+                ],
+                commands=commands,
+                runner=self.runner,
+                env=os.environ.copy(),
+            )
+            if isinstance(refresh_probe, ChannelGateResult):
+                return refresh_probe
+            refresh_payloads = _json_objects(refresh_probe.stdout, refresh_probe.stderr)
+            classified = _classify_structured_failure(
+                channel=self.channel_name,
+                phase="refresh_probe",
+                completed=refresh_probe,
+                payloads=refresh_payloads,
+                commands=commands,
+            )
+            if classified is not None:
+                return classified
+            if refresh_probe.returncode != 0 or not refresh_payloads:
+                return _generic_failure(
+                    channel=self.channel_name,
+                    phase="refresh_probe",
+                    completed=refresh_probe,
+                    commands=commands,
+                )
+            refreshed_status = _run_command(
+                channel=self.channel_name,
+                phase="status",
+                command=status_command,
+                commands=commands,
+                runner=self.runner,
+                env=os.environ.copy(),
+            )
+            if isinstance(refreshed_status, ChannelGateResult):
+                return refreshed_status
+            refreshed_payloads = _json_objects(refreshed_status.stdout, refreshed_status.stderr)
+            if refreshed_status.returncode == 0 and refreshed_payloads:
+                payload = refreshed_payloads[0]
+                if payload.get("identity") == "user" and payload.get("tokenStatus") == "normal":
+                    user_name = str(payload.get("userName") or "当前用户")
+                    cli_version = str(payload.get("cliVersion") or "未知版本")
+                    return _result(
+                        self.channel_name,
+                        ChannelGateState.READY,
+                        "ready",
+                        commands,
+                        detail=f"已登录纷享销客：{user_name}；access token 已刷新；CLI {cli_version}",
+                    )
+        if payload.get("tokenStatus") != "normal":
             return _result(
                 self.channel_name,
                 ChannelGateState.NEEDS_LOGIN,
