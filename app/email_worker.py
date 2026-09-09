@@ -2185,6 +2185,8 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
         task_status, send_status = status_map[result.status]
     except KeyError as exc:
         raise ValueError("invalid email orchestration status") from exc
+    if result.error.authorization_required:
+        task_status, send_status = "done", "needs_human"
     run = store.get_agent_run(result.final_run_id)
     if run is None:
         raise RuntimeError("email orchestration final run was not persisted")
