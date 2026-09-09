@@ -137,9 +137,11 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
         _validate_claim(owner, lease)
         now_value = ensure_utc_datetime(now, field="scheduled dispatcher claim time")
         now_text = now_value.isoformat(timespec="seconds")
-        lease_text = ensure_utc_datetime(
-            now + lease, field="scheduled dispatcher claim expiry"
-        ).isoformat(timespec="seconds")
+        lease_text = _iso_lease_expiry(
+            now,
+            lease,
+            field="scheduled dispatcher claim expiry",
+        )
         with self.store._immediate_write_transaction() as db:
 
             def fetch_page(after: sqlite3.Row | None, limit: int):
@@ -245,10 +247,11 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
         now_text = ensure_utc_datetime(
             now, field="scheduled dispatcher renewal time"
         ).isoformat(timespec="seconds")
-        lease_text = ensure_utc_datetime(
-            now + lease, field="scheduled dispatcher renewal expiry"
-        ).isoformat(timespec="seconds")
-        _lease_seconds(lease)
+        lease_text = _iso_lease_expiry(
+            now,
+            lease,
+            field="scheduled dispatcher renewal expiry",
+        )
         with self.store._immediate_write_transaction() as db:
             _renew_lease_in_db(
                 db,
@@ -269,11 +272,16 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
     def assert_current(
         self, envelope: DispatchEnvelope, *, owner: str, now: datetime
     ) -> None:
-        super().assert_current(envelope, owner=owner, now=now)
         now_text = ensure_utc_datetime(
             now, field="scheduled dispatcher assertion time"
         ).isoformat(timespec="seconds")
         with self.store._connect() as db:
+            _assert_ledger_current_in_db(
+                db,
+                envelope=envelope,
+                owner=owner,
+                now=now_text,
+            )
             row = db.execute(
                 "select 1 from scheduled_task_runs where id=? "
                 "and dispatch_status='pending' and lease_owner=? "
@@ -1282,10 +1290,25 @@ def _lease_seconds(lease: timedelta) -> int:
 
 def _lease_expiry(now: datetime, lease: timedelta) -> str:
     _lease_seconds(lease)
-    expires_at = now + lease
-    if expires_at.microsecond:
-        expires_at = expires_at.replace(microsecond=0) + timedelta(seconds=1)
-    return _sqlite_time(expires_at)
+    return _sqlite_time(_ceil_to_whole_second(now + lease))
+
+
+def _iso_lease_expiry(
+    now: datetime,
+    lease: timedelta,
+    *,
+    field: str,
+) -> str:
+    _lease_seconds(lease)
+    ensure_utc_datetime(now, field=field)
+    expires_at = (now + lease).astimezone(UTC)
+    return _ceil_to_whole_second(expires_at).isoformat(timespec="seconds")
+
+
+def _ceil_to_whole_second(value: datetime) -> datetime:
+    if value.microsecond:
+        return value.replace(microsecond=0) + timedelta(seconds=1)
+    return value
 
 
 def _acquire_lease(

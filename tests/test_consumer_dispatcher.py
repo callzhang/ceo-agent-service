@@ -477,6 +477,93 @@ def test_scheduled_claim_is_recoverable_after_lease_expiry(tmp_path: Path):
     assert recovered.generation > first.generation
 
 
+def test_scheduled_claim_ceil_preserves_full_lease_for_source_and_ledger(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    run = _scheduled_run(store)
+    adapter = ScheduledTaskQueueAdapter(store)
+    now = NOW.replace(microsecond=900_000)
+
+    envelope = adapter.claim(
+        now,
+        owner="dispatcher-a",
+        owner_pid=101,
+        lease=timedelta(seconds=1),
+    )
+
+    assert envelope is not None
+    with store._connect() as db:
+        source_expiry = db.execute(
+            "select lease_expires_at from scheduled_task_runs where id=?",
+            (run.id,),
+        ).fetchone()[0]
+        ledger_expiry = db.execute(
+            "select lease_expires_at from dispatcher_claim_leases "
+            "where adapter_name='scheduled' and source_id=?",
+            (str(run.id),),
+        ).fetchone()[0]
+    assert source_expiry == "2026-09-08T12:00:02+00:00"
+    assert ledger_expiry == source_expiry
+    adapter.assert_current(
+        envelope,
+        owner="dispatcher-a",
+        now=now + timedelta(seconds=0.2),
+    )
+    with pytest.raises(ValueError, match="no longer owned"):
+        adapter.assert_current(
+            envelope,
+            owner="dispatcher-a",
+            now=now + timedelta(seconds=1.1),
+        )
+
+
+def test_scheduled_renew_ceil_updates_source_and_ledger_together(tmp_path: Path):
+    store = _store(tmp_path)
+    run = _scheduled_run(store)
+    adapter = ScheduledTaskQueueAdapter(store)
+    now = NOW.replace(microsecond=900_000)
+    envelope = adapter.claim(
+        now,
+        owner="dispatcher-a",
+        owner_pid=101,
+        lease=timedelta(seconds=1),
+    )
+    assert envelope is not None
+
+    renewed_at = now + timedelta(seconds=0.2)
+    adapter.renew(
+        envelope,
+        owner="dispatcher-a",
+        now=renewed_at,
+        lease=timedelta(seconds=1),
+    )
+
+    with store._connect() as db:
+        source_expiry = db.execute(
+            "select lease_expires_at from scheduled_task_runs where id=?",
+            (run.id,),
+        ).fetchone()[0]
+        ledger_expiry = db.execute(
+            "select lease_expires_at from dispatcher_claim_leases "
+            "where adapter_name='scheduled' and source_id=?",
+            (str(run.id),),
+        ).fetchone()[0]
+    assert source_expiry == "2026-09-08T12:00:03+00:00"
+    assert ledger_expiry == source_expiry
+    adapter.assert_current(
+        envelope,
+        owner="dispatcher-a",
+        now=renewed_at + timedelta(seconds=0.2),
+    )
+    with pytest.raises(ValueError, match="no longer owned"):
+        adapter.assert_current(
+            envelope,
+            owner="dispatcher-a",
+            now=renewed_at + timedelta(seconds=1.9),
+        )
+
+
 def test_legacy_source_leases_recover_with_fencing_and_monotonic_generation(
     tmp_path: Path,
 ):
