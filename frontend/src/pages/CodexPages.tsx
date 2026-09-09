@@ -1,23 +1,92 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { displayValue, getCodexSession } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
+import { StatusBadge } from "../components/status/StatusBadge";
+
+type CodexSessionEvent = {
+  timestamp?: string;
+  kind?: string;
+  title?: string;
+  body?: string;
+};
 
 type CodexSessionPayload = {
   available?: boolean;
   message?: string;
-  events?: unknown[];
+  events?: CodexSessionEvent[];
   related_attempts?: Array<{ id: number; status: string }>;
 };
+
+function displayEventTime(value?: string) {
+  if (!value) return "时间未记录";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "时间未记录" : date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function eventLabel(kind?: string) {
+  if (kind === "user") return "任务与上下文";
+  if (kind === "assistant") return "Agent 输出";
+  if (kind === "reasoning") return "思考摘要";
+  if (kind === "tool") return "工具执行";
+  return "执行事件";
+}
+
+function eventText(event: CodexSessionEvent) {
+  if (event.kind === "reasoning") return "思考摘要未保留";
+  const body = displayValue(event.body || "").trim();
+  if (!body) return "未记录内容";
+  try {
+    const value = JSON.parse(body) as { summary?: unknown; error_code?: unknown; outcome?: unknown };
+    if (value && typeof value === "object") {
+      const summary = typeof value.summary === "string" ? value.summary.trim() : "";
+      const outcome = typeof value.outcome === "string" ? value.outcome.trim() : "";
+      const error = typeof value.error_code === "string" ? value.error_code.trim() : "";
+      return summary || [outcome && `结果：${outcome}`, error && `异常：${error}`].filter(Boolean).join(" · ") || "已记录结构化执行结果";
+    }
+  } catch {
+    // The persisted event is ordinary text, so it remains directly readable.
+  }
+  return body;
+}
+
+function SessionTimeline({ events }: { events: CodexSessionEvent[] }) {
+  if (!events.length) return <section className="console-card page-state">本次没有可展示的执行事件。</section>;
+  return <section className="console-card codex-session-timeline" aria-label="Agent 执行时间线">
+    <div className="codex-session-timeline-header"><div><h2>Agent 执行过程</h2><p>按发生顺序记录任务输入、Agent 输出与可见执行结果。</p></div><span>{events.length} 个事件</span></div>
+    <ol>{events.map((event, index) => <li className={`codex-session-event codex-session-event-${event.kind || "system"}`} key={`${event.timestamp}-${index}`}>
+      <div className="codex-session-event-rail"><span aria-hidden="true" /><time>{displayEventTime(event.timestamp)}</time></div>
+      <article><header><span>{eventLabel(event.kind)}</span>{event.kind !== "reasoning" && <small>{event.title || "已记录"}</small>}</header><p>{eventText(event)}</p></article>
+    </li>)}</ol>
+  </section>;
+}
+
+function RelatedAttempts({ attempts }: { attempts: Array<{ id: number; status: string }> }) {
+  if (!attempts.length) return null;
+  return <section className="console-card codex-related-attempts"><div><h2>关联事项</h2><p>这些业务记录使用了本次 Agent 执行。</p></div><ul>{attempts.map((attempt) => <li key={attempt.id}><Link to={`/attempts/${attempt.id}`}>Attempt #{attempt.id}</Link><StatusBadge value={attempt.status || "unknown"} /></li>)}</ul></section>;
+}
 
 export function CodexSessionDetailPage() {
   const { sessionId = "" } = useParams();
   const [payload, setPayload] = useState<CodexSessionPayload | null>(null);
   const [error, setError] = useState("");
   const [snapshot, setSnapshot] = useState("");
-  useEffect(() => { const controller = new AbortController(); getCodexSession(sessionId, controller.signal).then((response) => { setPayload(response.item); setSnapshot(response.meta.snapshot_at); }).catch((reason: unknown) => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "加载失败"); }); return () => controller.abort(); }, [sessionId]);
+  useEffect(() => {
+    const controller = new AbortController();
+    getCodexSession(sessionId, controller.signal).then((response) => {
+      setPayload(response.item);
+      setSnapshot(response.meta.snapshot_at);
+    }).catch((reason: unknown) => {
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "加载失败");
+    });
+    return () => controller.abort();
+  }, [sessionId]);
+  const events = useMemo(() => payload?.events || [], [payload?.events]);
   const relatedAttempts = payload?.related_attempts || [];
-  return <ConsolePageLayout title="Codex Session" actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to="/codex">返回 Codex</Link></>}><section className="console-card">{error ? <div className="page-state page-state-error" role="alert">{error}</div> : !payload ? <div className="page-state" role="status">正在加载…</div> : payload.available ? <><h2>执行记录</h2><p>{displayValue(payload.message || "本次执行已关联业务历史。")}</p><details><summary>Runtime details</summary><pre className="technical-details">{JSON.stringify(payload.events || [], null, 2)}</pre></details></> : <><h2>执行记录不可用</h2><p>{displayValue(payload.message || "本机 transcript 文件已不可用。")}</p>{relatedAttempts.length > 0 && <section className="codex-related-attempts"><h3>相关处理记录</h3><ul>{relatedAttempts.map((attempt) => <li key={attempt.id}><Link to={`/attempts/${attempt.id}`}>Attempt #{attempt.id}</Link><span>{attempt.status || "未记录状态"}</span></li>)}</ul></section>}</>}</section></ConsolePageLayout>;
+
+  return <ConsolePageLayout title="Agent 执行过程" actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to="/codex">返回会话列表</Link></>}>
+    {error ? <section className="console-card page-state page-state-error" role="alert">{error}</section> : !payload ? <section className="console-card page-state" role="status">正在加载…</section> : payload.available ? <><SessionTimeline events={events} /><RelatedAttempts attempts={relatedAttempts} /></> : <><section className="console-card codex-session-unavailable"><div><h2>本机执行记录不可用</h2><p>{payload.message === "本机执行记录不可用" ? "本机的 session 文件已被清理或当前不可读取。" : displayValue(payload.message || "本机 transcript 文件已不可用。")}</p><p>业务处理结果仍保留在关联事项中；可从那里查看最终回复、状态和审计结论。</p></div><StatusBadge value="unavailable" /></section><RelatedAttempts attempts={relatedAttempts} /></>}
+  </ConsolePageLayout>;
 }

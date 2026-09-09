@@ -2269,7 +2269,7 @@ def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
         "[👎 需改进](https://feedback.example.com/api/dingtalk-feedback-spike"
         "?feedback_token=spike_1_abcd1234&rating=down)"
     )
-    store.finalize_orchestrated_reply_task(
+    attempt_id = store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,
         run_id=audit.id,
@@ -2295,10 +2295,13 @@ def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
     )
 
     sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
+    attempt = store.get_reply_attempt(attempt_id)
 
     assert sent is not None
     assert sent.reply_text == sent_reply_text
     assert sent.feedback_token == "spike_1_abcd1234"
+    assert attempt is not None
+    assert attempt.final_reply_text == sent_reply_text
 
 
 def test_earliest_delivery_receipt_records_exact_configured_feedback_token(

@@ -7,6 +7,11 @@
   Workbench Codex runtime or uses approval bypass. Legacy Workbench confirmations
   remain visible as read-only history and cannot execute from the UI or API.
 
+- 2026-09-08: allow `send-attempt` to reopen a `needs_human` result only when
+  an explicit reviewed instruction is supplied. The instruction creates a new
+  Consumer/Audit revision while preserving the original decision record; sent
+  or completed attempts remain non-replayable.
+
 - 2026-09-07: remove the foreground-capable WeChat Sender preparation RPC.
   Actual delivery now owns the one bounded UI activation it needs; an unavailable
   window can no longer leave a delivery queued and repeatedly activate WeChat

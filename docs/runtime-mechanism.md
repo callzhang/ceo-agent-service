@@ -137,6 +137,10 @@ run 结束后提高 generation 并重新排队同一 task。
 或 Audit run，但不能编辑或覆盖旧 run。原始失败、session、runtime attempt、tool
 event 和 provider 结果仍然作为 append-only 事实保留。
 
+`needs_human` 收到明确人工指令后，必须创建新的 reviewed revision 并重新进入统一
+Consumer/Audit 流程；原 `needs_human` attempt 继续作为历史事实保留。没有明确指令时
+不得自动猜测决策，已经送达或完成的 attempt 也不得由该入口重新打开。
+
 ### 重复外发故障的统一排查顺序
 
 当人员收到多条相似或互相矛盾的消息时，不得先把问题归因于某一条 prompt 或某个发送命令。

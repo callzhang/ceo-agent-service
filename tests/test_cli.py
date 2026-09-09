@@ -4114,6 +4114,53 @@ def test_send_attempt_command_persists_instruction_as_new_reviewed_attempt(
     assert task is not None and task.manual_rerun_attempt_id == reviewed_attempt.id
 
 
+def test_send_attempt_command_reopens_needs_human_with_reviewed_instruction(
+    monkeypatch, tmp_path
+):
+    class FakeDws:
+        def __init__(self, **kwargs):
+            raise AssertionError("send-attempt must not construct DwsClient")
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, None)
+    enqueue_trigger_task(store)
+    source_attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Alex Chen 看一下",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+    )
+    store.update_reply_attempt(
+        source_attempt_id,
+        send_error="explicit_instruction_required",
+    )
+
+    result = send_attempt_command(
+        settings,
+        source_attempt_id,
+        instruction="Re-read the current state and complete the requested action.",
+    )
+
+    reviewed_attempt = store.get_reply_attempt(int(result["attempt_id"]))
+    source_attempt = store.get_reply_attempt(source_attempt_id)
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert result["attempt_id"] != source_attempt_id
+    assert source_attempt is not None
+    assert source_attempt.send_status == "needs_human"
+    assert reviewed_attempt is not None
+    assert reviewed_attempt.send_status == "pending"
+    assert reviewed_attempt.reviewer_feedback == (
+        "Re-read the current state and complete the requested action."
+    )
+    assert task is not None and task.manual_rerun_attempt_id == reviewed_attempt.id
+
+
 def test_send_attempt_command_rotates_pending_task_with_previous_error(
     monkeypatch, tmp_path
 ):

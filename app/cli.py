@@ -2033,9 +2033,9 @@ def send_attempt_command(
     reviewed_instruction = instruction.strip()
     allowed_source_statuses = {"dry_run", "failed", "pending"}
     if reviewed_instruction:
-        # A prior no-action conclusion may be corrected by an explicit user
-        # instruction, but delivered attempts must never be reopened here.
-        allowed_source_statuses.add("skipped")
+        # An explicit user instruction may resolve a prior no-action or human
+        # decision boundary. Delivered attempts must never be reopened here.
+        allowed_source_statuses.update({"skipped", "needs_human"})
     if attempt.send_status not in allowed_source_statuses:
         raise SystemExit(
             f"reply attempt {attempt_id} is not an unsent attempt: "

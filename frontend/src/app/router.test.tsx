@@ -18,7 +18,7 @@ describe("console router", () => {
     ["/user-feedback", "用户反馈"],
     ["/tutorial", "Tutorial"],
     ["/notifications", "Notifications"],
-    ["/codex/session-1", "Codex Session"],
+    ["/codex/session-1", "Agent 执行过程"],
     ["/wechat/review", "WeChat 待发审核"],
   ])("renders a deep link for %s", async (path, heading) => {
     if (path.startsWith("/settings")) {
