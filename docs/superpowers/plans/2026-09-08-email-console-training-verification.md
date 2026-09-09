@@ -1,6 +1,6 @@
 # Email Console implementation verification
 
-Status: implementation, independent review and full regression verified; deployment pending.
+Status: Email implementation deployed and live-verified; task cleanup is blocked by execution policy.
 
 ## Scope
 
@@ -36,10 +36,45 @@ Fixture messages and models are synthetic; every API operation is in memory.
 - Category editor displays core definition, inclusion examples, exclusions,
   description/config versions, and provider-folder bindings.
 
-## Remaining deployment verification
+## Deployment and live verification
 
-- Verify database backup before migration, deploy, and check live mode and queue
-  state. Do not claim that the fixture proves production behavior.
+- Fast-forwarded main to `8a718503`, built the actual `app/static/workbench`
+  assets, and restarted launchd. Supervisor changed from PID 94468 to 18899;
+  API 18902 and independent Email worker 18903 started successfully.
+- Verified a fresh schema-33 SQLite backup before deployment. Live schema is 34,
+  `quick_check=ok`, and the migration preserved all 350 classification rows.
+- A parallel task independently resolved a pre-existing weekly-job startup
+  status mismatch in `d659c559`. That commit is not an Email policy change.
+  Subsequent stable PIDs: supervisor 23543, service 23556, API 23557, Email 23558.
+  The follow-up exact weekly regression plus CLI suite passed: 226 tests.
+- Read-only `/healthz`, Email learning, category config, list and detail checks
+  succeeded. Runtime is `agent_primary`, no current or candidate online model,
+  no Registry integrity issues, and the primary-model toggle is disabled.
+- Real browser: pending-feedback total 123, 50 rows per page, measured row height
+  44px, page two works, full saved body is visible, and attachments remain metadata.
+  Category configuration exposes core/include/exclude and folder bindings.
+- Real data exposed a legacy-label UI defect: an old TF-IDF registry `active`
+  record was incorrectly labelled as current primary. `d304131c` fixes only the
+  historical row/detail labels and adds a red-green regression. Independent review
+  passed; final frontend suite: 333 passed, two skipped, build passed. Main
+  integration `423b779d` was rebuilt and real browser readback now says historical
+  version for both TF-IDF records, with the primary toggle still disabled.
+- Post-merge Email controls/worker regression: 184 passed. Existing backlog was
+  preserved: 42 failed email actions and three failed classifier tasks, unchanged
+  after deployment; no new Email failures in the deployment window. Final reply
+  queue has 5,113 done and no failed/running/processing items. Pending Email work
+  continues through the existing worker; no manual replay was performed.
+
+## Remaining cleanup
+
+- The verified latest backup is `pre-deploy-final-schema33.sqlite3` inside the
+  private `email-console-deploy-20260908-8Ep6WG` deployment directory. The earlier
+  backup and migration-rehearsal copy remain because their exact-target deletion
+  was rejected by the current execution policy (approval unavailable).
+- The temporary fixture browser tab is closed. Stopping the task-owned Vite
+  preview PID 11740 was also rejected, so the clean, fully merged Email worktree
+  and branch remain rather than removing an in-use directory. No policy bypass
+  or unrelated-file deletion was attempted. The live Email tab is retained.
 
 ## Final pre-deployment evidence
 
