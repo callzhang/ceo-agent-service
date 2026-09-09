@@ -153,6 +153,8 @@ export interface EmailClassificationItem {
   sender: string;
   subject: string;
   preview: string;
+  message_text?: string;
+  quoted_text?: string;
   important?: boolean | null;
   provider_classification?: EmailProviderClassification | null;
   description_version?: string;
@@ -175,6 +177,10 @@ export interface EmailClassificationItem {
   updated_at: string;
 }
 export type EmailClassificationStatus = "all" | "pending_feedback" | "processed";
+export interface EmailClassificationListParams {
+  page?: number;
+  page_size?: number;
+}
 export interface EmailClassificationDetailItem extends EmailClassificationItem {
   message_text: string;
   quoted_text?: string;
@@ -428,7 +434,7 @@ function mapEmailClassification(value: unknown, includeBody = false): EmailClass
     }))
     : [];
   const item: EmailClassificationItem = {
-    id: emailText(row.id),
+    id: typeof row.id === "string" ? row.id : String(row.id ?? ""),
     provider: emailText(row.provider),
     mailbox: emailText(row.mailbox || row.folder),
     message_id: emailText(row.message_id || row.rfc_message_id || row.stable_message_identity),
@@ -578,12 +584,12 @@ export function listHistory(params: Record<string, string | number | undefined> 
 
 export function listEmailClassifications(
   status: EmailClassificationStatus,
-  params: Record<string, string | number | undefined> = {},
+  params: EmailClassificationListParams = {},
   signal?: AbortSignal,
 ) {
   return request<unknown>(`/api/console/email/classifications${query({ status, ...params })}`, { signal }).then((value) => {
     const page = parseConsoleList<Record<string, unknown>>(value);
-    return { ...page, items: page.items.map(mapEmailClassification) } satisfies ConsoleList<EmailClassificationItem>;
+    return { ...page, items: page.items.map((item) => mapEmailClassification(item)) } satisfies ConsoleList<EmailClassificationItem>;
   });
 }
 
