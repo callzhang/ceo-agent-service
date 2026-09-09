@@ -1,5 +1,12 @@
 # Changelog
 
+- 2026-09-09: remove the dead WeChat producer/consumer loop roles. The
+  internal loop now only runs the sender (`_run_wechat_sender_loop`); reading
+  is the `wechat-produce-once` scheduled service command and replies are
+  consumed through the unified Dispatcher, so the loop no longer marks the
+  reader healthy or maps consumer failures. `wechat_loop_names` is gone. Loop
+  failures are recorded as `wechat_sender_loop_error`.
+
 - 2026-09-09: run Codex turns on `service_api` routes without the automatic
   reviewer. The reviewer is a call to the `codex-auto-review` model on the
   route's provider; MiniMax rejects it as an unknown model, so every reviewed

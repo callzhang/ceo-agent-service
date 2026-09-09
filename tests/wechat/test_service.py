@@ -1,19 +1,7 @@
 from app.store import AutoReplyStore
 from app import config
 from app.wechat import service as wechat_service
-from app.wechat.service import (
-    account_from_state, build_reader, ready_account_state, wechat_loop_names,
-)
-
-
-def test_no_loops_by_default():
-    assert wechat_loop_names(reader_enabled=False, capability_ready=False) == []
-    assert wechat_loop_names(reader_enabled=True, capability_ready=False) == []
-
-
-def test_reader_ready_does_not_restore_legacy_producer_or_consumer_loops():
-    names = wechat_loop_names(reader_enabled=True, capability_ready=True)
-    assert names == []
+from app.wechat.service import account_from_state, build_reader, ready_account_state
 
 
 def test_ready_account_requires_exactly_one(tmp_path):

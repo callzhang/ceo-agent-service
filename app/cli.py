@@ -3228,16 +3228,23 @@ def _wechat_service_components(settings: WorkerSettings) -> tuple:
     # it holds ready_to_send deliveries for explicit approval. Only start it when
     # sending is enabled at all.
     if _cfg.wechat_sender_enabled():
-        components.append(("wechat-sender", lambda: _run_wechat_loop(settings, "sender")))
+        components.append(("wechat-sender", lambda: _run_wechat_sender_loop(settings)))
     return tuple(components)
 
 
-def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
+def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
+    """Deliver ready WeChat replies on a fixed cadence.
+
+    Reading (producer) and deciding (consumer) left this loop: the producer is
+    the ``wechat-produce-once`` scheduled service command and replies are
+    consumed through the unified Dispatcher. Reader health is owned by that
+    command; this loop only reports the failures it meets while sending.
+    """
     import time
 
     from app import config as _cfg
     from app.wechat import service as _wx
-    from app.wechat.consumer import WechatTaskProcessingError
+    from app.wechat.accessibility import WechatSender
     from app.wechat.reader_ipc import ReaderIpcError
 
     store = AutoReplyStore(settings.db_path)
@@ -3252,51 +3259,31 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
             time.sleep(15)
     account = _wx.account_from_state(state)
     reader = _wx.build_reader()
-    runner = None
-    if role == "consumer":
-        from app.wechat.decision_runner import WechatDecisionRunner
-
-        runner = WechatDecisionRunner(
-            workspace=settings.workspace,
-            store=store,
-            timeout_seconds=settings.codex_timeout_seconds,
-            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
-        )
-    wsender = None
-    if role == "sender":
-        from app.wechat.accessibility import WechatSender
-        wsender = WechatSender(store, _wx.build_sender())
+    wsender = WechatSender(store, _wx.build_sender())
     interval = 15
     consecutive_sqlite_lock_failures = 0
     consecutive_reader_failures = 0
     reader_failure_reported = False
     while True:
         try:
-            if role == "producer":
-                _wx.run_produce_once(store, reader, account, self_user_id=account.self_user_id)
-            elif role == "consumer":
-                _wx.run_consume_once(store, runner, reader, account)
-            else:  # sender: auto-sends only in 'auto' mode, else holds for approval
-                _wx.process_ready_wechat_deliveries(
-                    store, wsender,
-                    mode=_cfg.wechat_send_mode(),
-                    sender_enabled=_cfg.wechat_sender_enabled(),
-                    reader=reader,
-                    account=account,
-                )
+            # Auto-sends only in 'auto' mode, else holds for approval.
+            _wx.process_ready_wechat_deliveries(
+                store, wsender,
+                mode=_cfg.wechat_send_mode(),
+                sender_enabled=_cfg.wechat_sender_enabled(),
+                reader=reader,
+                account=account,
+            )
             consecutive_sqlite_lock_failures = 0
             consecutive_reader_failures = 0
             reader_failure_reported = False
-            if role in {"producer", "consumer"}:
-                store.resolve_errors_recovered_by_wechat_reader()
-                store.set_service_health_component("wechat.reader", state="healthy")
         except Exception as exc:  # keep the loop alive; surface via error log
             if isinstance(exc, OSError) and exc.errno in {errno.EACCES, errno.EPERM}:
                 store.record_error(
                     "wechat",
                     "",
                     "wechat_data_permission_required",
-                    "WeChat data access was denied; reader paused until service restart.",
+                    "WeChat data access was denied; sender paused until service restart.",
                 )
                 _pause_wechat_loop_until_service_restart(time.sleep)
             elif isinstance(exc, ReaderIpcError):
@@ -3306,7 +3293,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                         "",
                         "wechat_data_permission_required",
                         "CEO WeChat Reader App Data permission is required; "
-                        f"{role} paused until service restart.",
+                        "sender paused until service restart.",
                     )
                     _pause_wechat_loop_until_service_restart(time.sleep)
                 else:
@@ -3322,16 +3309,9 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                             "wechat",
                             "",
                             "wechat_reader_unavailable",
-                            f"WeChat reader unavailable; {role} retrying automatically: {exc}",
+                            f"WeChat reader unavailable; sender retrying automatically: {exc}",
                         )
                         reader_failure_reported = True
-            elif isinstance(exc, WechatTaskProcessingError):
-                store.record_error(
-                    exc.conversation_id,
-                    exc.trigger_message_id,
-                    f"wechat_{role}_loop_error",
-                    str(exc),
-                )
             elif isinstance(exc, sqlite3.OperationalError) and (
                 "database is locked" in str(exc).casefold()
                 or "database is busy" in str(exc).casefold()
@@ -3339,11 +3319,11 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                 consecutive_sqlite_lock_failures += 1
                 if consecutive_sqlite_lock_failures >= 3:
                     store.record_error(
-                        "wechat", "", f"wechat_{role}_loop_error", str(exc)
+                        "wechat", "", "wechat_sender_loop_error", str(exc)
                     )
             else:
                 consecutive_sqlite_lock_failures = 0
-                store.record_error("wechat", "", f"wechat_{role}_loop_error", str(exc))
+                store.record_error("wechat", "", "wechat_sender_loop_error", str(exc))
         time.sleep(interval)
 
 

@@ -34,12 +34,6 @@ def ready_account_state(store) -> dict | None:
     return state
 
 
-def wechat_loop_names(*, reader_enabled: bool, capability_ready: bool) -> list[str]:
-    """Legacy producer/consumer loops stay absent after Cron migration."""
-    del reader_enabled, capability_ready
-    return []
-
-
 def build_reader(*, socket_path=None):
     """Build the IPC facade used for all WeChat reads."""
     from app import config

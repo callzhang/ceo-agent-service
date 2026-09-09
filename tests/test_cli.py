@@ -473,7 +473,7 @@ def test_main_dispatches_skip_stale_wechat_delivery_without_runtime_components(
         "CodexDecisionRunner",
         "TaskAgentCodexRunner",
         "MeetingAlignmentCodexRunner",
-        "_run_wechat_loop",
+        "_run_wechat_sender_loop",
     ):
         monkeypatch.setattr(cli, component_name, forbidden_component)
     db_path = tmp_path / "worker.sqlite3"
@@ -7561,228 +7561,94 @@ def test_wechat_service_components_wait_when_ready_account_has_no_self_id(
     )] == ["wechat-sender"]
 
 
-def test_wechat_loop_stops_after_app_data_permission_denial(
-    monkeypatch,
-    tmp_path,
-):
-    import time
-
-    class StopLoop(Exception):
-        pass
-
+def _wechat_sender_loop_store(tmp_path, monkeypatch):
     db = tmp_path / "w.sqlite3"
     store = AutoReplyStore(db)
     store.upsert_wechat_read_state(
-        account_id="a1",
-        account_dir="/a1",
-        db_dir="/a1/db_storage",
-        app_version="4.1.10",
-        self_user_id="self-1",
-        capability_status="ready",
-    )
-    settings = SimpleNamespace(
-        db_path=db,
-        workspace=tmp_path,
-        codex_timeout_seconds=30,
-        codex_idle_timeout_seconds=30,
+        account_id="a1", account_dir="/a1", db_dir="/a1/db_storage",
+        app_version="4.1.10", self_user_id="self-1", capability_status="ready",
     )
     monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    monkeypatch.setattr(
-        "app.wechat.service.run_produce_once",
-        lambda *a, **k: (_ for _ in ()).throw(
-            PermissionError(1, "Operation not permitted", "/private/wechat.db")
-        ),
-    )
+    monkeypatch.setattr("app.wechat.service.build_sender", lambda *a, **k: object())
+    return store, SimpleNamespace(db_path=db)
+
+
+class _StopLoop(Exception):
+    pass
+
+
+def _stop_after(monkeypatch, count):
+    import time
+
     sleeps = []
 
     def sleep(seconds):
         sleeps.append(seconds)
-        raise StopLoop
+        if len(sleeps) >= count:
+            raise _StopLoop
 
     monkeypatch.setattr(time, "sleep", sleep)
+    return sleeps
 
-    with pytest.raises(StopLoop):
-        cli._run_wechat_loop(settings, "producer")
+
+def _deliveries_raise(monkeypatch, factory):
+    monkeypatch.setattr(
+        "app.wechat.service.process_ready_wechat_deliveries",
+        lambda *a, **k: (_ for _ in ()).throw(factory()),
+    )
+
+
+def test_wechat_sender_loop_pauses_after_data_access_denied(monkeypatch, tmp_path):
+    store, settings = _wechat_sender_loop_store(tmp_path, monkeypatch)
+    _deliveries_raise(
+        monkeypatch,
+        lambda: PermissionError(1, "Operation not permitted", "/private/wechat.db"),
+    )
+    sleeps = _stop_after(monkeypatch, 1)
+
+    with pytest.raises(_StopLoop):
+        cli._run_wechat_sender_loop(settings)
 
     errors = store.list_errors(limit=10)
     assert [error.kind for error in errors] == ["wechat_data_permission_required"]
     assert errors[0].detail == (
-        "WeChat data access was denied; reader paused until service restart."
+        "WeChat data access was denied; sender paused until service restart."
     )
     assert sleeps == [3600]
 
 
-def test_wechat_loop_retries_after_transient_reader_ipc_unavailable(
-    monkeypatch,
-    tmp_path,
+def test_wechat_sender_loop_retries_after_transient_reader_ipc_unavailable(
+    monkeypatch, tmp_path
 ):
-    import time
-
     from app.wechat.reader_ipc import ReaderIpcError
 
-    class StopLoop(Exception):
-        pass
-
-    db = tmp_path / "w.sqlite3"
-    store = AutoReplyStore(db)
-    store.upsert_wechat_read_state(
-        account_id="a1",
-        account_dir="/a1",
-        db_dir="/a1/db_storage",
-        app_version="4.1.10",
-        self_user_id="self-1",
-        capability_status="ready",
+    store, settings = _wechat_sender_loop_store(tmp_path, monkeypatch)
+    _deliveries_raise(
+        monkeypatch,
+        lambda: ReaderIpcError("WeChat reader unavailable: timed out", code="unavailable"),
     )
-    settings = SimpleNamespace(
-        db_path=db,
-        workspace=tmp_path,
-        codex_timeout_seconds=30,
-        codex_idle_timeout_seconds=30,
-    )
-    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    monkeypatch.setattr(
-        "app.wechat.service.run_produce_once",
-        lambda *a, **k: (_ for _ in ()).throw(
-            ReaderIpcError(
-                "WeChat reader unavailable: timed out", code="unavailable",
-            )
-        ),
-    )
-    sleeps = []
+    sleeps = _stop_after(monkeypatch, 1)
 
-    def sleep(seconds):
-        sleeps.append(seconds)
-        raise StopLoop
+    with pytest.raises(_StopLoop):
+        cli._run_wechat_sender_loop(settings)
 
-    monkeypatch.setattr(time, "sleep", sleep)
-
-    with pytest.raises(StopLoop):
-        cli._run_wechat_loop(settings, "producer")
-
-    errors = store.list_errors(limit=10)
-    assert errors == []
+    assert store.list_errors(limit=10) == []
     assert sleeps == [15]
 
 
-def test_wechat_reader_failure_debounce_resets_after_a_success(
-    monkeypatch,
-    tmp_path,
+def test_wechat_sender_loop_restarts_reader_once_after_repeated_ipc_failures(
+    monkeypatch, tmp_path
 ):
-    import time
-
     from app.wechat.reader_ipc import ReaderIpcError
 
-    class StopLoop(Exception):
-        pass
-
-    db = tmp_path / "w.sqlite3"
-    store = AutoReplyStore(db)
-    store.upsert_wechat_read_state(
-        account_id="a1",
-        account_dir="/a1",
-        db_dir="/a1/db_storage",
-        app_version="4.1.10",
-        self_user_id="self-1",
-        capability_status="ready",
-    )
-    settings = SimpleNamespace(
-        db_path=db,
-        workspace=tmp_path,
-        codex_timeout_seconds=30,
-        codex_idle_timeout_seconds=30,
-    )
-    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    outcomes = iter(
-        [
-            ReaderIpcError("unavailable", code="unavailable"),
-            ReaderIpcError("unavailable", code="unavailable"),
-            ReaderIpcError("unavailable", code="unavailable"),
-            None,
-            ReaderIpcError("unavailable", code="unavailable"),
-            ReaderIpcError("unavailable", code="unavailable"),
-            ReaderIpcError("unavailable", code="unavailable"),
-        ]
-    )
-    monkeypatch.setattr(
-        "app.wechat.service.run_produce_once",
-        lambda *a, **k: (
-            (_ for _ in ()).throw(outcome) if (outcome := next(outcomes)) else None
-        ),
-    )
-    sleeps = []
-
-    def sleep(seconds):
-        sleeps.append(seconds)
-        if len(sleeps) >= 7:
-            raise StopLoop
-
-    monkeypatch.setattr(time, "sleep", sleep)
-
-    with pytest.raises(StopLoop):
-        cli._run_wechat_loop(settings, "producer")
-
-    errors = store.list_errors(limit=10)
-    assert [error.kind for error in errors] == [
-        "wechat_reader_unavailable",
-        "wechat_reader_unavailable",
-    ]
-    assert errors[0].resolved_at == ""
-    assert errors[1].resolved_at
-    assert errors[1].resolution == "recovered by successful WeChat reader cycle"
-
-
-def test_wechat_reader_restarts_helper_after_repeated_ipc_failures(
-    monkeypatch,
-    tmp_path,
-):
-    import time
-
-    from app.wechat.reader_ipc import ReaderIpcError
-
-    class StopLoop(Exception):
-        pass
-
-    db = tmp_path / "w.sqlite3"
-    store = AutoReplyStore(db)
-    store.upsert_wechat_read_state(
-        account_id="a1",
-        account_dir="/a1",
-        db_dir="/a1/db_storage",
-        app_version="4.1.10",
-        self_user_id="self-1",
-        capability_status="ready",
-    )
-    settings = SimpleNamespace(
-        db_path=db,
-        workspace=tmp_path,
-        codex_timeout_seconds=30,
-        codex_idle_timeout_seconds=30,
-    )
-    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    outcomes = iter(
-        [
-            ReaderIpcError("unavailable", code="unavailable"),
-            ReaderIpcError("unavailable", code="unavailable"),
-            ReaderIpcError("unavailable", code="unavailable"),
-        ]
-    )
-    monkeypatch.setattr(
-        "app.wechat.service.run_produce_once",
-        lambda *a, **k: (_ for _ in ()).throw(next(outcomes)),
-    )
+    store, settings = _wechat_sender_loop_store(tmp_path, monkeypatch)
+    _deliveries_raise(monkeypatch, lambda: ReaderIpcError("unavailable", code="unavailable"))
     restart_calls = []
     monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: restart_calls.append((a, k)))
-    sleeps = []
+    _stop_after(monkeypatch, 4)
 
-    def sleep(seconds):
-        sleeps.append(seconds)
-        if len(sleeps) >= 3:
-            raise StopLoop
-
-    monkeypatch.setattr(time, "sleep", sleep)
-
-    with pytest.raises(StopLoop):
-        cli._run_wechat_loop(settings, "producer")
+    with pytest.raises(_StopLoop):
+        cli._run_wechat_sender_loop(settings)
 
     assert len(restart_calls) == 1
     assert restart_calls[0][0] == (
@@ -7793,293 +7659,83 @@ def test_wechat_reader_restarts_helper_after_repeated_ipc_failures(
             f"gui/{cli.os.getuid()}/{cli.WECHAT_READER_LAUNCHD_LABEL}",
         ],
     )
+    [error] = store.list_errors(limit=10)
+    assert error.kind == "wechat_reader_unavailable"
+    assert "sender retrying automatically" in error.detail
 
 
-def test_wechat_internal_delivery_loop_uses_fixed_interval(
-    monkeypatch,
-    tmp_path,
+def test_wechat_sender_loop_uses_fixed_interval_after_unexpected_error(
+    monkeypatch, tmp_path
 ):
-    import time
+    store, settings = _wechat_sender_loop_store(tmp_path, monkeypatch)
+    _deliveries_raise(monkeypatch, lambda: RuntimeError("exercise interval boundary"))
+    sleeps = _stop_after(monkeypatch, 1)
 
-    class StopLoop(Exception):
-        pass
-
-    db = tmp_path / "w.sqlite3"
-    store = AutoReplyStore(db)
-    store.upsert_wechat_read_state(
-        account_id="a1",
-        account_dir="/a1",
-        db_dir="/a1/db_storage",
-        app_version="4.1.10",
-        self_user_id="self-1",
-        capability_status="ready",
-    )
-    settings = SimpleNamespace(
-        db_path=db,
-        workspace=tmp_path,
-        codex_timeout_seconds=30,
-        codex_idle_timeout_seconds=30,
-    )
-    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    monkeypatch.setattr(
-        "app.wechat.service.run_produce_once",
-        lambda *a, **k: (_ for _ in ()).throw(
-            RuntimeError("exercise interval boundary")
-        ),
-    )
-    sleeps = []
-
-    def sleep(seconds):
-        sleeps.append(seconds)
-        raise StopLoop
-
-    monkeypatch.setattr(time, "sleep", sleep)
-
-    with pytest.raises(StopLoop):
-        cli._run_wechat_loop(settings, "producer")
+    with pytest.raises(_StopLoop):
+        cli._run_wechat_sender_loop(settings)
 
     assert sleeps == [15]
-
-
-def test_wechat_consumer_loop_records_failed_trigger_identity(
-    monkeypatch,
-    tmp_path,
-):
-    import time
-
-    from app.wechat.consumer import WechatTaskProcessingError
-
-    class StopLoop(Exception):
-        pass
-
-    db = tmp_path / "w.sqlite3"
-    store = AutoReplyStore(db)
-    store.upsert_wechat_read_state(
-        account_id="a1",
-        account_dir="/a1",
-        db_dir="/a1/db_storage",
-        app_version="4.1.10",
-        self_user_id="self-1",
-        capability_status="ready",
-    )
-    settings = SimpleNamespace(
-        db_path=db,
-        workspace=tmp_path,
-        codex_timeout_seconds=30,
-        codex_idle_timeout_seconds=30,
-    )
-    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    monkeypatch.setattr(
-        "app.wechat.service.run_consume_once",
-        lambda *a, **k: (_ for _ in ()).throw(
-            WechatTaskProcessingError("cid-1", "msg-1", "decision failed")
-        ),
-    )
-
-    def sleep(_seconds):
-        raise StopLoop
-
-    monkeypatch.setattr(time, "sleep", sleep)
-
-    with pytest.raises(StopLoop):
-        cli._run_wechat_loop(settings, "consumer")
-
     [error] = store.list_errors(limit=10)
-    assert error.conversation_id == "cid-1"
-    assert error.message_id == "msg-1"
-    assert error.kind == "wechat_consumer_loop_error"
+    assert error.kind == "wechat_sender_loop_error"
+    assert error.detail == "exercise interval boundary"
 
 
-def test_wechat_consumer_does_not_preflight_codex_authentication(
-    monkeypatch,
-    tmp_path,
+def test_wechat_sender_loop_retries_one_sqlite_lock_without_recording_error(
+    monkeypatch, tmp_path
 ):
-    import time
-
-    class StopLoop(Exception):
-        pass
-
-    db = tmp_path / "w.sqlite3"
-    store = AutoReplyStore(db)
-    store.upsert_wechat_read_state(
-        account_id="a1",
-        account_dir="/a1",
-        db_dir="/a1/db_storage",
-        app_version="4.1.10",
-        self_user_id="self-1",
-        capability_status="ready",
-    )
-    settings = SimpleNamespace(
-        db_path=db,
-        workspace=tmp_path,
-        codex_timeout_seconds=30,
-        codex_idle_timeout_seconds=30,
-    )
-    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    consumed = []
-    monkeypatch.setattr(
-        "app.wechat.service.run_consume_once",
-        lambda *a, **k: consumed.append(True),
-    )
-    monkeypatch.setattr(time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopLoop))
-
-    with pytest.raises(StopLoop):
-        cli._run_wechat_loop(settings, "consumer")
-
-    assert consumed == [True]
-
-
-def test_wechat_loop_retries_one_sqlite_lock_without_recording_error(
-    monkeypatch,
-    tmp_path,
-):
-    import time
-
-    class StopLoop(Exception):
-        pass
-
-    db = tmp_path / "w.sqlite3"
-    store = AutoReplyStore(db)
-    store.upsert_wechat_read_state(
-        account_id="a1",
-        account_dir="/a1",
-        db_dir="/a1/db_storage",
-        app_version="4.1.10",
-        self_user_id="self-1",
-        capability_status="ready",
-    )
-    settings = SimpleNamespace(
-        db_path=db,
-        workspace=tmp_path,
-        codex_timeout_seconds=30,
-        codex_idle_timeout_seconds=30,
-    )
+    store, settings = _wechat_sender_loop_store(tmp_path, monkeypatch)
     calls = 0
 
-    def consume_once(*_args, **_kwargs):
+    def deliveries(*_args, **_kwargs):
         nonlocal calls
         calls += 1
         if calls == 1:
             raise sqlite3.OperationalError("database is locked")
-        return None
+        return 0
 
-    sleeps = 0
+    monkeypatch.setattr("app.wechat.service.process_ready_wechat_deliveries", deliveries)
+    _stop_after(monkeypatch, 2)
 
-    def sleep(_seconds):
-        nonlocal sleeps
-        sleeps += 1
-        if sleeps == 2:
-            raise StopLoop
+    with pytest.raises(_StopLoop):
+        cli._run_wechat_sender_loop(settings)
 
-    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    monkeypatch.setattr("app.wechat.service.run_consume_once", consume_once)
-    monkeypatch.setattr(time, "sleep", sleep)
-
-    with pytest.raises(StopLoop):
-        cli._run_wechat_loop(settings, "consumer")
-
+    assert calls == 2
     assert store.list_errors(limit=10) == []
 
 
-def test_wechat_loop_records_persistent_sqlite_lock(monkeypatch, tmp_path):
-    import time
+def test_wechat_sender_loop_records_persistent_sqlite_lock(monkeypatch, tmp_path):
+    store, settings = _wechat_sender_loop_store(tmp_path, monkeypatch)
+    _deliveries_raise(monkeypatch, lambda: sqlite3.OperationalError("database is locked"))
+    _stop_after(monkeypatch, 3)
 
-    class StopLoop(Exception):
-        pass
-
-    db = tmp_path / "w.sqlite3"
-    store = AutoReplyStore(db)
-    store.upsert_wechat_read_state(
-        account_id="a1",
-        account_dir="/a1",
-        db_dir="/a1/db_storage",
-        app_version="4.1.10",
-        self_user_id="self-1",
-        capability_status="ready",
-    )
-    settings = SimpleNamespace(
-        db_path=db,
-        workspace=tmp_path,
-        codex_timeout_seconds=30,
-        codex_idle_timeout_seconds=30,
-    )
-    sleeps = 0
-
-    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    monkeypatch.setattr(
-        "app.wechat.service.run_consume_once",
-        lambda *_a, **_k: (_ for _ in ()).throw(
-            sqlite3.OperationalError("database is locked")
-        ),
-    )
-
-    def sleep(_seconds):
-        nonlocal sleeps
-        sleeps += 1
-        if sleeps == 3:
-            raise StopLoop
-
-    monkeypatch.setattr(time, "sleep", sleep)
-
-    with pytest.raises(StopLoop):
-        cli._run_wechat_loop(settings, "consumer")
+    with pytest.raises(_StopLoop):
+        cli._run_wechat_sender_loop(settings)
 
     [error] = store.list_errors(limit=10)
-    assert error.kind == "wechat_consumer_loop_error"
+    assert error.kind == "wechat_sender_loop_error"
     assert error.detail == "database is locked"
 
 
-def test_wechat_loop_pauses_after_reader_reports_app_data_denial(
-    monkeypatch,
-    tmp_path,
+def test_wechat_sender_loop_pauses_after_reader_reports_app_data_denial(
+    monkeypatch, tmp_path
 ):
-    import time
-
     from app.wechat.reader_ipc import ReaderIpcError
 
-    class StopLoop(Exception):
-        pass
-
-    db = tmp_path / "w.sqlite3"
-    store = AutoReplyStore(db)
-    store.upsert_wechat_read_state(
-        account_id="a1",
-        account_dir="/a1",
-        db_dir="/a1/db_storage",
-        app_version="4.1.10",
-        self_user_id="self-1",
-        capability_status="ready",
-    )
-    settings = SimpleNamespace(
-        db_path=db,
-        workspace=tmp_path,
-        codex_timeout_seconds=30,
-        codex_idle_timeout_seconds=30,
-    )
-    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    monkeypatch.setattr(
-        "app.wechat.service.run_produce_once",
-        lambda *a, **k: (_ for _ in ()).throw(
-            ReaderIpcError(
-                "Grant App Data permission to CEO WeChat Reader.",
-                code="permission_required",
-            )
+    store, settings = _wechat_sender_loop_store(tmp_path, monkeypatch)
+    _deliveries_raise(
+        monkeypatch,
+        lambda: ReaderIpcError(
+            "Grant App Data permission to CEO WeChat Reader.", code="permission_required"
         ),
     )
-    sleeps = []
+    sleeps = _stop_after(monkeypatch, 1)
 
-    def sleep(seconds):
-        sleeps.append(seconds)
-        raise StopLoop
-
-    monkeypatch.setattr(time, "sleep", sleep)
-
-    with pytest.raises(StopLoop):
-        cli._run_wechat_loop(settings, "producer")
+    with pytest.raises(_StopLoop):
+        cli._run_wechat_sender_loop(settings)
 
     errors = store.list_errors(limit=10)
     assert [error.kind for error in errors] == ["wechat_data_permission_required"]
-    assert "producer paused until service restart" in errors[0].detail
+    assert "sender paused until service restart" in errors[0].detail
     assert sleeps == [3600]
 
 
