@@ -44,7 +44,7 @@ from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_task_adapter import email_action_identity
 from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 
 
 def _frozen_training_observation(**overrides):
@@ -8017,6 +8017,87 @@ def test_uncertain_unsubscribe_claim_cannot_be_reacquired_for_blind_write(
     assert persisted["owner_id"] == _UNSUBSCRIBE_OWNER_A["owner_id"]
     assert persisted["owner_generation"] == _UNSUBSCRIBE_OWNER_A["generation"]
     assert persisted["lease_token"] == _UNSUBSCRIBE_OWNER_A["lease_token"]
+
+
+def test_explicit_retry_releases_failed_unsubscribe_without_browser_state(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "unsubscribe-explicit-retry.sqlite3")
+    authorization = _unsubscribe_authorization(store)
+    claim = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    assert claim is not None
+    task_store = AutoReplyStore(store.path)
+    task = task_store.ensure_reply_task(
+        channel="email",
+        conversation_id="email-thread",
+        conversation_title="Email",
+        single_chat=True,
+        trigger_message_id=authorization["action_identity"],
+        trigger_create_time="2026-09-09T03:00:00+00:00",
+        trigger_sender="sender@example.com",
+        trigger_text="unsubscribe",
+        execution_generation="generation-explicit-retry",
+    )
+    consumer = task_store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer-owner",
+    ).run
+    consumer = task_store.complete_agent_run(
+        consumer.id,
+        {"outcome": "proposal"},
+        owner="consumer-owner",
+    )
+    audit = task_store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="email-unsubscribe-audit",
+        owner="audit-owner",
+    ).run
+    task_store.fail_agent_run(
+        audit.id,
+        {
+            "code": "email_unsubscribe_browser_failed",
+            "retryable": True,
+            "authorization_required": False,
+            "session_continuable": False,
+        },
+        owner="audit-owner",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update email_unsubscribe_claims "
+            "set status='uncertain', phase='effect_uncertain', audit_agent_run_id=? "
+            "where action_identity=?",
+            (audit.id, authorization["action_identity"]),
+        )
+        db.execute(
+            "update email_unsubscribe_effects set audit_agent_run_id=? "
+            "where action_identity=?",
+            (audit.id, authorization["action_identity"]),
+        )
+
+    store.release_failed_email_unsubscribe_for_explicit_retry(
+        authorization["action_identity"],
+        audit_agent_run_id=audit.id,
+    )
+
+    assert store.get_email_unsubscribe_claim(authorization["action_identity"]) is None
+    assert store.get_email_unsubscribe_effect(
+        authorization["action_identity"], claim["effect_digest"]
+    ) is None
 
 
 def test_dispatching_unsubscribe_claim_is_not_reacquired_by_same_owner(

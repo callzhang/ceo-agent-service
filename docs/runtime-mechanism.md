@@ -392,6 +392,7 @@ Consumer 修订版可以原样复用上一 revision 中已持久化的服务反�
 
 邮件退订任务把不可变 ActionPlan 派生出的首步 `ProposedAction` 作为任务绑定契约直接提供给 Consumer。该动作固定使用 `email_browser/unsubscribe`、精确目标字段和 `operations` payload；内部 `classification_id` 不进入外部工具参数，避免 64 位标识经 JSON 数值链路发生精度变化。
 审计 `proposal_revision` 只表示反馈修订轮次，退订 `operations` 的长度只表示浏览器步骤；两者独立计数。首步动作经过审计反馈后仍可在更高 revision 执行，不能被误判为缺少后续浏览器步骤。
+旧版本若在浏览器预检查阶段失败并错误留下 `uncertain/effect_uncertain` claim，可通过显式恢复命令释放，但必须精确绑定失败 Audit，且确认没有浏览器步骤、完成记录、续跑记录或多个 effect；释放后仍需单独发起正式任务重试。
 
 ## 进程、租约和恢复
 

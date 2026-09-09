@@ -10474,6 +10474,95 @@ class EmailStore:
                     "unsubscribe preflight failure changed concurrently"
                 )
 
+    def release_failed_email_unsubscribe_for_explicit_retry(
+        self,
+        action_identity: str,
+        *,
+        audit_agent_run_id: int,
+    ) -> None:
+        """Release a legacy uncertain claim after an explicit reviewed retry."""
+
+        if audit_agent_run_id <= 0:
+            raise ValueError("audit_agent_run_id must be positive")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            claim = db.execute(
+                "select * from email_unsubscribe_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            audit = db.execute(
+                """
+                select runs.role, runs.status, runs.structured_error_json,
+                       tasks.channel, tasks.trigger_message_id
+                from agent_runs as runs
+                join reply_tasks as tasks on tasks.id=runs.reply_task_id
+                where runs.id=?
+                """,
+                (audit_agent_run_id,),
+            ).fetchone()
+            try:
+                structured_error = (
+                    None
+                    if audit is None
+                    else json.loads(str(audit["structured_error_json"]))
+                )
+            except (KeyError, TypeError, ValueError, RecursionError) as exc:
+                raise EmailUnsubscribeClaimConflict(
+                    "unsubscribe retry Audit evidence is invalid"
+                ) from exc
+            if (
+                claim is None
+                or claim["status"] != "uncertain"
+                or claim["phase"] != "effect_uncertain"
+                or claim["audit_agent_run_id"] != audit_agent_run_id
+                or audit is None
+                or audit["role"] != "audit"
+                or audit["status"] != "failed"
+                or audit["channel"] != "email"
+                or audit["trigger_message_id"] != action_identity
+                or not isinstance(structured_error, dict)
+                or structured_error.get("code") != "email_unsubscribe_browser_failed"
+            ):
+                raise EmailUnsubscribeClaimConflict(
+                    "unsubscribe retry is not bound to the failed Audit claim"
+                )
+            related = db.execute(
+                """
+                select
+                    (select count(*) from email_unsubscribe_steps
+                     where action_identity=?) as steps,
+                    (select count(*) from email_unsubscribe_receipts
+                     where action_identity=?) as receipts,
+                    (select count(*) from email_unsubscribe_continuations
+                     where action_identity=?) as continuations,
+                    (select count(*) from email_unsubscribe_effects
+                     where action_identity=?) as effects
+                """,
+                (action_identity,) * 4,
+            ).fetchone()
+            if (
+                related is None
+                or int(related["steps"]) != 0
+                or int(related["receipts"]) != 0
+                or int(related["continuations"]) != 0
+                or int(related["effects"]) != 1
+            ):
+                raise EmailUnsubscribeClaimConflict(
+                    "unsubscribe explicit retry has durable browser state"
+                )
+            deleted_effect = db.execute(
+                "delete from email_unsubscribe_effects where action_identity=?",
+                (action_identity,),
+            ).rowcount
+            deleted_claim = db.execute(
+                "delete from email_unsubscribe_claims where action_identity=?",
+                (action_identity,),
+            ).rowcount
+            if deleted_effect != 1 or deleted_claim != 1:
+                raise EmailUnsubscribeClaimConflict(
+                    "unsubscribe explicit retry changed concurrently"
+                )
+
     def advance_email_unsubscribe_phase(
         self,
         action_identity: str,

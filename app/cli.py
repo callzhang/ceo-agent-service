@@ -309,6 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
         "consume",
         "process-work-items",
         "retry-work-summary-input",
+        "release-failed-email-unsubscribe",
         "skip-stale-wechat-delivery",
         "backfill-task-memory-context",
         "backfill-routine-process-todos",
@@ -486,6 +487,11 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--operation-id", required=True)
         if command == "retry-work-summary-input":
             subparser.add_argument("--input-id", type=_positive_int, required=True)
+        if command == "release-failed-email-unsubscribe":
+            subparser.add_argument("--action-identity", type=_non_blank, required=True)
+            subparser.add_argument(
+                "--audit-agent-run-id", type=_positive_int, required=True
+            )
         if command == "skip-stale-wechat-delivery":
             subparser.add_argument("--delivery-id", type=_positive_int, required=True)
             subparser.add_argument(
@@ -1213,6 +1219,21 @@ def retry_work_summary_input_command(
             f"work summary input is not a retryable failed record: {input_id}"
         )
     print(f"work-summary-input requeued={input_id}", flush=True)
+
+
+def release_failed_email_unsubscribe_command(
+    settings: WorkerSettings,
+    *,
+    action_identity: str,
+    audit_agent_run_id: int,
+) -> None:
+    from app.email_store import EmailStore
+
+    EmailStore(settings.db_path).release_failed_email_unsubscribe_for_explicit_retry(
+        action_identity,
+        audit_agent_run_id=audit_agent_run_id,
+    )
+    print("failed email unsubscribe released for explicit retry", flush=True)
 
 
 def skip_stale_wechat_delivery_command(
@@ -3677,6 +3698,12 @@ def main() -> None:
         process_work_items_command(settings)
     elif args.command == "retry-work-summary-input":
         retry_work_summary_input_command(settings, input_id=args.input_id)
+    elif args.command == "release-failed-email-unsubscribe":
+        release_failed_email_unsubscribe_command(
+            settings,
+            action_identity=args.action_identity,
+            audit_agent_run_id=args.audit_agent_run_id,
+        )
     elif args.command == "skip-stale-wechat-delivery":
         skip_stale_wechat_delivery_command(
             settings,
