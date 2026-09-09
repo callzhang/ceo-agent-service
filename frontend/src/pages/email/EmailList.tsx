@@ -5,8 +5,13 @@ import { EmailDrawer } from "./EmailDrawer";
 import { ObservabilityDetails, ProcessedClassificationEvidence } from "./Evidence";
 import { configurableCategories, errorMessage, localTime, measured, sourceLabel, statusLabel } from "./shared";
 
-export function EmailList({pending, configs, onBusy}: {pending:boolean; configs:EmailCategoryConfig[]; onBusy:(value:boolean)=>void}) {
+const filters=[["all","全部"],["pending_feedback","待确认"],["processed","已处理"]] as const;
+type EmailFilter=typeof filters[number][0];
+
+export function EmailList({configs, onBusy}: {configs:EmailCategoryConfig[]; onBusy:(value:boolean)=>void}) {
   const [params,setParams]=useSearchParams();
+  const requestedFilter=params.get("filter");
+  const filter:EmailFilter=filters.some(([key])=>key===requestedFilter) ? requestedFilter as EmailFilter : "all";
   const rawPage=Number(params.get("page"));
   const page=Number.isInteger(rawPage) && rawPage>0 ? rawPage : 1;
   const rawSize=Number(params.get("page_size"));
@@ -28,21 +33,21 @@ export function EmailList({pending, configs, onBusy}: {pending:boolean; configs:
   const rowRefs=useRef(new Map<string,HTMLButtonElement>());
   const open=!!selected && closed!==selected;
   const options=[...configurableCategories(configs).filter(item=>item.enabled),{category_key:"junk",display_name:"垃圾（Trash）"}];
-  const label=(key:string)=>configs.find(item=>item.category_key===key)?.display_name || key;
+  const label=(key?:string|null)=>key ? (configs.find(item=>item.category_key===key)?.display_name || key) : "未分类（留在收件箱）";
   function navigate(nextPage:number,nextSize=pageSize,id?:string) {
     setParams(previous=>{const next=new URLSearchParams(previous);next.set("page",String(nextPage));next.set("page_size",String(nextSize));if(id)next.set("selected",id);else next.delete("selected");return next;});
     setClosed("");
   }
   useEffect(()=>{
     const controller=new AbortController();setLoading(true);setError("");
-    listEmailClassifications(pending?"pending_feedback":"processed",{page,page_size:pageSize},controller.signal).then(result=>{
+    listEmailClassifications(filter,{page,page_size:pageSize},controller.signal).then(result=>{
       if(controller.signal.aborted)return;
       const last=Math.max(1,Math.ceil(result.meta.total/pageSize));
       if(page>last){navigate(last);return;}
       setRows(result.items);setTotal(result.meta.total);setLoading(false);
     }).catch(reason=>{if(!controller.signal.aborted){setError(errorMessage(reason));setLoading(false);}});
     return ()=>controller.abort();
-  },[pending,page,pageSize,revision]);
+  },[filter,page,pageSize,revision]);
   useEffect(()=>{
     setCategory("");setDetail(null);setDetailError("");setSaveError("");
     if(!open)return;
@@ -67,7 +72,18 @@ export function EmailList({pending, configs, onBusy}: {pending:boolean; configs:
     } catch(reason){setSaveError(errorMessage(reason));}
     finally{lock.current=false;setSaving(false);onBusy(false);}
   }
-  return <section className="console-card email-dense-list" aria-label={pending?"待反馈邮件":"已处理邮件"}>
+  function selectFilter(nextFilter:EmailFilter) {
+    setParams(previous=>{
+      const next=new URLSearchParams(previous);
+      next.set("filter",nextFilter);
+      next.set("page","1");
+      return next;
+    });
+  }
+  const categoryLabel=(key:string|null|undefined)=>key ? label(key) : "未分类（留在收件箱）";
+  const filterLabel=filters.find(([key])=>key===filter)?.[1] || "全部";
+  return <section className="console-card email-dense-list" aria-label="邮件分类列表">
+    <div className="email-filter-row" role="group" aria-label="邮件筛选">{filters.map(([key,text])=><button type="button" key={key} aria-pressed={filter===key} disabled={saving} onClick={()=>selectFilter(key)}>{text}</button>)}</div>
     <nav className="email-list-toolbar" aria-label="邮件分页"><span>第 {page} / {Math.max(1,Math.ceil(total/pageSize))} 页 · 共 {total} 封</span>
       <label>每页邮件数 <select aria-label="每页邮件数" value={pageSize} disabled={saving||loading} onChange={event=>navigate(1,Number(event.target.value))}>{[20,50,100].map(size=><option key={size}>{size}</option>)}</select></label>
       <button className="compact-button" disabled={saving||loading||page===1} onClick={()=>navigate(page-1)}>上一页</button>
@@ -75,14 +91,14 @@ export function EmailList({pending, configs, onBusy}: {pending:boolean; configs:
       {loading&&<span role="status">正在加载邮件…</span>}
     </nav>
     {error&&<p role="alert">{error} <button onClick={()=>setRevision(value=>value+1)}>重试</button></p>}
-    {!loading&&!error&&!rows.length&&<p className="page-state">当前没有{pending?"待反馈":"已处理"}邮件</p>}
+    {!loading&&!error&&!rows.length&&<p className="page-state">当前没有{filterLabel}邮件</p>}
     <div className="email-row-list" aria-busy={loading}>
       {rows.map(item=><button type="button" key={item.id} ref={element=>{if(element)rowRefs.current.set(item.id,element);else rowRefs.current.delete(item.id);}} aria-label={`打开邮件 ${item.subject || "无主题"}`} aria-pressed={selected===item.id} disabled={saving||loading} className="email-dense-row" onClick={()=>{navigate(page,pageSize,item.id);setClosed("");}}>
         <span title={item.important==null?"重要状态未知":item.important?"重要 · Star / Flag":"未标记重要"} aria-label={item.important==null?"重要状态未知":item.important?"重要":"未标记重要"}>{item.important==null?"?":item.important?"★":"☆"}</span>
         <span className="email-row-sender" title={item.sender}>{item.sender || "未提供发件人"}</span>
-        <span className="email-row-content"><span className="email-mobile-sender">{item.sender} · </span><strong>{item.subject || "无主题"}</strong><span className="muted"> — {item.preview || "未提供摘要"}</span></span>
-        <span className="email-row-category" title={label(item.category)}>{pending?"建议：":""}{label(item.category)}{pending&&<small> · {measured(item.confidence)}</small>}</span>
-        <span className="email-row-status">{pending?"待反馈":`${sourceLabel(item.classification_source)} · ${statusLabel(item.status)}`}</span>
+        <span className="email-row-content"><span className="email-mobile-sender">{item.sender} · </span><strong>{item.subject || "无主题"}</strong><span className="email-row-original-text">{item.message_text || "未提供正文"}</span></span>
+        <span className="email-row-category" title={categoryLabel(item.category)}>{item.status==="pending_feedback"?"建议：":""}{categoryLabel(item.category)}{item.status==="pending_feedback"&&<small> · {measured(item.confidence)}</small>}</span>
+        <span className="email-row-status">{sourceLabel(item.classification_source)} · {statusLabel(item.status)}</span>
         <time title={localTime(item.received_at || item.updated_at)}>{localTime(item.received_at || item.updated_at)}</time>
       </button>)}
     </div>
@@ -96,10 +112,10 @@ export function EmailList({pending, configs, onBusy}: {pending:boolean; configs:
         <p>分类来源：{sourceLabel(detail.item.classification_source)} · 置信度：{measured(detail.item.confidence)} · 描述版本：{detail.item.description_version || "未提供"}</p>
         <ProcessedClassificationEvidence row={detail.item}/>
         {(detail.provider_classification || detail.item.provider_classification)&&<section aria-label="邮箱观察事实"><h3>邮箱观察事实</h3><p>已观察到的文件夹与 Star / Flag 状态：</p><pre>{JSON.stringify(detail.provider_classification || detail.item.provider_classification,null,2)}</pre></section>}
-        <details><summary>候选分布</summary>{Object.entries(detail.item.probabilities).map(([key,value])=><p key={key}>{label(key)}：{measured(value)}</p>)}</details>
+        <section className="email-candidate-distribution" aria-label="候选分布"><h3>候选分布</h3><div className="email-probability-bar" aria-hidden="true">{Object.entries(detail.item.probabilities).sort(([,a],[,b])=>b-a).map(([key,value])=><span key={key} data-category={key} style={{flexGrow:Math.max(0,value)}} />)}</div><div className="email-probability-legend">{Object.entries(detail.item.probabilities).sort(([,a],[,b])=>b-a).map(([key,value])=><span key={key}><i data-category={key}/>{label(key)} {measured(value)}</span>)}</div><p className="muted">模型置信度：{measured(detail.item.confidence)} · 间隔：{measured(detail.item.margin)}</p></section>
         <ObservabilityDetails events={detail.observability}/>
         </div>
-        {pending&&<form className="email-drawer-footer" onSubmit={event=>{event.preventDefault();void save();}}>
+        {filter!=="processed"&&detail.item.status==="pending_feedback"&&<form aria-label="分类确认" className="email-drawer-footer" onSubmit={event=>{event.preventDefault();void save();}}>
           <p>建议：{label(detail.item.category)} · {measured(detail.item.confidence)}，请选择类别后保存。</p>
           <div className="settings-pill-row" role="group" aria-label="选择分类">{options.map(item=><button type="button" key={item.category_key} disabled={saving||loading} aria-pressed={category===item.category_key} onClick={()=>setCategory(item.category_key)}>{item.display_name}</button>)}</div>
           {!options.length&&<p>暂无可用类别，请先检查邮件配置。</p>}{saveError&&<p role="alert">{saveError}</p>}

@@ -7,12 +7,12 @@ import { EmailConfig } from "./email/EmailConfig";
 import { ModelTraining } from "./email/ModelTraining";
 import { errorMessage } from "./email/shared";
 import "./email/email.css";
-const tabs=[["processed","已处理"],["pending_feedback","待反馈"],["config","邮件配置"],["learning","模型训练"]] as const;
+const tabs=[["list","邮件分类"],["config","邮件配置"],["learning","模型训练"]] as const;
 
 export function EmailPage() {
   const [params,setParams]=useSearchParams();
-  const requested=params.get("tab") || "processed";
-  const tab=tabs.some(([key])=>key===requested)?requested:"processed";
+  const requested=params.get("tab") || "list";
+  const tab=tabs.some(([key])=>key===requested)?requested:"list";
   const [configs,setConfigs]=useState<EmailCategoryConfig[]|null>(null);
   const [configError,setConfigError]=useState("");
   const [learning,setLearning]=useState<EmailLearningEvidence|null>(null);
@@ -54,7 +54,7 @@ export function EmailPage() {
       {configError&&tab!=="learning"&&<p role="alert">邮件配置加载失败：{configError} <button onClick={()=>setRetry(value=>value+1)}>重新加载配置</button></p>}
       {tab==="config"?(configs?<EmailConfig configs={configs} onBusy={setBusy} onSaved={item=>setConfigs(previous=>[...(previous || []).filter(value=>value.category_key!==item.category_key),item])}/>:<p role="status">正在加载邮件配置…</p>)
         :tab==="learning"?<>{learningError&&<p role="alert">{learningError} <button onClick={()=>setRetry(value=>value+1)}>重新加载模型训练</button></p>}{learning?<ModelTraining learning={learning} configs={configs || []} reload={reload} runtimeVerified={runtimeVerified} onRuntimeUnverified={()=>setRuntimeVerified(false)} onBusy={setBusy}/>:!learningError&&<p role="status">正在加载模型训练…</p>}</>
-        :<EmailList key={tab} pending={tab==="pending_feedback"} configs={configs || []} onBusy={setBusy}/>}
+        :<EmailList configs={configs || []} onBusy={setBusy}/>}
     </div>
   </ConsolePageLayout>;
 }
