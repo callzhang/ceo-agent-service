@@ -166,6 +166,20 @@ def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
     )
 
 
+def repository_managed_skill_content(name: str) -> str:
+    """Return the current exact repository baseline for one managed Skill."""
+    try:
+        return next(
+            content
+            for repository_name, content in _repository_managed_skills()
+            if repository_name == name
+        )
+    except StopIteration as exc:
+        raise ManagedSkillValidationError(
+            f"repository managed Skill does not exist: {name}"
+        ) from exc
+
+
 @dataclass(frozen=True)
 class RepositoryManagedSkillImport:
     name: str
@@ -185,7 +199,7 @@ class RepositoryManagedSkillExport:
 
 
 def import_repository_managed_skills(
-    store: "AutoReplyStore",
+    store: "AutoReplyStore", *, upgrade_existing_runtime: bool = True,
 ) -> tuple[RepositoryManagedSkillImport, ...]:
     """Import only this service's bundled repository Skills once.
 
@@ -195,11 +209,11 @@ def import_repository_managed_skills(
     scans global agent, plugin, or runtime directories.
     """
     with store.managed_skill_baseline_initialization_lock():
-        return _import_repository_managed_skills_locked(store)
+        return _import_repository_managed_skills_locked(store, upgrade_existing_runtime=upgrade_existing_runtime)
 
 
 def _import_repository_managed_skills_locked(
-    store: "AutoReplyStore",
+    store: "AutoReplyStore", *, upgrade_existing_runtime: bool = True,
 ) -> tuple[RepositoryManagedSkillImport, ...]:
     """Reconcile one complete baseline while the store lock is held."""
     imported: list[tuple[str, ManagedSkillRevision]] = []
@@ -208,12 +222,18 @@ def _import_repository_managed_skills_locked(
         existing = store.get_managed_skill_by_name(name)
         if existing is not None:
             revisions = store.list_managed_skill_revisions(existing.id)
-            if name != EMAIL_CLASSIFIER_SKILL_NAME:
-                if any(
-                    revision.source == REPOSITORY_IMPORT_SOURCE
-                    for revision in revisions
-                ):
-                    baseline.append((name, revisions[-1]))
+            repository_revisions = tuple(
+                revision for revision in revisions
+                if revision.source == REPOSITORY_IMPORT_SOURCE
+            )
+            if not repository_revisions:
+                if name != EMAIL_CLASSIFIER_SKILL_NAME:
+                    continue
+                revision = store.create_managed_skill_revision(
+                    existing.id, content, source=REPOSITORY_IMPORT_SOURCE
+                )
+                imported.append((name, revision))
+                baseline.append((name, revision))
                 continue
             expected_digest = validate_managed_skill_content(name, content)
             exact_repository_revision = next(
@@ -227,7 +247,7 @@ def _import_repository_managed_skills_locked(
                 None,
             )
             if exact_repository_revision is not None:
-                baseline.append((name, exact_repository_revision))
+                baseline.append((name, revisions[-1] if len(repository_revisions) != len(revisions) else exact_repository_revision))
                 continue
             exact_repository_revision = store.create_managed_skill_revision(
                 existing.id,
@@ -235,7 +255,7 @@ def _import_repository_managed_skills_locked(
                 source=REPOSITORY_IMPORT_SOURCE,
             )
             imported.append((name, exact_repository_revision))
-            baseline.append((name, exact_repository_revision))
+            baseline.append((name, revisions[-1] if len(repository_revisions) != len(revisions) else exact_repository_revision))
             continue
         skill = store.create_managed_skill(name, name)
         revision = store.create_managed_skill_revision(
@@ -312,7 +332,7 @@ def _import_repository_managed_skills_locked(
             or not classifier_binding.enabled
             or classifier_binding.purpose != "email_classification"
         )
-        if classifier_upgrade_required:
+        if classifier_upgrade_required and upgrade_existing_runtime:
             assert classifier is not None
             next_load_order = (
                 max((binding.load_order for binding in bindings), default=-1) + 1
