@@ -1405,6 +1405,66 @@ def test_network_policy_allows_only_same_google_provider_redirect() -> None:
         )
 
 
+def test_redirected_google_resources_are_not_checked_as_document_navigation() -> None:
+    addresses = lambda _host, _port: ("142.250.72.14",)
+    policy = BrowserNetworkPolicy(
+        allowed_origins=frozenset({"https://c.gle"}),
+        resolver=addresses,
+    )
+
+    class Request:
+        def __init__(self, url: str, navigation: bool) -> None:
+            self.url = url
+            self._navigation = navigation
+
+        def is_navigation_request(self) -> bool:
+            return self._navigation
+
+    class Response:
+        def __init__(self, url: str) -> None:
+            self.url = url
+            self.headers = {}
+
+    class Route:
+        def __init__(self, response: Response) -> None:
+            self.response = response
+            self.fulfilled = False
+            self.aborted = False
+
+        def fetch(self, **_kwargs):
+            return self.response
+
+        def fulfill(self, **_kwargs):
+            self.fulfilled = True
+
+        def abort(self):
+            self.aborted = True
+
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser.network_policy = policy
+    browser.timeout_ms = 500
+    browser._provider_redirect_origins = {
+        "https://myaccount.google.com:443": "https://c.gle/workspace-unsubscribe"
+    }
+    browser._provider_root_source = "https://c.gle/workspace-unsubscribe"
+
+    resource_route = Route(Response("https://ssl.gstatic.com/account.css"))
+    browser._guard_request(
+        resource_route,
+        Request("https://myaccount.google.com/account.css", navigation=False),
+    )
+    assert resource_route.fulfilled is True
+    assert resource_route.aborted is False
+
+    navigation_route = Route(Response("https://myaccount.google.com/continue"))
+    browser._guard_request(
+        navigation_route,
+        Request("https://myaccount.google.com/continue", navigation=True),
+    )
+    assert navigation_route.fulfilled is True
+    assert navigation_route.aborted is False
+
+
 def test_no_reliable_browser_entry_is_skipped_without_calling_browser(
     tmp_path: Path,
 ) -> None:

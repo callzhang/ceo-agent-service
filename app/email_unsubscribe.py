@@ -617,6 +617,11 @@ def _canonical_origin(value: str) -> str:
     return f"{scheme}://{rendered_host}:{port}"
 
 
+def _url_origin(value: str) -> str:
+    parsed = urlsplit(value)
+    return _canonical_origin(f"{parsed.scheme}://{parsed.netloc}")
+
+
 def _default_resolve_host(host: str, port: int) -> tuple[str, ...]:
     return tuple(
         sorted(
@@ -1563,14 +1568,22 @@ class PlaywrightUnsubscribeBrowser:
 
     def _guard_request(self, route: object, request: object) -> None:
         try:
-            request_origin = _canonical_origin(request.url)
+            request_origin = _url_origin(request.url)
             redirect_source = self._provider_redirect_origins.get(request_origin)
+            is_navigation = request.is_navigation_request()
             provider_resource = False
             if redirect_source is not None:
-                self.network_policy.validate_provider_redirect(
-                    redirect_source,
-                    request.url,
-                )
+                if is_navigation:
+                    self.network_policy.validate_provider_redirect(
+                        redirect_source,
+                        request.url,
+                    )
+                else:
+                    self.network_policy.validate_provider_resource(
+                        self._provider_root_source,
+                        request.url,
+                    )
+                    provider_resource = True
             else:
                 try:
                     self.network_policy.validate_url(request.url)
@@ -1590,6 +1603,11 @@ class PlaywrightUnsubscribeBrowser:
                 )
             elif redirect_source is None:
                 self.network_policy.validate_url(response.url)
+            elif not is_navigation:
+                self.network_policy.validate_provider_resource(
+                    self._provider_root_source,
+                    response.url,
+                )
             else:
                 self.network_policy.validate_provider_redirect(
                     redirect_source,
@@ -1604,7 +1622,7 @@ class PlaywrightUnsubscribeBrowser:
                     root_source = redirect_source or request.url
                     self.network_policy.validate_provider_redirect(root_source, target)
                     self._provider_redirect_origins[
-                        _canonical_origin(target)
+                        _url_origin(target)
                     ] = root_source
                     self._provider_root_source = root_source
         except Exception:
