@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import tempfile
 from dataclasses import dataclass
@@ -570,6 +571,40 @@ def resolve_pending_runtime_skills(
             },
         )
         return snapshot
+
+
+def runtime_skill_snapshot_for_process(
+    store: "AutoReplyStore",
+    *,
+    pid: int,
+) -> RuntimeSkillSnapshot | None:
+    """Rebuild only the exact managed revisions proven loaded by one process."""
+
+    receipt = store.latest_runtime_skill_load_receipt_for_pid(pid)
+    if receipt is None or receipt.error:
+        return None
+    try:
+        loaded = json.loads(receipt.loaded_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    revisions: list[ManagedSkillRevision] = []
+    expected: dict[str, str] = {}
+    for binding in store.list_runtime_skill_bindings(receipt.config_id):
+        if not binding.enabled:
+            continue
+        revision = store.get_managed_skill_revision(binding.revision_id)
+        if revision is None or revision.skill_id != binding.skill_id:
+            return None
+        revisions.append(revision)
+        expected[str(binding.skill_id)] = revision.sha256
+    if loaded != expected:
+        return None
+    return RuntimeSkillSnapshot(
+        config_id=receipt.config_id,
+        revisions=tuple(revisions),
+    )
 
 
 def validate_managed_skill_content(name: str, content: str) -> str:
