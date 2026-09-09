@@ -2752,11 +2752,15 @@ class PlaywrightUnsubscribeBrowser:
                     visible_text=visible,
                 )
             if operation.kind is UnsubscribeOperationKind.OPEN_ENTRY:
-                self.page.goto(
-                    self._validate_navigation_target(private_url),
-                    wait_until="domcontentloaded",
-                    timeout=self.timeout_ms,
-                )
+                try:
+                    self.page.goto(
+                        self._validate_navigation_target(private_url),
+                        wait_until="domcontentloaded",
+                        timeout=self.timeout_ms,
+                    )
+                except Exception:
+                    self._raise_if_blocked()
+                    raise
                 self._raise_if_blocked()
                 self._document_url = self._validate_navigation_target(
                     getattr(self.page, "url")

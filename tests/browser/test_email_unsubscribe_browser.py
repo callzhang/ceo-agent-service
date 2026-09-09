@@ -1818,6 +1818,7 @@ def test_unapproved_redirect_and_subresources_are_blocked_before_request(
             context.close()
 
     assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert result.error_code == "email_unsubscribe_browser_network_rejected"
     assert _BlockedHandler.requests == []
 
 
