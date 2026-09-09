@@ -39,6 +39,7 @@ def test_wechat_decision_runner_uses_normal_runtime_command(
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
     executor = CapturingExecutor()
     runner = WechatDecisionRunner(workspace=tmp_path, executor=executor)
 

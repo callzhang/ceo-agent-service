@@ -2318,6 +2318,7 @@ def test_console_email_accounts_are_registered_and_keep_classifier_config_global
     }
 
     with _client(tmp_path) as client:
+        configs = client.get("/api/console/email/config").json()["items"]
         config = client.put(
             "/api/console/email/config/work",
             json={
@@ -2328,6 +2329,10 @@ def test_console_email_accounts_are_registered_and_keep_classifier_config_global
                 "enabled": True,
                 "description_version": "work-description-v2",
                 "config_version": "email-config-v2",
+                "expected_current_version": next(
+                    item["config_version"] for item in configs
+                    if item["category_key"] == "work"
+                ),
             },
         )
         created = client.post("/api/console/email/accounts", json=account)
