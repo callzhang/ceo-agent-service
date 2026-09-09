@@ -882,6 +882,20 @@ def _create_service_worker(settings: WorkerSettings, runtime_refresher, runtime_
     )
 
 
+def _service_command_registry(reply_worker, settings: WorkerSettings):
+    """Bind scheduled service commands to the same operations the CLI runs."""
+    from app.agent_cron.commands import ServiceCommandRegistry
+
+    return ServiceCommandRegistry(
+        {
+            "produce-once": lambda: (
+                f"produce-once queued="
+                f"{reply_worker.produce_once(max_tasks=settings.max_batches)}"
+            ),
+        }
+    )
+
+
 def _resolve_service_runtime_skills(
     settings: WorkerSettings, *, pid: int | None = None
 ):
@@ -901,6 +915,7 @@ def run_agent_cron_scheduler_loop(
     dispatcher_wake_event: threading.Event | None = None,
 ) -> None:
     """Run the Cron trigger producer with the service's immutable capabilities."""
+    from app.agent_cron.commands import SERVICE_COMMAND_EXECUTION_KIND
     from app.agent_cron.scheduler import (
         AgentCronScheduler,
         ExecutionTerminalResolverRegistry,
@@ -915,7 +930,10 @@ def run_agent_cron_scheduler_loop(
             "reply_task": lambda execution_id: (
                 (task := store.get_reply_task(int(execution_id))) is not None
                 and task.status in {"done", "failed"}
-            )
+            ),
+            # A service command runs to completion inside its trigger claim,
+            # so a linked command execution is terminal by construction.
+            SERVICE_COMMAND_EXECUTION_KIND: lambda _execution_id: True,
         }),
         dispatcher_wake=(dispatcher_wake_event or wake_event).set,
         tick_observer=lambda tick_at: store.set_service_health_component(
@@ -960,8 +978,12 @@ def run_agent_cron_dispatcher_loop(
         refresh_runtime_capabilities=(runtime_refresher.refresh_expired if runtime_refresher else None),
     )
     options = _scheduled_task_option_service(settings, runtime_skill_snapshot)
+    reply_worker = _create_service_worker(
+        settings, runtime_refresher, runtime_skill_snapshot
+    )
     trigger_consumer = ScheduledTaskTriggerConsumer(
         store=store, option_service=options,
+        commands=_service_command_registry(reply_worker, settings),
     )
     execution_consumer = ScheduledAgentConsumer(
         store=store, option_service=options,
@@ -970,9 +992,6 @@ def run_agent_cron_dispatcher_loop(
             dry_run=settings.dry_run,
             refresh_runtime_capabilities=runtime.refresh_runtime_capabilities,
         ),
-    )
-    reply_worker = _create_service_worker(
-        settings, runtime_refresher, runtime_skill_snapshot
     )
     wechat_consumer: WechatReplyConsumer | None = None
 

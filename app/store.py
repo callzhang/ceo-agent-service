@@ -7,12 +7,14 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from types import MappingProxyType
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -2095,6 +2097,7 @@ class AutoReplyStore:
                     migration_key text,
                     name text not null,
                     prompt text not null,
+                    command text not null default '',
                     cron_expression text not null,
                     timezone text not null,
                     runtime_id text not null,
@@ -4388,12 +4391,24 @@ class AutoReplyStore:
                     "alter table scheduled_tasks add column "
                     "required_runtime_capabilities_json text not null default '[]'"
                 )
+            if "command" not in scheduled_task_columns:
+                db.execute(
+                    "alter table scheduled_tasks add column "
+                    "command text not null default ''"
+                )
             for snapshot_row in db.execute(
                 "select id, snapshot_json from scheduled_task_runs"
             ).fetchall():
                 snapshot_payload = json.loads(str(snapshot_row["snapshot_json"]))
-                if "required_runtime_capabilities" not in snapshot_payload:
-                    snapshot_payload["required_runtime_capabilities"] = []
+                missing_snapshot_fields = {
+                    "required_runtime_capabilities": [],
+                    "command": "",
+                }
+                if any(
+                    field not in snapshot_payload for field in missing_snapshot_fields
+                ):
+                    for field, default in missing_snapshot_fields.items():
+                        snapshot_payload.setdefault(field, default)
                     db.execute(
                         "update scheduled_task_runs set snapshot_json=? where id=?",
                         (
@@ -4981,6 +4996,7 @@ class AutoReplyStore:
             ),
             name=str(row["name"]),
             prompt=str(row["prompt"]),
+            command=str(row["command"]),
             cron_expression=str(row["cron_expression"]),
             timezone_name=str(row["timezone"]),
             runtime_id=str(row["runtime_id"]),
@@ -5008,11 +5024,43 @@ class AutoReplyStore:
     @staticmethod
     def _scheduled_task_columns() -> str:
         return (
-            "id, migration_key, name, prompt, cron_expression, timezone, "
+            "id, migration_key, name, prompt, command, cron_expression, timezone, "
             "runtime_id, runtime_options_json, working_directory, enabled, "
             "required_runtime_capabilities_json, "
             "version, created_at, updated_at, deleted_at"
         )
+
+    @staticmethod
+    def _validate_scheduled_task_execution(
+        *,
+        command: str,
+        prompt: str,
+        runtime_id: str,
+        runtime_options_json: str,
+        required_runtime_capabilities_json: str,
+        working_directory: str,
+        skill_refs: Sequence[ScheduledTaskSkillRef],
+    ) -> None:
+        """A task runs either one service command or one Agent prompt, never both."""
+        if command:
+            agent_fields = (
+                prompt,
+                runtime_id,
+                working_directory,
+                runtime_options_json != "{}",
+                required_runtime_capabilities_json != "[]",
+                tuple(skill_refs),
+            )
+            if any(agent_fields):
+                raise ValueError(
+                    "service command scheduled task must not carry Agent "
+                    "prompt, runtime, working directory, or Skill refs"
+                )
+            return
+        if not prompt:
+            raise ValueError("scheduled task prompt must be nonempty")
+        if not runtime_id:
+            raise ValueError("scheduled task runtime must be nonempty")
 
     @classmethod
     def _replace_scheduled_task_skill_refs(
@@ -5054,33 +5102,35 @@ class AutoReplyStore:
         self,
         *,
         name: str,
-        prompt: str,
+        prompt: str = "",
+        command: str = "",
         cron_expression: str,
         timezone_name: str,
-        runtime_id: str,
-        runtime_options: Mapping[str, object],
+        runtime_id: str = "",
+        runtime_options: Mapping[str, object] = MappingProxyType({}),
         required_runtime_capabilities: Sequence[str] = (),
-        working_directory: str,
-        skill_refs: Sequence[ScheduledTaskSkillRef],
+        working_directory: str = "",
+        skill_refs: Sequence[ScheduledTaskSkillRef] = (),
         enabled: bool = True,
         migration_key: str | None = None,
         now: datetime | None = None,
     ) -> ScheduledTask:
         name = self._require_scheduled_task_text(name, field="scheduled task name")
-        prompt = self._require_scheduled_task_text(
-            prompt, field="scheduled task prompt"
-        )
         cron_expression = self._require_scheduled_task_text(
             cron_expression, field="scheduled task Cron expression"
         )
         timezone_name = self._require_scheduled_task_text(
             timezone_name, field="scheduled task timezone"
         )
-        runtime_id = self._require_scheduled_task_text(
-            runtime_id, field="scheduled task runtime"
-        )
-        if not isinstance(working_directory, str):
-            raise ValueError("scheduled task working directory must be text")
+        for field_name, value in (
+            ("prompt", prompt),
+            ("command", command),
+            ("runtime", runtime_id),
+            ("working directory", working_directory),
+        ):
+            if not isinstance(value, str):
+                raise ValueError(f"scheduled task {field_name} must be text")
+        prompt, command, runtime_id = prompt.strip(), command.strip(), runtime_id.strip()
         if not isinstance(enabled, bool):
             raise ValueError("scheduled task enabled must be a boolean")
         if migration_key is not None:
@@ -5094,6 +5144,15 @@ class AutoReplyStore:
         required_runtime_capabilities_json = canonical_capabilities_json(
             required_runtime_capabilities,
             field="scheduled task required runtime capabilities",
+        )
+        self._validate_scheduled_task_execution(
+            command=command,
+            prompt=prompt,
+            runtime_id=runtime_id,
+            runtime_options_json=runtime_options_json,
+            required_runtime_capabilities_json=required_runtime_capabilities_json,
+            working_directory=working_directory,
+            skill_refs=skill_refs,
         )
         now_value = ensure_utc_datetime(
             now or datetime.now(timezone.utc),
@@ -5113,16 +5172,17 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 insert into scheduled_tasks (
-                    migration_key, name, prompt, cron_expression, timezone,
+                    migration_key, name, prompt, command, cron_expression, timezone,
                     runtime_id, runtime_options_json, working_directory,
                     required_runtime_capabilities_json, enabled, version,
                     created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 """,
                 (
                     migration_key,
                     name,
                     prompt,
+                    command,
                     cron_expression,
                     timezone_name,
                     runtime_id,
@@ -5251,6 +5311,7 @@ class AutoReplyStore:
         expected_version: int,
         name: str | None = None,
         prompt: str | None = None,
+        command: str | None = None,
         cron_expression: str | None = None,
         timezone_name: str | None = None,
         runtime_id: str | None = None,
@@ -5286,12 +5347,9 @@ class AutoReplyStore:
                     if name is not None
                     else current.name
                 ),
-                "prompt": (
-                    self._require_scheduled_task_text(
-                        prompt, field="scheduled task prompt"
-                    )
-                    if prompt is not None
-                    else current.prompt
+                "prompt": prompt.strip() if prompt is not None else current.prompt,
+                "command": (
+                    command.strip() if command is not None else current.command
                 ),
                 "cron_expression": (
                     self._require_scheduled_task_text(
@@ -5308,11 +5366,7 @@ class AutoReplyStore:
                     else current.timezone_name
                 ),
                 "runtime_id": (
-                    self._require_scheduled_task_text(
-                        runtime_id, field="scheduled task runtime"
-                    )
-                    if runtime_id is not None
-                    else current.runtime_id
+                    runtime_id.strip() if runtime_id is not None else current.runtime_id
                 ),
                 "runtime_options_json": (
                     canonical_json_object(
@@ -5336,9 +5390,23 @@ class AutoReplyStore:
                     else current.working_directory
                 ),
             }
-            if not isinstance(updates["working_directory"], str):
-                raise ValueError("scheduled task working directory must be text")
+            for field_name in ("prompt", "command", "runtime_id", "working_directory"):
+                if not isinstance(updates[field_name], str):
+                    raise ValueError(
+                        f"scheduled task {field_name.replace('_', ' ')} must be text"
+                    )
             next_refs = current.skill_refs if skill_refs is None else tuple(skill_refs)
+            self._validate_scheduled_task_execution(
+                command=updates["command"],
+                prompt=updates["prompt"],
+                runtime_id=updates["runtime_id"],
+                runtime_options_json=updates["runtime_options_json"],
+                required_runtime_capabilities_json=(
+                    updates["required_runtime_capabilities_json"]
+                ),
+                working_directory=updates["working_directory"],
+                skill_refs=next_refs,
+            )
             validated_refs = self._validate_scheduled_task_skill_refs(
                 db,
                 next_refs,
@@ -5347,7 +5415,7 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update scheduled_tasks
-                   set name=?, prompt=?, cron_expression=?, timezone=?,
+                   set name=?, prompt=?, command=?, cron_expression=?, timezone=?,
                        runtime_id=?, runtime_options_json=?, working_directory=?,
                        required_runtime_capabilities_json=?,
                        version=version + 1, updated_at=?
@@ -5356,6 +5424,7 @@ class AutoReplyStore:
                 (
                     updates["name"],
                     updates["prompt"],
+                    updates["command"],
                     updates["cron_expression"],
                     updates["timezone"],
                     updates["runtime_id"],
@@ -5376,6 +5445,61 @@ class AutoReplyStore:
                 f"select {self._scheduled_task_columns()} "
                 "from scheduled_tasks where id=?",
                 (task_id,),
+            ).fetchone()
+            assert updated_row is not None
+            return self._scheduled_task_from_row(db, updated_row)
+
+    def adopt_scheduled_task_service_command(
+        self,
+        *,
+        migration_key: str,
+        command: str,
+        now: datetime | None = None,
+    ) -> ScheduledTask | None:
+        """Move a repository seed from its Agent prompt to one service command.
+
+        Name, Cron, timezone, and enabled state are the user's and stay as they
+        are; the Agent prompt, runtime, Skill refs, and working directory are
+        replaced by the command because the seed no longer has an Agent form.
+        """
+        migration_key = self._require_scheduled_task_text(
+            migration_key, field="scheduled task migration key"
+        )
+        command = self._require_scheduled_task_text(
+            command, field="scheduled task command"
+        )
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc), field="scheduled task now"
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if row is None:
+                return None
+            current = self._scheduled_task_from_row(db, row)
+            if current.deleted_at is not None or current.command == command:
+                return current
+            db.execute(
+                """
+                update scheduled_tasks
+                   set command=?, prompt='', runtime_id='', runtime_options_json='{}',
+                       required_runtime_capabilities_json='[]', working_directory='',
+                       version=version + 1, updated_at=?
+                 where id=?
+                """,
+                (command, now_text, current.id),
+            )
+            db.execute(
+                "delete from scheduled_task_skill_refs where scheduled_task_id=?",
+                (current.id,),
+            )
+            updated_row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=?",
+                (current.id,),
             ).fetchone()
             assert updated_row is not None
             return self._scheduled_task_from_row(db, updated_row)

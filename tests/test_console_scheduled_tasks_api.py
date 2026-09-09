@@ -776,3 +776,119 @@ def test_audit_app_reads_only_current_main_pid_runtime_and_skill_receipts(
         "runtime_skill_snapshot_missing"
     )
     assert stale.json()["runtime_options"][0]["unavailable_reason"] == "snapshot_expired"
+
+
+def _command_payload() -> dict[str, object]:
+    return {
+        "name": "检查 DingTalk 消息",
+        "command": "produce-once",
+        "cron_expression": "0 * * * * *",
+        "timezone_name": "Asia/Shanghai",
+        "enabled": True,
+    }
+
+
+def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
+    tmp_path: Path,
+) -> None:
+    client, store, _ids, wakes = _client(tmp_path, include_runtime_snapshot=False)
+
+    with client:
+        created = client.post("/api/console/scheduled-tasks", json=_command_payload())
+        assert created.status_code == 201, created.json()
+        item = created.json()["item"]
+        task_id = item["id"]
+        disabled = client.post(
+            f"/api/console/scheduled-tasks/{task_id}/disable",
+            json={"version": item["version"]},
+        )
+        enabled = client.post(
+            f"/api/console/scheduled-tasks/{task_id}/enable",
+            json={"version": disabled.json()["item"]["version"]},
+        )
+        run = client.post(f"/api/console/scheduled-tasks/{task_id}/run")
+        detail = client.get(f"/api/console/scheduled-tasks/{task_id}")
+        options = client.get("/api/console/scheduled-task-options")
+
+    assert item["command"] == "produce-once"
+    assert item["prompt"] == "" and item["runtime_id"] == ""
+    assert item["skill_refs"] == [] and item["required_runtime_capabilities"] == []
+    assert disabled.status_code == 200 and enabled.status_code == 200
+    assert enabled.json()["item"]["enabled"] is True
+    assert run.status_code == 201 and wakes == ["wake"]
+    assert run.json()["item"]["snapshot"]["command"] == "produce-once"
+    assert detail.json()["item"]["recent_run"]["snapshot"]["command"] == "produce-once"
+    assert options.json()["service_command_options"] == [
+        {
+            "name": "produce-once",
+            "description": (
+                "增量读取 DingTalk 未读消息，去重后写入 reply task，"
+                "由统一 Dispatcher 继续消费。"
+            ),
+        }
+    ]
+    assert store.get_scheduled_task(task_id).command == "produce-once"
+
+
+def test_service_command_task_rejects_agent_fields_and_unknown_commands(
+    tmp_path: Path,
+) -> None:
+    client, _store, ids, _wakes = _client(tmp_path)
+    mixed = {**_command_payload(), "prompt": "also an Agent prompt"}
+    with_runtime = {**_command_payload(), "runtime_id": "codex_oauth"}
+    with_refs = {**_command_payload(), "skill_refs": _create_payload(ids)["skill_refs"]}
+    unknown = {**_command_payload(), "command": "scan-oa-approvals"}
+    agent_without_runtime = {**_create_payload(ids), "runtime_id": ""}
+
+    with client:
+        responses = [
+            client.post("/api/console/scheduled-tasks", json=payload)
+            for payload in (mixed, with_runtime, with_refs, unknown, agent_without_runtime)
+        ]
+
+    assert [response.status_code for response in responses] == [422] * 5
+    assert all(response.json()["code"] == "validation_error" for response in responses)
+    assert "must not carry" in responses[0].json()["message"]
+    assert "service_command_not_registered" in responses[3].json()["message"]
+    assert "runtime must be nonempty" in responses[4].json()["message"]
+
+
+def test_repository_seeded_service_command_is_immutable_through_the_api(
+    tmp_path: Path,
+) -> None:
+    client, store, ids, _wakes = _client(tmp_path)
+    seeded = store.create_scheduled_task(
+        migration_key="dingtalk-message-check-v1",
+        name="检查 DingTalk 消息",
+        command="produce-once",
+        cron_expression="0 * * * * *",
+        timezone_name="Asia/Shanghai",
+        enabled=True,
+        now=NOW,
+    )
+    renamed = {
+        **_command_payload(),
+        "name": "每两分钟检查消息",
+        "cron_expression": "0 */2 * * * *",
+        "version": seeded.version,
+    }
+    switched = {
+        **renamed,
+        "command": "",
+        "prompt": "改成 Agent",
+        "runtime_id": "codex_oauth",
+        "skill_refs": _create_payload(ids)["skill_refs"],
+    }
+
+    with client:
+        accepted = client.put(f"/api/console/scheduled-tasks/{seeded.id}", json=renamed)
+        rejected = client.put(
+            f"/api/console/scheduled-tasks/{seeded.id}",
+            json={**switched, "version": accepted.json()["item"]["version"]},
+        )
+
+    assert accepted.status_code == 200, accepted.json()
+    assert accepted.json()["item"]["name"] == "每两分钟检查消息"
+    assert accepted.json()["item"]["command"] == "produce-once"
+    assert rejected.status_code == 422
+    assert "service command is immutable" in rejected.json()["message"]

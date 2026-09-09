@@ -11,6 +11,11 @@ import pytest
 
 from app.cli import build_parser
 import app.managed_skills as managed_skills_module
+from app.agent_cron.commands import (
+    SERVICE_COMMAND_EXECUTION_KIND,
+    ServiceCommandRegistry,
+)
+from app.agent_cron.models import ScheduledTaskSkillRef
 from app.agent_cron.options import ScheduledTaskOptionService
 from app.agent_cron.consumer import ScheduledTaskTriggerConsumer
 from app.agent_cron.scheduler import AgentCronScheduler, ExecutionTerminalResolverRegistry
@@ -130,7 +135,6 @@ def _options(
 
 LOCAL_PRODUCER_KEYS = frozenset(
     {
-        "dingtalk-message-check-v1",
         "dingtalk-meeting-check-v1",
         "wechat-message-check-v1",
         "dingtalk-oa-check-v1",
@@ -167,7 +171,7 @@ def test_local_producer_seeds_require_local_runtime_surface(
         task for task in tasks if task.migration_key in LOCAL_PRODUCER_KEYS
     )
 
-    assert len(producers) == 6
+    assert len(producers) == 5
     assert all(task.enabled for task in producers)
     assert {task.runtime_id for task in producers} == {runtime_id}
     assert all(
@@ -203,7 +207,7 @@ def test_friday_only_keeps_local_producer_seeds_visible_and_disabled(
         task for task in tasks if task.migration_key in LOCAL_PRODUCER_KEYS
     )
 
-    assert len(producers) == 6
+    assert len(producers) == 5
     assert all(not task.enabled for task in producers)
     assert {task.runtime_id for task in producers} == {"friday_runtime"}
     assert all("missing_capabilities" in task.prompt for task in producers)
@@ -232,13 +236,13 @@ def test_reseeding_preserves_edits_but_disables_existing_friday_producer(
         seed_scheduled_tasks(
             store=store, options=options, working_directory=tmp_path, now=NOW
         ),
-        "dingtalk-message-check-v1",
+        "dingtalk-oa-check-v1",
     )
     edited = store.update_scheduled_task(
         original.id,
         expected_version=original.version,
-        name="我的消息 producer",
-        prompt="保留我的精确执行描述 $ceo-message-triage $dingtalk-chat",
+        name="我的 OA producer",
+        prompt="保留我的精确执行描述 $dingtalk-oa-approval",
         runtime_id="friday_runtime",
         runtime_options={"model": "default"},
         required_runtime_capabilities=(),
@@ -252,7 +256,7 @@ def test_reseeding_preserves_edits_but_disables_existing_friday_producer(
             working_directory=tmp_path / "different",
             now=NOW + timedelta(minutes=2),
         ),
-        "dingtalk-message-check-v1",
+        "dingtalk-oa-check-v1",
     )
 
     assert repeated.name == edited.name
@@ -273,18 +277,18 @@ def test_startup_seed_leaves_deleted_legacy_producer_exactly_unchanged(
         tmp_path,
         store,
         healthy_routes={"codex_oauth"},
-        operation_skills=("dingtalk-chat",),
+        operation_skills=("dingtalk-oa-approval",),
     )
     original = _task_by_key(
         seed_scheduled_tasks(
             store=store, options=options, working_directory=tmp_path, now=NOW
         ),
-        "dingtalk-message-check-v1",
+        "dingtalk-oa-check-v1",
     )
     legacy = store.update_scheduled_task(
         original.id,
         expected_version=original.version,
-        name="用户删除的旧消息任务",
+        name="用户删除的旧 OA 任务",
         prompt="保留用户修改后的旧 Prompt",
         runtime_id="legacy-user-runtime",
         runtime_options={"model": "legacy-user-model"},
@@ -307,7 +311,7 @@ def test_startup_seed_leaves_deleted_legacy_producer_exactly_unchanged(
     )
 
     after = store.list_scheduled_tasks(include_deleted=True)
-    preserved = _task_by_key(after, "dingtalk-message-check-v1")
+    preserved = _task_by_key(after, "dingtalk-oa-check-v1")
     assert len(after) == len(before)
     assert preserved == deleted
     assert preserved.deleted_at == NOW + timedelta(minutes=2)
@@ -317,9 +321,9 @@ def test_startup_seed_leaves_deleted_legacy_producer_exactly_unchanged(
     assert preserved.runtime_id == legacy.runtime_id
     assert preserved.runtime_options == legacy.runtime_options
     assert preserved.skill_refs == legacy.skill_refs
-    assert _task_by_key(seeded, "dingtalk-message-check-v1") == deleted
+    assert _task_by_key(seeded, "dingtalk-oa-check-v1") == deleted
     assert all(
-        task.migration_key != "dingtalk-message-check-v1"
+        task.migration_key != "dingtalk-oa-check-v1"
         for task in store.list_scheduled_tasks()
     )
 
@@ -332,18 +336,18 @@ def test_startup_seed_backfills_active_legacy_producer_capabilities(
         tmp_path,
         store,
         healthy_routes={"codex_oauth"},
-        operation_skills=("dingtalk-chat",),
+        operation_skills=("dingtalk-oa-approval",),
     )
     original = _task_by_key(
         seed_scheduled_tasks(
             store=store, options=options, working_directory=tmp_path, now=NOW
         ),
-        "dingtalk-message-check-v1",
+        "dingtalk-oa-check-v1",
     )
     legacy = store.update_scheduled_task(
         original.id,
         expected_version=original.version,
-        name="用户保留的旧消息任务",
+        name="用户保留的旧 OA 任务",
         required_runtime_capabilities=(),
         now=NOW + timedelta(minutes=1),
     )
@@ -355,7 +359,7 @@ def test_startup_seed_backfills_active_legacy_producer_capabilities(
         now=NOW + timedelta(minutes=2),
     )
 
-    updated = _task_by_key(seeded, "dingtalk-message-check-v1")
+    updated = _task_by_key(seeded, "dingtalk-oa-check-v1")
     assert updated.id == legacy.id
     assert updated.version == legacy.version + 1
     assert updated.name == legacy.name
@@ -384,17 +388,105 @@ def test_seed_creates_dingtalk_message_check_every_minute(tmp_path: Path) -> Non
     assert task.name == "检查 DingTalk 消息"
     assert task.cron_expression == "0 * * * * *"
     assert task.timezone_name == "Asia/Shanghai"
-    assert task.runtime_id == "codex_oauth"
+    assert task.command == "produce-once"
     assert task.enabled is True
-    assert [(ref.skill_source, ref.skill_name) for ref in task.skill_refs] == [
-        ("managed", "ceo-message-triage"),
-        ("operation", "dingtalk-chat"),
-    ]
-    assert "$ceo-message-triage" in task.prompt
-    assert "$dingtalk-chat" in task.prompt
-    assert f"`{_cli_command(store, tmp_path, 'produce-once')}`" in task.prompt
-    assert "只执行一次" in task.prompt
-    assert "不要直接回复" in task.prompt
+    assert task.prompt == "" and task.runtime_id == "" and task.skill_refs == ()
+    assert task.runtime_options == {} and task.required_runtime_capabilities == ()
+    assert task.working_directory == ""
+
+
+def _legacy_message_agent_task(store, options, tmp_path, *, enabled=True):
+    dingtalk_chat = next(
+        item for item in options.list_operation_skill_options()
+        if item.name == "dingtalk-chat"
+    )
+    assert dingtalk_chat.available
+    return store.create_scheduled_task(
+        migration_key="dingtalk-message-check-v1",
+        name="用户改名的消息检查",
+        prompt=(
+            "使用 $dingtalk-chat 理解现有消息发现边界。只执行一次确定性 producer 命令："
+            f"`{_cli_command(store, tmp_path, 'produce-once')}`。"
+        ),
+        cron_expression="0 */2 * * * *",
+        timezone_name="Asia/Shanghai",
+        runtime_id="codex_oauth",
+        runtime_options={"model": "gpt-5.6-sol"},
+        required_runtime_capabilities=sorted(LOCAL_SERVICE_RUNTIME_CAPABILITIES),
+        working_directory=str(tmp_path),
+        skill_refs=(
+            ScheduledTaskSkillRef(
+                skill_source="operation", skill_name="dingtalk-chat", position=0
+            ),
+        ),
+        enabled=enabled,
+        now=NOW,
+    )
+
+
+def test_startup_seed_moves_legacy_agent_message_check_to_the_service_command(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "legacy-message-agent.sqlite3")
+    options = _options(
+        tmp_path, store, healthy_routes={"codex_oauth"}, operation_skills=("dingtalk-chat",)
+    )
+    legacy = _legacy_message_agent_task(store, options, tmp_path, enabled=False)
+
+    seeded = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path,
+            now=NOW + timedelta(minutes=1),
+        ),
+        "dingtalk-message-check-v1",
+    )
+
+    assert seeded.id == legacy.id
+    assert seeded.version == legacy.version + 1
+    assert seeded.command == "produce-once"
+    assert seeded.prompt == "" and seeded.runtime_id == "" and seeded.skill_refs == ()
+    assert seeded.required_runtime_capabilities == ()
+    assert seeded.working_directory == ""
+    assert seeded.name == legacy.name
+    assert seeded.cron_expression == "0 */2 * * * *"
+    assert seeded.enabled is False
+    assert store.list_scheduled_tasks(include_deleted=True).count(seeded) == 1
+    again = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path,
+            now=NOW + timedelta(minutes=2),
+        ),
+        "dingtalk-message-check-v1",
+    )
+    assert again == seeded
+
+
+def test_startup_seed_leaves_deleted_legacy_message_check_unchanged(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "deleted-message-agent.sqlite3")
+    options = _options(
+        tmp_path, store, healthy_routes={"codex_oauth"}, operation_skills=("dingtalk-chat",)
+    )
+    legacy = _legacy_message_agent_task(store, options, tmp_path)
+    deleted = store.delete_scheduled_task(
+        legacy.id, expected_version=legacy.version, now=NOW + timedelta(minutes=1)
+    )
+
+    seeded = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path,
+            now=NOW + timedelta(minutes=2),
+        ),
+        "dingtalk-message-check-v1",
+    )
+
+    assert seeded == deleted
+    assert seeded.command == "" and seeded.prompt == legacy.prompt
+    assert all(
+        task.migration_key != "dingtalk-message-check-v1"
+        for task in store.list_scheduled_tasks()
+    )
 
 
 def test_seed_creates_meeting_check_with_fixed_ten_minute_eligibility(
@@ -580,8 +672,12 @@ def test_non_wechat_seed_commands_are_registered_one_shot_cli_entries(
     tasks = seed_scheduled_tasks(
         store=store, options=options, working_directory=tmp_path, now=NOW
     )
+    message_check = _task_by_key(tasks, "dingtalk-message-check-v1")
+    assert message_check.command == "produce-once"
+    assert build_parser().parse_args(
+        ["produce-once", "--db", str(store.path), "--workspace", str(tmp_path)]
+    ).command == "produce-once"
     expected = {
-        "dingtalk-message-check-v1": "produce-once",
         "dingtalk-meeting-check-v1": "scan-meetings-once",
         "dingtalk-oa-check-v1": "scan-oa-approvals",
         "work-source-scan-daily-v1": "scan-task-sources",
@@ -657,8 +753,12 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
 
     assert scheduler.tick(due_at) == len(tasks)
     adapter = ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: False)
+    produced: list[str] = []
     consumer = ScheduledTaskTriggerConsumer(
-        store=store, option_service=options, now=lambda: due_at
+        store=store, option_service=options, now=lambda: due_at,
+        commands=ServiceCommandRegistry(
+            {"produce-once": lambda: produced.append("produce-once") or "queued=0"}
+        ),
     )
     for _task in tasks:
         envelope = adapter.claim(
@@ -672,6 +772,7 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
             adapter=adapter, envelope=envelope, owner="seed-dispatch"
         )
         consumer(envelope, guard)
+    assert produced == ["produce-once"]
     for task in tasks:
         runs = store.list_scheduled_task_runs(task.id)
         assert len(runs) == 1
@@ -679,11 +780,16 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         dispatched = store.get_scheduled_task_run(run.id)
         assert dispatched is not None
         assert dispatched.dispatch_status == "dispatched"
+        if task.command:
+            assert dispatched.execution_kind == SERVICE_COMMAND_EXECUTION_KIND
+            assert dispatched.execution_id == task.command
+            continue
         reply = store.get_reply_task(int(dispatched.execution_id))
         assert reply is not None
         assert reply.channel == "scheduled"
         assert reply.trigger_text == task.prompt
         assert task.name in reply.trigger_message_json
+    assert len(store.list_reply_tasks(channel="scheduled")) == len(tasks) - 1
 
 
 def test_seed_creates_daily_minutes_task_with_healthy_runtime_and_exact_revision(
@@ -881,8 +987,11 @@ def test_all_proactive_seeds_stay_visible_and_disabled_without_healthy_runtime(
     )
 
     assert len(tasks) == 7
-    assert all(not task.enabled for task in tasks)
-    assert all("没有健康且已配置的 Runtime" in task.prompt for task in tasks)
+    agent_tasks = [task for task in tasks if not task.command]
+    assert len(agent_tasks) == 6
+    assert all(not task.enabled for task in agent_tasks)
+    assert all("没有健康且已配置的 Runtime" in task.prompt for task in agent_tasks)
+    assert _task_by_key(tasks, "dingtalk-message-check-v1").enabled is True
     assert all(store.list_scheduled_task_runs(task.id) == () for task in tasks)
 
 

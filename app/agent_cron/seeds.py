@@ -19,6 +19,7 @@ from app.store import AutoReplyStore
 
 MINUTES_SYNC_MIGRATION_KEY = "ceo-minutes-sync-daily-v1"
 DINGTALK_MESSAGE_MIGRATION_KEY = "dingtalk-message-check-v1"
+DINGTALK_MESSAGE_SERVICE_COMMAND = "produce-once"
 PRODUCER_RUNTIME_CAPABILITIES = LOCAL_SERVICE_RUNTIME_CAPABILITIES
 
 
@@ -112,55 +113,28 @@ def _seed_dingtalk_message_task(
     working_directory: Path,
     now: datetime | None,
 ) -> ScheduledTask:
-    existing = _existing_task(
-        store,
-        DINGTALK_MESSAGE_MIGRATION_KEY,
-        options=options,
-        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    """Seed the DingTalk message check as a service command, not an Agent task.
+
+    The check is one deterministic producer pass, so it runs in-process without
+    a runtime or Skills.  A task seeded earlier in the Agent form is moved to
+    the command form in place; its name, Cron, timezone, and enabled state are
+    kept.
+    """
+    del options, working_directory
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
+        command=DINGTALK_MESSAGE_SERVICE_COMMAND,
         now=now,
     )
-    if existing is not None:
-        return existing
-    runtime, runtime_reason = _select_runtime(
-        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
-    )
-    managed_ref, managed_reason = _managed_ref(
-        store=store,
-        options=options,
-        name="ceo-message-triage",
-        position=0,
-    )
-    operation_ref, operation_reason = _operation_ref(
-        options=options,
-        name="dingtalk-chat",
-        position=1,
-    )
-    command = _one_shot_command(store, working_directory, "produce-once")
-    prompt = (
-        "使用 $ceo-message-triage 与 $dingtalk-chat 理解现有消息发现边界。"
-        f"只执行一次确定性 producer 命令：`{command}`。"
-        "该命令负责增量读取、去重并写入 reply task，后续由统一 Dispatcher 消费；"
-        "不要直接回复、重复消费、新增复盘或摘要任务。"
-    )
-    reasons = tuple(
-        reason
-        for reason in (runtime_reason, managed_reason, operation_reason)
-        if reason is not None
-    )
-    if reasons:
-        prompt += "\n\n未启用：" + "；".join(reasons) + "。"
+    if adopted is not None:
+        return adopted
     return store.create_scheduled_task(
         migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
         name="检查 DingTalk 消息",
-        prompt=prompt,
+        command=DINGTALK_MESSAGE_SERVICE_COMMAND,
         cron_expression="0 * * * * *",
         timezone_name="Asia/Shanghai",
-        runtime_id=runtime.route_name,
-        runtime_options={"model": runtime.model},
-        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
-        working_directory=str(working_directory.expanduser().resolve()),
-        skill_refs=(managed_ref, operation_ref),
-        enabled=not reasons,
+        enabled=True,
         now=now,
     )
 

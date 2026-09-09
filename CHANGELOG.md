@@ -1,5 +1,22 @@
 # Changelog
 
+- 2026-09-09: run the DingTalk message check as a service command instead of an
+  Agent task. A scheduled task now has a `command` field (schema adds
+  `scheduled_tasks.command` and backfills persisted run snapshots). A command
+  task names one entry of the service command catalog (`produce-once`, the same
+  operation as `app.cli produce-once`); the Dispatcher runs it in-process inside
+  the trigger claim and links `service_command` as the trigger execution
+  (`dispatched`), or ends the trigger `failed` with
+  `scheduled_task_service_command_failed` in Attention. Command tasks create no
+  reply task, agent run, or reply_attempt, need no Runtime, Skills, or working
+  directory, and are gated before dispatch only by
+  `scheduled_task_service_command_unavailable`. The seeded
+  `dingtalk-message-check-v1` task is converted in place on startup (name,
+  Cron, timezone, and enabled state kept) and its command is immutable through
+  the Console API, which now also lists `service_command_options`. This
+  replaces the migration-key special case that ran the prompt's backtick
+  command as a subprocess and recorded success as `skipped`.
+
 - 2026-09-09: accept `null` as the wire `error_code` for results without an
   error (normalized to the empty string). The fallback model kept returning
   `"error_code": null` even after a correction turn, so the strict string

@@ -8081,3 +8081,17 @@ def test_wechat_loop_pauses_after_reader_reports_app_data_denial(
     assert [error.kind for error in errors] == ["wechat_data_permission_required"]
     assert "producer paused until service restart" in errors[0].detail
     assert sleeps == [3600]
+
+
+def test_service_command_registry_binds_produce_once_to_the_reply_worker() -> None:
+    calls: list[object] = []
+
+    class Worker:
+        def produce_once(self, max_tasks=None):
+            calls.append(max_tasks)
+            return 3
+
+    registry = cli._service_command_registry(Worker(), SimpleNamespace(max_batches=7))
+
+    assert registry.run("produce-once") == "produce-once queued=3"
+    assert calls == [7]

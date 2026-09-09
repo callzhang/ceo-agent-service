@@ -3,19 +3,26 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 import json
-import re
-import shlex
-import subprocess
+import logging
 from typing import Protocol
 
+from app.agent_cron.commands import (
+    SERVICE_COMMAND_EXECUTION_KIND,
+    ServiceCommandRegistry,
+)
 from app.agent_cron.context import (
     ScheduledAgentContext,
     ScheduledAgentContextBuilder,
     validate_scheduled_execution_availability,
 )
+from app.agent_cron.models import ScheduledTaskRun
 from app.agent_cron.scheduler import EXECUTION_UNAVAILABLE
 from app.dispatcher.models import ClaimGuard, DispatchEnvelope
 from app.store import AutoReplyStore, ReplyTask
+
+
+SERVICE_COMMAND_FAILED = "scheduled_task_service_command_failed"
+logger = logging.getLogger(__name__)
 
 
 class ScheduledOrchestrator(Protocol):
@@ -23,11 +30,19 @@ class ScheduledOrchestrator(Protocol):
 
 
 class ScheduledTaskTriggerConsumer:
-    """Convert a Cron trigger into one execution source and finish the trigger."""
+    """Finish a Cron trigger: run its service command, or create its Agent input."""
 
-    def __init__(self, *, store: AutoReplyStore, option_service, now=None) -> None:
+    def __init__(
+        self,
+        *,
+        store: AutoReplyStore,
+        option_service,
+        commands: ServiceCommandRegistry,
+        now=None,
+    ) -> None:
         self._store = store
         self._builder = ScheduledAgentContextBuilder(option_service)
+        self._commands = commands
         self._now = now or (lambda: datetime.now(UTC))
 
     def __call__(self, envelope: DispatchEnvelope, guard: ClaimGuard) -> None:
@@ -36,35 +51,8 @@ class ScheduledTaskTriggerConsumer:
         run = self._store.get_scheduled_task_run(int(envelope.source_id))
         if run is None:
             raise ValueError("scheduled task run does not exist")
-        task = self._store.get_scheduled_task(run.scheduled_task_id)
-        if task is not None and task.migration_key in {
-            "dingtalk-message-check-v1",
-            "wechat-message-check-v1",
-        }:
-            # These Cron entries are service producers: the service performs the
-            # deterministic incremental read, and only newly queued business
-            # messages reach an Agent through the normal Dispatcher.
-            match = re.search(r"`([^`]+)`", task.prompt)
-            if match is None:
-                raise ValueError("producer command is missing")
-            command = match.group(1)
-            completed = subprocess.run(
-                shlex.split(command), cwd=task.working_directory,
-                capture_output=True, text=True, timeout=300, check=False,
-            )
-            if completed.returncode != 0:
-                reason = f"producer_failed:{completed.returncode}"
-                self._store.finish_scheduled_task_dispatch(
-                    run.id, owner=guard.token.owner,
-                    status="failed", reason=reason, now=now,
-                )
-                guard.accept_atomic_source_completion()
-                return
-            self._store.finish_scheduled_task_dispatch(
-                run.id, owner=guard.token.owner,
-                status="skipped", reason="producer_completed", now=now,
-            )
-            guard.accept_atomic_source_completion()
+        if run.snapshot.command:
+            self._run_service_command(run, guard)
             return
         try:
             built = self._builder.build(run, reply_task_id=0)
@@ -82,6 +70,45 @@ class ScheduledTaskTriggerConsumer:
             execution_context_json=built.to_execution_json(), now=now,
         )
         guard.accept_atomic_source_completion()
+
+    def _run_service_command(self, run: ScheduledTaskRun, guard: ClaimGuard) -> None:
+        """Run the command inside the trigger claim; the trigger is the only fact.
+
+        The command is idempotent, so a claim lost mid-run simply reruns it on
+        the next claim.  Success links the command as the trigger's execution;
+        failure ends the trigger as ``failed`` and raises Attention.
+        """
+        command = run.snapshot.command
+        try:
+            summary = self._commands.run(command)
+        except Exception as exc:  # noqa: BLE001 - the trigger records this failure fact
+            reason = f"{SERVICE_COMMAND_FAILED}: {exc}"
+            self._store.record_error(
+                f"scheduled-task:{run.scheduled_task_id}", run.event_id,
+                SERVICE_COMMAND_FAILED,
+                f"Scheduled task {run.snapshot.task_id} ({run.snapshot.name}) "
+                f"command {command} failed for event {run.event_id}: {exc}",
+            )
+            guard.finish_source(
+                self._now().astimezone(UTC), status="failed", reason=reason,
+            )
+            return
+        now = self._now().astimezone(UTC)
+        self._store.link_scheduled_task_run_execution(
+            run.id, owner=guard.token.owner,
+            execution_kind=SERVICE_COMMAND_EXECUTION_KIND, execution_id=command,
+            now=now,
+        )
+        guard.finish_source(now, status="dispatched")
+        logger.info(
+            "scheduled_task_service_command_completed",
+            extra={
+                "scheduled_task_id": run.scheduled_task_id,
+                "scheduled_task_run_id": run.id,
+                "service_command": command,
+                "service_command_summary": summary,
+            },
+        )
 
 
 class ScheduledAgentConsumer:

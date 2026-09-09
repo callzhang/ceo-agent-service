@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 
+from app.agent_cron.commands import (
+    SERVICE_COMMAND_OPTIONS,
+    ServiceCommandOption,
+    service_command_option,
+)
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
     CredentialMode,
@@ -211,6 +216,15 @@ class ScheduledTaskOptionService:
                 f"managed revision {revision_id}: {option.unavailable_reason}"
             )
         return revision
+
+    def list_service_command_options(self) -> tuple[ServiceCommandOption, ...]:
+        return SERVICE_COMMAND_OPTIONS
+
+    def resolve_service_command(self, name: str) -> ServiceCommandOption:
+        try:
+            return service_command_option(name)
+        except ValueError as exc:
+            raise ScheduledTaskOptionUnavailableError(str(exc)) from exc
 
     def list_operation_skill_options(self) -> tuple[OperationSkillOption, ...]:
         documents, invalid_options = self._read_operation_skill_catalog()

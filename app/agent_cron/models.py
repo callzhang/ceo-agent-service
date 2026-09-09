@@ -184,6 +184,7 @@ class ScheduledTask:
     migration_key: str | None
     name: str
     prompt: str
+    command: str
     cron_expression: str
     timezone_name: str
     runtime_id: str
@@ -218,6 +219,7 @@ class ScheduledTaskSnapshot:
     task_version: int
     name: str
     prompt: str
+    command: str
     cron_expression: str
     timezone_name: str
     runtime_id: str
@@ -247,6 +249,7 @@ class ScheduledTaskSnapshot:
             task_version=task.version,
             name=task.name,
             prompt=task.prompt,
+            command=task.command,
             cron_expression=task.cron_expression,
             timezone_name=task.timezone_name,
             runtime_id=task.runtime_id,
@@ -264,6 +267,7 @@ class ScheduledTaskSnapshot:
             "task_version": self.task_version,
             "name": self.name,
             "prompt": self.prompt,
+            "command": self.command,
             "cron_expression": self.cron_expression,
             "timezone_name": self.timezone_name,
             "runtime_id": self.runtime_id,
@@ -292,6 +296,7 @@ class ScheduledTaskSnapshot:
             "task_version",
             "name",
             "prompt",
+            "command",
             "cron_expression",
             "timezone_name",
             "runtime_id",
@@ -312,6 +317,7 @@ class ScheduledTaskSnapshot:
         text_fields = (
             "name",
             "prompt",
+            "command",
             "cron_expression",
             "timezone_name",
             "runtime_id",
@@ -343,6 +349,7 @@ class ScheduledTaskSnapshot:
             task_version=payload["task_version"],
             name=payload["name"],
             prompt=payload["prompt"],
+            command=payload["command"],
             cron_expression=payload["cron_expression"],
             timezone_name=payload["timezone_name"],
             runtime_id=payload["runtime_id"],

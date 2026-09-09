@@ -55,20 +55,47 @@ class ScheduledTaskRuntimeOptionsPayload(BaseModel):
 
 
 class ScheduledTaskCreatePayload(BaseModel):
+    """One task runs either a service command or an Agent prompt, never both."""
+
     model_config = ConfigDict(extra="forbid", strict=True)
 
     name: str = Field(min_length=1)
-    prompt: str = Field(min_length=1)
+    prompt: str = ""
+    command: str = ""
     cron_expression: str = Field(min_length=1)
     timezone_name: str = Field(min_length=1)
-    runtime_id: str = Field(min_length=1)
+    runtime_id: str = ""
     runtime_options: ScheduledTaskRuntimeOptionsPayload = Field(
         default_factory=ScheduledTaskRuntimeOptionsPayload
     )
     required_runtime_capabilities: list[str] = Field(default_factory=list)
     working_directory: str = ""
     enabled: bool = True
-    skill_refs: list[ScheduledTaskSkillRefPayload] = Field(min_length=1)
+    skill_refs: list[ScheduledTaskSkillRefPayload] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_execution_form(self) -> "ScheduledTaskCreatePayload":
+        if self.command.strip():
+            if (
+                self.prompt.strip()
+                or self.runtime_id.strip()
+                or self.runtime_options.thinking is not None
+                or self.required_runtime_capabilities
+                or self.working_directory.strip()
+                or self.skill_refs
+            ):
+                raise ValueError(
+                    "service command task must not carry prompt, runtime, "
+                    "working directory, or Skill refs"
+                )
+            return self
+        if not self.prompt.strip():
+            raise ValueError("Agent task prompt must be nonempty")
+        if not self.runtime_id.strip():
+            raise ValueError("Agent task runtime must be nonempty")
+        if not self.skill_refs:
+            raise ValueError("Agent task requires at least one Skill ref")
+        return self
 
     @model_validator(mode="after")
     def validate_ref_positions(self) -> "ScheduledTaskCreatePayload":
@@ -134,6 +161,7 @@ def _run_payload(run: ScheduledTaskRun) -> dict[str, object]:
             "task_version": run.snapshot.task_version,
             "name": run.snapshot.name,
             "prompt": run.snapshot.prompt,
+            "command": run.snapshot.command,
             "cron_expression": run.snapshot.cron_expression,
             "timezone_name": run.snapshot.timezone_name,
             "runtime_id": run.snapshot.runtime_id,
@@ -161,6 +189,7 @@ def _task_payload(
         "migration_key": task.migration_key,
         "name": task.name,
         "prompt": task.prompt,
+        "command": task.command,
         "cron_expression": task.cron_expression,
         "timezone_name": task.timezone_name,
         "schedule_description": schedule.describe(),
@@ -210,6 +239,9 @@ def _validate_choices(
     payload: ScheduledTaskCreatePayload,
     service: ScheduledTaskOptionService,
 ) -> None:
+    if payload.command.strip():
+        service.resolve_service_command(payload.command.strip())
+        return
     runtime_options = {
         option.route_name: option for option in service.list_runtime_options()
     }
@@ -321,6 +353,7 @@ def register_scheduled_task_routes(
             task = store_factory().create_scheduled_task(
                 name=payload.name,
                 prompt=payload.prompt,
+                command=payload.command,
                 cron_expression=schedule.expression,
                 timezone_name=schedule.timezone_name,
                 runtime_id=payload.runtime_id,
@@ -373,6 +406,15 @@ def register_scheduled_task_routes(
                 "repository managed task runtime requirements are immutable",
                 422,
             )
+        if (
+            current.migration_key is not None
+            and payload.command.strip() != current.command
+        ):
+            return _error(
+                "validation_error",
+                "repository managed task service command is immutable",
+                422,
+            )
         try:
             schedule = CronSchedule.parse(
                 payload.cron_expression,
@@ -384,6 +426,7 @@ def register_scheduled_task_routes(
                 expected_version=payload.version,
                 name=payload.name,
                 prompt=payload.prompt,
+                command=payload.command,
                 cron_expression=schedule.expression,
                 timezone_name=schedule.timezone_name,
                 runtime_id=payload.runtime_id,
@@ -414,12 +457,15 @@ def register_scheduled_task_routes(
             return current
         if enabled:
             try:
-                option_service_factory().validate_runtime_capabilities(
-                    current.runtime_id,
-                    required_capabilities=frozenset(
-                        current.required_runtime_capabilities
-                    ),
-                )
+                if current.command:
+                    option_service_factory().resolve_service_command(current.command)
+                else:
+                    option_service_factory().validate_runtime_capabilities(
+                        current.runtime_id,
+                        required_capabilities=frozenset(
+                            current.required_runtime_capabilities
+                        ),
+                    )
             except ValueError as exc:
                 return _error("validation_error", str(exc), 422)
         try:
@@ -540,6 +586,9 @@ def register_scheduled_task_routes(
             ),
             "operation_skill_options": json_safe(
                 [asdict(option) for option in service.list_operation_skill_options()]
+            ),
+            "service_command_options": json_safe(
+                [asdict(option) for option in service.list_service_command_options()]
             ),
             "meta": {"snapshot_at": snapshot_at()},
         }

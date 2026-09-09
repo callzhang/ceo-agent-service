@@ -436,6 +436,17 @@ prompt、Skill protocol、route、model、thinking 和 workdir 启动 Agent。ma
 revision；执行前若指定 Runtime、该 revision 或工作目录已经不可用，execution 以 `skipped`
 收口并产生 Attention，绝不 fallback，也不把业务结果写回 trigger。
 
+服务命令任务（`scheduled_tasks.command` 非空）只有第一阶段：`scheduled` adapter 领取 trigger
+后，在同一个 claim 内直接运行服务命令目录中的实现（`produce-once` 即 DingTalk 消息 producer
+的一次增量读取，与 `app.cli produce-once` 相同），成功后把 `execution_kind=service_command`、
+`execution_id=<命令名>` 链接到 trigger 并标记 `dispatched`。该 execution 由构造保证终态，
+下一分钟不会因 `scheduled_task_previous_execution_active` 被跳过；命令仍在运行时 trigger 保持
+`pending`，同一任务不会并行跑第二次。命令抛错时 trigger 以 `failed` 和
+`scheduled_task_service_command_failed: <原因>` 收口并写入 Attention；命令幂等，claim 丢失后的
+重领会直接重跑。命令名不在目录中时 Scheduler 在派发前以
+`scheduled_task_service_command_unavailable` 跳过。服务命令任务不经过 Runtime、Skill、
+Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
+
 同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review 和
 DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
 公平性和容量；Consumer 保持领域边界。主动唤醒之外的有界等待只用于跨进程写入和异常恢复，不是
@@ -443,8 +454,10 @@ DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 cla
 进程/扫描健康与 scheduled run 的业务结果分别展示，空队列不会制造 Agent run。
 
 默认业务生产任务通过稳定 migration key 幂等 seed。钉钉消息、会议、微信 reader、OA、每日工作来源、
-每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）的 `ceo-minutes-sync` 共七项；前六项的旧
-producer timing loops 已移除，由对应 Agent Cron 形成 one-shot 输入。Lark 没有默认 seed。
+每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）的 `ceo-minutes-sync` 共七项；旧的 producer
+timing loops 已移除。钉钉消息检查是服务命令任务；以 Agent 形式创建的旧
+`dingtalk-message-check-v1` 在启动时原地转换为命令形式（保留名称、Cron、时区、启用状态，
+已删除的不动），其余五项由对应 Agent Cron 形成 one-shot 输入。Lark 没有默认 seed。
 内部投递、发送状态确认、错误恢复及 Todo completion follow-up 仍是内部机制，不外化为 Cron。
 
 ### 应用层边界

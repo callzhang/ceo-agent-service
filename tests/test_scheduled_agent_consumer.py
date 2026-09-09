@@ -10,7 +10,12 @@ from types import SimpleNamespace
 import pytest
 
 from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult
+from app.agent_cron.commands import (
+    SERVICE_COMMAND_EXECUTION_KIND,
+    ServiceCommandRegistry,
+)
 from app.agent_cron.consumer import (
+    SERVICE_COMMAND_FAILED,
     ScheduledAgentConsumer,
     ScheduledTaskTriggerConsumer,
     build_scheduled_orchestrator,
@@ -119,13 +124,35 @@ def claim(adapter, source_id, owner):
     return envelope, ClaimGuard(adapter=adapter, envelope=envelope, owner=owner)
 
 
-def dispatch(store, run, options):
+def commands(produce_once=lambda: "produce-once queued=0"):
+    return ServiceCommandRegistry({"produce-once": produce_once})
+
+
+def dispatch(store, run, options, *, registry=None):
     adapter = ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, run.id, "trigger")
-    ScheduledTaskTriggerConsumer(store=store, option_service=options, now=lambda: NOW)(
-        envelope, guard
-    )
+    ScheduledTaskTriggerConsumer(
+        store=store, option_service=options, commands=registry or commands(),
+        now=lambda: NOW,
+    )(envelope, guard)
     return store.get_scheduled_task_run(run.id)
+
+
+def command_task_run(store):
+    task = store.create_scheduled_task(
+        name="Producer", command="produce-once", cron_expression="0 * * * * *",
+        timezone_name="UTC", enabled=True, now=NOW,
+    )
+    return store.create_scheduled_task_run(
+        task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
+    )
+
+
+def error_rows(store):
+    with store._connect() as db:
+        return [dict(row) for row in db.execute(
+            "select conversation_id, message_id, kind, detail from errors order by id"
+        ).fetchall()]
 
 
 def audit(outcome, revision):
@@ -311,14 +338,71 @@ def test_atomic_dispatch_rolls_back_source_link_run_and_ledger_on_interrupt(tmp_
     assert store.list_reply_tasks(channel="scheduled") == [source]
 
 
+def test_command_trigger_runs_in_process_and_never_creates_an_agent_input(tmp_path):
+    store = AutoReplyStore(tmp_path / "command.sqlite3")
+    run = command_task_run(store)
+    calls = []
+
+    def produce_once():
+        calls.append("produce-once")
+        return "produce-once queued=2"
+
+    persisted = dispatch(store, run, None, registry=commands(produce_once))
+
+    assert calls == ["produce-once"]
+    assert persisted.dispatch_status == "dispatched"
+    assert persisted.execution_kind == SERVICE_COMMAND_EXECUTION_KIND
+    assert persisted.execution_id == "produce-once"
+    assert persisted.dispatched_at == NOW
+    assert store.list_reply_tasks(channel="scheduled") == []
+    assert ScheduledExecutionQueueAdapter(store).claim(
+        NOW, owner="execution", owner_pid=42, lease=timedelta(minutes=5)
+    ) is None
+    assert error_rows(store) == []
+    assert ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: False).claim(
+        NOW, owner="again", owner_pid=42, lease=timedelta(minutes=5)
+    ) is None
+
+
+def test_command_trigger_failure_ends_the_trigger_and_raises_attention(tmp_path):
+    store = AutoReplyStore(tmp_path / "command-failed.sqlite3")
+    run = command_task_run(store)
+
+    def produce_once():
+        raise RuntimeError("dws unreachable")
+
+    persisted = dispatch(store, run, None, registry=commands(produce_once))
+
+    assert persisted.dispatch_status == "failed"
+    assert persisted.skip_or_error_reason == (
+        f"{SERVICE_COMMAND_FAILED}: dws unreachable"
+    )
+    assert persisted.execution_kind == "" and persisted.execution_id == ""
+    assert store.list_reply_tasks(channel="scheduled") == []
+    rows = error_rows(store)
+    assert [row["kind"] for row in rows] == [SERVICE_COMMAND_FAILED]
+    assert rows[0]["conversation_id"] == f"scheduled-task:{run.scheduled_task_id}"
+    assert rows[0]["message_id"] == run.event_id
+    assert "produce-once" in rows[0]["detail"] and "dws unreachable" in rows[0]["detail"]
+
+
+def test_command_registry_rejects_bindings_that_do_not_match_the_catalog():
+    with pytest.raises(ValueError, match="match the catalog exactly"):
+        ServiceCommandRegistry({})
+    with pytest.raises(ValueError, match="match the catalog exactly"):
+        ServiceCommandRegistry({"produce-once": lambda: "", "extra": lambda: ""})
+    with pytest.raises(ValueError, match="service_command_not_registered"):
+        commands().run("scan-oa-approvals")
+
+
 def test_preflight_loss_skips_before_source_or_agent_fact(tmp_path):
     store, run, options = fixture(tmp_path)
     options.available = False
     adapter = ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, run.id, "trigger")
-    ScheduledTaskTriggerConsumer(store=store, option_service=options, now=lambda: NOW)(
-        envelope, guard
-    )
+    ScheduledTaskTriggerConsumer(
+        store=store, option_service=options, commands=commands(), now=lambda: NOW
+    )(envelope, guard)
     persisted = store.get_scheduled_task_run(run.id)
     assert persisted.dispatch_status == "skipped"
     assert persisted.execution_id == ""

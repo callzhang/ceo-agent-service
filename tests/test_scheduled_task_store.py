@@ -1010,3 +1010,137 @@ def test_runtime_capability_bridge_is_exactly_scoped_to_process_pid(
     assert store.runtime_capability_snapshots_for_pid(
         ("codex_oauth",), pid=702
     ) == {}
+
+
+def test_command_task_round_trips_and_rejects_mixed_execution_forms(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "command-task.sqlite3")
+
+    task = store.create_scheduled_task(
+        name="Producer",
+        command=" produce-once ",
+        cron_expression="0 * * * * *",
+        timezone_name="Asia/Shanghai",
+        enabled=True,
+        now=NOW,
+    )
+
+    assert task.command == "produce-once"
+    assert task.prompt == "" and task.runtime_id == ""
+    assert task.runtime_options == {} and task.required_runtime_capabilities == ()
+    assert task.working_directory == "" and task.skill_refs == ()
+    run = store.create_scheduled_task_run(
+        task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
+    )
+    assert run.snapshot.command == "produce-once"
+    assert json.loads(run.snapshot.to_json())["command"] == "produce-once"
+    assert ScheduledTaskSnapshot.from_json(run.snapshot.to_json()) == run.snapshot
+
+    with pytest.raises(ValueError, match="must not carry Agent"):
+        store.create_scheduled_task(
+            name="Mixed", command="produce-once", prompt="also an Agent prompt",
+            cron_expression="0 * * * * *", timezone_name="UTC", now=NOW,
+        )
+    with pytest.raises(ValueError, match="must not carry Agent"):
+        store.create_scheduled_task(
+            name="Mixed", command="produce-once", runtime_id="codex_oauth",
+            cron_expression="0 * * * * *", timezone_name="UTC", now=NOW,
+        )
+    with pytest.raises(ValueError, match="prompt must be nonempty"):
+        store.create_scheduled_task(
+            name="Agent", runtime_id="codex_oauth",
+            cron_expression="0 * * * * *", timezone_name="UTC", now=NOW,
+        )
+    with pytest.raises(ValueError, match="runtime must be nonempty"):
+        store.create_scheduled_task(
+            name="Agent", prompt="Do the thing",
+            cron_expression="0 * * * * *", timezone_name="UTC", now=NOW,
+        )
+    with pytest.raises(ValueError, match="must not carry Agent"):
+        store.update_scheduled_task(
+            task.id, expected_version=task.version, prompt="now an Agent", now=NOW
+        )
+    assert store.get_scheduled_task(task.id).version == task.version
+
+
+def test_previous_scheduled_tasks_gain_empty_command(tmp_path: Path) -> None:
+    db_path = tmp_path / "previous-command.sqlite3"
+    previous = AutoReplyStore(db_path)
+    task = _create_task(previous)
+    run = previous.create_scheduled_task_run(
+        task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
+    )
+    with previous._connect() as db:
+        snapshot = json.loads(run.snapshot.to_json())
+        snapshot.pop("command")
+        db.execute(
+            "update scheduled_task_runs set snapshot_json=? where id=?",
+            (json.dumps(snapshot), run.id),
+        )
+        db.execute("alter table scheduled_tasks drop column command")
+        db.execute(
+            "update service_state set value='2026-09-08.5' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    migrated = AutoReplyStore(db_path)
+
+    assert migrated.get_scheduled_task(task.id).command == ""
+    assert migrated.get_scheduled_task_run(run.id).snapshot.command == ""
+    assert migrated.get_scheduled_task_run(run.id).snapshot.prompt == task.prompt
+
+
+def test_adopting_a_service_command_moves_the_seed_in_place_once(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "adopt.sqlite3")
+    legacy = _create_task(store, migration_key="producer-v1")
+    disabled = store.set_scheduled_task_enabled(
+        legacy.id, enabled=False, expected_version=legacy.version, now=NOW
+    )
+
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key="producer-v1", command="produce-once",
+        now=NOW + timedelta(minutes=1),
+    )
+
+    assert adopted is not None and adopted.id == legacy.id
+    assert adopted.version == disabled.version + 1
+    assert adopted.command == "produce-once"
+    assert adopted.prompt == "" and adopted.runtime_id == ""
+    assert adopted.runtime_options == {} and adopted.required_runtime_capabilities == ()
+    assert adopted.working_directory == "" and adopted.skill_refs == ()
+    assert adopted.name == legacy.name
+    assert adopted.cron_expression == legacy.cron_expression
+    assert adopted.timezone_name == legacy.timezone_name
+    assert adopted.enabled is False
+    assert adopted.updated_at == NOW + timedelta(minutes=1)
+    with store._connect() as db:
+        refs = db.execute(
+            "select count(*) from scheduled_task_skill_refs where scheduled_task_id=?",
+            (legacy.id,),
+        ).fetchone()[0]
+    assert refs == 0
+
+    again = store.adopt_scheduled_task_service_command(
+        migration_key="producer-v1", command="produce-once",
+        now=NOW + timedelta(minutes=2),
+    )
+    assert again == adopted
+    assert store.adopt_scheduled_task_service_command(
+        migration_key="unknown-v1", command="produce-once", now=NOW
+    ) is None
+
+    deleted_legacy = _create_task(
+        store,
+        migration_key="deleted-v1",
+        skill_refs=(_managed_ref(store, skill_name="ceo-deleted"),),
+    )
+    deleted = store.delete_scheduled_task(
+        deleted_legacy.id, expected_version=deleted_legacy.version, now=NOW
+    )
+    assert store.adopt_scheduled_task_service_command(
+        migration_key="deleted-v1", command="produce-once", now=NOW
+    ) == deleted

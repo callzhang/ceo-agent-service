@@ -6,6 +6,7 @@ import threading
 
 import pytest
 
+from app.agent_cron.commands import SERVICE_COMMAND_EXECUTION_KIND
 from app.agent_cron.models import ScheduledTaskSkillRef
 from app.agent_cron.scheduler import (
     AgentCronScheduler,
@@ -14,6 +15,7 @@ from app.agent_cron.scheduler import (
     OPERATION_SKILL_UNAVAILABLE,
     PREVIOUS_EXECUTION_ACTIVE,
     RUNTIME_UNAVAILABLE,
+    SERVICE_COMMAND_UNAVAILABLE,
 )
 from app.store import AutoReplyStore
 
@@ -32,6 +34,15 @@ class AvailableOptions:
     def resolve_operation_skill(self, name: str) -> object:
         assert name == "dingtalk-chat"
         return object()
+
+    def resolve_service_command(self, name: str) -> object:
+        assert name == "produce-once"
+        return object()
+
+
+class MissingServiceCommand(AvailableOptions):
+    def resolve_service_command(self, name: str) -> object:
+        raise ValueError(f"service command {name}: service_command_not_registered")
 
 
 class MissingRuntime(AvailableOptions):
@@ -88,6 +99,17 @@ def _task(
         working_directory="/tmp",
         enabled=True,
         skill_refs=skill_refs,
+        now=NOW,
+    )
+
+
+def _command_task(store: AutoReplyStore, *, expression: str = "0 * * * * *"):
+    return store.create_scheduled_task(
+        name="Producer",
+        command="produce-once",
+        cron_expression=expression,
+        timezone_name="UTC",
+        enabled=True,
         now=NOW,
     )
 
@@ -562,3 +584,78 @@ def test_bounded_reload_preserves_an_unchanged_due_instant(tmp_path: Path) -> No
     runs = store.list_scheduled_task_runs(task.id)
     assert len(runs) == 1
     assert runs[0].scheduled_for == NOW + timedelta(minutes=1)
+
+
+def test_command_task_is_gated_only_by_its_command_not_by_runtime_or_skills(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "command.sqlite3")
+    task = _command_task(store)
+    wakes: list[str] = []
+    scheduler = _scheduler(store, options=MissingRuntime(), wakes=wakes)
+
+    scheduler.start(NOW)
+    assert scheduler.tick(NOW + timedelta(minutes=1)) == 1
+
+    (run,) = store.list_scheduled_task_runs(task.id)
+    assert run.dispatch_status == "pending"
+    assert run.snapshot.command == "produce-once"
+    assert wakes == ["wake"]
+
+
+def test_command_task_with_unregistered_command_is_skipped_into_attention(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "command-missing.sqlite3")
+    task = _command_task(store)
+    wakes: list[str] = []
+    scheduler = _scheduler(store, options=MissingServiceCommand(), wakes=wakes)
+
+    scheduler.start(NOW)
+    assert scheduler.tick(NOW + timedelta(minutes=1)) == 1
+
+    (run,) = store.list_scheduled_task_runs(task.id)
+    assert run.dispatch_status == "skipped"
+    assert run.skip_or_error_reason == SERVICE_COMMAND_UNAVAILABLE
+    assert wakes == []
+    with store._connect() as db:
+        rows = db.execute("select kind, detail from errors").fetchall()
+    assert [row["kind"] for row in rows] == [SERVICE_COMMAND_UNAVAILABLE]
+    assert "service_command_not_registered" in rows[0]["detail"]
+
+
+def test_completed_command_run_is_terminal_so_the_next_minute_is_not_skipped(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "command-terminal.sqlite3")
+    task = _command_task(store)
+    resolver = ExecutionTerminalResolverRegistry(
+        {SERVICE_COMMAND_EXECUTION_KIND: lambda _execution_id: True}
+    )
+    scheduler = _scheduler(store, resolver=resolver)
+    scheduler.start(NOW)
+    assert scheduler.tick(NOW + timedelta(minutes=1)) == 1
+    (first,) = store.list_scheduled_task_runs(task.id)
+
+    # The trigger is still pending while the command runs inside its claim.
+    assert scheduler.tick(NOW + timedelta(minutes=2)) == 1
+    runs = store.list_scheduled_task_runs(task.id)
+    assert [run.dispatch_status for run in runs] == ["pending", "skipped"]
+    assert runs[1].skip_or_error_reason == PREVIOUS_EXECUTION_ACTIVE
+
+    claimed = store.claim_scheduled_task_run(
+        first.id, owner="trigger", lease_seconds=60, now=NOW + timedelta(minutes=2)
+    )
+    assert claimed is not None
+    store.link_scheduled_task_run_execution(
+        first.id, owner="trigger", execution_kind=SERVICE_COMMAND_EXECUTION_KIND,
+        execution_id="produce-once", now=NOW + timedelta(minutes=2),
+    )
+    store.finish_scheduled_task_dispatch(
+        first.id, owner="trigger", status="dispatched", now=NOW + timedelta(minutes=2)
+    )
+
+    assert scheduler.tick(NOW + timedelta(minutes=3)) == 1
+    latest = store.list_scheduled_task_runs(task.id)[-1]
+    assert latest.dispatch_status == "pending"
+    assert latest.skip_or_error_reason == ""

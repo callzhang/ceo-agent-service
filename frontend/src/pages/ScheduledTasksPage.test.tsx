@@ -20,17 +20,17 @@ const run = {
   id: 11, event_id: "manual:11", scheduled_task_id: 7, trigger_kind: "manual" as const,
   scheduled_for: "2026-09-08T12:00:00Z", dispatch_status: "dispatched", skip_or_error_reason: "",
   execution_kind: "reply_task", execution_id: "91", created_at: "2026-09-08T12:00:00Z", dispatched_at: "2026-09-08T12:00:01Z",
-  snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", prompt: "检查新的钉钉消息 $dingtalk-chat", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, required_runtime_capabilities: [], working_directory: "/tmp/ceo-agent", skill_refs: [operationRef] },
+  snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, required_runtime_capabilities: [], working_directory: "/tmp/ceo-agent", skill_refs: [operationRef] },
 };
 const task = {
-  id: 7, migration_key: null, name: "检查钉钉消息", prompt: "检查新的钉钉消息 $dingtalk-chat",
+  id: 7, migration_key: null, name: "检查钉钉消息", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "",
   cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", schedule_description: "每分钟 · Asia/Shanghai",
   next_run_at: "2026-09-08T12:01:00Z", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const } as { thinking?: "low" | "medium" | "high" | "xhigh" },
   required_runtime_capabilities: [] as string[],
   working_directory: "/tmp/ceo-agent", enabled: true, version: 3, skill_refs: [operationRef], recent_run: run,
   created_at: "2026-09-08T10:00:00Z", updated_at: "2026-09-08T11:00:00Z", deleted_at: null,
 };
-type TestTask = Omit<typeof task, "recent_run" | "deleted_at"> & { recent_run: typeof run | null; deleted_at: string | null };
+type TestTask = Omit<typeof task, "recent_run" | "deleted_at" | "migration_key"> & { recent_run: typeof run | null; deleted_at: string | null; migration_key: string | null };
 const taskB: TestTask = { ...task, id: 8, name: "检查飞书消息", prompt: "检查飞书消息 $dingtalk-chat", version: 5, recent_run: null };
 const options = {
   runtime_options: [
@@ -46,8 +46,11 @@ const options = {
     { name: "dingtalk-chat", source: "/skills/dingtalk-chat/SKILL.md", content_summary: "读取并处理钉钉消息", sha256: "chat", available: true, unavailable_reason: null },
     { name: "lark-im", source: "/skills/lark-im/SKILL.md", content_summary: "读取飞书消息", sha256: "lark", available: false, unavailable_reason: "operation_skill_name_conflict" },
   ],
+  service_command_options: [{ name: "produce-once", description: "增量读取 DingTalk 未读消息，去重后写入 reply task。" }],
   meta: { snapshot_at: "2026-09-08T12:00:00Z" },
 };
+const commandRun: typeof run = { ...run, id: 13, scheduled_task_id: 9, execution_kind: "service_command", execution_id: "produce-once", snapshot: { ...run.snapshot, task_id: 9, name: "检查 DingTalk 消息", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {} as typeof run.snapshot.runtime_options, working_directory: "", skill_refs: [] } };
+const commandTask: TestTask = { ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "检查 DingTalk 消息", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: [], recent_run: commandRun };
 
 function setup(items: TestTask[] = [task]) {
   api.listScheduledTasks.mockResolvedValue({ items, meta: { total: items.length, snapshot_at: "now" } });
@@ -383,5 +386,31 @@ describe("ScheduledTasksPage", () => {
     expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-actions\s*\{[^}]*flex-wrap:\s*wrap;[^}]*\}/);
     expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-suggestions\s+button\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;[^}]*\}/);
     expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-history\s+li\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*\}/);
+  });
+});
+
+describe("service command tasks", () => {
+  it("edits only name, Cron, and timezone for a service command task and shows its command execution", async () => {
+    setup([commandTask]);
+    api.listScheduledTaskRuns.mockResolvedValue({ scheduled_task: commandTask, items: [commandRun], meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false } });
+    api.updateScheduledTask.mockImplementation(async (_id, draft) => ({ item: { ...commandTask, ...draft, version: 4 }, meta: { snapshot_at: "now" } }));
+    const user = userEvent.setup();
+    renderPage("/scheduled-tasks?id=9");
+
+    expect(await screen.findByLabelText("服务命令")).toHaveValue("produce-once");
+    expect(screen.getByLabelText("服务命令")).toHaveAttribute("readonly");
+    expect(screen.getByText("增量读取 DingTalk 未读消息，去重后写入 reply task。")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Runtime")).toBeNull();
+    expect(screen.queryByLabelText("任务描述")).toBeNull();
+    expect(screen.queryByText("Agent Skills")).toBeNull();
+    expect(screen.getByText("service_command #produce-once")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "暂停任务" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "立即运行" })).toBeEnabled();
+
+    await user.clear(screen.getByLabelText("Cron 表达式"));
+    await user.type(screen.getByLabelText("Cron 表达式"), "0 */2 * * * *");
+    await user.click(screen.getByRole("button", { name: "保存更改" }));
+
+    await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(9, expect.objectContaining({ command: "produce-once", cron_expression: "0 */2 * * * *", prompt: "", runtime_id: "", skill_refs: [], version: 3 })));
   });
 });

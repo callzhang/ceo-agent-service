@@ -26,6 +26,8 @@ export type ScheduledTaskSkillRef = ManagedScheduledTaskSkillRef | OperationSche
 export interface ScheduledTaskDraft {
   name: string;
   prompt: string;
+  /** Nonempty means the task runs this service command in-process instead of an Agent. */
+  command: string;
   cron_expression: string;
   timezone_name: string;
   runtime_id: string;
@@ -110,10 +112,16 @@ interface OperationSkillOptionBase {
 
 export type OperationSkillOption = OperationSkillOptionBase & Availability;
 
+export interface ServiceCommandOption {
+  name: string;
+  description: string;
+}
+
 export interface ScheduledTaskOptions {
   runtime_options: RuntimeOption[];
   managed_skill_options: ManagedSkillOption[];
   operation_skill_options: OperationSkillOption[];
+  service_command_options: ServiceCommandOption[];
   meta: { snapshot_at: string };
 }
 
@@ -167,9 +175,10 @@ function validSkillRef(value: unknown): value is ScheduledTaskSkillRef {
     && item.managed_revision_id === null;
 }
 
-function validSkillRefs(value: unknown): value is ScheduledTaskSkillRef[] {
+function validSkillRefs(value: unknown, command: unknown): value is ScheduledTaskSkillRef[] {
+  if (typeof command !== "string") return false;
   return Array.isArray(value)
-    && value.length > 0
+    && (command ? value.length === 0 : value.length > 0)
     && value.every((ref, position) => validSkillRef(ref) && ref.position === position);
 }
 
@@ -187,22 +196,24 @@ function validRun(value: unknown): value is ScheduledTaskRun {
     && nullableString(item.dispatched_at)
     && positiveInteger(snapshot.task_id) && positiveInteger(snapshot.task_version)
     && typeof snapshot.name === "string" && typeof snapshot.prompt === "string"
+    && typeof snapshot.command === "string"
     && typeof snapshot.cron_expression === "string" && typeof snapshot.timezone_name === "string"
     && typeof snapshot.runtime_id === "string" && validRuntimeOptions(snapshot.runtime_options)
     && validStringSet(snapshot.required_runtime_capabilities)
-    && typeof snapshot.working_directory === "string" && validSkillRefs(snapshot.skill_refs));
+    && typeof snapshot.working_directory === "string" && validSkillRefs(snapshot.skill_refs, snapshot.command));
 }
 
 function validTask(value: unknown): value is ScheduledTask {
   const item = record(value);
   return Boolean(item && positiveInteger(item.id) && nullableString(item.migration_key)
     && typeof item.name === "string" && typeof item.prompt === "string"
+    && typeof item.command === "string"
     && typeof item.cron_expression === "string" && typeof item.timezone_name === "string"
     && typeof item.schedule_description === "string" && nullableString(item.next_run_at)
     && typeof item.runtime_id === "string" && validRuntimeOptions(item.runtime_options)
     && validStringSet(item.required_runtime_capabilities)
     && typeof item.working_directory === "string" && typeof item.enabled === "boolean"
-    && positiveInteger(item.version) && validSkillRefs(item.skill_refs)
+    && positiveInteger(item.version) && validSkillRefs(item.skill_refs, item.command)
     && (item.recent_run === null || validRun(item.recent_run))
     && typeof item.created_at === "string" && typeof item.updated_at === "string" && nullableString(item.deleted_at));
 }
@@ -247,6 +258,12 @@ function validManagedSkill(value: unknown): value is ManagedSkillOption {
     && Array.isArray(item.revisions) && item.revisions.every(validRevision));
 }
 
+function validServiceCommand(value: unknown): value is ServiceCommandOption {
+  const item = record(value);
+  return Boolean(item && typeof item.name === "string" && Boolean(item.name.trim())
+    && typeof item.description === "string" && Boolean(item.description.trim()));
+}
+
 function validOperationSkill(value: unknown): value is OperationSkillOption {
   const item = record(value);
   return Boolean(item && typeof item.name === "string" && Boolean(item.name.trim())
@@ -269,6 +286,7 @@ export async function getScheduledTaskOptions(signal?: AbortSignal): Promise<Sch
   if (!payload || !Array.isArray(payload.runtime_options) || !payload.runtime_options.every(validRuntimeOption)
     || !Array.isArray(payload.managed_skill_options) || !payload.managed_skill_options.every(validManagedSkill)
     || !Array.isArray(payload.operation_skill_options) || !payload.operation_skill_options.every(validOperationSkill)
+    || !Array.isArray(payload.service_command_options) || !payload.service_command_options.every(validServiceCommand)
     || !meta || typeof meta.snapshot_at !== "string") throw new Error("invalid scheduled task options response");
   return value as ScheduledTaskOptions;
 }

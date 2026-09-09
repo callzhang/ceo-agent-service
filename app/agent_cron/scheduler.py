@@ -19,12 +19,14 @@ PREVIOUS_EXECUTION_ACTIVE = "scheduled_task_previous_execution_active"
 RUNTIME_UNAVAILABLE = "scheduled_task_runtime_unavailable"
 MANAGED_SKILL_UNAVAILABLE = "scheduled_task_managed_skill_unavailable"
 OPERATION_SKILL_UNAVAILABLE = "scheduled_task_operation_skill_unavailable"
+SERVICE_COMMAND_UNAVAILABLE = "scheduled_task_service_command_unavailable"
 EXECUTION_UNAVAILABLE = "scheduled_task_execution_unavailable"
 SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS = frozenset(
     {
         RUNTIME_UNAVAILABLE,
         MANAGED_SKILL_UNAVAILABLE,
         OPERATION_SKILL_UNAVAILABLE,
+        SERVICE_COMMAND_UNAVAILABLE,
         EXECUTION_UNAVAILABLE,
     }
 )
@@ -45,6 +47,8 @@ class ScheduledTaskOptions(Protocol):
     ) -> object: ...
 
     def resolve_operation_skill(self, name: str) -> object: ...
+
+    def resolve_service_command(self, name: str) -> object: ...
 
 
 class ExecutionTerminalResolver(Protocol):
@@ -243,6 +247,13 @@ class AgentCronScheduler:
                 prior.id,
             )
         overlap_run_id = prior.id if prior is not None else None
+
+        if task.command:
+            try:
+                self._option_service.resolve_service_command(task.command)
+            except ValueError as exc:
+                return SERVICE_COMMAND_UNAVAILABLE, str(exc), overlap_run_id
+            return None, "", overlap_run_id
 
         try:
             self._option_service.resolve_runtime_route(
