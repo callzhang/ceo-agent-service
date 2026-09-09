@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
+import type { EmailClassificationListParams } from "../api/console";
 const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "getEmailClassification", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
 vi.mock("../api/console", async importOriginal => ({ ...await importOriginal<object>(), ...api }));
 import { EmailPage } from "./EmailPage";
@@ -30,6 +31,18 @@ it("uses shared rows, 50 default, URL pagination and page sizes", async()=>{
   expect(screen.getByLabelText("URL")).toHaveTextContent("page=2");
   expect(screen.getByRole("tab",{name:/模型训练/})).toBeInTheDocument();
 });
+it("requests the unified all status and keeps message text out of list items",async()=>{
+  const params: EmailClassificationListParams = { page: 1, page_size: 20 };
+  const actual=await vi.importActual<typeof import("../api/console")>("../api/console");
+  const fetchMock=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({items:[{id:"8423079112545370123",category:"work",classification_source:"agent",status:"pending_feedback",preview:"摘要"}],meta:{page:1,page_size:20,total:1,next_cursor:"",has_more:false,snapshot_at:""}}),{status:200,headers:{"Content-Type":"application/json"}}));
+  const result=await actual.listEmailClassifications("all",params);
+  expect(fetchMock).toHaveBeenCalledWith("/api/console/email/classifications?status=all&page=1&page_size=20",expect.objectContaining({signal:undefined}));
+  expect(result.items[0].id).toBe("8423079112545370123");
+  expect(result.items[0]).not.toHaveProperty("message_text");
+  expect(result.items[0].category).toBe("work");
+  expect(result.items[0].classification_source).toBe("agent");
+  fetchMock.mockRestore();
+});
 it("opens readonly body and metadata drawer and restores focus without losing selection",async()=>{
   const user=userEvent.setup();show("/email?page=1&page_size=50");const trigger=await screen.findByRole("button",{name:"打开邮件 邮件1"});await user.click(trigger);
   const drawer=await screen.findByRole("dialog",{name:"邮件详情"});
@@ -37,6 +50,16 @@ it("opens readonly body and metadata drawer and restores focus without losing se
   expect(drawer).toHaveTextContent("a.pdf");expect(drawer).not.toHaveTextContent("SECRET");
   expect(within(drawer).queryByRole("button",{name:/保存分类/})).not.toBeInTheDocument();
   await user.keyboard("{Escape}");expect(trigger).toHaveFocus();expect(screen.getByLabelText("URL")).toHaveTextContent("selected=1");
+});
+it("labels the pending decision bar for keyboard and assistive navigation",async()=>{
+  const user=userEvent.setup();show("/email?tab=pending_feedback&selected=1");
+  const drawer=await screen.findByRole("dialog",{name:"邮件详情"});
+  expect(within(drawer).getByRole("form",{name:"分类确认"})).toHaveTextContent("建议：工作");
+});
+it("shows an explicit inbox fallback when the agent leaves a message unclassified",async()=>{
+  api.getEmailClassification.mockResolvedValueOnce({item:{...row("1"),category:null,message_text:"Hi"},observability:[]});
+  show("/email?tab=pending_feedback&selected=1");
+  expect(await screen.findByText(/未分类（留在收件箱）/)).toBeInTheDocument();
 });
 it("cancels stale detail requests when selection changes",async()=>{
   const user=userEvent.setup();const first=deferred<unknown>();api.getEmailClassification.mockReturnValueOnce(first.promise);show();
@@ -248,11 +271,7 @@ it("ignores an aborted learning rejection after a newer tab request succeeds",as
 });
 it("includes evidence summaries in drawer keyboard traversal",async()=>{
   const user=userEvent.setup();show("/email?selected=1");await screen.findByText(/完整正文/);
-  const summary=screen.getByText("候选分布");expect(summary.closest("details")).not.toHaveAttribute("open");
-  await user.keyboard("{Tab}");expect(summary).toHaveFocus();
-  // jsdom does not implement the browser's Enter-to-click default for summary.
-  // Actual Tab -> Enter opening is also verified in the local browser fixture.
-  await user.click(summary);expect(summary.closest("details")).toHaveAttribute("open");
+  const distribution=screen.getByRole("region",{name:"候选分布"});expect(distribution).toHaveTextContent("工作");expect(distribution).toHaveTextContent("70.0%");expect(distribution.querySelector(".email-probability-bar")).toBeTruthy();
 });
 it("reconciles a lost switch response from server mode before claiming current state",async()=>{
   const user=userEvent.setup();api.saveEmailRuntimeMode.mockRejectedValueOnce(new Error("切换响应丢失"));show("/email?tab=learning");

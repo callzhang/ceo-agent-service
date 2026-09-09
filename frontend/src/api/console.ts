@@ -176,6 +176,15 @@ export interface EmailClassificationItem {
   created_at: string;
   updated_at: string;
 }
+export type EmailClassificationStatus = "all" | "pending_feedback" | "processed";
+export interface EmailClassificationListParams {
+  page?: number;
+  page_size?: number;
+}
+export interface EmailClassificationDetailItem extends EmailClassificationItem {
+  message_text: string;
+  quoted_text?: string;
+}
 export interface EmailObservabilityAttempt {
   attempt_number: number;
   status: string;
@@ -424,8 +433,8 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
       inline: attachment.inline === true,
     }))
     : [];
-  return {
-    id: emailText(row.id),
+  const item: EmailClassificationItem = {
+    id: typeof row.id === "string" ? row.id : String(row.id ?? ""),
     provider: emailText(row.provider),
     mailbox: emailText(row.mailbox || row.folder),
     message_id: emailText(row.message_id || row.rfc_message_id || row.stable_message_identity),
@@ -458,6 +467,7 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
     created_at: emailText(row.created_at),
     updated_at: emailText(row.updated_at),
   };
+  return item;
 }
 
 function resolveOwnerDisplay(project: Record<string, unknown>, todos: Array<Record<string, unknown>> = []): string {
@@ -574,13 +584,13 @@ export function listHistory(params: Record<string, string | number | undefined> 
 }
 
 export function listEmailClassifications(
-  status: "processed" | "pending_feedback",
-  params: Record<string, string | number | undefined> = {},
+  status: EmailClassificationStatus,
+  params: EmailClassificationListParams = {},
   signal?: AbortSignal,
 ) {
   return request<unknown>(`/api/console/email/classifications${query({ status, ...params })}`, { signal }).then((value) => {
     const page = parseConsoleList<Record<string, unknown>>(value);
-    return { ...page, items: page.items.map(mapEmailClassification) } satisfies ConsoleList<EmailClassificationItem>;
+    return { ...page, items: page.items.map((item) => mapEmailClassification(item)) } satisfies ConsoleList<EmailClassificationItem>;
   });
 }
 

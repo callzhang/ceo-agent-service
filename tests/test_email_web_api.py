@@ -771,6 +771,81 @@ def test_email_classification_list_excludes_body_and_detail_exposes_persisted_te
         )
 
 
+def test_email_classification_list_all_unifies_statuses_without_body(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "classification-all.sqlite3")
+    for classification_id, status, category, source in (
+        (101, EmailClassificationStatus.PENDING_FEEDBACK, EmailCategory.WORK, "model"),
+        (102, EmailClassificationStatus.PROCESSED, EmailCategory.LEGAL, "model"),
+    ):
+        action_plan = (
+            build_versioned_email_action_plan(
+                action_plan_version=1,
+                classification_id=classification_id,
+                account_id="account-1",
+                category=category,
+                classification_source=source,
+                confidence=0.7,
+                model_id="email-model-v1",
+                config_version="email-config-v1",
+                actions=(EmailAction.MOVE,),
+                action_parameters={EmailAction.MOVE: {"target_folder": "Legal"}},
+                created_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+            )
+            if status is EmailClassificationStatus.PROCESSED
+            else None
+        )
+        classification = EmailClassification.model_validate(
+            {
+                "classification_id": classification_id,
+                "stable_message_identity": f"account-1:message-id:<{classification_id}@example.com>",
+                "provider_locator": {
+                    "account_id": "account-1",
+                    "folder": "INBOX",
+                    "uidvalidity": 1,
+                    "uid": classification_id,
+                    "rfc_message_id": f"<{classification_id}@example.com>",
+                    "thread_id": str(classification_id),
+                },
+                "category": category,
+                "confidence": 0.7,
+                "margin": 0.2,
+                "probabilities": {category.value: 0.7},
+                "model_id": "email-model-v1",
+                "config_version": "email-config-v1",
+                "status": status,
+                "classification_source": source,
+                "action_plan": action_plan,
+            }
+        )
+        store.persist_scan_result(
+            classification,
+            sender="sender@example.com",
+            subject=f"Message {classification_id}",
+            normalized_text=f"正文 {classification_id}",
+            preview=f"摘要 {classification_id}",
+            model_text=f"模型文本 {classification_id}",
+        )
+
+    client = TestClient(FastAPI())
+    app = client.app
+    register_email_routes(app, lambda: store)
+    response = client.get("/api/console/email/classifications?status=all&page_size=10")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["total"] == 2
+    assert {item["status"] for item in payload["items"]} == {
+        "pending_feedback",
+        "processed",
+    }
+    assert {item["category"] for item in payload["items"]} == {"work", "legal"}
+    assert {item["classification_source"] for item in payload["items"]} == {"model"}
+    assert all(isinstance(item["id"], str) for item in payload["items"])
+    assert all("message_text" not in item for item in payload["items"])
+
+
 def test_email_classification_detail_projects_observability(tmp_path: Path) -> None:
     classification = {
         "id": 41,
