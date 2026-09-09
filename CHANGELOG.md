@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-09-08: register the installed Fxiaoke `sharecrm` CLI in Settings →
+  Connectors. The page now reports executable/authentication readiness, current
+  CRM user, CLI version, and the read-only status check used by the service.
+
 - 2026-09-08: route main-page Agent turns through the shared Service Runtime.
   Main-page work now shares route selection, runtime-attempt persistence,
   session continuity, failover, cancellation, and native CLI `auto_review`

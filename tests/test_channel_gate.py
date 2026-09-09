@@ -14,9 +14,11 @@ from app.channel_gate import (
     ChannelGateResult,
     ChannelGateState,
     DwsChannelGate,
+    FxiaokeCliGate,
     LarkChannelGate,
     LoginCoordinator,
     classify_cli_read_failure,
+    default_channel_gates,
     start_lark_auth_login,
 )
 from app.store import AutoReplyStore
@@ -416,6 +418,52 @@ def test_lark_gate_requires_verified_status_and_authenticated_probe():
         "user",
         "--json",
     ]
+
+
+def test_fxiaoke_cli_gate_accepts_authenticated_user_status():
+    runner = ScriptedRunner(
+        [
+            completed(
+                0,
+                json.dumps(
+                    {
+                        "identity": "user",
+                        "tokenStatus": "normal",
+                        "userName": "章磊",
+                        "cliVersion": "1.1.12",
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        ]
+    )
+
+    result = FxiaokeCliGate(binary="sharecrm", runner=runner).check()
+
+    assert result.channel == "fxiaoke"
+    assert result.state is ChannelGateState.READY
+    assert result.reason_code == "ready"
+    assert result.detail == "已登录纷享销客：章磊；CLI 1.1.12"
+    assert runner.commands == [["sharecrm", "auth", "status"]]
+    assert result.commands == (("sharecrm", "auth", "status"),)
+
+
+def test_fxiaoke_cli_gate_requires_normal_user_session():
+    runner = ScriptedRunner(
+        [completed(0, '{"identity":"user","tokenStatus":"expired"}')]
+    )
+
+    result = FxiaokeCliGate(runner=runner).check()
+
+    assert result.state is ChannelGateState.NEEDS_LOGIN
+    assert result.reason_code == "status_auth_invalid"
+
+
+def test_default_channel_gates_registers_fxiaoke_cli():
+    gates = default_channel_gates()
+
+    assert set(gates) == {"dingtalk", "lark", "fxiaoke"}
+    assert isinstance(gates["fxiaoke"], FxiaokeCliGate)
 
 
 @pytest.mark.parametrize(

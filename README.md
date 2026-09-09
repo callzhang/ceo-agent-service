@@ -466,7 +466,7 @@ http://127.0.0.1:8765/
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录；Facts 在桌面端为宽 Description/Source 与固定操作列的可比较表格，在移动端为单列事实卡片，完整描述和来源可逐条展开
 - `/attempts/{id}`：单次处理详情；同一触发消息后续重跑成功时，旧记录顶部会链接到后续 attempt 并展示其最新动作，原始状态仍保留在详情字段中供审计。Consumer 与 Audit 执行记录只能从该 Attempt 打开，不显示内部会话标识或本地文件路径。
 - `/developer-prompt`：Developer/User Prompt 模板管理
-- `/settings`：Settings 使用 React SPA 统一导航（Status、Info、Configuration、Agent Runtime、Prompts、Connectors、Audit Rules、Attention）。Configuration 汇总 `.env` 中的运行参数和 Prompt variables；Prompts 页面用 Developer/User tab 与 Template/Rendered preview 切换；Connectors 内含 DingTalk、Lark、WeChat；Workers 通过 `/status` 映射到 Runtime Monitor，Attention 单独展示未解决运行项。`/config`、`/workers`、`/logs` 保留为兼容入口并在 SPA 内映射；Logs 不再作为 Settings 一级导航。
+- `/settings`：Settings 使用 React SPA 统一导航（Status、Info、Configuration、Agent Runtime、Prompts、Connectors、Audit Rules、Attention）。Configuration 汇总 `.env` 中的运行参数和 Prompt variables；Prompts 页面用 Developer/User tab 与 Template/Rendered preview 切换；Connectors 内含 DingTalk、Lark、纷享销客 CLI、WeChat 和 Email；Workers 通过 `/status` 映射到 Runtime Monitor，Attention 单独展示未解决运行项。`/config`、`/workers`、`/logs` 保留为兼容入口并在 SPA 内映射；Logs 不再作为 Settings 一级导航。
 
 除 DingTalk bridge/popup、通知 Service Worker 和 `/api/workbench/*` 外，业务页面统一由同一个 React SPA 渲染。FastAPI 的 `/api/console/*` 按 History、Tasks、Settings、Feedback、Tutorial、Notifications、Codex 和 WeChat 领域返回 JSON DTO；因此 `/tasks/836` 等业务深链可以直接打开或刷新，而未知 `/api/*` 仍返回 JSON 404。
 - `/errors`：错误列表
