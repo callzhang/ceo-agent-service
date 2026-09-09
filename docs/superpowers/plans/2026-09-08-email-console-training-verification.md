@@ -1,6 +1,6 @@
 # Email Console implementation verification
 
-Status: implementation and review in progress; not deployed.
+Status: implementation, independent review and full regression verified; deployment pending.
 
 ## Scope
 
@@ -36,14 +36,20 @@ Fixture messages and models are synthetic; every API operation is in memory.
 - Category editor displays core definition, inclusion examples, exclusions,
   description/config versions, and provider-folder bindings.
 
-## Remaining verification
+## Remaining deployment verification
 
-- Resolve independent persistence, runtime/API, and frontend review findings.
-- Confirm training/online input equivalence before accepting benchmark evidence.
-- Finish full Python suite, frontend suite/build, and affected regression reruns.
-- Reconcile concurrent main-branch changes without overwriting unrelated work.
 - Verify database backup before migration, deploy, and check live mode and queue
   state. Do not claim that the fixture proves production behavior.
+
+## Final pre-deployment evidence
+
+- Frozen code `b3cb22d7`, including main `5024bbe6`: **7,165 passed, 86 skipped,
+  zero failed**, four existing deprecation warnings, 362.72 seconds.
+- Frontend: **332 passed, two skipped**, TypeScript and production Vite build passed.
+- Independent persistence, runtime/API, training and frontend reviews closed all
+  reported P1/P2 findings. Input/cache equivalence and browser fixture checks passed.
+- No production model promotion, new training run, SMTP action or mailbox mutation
+  was performed by this verification workflow.
 
 ## Intermediate test evidence
 
@@ -102,8 +108,8 @@ Fixture messages and models are synthetic; every API operation is in memory.
   and reverted the earlier test-only three-channel expectation adjustment.
 - Independent source review identified the same environment leak in direct
   legacy settings-handler tests in `test_audit_web.py`. The producer followed by
-  runtime-refresh test reproduced it (one passed, one failed); a module-scoped
-  test fixture now restores each test's process environment without forcing any
+  runtime-refresh test reproduced it (one passed, one failed); a module-local,
+  function-scoped fixture now restores each test's process environment without forcing any
   runtime default. Both source/victim checks and the Console restoration check
   pass (three tests). The just-started full run was stopped at 462 passing tests
   so this confirmed second source could be fixed before freezing another run.
