@@ -10414,14 +10414,14 @@ class EmailStore:
                     "unsubscribe claim owner fence changed"
                 )
 
-    def release_email_unsubscribe_preflight_failure(
+    def release_email_unsubscribe_failed_operation(
         self,
         action_identity: str,
         *,
         effect_digest: str,
         owner: Mapping[str, object],
     ) -> None:
-        """Release a claim when browser preflight failed before any operation."""
+        """Release a failed claim when no browser result was persisted."""
 
         owner = _validate_email_unsubscribe_owner(owner)
         with self._connect() as db:
@@ -10442,7 +10442,7 @@ class EmailStore:
                 )
             ):
                 raise EmailUnsubscribeClaimConflict(
-                    "unsubscribe preflight claim owner fence changed"
+                    "unsubscribe failed claim owner fence changed"
                 )
             related = db.execute(
                 """
@@ -10458,7 +10458,7 @@ class EmailStore:
             ).fetchone()
             if related is None or any(int(related[name]) for name in related.keys()):
                 raise EmailUnsubscribeClaimConflict(
-                    "unsubscribe preflight failure has durable browser state"
+                    "unsubscribe failed operation has durable browser state"
                 )
             deleted_effect = db.execute(
                 "delete from email_unsubscribe_effects "
@@ -10471,7 +10471,7 @@ class EmailStore:
             ).rowcount
             if deleted_effect != 1 or deleted_claim != 1:
                 raise EmailUnsubscribeClaimConflict(
-                    "unsubscribe preflight failure changed concurrently"
+                    "unsubscribe failed operation changed concurrently"
                 )
 
     def release_failed_email_unsubscribe_for_explicit_retry(

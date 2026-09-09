@@ -54,7 +54,6 @@ class EmailUnsubscribeAuditOperationResult(BaseModel):
     error: AgentError = AgentError()
     final_step: dict[str, object] | None = None
     continuation: dict[str, object] | None = None
-    operation_attempted: bool = True
 
 
 class EmailUnsubscribeAuditOperation:
@@ -345,17 +344,11 @@ class EmailUnsubscribeAuditOperation:
                 effect.action_identity
             )
             if current is not None and current["status"] == "dispatching":
-                if result.operation_attempted:
-                    self.email_store.mark_email_unsubscribe_uncertain(
-                        effect.action_identity,
-                        owner=owner,
-                    )
-                else:
-                    self.email_store.release_email_unsubscribe_preflight_failure(
-                        effect.action_identity,
-                        effect_digest=effect.effect_digest,
-                        owner=owner,
-                    )
+                self.email_store.release_email_unsubscribe_failed_operation(
+                    effect.action_identity,
+                    effect_digest=effect.effect_digest,
+                    owner=owner,
+                )
             return result.model_dump(mode="json")
         if result.status != "done" or not result.receipt_id.strip():
             raise ValueError("unsubscribe operation result is not terminal")
@@ -791,7 +784,6 @@ def _normalize_result(value: object) -> EmailUnsubscribeAuditOperationResult:
                     "reference": value.journal[-1].reference,
                 }
             ),
-            operation_attempted=value.operation_attempted,
         )
     if not isinstance(value, Mapping):
         raise ValueError("unsubscribe effect returned an invalid result")

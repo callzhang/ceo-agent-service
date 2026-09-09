@@ -1026,7 +1026,6 @@ def test_revised_initial_proposal_is_not_treated_as_a_later_browser_step(
             ),
             journal=(),
             error_code="email_unsubscribe_browser_failed",
-            operation_attempted=False,
         )
     )
     first_result = fixture.operation.execute(
