@@ -424,6 +424,7 @@ def _agent_process_error_code(exc: Exception) -> str:
 
 
 RESULT_INVALID_ERROR_CODE = "codex_result_invalid"
+RESULT_MISSING_ERROR_CODE = "codex_result_missing"
 
 
 def result_correction_prompt(
@@ -433,11 +434,12 @@ def result_correction_prompt(
     role: AgentRole,
     proposal_revision: int,
 ) -> str:
-    """Return the correction block for a role retry after a schema-invalid result.
+    """Return the correction block for a role retry after an unusable result.
 
-    The retry re-enters the same typed contract, so the model is told where its
-    previous result failed validation instead of receiving the identical
-    prompt again and repeating the same wire defect.
+    The retry re-enters the same typed contract, so the model is told what was
+    wrong with its previous result (no JSON object at all, or the fields that
+    failed validation) instead of receiving the identical prompt again and
+    repeating the same wire defect.
     """
     failed_runs = [
         run
@@ -456,13 +458,19 @@ def result_correction_prompt(
         error = json.loads(latest.structured_error_json or "{}")
     except json.JSONDecodeError:
         return ""
-    if not isinstance(error, dict) or error.get("code") != RESULT_INVALID_ERROR_CODE:
+    if not isinstance(error, dict):
         return ""
-    locations = str(error.get("detail") or "").strip() or "result"
+    code = error.get("code")
+    if code == RESULT_MISSING_ERROR_CODE:
+        problem = "上一轮没有返回任何 JSON 对象，只有说明文字"
+    elif code == RESULT_INVALID_ERROR_CODE:
+        locations = str(error.get("detail") or "").strip() or "result"
+        problem = f"上一轮返回的结果未通过 wire schema 校验：{locations}"
+    else:
+        return ""
     return (
         "\n\n## Result Correction\n"
-        f"上一轮返回的结果未通过 wire schema 校验：{locations}。"
-        "请只返回一个修正后的、严格匹配 schema 的 JSON 对象，"
+        f"{problem}。请只返回一个修正后的、严格匹配 schema 的 JSON 对象，"
         "不要重新开始新的业务判断。"
     )
 

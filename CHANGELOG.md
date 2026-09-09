@@ -10,7 +10,9 @@
 - 2026-09-09: report a schema-violating typed result as `codex_result_invalid`
   with its field locations instead of `codex_result_missing`, and feed those
   locations back to the same role's next turn as `## Result Correction` so the
-  retry can repair the wire result rather than repeat it.
+  retry can repair the wire result rather than repeat it. A turn that returned
+  prose without any JSON object (`codex_result_missing`) gets the same
+  correction block.
 
 - 2026-09-08: register the installed Fxiaoke `sharecrm` CLI in Settings →
   Connectors. The page now reports executable/authentication readiness, current

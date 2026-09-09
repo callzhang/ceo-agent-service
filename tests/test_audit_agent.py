@@ -245,6 +245,65 @@ def test_audit_retry_after_invalid_result_carries_validation_locations(
     assert "executed.error_code: string_type" in prompt
 
 
+def test_audit_retry_after_missing_result_asks_for_json_object(setup, monkeypatch):
+    store, task, audit_context, parent = setup
+    failed = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=audit_context.operation_id,
+        owner="audit-test",
+    )
+    assert failed.claimed
+    store.fail_agent_run(
+        failed.run.id,
+        {
+            "code": "codex_result_missing",
+            "retryable": True,
+            "authorization_required": False,
+            "detail": "no valid typed result JSON found in Codex JSONL",
+            "session_continuable": True,
+        },
+        owner="audit-test",
+    )
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=1,
+        parent_agent_run_id=parent.id,
+        operation_id=audit_context.operation_id,
+        owner="audit-test",
+    )
+    assert claim.claimed
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        @classmethod
+        def __class_getitem__(cls, _item):
+            return cls
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def execute(self, **kwargs):
+            captured.update(kwargs)
+            return "executed"
+
+    monkeypatch.setattr(audit_agent, "AgentTurnProcess", FakeProcess)
+    runner = AuditAgentRunner(store=store, workspace=Path("/workspace"), owner="audit-test")
+
+    runner._execute_claimed(task, audit_context, run=claim.run, rendered_rules="rules")
+
+    prompt = str(captured["prompt"])
+    assert "## Result Correction" in prompt
+    assert "没有返回任何 JSON 对象" in prompt
+
+
 def test_audit_runner_adds_stable_action_identity_without_command_authorization(
     setup, monkeypatch
 ):
