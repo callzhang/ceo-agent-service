@@ -945,7 +945,7 @@ h1, h2, h3, p { margin-top: 0; }
 /* Attempt detail keeps the legacy reading order: one review card plus a side rail. */
 .attempt-conversation-banner { width: 100%; }
 .attempt-conversation-left { min-width: 0; }
-.attempt-conversation-title { display: flex; align-items: baseline; gap: 4px; min-width: 0; font-weight: 700; white-space: nowrap; }
+.attempt-conversation-title { display: flex; align-items: baseline; gap: 0; min-width: 0; font-weight: 700; white-space: nowrap; }
 .attempt-conversation-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .attempt-banner-actions { min-width: 0; }
 .agent-log-button, .compact-button, .disabled-action {
