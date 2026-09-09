@@ -129,7 +129,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-08.6"
+STORE_SCHEMA_VERSION = "2026-09-09.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",

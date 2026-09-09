@@ -8660,7 +8660,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-08.6"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-09.1"
     assert {
         "lease_owner",
         "lease_expires_at",

@@ -1079,10 +1079,13 @@ def test_previous_scheduled_tasks_gain_empty_command(tmp_path: Path) -> None:
             (json.dumps(snapshot), run.id),
         )
         db.execute("alter table scheduled_tasks drop column command")
+        # The version a database carried before the command column shipped:
+        # the schema gate must treat it as stale, or the column is never added.
         db.execute(
-            "update service_state set value='2026-09-08.5' where key=?",
+            "update service_state set value='2026-09-08.6' where key=?",
             (store_module.STORE_SCHEMA_VERSION_KEY,),
         )
+    assert store_module.STORE_SCHEMA_VERSION > "2026-09-08.6"
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     migrated = AutoReplyStore(db_path)
