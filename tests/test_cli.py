@@ -923,6 +923,14 @@ def test_channel_doctor_reports_typed_gate_results(monkeypatch, capsys):
             reason_code="status_auth_invalid",
         ),
     )
+    monkeypatch.setattr(
+        "app.channel_gate.FxiaokeCliGate.check",
+        lambda self: ChannelGateResult(
+            channel="fxiaoke",
+            state=ChannelGateState.READY,
+            reason_code="ready",
+        ),
+    )
     report = channel_doctor_command()
 
     assert report == {
@@ -938,6 +946,13 @@ def test_channel_doctor_reports_typed_gate_results(monkeypatch, capsys):
                 "channel": "lark",
                 "state": "needs_login",
                 "reason_code": "status_auth_invalid",
+                "detail": "",
+                "commands": [],
+            },
+            {
+                "channel": "fxiaoke",
+                "state": "ready",
+                "reason_code": "ready",
                 "detail": "",
                 "commands": [],
             },
