@@ -174,6 +174,21 @@ def make_audit_agent_command(
     )
 
 
+def disable_automatic_review(command: list[str]) -> None:
+    """Run the turn without Codex's automatic reviewer.
+
+    The reviewer is a separate call to the `codex-auto-review` model on the
+    route's provider. Third-party OpenAI-compatible providers do not serve that
+    model, so every reviewed action on such a route would be rejected. The
+    sandbox stays in place; the turn simply never asks for approval.
+    """
+    _remove_config_options(
+        command,
+        prefixes=("approval_policy=", "approvals_reviewer="),
+    )
+    _insert_command_options(command, ["-c", 'approval_policy="never"'])
+
+
 def _insert_command_options(command: list[str], options: list[str]) -> None:
     prompt_index = len(command) - 1
     if command[1:3] == ["exec", "resume"]:

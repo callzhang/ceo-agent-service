@@ -1,5 +1,13 @@
 # Changelog
 
+- 2026-09-09: run Codex turns on `service_api` routes without the automatic
+  reviewer. The reviewer is a call to the `codex-auto-review` model on the
+  route's provider; MiniMax rejects it as an unknown model, so every reviewed
+  action on the fallback route (the audited unsubscribe tool included) was
+  refused "due to unacceptable risk" and surfaced as model-invented error
+  codes. `service_api` turns now use `approval_policy="never"` with the
+  sandbox intact; `codex_oauth` keeps `auto_review`.
+
 - 2026-09-09: run the WeChat message check as a service command too. The
   catalog gains `wechat-produce-once` (the same pass as
   `app.wechat.cli produce-once`), bound in-process with the legacy loop's

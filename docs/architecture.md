@@ -41,6 +41,11 @@ pending -> running -> done
 runtime attempt、失败切换和 CLI 原生 `auto_review`。页面后端只把统一运行事件投影为时间线并
 维护停止请求；不得自行构造 provider 命令、启用 approval bypass，或实现第二套命令审批。
 
+CLI 原生 `auto_review` 是 Codex 对 `codex-auto-review` 模型的一次额外调用，只有 OpenAI 托管路由
+（`codex_oauth`）提供该模型。`service_api` 路由（第三方 OpenAI 兼容 provider，如 MiniMax）上不存在该
+模型，审批请求会被 provider 以 unknown model 拒绝，进而拒绝所有需审批的动作；因此 turn runner 在
+`service_api` 路由上把 `approval_policy` 设为 `never` 并去掉 reviewer：沙箱保留，不再请求审批。
+
 历史 `workbench_confirmations` 仅用于读取既有记录，不属于新 turn 的执行路径；确认与取消
 接口固定拒绝执行，主页也不再显示操作按钮。
 

@@ -27,6 +27,7 @@ from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 from app.wechat.codex_safety import (
     ControlledCliConfig,
+    disable_automatic_review,
     make_audit_agent_command,
     make_consumer_agent_command,
 )
@@ -826,6 +827,61 @@ def test_consumer_command_does_not_expose_audited_unsubscribe_write() -> None:
     assert 'approval_policy="on-failure"' in command
     assert 'approvals_reviewer="auto_review"' in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
+
+
+def test_disable_automatic_review_keeps_sandbox_and_never_asks_for_approval() -> None:
+    command = ["codex", "exec", "--json", "-"]
+    make_audit_agent_command(command)
+    assert 'approvals_reviewer="auto_review"' in command
+
+    disable_automatic_review(command)
+
+    assert 'approval_policy="never"' in command
+    assert not any(value.startswith("approvals_reviewer=") for value in command)
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert command[-1] == "-"
+
+
+def test_service_api_route_runs_audit_without_automatic_review(setup):
+    store, task, audit_context, parent = setup
+    config, router, adapter = _audit_runtime_dependencies(store, routes="codex_api")
+    executor = CapturingExecutor(
+        _audit_jsonl("operation-1", session="session-api-audit")
+    )
+
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    command = executor.commands[0]
+    assert 'approval_policy="never"' in command
+    assert 'approvals_reviewer="auto_review"' not in command
+
+
+def test_oauth_route_keeps_automatic_review_for_audit(setup):
+    store, task, audit_context, parent = setup
+    config, router, adapter = _audit_runtime_dependencies(store, routes="codex_oauth")
+    executor = CapturingExecutor(
+        _audit_jsonl("operation-1", session="session-oauth-audit")
+    )
+
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    command = executor.commands[0]
+    assert 'approval_policy="on-failure"' in command
+    assert 'approvals_reviewer="auto_review"' in command
 
 
 def test_audit_command_configures_runtime_reviewed_agent_cli_without_tool_allowlist() -> None:

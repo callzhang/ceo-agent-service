@@ -26,6 +26,7 @@ from app.agent_effects import (
 from app.agent_result import ResultParseError
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
+    CredentialMode,
     RuntimeFailureClass,
     RuntimeKind,
     RuntimeRoute,
@@ -48,6 +49,7 @@ from app.codex_failure import (
     CODEX_PROVIDER_UNAVAILABLE,
     classify_codex_process_failure,
 )
+from app.wechat.codex_safety import disable_automatic_review
 from app.codex_history import (
     count_codex_session_lines,
     extract_codex_assistant_messages_from_session,
@@ -1010,6 +1012,10 @@ class AgentTurnProcess(Generic[ResultT]):
                         reasoning_effort=self.reasoning_effort or None,
                     )
                     configure_command(command)
+                    if route.credential_mode is CredentialMode.SERVICE_API:
+                        # The automatic reviewer model only exists on the
+                        # OpenAI-hosted route; a service-API provider rejects it.
+                        disable_automatic_review(command)
                     command_env = self.codex_adapter.build_env(route)
                 if command_env is not None:
                     command_env.update(self.execution_mode_environment)
