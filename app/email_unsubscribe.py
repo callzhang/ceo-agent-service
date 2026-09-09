@@ -326,6 +326,7 @@ _BROWSER_FAILURE_CODES = {
 }
 
 _TRUSTED_UNSUBSCRIBE_REDIRECT_FAMILIES = ("google.com",)
+_TRUSTED_UNSUBSCRIBE_REDIRECT_BRIDGES = {"c.gle": "google.com"}
 
 
 def _browser_failure_code(error: Exception) -> str:
@@ -714,8 +715,15 @@ class BrowserNetworkPolicy:
             and (target_host == family or target_host.endswith("." + family))
             for family in _TRUSTED_UNSUBSCRIBE_REDIRECT_FAMILIES
         )
+        bridged_family = _TRUSTED_UNSUBSCRIBE_REDIRECT_BRIDGES.get(source_host)
+        trusted_bridge = bridged_family is not None and (
+            target_host == bridged_family
+            or target_host.endswith("." + bridged_family)
+        )
         try:
-            if target.scheme.casefold() != "https" or not same_family:
+            if target.scheme.casefold() != "https" or not (
+                same_family or trusted_bridge
+            ):
                 raise ValueError
             port = target.port or 443
             addresses = self.resolver(target_host, port)
