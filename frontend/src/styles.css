@@ -1490,6 +1490,9 @@ h1, h2, h3, p { margin-top: 0; }
 .scheduled-task-form input::placeholder, .scheduled-task-form textarea::placeholder { color: var(--ink-soft); opacity: .72; }
 .scheduled-task-form-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, .45fr); gap: 12px; }
 .scheduled-task-prompt-field { position: relative; }
+.scheduled-task-system-prompt { display: grid; gap: 8px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
+.scheduled-task-system-prompt pre { margin: 0; padding: 10px 11px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-soft); background: var(--surface); font: inherit; font-size: .78rem; line-height: 1.55; white-space: pre-wrap; }
+.scheduled-task-system-prompt small, .scheduled-task-inherited-setting { margin: 0; color: var(--ink-soft); font-size: .74rem; line-height: 1.5; }
 .scheduled-task-suggestions { position: absolute; z-index: 10; top: 100%; right: 0; left: 0; display: grid; max-height: 220px; overflow: auto; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow); }
 .scheduled-task-suggestions button { display: grid; gap: 3px; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); background: var(--surface); text-align: left; cursor: pointer; }
 .scheduled-task-suggestions button:hover { background: var(--surface-muted); }
