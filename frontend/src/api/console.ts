@@ -154,6 +154,10 @@ export interface EmailClassificationItem {
   subject: string;
   preview: string;
   message_text?: string;
+  quoted_text?: string;
+  important?: boolean | null;
+  provider_classification?: EmailProviderClassification | null;
+  description_version?: string;
   recipients?: string[];
   cc?: string;
   received_at: string;
@@ -164,7 +168,7 @@ export interface EmailClassificationItem {
   model_version: string;
   config_version: string;
   status: string;
-  classification_source: "model" | "user";
+  classification_source: string;
   action_plan: Record<string, unknown>;
   current_action_plan_id: string | null;
   attachment_metadata: EmailAttachmentMetadata[];
@@ -221,11 +225,23 @@ export interface EmailClassificationDetail {
   ok: boolean;
   item: EmailClassificationItem;
   observability: EmailObservabilityEvent[];
+  provider_classification?: EmailProviderClassification | null;
   meta: { snapshot_at: string };
 }
+export interface EmailProviderClassification {
+  state: string;
+  category_key: string | null;
+  important: boolean | null;
+  [key: string]: unknown;
+}
 export interface EmailCategoryConfig {
-  category: string;
-  description: string;
+  category_key: string;
+  display_name: string;
+  core_description: string;
+  include: string[];
+  exclude: string[];
+  description_version: string;
+  bindings: Array<{account_id: string; provider_folder_id: string; provider_folder_name: string; binding_status: string; last_verified_at: string}>;
   threshold: number;
   actions: string[];
   action_parameters?: Record<string, Record<string, unknown>>;
@@ -309,6 +325,10 @@ export interface EmailModelEvidence {
   artifact_sha256: string;
 }
 export interface EmailLearningEvidence {
+  runtime: EmailRuntime;
+  promotion_gate: {config: EmailPromotionConfig; promotion_eligible: boolean; checks: Array<{key: string; actual: unknown; target: unknown; operator: string; passed: boolean; reason: string}>};
+  mode_transitions: Array<Record<string, unknown>>;
+  staged_models: EmailStagedModel[];
   active_model_id: string | null;
   pending_examples: number;
   last_trained_feedback_count: number;
@@ -318,6 +338,56 @@ export interface EmailLearningEvidence {
   models: EmailModelEvidence[];
   registry_issues: Array<{ model_id: string; integrity_status: "corrupt"; integrity_error: string }>;
   category_thresholds: Record<string, number>;
+}
+export interface EmailRuntime {
+  mode: "agent_primary" | "model_primary";
+  active_model_id: string | null;
+  candidate_model_id: string | null;
+  candidate_ready: boolean;
+  toggle_enabled: boolean;
+}
+export interface EmailPromotionConfig {
+  macro_f1_min: number;
+  category_precision_min: number;
+  category_validation_samples_min: number;
+  p95_latency_max_ms: number;
+  config_version: string;
+}
+export interface EmailStagedModel {
+  model_id: string;
+  status: string;
+  trained_at: string;
+  metrics: {accuracy: number | null; macro_f1: number | null; categories: Record<string, Record<string, number | null>>; important?: Record<string, number | null>} | null;
+  evaluation: {protocol: string; test_digest: string; comparability_key: string} | null;
+  head_timing_percentiles_ms: EmailLatency | null;
+  end_to_end_latency_ms: EmailLatency | null;
+  compatibility?: {enabled_categories: string[]; description_version: string; [key: string]: unknown};
+  split_counts?: {train: number; validation: number; test: number; [key: string]: unknown};
+  integrity_status?: string;
+  training?: {
+    started_at: string | null; completed_at: string | null; duration_ms: number | null;
+    sample_count: number | null; category_sample_count: number | null; account_count: number | null; group_count: number | null;
+    new_sample_count?: number | null;
+  } | null;
+  parameters?: Record<string, unknown> | null;
+  failure_reason?: string;
+  [key: string]: unknown;
+}
+export interface EmailLatency {p50: number | null; p95: number | null; p99: number | null}
+export interface EmailCategoryUpdate {
+  core_description: string; include: string[]; exclude: string[];
+  threshold: number; enabled: boolean; expected_current_version: string;
+}
+export interface EmailCategoryCreate extends Omit<EmailCategoryUpdate, "expected_current_version"> {
+  category_key: string; display_name: string; provider_folder_name: string;
+}
+export interface EmailCategoryRevision {
+  revision_id: number | string;
+  category_key: string;
+  config_version: string;
+  description_version: string;
+  created_at: string;
+  config: Pick<EmailCategoryConfig,"core_description"|"include"|"exclude">;
 }
 export interface SentTodoItem { id: string; kind: string; kind_label: string; sent_at: string; status: string; owner: string; project_title: string; todo_title: string; description: string; original_text: string; deadline: string; priority: string; target: string; external_id: string; detail_url: string; }
 export interface WechatScopeTarget {
@@ -364,6 +434,10 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
     subject: emailText(row.subject),
     preview: emailText(row.preview),
     message_text: emailText(row.message_text),
+    quoted_text: emailText(row.quoted_text),
+    important: typeof row.important === "boolean" ? row.important : null,
+    provider_classification: isRecord(row.provider_classification) ? row.provider_classification as unknown as EmailProviderClassification : null,
+    description_version: emailText(row.description_version),
     cc: emailText(row.cc),
     recipients: Array.isArray(row.recipients) ? row.recipients.map(emailText) : [],
     received_at: emailText(row.received_at),
@@ -374,7 +448,7 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
     model_version: emailText(row.model_version || row.model_id),
     config_version: emailText(row.config_version),
     status: emailText(row.status),
-    classification_source: row.classification_source === "user" ? "user" : "model",
+    classification_source: emailText(row.classification_source),
     action_plan: asRecord(row.action_plan),
     current_action_plan_id: typeof row.current_action_plan_id === "string" && row.current_action_plan_id.trim() !== ""
       ? row.current_action_plan_id
@@ -517,6 +591,7 @@ export function getEmailClassification(id: string, signal?: AbortSignal) {
       ok: payload.ok === true,
       item: mapEmailClassification(payload.item),
       observability: Array.isArray(payload.observability) ? payload.observability as EmailObservabilityEvent[] : [],
+      provider_classification: isRecord(payload.provider_classification) ? payload.provider_classification as unknown as EmailProviderClassification : null,
       meta: asRecord(payload.meta) as { snapshot_at: string },
     } satisfies EmailClassificationDetail;
   });
@@ -576,7 +651,7 @@ export function testEmailAccount(accountId: string) {
 
 export function saveEmailConfig(
   category: string,
-  payload: Omit<EmailCategoryConfig, "category" | "updated_at">,
+  payload: EmailCategoryUpdate,
 ) {
   return request<{ ok: boolean; item: EmailCategoryConfig; message: string }>(
     `/api/console/email/config/${encodeURIComponent(category)}`,
@@ -589,6 +664,22 @@ export function listEmailLearning(signal?: AbortSignal) {
     "/api/console/email/learning",
     { signal },
   );
+}
+
+export function createEmailCategory(payload: EmailCategoryCreate) {
+  return request<{ok: boolean; item: EmailCategoryConfig; message: string}>("/api/console/email/config", {method: "POST", body: JSON.stringify(payload)});
+}
+export function listEmailCategoryHistory(categoryKey:string, signal?:AbortSignal) {
+  return request<{ok:boolean;items:EmailCategoryRevision[]}>(`/api/console/email/config/${encodeURIComponent(categoryKey)}/history`,{signal});
+}
+export function getEmailModelVersion(id: string, signal?: AbortSignal) {
+  return request<{ok: boolean; model: EmailStagedModel}>(`/api/console/email/model-versions/${encodeURIComponent(id)}`, {signal});
+}
+export function saveEmailRuntimeMode(payload: {mode: EmailRuntime["mode"]; model_id: string | null; request_id: string; expected_mode: EmailRuntime["mode"]; expected_model_id: string | null}) {
+  return request<{ok: boolean; runtime: EmailRuntime}>("/api/console/email/runtime-mode", {method:"PUT",body:JSON.stringify(payload)});
+}
+export function saveEmailPromotionConfig(payload: Omit<EmailPromotionConfig, "config_version"> & {expected_current_version: string}) {
+  return request<{ok: boolean; config: EmailPromotionConfig}>("/api/console/email/promotion-config", {method:"PUT",body:JSON.stringify(payload)});
 }
 
 export function getHistoryChart(range = "24h", signal?: AbortSignal) {
