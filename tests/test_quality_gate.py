@@ -344,6 +344,26 @@ def test_quality_gate_reports_deferred_minutes_pagination_as_attention(tmp_path)
     }
 
 
+def test_quality_gate_keeps_scheduled_capability_skip_out_of_scheduler_health(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    store.record_error(
+        "scheduled-task:7",
+        "scheduled:7:2026-09-08T12:00:00+00:00",
+        "scheduled_task_runtime_unavailable",
+        "configured runtime is unavailable; no fallback was used",
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(issue.code == "recent_error" for issue in report.violations)
+    assert any(
+        issue.source == "scheduled_task_runs"
+        and issue.code == "scheduled_task_execution_unavailable"
+        and issue.count == 1
+        for issue in report.attention
+    )
+
+
 def test_quality_gate_keeps_future_follow_up_as_attention_not_failure(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     future = (NOW + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")

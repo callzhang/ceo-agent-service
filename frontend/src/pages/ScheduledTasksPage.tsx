@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import {
   createScheduledTask,
@@ -185,6 +186,8 @@ function RunHistory({ runs, hasMore, loading, onMore }: { runs: ScheduledTaskRun
 }
 
 export function ScheduledTasksPage() {
+  const [searchParams] = useSearchParams();
+  const requestedTaskId = Number(searchParams.get("id"));
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [options, setOptions] = useState<ScheduledTaskOptions | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -236,7 +239,12 @@ export function ScheduledTasksPage() {
       const [taskResult, optionResult] = await Promise.all([listScheduledTasks(signal), getScheduledTaskOptions(signal)]);
       if (signal?.aborted || generation !== contextGeneration.current) return;
       setTasks(taskResult.items); setOptions(optionResult);
-      const nextSelected = taskResult.items.find((item) => item.id === selectedId) || taskResult.items[0] || null;
+      const nextSelected = taskResult.items.find((item) => item.id === selectedId)
+        || (Number.isInteger(requestedTaskId) && requestedTaskId > 0
+          ? taskResult.items.find((item) => item.id === requestedTaskId)
+          : null)
+        || taskResult.items[0]
+        || null;
       setSelectedId(nextSelected?.id || null); setCreating(false);
       setDraft(nextSelected ? taskDraft(nextSelected) : emptyDraft(optionResult));
       setLoadState("ready");

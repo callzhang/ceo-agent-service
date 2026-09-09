@@ -1008,6 +1008,38 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
     json.dumps(payload, ensure_ascii=False)
 
 
+def test_worker_status_exposes_each_dispatcher_adapter_without_creating_runs(
+    monkeypatch, tmp_path: Path
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda _label: {"ok": True, "state": "running"},
+    )
+
+    payload = audit_web_module.build_worker_status_payload(store)
+
+    assert [row["name"] for row in payload["dispatcher_queues"]] == [
+        "scheduled",
+        "scheduled_execution",
+        "reply",
+        "meeting",
+        "work_summary",
+        "okr_review",
+        "task_todo_sync_outbox",
+    ]
+    expected_fields = {
+        "name", "pending", "due", "oldest_available_at", "running", "latest_error"
+    }
+    assert all(set(row) == expected_fields for row in payload["dispatcher_queues"])
+    assert all(
+        row["pending"] == 0 and row["running"] == 0
+        for row in payload["dispatcher_queues"]
+    )
+    assert store.list_reply_tasks() == []
+
+
 def test_worker_status_projects_email_health_and_queues_without_double_counting(
     monkeypatch, tmp_path: Path
 ):
@@ -1740,6 +1772,23 @@ def test_console_attention_preserves_record_detail_url(monkeypatch, tmp_path: Pa
 
     assert response.status_code == 200
     assert response.json()["items"][0]["records"][0]["detail_url"] == "/history/errors/12830"
+
+
+def test_scheduled_task_unavailability_attention_links_to_the_cron(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error(
+        "scheduled-task:42",
+        "scheduled:42:2026-09-08T12:00:00+00:00",
+        "scheduled_task_execution_unavailable",
+        "scheduled_task_execution_unavailable: runtime route is unhealthy",
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    [row] = [item for item in rows if item["category"] == "Scheduled task"]
+    assert row["context"] == "scheduled-task:42"
+    assert row["root_cause"] == "scheduled_task_execution_unavailable"
+    assert row["detail_url"] == "/scheduled-tasks?id=42"
 
 
 def test_console_attention_humanizes_markup_and_bounds_primary_summary():

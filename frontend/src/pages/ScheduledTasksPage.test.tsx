@@ -62,7 +62,7 @@ function setup(items: TestTask[] = [task]) {
 
 beforeEach(() => { vi.clearAllMocks(); setup(); });
 
-function renderPage() { return render(<MemoryRouter><ScheduledTasksPage /></MemoryRouter>); }
+function renderPage(entry = "/scheduled-tasks") { return render(<MemoryRouter initialEntries={[entry]}><ScheduledTasksPage /></MemoryRouter>); }
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -71,6 +71,14 @@ function deferred<T>() {
 }
 
 describe("ScheduledTasksPage", () => {
+  it("selects the task named by the Attention deep link", async () => {
+    setup([task, taskB]);
+    renderPage("/scheduled-tasks?id=8");
+
+    expect(await screen.findByLabelText("任务名称")).toHaveValue("检查飞书消息");
+    expect(api.listScheduledTaskRuns).toHaveBeenCalledWith(8, "", expect.any(AbortSignal));
+  });
+
   it("shows a compact master-detail with readable schedule and execution state", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "定时任务" })).toBeInTheDocument();

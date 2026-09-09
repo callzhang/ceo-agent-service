@@ -148,7 +148,7 @@ def scan_hourly_quality(
         _check_scan_health(db, violations, attention)
         _check_codex_capacity_pause(db, checked_now, attention)
         _check_runtime_route_pauses(db, checked_now, attention)
-        _check_recent_errors(db, checked_now, violations)
+        _check_recent_errors(db, checked_now, violations, attention)
     return QualityGateReport(
         checked_at=now_text,
         checked_sources=checked,
@@ -678,7 +678,21 @@ def _check_recent_errors(
     db: sqlite3.Connection,
     now: datetime,
     violations: list[QualityIssue],
+    attention: list[QualityIssue],
 ) -> None:
+    scheduled_predicate = "error_event.conversation_id like 'scheduled-task:%'"
+    scheduled_count = _count(
+        db,
+        f"""select count(*) from errors error_event
+            where datetime(error_event.created_at) >= datetime(?)
+              and coalesce(error_event.resolved_at, '') = ''
+              and {scheduled_predicate}""",
+        (_cutoff(now, RECENT_ERROR_WINDOW_SECONDS),),
+    )
+    _add(attention, source="scheduled_task_runs",
+         code="scheduled_task_execution_unavailable", count=scheduled_count,
+         severity="warning",
+         detail="a scheduled task could not use its pinned Runtime or Skill")
     _add(violations, source="errors", code="recent_error", count=_count(
         db,
         """select count(*)
@@ -690,6 +704,7 @@ def _check_recent_errors(
                 or coalesce(error_event.message_id, '') <> ''
              )
              and error_event.kind <> 'codex_capacity_pause'
+             and not ({})
              and not exists (
                 select 1
                 from reply_attempts recovery
@@ -698,7 +713,8 @@ def _check_recent_errors(
                   and datetime(recovery.updated_at) >= datetime(error_event.created_at)
                   and lower(recovery.send_status) in ({})
              )""".format(
-            ",".join("?" for _ in RECOVERED_REPLY_ATTEMPT_STATUSES)
+            scheduled_predicate,
+            ",".join("?" for _ in RECOVERED_REPLY_ATTEMPT_STATUSES),
         ),
         (
             _cutoff(now, RECENT_ERROR_WINDOW_SECONDS),

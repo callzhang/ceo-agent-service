@@ -17,6 +17,10 @@ describe("StatusPage", () => {
       email: { status: "ready", entries: [{ scope: "component:email-provider-actions", status: "ready", updated_at: "now" }] },
       wechat: { reader: { status: "ready", enabled: true }, sender: { status: "ready", enabled: true }, preflight: { status: "ready" }, account: { ready: true } },
       queues: [{ name: "Reply tasks", table: "reply_tasks", counts: { done: 1 }, pending: 0, processing: 0, retryable: 0, failed: 0, latest_updated_at: "now", latest_error: "" }],
+      dispatcher_queues: [
+        { name: "scheduled", pending: 1, due: 1, oldest_available_at: "2026-09-08T12:00:00Z", running: 0, latest_error: "runtime unavailable" },
+        { name: "scheduled_execution", pending: 0, due: 0, oldest_available_at: null, running: 1, latest_error: "" },
+      ],
     }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
   });
 
@@ -28,6 +32,10 @@ describe("StatusPage", () => {
     expect(screen.getByRole("heading", { name: "Email worker" })).toBeInTheDocument();
     expect(screen.getByText("component:email-provider-actions")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Queues" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Dispatcher queues" })).toBeInTheDocument();
+    expect(screen.getByText("scheduled_execution")).toBeInTheDocument();
+    expect(screen.getByText("runtime unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Polling interval")).not.toBeInTheDocument();
     expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
   });
 });

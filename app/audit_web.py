@@ -2143,6 +2143,7 @@ def build_worker_status_payload(
     # not repeatedly contend for the writer lock or mix queue generations.
     with store.read_snapshot():
         queues = _queue_status_snapshots(store)
+        dispatcher_queues = _dispatcher_queue_snapshots(store)
         attention_rows = _queue_attention_rows(store)
         email_health = _email_worker_health_snapshot(store)
     summary_queues = [
@@ -2165,6 +2166,7 @@ def build_worker_status_payload(
         "connectors": {},
         "email": email_health,
         "queues": queues,
+        "dispatcher_queues": dispatcher_queues,
         "attention_rows": attention_rows,
         "database": {"path": str(store.path)},
         "summary": {
@@ -2477,6 +2479,45 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
         if _sqlite_table_exists(db, "reply_tasks"):
             snapshots.append(_email_unsubscribe_task_queue_snapshot(db))
     return snapshots
+
+
+def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
+    """Read each adapter's native queue projection without claiming work."""
+    from app.dispatcher.adapters import (
+        MeetingQueueAdapter,
+        OkrReviewQueueAdapter,
+        ReplyQueueAdapter,
+        ScheduledExecutionQueueAdapter,
+        ScheduledTaskQueueAdapter,
+        TaskTodoSyncOutboxQueueAdapter,
+        WorkSummaryQueueAdapter,
+    )
+
+    now = datetime.now(timezone.utc)
+    adapters = (
+        ScheduledTaskQueueAdapter(store),
+        ScheduledExecutionQueueAdapter(store),
+        ReplyQueueAdapter(store),
+        MeetingQueueAdapter(store),
+        WorkSummaryQueueAdapter(store),
+        OkrReviewQueueAdapter(store),
+        TaskTodoSyncOutboxQueueAdapter(store),
+    )
+    rows = []
+    for adapter in adapters:
+        metrics = adapter.metrics(now)
+        rows.append({
+            "name": adapter.name,
+            "pending": metrics.pending,
+            "due": metrics.due,
+            "oldest_available_at": (
+                metrics.oldest_available_at.isoformat()
+                if metrics.oldest_available_at is not None else None
+            ),
+            "running": metrics.running,
+            "latest_error": metrics.latest_error,
+        })
+    return rows
 
 
 def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
@@ -3031,8 +3072,9 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
             recovered_placeholders = ",".join("?" for _ in recovered_statuses)
             for row in db.execute(
                 f"""
-                select error_event.id, error_event.kind, error_event.detail,
-                       error_event.created_at
+                select error_event.id, error_event.conversation_id,
+                       error_event.message_id, error_event.kind,
+                       error_event.detail, error_event.created_at
                 from errors error_event
                 where datetime(error_event.created_at) >= datetime('now', '-4 hours')
                   and coalesce(error_event.resolved_at, '') = ''
@@ -3055,16 +3097,22 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                 (*recovered_statuses, limit),
             ).fetchall():
                 detail = str(row["detail"] or row["kind"] or "unresolved service error")
+                conversation_id = str(row["conversation_id"] or "")
+                scheduled_match = re.fullmatch(r"scheduled-task:(\d+)", conversation_id)
                 rows.append(
                     {
-                        "category": "Service error",
+                        "category": "Scheduled task" if scheduled_match else "Service error",
                         "id": str(row["id"]),
                         "status": "failed",
-                        "context": str(row["kind"] or "service error"),
+                        "context": conversation_id if scheduled_match else str(row["kind"] or "service error"),
+                        "root_cause": str(row["kind"] or "service error"),
                         "summary": detail,
                         "updated_at": str(row["created_at"] or ""),
                         "error": detail,
-                        "detail_url": f"/history/errors/{int(row['id'])}",
+                        "detail_url": (
+                            f"/scheduled-tasks?id={scheduled_match.group(1)}"
+                            if scheduled_match else f"/history/errors/{int(row['id'])}"
+                        ),
                     }
                 )
     for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
@@ -9943,6 +9991,7 @@ def create_audit_app(
             "connectors": {},
             "email": {"status": "refreshing", "updated_at": "", "entries": []},
             "queues": [],
+            "dispatcher_queues": [],
             "attention_rows": [],
             "database": {"path": str(db_path)},
             "summary": {

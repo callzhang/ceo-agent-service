@@ -61,6 +61,7 @@ export function StatusPanel() {
   const summary = record(payload.summary);
   const components = list(payload.components);
   const queues = list(payload.queues);
+  const dispatcherQueues = list(payload.dispatcher_queues);
   const connectors = record(payload.connectors);
   const email = record(payload.email);
   const emailRows = list(email.entries);
@@ -97,6 +98,9 @@ export function StatusPanel() {
     </StatusSection>
     <StatusSection title="Queues">
       <StatusTable headers={["Queue", "Status counts", "Pending", "Processing", "Retryable", "Failed", "Updated", "Latest error"]} mobileLabels={["Queue", "Status counts", "Pending", "Processing", "Retryable", "Failed", "Updated", "Latest error"]} rows={queues.map((item) => [<><strong>{displayValue(item.name)}</strong><small className="table-subtitle">{displayValue(item.table)}</small></>, displayValue(item.counts), displayValue(item.pending), displayValue(item.processing), displayValue(item.retryable), displayValue(item.failed), displayValue(item.latest_updated_at), displayValue(item.latest_error || "-")])} />
+    </StatusSection>
+    <StatusSection title="Dispatcher queues">
+      <StatusTable headers={["Adapter", "Pending", "Due", "Oldest", "Running", "Latest error"]} mobileLabels={["Adapter", "Pending", "Due", "Oldest", "Running", "Latest error"]} rows={dispatcherQueues.map((item) => [displayValue(item.name), displayValue(item.pending), displayValue(item.due), displayValue(item.oldest_available_at || "-"), displayValue(item.running), displayValue(item.latest_error || "-")])} />
     </StatusSection>
     {state === "error" && <p className="inline-alert" role="alert">刷新失败，页面继续显示上一份快照：{error}</p>}
   </>;
