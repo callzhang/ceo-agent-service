@@ -1,13 +1,12 @@
-import { memo, useEffect, useMemo, useRef } from "react";
-import ReactMarkdown from "react-markdown";
+import { useEffect, useMemo, useRef } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
-import remarkGfm from "remark-gfm";
 
 import { timelineBlocks } from "../events";
 import type { Artifact, Confirmation, Timeline, Turn, WorkbenchEvent } from "../types";
 import { ArtifactList } from "./ArtifactList";
 import { ConfirmationCard } from "./ConfirmationCard";
 import { displayText, ExecutionStep } from "./ExecutionStep";
+import { MarkdownContent } from "./MarkdownContent";
 
 interface ConversationTimelineProps {
   timeline: Timeline;
@@ -37,37 +36,6 @@ export function latestTurnScrollIndex(
   return turns.length ? firstItemIndex + turns.length - 1 : null;
 }
 
-function safeWebHref(href?: string): string | undefined {
-  if (!href) return undefined;
-  try {
-    const parsed = new URL(href);
-    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
-  return (
-    <div className="assistant-markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        urlTransform={(url) => safeWebHref(url) ?? ""}
-        components={{
-          a: ({ href, children }) => {
-            const safe = safeWebHref(href);
-            return safe
-              ? <a href={safe} target="_blank" rel="noopener noreferrer">{children}</a>
-              : <span>{children}</span>;
-          },
-          img: ({ alt }) => <span role="note">[图片已阻止：{alt || "未命名"}]</span>,
-        }}
-      >{text}</ReactMarkdown>
-    </div>
-  );
-});
-
 function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, active }: {
   turn: Turn;
   events: WorkbenchEvent[];
@@ -85,7 +53,7 @@ function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, acti
       <div className="user-message"><p>{turn.user_text}</p></div>
       <div className="assistant-message">
         {blocks.map((block) => {
-          if (block.kind === "markdown") return !authoritativeFinalText ? <MarkdownBlock key={block.key} text={block.text ?? ""} /> : null;
+          if (block.kind === "markdown") return !authoritativeFinalText ? <MarkdownContent key={block.key} text={block.text ?? ""} /> : null;
           if (block.kind === "thinking") return <details className="thinking-block" key={block.key}><summary>思考摘要</summary><p>{block.text}</p></details>;
           if (block.kind === "tool" || block.kind === "file") return <ExecutionStep key={block.key} kind={block.kind} status={block.status} payload={block.payload} startedAt={block.startedAt} completedAt={block.completedAt} />;
           if (block.kind === "confirmation") {
@@ -95,8 +63,8 @@ function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, acti
           const artifact = artifactsById.get(block.artifactId ?? "");
           return artifact?.turn_id === turn.id ? <ArtifactList key={block.key} taskId={taskId} turnId={turn.id} artifacts={[artifact]} /> : null;
         })}
-        {authoritativeFinalText && <MarkdownBlock text={turn.final_text} />}
-        {!authoritativeFinalText && !renderedText && turn.final_text && <MarkdownBlock text={turn.final_text} />}
+        {authoritativeFinalText && <MarkdownContent text={turn.final_text} />}
+        {!authoritativeFinalText && !renderedText && turn.final_text && <MarkdownContent text={turn.final_text} />}
         {turn.status === "queued" && <p className="turn-state" role="status">已排队</p>}
         {turn.status === "running" && <p className="turn-state" role="status">执行中</p>}
         {turn.status === "waiting_confirmation" && <p className="turn-state" role="status">等待确认</p>}

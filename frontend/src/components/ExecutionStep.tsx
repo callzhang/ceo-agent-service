@@ -57,10 +57,13 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
   const completed = status === "completed" || status === "success";
   const aborted = status === "aborted";
   const Icon = kind === "file" ? FilePenLine : failed ? XCircle : completed ? CheckCircle2 : aborted ? CircleSlash2 : CircleEllipsis;
-  const whiteBox = kind === "tool" && (payload.kind === "command" || payload.kind === "mcp");
+  const sessionTrace = kind === "tool" && payload.kind === "trace";
+  const whiteBox = kind === "tool" && (payload.kind === "command" || payload.kind === "mcp" || sessionTrace);
   const name = kind === "file"
     ? displayText(payload.filename, "文件变更")
-    : whiteBox
+    : sessionTrace
+      ? exactText(payload.name, "工具调用")
+      : whiteBox
       ? exactText(payload.kind === "command" ? payload.command : payload.name, exactText(payload.name, "工具调用"))
       : executionName(payload.tool);
   const rawSummary = payload.summary ?? payload.change;
@@ -83,7 +86,12 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
       {kind === "file" ? <p>{summary}</p> : whiteBox ? (
         <div className="execution-details">
           <dl className="execution-metadata">
-            {payload.kind === "command" ? (
+            {sessionTrace ? (
+              <>
+                <div><dt>调用名称</dt><dd><code>{exactText(payload.name, "未提供")}</code></dd></div>
+                {typeof payload.tool_call_id === "string" && <div><dt>调用 ID</dt><dd><code>{exactText(payload.tool_call_id)}</code></dd></div>}
+              </>
+            ) : payload.kind === "command" ? (
               <>
                 <div><dt>命令</dt><dd><code>{exactText(payload.command, "未提供")}</code></dd></div>
                 {typeof payload.cwd === "string" && <div><dt>工作目录</dt><dd><code>{exactText(payload.cwd)}</code></dd></div>}
@@ -101,6 +109,7 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
             <TimeDetail label="完成时间" value={completedAt} />
             {duration && <div><dt>耗时</dt><dd>{duration}</dd></div>}
           </dl>
+          {sessionTrace && payload.input !== undefined && <section><h4>输入</h4><pre>{detailText(payload.input)}</pre></section>}
           {payload.arguments !== undefined && <section><h4>参数</h4><pre>{detailText(payload.arguments)}</pre></section>}
           {payload.output !== undefined && <section><h4>输出</h4><pre>{detailText(payload.output)}</pre></section>}
           {payload.result !== undefined && <section><h4>结果</h4><pre>{detailText(payload.result)}</pre></section>}

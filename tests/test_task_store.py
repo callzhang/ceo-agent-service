@@ -1686,7 +1686,7 @@ def test_operation_logs_query_prunes_unrequested_sources(tmp_path: Path):
 
     assert "from reply_attempts" in query
     assert "from errors" not in query
-    assert "from reply_tasks" not in query
+    assert "'reply_tasks' as source_table" not in query
 
 
 def test_operation_logs_page_and_count_share_one_materialized_query(tmp_path: Path):
@@ -1713,6 +1713,78 @@ def test_operation_logs_page_and_count_share_one_materialized_query(tmp_path: Pa
     assert total == 3
     assert len(rows) == 2
     assert all(row.source_table == "reply_attempts" for row in rows)
+
+
+def test_operation_logs_project_recovered_failures_without_losing_history(tmp_path: Path):
+    store = _store(tmp_path)
+    failed_id = store.record_reply_attempt(
+        conversation_id="history-recovered",
+        conversation_title="Recovered history",
+        trigger_message_id="history-recovered-message",
+        trigger_sender="Derek",
+        trigger_text="Retry this message",
+        action="agent_run",
+        sensitivity_kind="",
+        codex_reason="temporary failure",
+        draft_reply_text="",
+        send_status="failed",
+    )
+    store.update_reply_attempt(failed_id, send_error="temporary provider error")
+    store.record_reply_attempt(
+        conversation_id="history-recovered",
+        conversation_title="Recovered history",
+        trigger_message_id="history-recovered-message",
+        trigger_sender="Derek",
+        trigger_text="Retry this message",
+        action="send_reply",
+        sensitivity_kind="",
+        codex_reason="recovered",
+        draft_reply_text="done",
+        send_status="sent",
+    )
+
+    recovered = store.list_operation_logs(
+        statuses=("recovered",), source_tables=("reply_attempts",)
+    )
+    failed = store.list_operation_logs(
+        statuses=("failed",), source_tables=("reply_attempts",)
+    )
+
+    assert [row.source_id for row in recovered] == [failed_id]
+    assert recovered[0].detail == "temporary provider error"
+    assert failed == []
+
+
+def test_operation_logs_project_recovered_meeting_failures(tmp_path: Path):
+    store = _store(tmp_path)
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="history-recovered-meeting",
+        title="Recovered meeting",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-09-01T00:00:00Z",
+        eligible_at="2026-09-01T00:10:00Z",
+        status="pending",
+    )
+    failed_id = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="meeting-failed",
+        decision_json="{}",
+        audit_summary="temporary failure",
+        status="failed",
+        error="provider unavailable",
+    )
+    store.update_meeting_alignment_job(job_id, status="sent")
+
+    recovered = store.list_operation_logs(
+        statuses=("recovered",), source_tables=("meeting_alignment_runs",)
+    )
+    failed = store.list_operation_logs(
+        statuses=("failed",), source_tables=("meeting_alignment_runs",)
+    )
+
+    assert [row.source_id for row in recovered] == [failed_id]
+    assert failed == []
 
 
 def test_read_connections_use_bounded_cache_and_mmap(tmp_path: Path):
