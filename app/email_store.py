@@ -20,6 +20,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 from urllib.parse import unquote, unquote_plus, urlsplit
+from uuid import uuid4
 
 from app.email_classifier_contracts import (
     ACTION_DEPENDENCY_PARAMETER,
@@ -63,7 +64,14 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 33
+EMAIL_SCHEMA_VERSION = 34
+_REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
+    {
+        "email_model_promotion_configs",
+        "email_model_mode_transitions",
+        "email_category_description_revisions",
+    }
+)
 MAX_CLASSIFIER_RUNTIME_SAMPLES = 2048
 HISTORICAL_DEFER_RETRY_SECONDS = 60
 DIRECT_ACTION_MAX_ATTEMPTS = 3
@@ -135,6 +143,33 @@ _UNREDACTED_SECRET_TOKEN = re.compile(
 )
 _ColumnContract = tuple[str, bool, str | None]
 _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
+    "email_category_description_revisions": {
+        "revision_id": ("text", True, None),
+        "category_key": ("text", True, None),
+        "config_version": ("text", True, None),
+        "config_json": ("text", True, None),
+        "created_at": ("text", True, None),
+    },
+    "email_model_promotion_configs": {
+        "config_version": ("text", True, None),
+        "macro_f1_min": ("real", True, None),
+        "category_precision_min": ("real", True, None),
+        "category_validation_samples_min": ("integer", True, None),
+        "p95_latency_max_ms": ("real", True, None),
+        "created_at": ("text", True, None),
+    },
+    "email_model_mode_transitions": {
+        "request_id": ("text", True, None),
+        "actor": ("text", True, None),
+        "from_mode": ("text", True, None),
+        "to_mode": ("text", True, None),
+        "from_model_id": ("text", False, None),
+        "target_model_id": ("text", False, None),
+        "promotion_config_version": ("text", True, None),
+        "status": ("text", True, None),
+        "reason": ("text", True, None),
+        "created_at": ("text", True, None),
+    },
     "email_schema_migrations": {
         "version": ("integer", False, None),
         "applied_at": ("text", True, None),
@@ -476,6 +511,32 @@ _REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
     table: frozenset(columns) for table, columns in _REQUIRED_COLUMN_CONTRACTS.items()
 }
 _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
+    "email_category_description_revisions": (
+        "trim(revision_id) != ''",
+        "trim(category_key) != ''",
+        "trim(config_version) != ''",
+        "json_valid(config_json)",
+        "trim(created_at) != ''",
+    ),
+    "email_model_promotion_configs": (
+        "trim(config_version) != ''",
+        "macro_f1_min >= 0 and macro_f1_min <= 1",
+        "category_precision_min >= 0 and category_precision_min <= 1",
+        "typeof(category_validation_samples_min) = 'integer' and category_validation_samples_min > 0",
+        "p95_latency_max_ms > 0 and (p95_latency_max_ms - p95_latency_max_ms) is 0.0",
+        "trim(created_at) != ''",
+    ),
+    "email_model_mode_transitions": (
+        "trim(request_id) != ''",
+        "trim(actor) != ''",
+        "from_mode in ('agent_primary', 'model_primary')",
+        "to_mode in ('agent_primary', 'model_primary')",
+        "from_model_id is null or trim(from_model_id) != ''",
+        "target_model_id is null or trim(target_model_id) != ''",
+        "trim(promotion_config_version) != ''",
+        "status in ('applied', 'rejected', 'failed')",
+        "trim(created_at) != ''",
+    ),
     "email_classifications": ("legacy_processed_without_plan in (0, 1)",),
     "email_agent_classification_tasks": (
         "trim(task_id) != ''",
@@ -692,6 +753,9 @@ _REQUIRED_AUTOINCREMENT_COLUMNS = frozenset(
     }
 )
 _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
+    "email_category_description_revisions": ("revision_id",),
+    "email_model_promotion_configs": ("config_version",),
+    "email_model_mode_transitions": ("request_id",),
     "email_schema_migrations": ("version",),
     "email_classifications": ("id",),
     "email_agent_classification_tasks": ("task_id",),
@@ -741,6 +805,14 @@ _REQUIRED_FOREIGN_KEYS: Mapping[
     str,
     tuple[tuple[str, str, str, str], ...],
 ] = {
+    "email_model_mode_transitions": (
+        (
+            "promotion_config_version",
+            "email_model_promotion_configs",
+            "config_version",
+            "RESTRICT",
+        ),
+    ),
     "email_category_folder_bindings": (
         ("account_id", "email_accounts", "account_id", "CASCADE"),
         ("category_key", "email_category_configs", "category_key", "CASCADE"),
@@ -857,7 +929,23 @@ _REQUIRED_PARTIAL_UNIQUE_INDEXES: Mapping[
         "where binding_status = 'active'",
     ),
 }
+_MODEL_CONTROL_IMMUTABLE_TRIGGER_TABLES = {
+    f"trg_{table}_immutable_{operation}": table
+    for table in (
+        "email_model_promotion_configs",
+        "email_model_mode_transitions",
+        "email_category_description_revisions",
+    )
+    for operation in ("update", "delete", "insert")
+}
+_MODEL_CONTROL_IMMUTABLE_TRIGGER_SQL = {
+    name: f"""create trigger {name} before {name.rsplit("_", 1)[1]} on {table}
+        {f'when exists (select 1 from {table} where {_REQUIRED_PRIMARY_KEYS[table][0]}=new.{_REQUIRED_PRIMARY_KEYS[table][0]})' if name.endswith('_insert') else ''}
+        begin select raise(abort, 'immutable model control history'); end"""
+    for name, table in _MODEL_CONTROL_IMMUTABLE_TRIGGER_TABLES.items()
+}
 _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
+    **_MODEL_CONTROL_IMMUTABLE_TRIGGER_SQL,
     "trg_email_training_snapshots_immutable_update": """
         create trigger trg_email_training_snapshots_immutable_update
         before update on email_training_snapshots
@@ -1130,6 +1218,7 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
     """,
 }
 _REQUIRED_TRIGGER_TABLES: Mapping[str, str] = {
+    **_MODEL_CONTROL_IMMUTABLE_TRIGGER_TABLES,
     "trg_email_training_snapshots_immutable_update": "email_training_snapshots",
     "trg_email_training_snapshots_immutable_delete": "email_training_snapshots",
     "trg_email_training_observations_immutable_update": (
@@ -2769,6 +2858,9 @@ class EmailStore:
                 latest_version = 32
             if latest_version == 32:
                 self._migrate_v32_to_v33(db, replace_version=is_prototype)
+                latest_version = 33
+            if latest_version == 33:
+                self._migrate_v33_to_v34(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -4311,6 +4403,276 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v33_to_v34(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        db.execute("""
+            create table if not exists email_model_promotion_configs (
+                config_version text primary key not null check(trim(config_version) != ''),
+                macro_f1_min real not null check(macro_f1_min >= 0 and macro_f1_min <= 1),
+                category_precision_min real not null check(category_precision_min >= 0 and category_precision_min <= 1),
+                category_validation_samples_min integer not null check(typeof(category_validation_samples_min) = 'integer' and category_validation_samples_min > 0),
+                p95_latency_max_ms real not null check(p95_latency_max_ms > 0 and (p95_latency_max_ms - p95_latency_max_ms) is 0.0),
+                created_at text not null check(trim(created_at) != '')
+            ) without rowid
+        """)
+        db.execute("""
+            create table if not exists email_model_mode_transitions (
+                request_id text primary key not null check(trim(request_id) != ''),
+                actor text not null check(trim(actor) != ''),
+                from_mode text not null check(from_mode in ('agent_primary', 'model_primary')),
+                to_mode text not null check(to_mode in ('agent_primary', 'model_primary')),
+                from_model_id text check(from_model_id is null or trim(from_model_id) != ''),
+                target_model_id text check(target_model_id is null or trim(target_model_id) != ''),
+                promotion_config_version text not null check(trim(promotion_config_version) != ''),
+                status text not null check(status in ('applied', 'rejected', 'failed')),
+                reason text not null,
+                created_at text not null check(trim(created_at) != ''),
+                foreign key(promotion_config_version) references email_model_promotion_configs(config_version) on delete restrict
+            ) without rowid
+        """)
+        if db.execute("select 1 from email_model_promotion_configs").fetchone() is None:
+            db.execute(
+                "insert into email_model_promotion_configs values (?, ?, ?, ?, ?, ?)",
+                (str(uuid4()), 0.95, 0.95, 20, 500.0, self._now()),
+            )
+        db.execute("""
+            create table if not exists email_category_description_revisions (
+                revision_id text primary key not null check(trim(revision_id) != ''),
+                category_key text not null check(trim(category_key) != ''),
+                config_version text not null check(trim(config_version) != ''),
+                config_json text not null check(json_valid(config_json)),
+                created_at text not null check(trim(created_at) != '')
+            ) without rowid
+        """)
+        for row in db.execute(
+            "select * from email_category_configs order by category_key"
+        ).fetchall():
+            if (
+                db.execute(
+                    "select 1 from email_category_description_revisions where category_key=?",
+                    (row["category_key"],),
+                ).fetchone()
+                is None
+            ):
+                self._append_category_description_revision(db, row)
+        for sql in _MODEL_CONTROL_IMMUTABLE_TRIGGER_SQL.values():
+            db.execute(
+                sql.replace("create trigger ", "create trigger if not exists ", 1)
+            )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=34, applied_at=? where version=33",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (34, ?)",
+                (self._now(),),
+            )
+
+    def _next_model_control_timestamp(self, db: sqlite3.Connection, table: str) -> str:
+        """Allocate insertion order while the caller holds BEGIN IMMEDIATE."""
+        previous = db.execute(f"select max(created_at) from {table}").fetchone()[0]
+        return self._next_account_timestamp(previous)
+
+    def current_model_promotion_config(self) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_model_promotion_configs order by created_at desc limit 1"
+            ).fetchone()
+        if row is None:
+            raise EmailPersistenceCorruption("missing model promotion config")
+        return dict(row)
+
+    def list_model_promotion_configs(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    "select * from email_model_promotion_configs order by created_at desc"
+                )
+            ]
+
+    @staticmethod
+    def _validate_model_promotion_values(
+        *,
+        macro_f1_min: float,
+        category_precision_min: float,
+        category_validation_samples_min: int,
+        p95_latency_max_ms: float,
+    ) -> None:
+        for field, value, minimum, maximum in (
+            ("macro_f1_min", macro_f1_min, 0, 1),
+            ("category_precision_min", category_precision_min, 0, 1),
+            ("p95_latency_max_ms", p95_latency_max_ms, 0, 1.7976931348623157e308),
+        ):
+            if (
+                type(value) not in (int, float)
+                or not minimum <= value <= maximum
+                or not math.isfinite(value)
+            ):
+                raise ValueError(f"{field} must be a finite number in range")
+        if p95_latency_max_ms <= 0:
+            raise ValueError("p95_latency_max_ms must be positive")
+        if (
+            type(category_validation_samples_min) is not int
+            or not 0 < category_validation_samples_min < 2**63
+        ):
+            raise ValueError(
+                "category_validation_samples_min must be a positive SQLite integer"
+            )
+
+    def create_model_promotion_config(
+        self,
+        *,
+        expected_current_version: str,
+        macro_f1_min: float,
+        category_precision_min: float,
+        category_validation_samples_min: int,
+        p95_latency_max_ms: float,
+    ) -> dict[str, Any]:
+        values = dict(
+            macro_f1_min=macro_f1_min,
+            category_precision_min=category_precision_min,
+            category_validation_samples_min=category_validation_samples_min,
+            p95_latency_max_ms=p95_latency_max_ms,
+        )
+        self._validate_model_promotion_values(**values)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            current = db.execute(
+                "select config_version from email_model_promotion_configs order by created_at desc limit 1"
+            ).fetchone()
+            if current is None or current["config_version"] != expected_current_version:
+                raise ValueError("model promotion config changed")
+            version = str(uuid4())
+            db.execute(
+                "insert into email_model_promotion_configs values (?, ?, ?, ?, ?, ?)",
+                (
+                    version,
+                    *values.values(),
+                    self._next_model_control_timestamp(db, "email_model_promotion_configs"),
+                ),
+            )
+            return dict(
+                db.execute(
+                    "select * from email_model_promotion_configs where config_version=?",
+                    (version,),
+                ).fetchone()
+            )
+
+    @staticmethod
+    def _validate_model_mode_transition(payload: Mapping[str, Any]) -> None:
+        for field in (
+            "request_id",
+            "actor",
+            "from_mode",
+            "to_mode",
+            "promotion_config_version",
+            "status",
+        ):
+            if not isinstance(payload[field], str) or not payload[field].strip():
+                raise ValueError(f"{field} must be nonempty text")
+        if not isinstance(payload["reason"], str):
+            raise ValueError("reason must be text")
+        for field in ("from_model_id", "target_model_id"):
+            value = payload[field]
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{field} must be nonempty text or null")
+        for field in ("from_mode", "to_mode"):
+            if payload[field] not in ("agent_primary", "model_primary"):
+                raise ValueError(f"invalid {field}")
+        if payload["status"] not in ("applied", "rejected", "failed"):
+            raise ValueError("invalid transition status")
+        if (payload["from_mode"] == "model_primary") != (
+            payload["from_model_id"] is not None
+        ):
+            raise ValueError("from_model_id must match from_mode")
+        if (
+            payload["to_mode"] == "agent_primary"
+            and payload["target_model_id"] is not None
+        ):
+            raise ValueError("agent_primary cannot have a target_model_id")
+        if (
+            payload["to_mode"] == "model_primary"
+            and payload["status"] == "applied"
+            and payload["target_model_id"] is None
+        ):
+            raise ValueError("applied model_primary requires target_model_id")
+
+    def record_model_mode_transition(
+        self,
+        *,
+        request_id: str,
+        actor: str,
+        from_mode: str,
+        to_mode: str,
+        from_model_id: str | None,
+        target_model_id: str | None,
+        promotion_config_version: str,
+        status: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Append the mirrored transition receipt; this does not activate a model."""
+        payload = dict(
+            request_id=request_id,
+            actor=actor,
+            from_mode=from_mode,
+            to_mode=to_mode,
+            from_model_id=from_model_id,
+            target_model_id=target_model_id,
+            promotion_config_version=promotion_config_version,
+            status=status,
+            reason=reason,
+        )
+        self._validate_model_mode_transition(payload)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            existing = db.execute(
+                "select * from email_model_mode_transitions where request_id=?",
+                (request_id,),
+            ).fetchone()
+            if existing is not None:
+                if any(existing[key] != value for key, value in payload.items()):
+                    raise ValueError("model mode transition request_id conflict")
+                return dict(existing)
+            if (
+                db.execute(
+                    "select 1 from email_model_promotion_configs where config_version=?",
+                    (promotion_config_version,),
+                ).fetchone()
+                is None
+            ):
+                raise ValueError("unknown promotion_config_version")
+            result = payload | {
+                "created_at": self._next_model_control_timestamp(
+                    db, "email_model_mode_transitions"
+                )
+            }
+            db.execute(
+                "insert into email_model_mode_transitions values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                tuple(result.values()),
+            )
+            return result
+
+    def get_model_mode_transition(self, request_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_model_mode_transitions where request_id=?",
+                (request_id,),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def list_model_mode_transitions(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    "select * from email_model_mode_transitions order by created_at desc"
+                )
+            ]
+
     @staticmethod
     def _create_task10_historical_tables(db: sqlite3.Connection) -> None:
         db.execute(
@@ -5357,6 +5719,17 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     f"missing required email table: {missing}"
                 )
+            without_rowid_tables = {
+                _schema_identifier(row["name"], field="pragma table_list table name")
+                for row in db.execute("pragma table_list")
+                if row["wr"]
+            }
+            missing_without_rowid = _REQUIRED_WITHOUT_ROWID_TABLES - without_rowid_tables
+            if missing_without_rowid:
+                raise EmailPersistenceCorruption(
+                    "required WITHOUT ROWID table contract is missing: "
+                    + ", ".join(sorted(missing_without_rowid))
+                )
 
             indexes_by_table: dict[str, dict[str, sqlite3.Row]] = {}
             table_order = [
@@ -5572,6 +5945,39 @@ class EmailStore:
             ) from exc
 
     def _validate_durable_rows(self, db: sqlite3.Connection) -> None:
+        configs = db.execute("select * from email_model_promotion_configs").fetchall()
+        if not configs:
+            raise EmailPersistenceCorruption("missing model promotion config")
+        versions = {row["config_version"] for row in configs}
+        try:
+            for row in configs:
+                self._validate_model_promotion_values(
+                    **{
+                        key: row[key]
+                        for key in (
+                            "macro_f1_min",
+                            "category_precision_min",
+                            "category_validation_samples_min",
+                            "p95_latency_max_ms",
+                        )
+                    }
+                )
+            for row in db.execute("select * from email_model_mode_transitions"):
+                self._validate_model_mode_transition(row)
+                if row["promotion_config_version"] not in versions:
+                    raise ValueError("unknown promotion_config_version")
+            for row in db.execute("select * from email_category_description_revisions"):
+                config = _json_load(
+                    row["config_json"], field="config_json", expected_type=dict
+                )
+                self._validate_category_revision_snapshot(config)
+                if (
+                    config.get("category_key") != row["category_key"]
+                    or config.get("config_version") != row["config_version"]
+                ):
+                    raise ValueError("category description revision identity mismatch")
+        except ValueError as exc:
+            raise EmailPersistenceCorruption(str(exc)) from exc
         for row in db.execute("select * from email_agent_classification_tasks"):
             payload = _json_load(
                 row["input_json"], field="input_json", expected_type=dict
@@ -13618,6 +14024,7 @@ class EmailStore:
                 "select * from email_category_configs where category_key=?",
                 (category_key,),
             ).fetchone()
+            self._append_category_description_revision(db, row)
         assert row is not None
         return self._category_config_row(row)
 
@@ -13645,6 +14052,140 @@ class EmailStore:
             == 1
         )
 
+    @staticmethod
+    def _validate_category_revision_snapshot(config: dict[str, Any]) -> None:
+        json_fields = {
+            "include": "include_json",
+            "exclude": "exclude_json",
+            "actions": "actions_json",
+            "action_parameters": "action_parameters_json",
+        }
+        required = (
+            set(CATEGORY_CONFIG_COLUMN_CONTRACTS) - set(json_fields.values())
+        ) | set(json_fields)
+        if set(config) != required:
+            raise ValueError(
+                "category revision snapshot has incomplete or unexpected fields"
+            )
+        validate_email_category_key(config["category_key"])
+        if type(config["enabled"]) is not bool:
+            raise ValueError("category revision enabled must be boolean")
+        threshold = config["threshold"]
+        if type(threshold) not in (int, float) or not 0 <= threshold <= 1:
+            raise ValueError("category revision threshold must be numeric in range")
+        for field in ("config_version", "updated_at"):
+            if type(config[field]) is not str or not config[field].strip():
+                raise ValueError(f"category revision {field} must be nonblank text")
+        if (
+            type(config["actions"]) is not list
+            or type(config["action_parameters"]) is not dict
+        ):
+            raise ValueError(
+                "category revision actions must be a list and parameters an object"
+            )
+        for action in config["actions"]:
+            if type(action) is not str:
+                raise ValueError("category revision action must be text")
+            EmailAction(action)
+        for action, parameters in config["action_parameters"].items():
+            EmailAction(action)
+            if type(parameters) is not dict:
+                raise ValueError("category revision action parameters must be objects")
+        # Reconstitute the stored category row and reuse its canonical description
+        # and JSON validators, rather than introducing another snapshot format.
+        row = {key: value for key, value in config.items() if key not in json_fields}
+        row.update(
+            {column: _json_dump(config[key]) for key, column in json_fields.items()}
+        )
+        category_config_row(row)
+
+    def _append_category_description_revision(
+        self,
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        previous_row: sqlite3.Row | None = None,
+        expected_current_version: str | None = None,
+    ) -> None:
+        config = self._category_config_row(row)
+        if (
+            previous_row is not None
+            and previous_row["config_version"] == config["config_version"]
+        ):
+            previous = self._category_config_row(previous_row)
+            if expected_current_version is not None or any(
+                previous[field] != config[field]
+                for field in config
+                if field != "updated_at"
+            ):
+                raise EmailFolderBindingConflict(
+                    "config_version must be new and never used"
+                )
+            db.execute(
+                "update email_category_configs set updated_at=? where category_key=?",
+                (previous["updated_at"], config["category_key"]),
+            )
+            return
+        # A description version identifies semantic content within one category;
+        # configuration-only changes may append another snapshot of that content.
+        for revision in db.execute(
+            "select config_json from email_category_description_revisions "
+            "where category_key=?",
+            (config["category_key"],),
+        ):
+            previous = _json_load(
+                revision["config_json"], field="config_json", expected_type=dict
+            )
+            if previous["config_version"] == config["config_version"]:
+                raise EmailFolderBindingConflict(
+                    "config_version must be new and never used"
+                )
+            if previous["description_version"] == config["description_version"] and any(
+                previous[field] != config[field]
+                for field in ("display_name", "core_description", "include", "exclude")
+            ):
+                raise EmailFolderBindingConflict(
+                    "description_version already identifies different category content"
+                )
+        db.execute(
+            "insert into email_category_description_revisions values (?, ?, ?, ?, ?)",
+            (
+                str(uuid4()),
+                config["category_key"],
+                config["config_version"],
+                _json_dump(config),
+                self._next_model_control_timestamp(
+                    db, "email_category_description_revisions"
+                ),
+            ),
+        )
+
+    def list_category_description_revisions(
+        self, category_key: str
+    ) -> list[dict[str, Any]]:
+        category_key = validate_email_category_key(category_key)
+        with self._connect() as db:
+            return [
+                {
+                    key: row[key]
+                    for key in (
+                        "revision_id",
+                        "category_key",
+                        "config_version",
+                        "created_at",
+                    )
+                }
+                | {
+                    "config": _json_load(
+                        row["config_json"], field="config_json", expected_type=dict
+                    )
+                }
+                for row in db.execute(
+                    "select * from email_category_description_revisions where category_key=? order by created_at desc",
+                    (category_key,),
+                )
+            ]
+
     def update_category_descriptions(
         self,
         category_key: str,
@@ -13656,6 +14197,7 @@ class EmailStore:
         enabled: bool,
         description_version: str,
         config_version: str,
+        expected_current_version: str | None = None,
     ) -> dict[str, Any] | None:
         category_key = validate_email_category_key(category_key)
         include_values, exclude_values = validate_category_descriptions(
@@ -13674,11 +14216,16 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select 1 from email_category_configs where category_key=?",
+                "select * from email_category_configs where category_key=?",
                 (category_key,),
             ).fetchone()
             if existing is None:
                 return None
+            if (
+                expected_current_version is not None
+                and existing["config_version"] != expected_current_version
+            ):
+                raise EmailFolderBindingConflict("category config changed")
             final_enabled = bool(
                 enabled and self._bindings_cover_enabled_accounts(db, category_key)
             )
@@ -13706,6 +14253,13 @@ class EmailStore:
                 "select * from email_category_configs where category_key=?",
                 (category_key,),
             ).fetchone()
+            self._append_category_description_revision(
+                db, row, previous_row=existing,
+                expected_current_version=expected_current_version,
+            )
+            row = db.execute(
+                "select * from email_category_configs where category_key=?", (category_key,)
+            ).fetchone()
         assert row is not None
         return self._category_config_row(row)
 
@@ -13721,6 +14275,7 @@ class EmailStore:
         description_version: str,
         config_version: str,
         bindings: Sequence[VerifiedEmailFolderBinding],
+        expected_current_version: str | None = None,
     ) -> dict[str, Any] | None:
         """Atomically replace enabled-account bindings and category configuration."""
 
@@ -13751,11 +14306,16 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select 1 from email_category_configs where category_key=?",
+                "select * from email_category_configs where category_key=?",
                 (category_key,),
             ).fetchone()
             if existing is None:
                 return None
+            if (
+                expected_current_version is not None
+                and existing["config_version"] != expected_current_version
+            ):
+                raise EmailFolderBindingConflict("category config changed")
             enabled_accounts = {
                 row["account_id"]
                 for row in db.execute(
@@ -13820,6 +14380,13 @@ class EmailStore:
             row = db.execute(
                 "select * from email_category_configs where category_key=?",
                 (category_key,),
+            ).fetchone()
+            self._append_category_description_revision(
+                db, row, previous_row=existing,
+                expected_current_version=expected_current_version,
+            )
+            row = db.execute(
+                "select * from email_category_configs where category_key=?", (category_key,)
             ).fetchone()
         assert row is not None
         return self._category_config_row(row)
