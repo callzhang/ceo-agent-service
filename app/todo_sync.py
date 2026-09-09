@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from app.dws_client import DwsError
@@ -669,47 +669,112 @@ def dispatch_task_todo_sync_outbox(
         item = store.claim_task_todo_sync_outbox(owner=owner, now=now)
         if item is None:
             break
-        try:
-            if item["operation"] == "create":
-                link = maybe_create_dingtalk_todo(
-                    store, dws, work_todo_id=item["work_todo_id"], now=now
-                )
-                receipt = {
-                    "link_id": link.id if link is not None else 0,
-                    "dingtalk_task_id": link.dingtalk_task_id if link is not None else "",
-                }
-                delivered_now = link is not None and link.status != "failed"
-            else:
-                delivered_now = sync_completed_todo_to_dingtalk(
-                    store,
-                    dws,
-                    work_todo_id=item["work_todo_id"],
-                    evidence=json.loads(item["evidence_json"]),
-                    now=now,
-                )
-                receipt = {"delivered": delivered_now}
-            if not delivered_now:
-                store.retry_task_todo_sync_outbox(
-                    outbox_id=item["id"], owner=owner,
-                    error="dingtalk_todo_effect_not_delivered", now=now,
-                )
-                continue
-            store.finish_task_todo_sync_outbox(
-                outbox_id=item["id"], owner=owner, status="completed",
-                receipt_json=json.dumps(receipt, ensure_ascii=False),
-            )
+        item = store.get_task_todo_sync_outbox(int(item["id"]))
+        assert item is not None
+        status = dispatch_claimed_task_todo_sync_outbox(
+            store,
+            dws,
+            item=item,
+            owner=owner,
+            now=now,
+        )
+        if status == "completed":
             delivered += 1
-        except Exception as exc:
-            # The external outcome may already be visible but not durably receipted.
-            # Do not queue an automatic duplicate; reconciliation owns unknown effects.
-            try:
-                store.finish_task_todo_sync_outbox(
-                    outbox_id=item["id"], owner=owner, status="unknown", error=str(exc)
-                )
-            except Exception:
-                pass
-            raise
     return delivered
+
+
+def dispatch_claimed_task_todo_sync_outbox(
+    store: AutoReplyStore,
+    dws: Any,
+    *,
+    item: Any,
+    owner: str,
+    now: str,
+    claim_guard: Any | None = None,
+) -> str:
+    """Deliver one already-claimed Todo intent without scanning its queue."""
+    if str(item["status"]) != "running" or str(item["lease_owner"]) != owner:
+        raise ValueError("task todo sync dispatch source is not claimed by owner")
+    if claim_guard is not None:
+        claim_guard.assert_current(
+            datetime.strptime(now, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        )
+
+    def persist_terminal(
+        status: str,
+        *,
+        receipt_json: str = "{}",
+        error: str = "",
+    ) -> None:
+        if claim_guard is not None and hasattr(
+            claim_guard.adapter, "finish_delivery"
+        ):
+            claim_guard.adapter.finish_delivery(
+                claim_guard.envelope,
+                owner=owner,
+                now=datetime.strptime(now, "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=timezone.utc
+                ),
+                status=status,
+                receipt_json=receipt_json,
+                error=error,
+            )
+            claim_guard.accept_atomic_source_completion()
+            return
+        if status == "failed":
+            store.retry_task_todo_sync_outbox(
+                outbox_id=item["id"],
+                owner=owner,
+                error=error,
+                now=now,
+            )
+            return
+        store.finish_task_todo_sync_outbox(
+            outbox_id=item["id"],
+            owner=owner,
+            status=status,
+            receipt_json=receipt_json,
+            error=error,
+        )
+
+    try:
+        if item["operation"] == "create":
+            link = maybe_create_dingtalk_todo(
+                store, dws, work_todo_id=item["work_todo_id"], now=now
+            )
+            receipt = {
+                "link_id": link.id if link is not None else 0,
+                "dingtalk_task_id": link.dingtalk_task_id if link is not None else "",
+            }
+            delivered_now = link is not None and link.status != "failed"
+        else:
+            delivered_now = sync_completed_todo_to_dingtalk(
+                store,
+                dws,
+                work_todo_id=item["work_todo_id"],
+                evidence=json.loads(item["evidence_json"]),
+                now=now,
+            )
+            receipt = {"delivered": delivered_now}
+        if not delivered_now:
+            persist_terminal(
+                "failed",
+                error="dingtalk_todo_effect_not_delivered",
+            )
+            return "failed"
+        persist_terminal(
+            "completed",
+            receipt_json=json.dumps(receipt, ensure_ascii=False),
+        )
+        return "completed"
+    except Exception as exc:
+        # The external outcome may already be visible but not durably receipted.
+        # Do not queue an automatic duplicate; reconciliation owns unknown effects.
+        try:
+            persist_terminal("unknown", error=str(exc))
+        except Exception:
+            pass
+        raise
 
 
 def _close_internal_todo_from_dingtalk(

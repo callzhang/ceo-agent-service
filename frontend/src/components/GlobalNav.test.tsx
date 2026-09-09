@@ -24,6 +24,7 @@ describe("GlobalNav", () => {
       ["Agent", "/"],
       ["History", "/history"],
       ["Tasks", "/tasks"],
+      ["定时任务", "/scheduled-tasks"],
       ["用户反馈", "/user-feedback"],
       ["Settings", "/settings"],
     ] as const;
@@ -40,6 +41,12 @@ describe("GlobalNav", () => {
     expect(screen.getByRole("link", { name: "Tasks" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Tasks" })).toHaveClass("active");
     expect(screen.getByRole("link", { name: "Agent" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks the top-level scheduled tasks workspace active", () => {
+    render(<GlobalNav activePath="/scheduled-tasks" />);
+
+    expect(screen.getByRole("link", { name: "定时任务" })).toHaveAttribute("aria-current", "page");
   });
 
   it("brings the active destination into view on narrow navigation", () => {

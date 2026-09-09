@@ -1,8 +1,11 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+import app.todo_sync as todo_sync
+from app.dispatcher.models import ClaimGuard
 from app.dws_client import DwsError
 from app.store import AutoReplyStore
 from app.todo_sync import (
@@ -134,6 +137,107 @@ def test_task_todo_outbox_claim_allows_one_sender(tmp_path):
 
     assert first is not None
     assert second is None
+
+
+def test_claimed_task_todo_outbox_delivery_does_not_scan_or_reclaim(
+    tmp_path, monkeypatch
+):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    store.enqueue_task_todo_sync_outbox(
+        operation_key="task-agent:1:todo:1:create",
+        work_todo_id=todo_id,
+        operation="create",
+    )
+    now = datetime(2026, 6, 27, 10, 0, tzinfo=UTC)
+    adapter_type = getattr(
+        __import__("app.dispatcher.adapters", fromlist=["TaskTodoSyncOutboxQueueAdapter"]),
+        "TaskTodoSyncOutboxQueueAdapter",
+    )
+    adapter = adapter_type(store)
+    envelope = adapter.claim(
+        now,
+        owner="dispatcher-a",
+        owner_pid=101,
+        lease=timedelta(minutes=5),
+    )
+    assert envelope is not None
+    item = store.list_task_todo_sync_outbox(statuses=("running",))[0]
+    monkeypatch.setattr(
+        store,
+        "claim_task_todo_sync_outbox",
+        lambda **_kwargs: pytest.fail("claimed delivery must not scan the queue"),
+    )
+    guard = ClaimGuard(adapter=adapter, envelope=envelope, owner="dispatcher-a")
+    dws = FakeTodoDws()
+
+    status = todo_sync.dispatch_claimed_task_todo_sync_outbox(
+        store,
+        dws,
+        item=item,
+        owner="dispatcher-a",
+        now="2026-06-27 10:00:00",
+        claim_guard=guard,
+    )
+
+    assert status == "completed"
+    assert guard.resolved is True
+    assert len(dws.created) == 1
+    assert len(store.list_task_todo_sync_outbox(statuses=("completed",))) == 1
+
+
+def test_claimed_task_todo_outbox_terminal_write_is_fenced_by_generation(
+    tmp_path,
+) -> None:
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    store.enqueue_task_todo_sync_outbox(
+        operation_key="task-agent:1:todo:1:create",
+        work_todo_id=todo_id,
+        operation="create",
+    )
+    now = datetime(2026, 6, 27, 10, 0, tzinfo=UTC)
+    adapter_type = getattr(
+        __import__("app.dispatcher.adapters", fromlist=["TaskTodoSyncOutboxQueueAdapter"]),
+        "TaskTodoSyncOutboxQueueAdapter",
+    )
+    adapter = adapter_type(store)
+    envelope = adapter.claim(
+        now,
+        owner="dispatcher-a",
+        owner_pid=101,
+        lease=timedelta(minutes=5),
+    )
+    assert envelope is not None
+    item = store.get_task_todo_sync_outbox(int(envelope.source_id))
+    assert item is not None
+
+    class ClaimLosingDws(FakeTodoDws):
+        def create_todo_task(self, **kwargs):
+            result = super().create_todo_task(**kwargs)
+            with store._connect() as db:
+                db.execute(
+                    "update dispatcher_claim_leases set generation=generation+1 "
+                    "where adapter_name=? and source_id=?",
+                    (envelope.adapter_name, envelope.source_id),
+                )
+            return result
+
+    guard = ClaimGuard(adapter=adapter, envelope=envelope, owner="dispatcher-a")
+    with pytest.raises(ValueError, match="no longer owned"):
+        todo_sync.dispatch_claimed_task_todo_sync_outbox(
+            store,
+            ClaimLosingDws(),
+            item=item,
+            owner="dispatcher-a",
+            now="2026-06-27 10:00:00",
+            claim_guard=guard,
+        )
+
+    persisted = store.get_task_todo_sync_outbox(int(envelope.source_id))
+    assert persisted is not None
+    assert persisted["status"] == "running"
+    assert persisted["lease_owner"] == "dispatcher-a"
 
 
 def test_task_todo_outbox_receipt_write_failure_never_blindly_replays(tmp_path, monkeypatch):

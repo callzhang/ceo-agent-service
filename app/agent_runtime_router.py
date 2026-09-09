@@ -22,6 +22,7 @@ from app.agent_runtime_contracts import (
     RuntimeFailureClass,
     RuntimeKind,
     RuntimeRoute,
+    runtime_route_surface_capabilities,
 )
 from app.codex_decision import extract_codex_session_id
 from app.codex_history import count_codex_session_lines
@@ -733,7 +734,9 @@ class AgentRuntimeRouter:
         snapshot: RuntimeCapabilitySnapshot,
         required_capabilities: frozenset[str],
     ) -> tuple[list[str], list[str]]:
-        unresolved = required_capabilities - snapshot.capabilities
+        unresolved = required_capabilities - (
+            snapshot.capabilities | runtime_route_surface_capabilities(route)
+        )
         return sorted(unresolved), []
 
 

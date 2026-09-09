@@ -1,6 +1,25 @@
 import { describe, expect, it } from "vitest";
 
-import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification } from "./console";
+import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus } from "./console";
+
+function statusEnvelope() {
+  return {
+    item: {
+      service: { label: "main", target: "gui/1/main", ok: true, state: "running", detail: "running", pid: "42", runs: "1", initialized: "1", last_terminating_signal: "", returncode: 0 },
+      system_health: { state: "healthy", detail: "healthy", checked_at: "now", violations: 0, components: [] },
+      components: [{ name: "agent-cron-scheduler", role: "business trigger scheduling", cadence: "task configured", status: "running", latest_tick_at: "now", latest_error: "", latest_error_at: "" }],
+      connectors: {},
+      email: { status: "ready", updated_at: "", entries: [] },
+      wechat: { reader: { status: "ready", enabled: true, error: "" }, sender: { status: "ready", enabled: true, error: "" }, preflight: { status: "on_send", error: "" }, account: { ready: true, account_id: "account" } },
+      queues: [{ name: "Reply tasks", table: "reply_tasks", counts: {}, pending: 0, processing: 0, failed: 0, retryable: 0, latest_updated_at: "", latest_error: "" }],
+      dispatcher_queues: [{ name: "scheduled", pending: 0, due: 0, oldest_available_at: null, running: 0, latest_error: "" }],
+      attention_rows: [],
+      database: { path: "/tmp/worker.sqlite3" },
+      summary: { queue_count: 1, pending: 0, processing: 0, failed: 0, retryable: 0, attention: 0 },
+    },
+    meta: { snapshot_at: "now" },
+  };
+}
 
 describe("console API helpers", () => {
   it("preserves 64-bit email IDs from JSON through the feedback URL", async () => {
@@ -38,6 +57,33 @@ describe("console API helpers", () => {
       items: [{ id: "1" }],
       meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" },
     });
+  });
+
+  it.each([
+    ["missing field", (payload: ReturnType<typeof statusEnvelope>) => { delete (payload.item.summary as Partial<typeof payload.item.summary>).failed; }],
+    ["wrong nested type", (payload: ReturnType<typeof statusEnvelope>) => { (payload.item.dispatcher_queues[0] as { pending: unknown }).pending = "0"; }],
+    ["extra nested field", (payload: ReturnType<typeof statusEnvelope>) => { Object.assign(payload.item.components[0], { unexpected: true }); }],
+  ])("rejects a status response with %s", async (_label, mutate) => {
+    const originalFetch = globalThis.fetch;
+    const payload = statusEnvelope();
+    mutate(payload);
+    globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
+    try {
+      await expect(getStatus()).rejects.toThrow("invalid status response");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("accepts the complete status response contract", async () => {
+    const originalFetch = globalThis.fetch;
+    const payload = statusEnvelope();
+    globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
+    try {
+      await expect(getStatus()).resolves.toEqual(payload);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("surfaces FastAPI detail messages for actionable validation errors", async () => {

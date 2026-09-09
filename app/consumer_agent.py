@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -138,6 +138,7 @@ resolution method.
 
 def consumer_wire_contract_hash(
     runtime_skill_snapshot: RuntimeSkillSnapshot | None = None,
+    *, skill_protocol_override: str | None = None,
 ) -> str:
     """Fingerprint stable Consumer output, instructions, and read-tool policy."""
     contract = {
@@ -154,6 +155,7 @@ def consumer_wire_contract_hash(
         "runtime_skill_snapshot": (
             runtime_skill_snapshot.protocol() if runtime_skill_snapshot is not None else ""
         ),
+        "skill_protocol_override": skill_protocol_override or "",
     }
     encoded = json.dumps(contract, sort_keys=True, separators=(",", ":"))
     return sha256(encoded.encode("utf-8")).hexdigest()
@@ -257,6 +259,10 @@ class ConsumerAgentRunner:
         refresh_runtime_capabilities: Callable[[], object] | None = None,
         codex_session_exists: Callable[[str], bool] | None = None,
         runtime_skill_snapshot: RuntimeSkillSnapshot | None = None,
+        forced_runtime_route=None,
+        reasoning_effort: str = "",
+        skill_protocol_override: str | None = None,
+        execution_environment: Mapping[str, str] | None = None,
     ) -> None:
         self.store = store
         self.workspace = workspace
@@ -273,6 +279,10 @@ class ConsumerAgentRunner:
             lambda session_id: find_codex_session_path(session_id) is not None
         )
         self.runtime_skill_snapshot = runtime_skill_snapshot
+        self.forced_runtime_route = forced_runtime_route
+        self.reasoning_effort = reasoning_effort
+        self.skill_protocol_override = skill_protocol_override
+        self.execution_environment = dict(execution_environment or {})
 
     def _configured_route_names(self) -> tuple[str, ...]:
         config = self.runtime_config or (
@@ -391,7 +401,10 @@ class ConsumerAgentRunner:
         rendered_rules: str,
         feedback: AuditFeedback | None,
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
-        contract_hash = consumer_wire_contract_hash(self.runtime_skill_snapshot)
+        contract_hash = consumer_wire_contract_hash(
+            self.runtime_skill_snapshot,
+            skill_protocol_override=self.skill_protocol_override,
+        )
         route_sessions = self._consumer_route_sessions(
             task.conversation_id, contract_hash
         )
@@ -447,6 +460,9 @@ class ConsumerAgentRunner:
             claude_adapter=self.claude_adapter,
             friday_adapter=self.friday_adapter,
             refresh_runtime_capabilities=self.refresh_runtime_capabilities,
+            forced_runtime_route=self.forced_runtime_route,
+            reasoning_effort=self.reasoning_effort,
+            execution_mode_environment=self.execution_environment,
         )
 
         def renew_session_lock() -> None:
@@ -478,9 +494,13 @@ class ConsumerAgentRunner:
                     rendered_rules,
                     skill_protocol="\n\n".join(
                         part for part in (
-                            self.runtime_skill_snapshot.protocol()
-                            if self.runtime_skill_snapshot is not None
-                            else render_business_skill_protocol(installed_business_skill_catalog()),
+                            self.skill_protocol_override
+                            if self.skill_protocol_override is not None
+                            else (
+                                self.runtime_skill_snapshot.protocol()
+                                if self.runtime_skill_snapshot is not None
+                                else render_business_skill_protocol(installed_business_skill_catalog())
+                            ),
                         ) if part
                     ),
                 ),

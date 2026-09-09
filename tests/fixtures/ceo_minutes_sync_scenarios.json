@@ -1,0 +1,87 @@
+{
+  "schema": "ceo_minutes_sync_skill_scenarios.v2",
+  "recorded_contract": {
+    "list_ok": "ok",
+    "list_items": "data.minutes",
+    "list_complete": "data.complete",
+    "list_pagination_complete": "meta.pagination.endpoint_exhausted",
+    "detail_complete": "complete",
+    "basic_success": "basic.success",
+    "basic": "basic.result",
+    "summary_success": "summary.success",
+    "summary": "summary.result",
+    "transcript": "data.paragraphList",
+    "transcript_complete": "data.complete",
+    "transcript_pagination_complete": "meta.pagination.endpoint_exhausted"
+  },
+  "archive_json": {
+    "encoding": "UTF-8",
+    "ensure_ascii": false,
+    "sort_keys": true,
+    "separators": [",", ":"],
+    "trailing_newline": false
+  },
+  "scenarios": [
+    {
+      "case": "complete_new",
+      "prior": null,
+      "list": {"ok": true, "outcome": "success", "data": {"complete": true, "count": 1, "minutes": [{"taskUuid": "m-new", "title": "CEO product review"}], "pages": 1, "scope": "mine"}, "meta": {"pagination": {"endpoint_exhausted": true, "pages": 1, "items": 1}}},
+      "detail": {"basic": {"dingOpenErrcode": 0, "errorMsg": "", "result": {"taskUuid": "m-new", "title": "CEO product review"}, "success": true}, "complete": true, "failureCount": 0, "summary": {"dingOpenErrcode": "0", "errorMsg": "", "result": {"fullSummary": "Decision and owners"}, "success": "true"}, "taskUuid": "m-new"},
+      "transcript": {"ok": true, "outcome": "success", "data": {"complete": true, "direction": "0", "duplicateCount": 0, "pages": 1, "paragraphCount": 1, "paragraphList": [{"paragraph": "Decision transcript", "paragraphId": 1}], "taskUuid": "m-new"}, "meta": {"count": 1, "pagination": {"endpoint_exhausted": true, "pages": 1, "items": 1}}},
+      "expected": {"outcome": "synced", "cursor_advance": true, "access_request": false, "evidence": "fresh_fetch"}
+    },
+    {
+      "case": "complete_unchanged",
+      "prior": {"artifact_sha256": {"basic": "448d6481a20425b23b1ee8cdf583872771c45b2dac840228f0a5be5af8cd7998", "summary": "af6f54c72fcb7e8919f1cbc98f8fd62db232e2b00f9a6d937fca9e66c629bb72", "transcript": "8b7d3200f36b0145b2e148f1719448404fed89083ffc84bfed63a7cc66fdbf82"}},
+      "list": {"ok": true, "outcome": "success", "data": {"complete": true, "count": 1, "minutes": [{"taskUuid": "m-same", "title": "Same"}], "pages": 1, "scope": "mine"}, "meta": {"pagination": {"endpoint_exhausted": true, "pages": 1, "items": 1}}},
+      "detail": {"basic": {"dingOpenErrcode": 0, "errorMsg": "", "result": {"taskUuid": "m-same", "title": "Same"}, "success": true}, "complete": true, "failureCount": 0, "summary": {"dingOpenErrcode": "0", "errorMsg": "", "result": {"fullSummary": "Same summary"}, "success": "true"}, "taskUuid": "m-same"},
+      "transcript": {"ok": true, "outcome": "success", "data": {"complete": true, "direction": "0", "duplicateCount": 0, "pages": 1, "paragraphCount": 1, "paragraphList": [{"paragraph": "Same transcript", "paragraphId": 1}], "taskUuid": "m-same"}, "meta": {"count": 1, "pagination": {"endpoint_exhausted": true, "pages": 1, "items": 1}}},
+      "expected": {"outcome": "skipped", "cursor_advance": true, "access_request": false, "evidence": "unchanged_fetched"}
+    },
+    {
+      "case": "transcript_incomplete",
+      "prior": null,
+      "list": {"ok": true, "outcome": "success", "data": {"complete": true, "count": 1, "minutes": [{"taskUuid": "m-partial"}], "pages": 1, "scope": "mine"}, "meta": {"pagination": {"endpoint_exhausted": true, "pages": 1, "items": 1}}},
+      "detail": {"basic": {"dingOpenErrcode": 0, "errorMsg": "", "result": {"taskUuid": "m-partial"}, "success": true}, "complete": true, "failureCount": 0, "summary": {"dingOpenErrcode": "0", "errorMsg": "", "result": {"fullSummary": "Partial"}, "success": "true"}, "taskUuid": "m-partial"},
+      "transcript": {"ok": false, "outcome": "error", "error": {"type": "tool_error", "subtype": "pagination_incomplete", "exit_code": 1, "message": "transcript pagination incomplete", "operation": "minutes/+transcript", "origin": "shortcut", "stage": "pagination", "execution_started": true, "details": {"cause": "next cursor repeated", "pages": 1, "paragraphCount": 1, "taskUuid": "m-partial"}}},
+      "expected": {"outcome": "failed", "cursor_advance": false, "access_request": false, "evidence": "freshness_unknown"}
+    },
+    {
+      "case": "complete_without_remote_version",
+      "prior": null,
+      "list": {"ok": true, "outcome": "success", "data": {"complete": true, "count": 1, "minutes": [{"taskUuid": "m-no-version"}], "pages": 1, "scope": "mine"}, "meta": {"pagination": {"endpoint_exhausted": true, "pages": 1, "items": 1}}},
+      "detail": {"basic": {"dingOpenErrcode": 0, "errorMsg": "", "result": {"taskUuid": "m-no-version"}, "success": true}, "complete": true, "failureCount": 0, "summary": {"dingOpenErrcode": "0", "errorMsg": "", "result": {"fullSummary": "No version fields"}, "success": "true"}, "taskUuid": "m-no-version"},
+      "transcript": {"ok": true, "outcome": "success", "data": {"complete": true, "direction": "0", "duplicateCount": 0, "pages": 1, "paragraphCount": 1, "paragraphList": [{"paragraph": "Complete bytes", "paragraphId": 1}], "taskUuid": "m-no-version"}, "meta": {"count": 1, "pagination": {"endpoint_exhausted": true, "pages": 1, "items": 1}}},
+      "expected": {"outcome": "synced", "cursor_advance": true, "access_request": false, "evidence": "fresh_fetch"}
+    },
+    {
+      "case": "permission_recovered",
+      "prior": {"status": "permission_pending", "taskUuid": "m-recovered"},
+      "list": {"ok": true, "outcome": "success", "data": {"complete": true, "count": 0, "minutes": [], "pages": 1, "scope": "mine"}, "meta": {"pagination": {"endpoint_exhausted": true, "pages": 1, "items": 0}}},
+      "detail": {"basic": {"dingOpenErrcode": 0, "errorMsg": "", "result": {"taskUuid": "m-recovered"}, "success": true}, "complete": true, "failureCount": 0, "summary": {"dingOpenErrcode": "0", "errorMsg": "", "result": {"fullSummary": "Now readable"}, "success": "true"}, "taskUuid": "m-recovered"},
+      "transcript": {"ok": true, "outcome": "success", "data": {"complete": true, "direction": "0", "duplicateCount": 0, "pages": 1, "paragraphCount": 1, "paragraphList": [{"paragraph": "Recovered", "paragraphId": 1}], "taskUuid": "m-recovered"}, "meta": {"count": 1, "pagination": {"endpoint_exhausted": true, "pages": 1, "items": 1}}},
+      "expected": {"outcome": "synced", "cursor_advance": true, "access_request": false, "evidence": "permission_recovered"}
+    },
+    {
+      "case": "restricted_relevant_authorized",
+      "authorization": {"request_access": true, "content_needed": true},
+      "list": {"ok": true, "outcome": "success", "data": {"complete": true, "count": 1, "minutes": [{"taskUuid": "m-relevant", "title": "CEO budget decision", "owner": "CFO"}], "pages": 1, "scope": "shared"}, "meta": {"pagination": {"endpoint_exhausted": true, "pages": 1, "items": 1}}},
+      "detail": {"basic": {"error": "permission denied"}, "complete": false, "failureCount": 2, "failures": [{"artifact": "basic", "error": "permission denied", "taskUuid": "m-relevant"}, {"artifact": "summary", "error": "permission denied", "taskUuid": "m-relevant"}], "summary": {"error": "permission denied"}, "taskUuid": "m-relevant"},
+      "expected": {"outcome": "permission_pending", "cursor_advance": false, "access_request": true, "evidence": "request_pending"}
+    },
+    {
+      "case": "restricted_out_of_scope",
+      "authorization": {"request_access": true},
+      "list": {"ok": true, "outcome": "success", "data": {"complete": true, "count": 1, "minutes": [{"taskUuid": "m-unrelated", "title": "Cafeteria menu", "owner": "Facilities"}], "pages": 1, "scope": "shared"}, "meta": {"pagination": {"endpoint_exhausted": true, "pages": 1, "items": 1}}},
+      "detail": {"basic": {"error": "permission denied"}, "complete": false, "failureCount": 2, "failures": [{"artifact": "basic", "error": "permission denied", "taskUuid": "m-unrelated"}, {"artifact": "summary", "error": "permission denied", "taskUuid": "m-unrelated"}], "summary": {"error": "permission denied"}, "taskUuid": "m-unrelated"},
+      "expected": {"outcome": "skipped", "cursor_advance": true, "access_request": false, "evidence": "out_of_scope_metadata"}
+    },
+    {
+      "case": "restricted_relevance_unknown",
+      "authorization": {"request_access": true},
+      "list": {"ok": true, "outcome": "success", "data": {"complete": true, "count": 1, "minutes": [{"taskUuid": "m-unknown", "title": "Weekly sync"}], "pages": 1, "scope": "shared"}, "meta": {"pagination": {"endpoint_exhausted": true, "pages": 1, "items": 1}}},
+      "detail": {"basic": {"error": "permission denied"}, "complete": false, "failureCount": 2, "failures": [{"artifact": "basic", "error": "permission denied", "taskUuid": "m-unknown"}, {"artifact": "summary", "error": "permission denied", "taskUuid": "m-unknown"}], "summary": {"error": "permission denied"}, "taskUuid": "m-unknown"},
+      "expected": {"outcome": "permission_pending", "cursor_advance": false, "access_request": false, "evidence": "needs_review"}
+    }
+  ]
+}

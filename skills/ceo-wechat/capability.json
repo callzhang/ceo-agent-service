@@ -6,7 +6,7 @@
       "entrypoint": "scripts/reader.py",
       "trusted_app": "CEO WeChat Reader.app",
       "transport": "owner-only Unix socket",
-      "operations": ["status", "read-recent"]
+      "operations": ["status", "read-recent", "produce-once"]
     },
     "sender": {
       "entrypoint": "scripts/sender.py",

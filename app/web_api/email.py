@@ -815,7 +815,6 @@ def register_email_routes(
                 "imap_move_mode",
                 "enabled",
                 "scan_folders",
-                "scan_interval_seconds",
                 "created_at",
                 "updated_at",
             )

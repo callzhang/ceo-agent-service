@@ -763,6 +763,21 @@ def test_weekly_window_rejects_invalid_hour():
         )
 
 
+def test_weekly_command_schedule_is_owned_by_cron_not_legacy_environment(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CEO_WEEKLY_OKR_REPORT_ENABLED", "false")
+    monkeypatch.setenv("CEO_WEEKLY_OKR_REPORT_HOUR", "0")
+
+    result = weekly_okr_report_module.weekly_okr_report_command(
+        SimpleNamespace(db_path=tmp_path / "worker.sqlite3"),
+        now=datetime(2026, 8, 2, 17, 0, tzinfo=SHANGHAI),
+        quiet_not_due=True,
+    )
+
+    assert result.status == "not_due"
+
+
 def test_resolve_wiki_lists_spaces_for_exact_emoji_name():
     dws = FakeDws(
         {
@@ -1473,6 +1488,71 @@ def test_weekly_command_honors_configured_codex_deadlines(tmp_path, monkeypatch)
 
     assert captured["agent"].timeout_seconds == 37
     assert captured["agent"].idle_timeout_seconds == 19
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "expected_deliver"),
+    ((True, False), (False, True)),
+)
+def test_weekly_command_inherits_scheduled_parent_execution_mode(
+    tmp_path, monkeypatch, dry_run, expected_deliver
+):
+    from app.agent_cron.consumer import scheduled_execution_environment
+    from app.cli import build_parser, settings_from_args
+
+    monkeypatch.delenv("CEO_DRY_RUN", raising=False)
+    monkeypatch.delenv("CEO_NOT_SEND_MESSAGE", raising=False)
+    for key, value in scheduled_execution_environment(dry_run).items():
+        monkeypatch.setenv(key, value)
+    args = build_parser().parse_args(
+        [
+            "weekly-okr-report",
+            "--force",
+            "--db",
+            str(tmp_path / "worker.sqlite3"),
+            "--workspace",
+            str(tmp_path),
+        ]
+    )
+    settings = settings_from_args(args)
+    captured = {}
+    gateway = FakeGateway(managers())
+
+    def fake_run_weekly_okr_report(**kwargs):
+        captured.update(kwargs)
+        return run_weekly_okr_report(
+            store=FakeStore(),
+            gateway=gateway,
+            source=FakeSource(),
+            agent=FakeAgent(),
+            workspace=tmp_path,
+            now=datetime(2026, 9, 6, 18, tzinfo=SHANGHAI),
+            force=True,
+            deliver=kwargs["deliver"],
+            period_label="2026 Q3",
+        )
+
+    monkeypatch.setattr(
+        weekly_okr_report_module,
+        "run_weekly_okr_report",
+        fake_run_weekly_okr_report,
+    )
+    monkeypatch.setenv("CEO_OKR_LIVE_SOURCE_COMMAND", "echo")
+
+    weekly_okr_report_module.weekly_okr_report_command(
+        settings,
+        force=True,
+        now=datetime(2026, 9, 6, 18, tzinfo=SHANGHAI),
+    )
+
+    assert settings.dry_run is dry_run
+    assert captured["deliver"] is expected_deliver
+    if dry_run:
+        assert gateway.published == []
+        assert gateway.sent == []
+    else:
+        assert gateway.published
+        assert gateway.sent
 
 
 def test_weekly_command_bounds_unresponsive_codex_wait(tmp_path, monkeypatch):

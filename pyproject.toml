@@ -5,6 +5,7 @@ description = "Local-first DingTalk executive auto-reply service"
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
+  "croniter>=6,<7",
   "cryptography>=42",
   "fastapi>=0.115",
   "httpx>=0.28,<1",
@@ -17,6 +18,7 @@ dependencies = [
   "pypdf>=5.0",
   "pydantic>=2.10,<2.13",
   "pydantic-settings>=2.5.2,<2.14",
+  "PyYAML>=6,<7",
   "robust-json-parser>=0.1.6,<0.2",
   "scikit-learn>=1.6,<2",
   "uvicorn>=0.34"

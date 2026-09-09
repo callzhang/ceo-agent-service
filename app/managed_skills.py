@@ -121,11 +121,13 @@ REPOSITORY_IMPORT_SOURCE = "repository:skills"
 FEEDBACK_ITERATION_SKILL_NAME = "ceo-feedback-iteration"
 WECHAT_SKILL_NAME = "ceo-wechat"
 EMAIL_CLASSIFIER_SKILL_NAME = "ceo-email-classifier"
+MINUTES_SYNC_SKILL_NAME = "ceo-minutes-sync"
 REPOSITORY_MANAGED_SKILL_NAMES = (
     *BUNDLED_BUSINESS_SKILL_NAMES,
     FEEDBACK_ITERATION_SKILL_NAME,
     WECHAT_SKILL_NAME,
     EMAIL_CLASSIFIER_SKILL_NAME,
+    MINUTES_SYNC_SKILL_NAME,
 )
 
 
@@ -160,6 +162,7 @@ def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
         ),
         (WECHAT_SKILL_NAME, load_runtime_skill(WECHAT_SKILL_NAME)),
         (EMAIL_CLASSIFIER_SKILL_NAME, load_runtime_skill(EMAIL_CLASSIFIER_SKILL_NAME)),
+        (MINUTES_SYNC_SKILL_NAME, load_runtime_skill(MINUTES_SYNC_SKILL_NAME)),
     )
 
 

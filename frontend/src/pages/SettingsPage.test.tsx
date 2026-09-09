@@ -292,8 +292,8 @@ describe("SettingsPage", () => {
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
     listEmailAccounts.mockResolvedValueOnce({
       items: [
-        { account_id: "work_mail", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], scan_interval_seconds: 60, imap_secret_configured: true, created_at: "", updated_at: "" },
-        { account_id: "private_mail", display_name: "私人邮箱", email_address: "private@example.test", imap_host: "mail.example.test", imap_port: 993, imap_tls: true, imap_username: "private@example.test", enabled: false, scan_folders: ["INBOX", "Receipts"], scan_interval_seconds: 120, imap_secret_configured: false, created_at: "", updated_at: "" },
+        { account_id: "work_mail", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, created_at: "", updated_at: "" },
+        { account_id: "private_mail", display_name: "私人邮箱", email_address: "private@example.test", imap_host: "mail.example.test", imap_port: 993, imap_tls: true, imap_username: "private@example.test", enabled: false, scan_folders: ["INBOX", "Receipts"], imap_secret_configured: false, created_at: "", updated_at: "" },
       ],
       meta: { snapshot_at: "2026-09-05T00:00:00Z" },
     });
@@ -306,6 +306,8 @@ describe("SettingsPage", () => {
     expect(screen.getByText("私人邮箱")).toBeInTheDocument();
     expect(screen.getByText("已保存密码")).toBeInTheDocument();
     expect(screen.getByText("尚未设置密码")).toBeInTheDocument();
+    expect(screen.queryByText(/秒扫描/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("扫描间隔（秒）")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Lark connector" })).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain("known-imap-secret");
   });
@@ -313,9 +315,9 @@ describe("SettingsPage", () => {
   it("adds and edits an IMAP account while leaving a saved secret undisclosed", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
-    const savedAccount = { account_id: "work_example_test", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], scan_interval_seconds: 60, imap_secret_configured: true, created_at: "", updated_at: "" };
+    const savedAccount = { account_id: "work_example_test", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, created_at: "", updated_at: "" };
     createEmailAccount.mockResolvedValueOnce({ ok: true, item: savedAccount, restart_required: true, message: "Email account configuration saved" });
-    updateEmailAccount.mockResolvedValueOnce({ ok: true, item: { ...savedAccount, scan_folders: ["INBOX", "Receipts"], scan_interval_seconds: 120 }, restart_required: true, message: "Email account configuration saved" });
+    updateEmailAccount.mockResolvedValueOnce({ ok: true, item: { ...savedAccount, scan_folders: ["INBOX", "Receipts"] }, restart_required: true, message: "Email account configuration saved" });
 
     renderSettings("/settings?tab=connectors&connector=email");
     await user.click(await screen.findByRole("button", { name: "添加邮箱" }));
@@ -336,9 +338,9 @@ describe("SettingsPage", () => {
       imap_username: "work@example.test",
       imap_secret: "known-imap-secret",
       scan_folders: ["INBOX"],
-      scan_interval_seconds: 60,
       enabled: true,
     }));
+    expect(createEmailAccount.mock.calls[0][0]).not.toHaveProperty("scan_interval_seconds");
     expect(await screen.findByText("配置已保存，请重启服务使其生效。" )).toBeInTheDocument();
     expect(screen.queryByDisplayValue("known-imap-secret")).not.toBeInTheDocument();
 
@@ -348,22 +350,19 @@ describe("SettingsPage", () => {
     const folders = screen.getByRole("textbox", { name: "扫描文件夹" });
     await user.clear(folders);
     await user.type(folders, "INBOX, Receipts");
-    const interval = screen.getByRole("spinbutton", { name: "扫描间隔（秒）" });
-    await user.clear(interval);
-    await user.type(interval, "120");
     await user.click(screen.getByRole("button", { name: "保存邮箱" }));
 
     expect(updateEmailAccount).toHaveBeenCalledWith("work_example_test", expect.objectContaining({
       scan_folders: ["INBOX", "Receipts"],
-      scan_interval_seconds: 120,
     }));
+    expect(updateEmailAccount.mock.calls[0][1]).not.toHaveProperty("scan_interval_seconds");
     expect(updateEmailAccount.mock.calls[0][1]).not.toHaveProperty("imap_secret");
   });
 
   it("toggles an account, tests IMAP only, and shows restart-required state", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
-    const account = { account_id: "work_mail", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], scan_interval_seconds: 60, imap_secret_configured: true, created_at: "", updated_at: "" };
+    const account = { account_id: "work_mail", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, created_at: "", updated_at: "" };
     listEmailAccounts.mockResolvedValueOnce({ items: [account], meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
     updateEmailAccount.mockResolvedValueOnce({ ok: true, item: { ...account, enabled: false }, restart_required: true, message: "Email account configuration saved" });
     testEmailAccount.mockResolvedValueOnce({ ok: true, account_id: "work_mail", diagnostics: { imap: { ok: true, code: "connected" }, smtp: { enabled: false, tested: false, code: "disabled" } } });

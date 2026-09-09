@@ -279,21 +279,21 @@ def test_configuration_post_rejects_invalid_scheduling_value_without_overwrite(
     tmp_path: Path, monkeypatch
 ):
     env_path = tmp_path / ".env"
-    env_path.write_text("CEO_PRODUCER_INTERVAL_SECONDS=60\n", encoding="utf-8")
+    env_path.write_text("CEO_CONSUMER_WORKERS=2\n", encoding="utf-8")
     monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
 
     response = client.post(
         "/config/configuration",
         data={
-            "config_key": ["CEO_PRODUCER_INTERVAL_SECONDS"],
+            "config_key": ["CEO_CONSUMER_WORKERS"],
             "config_value": ["not-a-number"],
         },
         follow_redirects=False,
     )
 
     assert response.status_code == 400
-    assert read_env_file(env_path)["CEO_PRODUCER_INTERVAL_SECONDS"] == "60"
+    assert read_env_file(env_path)["CEO_CONSUMER_WORKERS"] == "2"
 
 
 def test_settings_attention_badge_counts_records_not_groups(tmp_path: Path):

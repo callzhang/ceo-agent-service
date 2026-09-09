@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 
 from app.web_api.attention import AttentionListEnvelope, group_attention_rows
 from app.web_api.attempts import build_attempt_detail
-from app.web_api.common import ApiItemEnvelope, ApiListMeta, ApiMeta, json_safe, normalize_display_value, snapshot_at
+from app.web_api.common import ApiListMeta, ApiMeta, json_safe, normalize_display_value, snapshot_at
 from app.web_api.tasks import (
     ConsoleTaskDetail,
     ConsoleTaskDetailEnvelope,
@@ -31,7 +31,10 @@ from app.web_api.tasks import (
     task_list_response,
 )
 from app.web_api.settings import info_payload
+from app.web_api.status import StatusEnvelope, StatusMeta, WorkerStatus
 from app.web_api.email import register_email_routes
+from app.web_api.scheduled_tasks import register_scheduled_task_routes
+from app.agent_cron.options import ScheduledTaskOptionService
 from app.skill_features import FeatureRegistry
 from app.skill_files import (
     SkillFileService,
@@ -80,6 +83,11 @@ def register_console_routes(
     feature_registry_factory: Callable[[], FeatureRegistry] | None = None,
     skill_file_service_factory: Callable[[], SkillFileService] | None = None,
     dws_factory: Callable[[], Any] | None = None,
+    scheduled_task_option_service_factory: Callable[
+        [], ScheduledTaskOptionService
+    ] | None = None,
+    scheduled_task_wake_callback: Callable[[], None] | None = None,
+    scheduled_task_now: Callable[[], Any] | None = None,
 ) -> None:
     feature_registry_factory = feature_registry_factory or FeatureRegistry
     skill_file_service_factory = skill_file_service_factory or SkillFileService
@@ -240,6 +248,15 @@ def register_console_routes(
             email_learning_factory=email_learning_factory,
         )
 
+    if scheduled_task_option_service_factory is not None:
+        register_scheduled_task_routes(
+            app,
+            store_factory,
+            option_service_factory=scheduled_task_option_service_factory,
+            wake_callback=scheduled_task_wake_callback,
+            now=scheduled_task_now,
+        )
+
     async def json_object(request: Request) -> dict[str, Any]:
         if "application/json" not in request.headers.get("content-type", ""):
             raise HTTPException(status_code=415, detail="JSON Content-Type required")
@@ -306,10 +323,14 @@ def register_console_routes(
             meta=ApiMeta(snapshot_at=snapshot_at()),
         )
 
-    @app.get("/api/console/status", response_model=None)
+    @app.get(
+        "/api/console/status",
+        response_model=StatusEnvelope,
+        response_model_exclude_none=True,
+    )
     def console_status():
-        item = json_safe(status_payload_factory())
-        return ApiItemEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
+        item = WorkerStatus.model_validate(json_safe(status_payload_factory()))
+        return StatusEnvelope(item=item, meta=StatusMeta(snapshot_at=snapshot_at()))
 
     @app.get("/api/console/attention", response_model=AttentionListEnvelope)
     def console_attention():

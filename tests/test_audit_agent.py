@@ -43,10 +43,12 @@ class CapturingExecutor:
         self.returncode = returncode
         self.commands: list[list[str]] = []
         self.prompts: list[str] = []
+        self.environments: list[dict[str, str]] = []
 
     def __call__(self, command, *, on_stdout_line, **kwargs):
         self.prompts.append(kwargs["prompt"])
         self.commands.append(command)
+        self.environments.append(dict(kwargs["env"]))
         for line in self.stdout.splitlines():
             on_stdout_line(line)
         return ProcessRunResult(self.returncode, self.stdout, "")
@@ -615,6 +617,31 @@ def test_audit_uses_typed_result_without_application_receipt_validation(setup):
     assert result.result.outcome is AuditOutcome.EXECUTED
     assert persisted is not None and persisted.status == "completed"
     assert "execute_audited_email_unsubscribe" not in json.dumps(executor.commands)
+
+
+def test_audit_runtime_environment_overrides_ambient_send_mode(
+    setup, monkeypatch
+):
+    store, task, audit_context, parent = setup
+    monkeypatch.setenv("CEO_DRY_RUN", "0")
+    monkeypatch.setenv("CEO_NOT_SEND_MESSAGE", "0")
+    executor = CapturingExecutor(
+        _audit_jsonl("operation-1", session="session-audit-mode")
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        execution_environment={
+            "CEO_DRY_RUN": "1",
+            "CEO_NOT_SEND_MESSAGE": "1",
+        },
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert result.result.outcome is AuditOutcome.EXECUTED
+    assert executor.environments[0]["CEO_DRY_RUN"] == "1"
+    assert executor.environments[0]["CEO_NOT_SEND_MESSAGE"] == "1"
 
 
 def test_audited_email_turn_receives_task_bound_cli_and_prompt_identity(setup):

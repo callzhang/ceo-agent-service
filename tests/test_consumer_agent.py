@@ -19,6 +19,7 @@ from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import RuntimeRouteUnavailableError
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.consumer_agent import (
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
@@ -192,6 +193,33 @@ class SequencedRuntimeExecutor(CapturingExecutor):
         return result
 
 
+@pytest.mark.parametrize(
+    ("parent_mode", "ambient_mode"),
+    (("1", "0"), ("0", "1")),
+)
+def test_consumer_runtime_environment_overrides_ambient_send_mode(
+    store, task, context, monkeypatch, parent_mode, ambient_mode
+):
+    monkeypatch.setenv("CEO_DRY_RUN", ambient_mode)
+    monkeypatch.setenv("CEO_NOT_SEND_MESSAGE", ambient_mode)
+    stream = _result_jsonl()
+    executor = SequencedRuntimeExecutor(ProcessRunResult(0, stream, ""))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        execution_environment={
+            "CEO_DRY_RUN": parent_mode,
+            "CEO_NOT_SEND_MESSAGE": parent_mode,
+        },
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert len(executor.environments) == 1
+    assert executor.environments[0]["CEO_DRY_RUN"] == parent_mode
+    assert executor.environments[0]["CEO_NOT_SEND_MESSAGE"] == parent_mode
+
+
 def _consumer_runtime_dependencies(
     store, workspace=Path("/workspace"), *, routes="codex_oauth,codex_api"
 ):
@@ -199,6 +227,7 @@ def _consumer_runtime_dependencies(
         {
             "CEO_AGENT_RUNTIME_ROUTES": routes,
             "CEO_CODEX_API_KEY": "fallback-test-key",
+            "CEO_CLAUDE_API_KEY": "test-claude-secret",
         }
     )
     capabilities = frozenset(
@@ -1130,6 +1159,10 @@ def test_consumer_read_events_can_fail_over_within_same_run(
         runtime_config=config,
         runtime_router=router,
         codex_adapter=adapter,
+        execution_environment={
+            "CEO_DRY_RUN": "1",
+            "CEO_NOT_SEND_MESSAGE": "1",
+        },
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     attempts = store.list_agent_runtime_attempts(result.run_id)
@@ -1166,6 +1199,79 @@ def test_consumer_read_events_can_fail_over_within_same_run(
     assert persisted_run.codex_session_id == "session-a"
     assert "OPENAI_API_KEY" not in executor.environments[0]
     assert executor.environments[1]["OPENAI_API_KEY"] == "fallback-test-key"
+    assert [
+        (environment["CEO_DRY_RUN"], environment["CEO_NOT_SEND_MESSAGE"])
+        for environment in executor.environments
+    ] == [("1", "1"), ("1", "1")]
+
+
+def test_consumer_claude_runtime_receives_parent_execution_mode(
+    store, task, context, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CEO_DRY_RUN", "0")
+    monkeypatch.setenv("CEO_NOT_SEND_MESSAGE", "0")
+    config, router, adapter = _consumer_runtime_dependencies(
+        store, workspace=tmp_path, routes="claude_api"
+    )
+    claude_adapter = ClaudeRuntimeAdapter(
+        workspace=tmp_path,
+        config=config,
+        claude_bin="claude-test",
+        service_mcp_servers=(),
+    )
+    result = {
+        "outcome": "no_action",
+        "summary": "Nothing to do.",
+        "proposal": None,
+        "error": {
+            "code": "",
+            "retryable": False,
+            "authorization_required": False,
+        },
+    }
+    session_id = "claude-execution-mode"
+    stream = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "init",
+                    "session_id": session_id,
+                    "cwd": str(tmp_path),
+                    "tools": [],
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "result": json.dumps(_wire_result(result)),
+                    "session_id": session_id,
+                }
+            ),
+        )
+    )
+    executor = SequencedRuntimeExecutor(ProcessRunResult(0, stream, ""))
+
+    completed = ConsumerAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+        claude_adapter=claude_adapter,
+        execution_environment={
+            "CEO_DRY_RUN": "1",
+            "CEO_NOT_SEND_MESSAGE": "1",
+        },
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert completed.result.outcome.value == "no_action"
+    assert executor.environments[0]["CEO_DRY_RUN"] == "1"
+    assert executor.environments[0]["CEO_NOT_SEND_MESSAGE"] == "1"
+    assert executor.environments[0]["ANTHROPIC_API_KEY"] == "test-claude-secret"
 
 
 def test_transport_failure_opens_route_pause_before_api_successor(

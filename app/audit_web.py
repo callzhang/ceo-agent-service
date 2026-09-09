@@ -71,7 +71,6 @@ from app.config import (
     assistant_signature,
     batch_seconds,
     broadcast_mention_aliases,
-    consumer_poll_interval_seconds,
     consumer_worker_count,
     corpus_dir,
     document_extraction_ids,
@@ -86,20 +85,13 @@ from app.config import (
     forbidden_path_prefixes,
     handoff_ack,
     memory_connector_user_id,
-    meeting_consumer_poll_interval_seconds,
-    meeting_producer_interval_seconds,
-    meeting_settle_seconds,
     mention_aliases,
     message_recovery_interval,
     poll_interval_seconds,
     principal_name,
-    producer_interval_seconds,
     read_env_file,
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
-    task_daily_interval_seconds,
-    task_follow_up_interval_seconds,
-    task_work_item_interval_seconds,
     user_alias,
     worker_db_path,
     write_env_values,
@@ -2151,6 +2143,7 @@ def build_worker_status_payload(
     # not repeatedly contend for the writer lock or mix queue generations.
     with store.read_snapshot():
         queues = _queue_status_snapshots(store)
+        dispatcher_queues = _dispatcher_queue_snapshots(store)
         attention_rows = _queue_attention_rows(store)
         email_health = _email_worker_health_snapshot(store)
     summary_queues = [
@@ -2167,12 +2160,13 @@ def build_worker_status_payload(
     )
     payload: dict[str, object] = {
         "service": service,
-        "components": _service_component_snapshots(),
+        "components": _service_component_snapshots(store),
         # Connector probes have their own cache so a slow CLI/live probe never
         # delays the queue/status snapshot used by /workers and /attention.
         "connectors": {},
         "email": email_health,
         "queues": queues,
+        "dispatcher_queues": dispatcher_queues,
         "attention_rows": attention_rows,
         "database": {"path": str(store.path)},
         "summary": {
@@ -2323,17 +2317,31 @@ def _worker_metric_card(label: str, value: str, detail: str, *, ok: bool | None 
     )
 
 
-def _service_component_snapshots() -> list[dict[str, str]]:
-    return [
+def _service_component_snapshots(
+    store: AutoReplyStore | None = None,
+) -> list[dict[str, str]]:
+    persisted = {
+        item["component"]: item
+        for item in (store.list_service_health_components() if store else ())
+    }
+    components = [
         {"name": "audit-web", "role": "UI/API", "cadence": "always on"},
         {"name": "email-worker", "role": "IMAP scan and email actions", "cadence": "account configured"},
         {"name": "database-backup", "role": "sqlite backup", "cadence": "periodic"},
-        {"name": "producer", "role": "DingTalk message scan", "cadence": f"{producer_interval_seconds()}s"},
-        {"name": "consumer pool", "role": f"reply task execution x{consumer_worker_count()}", "cadence": f"{consumer_poll_interval_seconds()}s"},
-        {"name": "meeting-producer", "role": "AI minutes scan", "cadence": f"{meeting_producer_interval_seconds()}s"},
-        {"name": "meeting-consumer", "role": "meeting alignment", "cadence": f"{meeting_consumer_poll_interval_seconds()}s"},
-        {"name": "task-maintenance", "role": "task agent scans/OKR review", "cadence": f"{task_work_item_interval_seconds()}s"},
-        {"name": "follow-up-delivery", "role": "scheduled follow-up delivery", "cadence": f"{task_follow_up_interval_seconds()}s"},
+        {"name": "agent-cron-scheduler", "role": "business trigger scheduling", "cadence": "task configured"},
+        {"name": "agent-cron-dispatcher", "role": f"queue dispatch x{consumer_worker_count()}", "cadence": "internal"},
+        {"name": "task-maintenance", "role": "error recovery and completion checks", "cadence": "internal"},
+        {"name": "follow-up-delivery", "role": "scheduled follow-up delivery", "cadence": "internal"},
+    ]
+    return [
+        {
+            **component,
+            "status": persisted.get(component["name"], {}).get("status", "unknown"),
+            "latest_tick_at": persisted.get(component["name"], {}).get("latest_tick_at", ""),
+            "latest_error": persisted.get(component["name"], {}).get("latest_error", ""),
+            "latest_error_at": persisted.get(component["name"], {}).get("latest_error_at", ""),
+        }
+        for component in components
     ]
 
 
@@ -2398,6 +2406,8 @@ def _launchd_service_status(label: str) -> dict[str, object]:
             "pid": "",
             "runs": "",
             "initialized": "",
+            "last_terminating_signal": "",
+            "returncode": -1,
         }
     parsed = _parse_launchctl_print(completed.stdout)
     state = str(parsed.get("state") or ("error" if completed.returncode else "unknown"))
@@ -2487,6 +2497,45 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
         if _sqlite_table_exists(db, "reply_tasks"):
             snapshots.append(_email_unsubscribe_task_queue_snapshot(db))
     return snapshots
+
+
+def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
+    """Read each adapter's native queue projection without claiming work."""
+    from app.dispatcher.adapters import (
+        MeetingQueueAdapter,
+        OkrReviewQueueAdapter,
+        ReplyQueueAdapter,
+        ScheduledExecutionQueueAdapter,
+        ScheduledTaskQueueAdapter,
+        TaskTodoSyncOutboxQueueAdapter,
+        WorkSummaryQueueAdapter,
+    )
+
+    now = datetime.now(timezone.utc)
+    adapters = (
+        ScheduledTaskQueueAdapter(store),
+        ScheduledExecutionQueueAdapter(store),
+        ReplyQueueAdapter(store),
+        MeetingQueueAdapter(store),
+        WorkSummaryQueueAdapter(store),
+        OkrReviewQueueAdapter(store),
+        TaskTodoSyncOutboxQueueAdapter(store),
+    )
+    rows = []
+    for adapter in adapters:
+        metrics = adapter.metrics(now)
+        rows.append({
+            "name": adapter.name,
+            "pending": metrics.pending,
+            "due": metrics.due,
+            "oldest_available_at": (
+                metrics.oldest_available_at.isoformat()
+                if metrics.oldest_available_at is not None else None
+            ),
+            "running": metrics.running,
+            "latest_error": metrics.latest_error,
+        })
+    return rows
 
 
 def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
@@ -2662,7 +2711,7 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
     rows = []
     with store._connect() as db:
         if not _sqlite_table_exists(db, "service_state"):
-            return {"status": "unavailable", "entries": []}
+            return {"status": "unavailable", "updated_at": "", "entries": []}
         rows = db.execute(
             """
             select key, value, updated_at
@@ -3065,8 +3114,9 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             recovered_placeholders = ",".join("?" for _ in recovered_statuses)
             for row in db.execute(
                 f"""
-                select error_event.id, error_event.kind, error_event.detail,
-                       error_event.created_at
+                select error_event.id, error_event.conversation_id,
+                       error_event.message_id, error_event.kind,
+                       error_event.detail, error_event.created_at
                 from errors error_event
                 where datetime(error_event.created_at) >= datetime('now', '-4 hours')
                   and coalesce(error_event.resolved_at, '') = ''
@@ -3088,16 +3138,22 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 recovered_statuses,
             ).fetchall():
                 detail = str(row["detail"] or row["kind"] or "unresolved service error")
+                conversation_id = str(row["conversation_id"] or "")
+                scheduled_match = re.fullmatch(r"scheduled-task:(\d+)", conversation_id)
                 rows.append(
                     {
-                        "category": "Service error",
+                        "category": "Scheduled task" if scheduled_match else "Service error",
                         "id": str(row["id"]),
                         "status": "failed",
-                        "context": str(row["kind"] or "service error"),
+                        "context": conversation_id if scheduled_match else str(row["kind"] or "service error"),
+                        "root_cause": str(row["kind"] or "service error"),
                         "summary": detail,
                         "updated_at": str(row["created_at"] or ""),
                         "error": detail,
-                        "detail_url": f"/history/errors/{int(row['id'])}",
+                        "detail_url": (
+                            f"/scheduled-tasks?id={scheduled_match.group(1)}"
+                            if scheduled_match else f"/history/errors/{int(row['id'])}"
+                        ),
                     }
                 )
     for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
@@ -3842,15 +3898,7 @@ _CONFIGURATION_GROUP_BY_KEY = {
     "CEO_AGENT_NAMES": "Message Routing",
     "CEO_BROADCAST_MENTION_ALIASES": "Message Routing",
     "DOCUMENT_EXTRACTION_IDS": "Message Routing",
-    "CEO_PRODUCER_INTERVAL_SECONDS": "Scheduling",
-    "CEO_CONSUMER_POLL_INTERVAL_SECONDS": "Scheduling",
     "CEO_CONSUMER_WORKERS": "Scheduling",
-    "CEO_MEETING_PRODUCER_INTERVAL_SECONDS": "Scheduling",
-    "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS": "Scheduling",
-    "CEO_MEETING_SETTLE_SECONDS": "Scheduling",
-    "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS": "Scheduling",
-    "CEO_TASK_DAILY_INTERVAL_SECONDS": "Scheduling",
-    "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS": "Scheduling",
     "CEO_POLL_INTERVAL_SECONDS": "Scheduling",
     "CEO_BATCH_SECONDS": "Scheduling",
     "FAST_PATH_UNREAD_BACKOFF": "Scheduling",
@@ -3866,15 +3914,7 @@ _CONFIGURATION_GROUP_BY_KEY = {
 }
 _CONFIGURATION_INTEGER_KEYS = frozenset(
     {
-        "CEO_PRODUCER_INTERVAL_SECONDS",
-        "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
         "CEO_CONSUMER_WORKERS",
-        "CEO_MEETING_PRODUCER_INTERVAL_SECONDS",
-        "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS",
-        "CEO_MEETING_SETTLE_SECONDS",
-        "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS",
-        "CEO_TASK_DAILY_INTERVAL_SECONDS",
-        "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS",
         "CEO_POLL_INTERVAL_SECONDS",
         "CEO_BATCH_SECONDS",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
@@ -3900,8 +3940,6 @@ _PROMPT_VARIABLE_DESCRIPTIONS = {
 _CONFIGURATION_COMPATIBILITY_KEYS = frozenset({"CEO_PRINCIPAL_NAME"})
 _CONFIGURATION_CORE_SCHEDULING_KEYS = frozenset(
     {
-        "CEO_PRODUCER_INTERVAL_SECONDS",
-        "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
         "CEO_CONSUMER_WORKERS",
     }
 )
@@ -4231,49 +4269,9 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "系统安全检查使用：按路径前缀识别本机路径泄漏。",
         ),
         (
-            "CEO_PRODUCER_INTERVAL_SECONDS",
-            str(producer_interval_seconds()),
-            "主服务内 producer loop 的运行间隔。",
-        ),
-        (
-            "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
-            str(consumer_poll_interval_seconds()),
-            "consumer 检查 pending reply task 的间隔秒数。",
-        ),
-        (
             "CEO_CONSUMER_WORKERS",
             str(consumer_worker_count()),
-            "单个 launchd 服务内并发的 reply consumer 线程数；同一会话仍由 SQLite 会话锁串行执行。",
-        ),
-        (
-            "CEO_MEETING_PRODUCER_INTERVAL_SECONDS",
-            str(meeting_producer_interval_seconds()),
-            "meeting producer 扫描 dws minutes 的间隔秒数。",
-        ),
-        (
-            "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS",
-            str(meeting_consumer_poll_interval_seconds()),
-            "meeting consumer 检查 pending meeting job 的间隔秒数。",
-        ),
-        (
-            "CEO_MEETING_SETTLE_SECONDS",
-            str(meeting_settle_seconds()),
-            "会议结束后等待多久再允许 meeting consumer 处理。",
-        ),
-        (
-            "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS",
-            str(task_work_item_interval_seconds()),
-            "task-maintenance 处理 work item/OKR review 的间隔秒数。",
-        ),
-        (
-            "CEO_TASK_DAILY_INTERVAL_SECONDS",
-            str(task_daily_interval_seconds()),
-            "task-maintenance 扫 task sources 的间隔秒数。",
-        ),
-        (
-            "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS",
-            str(task_follow_up_interval_seconds()),
-            "follow-up-delivery 处理 due follow-ups 的间隔秒数。",
+            "单个服务内允许同时执行的 Agent 任务总数；各队列独立调度，同一会话仍由 SQLite 会话锁串行执行。",
         ),
         (
             "CEO_POLL_INTERVAL_SECONDS",
@@ -4613,15 +4611,7 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_CORPUS_DIR",
         "CEO_WORK_PROFILE_PATH",
         "CEO_FORBIDDEN_PATH_PREFIXES",
-        "CEO_PRODUCER_INTERVAL_SECONDS",
-        "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
         "CEO_CONSUMER_WORKERS",
-        "CEO_MEETING_PRODUCER_INTERVAL_SECONDS",
-        "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS",
-        "CEO_MEETING_SETTLE_SECONDS",
-        "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS",
-        "CEO_TASK_DAILY_INTERVAL_SECONDS",
-        "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS",
         "CEO_POLL_INTERVAL_SECONDS",
         "CEO_BATCH_SECONDS",
         "FAST_PATH_UNREAD_BACKOFF",
@@ -9845,6 +9835,7 @@ _SPA_EXACT_PAGE_PATHS = frozenset(
         "/",
         "/history",
         "/tasks",
+        "/scheduled-tasks",
         "/settings",
         "/user-feedback",
         "/tutorial",
@@ -9917,6 +9908,11 @@ def create_audit_app(
     workbench_scheduler_join_timeout_seconds: float = 1.0,
     spa_enabled: bool = False,
     email_learning_factory=None,
+    scheduled_task_runtime_snapshots=None,
+    scheduled_task_runtime_skill_snapshot=None,
+    scheduled_task_wake_callback=None,
+    scheduled_task_environment=None,
+    scheduled_task_now=None,
 ) -> FastAPI:
     # The audit process is read-heavy. Reuse one initialized Store so requests do
     # not repeatedly contend with the worker for schema initialization writes.
@@ -10030,17 +10026,21 @@ def create_audit_app(
         return {
             "service": {
                 "label": "com.ceo-agent-service.main",
+                "target": "gui/unknown/com.ceo-agent-service.main",
                 "ok": True,
                 "state": "refreshing",
                 "detail": "Status refresh in progress.",
                 "pid": "",
                 "runs": "",
                 "initialized": "",
+                "last_terminating_signal": "",
+                "returncode": 0,
             },
             "components": _service_component_snapshots(),
             "connectors": {},
             "email": {"status": "refreshing", "updated_at": "", "entries": []},
             "queues": [],
+            "dispatcher_queues": [],
             "attention_rows": [],
             "database": {"path": str(db_path)},
             "summary": {
@@ -10077,9 +10077,9 @@ def create_audit_app(
         wechat_status = wechat_status_cache.get_or_refresh(
             lambda: _wechat_status_snapshot(audit_store),
             lambda: {
-                "reader": {"status": "refreshing"},
-                "sender": {"status": "refreshing"},
-                "preflight": {"status": "refreshing"},
+                "reader": {"enabled": False, "status": "refreshing", "error": ""},
+                "sender": {"enabled": False, "status": "refreshing", "error": ""},
+                "preflight": {"status": "refreshing", "error": ""},
                 "account": {"ready": False, "account_id": ""},
             },
         )
@@ -10171,7 +10171,50 @@ def create_audit_app(
         """Minimal local liveness receipt used by service and feedback evidence."""
         return {"ok": True, "status": "ok"}
 
+    from app.agent_cron.options import ScheduledTaskOptionService
+    from app.agent_runtime_config import load_runtime_config
+    from app.managed_skills import (
+        import_repository_managed_skills,
+        runtime_skill_snapshot_for_process,
+    )
+    from app.skill_files import SkillFileService
     from app.web_api import register_console_routes
+
+    def scheduled_task_option_service() -> ScheduledTaskOptionService:
+        import_repository_managed_skills(audit_store)
+        environment = (
+            os.environ
+            if scheduled_task_environment is None
+            else scheduled_task_environment
+        )
+        service = _launchd_service_status("com.ceo-agent-service.main")
+        raw_pid = str(service.get("pid") or "") if service.get("ok") else ""
+        main_pid = int(raw_pid) if raw_pid.isdigit() and int(raw_pid) > 0 else None
+        runtime_config = load_runtime_config(environment)
+        runtime_snapshots = scheduled_task_runtime_snapshots
+        if runtime_snapshots is None:
+            runtime_snapshots = (
+                audit_store.runtime_capability_snapshots_for_pid(
+                    tuple(route.name for route in runtime_config.routes),
+                    pid=main_pid,
+                )
+                if main_pid is not None
+                else {}
+            )
+        runtime_skill_snapshot = scheduled_task_runtime_skill_snapshot
+        if runtime_skill_snapshot is None and main_pid is not None:
+            runtime_skill_snapshot = runtime_skill_snapshot_for_process(
+                audit_store,
+                pid=main_pid,
+            )
+        return ScheduledTaskOptionService(
+            store=audit_store,
+            environment=environment,
+            runtime_snapshots=runtime_snapshots,
+            operation_skill_files=SkillFileService(Path.home() / ".agents" / "skills"),
+            runtime_skill_snapshot=runtime_skill_snapshot,
+            now=scheduled_task_now,
+        )
 
     if email_learning_factory is None:
         from app.email_classifier_learning import EmailClassifierLearningService
@@ -10214,6 +10257,9 @@ def create_audit_app(
             ding_robot_code=ding_robot_code,
             ding_robot_name=ding_robot_name,
         ),
+        scheduled_task_option_service_factory=scheduled_task_option_service,
+        scheduled_task_wake_callback=scheduled_task_wake_callback,
+        scheduled_task_now=scheduled_task_now,
     )
 
     register_repository_upgrade_routes(

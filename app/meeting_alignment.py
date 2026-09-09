@@ -14,6 +14,7 @@ from app.codex_capacity import (
 from app.codex_failure import CODEX_PROCESS_FAILED, classify_codex_process_failure
 from app.config import codex_capacity_retry_duration, principal_display_name
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
+from app.dispatcher.models import ClaimGuard
 from app.external_retry import is_external_dependency_error
 from app.meeting_alignment_agent import (
     MeetingAlignmentAgent,
@@ -548,7 +549,7 @@ def consume_meeting_alignment_jobs(
     )
     for job in jobs:
         processed_ids.add(job.id)
-        _analyze_meeting_job(
+        consume_claimed_meeting_alignment_job(
             store,
             dws,
             runner,
@@ -559,16 +560,33 @@ def consume_meeting_alignment_jobs(
             embedding_client=embedding_client,
         )
 
-    delivery_jobs = (
-        store.claim_ready_to_send_meeting_alignment_jobs(
+    if deliver:
+        delivery_jobs = deliver_ready_meeting_alignment_jobs(
+            store,
+            dws,
+            now=now,
             limit=limit,
-            now=now.isoformat(),
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
         )
-        if deliver
-        else []
+        processed_ids.update(delivery_jobs)
+    return len(processed_ids)
+
+
+def deliver_ready_meeting_alignment_jobs(
+    store: AutoReplyStore,
+    dws: Any,
+    *,
+    now: datetime,
+    limit: int,
+    retry_delay: timedelta = DEFAULT_MEETING_RETRY_DELAY,
+    max_attempts: int = DEFAULT_MEETING_MAX_ATTEMPTS,
+) -> set[int]:
+    """Deliver only analyzed meeting facts; never claim the analysis queue."""
+    jobs = store.claim_ready_to_send_meeting_alignment_jobs(
+        limit=limit, now=now.isoformat()
     )
-    for job in delivery_jobs:
-        processed_ids.add(job.id)
+    for job in jobs:
         _deliver_meeting_job(
             store,
             dws,
@@ -577,7 +595,36 @@ def consume_meeting_alignment_jobs(
             retry_delay=retry_delay,
             max_attempts=max_attempts,
         )
-    return len(processed_ids)
+    return {job.id for job in jobs}
+
+
+def consume_claimed_meeting_alignment_job(
+    store: AutoReplyStore,
+    dws: Any,
+    runner: Any,
+    job: Any,
+    *,
+    now: datetime,
+    retry_delay: timedelta = DEFAULT_MEETING_RETRY_DELAY,
+    max_attempts: int = DEFAULT_MEETING_MAX_ATTEMPTS,
+    embedding_client: Callable[[list[str]], list[list[float]]] | None = None,
+    claim_guard: ClaimGuard | None = None,
+) -> None:
+    """Execute one already-claimed meeting fact without scanning the queue."""
+    if job.status != "processing":
+        raise ValueError("meeting job must be claimed before execution")
+    if claim_guard is not None:
+        claim_guard.assert_current(now.astimezone())
+    _analyze_meeting_job(
+        store,
+        dws,
+        runner,
+        job,
+        now=now,
+        retry_delay=retry_delay,
+        max_attempts=max_attempts,
+        embedding_client=embedding_client,
+    )
 
 
 def recover_meeting_alignment_jobs(store: AutoReplyStore) -> int:

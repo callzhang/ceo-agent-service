@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime, timedelta
@@ -12,6 +13,7 @@ from threading import RLock
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import (
     PROBE_VERIFIED_RUNTIME_CAPABILITIES,
+    LOCAL_SERVICE_RUNTIME_CAPABILITIES,
     RuntimeCapabilitySnapshot,
     RuntimeEventType,
     RuntimeFailure,
@@ -47,6 +49,7 @@ _PROBE_SCHEMA = {
     "additionalProperties": False,
 }
 _BASE_CAPABILITIES = PROBE_VERIFIED_RUNTIME_CAPABILITIES
+_LOCAL_CAPABILITIES = _BASE_CAPABILITIES | LOCAL_SERVICE_RUNTIME_CAPABILITIES
 _CLAUDE_EFFECT_TOOL = "mcp__runtime_probe__record_effect_start"
 _CLAUDE_EFFECT_PROMPT = (
     "Call the dedicated runtime probe tool exactly once with marker "
@@ -249,7 +252,7 @@ class AgentRuntimeProbe:
             adapter._mcp_proxy.close()
         return RuntimeCapabilitySnapshot(
             route_name=route.name,
-            capabilities=_BASE_CAPABILITIES,
+            capabilities=_LOCAL_CAPABILITIES,
             healthy=True,
             checked_at=checked_at.isoformat(),
             expires_at=expires_at.isoformat(),
@@ -390,6 +393,10 @@ class RuntimeCapabilityRefresher:
                         ),
                     )
                 snapshots[route_name] = snapshot
+                self._store.record_runtime_capability_snapshot(
+                    snapshot,
+                    pid=os.getpid(),
+                )
                 if snapshot.healthy and snapshot.failure is None:
                     self._store.close_runtime_route_pause(route_name)
                 else:
@@ -588,4 +595,4 @@ def _route_capabilities(
     # This no-tools probe proves only the transport/schema/read-only boundary.
     # Configured MCP transports are not evidence that any business tool works.
     del adapter, route
-    return _BASE_CAPABILITIES
+    return _LOCAL_CAPABILITIES

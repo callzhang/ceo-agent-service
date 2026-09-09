@@ -21,7 +21,6 @@ from app.database_backup import (
 )
 from app.config import (
     codex_capacity_retry_duration,
-    consumer_poll_interval_seconds,
     consumer_worker_count,
     embedding_api_key,
     embedding_base_url,
@@ -29,19 +28,12 @@ from app.config import (
     embedding_model,
     embedding_timeout_seconds,
     feedback_spike_vercel_base_url,
-    meeting_consumer_poll_interval_seconds,
-    meeting_producer_interval_seconds,
-    meeting_settle_seconds,
     principal_display_name,
-    producer_interval_seconds,
     repository_upgrade_branch,
     repository_upgrade_check_interval_seconds,
     repository_upgrade_enabled,
     repository_upgrade_remote,
     profile_evidence_dir,
-    task_daily_interval_seconds,
-    task_follow_up_interval_seconds,
-    task_work_item_interval_seconds,
     worker_db_path,
     work_profile_path,
 )
@@ -62,6 +54,7 @@ from app.dws_client import (
     local_time_zone_name,
     native_reply_delivery_payload,
 )
+from app.dispatcher.service import AdapterWorkerPools, ConsumerDispatcher
 from app.feedback_spike import (
     build_events_url,
     send_feedback_spike_links,
@@ -73,7 +66,9 @@ from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.notification import send_macos_notification
 from app.meeting_alignment import (
     MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY,
+    consume_claimed_meeting_alignment_job,
     consume_meeting_alignment_jobs,
+    deliver_ready_meeting_alignment_jobs,
     produce_meeting_alignment_jobs,
     queue_recent_meeting_alignment_replay,
     recover_meeting_alignment_jobs,
@@ -101,7 +96,7 @@ from app.task_owner_backfill import (
 )
 from app.todo_completion import enqueue_todo_completion_evidence_checks
 from app.todo_sync import (
-    dispatch_task_todo_sync_outbox,
+    dispatch_claimed_task_todo_sync_outbox,
     pull_dingtalk_todo_statuses,
     retry_failed_dingtalk_todo_links,
 )
@@ -126,11 +121,23 @@ from app.codex_capacity import (
     is_codex_capacity_exhausted,
 )
 from app.weekly_okr_report import (
-    DEFAULT_SCHEDULE_HOUR,
     refresh_company_okr_archive_command,
     weekly_okr_report_command,
-    weekly_okr_report_window_open,
 )
+
+
+def run_consumer_dispatcher_loop(
+    dispatcher: ConsumerDispatcher,
+    *,
+    stop_event: threading.Event,
+) -> None:
+    """Run an explicitly wired dispatcher without activating legacy queues here.
+
+    Task-specific consumers remain owned by their current service loops until
+    their migration supplies both a queue adapter and a one-item consumer.
+    """
+
+    dispatcher.run(stop_event=stop_event)
 
 WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = 3
 WECHAT_READER_LAUNCHD_LABEL = "com.stardust.ceo-agent.wechat-reader"
@@ -204,15 +211,7 @@ class WorkerSettings(BaseModel):
     codex_idle_timeout_seconds: PositiveInt = 900
     task_codex_timeout_seconds: PositiveInt = 1200
     task_codex_idle_timeout_seconds: PositiveInt = 900
-    task_work_item_interval_seconds: PositiveInt = 60
-    task_daily_interval_seconds: PositiveInt = 86_400
-    task_follow_up_interval_seconds: PositiveInt = 60
-    oa_pending_scan_enabled: bool = True
-    oa_pending_scan_interval_seconds: PositiveInt = 3_600
     oa_pending_scan_lookback_days: PositiveInt = 365
-    meeting_producer_interval_seconds: PositiveInt = 60
-    meeting_consumer_poll_interval_seconds: PositiveInt = 10
-    meeting_settle_seconds: PositiveInt = 600
     consumer_workers: PositiveInt = 2
     max_batches: NonNegativeInt | None = None
     repository_upgrade_enabled: bool = repository_upgrade_enabled()
@@ -318,6 +317,7 @@ def build_parser() -> argparse.ArgumentParser:
         "weekly-okr-report",
         "refresh-okr-archive",
         "scan-task-sources",
+        "scan-meetings-once",
         "scan-oa-approvals",
         "read-oa-approval-detail",
         "read-dingteam-okr",
@@ -373,26 +373,6 @@ def build_parser() -> argparse.ArgumentParser:
             type=_non_negative_int,
             default=_optional_non_negative_int_env("CEO_MAX_BATCHES"),
             help="maximum candidate batches to process before exiting this pass",
-        )
-        subparser.add_argument(
-            "--oa-pending-scan-enabled",
-            action=argparse.BooleanOptionalAction,
-            default=_env_bool(
-                "CEO_OA_PENDING_SCAN_ENABLED",
-                defaults.oa_pending_scan_enabled,
-            ),
-            help="enable the DingTalk OA pending approval scanner",
-        )
-        subparser.add_argument(
-            "--oa-pending-scan-interval-seconds",
-            type=_positive_int,
-            default=_positive_int(
-                os.getenv(
-                    "CEO_OA_PENDING_SCAN_INTERVAL_SECONDS",
-                    str(defaults.oa_pending_scan_interval_seconds),
-                )
-            ),
-            help="seconds between scheduled DingTalk OA pending approval scans",
         )
         subparser.add_argument(
             "--oa-pending-scan-lookback-days",
@@ -652,35 +632,10 @@ def build_parser() -> argparse.ArgumentParser:
                 default=_positive_int(os.getenv("CEO_AUDIT_WEB_PORT", "8765")),
             )
             subparser.add_argument(
-                "--producer-interval-seconds",
-                type=_positive_int,
-                default=producer_interval_seconds(),
-            )
-            subparser.add_argument(
-                "--consumer-poll-interval-seconds",
-                type=_positive_int,
-                default=consumer_poll_interval_seconds(),
-            )
-            subparser.add_argument(
                 "--consumer-workers",
                 type=_positive_int,
                 default=consumer_worker_count(),
-                help="bounded in-process reply consumer threads; the same conversation remains session-locked",
-            )
-            subparser.add_argument(
-                "--task-work-item-interval-seconds",
-                type=_positive_int,
-                default=task_work_item_interval_seconds(),
-            )
-            subparser.add_argument(
-                "--task-daily-interval-seconds",
-                type=_positive_int,
-                default=task_daily_interval_seconds(),
-            )
-            subparser.add_argument(
-                "--task-follow-up-interval-seconds",
-                type=_positive_int,
-                default=task_follow_up_interval_seconds(),
+                help="global concurrent Agent execution capacity; each queue remains independently scheduled",
             )
         if command == "export-feedback":
             subparser.add_argument(
@@ -834,27 +789,7 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         codex_idle_timeout_seconds=args.codex_idle_timeout_seconds,
         task_codex_timeout_seconds=args.task_codex_timeout_seconds,
         task_codex_idle_timeout_seconds=args.task_codex_idle_timeout_seconds,
-        task_work_item_interval_seconds=getattr(
-            args,
-            "task_work_item_interval_seconds",
-            WorkerSettings().task_work_item_interval_seconds,
-        ),
-        task_daily_interval_seconds=getattr(
-            args,
-            "task_daily_interval_seconds",
-            WorkerSettings().task_daily_interval_seconds,
-        ),
-        task_follow_up_interval_seconds=getattr(
-            args,
-            "task_follow_up_interval_seconds",
-            WorkerSettings().task_follow_up_interval_seconds,
-        ),
-        oa_pending_scan_enabled=args.oa_pending_scan_enabled,
-        oa_pending_scan_interval_seconds=args.oa_pending_scan_interval_seconds,
         oa_pending_scan_lookback_days=args.oa_pending_scan_lookback_days,
-        meeting_producer_interval_seconds=meeting_producer_interval_seconds(),
-        meeting_consumer_poll_interval_seconds=meeting_consumer_poll_interval_seconds(),
-        meeting_settle_seconds=meeting_settle_seconds(),
         consumer_workers=getattr(args, "consumer_workers", consumer_worker_count()),
         max_batches=args.max_batches,
         repository_upgrade_enabled=repository_upgrade_enabled(),
@@ -956,6 +891,270 @@ def _resolve_service_runtime_skills(
     return resolve_pending_runtime_skills(
         AutoReplyStore(settings.db_path), pid=os.getpid() if pid is None else pid
     )
+
+
+def run_agent_cron_scheduler_loop(
+    settings: WorkerSettings,
+    runtime_skill_snapshot,
+    *,
+    wake_event: threading.Event,
+    dispatcher_wake_event: threading.Event | None = None,
+) -> None:
+    """Run the Cron trigger producer with the service's immutable capabilities."""
+    from app.agent_cron.scheduler import (
+        AgentCronScheduler,
+        ExecutionTerminalResolverRegistry,
+    )
+
+    store = AutoReplyStore(settings.db_path)
+    option_service = _scheduled_task_option_service(settings, runtime_skill_snapshot)
+    scheduler = AgentCronScheduler(
+        store=store,
+        option_service=option_service,
+        terminal_resolver=ExecutionTerminalResolverRegistry({
+            "reply_task": lambda execution_id: (
+                (task := store.get_reply_task(int(execution_id))) is not None
+                and task.status in {"done", "failed"}
+            )
+        }),
+        dispatcher_wake=(dispatcher_wake_event or wake_event).set,
+        tick_observer=lambda tick_at: store.set_service_health_component(
+            "agent-cron-scheduler",
+            state="healthy",
+            status="running",
+            latest_tick_at=tick_at.isoformat(),
+        ),
+    )
+    scheduler.run_forever(wake_event=wake_event)
+
+
+def run_agent_cron_dispatcher_loop(
+    settings: WorkerSettings, runtime_skill_snapshot, *, wake_event: threading.Event,
+    stop_event: threading.Event | None = None, runtime_refresher=None,
+) -> None:
+    """Dispatch all business queues through one fair internal claim loop."""
+    from app.agent_cron.consumer import (
+        ScheduledAgentConsumer,
+        ScheduledTaskTriggerConsumer,
+        build_scheduled_orchestrator,
+    )
+    from app.agent_runtime_production import build_production_agent_runtime
+    from app.dispatcher.adapters import (
+        MeetingQueueAdapter,
+        OkrReviewQueueAdapter,
+        ReplyQueueAdapter,
+        ScheduledExecutionQueueAdapter,
+        ScheduledTaskQueueAdapter,
+        TaskTodoSyncOutboxQueueAdapter,
+        WorkSummaryQueueAdapter,
+    )
+    from app.agent_runtime_production import build_production_routed_codex_execution
+    from app.task_agent import TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS, TASK_AGENT_MAX_TIMEOUT_SECONDS
+    from app.wechat import service as wechat_service
+    from app.wechat.consumer import WechatReplyConsumer
+    from app.wechat.decision_runner import WechatDecisionRunner
+
+    store = AutoReplyStore(settings.db_path)
+    runtime = build_production_agent_runtime(
+        store=store, workspace=settings.workspace,
+        refresh_runtime_capabilities=(runtime_refresher.refresh_expired if runtime_refresher else None),
+    )
+    options = _scheduled_task_option_service(settings, runtime_skill_snapshot)
+    trigger_consumer = ScheduledTaskTriggerConsumer(
+        store=store, option_service=options,
+    )
+    execution_consumer = ScheduledAgentConsumer(
+        store=store, option_service=options,
+        orchestrator_factory=lambda built: build_scheduled_orchestrator(
+            store=store, built=built, runtime_config=runtime.config,
+            dry_run=settings.dry_run,
+            refresh_runtime_capabilities=runtime.refresh_runtime_capabilities,
+        ),
+    )
+    reply_worker = _create_service_worker(
+        settings, runtime_refresher, runtime_skill_snapshot
+    )
+    wechat_consumer: WechatReplyConsumer | None = None
+
+    def consume_reply(envelope, guard) -> None:
+        nonlocal wechat_consumer
+        task = store.get_reply_task(int(envelope.source_id))
+        if task is None or task.status != "processing":
+            raise ValueError("reply dispatch source is not claimed")
+        if task.channel == "dingtalk":
+            reply_worker.process_claimed_reply_task(task, claim_guard=guard)
+            return
+        if task.channel != "wechat":
+            raise ValueError(f"unsupported reply dispatch channel: {task.channel}")
+        if wechat_consumer is None:
+            state = wechat_service.ready_account_state(store)
+            if state is None:
+                guard.release(datetime.now(timezone.utc))
+                return
+            account = wechat_service.account_from_state(state)
+            wechat_consumer = WechatReplyConsumer(
+                store,
+                WechatDecisionRunner(
+                    workspace=settings.workspace,
+                    store=store,
+                    timeout_seconds=settings.codex_timeout_seconds,
+                    idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+                ),
+                wechat_service.build_reader(),
+                account,
+            )
+        guard.assert_current(datetime.now(timezone.utc))
+        wechat_consumer.process(task)
+
+    meeting_dws = _create_meeting_dws(settings)
+    meeting_runner = MeetingAlignmentCodexRunner(
+        routed_execution=build_production_routed_codex_execution(
+            store=store,
+            workspace=settings.workspace,
+            total_timeout_seconds=settings.codex_timeout_seconds,
+            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+        )
+    )
+    meeting_embedding = (
+        EmbeddingClient(
+            base_url=embedding_base_url(),
+            model=embedding_model(),
+            api_key=embedding_api_key(),
+            timeout_seconds=embedding_timeout_seconds(),
+        )
+        if embedding_enabled()
+        else None
+    )
+
+    def consume_meeting(envelope, guard) -> None:
+        now = datetime.now().astimezone()
+        consume_claimed_meeting_alignment_job(
+            store,
+            meeting_dws,
+            meeting_runner,
+            store.get_meeting_alignment_job(int(envelope.source_id)),
+            now=now,
+            embedding_client=meeting_embedding,
+            claim_guard=guard,
+        )
+
+    work_runner = TaskAgentRunner(
+        TaskAgentCodexRunner(
+            routed_execution=build_production_routed_codex_execution(
+                store=store,
+                workspace=settings.workspace,
+                total_timeout_seconds=min(
+                    settings.task_codex_timeout_seconds,
+                    TASK_AGENT_MAX_TIMEOUT_SECONDS,
+                ),
+                idle_timeout_seconds=min(
+                    settings.task_codex_idle_timeout_seconds,
+                    TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
+                ),
+            )
+        )
+    )
+    work_dws = None if settings.dry_run else _create_meeting_dws(settings)
+
+    def consume_work_summary(envelope, guard) -> None:
+        guard.assert_current(datetime.now(timezone.utc))
+        work_input = store.get_work_summary_input(int(envelope.source_id))
+        if work_input is None or work_input.status != "processing":
+            raise ValueError("work summary dispatch source is not claimed")
+        _process_claimed_work_summary_input(
+            store, work_runner, work_input, dws=work_dws
+        )
+
+    okr_runner = _build_okr_review_runner(settings, store)
+    okr_dws = None if settings.dry_run else _create_okr_review_dws(settings)
+
+    def consume_okr_review(envelope, guard) -> None:
+        request = store.get_okr_review_request(int(envelope.source_id))
+        process_claimed_okr_review_request(
+            settings,
+            store=store,
+            runner=okr_runner,
+            dws=okr_dws,
+            request=request,
+            claim_guard=guard,
+        )
+
+    todo_dws = None if settings.dry_run else meeting_dws
+
+    def consume_task_todo_sync_outbox(envelope, guard) -> None:
+        if todo_dws is None:
+            guard.release(datetime.now(timezone.utc))
+            return
+        item = store.get_task_todo_sync_outbox(int(envelope.source_id))
+        if item is None:
+            raise ValueError("task Todo outbox dispatch source does not exist")
+        now = datetime.now(timezone.utc)
+        status = dispatch_claimed_task_todo_sync_outbox(
+            store,
+            todo_dws,
+            item=item,
+            owner=guard.token.owner,
+            now=now.strftime("%Y-%m-%d %H:%M:%S"),
+            claim_guard=guard,
+        )
+        if not guard.resolved:
+            guard.finish_source(now, status=status)
+
+    adapters = (
+        ScheduledTaskQueueAdapter(store),
+        ScheduledExecutionQueueAdapter(store),
+        ReplyQueueAdapter(store),
+        MeetingQueueAdapter(store),
+        WorkSummaryQueueAdapter(store),
+        OkrReviewQueueAdapter(store),
+    ) + (() if settings.dry_run else (TaskTodoSyncOutboxQueueAdapter(store),))
+    consumers = {
+        "scheduled": trigger_consumer,
+        "scheduled_execution": execution_consumer,
+        "reply": consume_reply,
+        "meeting": consume_meeting,
+        "work_summary": consume_work_summary,
+        "okr_review": consume_okr_review,
+    }
+    if not settings.dry_run:
+        consumers["task_todo_sync_outbox"] = consume_task_todo_sync_outbox
+    agent_adapters = frozenset(
+        {
+            "scheduled_execution",
+            "reply",
+            "meeting",
+            "work_summary",
+            "okr_review",
+        }
+    )
+    agent_capacity = max(1, settings.consumer_workers)
+    worker_counts = {
+        adapter.name: 1 if adapter.name == "meeting" else agent_capacity
+        for adapter in adapters
+    }
+    worker_pools = AdapterWorkerPools(
+        worker_counts,
+    )
+    try:
+        dispatcher = ConsumerDispatcher(
+            adapters=adapters,
+            consumers=consumers,
+            executors=worker_pools.executors,
+            max_in_flight=worker_pools.max_in_flight,
+            shared_capacity_adapters=agent_adapters,
+            shared_max_in_flight=agent_capacity,
+            owner=f"scheduled-dispatcher:{os.getpid()}", lease=timedelta(minutes=5),
+            wake_event=wake_event,
+        )
+        dispatcher.run(stop_event=stop_event or threading.Event())
+        dispatcher.drain()
+    except BaseException:
+        worker_pools.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        # Controlled stop drains already-admitted work. Agent and network
+        # consumers enforce their own bounded operation timeouts.
+        worker_pools.shutdown(wait=True, cancel_futures=False)
 
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()
@@ -1130,13 +1329,6 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             transient_retry_attempts=settings.dws_transient_retry_attempts,
             transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
         )
-        dispatch_task_todo_sync_outbox(
-            store,
-            dws,
-            owner="process-work-items-recovery",
-            now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-            limit=min(limit, 20),
-        )
     processed = 0
     for _ in range(limit):
         if store.active_codex_capacity_pause(now=datetime.now(timezone.utc)):
@@ -1145,63 +1337,64 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         if not claimed:
             break
         work_input = claimed[0]
-        capacity_recovery_active = store.codex_capacity_failure_count() > 0
-        try:
-            process_work_item(store, runner, work_input, dws=dws)
-            store.clear_codex_capacity_pause()
+        if _process_claimed_work_summary_input(store, runner, work_input, dws=dws):
             processed += 1
-        except Exception as exc:
-            raw_error = str(exc)
-            error = _normalize_codex_stop_error_reason(raw_error)
-            if capacity_recovery_active and error in RECOVERABLE_AGENT_RUNTIME_ERRORS:
-                error = CODEX_PROVIDER_CAPACITY_EXHAUSTED
-            capacity_exhausted = is_codex_capacity_exhausted(error)
-            opened_capacity_pause = False
-            if capacity_exhausted:
-                now = datetime.now(timezone.utc)
-                opened_capacity_pause = store.open_codex_capacity_pause(
-                    retry_at=(
-                        now
-                        + codex_capacity_retry_duration(
-                            store.codex_capacity_failure_count()
-                        )
-                    ).isoformat(),
-                    now=now,
-                )
-            if capacity_exhausted:
-                store.defer_work_summary_input_for_capacity(
-                    work_input.id,
-                    error,
-                    available_at=_work_summary_retry_available_at(
-                        work_input.attempts,
-                        capacity_exhausted=True,
-                        capacity_failure_count=max(
-                            store.codex_capacity_failure_count() - 1,
-                            0,
-                        ),
-                    ),
-                )
-            elif _should_retry_work_summary_input(exc, work_input.attempts):
-                store.schedule_work_summary_input_retry(
-                    work_input.id,
-                    error,
-                    available_at=_work_summary_retry_available_at(
-                        work_input.attempts,
-                    ),
-                )
-            elif _should_skip_work_summary_input(error):
-                store.mark_work_summary_input_skipped(work_input.id, error)
-            else:
-                store.mark_work_summary_input_failed(work_input.id, error)
-            if not capacity_exhausted or opened_capacity_pause:
-                store.record_error(
-                    "work_summary_input",
-                    str(work_input.id),
-                    "codex_capacity_pause" if capacity_exhausted else "task_agent",
-                    CODEX_CAPACITY_EXHAUSTED_MESSAGE if capacity_exhausted else error,
-                )
     print(f"process-work-items processed={processed}", flush=True)
     return processed
+
+
+def _process_claimed_work_summary_input(store, runner, work_input, *, dws=None) -> bool:
+    capacity_recovery_active = store.codex_capacity_failure_count() > 0
+    try:
+        process_work_item(store, runner, work_input, dws=dws)
+        store.clear_codex_capacity_pause()
+        return True
+    except Exception as exc:
+        error = _normalize_codex_stop_error_reason(str(exc))
+        if capacity_recovery_active and error in RECOVERABLE_AGENT_RUNTIME_ERRORS:
+            error = CODEX_PROVIDER_CAPACITY_EXHAUSTED
+        capacity_exhausted = is_codex_capacity_exhausted(error)
+        opened_capacity_pause = False
+        if capacity_exhausted:
+            now = datetime.now(timezone.utc)
+            opened_capacity_pause = store.open_codex_capacity_pause(
+                retry_at=(
+                    now
+                    + codex_capacity_retry_duration(
+                        store.codex_capacity_failure_count()
+                    )
+                ).isoformat(),
+                now=now,
+            )
+            store.defer_work_summary_input_for_capacity(
+                work_input.id,
+                error,
+                available_at=_work_summary_retry_available_at(
+                    work_input.attempts,
+                    capacity_exhausted=True,
+                    capacity_failure_count=max(
+                        store.codex_capacity_failure_count() - 1, 0
+                    ),
+                ),
+            )
+        elif _should_retry_work_summary_input(exc, work_input.attempts):
+            store.schedule_work_summary_input_retry(
+                work_input.id,
+                error,
+                available_at=_work_summary_retry_available_at(work_input.attempts),
+            )
+        elif _should_skip_work_summary_input(error):
+            store.mark_work_summary_input_skipped(work_input.id, error)
+        else:
+            store.mark_work_summary_input_failed(work_input.id, error)
+        if not capacity_exhausted or opened_capacity_pause:
+            store.record_error(
+                "work_summary_input",
+                str(work_input.id),
+                "codex_capacity_pause" if capacity_exhausted else "task_agent",
+                CODEX_CAPACITY_EXHAUSTED_MESSAGE if capacity_exhausted else error,
+            )
+        return False
 
 
 def retry_work_summary_input_command(
@@ -1427,11 +1620,8 @@ def backfill_todo_owner_ids_command(
 
 
 def process_okr_reviews_command(settings: WorkerSettings) -> int:
-    from app.agent_runtime_production import (
-        build_production_routed_codex_execution,
-    )
-    from app.okr_review import process_okr_review_request
-    from app.structured_agent import AgentSpec, StructuredCodexRunner
+    from app.dispatcher.adapters import OkrReviewQueueAdapter
+    from app.dispatcher.models import ClaimGuard
 
     store = AutoReplyStore(settings.db_path)
     recovered_requests = store.reset_recoverable_okr_review_requests(
@@ -1451,6 +1641,42 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
                 f"error={request.error}"
             ),
         )
+    runner = _build_okr_review_runner(settings, store)
+    dws = None if settings.dry_run else _create_okr_review_dws(settings)
+    processed = 0
+    limit = 20 if settings.max_batches is None else settings.max_batches
+    adapter = OkrReviewQueueAdapter(store)
+    owner = f"okr-review-command:{os.getpid()}"
+    while processed < limit:
+        envelope = adapter.claim(
+            datetime.now(timezone.utc),
+            owner=owner,
+            lease=timedelta(
+                seconds=_okr_review_processing_stale_seconds(settings)
+            ),
+        )
+        if envelope is None:
+            break
+        request = store.get_okr_review_request(int(envelope.source_id))
+        guard = ClaimGuard(adapter=adapter, envelope=envelope, owner=owner)
+        process_claimed_okr_review_request(
+            settings,
+            store=store,
+            runner=runner,
+            dws=dws,
+            request=request,
+            claim_guard=guard,
+        )
+        guard.complete(datetime.now(timezone.utc))
+        processed += 1
+    print(f"process-okr-reviews processed={processed}", flush=True)
+    return processed
+
+
+def _build_okr_review_runner(settings: WorkerSettings, store: AutoReplyStore):
+    from app.agent_runtime_production import build_production_routed_codex_execution
+    from app.structured_agent import AgentSpec, StructuredCodexRunner
+
     spec = AgentSpec(
         name="okr_review",
         schema_path=_repo_root() / "app" / "schemas" / "agent_envelope.schema.json",
@@ -1474,84 +1700,96 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
             OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS,
         ),
     )
-    runner = StructuredCodexRunner(
+    return StructuredCodexRunner(
         routed_execution=routed_execution,
         spec=spec,
     )
-    dws = None
-    if not settings.dry_run:
-        dws = DwsClient(
-            ding_robot_code=settings.ding_robot_code,
-            ding_robot_name=settings.ding_robot_name,
-            ding_receiver_user_id=settings.ding_receiver_user_id,
-            transient_retry_attempts=settings.dws_transient_retry_attempts,
-            transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
+
+
+def _create_okr_review_dws(settings: WorkerSettings) -> DwsClient:
+    return DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+        transient_retry_attempts=settings.dws_transient_retry_attempts,
+        transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
+    )
+
+
+def process_claimed_okr_review_request(
+    settings: WorkerSettings,
+    *,
+    store: AutoReplyStore,
+    runner,
+    dws,
+    request,
+    claim_guard=None,
+) -> None:
+    """Process one already-claimed OKR request without scanning its queue."""
+    from app.okr_review import process_okr_review_request
+
+    if request.status != "processing":
+        raise ValueError("OKR review dispatch source is not claimed")
+    if claim_guard is not None:
+        claim_guard.assert_current(datetime.now(timezone.utc))
+    try:
+        conversation = DingTalkConversation(
+            open_conversation_id=request.conversation_id,
+            title=request.conversation_title,
+            single_chat=_conversation_single_chat_for_okr_request(store, request),
+            unread_point=0,
         )
-    processed = 0
-    limit = 20 if settings.max_batches is None else settings.max_batches
-    for request in store.claim_okr_review_requests(limit):
-        try:
-            conversation = DingTalkConversation(
-                open_conversation_id=request.conversation_id,
-                title=request.conversation_title,
-                single_chat=_conversation_single_chat_for_okr_request(store, request),
-                unread_point=0,
-            )
-            trigger = _trigger_message_for_okr_request(
-                store=store,
-                conversation=conversation,
-                request=request,
-            )
-            reply = process_okr_review_request(
-                store=store,
-                runner=runner,
-                request=request,
-                single_chat=conversation.single_chat,
-            )
-        except Exception as exc:
-            store.mark_okr_review_request_failed(request.id, str(exc))
-            store.record_error(
-                request.conversation_id,
-                request.trigger_message_id,
-                "okr_review_process",
-                str(exc),
-            )
-            raise
-        if settings.dry_run:
-            processed += 1
-            continue
-        try:
-            if dws is None:
-                raise RuntimeError("DWS client is not configured for OKR review send")
-            send_result = _send_reply_to_trigger_chunks(
-                ServiceMessageSender(store=store, dingtalk=dws),
-                conversation,
-                trigger,
-                reply,
-                request_id=request.id,
-            )
-        except Exception as exc:
-            store.mark_okr_review_request_failed(request.id, str(exc))
-            store.record_error(
-                request.conversation_id,
-                request.trigger_message_id,
-                "okr_review_send",
-                str(exc),
-            )
-            raise
-        store.record_sent_reply(
+        trigger = _trigger_message_for_okr_request(
+            store=store,
+            conversation=conversation,
+            request=request,
+        )
+        reply = process_okr_review_request(
+            store=store,
+            runner=runner,
+            request=request,
+            single_chat=conversation.single_chat,
+        )
+    except Exception as exc:
+        store.mark_okr_review_request_failed(request.id, str(exc))
+        store.record_error(
             request.conversation_id,
             request.trigger_message_id,
-            str(send_result["final_body"]),
-            send_result_json=json.dumps(
-                native_reply_delivery_payload(conversation, trigger, send_result),
-                ensure_ascii=False,
-            ),
-            recall_key=extract_recall_key_from_send_result(send_result),
+            "okr_review_process",
+            str(exc),
         )
-        processed += 1
-    print(f"process-okr-reviews processed={processed}", flush=True)
-    return processed
+        raise
+    if settings.dry_run:
+        return
+    try:
+        if dws is None:
+            raise RuntimeError("DWS client is not configured for OKR review send")
+        send_result = _send_reply_to_trigger_chunks(
+            ServiceMessageSender(store=store, dingtalk=dws),
+            conversation,
+            trigger,
+            reply,
+            request_id=request.id,
+        )
+    except Exception as exc:
+        store.mark_okr_review_request_failed(request.id, str(exc))
+        store.record_error(
+            request.conversation_id,
+            request.trigger_message_id,
+            "okr_review_send",
+            str(exc),
+        )
+        raise
+    store.record_sent_reply(
+        request.conversation_id,
+        request.trigger_message_id,
+        str(send_result["final_body"]),
+        send_result_json=json.dumps(
+            native_reply_delivery_payload(conversation, trigger, send_result),
+            ensure_ascii=False,
+        ),
+        recall_key=extract_recall_key_from_send_result(send_result),
+    )
 
 
 def _conversation_single_chat_for_okr_request(
@@ -1648,9 +1886,6 @@ def scan_oa_approvals_command(
     from app.task_scanners import scan_pending_oa_approvals
 
     store = AutoReplyStore(settings.db_path)
-    if not settings.oa_pending_scan_enabled:
-        print("scan-oa-approvals disabled", flush=True)
-        return 0
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
         ding_robot_name=settings.ding_robot_name,
@@ -1752,6 +1987,7 @@ def check_follow_up_completions_command(
     *,
     limit: int = 1,
 ) -> int:
+    """Confirm follow-up completion evidence; never scan messages, meetings, or OA."""
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
         ding_robot_name=settings.ding_robot_name,
@@ -1959,7 +2195,17 @@ def _record_service_failure(
     exc: Exception,
 ) -> None:
     message = str(exc)
-    AutoReplyStore(settings.db_path).record_error(None, None, component, message)
+    store = AutoReplyStore(settings.db_path)
+    store.record_error(None, None, component, message)
+    failed_at = datetime.now(timezone.utc).isoformat()
+    store.set_service_health_component(
+        component,
+        state="degraded",
+        status="failed",
+        detail=message,
+        latest_error=message,
+        latest_error_at=failed_at,
+    )
     send_macos_notification(
         title=f"CEO {component} failed",
         message=message[:120],
@@ -2649,6 +2895,24 @@ def _create_meeting_dws(settings: WorkerSettings) -> DwsClient:
     )
 
 
+def scan_meetings_once_command(
+    settings: WorkerSettings,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Discover eligible meetings once; Cron owns when this command runs."""
+    current = now or datetime.now().astimezone()
+    _initialize_meeting_discovery_on_service_start(settings, now=current)
+    created = produce_meeting_alignment_jobs(
+        AutoReplyStore(settings.db_path),
+        _create_meeting_dws(settings),
+        now=current,
+        settle_seconds=600,
+    )
+    print(f"scan-meetings-once queued={created}", flush=True)
+    return created
+
+
 def run_meeting_producer_loop(
     settings: WorkerSettings,
     poll_interval_seconds: int,
@@ -2763,6 +3027,29 @@ def run_meeting_consumer_loop(
         sleep(poll_interval_seconds)
 
 
+def run_meeting_delivery_loop(
+    settings: WorkerSettings,
+    *,
+    sleep: Callable[[int], None] = time.sleep,
+    network_ready: Callable[[], bool] = _macos_wifi_connected,
+) -> None:
+    store = AutoReplyStore(settings.db_path)
+    dws = _create_meeting_dws(settings)
+    while True:
+        if not settings.dry_run and network_ready():
+            try:
+                deliver_ready_meeting_alignment_jobs(
+                    store,
+                    dws,
+                    now=datetime.now().astimezone(),
+                    limit=20,
+                )
+            except Exception as exc:
+                if not _is_dws_transient_dependency_error(exc):
+                    store.record_error("", "", "meeting_alignment_delivery", str(exc))
+        sleep(10)
+
+
 def replay_recent_meetings_command(
     settings: WorkerSettings,
     *,
@@ -2775,7 +3062,6 @@ def replay_recent_meetings_command(
         now=datetime.now().astimezone(),
         limit=limit,
         offset=offset,
-        settle_seconds=settings.meeting_settle_seconds,
     )
     print(json.dumps(results, ensure_ascii=False), flush=True)
     return results
@@ -2802,11 +3088,7 @@ def _maintenance_step_completed(result: object) -> bool:
 def run_task_maintenance_loop(
     settings: WorkerSettings,
     *,
-    work_item_interval_seconds: int,
-    daily_interval_seconds: int,
     sleep: Callable[[int], None] = time.sleep,
-    monotonic: Callable[[], float] = time.monotonic,
-    wall_clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
@@ -2833,14 +3115,10 @@ def run_task_maintenance_loop(
                 resolution="recovered by a later successful maintenance cycle",
             )
 
-    now = monotonic()
-    next_daily_run = now
     while True:
         if not network_ready():
-            sleep(work_item_interval_seconds)
+            sleep(60)
             continue
-        run_step("process_work_items", lambda: process_work_items_command(settings))
-        run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
         run_step(
             "resolve_recovered_errors",
             lambda: (
@@ -2850,39 +3128,17 @@ def run_task_maintenance_loop(
                 + store.resolve_closed_blocked_reply_attempts()
             ),
         )
-        weekly_hour = int(
-            os.getenv("CEO_WEEKLY_OKR_REPORT_HOUR", str(DEFAULT_SCHEDULE_HOUR))
+        run_step(
+            # Delivery-state confirmation is an internal maintenance mechanism.
+            # It does not scan messages, meetings, OA, or other new work sources.
+            "confirm_external_todo_completions",
+            lambda: check_follow_up_completions_command(settings, limit=1),
         )
-        if weekly_okr_report_window_open(
-            wall_clock(),
-            schedule_hour=weekly_hour,
-        ):
-            run_step(
-                "weekly_okr_report",
-                lambda: weekly_okr_report_command(settings, quiet_not_due=True),
-            )
-        now = monotonic()
-        if now >= next_daily_run:
-            run_step(
-                "scan_task_sources",
-                lambda: scan_task_sources_command(
-                    settings,
-                    max_new_items=settings.max_batches,
-                ),
-            )
-            run_step("process_work_items", lambda: process_work_items_command(settings))
-            run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
-            run_step(
-                "check_follow_up_completions",
-                lambda: check_follow_up_completions_command(settings, limit=1),
-            )
-            next_daily_run = now + daily_interval_seconds
-        sleep(work_item_interval_seconds)
+        sleep(60)
 
 
 def run_follow_up_delivery_loop(
     settings: WorkerSettings,
-    interval_seconds: int,
     *,
     sleep: Callable[[int], None] = time.sleep,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
@@ -2910,7 +3166,7 @@ def run_follow_up_delivery_loop(
                 else:
                     consecutive_sqlite_lock_failures = 0
                     store.record_error("", "", "follow_up_delivery", str(exc))
-        sleep(interval_seconds)
+        sleep(60)
 
 
 def run_oa_pending_scan_loop(
@@ -2932,7 +3188,7 @@ def run_oa_pending_scan_loop(
 
 
 def _wechat_service_components(settings: WorkerSettings) -> tuple:
-    """WeChat components when enabled; workers wait for a ready account.
+    """Keep only WeChat delivery internal; Cron and Dispatcher own discovery/work.
 
     The account capability is written asynchronously by the dedicated Reader
     app, so gating component creation on a startup snapshot would lose the
@@ -2944,10 +3200,7 @@ def _wechat_service_components(settings: WorkerSettings) -> tuple:
     if not _cfg.wechat_reader_enabled():
         return ()
 
-    components = [
-        ("wechat-producer", lambda: _run_wechat_loop(settings, "producer")),
-        ("wechat-consumer", lambda: _run_wechat_loop(settings, "consumer")),
-    ]
+    components = []
     # The sender loop only auto-sends in 'auto' mode; in 'confirm' mode (default)
     # it holds ready_to_send deliveries for explicit approval. Only start it when
     # sending is enabled at all.
@@ -2973,7 +3226,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
     while state is None:
         state = _wx.ready_account_state(store)
         if state is None:
-            time.sleep(max(1, _cfg.wechat_poll_interval_seconds()))
+            time.sleep(15)
     account = _wx.account_from_state(state)
     reader = _wx.build_reader()
     runner = None
@@ -2990,19 +3243,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
     if role == "sender":
         from app.wechat.accessibility import WechatSender
         wsender = WechatSender(store, _wx.build_sender())
-    configured_interval = _cfg.wechat_poll_interval_seconds()
-    # Keep an optional/malformed provider value from reaching the loop's
-    # integer boundary.  The config default is 15 seconds, so this preserves
-    # the existing cadence when a launchd/.env value is absent or invalid.
-    interval = (
-        configured_interval
-        if (
-            isinstance(configured_interval, int)
-            and not isinstance(configured_interval, bool)
-            and configured_interval > 0
-        )
-        else 15
-    )
+    interval = 15
     consecutive_sqlite_lock_failures = 0
     consecutive_reader_failures = 0
     reader_failure_reported = False
@@ -3107,19 +3348,45 @@ def _pause_wechat_loop_until_service_restart(sleep: Callable[[float], None]) -> 
         sleep(3600)
 
 
+def _scheduled_task_option_service(settings: WorkerSettings, runtime_skill_snapshot):
+    from app.agent_cron.options import ScheduledTaskOptionService
+    from app.agent_runtime_production import PRODUCTION_RUNTIME_CAPABILITIES
+    from app.skill_files import SkillFileService
+
+    return ScheduledTaskOptionService(
+        store=AutoReplyStore(settings.db_path),
+        environment=os.environ,
+        runtime_snapshots=PRODUCTION_RUNTIME_CAPABILITIES,
+        operation_skill_files=SkillFileService(Path.home() / ".agents" / "skills"),
+        runtime_skill_snapshot=runtime_skill_snapshot,
+    )
+
+
+def _seed_scheduled_tasks_on_service_start(
+    settings: WorkerSettings, runtime_skill_snapshot
+) -> None:
+    from app.agent_cron.seeds import seed_scheduled_tasks
+
+    seed_scheduled_tasks(
+        store=AutoReplyStore(settings.db_path),
+        options=_scheduled_task_option_service(settings, runtime_skill_snapshot),
+        working_directory=settings.workspace,
+    )
+
+
 def run_service(
     settings: WorkerSettings,
     *,
     host: str,
     port: int,
-    producer_interval_seconds: int,
-    consumer_poll_interval_seconds: int,
     thread_factory: Callable[..., threading.Thread] = threading.Thread,
     wait: Callable[[], None] | None = None,
     exit_process: Callable[[int], None] = os._exit,
     runtime_refresher=None,
 ) -> None:
     runtime_skill_snapshot = _resolve_service_runtime_skills(settings)
+    scheduled_task_wake_event = threading.Event()
+    scheduled_dispatcher_wake_event = threading.Event()
     if runtime_refresher is not None:
         try:
             runtime_refresher.refresh_expired(force=True)
@@ -3130,6 +3397,7 @@ def run_service(
                 "agent_runtime_probe_startup_failed",
                 "Agent runtime startup probe failed; routes remain unavailable.",
             )
+    _seed_scheduled_tasks_on_service_start(settings, runtime_skill_snapshot)
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_orphaned_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
@@ -3149,38 +3417,33 @@ def run_service(
             lambda: run_database_backup_loop(settings.db_path),
         ),
         (
-            "producer",
-            lambda: run_producer_loop(
-                _create_service_worker(settings, runtime_refresher, runtime_skill_snapshot),
-                producer_interval_seconds,
-                max_tasks=settings.max_batches,
-                network_ready=dependency_gate.ready,
+            "agent-cron-scheduler",
+            lambda: run_agent_cron_scheduler_loop(
+                settings,
+                runtime_skill_snapshot,
+                wake_event=scheduled_task_wake_event,
+                dispatcher_wake_event=scheduled_dispatcher_wake_event,
             ),
         ),
         (
-            "meeting-producer",
-            lambda: run_meeting_producer_loop(
-                settings,
-                settings.meeting_producer_interval_seconds,
-                settings.meeting_settle_seconds,
-                network_ready=dependency_gate.ready,
-            ),
-        ),
-        (
-            "meeting-consumer",
-            lambda: run_meeting_consumer_loop(
-                settings,
-                settings.meeting_consumer_poll_interval_seconds,
-                max_tasks=settings.max_batches,
-                network_ready=dependency_gate.ready,
+            "agent-cron-dispatcher",
+            lambda: run_agent_cron_dispatcher_loop(
+                settings, runtime_skill_snapshot,
+                wake_event=scheduled_dispatcher_wake_event,
+                runtime_refresher=runtime_refresher,
             ),
         ),
         (
             "task-maintenance",
             lambda: run_task_maintenance_loop(
                 settings,
-                work_item_interval_seconds=settings.task_work_item_interval_seconds,
-                daily_interval_seconds=settings.task_daily_interval_seconds,
+                network_ready=dependency_gate.ready,
+            ),
+        ),
+        (
+            "meeting-delivery",
+            lambda: run_meeting_delivery_loop(
+                settings,
                 network_ready=dependency_gate.ready,
             ),
         ),
@@ -3188,24 +3451,10 @@ def run_service(
             "follow-up-delivery",
             lambda: run_follow_up_delivery_loop(
                 settings,
-                settings.task_follow_up_interval_seconds,
                 network_ready=dependency_gate.ready,
             ),
         ),
     )
-    consumer_components = tuple(
-        (
-            f"consumer-{index + 1}",
-            lambda: run_consumer_loop(
-                _create_service_worker(settings, runtime_refresher, runtime_skill_snapshot),
-                consumer_poll_interval_seconds,
-                max_tasks=settings.max_batches,
-                network_ready=dependency_gate.ready,
-            ),
-        )
-        for index in range(settings.consumer_workers)
-    )
-    components = components[:2] + consumer_components + components[2:]
     if runtime_refresher is not None:
         components = (
             (
@@ -3216,18 +3465,6 @@ def run_service(
                 ),
             ),
             *components,
-        )
-    if settings.oa_pending_scan_enabled:
-        components += (
-            (
-                "oa-pending-scan",
-                lambda: run_oa_pending_scan_loop(
-                    settings,
-                    settings.oa_pending_scan_interval_seconds,
-                    max_new_items=settings.max_batches,
-                    network_ready=dependency_gate.ready,
-                ),
-            ),
         )
     components = components + _wechat_service_components(settings)
     if settings.repository_upgrade_enabled:
@@ -3664,8 +3901,6 @@ def main() -> None:
             settings,
             host=args.host,
             port=args.port,
-            producer_interval_seconds=args.producer_interval_seconds,
-            consumer_poll_interval_seconds=args.consumer_poll_interval_seconds,
             runtime_refresher=runtime_refresher,
         )
     elif args.command == "email-worker":
@@ -3748,6 +3983,8 @@ def main() -> None:
         )
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
+    elif args.command == "scan-meetings-once":
+        scan_meetings_once_command(settings)
     elif args.command == "scan-oa-approvals":
         scan_oa_approvals_command(settings)
     elif args.command == "read-oa-approval-detail":

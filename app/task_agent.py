@@ -37,7 +37,6 @@ from app.task_retrieval import (
 )
 from app.todo_completion import complete_follow_ups_for_todo
 from app.todo_sync import (
-    dispatch_task_todo_sync_outbox,
     maybe_create_dingtalk_todo,
     sync_completed_todo_to_dingtalk,
 )
@@ -688,13 +687,6 @@ def process_work_item(
                 _db=db,
             )
         active_run_id = None
-        if dws is not None:
-            dispatch_task_todo_sync_outbox(
-                store,
-                dws,
-                owner=f"task-agent-outbox:{work_input.id}",
-                now=now or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            )
     except Exception as exc:
         _mark_todo_evidence_candidate_error(
             store,

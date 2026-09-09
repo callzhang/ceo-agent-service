@@ -14,12 +14,71 @@
   --danger: #a43a34;
   --warning: #99610d;
   --focus: #237fc2;
+  --on-accent: #ffffff;
+  --control-disabled-ink: #777a73;
+  --control-disabled-surface: #ecece8;
+  --control-disabled-line: #d4d6cf;
+  --error-surface: #fff0ef;
+  --error-line: #e5b6b2;
+  --status-success-ink: #145d49;
+  --status-success-line: #9dc9b5;
+  --status-success-surface: #e3f0e9;
+  --status-progress-ink: #1e6091;
+  --status-progress-line: #b8d5e8;
+  --status-progress-surface: #edf7fd;
+  --status-warning-ink: #7a4b06;
+  --status-warning-line: #e4c889;
+  --status-warning-surface: #fff8e8;
+  --status-danger-ink: #8d302b;
+  --status-danger-line: #e5b6b2;
+  --status-danger-surface: #fff0ef;
   --shadow: 0 18px 46px rgb(24 31 27 / 12%);
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--ink);
   background: var(--canvas);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
+
+@media (prefers-color-scheme: dark) {
+  .scheduled-tasks-route {
+    color-scheme: dark;
+    --canvas: #111411;
+    --panel: #171b17;
+    --surface: #1b1f1b;
+    --surface-muted: #242924;
+    --ink: #f0f3ed;
+    --ink-soft: #b3bab0;
+    --line: #363d36;
+    --line-strong: #555f55;
+    --accent: #61d0a6;
+    --accent-hover: #86dfbd;
+    --accent-soft: #193a2e;
+    --danger: #ff938d;
+    --warning: #f4c56a;
+    --focus: #72bef2;
+    --on-accent: #071a13;
+    --control-disabled-ink: #8d958b;
+    --control-disabled-surface: #252a25;
+    --control-disabled-line: #3a413a;
+    --error-surface: #3b2021;
+    --error-line: #854844;
+    --status-success-ink: #86dfbd;
+    --status-success-line: #3f765f;
+    --status-success-surface: #193a2e;
+    --status-progress-ink: #8dcef5;
+    --status-progress-line: #3f6e89;
+    --status-progress-surface: #172f3d;
+    --status-warning-ink: #f4c56a;
+    --status-warning-line: #80662f;
+    --status-warning-surface: #382e19;
+    --status-danger-ink: #ffaaa5;
+    --status-danger-line: #854844;
+    --status-danger-surface: #3b2021;
+    --shadow: 0 18px 46px rgb(0 0 0 / 38%);
+    color: var(--ink);
+    background: var(--canvas);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -73,6 +132,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--canvas);
+}
+
+.console-root.scheduled-tasks-route {
+  height: auto;
+  min-height: 100vh;
 }
 
 .console-page {
@@ -134,10 +198,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .filter-chip-loading { color: var(--ink-soft); font-size: .74rem; font-weight: 700; }
 @keyframes filter-chip-spin { to { transform: rotate(360deg); } }
 .status-badge { display: inline-flex; width: fit-content; align-items: center; padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-soft); background: var(--surface-muted); font-size: .74rem; font-weight: 700; white-space: nowrap; }
-.status-success { color: var(--accent); border-color: #b9d9ca; background: var(--accent-soft); }
-.status-progress { color: #1e6091; border-color: #b8d5e8; background: #edf7fd; }
-.status-warning { color: var(--warning); border-color: #e4c889; background: #fff8e8; }
-.status-danger { color: var(--danger); border-color: #e5b6b2; background: #fff0ef; }
+.status-success { color: var(--status-success-ink); border-color: var(--status-success-line); background: var(--status-success-surface); }
+.status-progress { color: var(--status-progress-ink); border-color: var(--status-progress-line); background: var(--status-progress-surface); }
+.status-warning { color: var(--status-warning-ink); border-color: var(--status-warning-line); background: var(--status-warning-surface); }
+.status-danger { color: var(--status-danger-ink); border-color: var(--status-danger-line); background: var(--status-danger-surface); }
 .status-neutral { color: var(--ink-soft); border-color: var(--line); background: var(--surface-muted); }
 .snapshot-badge { color: var(--ink-soft); font-size: .78rem; }
 .summary-text { display: inline; max-width: 100%; }
@@ -808,7 +872,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 }
 
 .global-nav-item:hover { color: var(--accent-hover); border-color: var(--accent); background: var(--accent-soft); }
-.global-nav-item.active { color: white; border-color: var(--accent); background: var(--accent); }
+.global-nav-item.active { color: var(--on-accent); border-color: var(--accent); background: var(--accent); }
 
 .workbench-shell {
   display: grid;
@@ -889,7 +953,7 @@ h1, h2, h3, p { margin-top: 0; }
   text-decoration: none;
 }
 
-.primary-button { color: white; background: var(--accent); }
+.primary-button { color: var(--on-accent); background: var(--accent); }
 .primary-button:hover { background: var(--accent-hover); }
 .secondary-button { color: var(--ink); border-color: var(--line-strong); background: var(--surface); }
 .secondary-button:hover { background: var(--surface-muted); }
@@ -901,7 +965,7 @@ h1, h2, h3, p { margin-top: 0; }
 .codex-related-attempts li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-muted); }
 .codex-related-attempts li span { color: var(--ink-soft); font-size: .8rem; }
 .danger-button { min-height: 38px; padding: 0 13px; border: 1px solid var(--danger); border-radius: 9px; color: var(--danger); background: var(--surface); cursor: pointer; font-weight: 680; }
-.danger-button:hover { color: white; background: var(--danger); }
+.danger-button:hover { color: var(--on-accent); background: var(--danger); }
 .danger-button:disabled { cursor: not-allowed; opacity: 0.5; }
 
 .new-task-button { width: 100%; margin-bottom: 12px; }
@@ -1392,4 +1456,93 @@ h1, h2, h3, p { margin-top: 0; }
  .email-review-content { padding:18px; }
  .email-review-decision { padding:16px 18px; }
  .email-review-decision .primary-button { width:100%; }
+}
+
+.scheduled-tasks-page { min-width: 0; }
+.scheduled-tasks-page .console-page-header { align-items: flex-start; }
+.scheduled-tasks-page .console-page-header .muted { max-width: 720px; margin: 7px 0 0; line-height: 1.5; }
+.scheduled-task-notice { max-width: 1180px; margin: 0 auto 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--accent); background: var(--accent-soft); }
+.scheduled-task-workspace { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); max-width: 1180px; min-width: 0; margin: 0 auto; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
+.scheduled-task-master, .scheduled-task-detail { min-width: 0; }
+.scheduled-task-master { border-right: 1px solid var(--line); background: var(--surface-muted); }
+.scheduled-task-detail { padding: 18px 20px 24px; }
+.scheduled-task-pane-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-height: 58px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.scheduled-task-detail > .scheduled-task-pane-heading { margin: -18px -20px 18px; padding: 16px 20px; }
+.scheduled-task-pane-heading h2, .scheduled-task-section-heading h3 { margin: 0; }
+.scheduled-task-pane-heading small, .scheduled-task-pane-heading > span, .scheduled-task-section-heading > span { color: var(--ink-soft); font-size: .74rem; }
+.scheduled-task-list { display: grid; max-height: calc(100dvh - 190px); overflow: auto; }
+.scheduled-task-list-item { display: grid; gap: 6px; width: 100%; min-width: 0; padding: 15px 16px; border: 0; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; color: var(--ink); background: transparent; text-align: left; cursor: pointer; }
+.scheduled-task-list-item:hover { background: var(--surface); }
+.scheduled-task-list-item.is-selected { border-left-color: var(--accent); background: var(--accent-soft); }
+.scheduled-task-list-item > span:not(.scheduled-task-list-title), .scheduled-task-list-item small { overflow: hidden; color: var(--ink-soft); font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-list-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.scheduled-task-list-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-enabled { flex: 0 0 auto; padding: 2px 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--accent); background: var(--surface); font-size: .66rem; font-weight: 700; }
+.scheduled-task-enabled.is-paused { color: var(--ink-soft); background: var(--surface-muted); }
+.scheduled-task-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.scheduled-task-actions button { min-height: 34px; padding: 0 10px; font-size: .75rem; }
+.scheduled-task-form { display: grid; gap: 14px; }
+.scheduled-task-form label { display: grid; gap: 6px; min-width: 0; color: var(--ink-soft); font-size: .74rem; font-weight: 700; }
+.scheduled-task-form input, .scheduled-task-form select, .scheduled-task-form textarea { width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: 9px; color: var(--ink); background: var(--surface); }
+.scheduled-task-form input:disabled, .scheduled-task-form select:disabled, .scheduled-task-form textarea:disabled { color: var(--control-disabled-ink); border-color: var(--control-disabled-line); background: var(--control-disabled-surface); cursor: not-allowed; }
+.scheduled-task-form input, .scheduled-task-form select { min-height: 40px; padding: 0 10px; }
+.scheduled-task-form textarea { padding: 10px 12px; resize: vertical; line-height: 1.55; }
+.scheduled-task-form input::placeholder, .scheduled-task-form textarea::placeholder { color: var(--ink-soft); opacity: .72; }
+.scheduled-task-form-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, .45fr); gap: 12px; }
+.scheduled-task-prompt-field { position: relative; }
+.scheduled-task-suggestions { position: absolute; z-index: 10; top: 100%; right: 0; left: 0; display: grid; max-height: 220px; overflow: auto; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow); }
+.scheduled-task-suggestions button { display: grid; gap: 3px; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); background: var(--surface); text-align: left; cursor: pointer; }
+.scheduled-task-suggestions button:hover { background: var(--surface-muted); }
+.scheduled-task-suggestions button:disabled { color: var(--control-disabled-ink); background: var(--control-disabled-surface); cursor: not-allowed; }
+.scheduled-task-suggestions small { color: var(--ink-soft); font-weight: 400; }
+.scheduled-task-suggestions p { margin: 0; padding: 12px; color: var(--ink-soft); font-weight: 400; }
+.scheduled-task-skill-block { display: grid; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
+.scheduled-task-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.scheduled-task-section-heading h3 { font-size: .86rem; }
+.scheduled-task-skill-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.scheduled-task-skill-chips button { display: inline-grid; grid-template-columns: auto auto auto; align-items: center; gap: 6px; min-width: 0; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: var(--surface); cursor: pointer; }
+.scheduled-task-skill-chips span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-skill-chips small { color: var(--ink-soft); font-size: .65rem; }
+.scheduled-task-skill-chips b { color: var(--ink-soft); font-size: 1rem; font-weight: 400; }
+.scheduled-task-form-error, .scheduled-task-delete-confirm { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; padding: 11px 12px; border: 1px solid var(--error-line); border-radius: 9px; color: var(--danger); background: var(--error-surface); }
+.scheduled-task-form-error .secondary-button { flex: 0 0 auto; }
+.scheduled-task-delete-confirm p { margin: 0; }
+.scheduled-task-delete-confirm > div { display: flex; gap: 7px; }
+.scheduled-task-history { display: grid; gap: 11px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.scheduled-task-history ol { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.scheduled-task-history li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
+.scheduled-task-history li div { display: flex; align-items: center; gap: 8px; }
+.scheduled-task-history li div span, .scheduled-task-history li small, .scheduled-task-history li > span { color: var(--ink-soft); font-size: .72rem; }
+.scheduled-task-history li p { grid-column: 1 / -1; margin: 0; color: var(--danger); font-size: .75rem; }
+.scheduled-task-empty { display: grid; justify-items: start; gap: 8px; padding: 24px 18px; color: var(--ink-soft); }
+.scheduled-task-empty p, .scheduled-task-empty-copy { margin: 0; color: var(--ink-soft); font-size: .8rem; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .scheduled-tasks-page { width: 100%; max-width: 100vw; padding: 16px 12px 28px; }
+  .scheduled-tasks-page .console-page-header { flex-direction: column; }
+  .scheduled-tasks-page .console-page-header > div { width: 100%; min-width: 0; }
+  .scheduled-tasks-page .console-page-header .muted { max-width: 100%; overflow-wrap: anywhere; }
+  .scheduled-tasks-page .console-page-header > .primary-button { width: 100%; }
+  .scheduled-task-workspace { grid-template-columns: minmax(0, 1fr); }
+  .scheduled-task-master { border-right: 0; border-bottom: 1px solid var(--line); }
+  .scheduled-task-list { max-height: 280px; }
+  .scheduled-task-detail { padding: 16px; }
+  .scheduled-task-detail > .scheduled-task-pane-heading { flex-direction: column; margin: -16px -16px 16px; padding: 14px 16px; }
+  .scheduled-task-actions { width: 100%; justify-content: flex-start; }
+  .scheduled-task-form-row { grid-template-columns: minmax(0, 1fr); }
+  .scheduled-task-section-heading, .scheduled-task-form-error, .scheduled-task-delete-confirm { align-items: flex-start; flex-direction: column; }
+  .scheduled-task-delete-confirm > div { width: 100%; flex-wrap: wrap; }
+  .scheduled-task-skill-chips button { max-width: 100%; }
+  .scheduled-task-history li { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 420px) {
+  .scheduled-task-actions { flex-wrap: wrap; }
+  .scheduled-task-actions button { flex: 1 1 128px; }
+  .scheduled-task-suggestions { max-width: 100%; }
+  .scheduled-task-suggestions button { min-width: 0; overflow-wrap: anywhere; }
+  .scheduled-task-suggestions button strong, .scheduled-task-suggestions button small { min-width: 0; overflow-wrap: anywhere; }
+  .scheduled-task-history li { display: grid; grid-template-columns: minmax(0, 1fr); padding: 12px; }
+  .scheduled-task-history li div { min-width: 0; flex-wrap: wrap; }
+  .scheduled-task-history li > span, .scheduled-task-history li p { overflow-wrap: anywhere; }
 }

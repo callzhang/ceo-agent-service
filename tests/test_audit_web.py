@@ -4398,25 +4398,19 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert 'name="system_value"' in html
     assert 'class="prompt-tab active"' in html
     assert "不写入 Prompt" in html
-    assert "CEO_PRODUCER_INTERVAL_SECONDS" in html
-    assert "主服务内 producer loop 的运行间隔" in html
-    assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS" in html
+    assert "CEO_PRODUCER_INTERVAL_SECONDS" not in html
+    assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS" not in html
     assert "CEO_CONSUMER_WORKERS" in html
+    assert "允许同时执行的 Agent 任务总数" in html
     assert "同一会话仍由 SQLite 会话锁串行执行" in html
     assert "CEO_CODEX_MODEL" not in html
     assert "CEO_CODEX_MODEL_REASONING_EFFORT" not in html
-    assert "CEO_MEETING_PRODUCER_INTERVAL_SECONDS" in html
-    assert "meeting producer 扫描 dws minutes 的间隔秒数" in html
-    assert "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS" in html
-    assert "meeting consumer 检查 pending meeting job 的间隔秒数" in html
-    assert "CEO_MEETING_SETTLE_SECONDS" in html
-    assert "会议结束后等待多久再允许 meeting consumer 处理" in html
-    assert "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS" in html
-    assert "task-maintenance 处理 work item/OKR review 的间隔秒数" in html
-    assert "CEO_TASK_DAILY_INTERVAL_SECONDS" in html
-    assert "task-maintenance 扫 task sources 的间隔秒数" in html
-    assert "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS" in html
-    assert "follow-up-delivery 处理 due follow-ups 的间隔秒数" in html
+    assert "CEO_MEETING_PRODUCER_INTERVAL_SECONDS" not in html
+    assert "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS" not in html
+    assert "CEO_MEETING_SETTLE_SECONDS" not in html
+    assert "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS" not in html
+    assert "CEO_TASK_DAILY_INTERVAL_SECONDS" not in html
+    assert "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS" not in html
     assert "CEO_POLL_INTERVAL_SECONDS" in html
     assert "CEO_BATCH_SECONDS" in html
     assert "FAST_PATH_UNREAD_BACKOFF" in html
@@ -4921,15 +4915,15 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
     assert html == ""
     env_text = env_path.read_text(encoding="utf-8")
     assert "CEO_WORKSPACE=/tmp/new-memory" in env_text
-    assert "CEO_PRODUCER_INTERVAL_SECONDS=60" in env_text
-    assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS=10" in env_text
+    assert "CEO_PRODUCER_INTERVAL_SECONDS" not in env_text
+    assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS" not in env_text
     assert "CEO_CONSUMER_WORKERS=2" in env_text
-    assert "CEO_MEETING_PRODUCER_INTERVAL_SECONDS=60" in env_text
-    assert "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS=10" in env_text
-    assert "CEO_MEETING_SETTLE_SECONDS=600" in env_text
-    assert "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS=60" in env_text
-    assert "CEO_TASK_DAILY_INTERVAL_SECONDS=86400" in env_text
-    assert "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS=3600" in env_text
+    assert "CEO_MEETING_PRODUCER_INTERVAL_SECONDS" not in env_text
+    assert "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS" not in env_text
+    assert "CEO_MEETING_SETTLE_SECONDS" not in env_text
+    assert "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS" not in env_text
+    assert "CEO_TASK_DAILY_INTERVAL_SECONDS" not in env_text
+    assert "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS" not in env_text
     assert "FAST_PATH_UNREAD_BACKOFF=5m" in env_text
     assert "MESSAGE_RECOVERY_INTERVAL=30m" in env_text
     assert "SINGLE_CHAT_READ_RECOVERY_WINDOW=12h" in env_text
@@ -8137,6 +8131,28 @@ def test_fastapi_app_serves_built_workbench_assets_with_secure_boundaries(
     assert tasks.status_code == 200
     assert workers.status_code == 200
     assert settings.status_code == 200
+
+
+def test_fastapi_spa_serves_scheduled_tasks_deep_link(tmp_path: Path):
+    asset_dir = tmp_path / "assets"
+    asset_dir.mkdir()
+    index = b"<!doctype html><title>Scheduled tasks workbench</title>"
+    (asset_dir / "index.html").write_bytes(index)
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    complete_setup_wizard(store)
+
+    with TestClient(
+        create_audit_app(
+            store.path,
+            workbench_asset_dir=asset_dir,
+            workbench_workspace=tmp_path,
+            spa_enabled=True,
+        )
+    ) as client:
+        response = client.get("/scheduled-tasks")
+
+    assert response.status_code == 200
+    assert response.content == index
 
 
 def test_workbench_root_rejects_index_symlink_outside_asset_directory(

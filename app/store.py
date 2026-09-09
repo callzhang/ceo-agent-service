@@ -6,7 +6,7 @@ import re
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -21,8 +21,22 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from app.agent_runtime_contracts import (
     CredentialMode,
+    RuntimeCapabilitySnapshot,
     RuntimeFailureClass,
     RuntimeKind,
+)
+from app.agent_cron.models import (
+    ScheduledTask,
+    ScheduledTaskRun,
+    ScheduledTaskSkillRef,
+    ScheduledTaskSnapshot,
+    ScheduledTaskVersionConflictError,
+    canonical_capabilities_json,
+    canonical_json_object,
+    decode_capabilities_json,
+    decode_json_object,
+    ensure_utc_datetime,
+    parse_utc_datetime,
 )
 from app.business_identity import reply_business_object_key
 from app.codex_failure import (
@@ -113,7 +127,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-07.4"
+STORE_SCHEMA_VERSION = "2026-09-08.6"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -143,6 +157,10 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "managed_skills",
     "managed_skill_revisions",
     "managed_skill_export_receipts",
+    "scheduled_tasks",
+    "scheduled_task_skill_refs",
+    "scheduled_task_runs",
+    "dispatcher_claim_leases",
     "runtime_skill_configs",
     "runtime_skill_bindings",
     "runtime_skill_load_receipts",
@@ -187,6 +205,14 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_managed_skill_revisions_number",
     "idx_managed_skill_revisions_identity",
     "idx_managed_skill_export_receipts_revision",
+    "idx_scheduled_tasks_migration_key",
+    "idx_scheduled_tasks_enabled",
+    "idx_scheduled_task_skill_refs_position",
+    "idx_scheduled_task_runs_scheduled_instant",
+    "idx_scheduled_task_runs_dispatch",
+    "idx_scheduled_task_runs_claim",
+    "idx_scheduled_task_runs_latest",
+    "idx_dispatcher_claim_leases_expiry",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
     "idx_feedback_iteration_decisions_batch",
@@ -197,6 +223,32 @@ STORE_SCHEMA_REMOVED_TABLES = (
     "universal_action_executions",
 )
 STORE_SCHEMA_REQUIRED_COLUMNS = {
+    "scheduled_tasks": (
+        "migration_key",
+        "runtime_options_json",
+        "required_runtime_capabilities_json",
+        "version",
+        "deleted_at",
+    ),
+    "scheduled_task_skill_refs": (
+        "skill_source",
+        "managed_skill_id",
+        "managed_revision_id",
+        "position",
+    ),
+    "scheduled_task_runs": (
+        "event_id",
+        "snapshot_json",
+        "execution_kind",
+        "execution_id",
+        "lease_owner",
+        "lease_expires_at",
+    ),
+    "dispatcher_claim_leases": (
+        "terminal_at",
+        "last_error",
+        "owner_pid",
+    ),
     "feedback_processing_items": ("current_round_id",),
     "feedback_processing_rounds": (
         "backlog_evidence_json",
@@ -1019,6 +1071,19 @@ class AgentRunClaim:
 class AgentRuntimeAttemptStartClaim:
     attempt: AgentRuntimeAttempt
     start_acquired: bool
+
+
+class ScheduledTaskRunCreateState(StrEnum):
+    CREATED = "created"
+    DUPLICATE = "duplicate"
+    RETRY = "retry"
+    STALE_TASK = "stale_task"
+
+
+@dataclass(frozen=True)
+class ScheduledTaskRunCreateResult:
+    state: ScheduledTaskRunCreateState
+    run: ScheduledTaskRun | None = None
 
 
 
@@ -2025,6 +2090,94 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_managed_skill_export_receipts_revision
                     on managed_skill_export_receipts(revision_id, id);
+                create table if not exists scheduled_tasks (
+                    id integer primary key autoincrement,
+                    migration_key text,
+                    name text not null,
+                    prompt text not null,
+                    cron_expression text not null,
+                    timezone text not null,
+                    runtime_id text not null,
+                    runtime_options_json text not null default '{}',
+                    required_runtime_capabilities_json text not null default '[]',
+                    working_directory text not null default '',
+                    enabled integer not null check(enabled in (0, 1)),
+                    version integer not null default 1 check(version > 0),
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    deleted_at text
+                );
+                create unique index if not exists idx_scheduled_tasks_migration_key
+                    on scheduled_tasks(migration_key)
+                    where migration_key is not null;
+                create index if not exists idx_scheduled_tasks_enabled
+                    on scheduled_tasks(enabled, deleted_at, id);
+                create table if not exists scheduled_task_skill_refs (
+                    scheduled_task_id integer not null,
+                    skill_source text not null,
+                    skill_name text not null,
+                    managed_skill_id integer,
+                    managed_revision_id integer,
+                    position integer not null check(position >= 0),
+                    primary key(scheduled_task_id, position),
+                    foreign key(scheduled_task_id) references scheduled_tasks(id),
+                    foreign key(managed_skill_id) references managed_skills(id),
+                    foreign key(managed_revision_id)
+                        references managed_skill_revisions(id)
+                );
+                create unique index if not exists idx_scheduled_task_skill_refs_position
+                    on scheduled_task_skill_refs(scheduled_task_id, position);
+                create table if not exists scheduled_task_runs (
+                    id integer primary key autoincrement,
+                    event_id text not null unique,
+                    scheduled_task_id integer not null,
+                    trigger_kind text not null check(trigger_kind in (
+                        'scheduled', 'manual'
+                    )),
+                    scheduled_for text not null,
+                    dispatch_status text not null default 'pending' check(
+                        dispatch_status in (
+                            'pending', 'dispatched', 'skipped', 'failed'
+                        )
+                    ),
+                    skip_or_error_reason text not null default '',
+                    snapshot_json text not null,
+                    execution_kind text not null default '',
+                    execution_id text not null default '',
+                    lease_owner text not null default '',
+                    lease_expires_at text,
+                    created_at text not null default current_timestamp,
+                    dispatched_at text,
+                    foreign key(scheduled_task_id) references scheduled_tasks(id)
+                );
+                create unique index if not exists idx_scheduled_task_runs_scheduled_instant
+                    on scheduled_task_runs(scheduled_task_id, scheduled_for)
+                    where trigger_kind = 'scheduled';
+                create index if not exists idx_scheduled_task_runs_dispatch
+                    on scheduled_task_runs(
+                        dispatch_status, lease_expires_at, scheduled_for, id
+                    );
+                create index if not exists idx_scheduled_task_runs_claim
+                    on scheduled_task_runs(dispatch_status, scheduled_for, id);
+                create index if not exists idx_scheduled_task_runs_latest
+                    on scheduled_task_runs(scheduled_task_id, id desc);
+                create table if not exists dispatcher_claim_leases (
+                    adapter_name text not null,
+                    source_id text not null,
+                    owner text not null default '',
+                    owner_pid integer not null default 0,
+                    generation integer not null default 0 check(generation >= 0),
+                    lease_expires_at text not null default '',
+                    terminal_at text not null default '',
+                    last_error text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    primary key(adapter_name, source_id)
+                );
+                create index if not exists idx_dispatcher_claim_leases_expiry
+                    on dispatcher_claim_leases(
+                        adapter_name, lease_expires_at, source_id
+                    );
                 create table if not exists runtime_skill_configs (
                     id integer primary key autoincrement,
                     parent_id integer,
@@ -3845,6 +3998,22 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table work_summary_inputs add column {column} {definition}"
                     )
+            dispatcher_lease_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(dispatcher_claim_leases)"
+                ).fetchall()
+            }
+            for column, definition in (
+                ("terminal_at", "text not null default ''"),
+                ("last_error", "text not null default ''"),
+                ("owner_pid", "integer not null default 0"),
+            ):
+                if column not in dispatcher_lease_columns:
+                    db.execute(
+                        f"alter table dispatcher_claim_leases "
+                        f"add column {column} {definition}"
+                    )
             work_todo_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(work_todos)").fetchall()
@@ -4210,6 +4379,33 @@ class AutoReplyStore:
                     "alter table wechat_deliveries add column "
                     "pre_action_failure integer not null default 0"
                 )
+            scheduled_task_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(scheduled_tasks)").fetchall()
+            }
+            if "required_runtime_capabilities_json" not in scheduled_task_columns:
+                db.execute(
+                    "alter table scheduled_tasks add column "
+                    "required_runtime_capabilities_json text not null default '[]'"
+                )
+            for snapshot_row in db.execute(
+                "select id, snapshot_json from scheduled_task_runs"
+            ).fetchall():
+                snapshot_payload = json.loads(str(snapshot_row["snapshot_json"]))
+                if "required_runtime_capabilities" not in snapshot_payload:
+                    snapshot_payload["required_runtime_capabilities"] = []
+                    db.execute(
+                        "update scheduled_task_runs set snapshot_json=? where id=?",
+                        (
+                            json.dumps(
+                                snapshot_payload,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            int(snapshot_row["id"]),
+                        ),
+                    )
             error_columns = {
                 row["name"] for row in db.execute("pragma table_info(errors)").fetchall()
             }
@@ -4637,6 +4833,1308 @@ class AutoReplyStore:
         return tuple(self._managed_skill_revision_from_row(row) for row in rows)
 
     @staticmethod
+    def _scheduled_task_time_text(value: datetime, *, field: str) -> str:
+        return ensure_utc_datetime(value, field=field).isoformat(timespec="seconds")
+
+    @staticmethod
+    def _require_scheduled_task_text(value: object, *, field: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field} must be nonempty")
+        return value.strip()
+
+    @staticmethod
+    def _require_scheduled_task_version(value: object) -> int:
+        if type(value) is not int or value <= 0:
+            raise ValueError(
+                "expected scheduled task version must be a positive integer"
+            )
+        return value
+
+    @staticmethod
+    def _normalize_scheduled_task_skill_refs(
+        skill_refs: Sequence[ScheduledTaskSkillRef],
+    ) -> tuple[ScheduledTaskSkillRef, ...]:
+        if not isinstance(skill_refs, Sequence) or isinstance(skill_refs, (str, bytes)):
+            raise ValueError("scheduled task Skill refs must be a sequence")
+        refs = tuple(skill_refs)
+        if any(not isinstance(ref, ScheduledTaskSkillRef) for ref in refs):
+            raise ValueError("scheduled task Skill refs contain an invalid item")
+        positions = tuple(ref.position for ref in refs)
+        if positions != tuple(range(len(refs))):
+            raise ValueError("scheduled task Skill ref positions must be contiguous")
+        return refs
+
+    @classmethod
+    def _validate_scheduled_task_skill_refs(
+        cls,
+        db: sqlite3.Connection,
+        skill_refs: Sequence[ScheduledTaskSkillRef],
+        *,
+        scheduled_task_id: int = 0,
+    ) -> tuple[ScheduledTaskSkillRef, ...]:
+        refs = cls._normalize_scheduled_task_skill_refs(skill_refs)
+        for ref in refs:
+            if ref.scheduled_task_id not in (0, scheduled_task_id):
+                raise ValueError("scheduled task Skill ref belongs to another task")
+            skill_name = cls._require_scheduled_task_text(
+                ref.skill_name,
+                field="scheduled task Skill ref name",
+            )
+            if ref.skill_source == "managed":
+                if ref.managed_skill_id is None or ref.managed_revision_id is None:
+                    raise ValueError("managed Skill ref requires an exact revision")
+                row = db.execute(
+                    """
+                    select skill.name
+                      from managed_skills skill
+                      join managed_skill_revisions revision
+                        on revision.skill_id=skill.id
+                     where skill.id=? and revision.id=?
+                    """,
+                    (ref.managed_skill_id, ref.managed_revision_id),
+                ).fetchone()
+                if row is None:
+                    skill = db.execute(
+                        "select 1 from managed_skills where id=?",
+                        (ref.managed_skill_id,),
+                    ).fetchone()
+                    if skill is None:
+                        raise ValueError("managed Skill does not exist")
+                    raise ValueError("managed Skill revision does not belong to Skill")
+                if str(row["name"]) != skill_name:
+                    raise ValueError("managed Skill ref name does not match Skill")
+            elif ref.skill_source == "operation":
+                if (
+                    ref.managed_skill_id is not None
+                    or ref.managed_revision_id is not None
+                ):
+                    raise ValueError(
+                        "operation Skill ref must not include managed identifiers"
+                    )
+            else:
+                raise ValueError("scheduled task Skill ref source is invalid")
+        return refs
+
+    @staticmethod
+    def _scheduled_task_skill_refs_in_connection(
+        db: sqlite3.Connection,
+        scheduled_task_id: int,
+    ) -> tuple[ScheduledTaskSkillRef, ...]:
+        rows = db.execute(
+            """
+            select scheduled_task_id, skill_source, skill_name,
+                   managed_skill_id, managed_revision_id, position
+              from scheduled_task_skill_refs
+             where scheduled_task_id=?
+             order by position
+            """,
+            (scheduled_task_id,),
+        ).fetchall()
+        return tuple(
+            ScheduledTaskSkillRef(
+                scheduled_task_id=int(row["scheduled_task_id"]),
+                skill_source=str(row["skill_source"]),
+                skill_name=str(row["skill_name"]),
+                managed_skill_id=(
+                    int(row["managed_skill_id"])
+                    if row["managed_skill_id"] is not None
+                    else None
+                ),
+                managed_revision_id=(
+                    int(row["managed_revision_id"])
+                    if row["managed_revision_id"] is not None
+                    else None
+                ),
+                position=int(row["position"]),
+            )
+            for row in rows
+        )
+
+    @classmethod
+    def _scheduled_task_from_row(
+        cls,
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> ScheduledTask:
+        deleted_at = row["deleted_at"]
+        task_id = int(row["id"])
+        runtime_options_json = canonical_json_object(
+            decode_json_object(
+                str(row["runtime_options_json"]),
+                field="scheduled task runtime options",
+            ),
+            field="scheduled task runtime options",
+        )
+        required_runtime_capabilities_json = canonical_capabilities_json(
+            decode_capabilities_json(
+                str(row["required_runtime_capabilities_json"]),
+                field="scheduled task required runtime capabilities",
+            ),
+            field="scheduled task required runtime capabilities",
+        )
+        return ScheduledTask(
+            id=task_id,
+            migration_key=(
+                str(row["migration_key"])
+                if row["migration_key"] is not None
+                else None
+            ),
+            name=str(row["name"]),
+            prompt=str(row["prompt"]),
+            cron_expression=str(row["cron_expression"]),
+            timezone_name=str(row["timezone"]),
+            runtime_id=str(row["runtime_id"]),
+            runtime_options_json=runtime_options_json,
+            required_runtime_capabilities_json=(
+                required_runtime_capabilities_json
+            ),
+            working_directory=str(row["working_directory"]),
+            enabled=bool(row["enabled"]),
+            version=int(row["version"]),
+            skill_refs=cls._scheduled_task_skill_refs_in_connection(db, task_id),
+            created_at=parse_utc_datetime(
+                row["created_at"], field="scheduled task created_at"
+            ),
+            updated_at=parse_utc_datetime(
+                row["updated_at"], field="scheduled task updated_at"
+            ),
+            deleted_at=(
+                parse_utc_datetime(deleted_at, field="scheduled task deleted_at")
+                if deleted_at is not None
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _scheduled_task_columns() -> str:
+        return (
+            "id, migration_key, name, prompt, cron_expression, timezone, "
+            "runtime_id, runtime_options_json, working_directory, enabled, "
+            "required_runtime_capabilities_json, "
+            "version, created_at, updated_at, deleted_at"
+        )
+
+    @classmethod
+    def _replace_scheduled_task_skill_refs(
+        cls,
+        db: sqlite3.Connection,
+        scheduled_task_id: int,
+        skill_refs: Sequence[ScheduledTaskSkillRef],
+    ) -> None:
+        refs = cls._validate_scheduled_task_skill_refs(
+            db,
+            skill_refs,
+            scheduled_task_id=scheduled_task_id,
+        )
+        db.execute(
+            "delete from scheduled_task_skill_refs where scheduled_task_id=?",
+            (scheduled_task_id,),
+        )
+        db.executemany(
+            """
+            insert into scheduled_task_skill_refs (
+                scheduled_task_id, skill_source, skill_name,
+                managed_skill_id, managed_revision_id, position
+            ) values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    scheduled_task_id,
+                    ref.skill_source,
+                    ref.skill_name.strip(),
+                    ref.managed_skill_id,
+                    ref.managed_revision_id,
+                    ref.position,
+                )
+                for ref in refs
+            ),
+        )
+
+    def create_scheduled_task(
+        self,
+        *,
+        name: str,
+        prompt: str,
+        cron_expression: str,
+        timezone_name: str,
+        runtime_id: str,
+        runtime_options: Mapping[str, object],
+        required_runtime_capabilities: Sequence[str] = (),
+        working_directory: str,
+        skill_refs: Sequence[ScheduledTaskSkillRef],
+        enabled: bool = True,
+        migration_key: str | None = None,
+        now: datetime | None = None,
+    ) -> ScheduledTask:
+        name = self._require_scheduled_task_text(name, field="scheduled task name")
+        prompt = self._require_scheduled_task_text(
+            prompt, field="scheduled task prompt"
+        )
+        cron_expression = self._require_scheduled_task_text(
+            cron_expression, field="scheduled task Cron expression"
+        )
+        timezone_name = self._require_scheduled_task_text(
+            timezone_name, field="scheduled task timezone"
+        )
+        runtime_id = self._require_scheduled_task_text(
+            runtime_id, field="scheduled task runtime"
+        )
+        if not isinstance(working_directory, str):
+            raise ValueError("scheduled task working directory must be text")
+        if not isinstance(enabled, bool):
+            raise ValueError("scheduled task enabled must be a boolean")
+        if migration_key is not None:
+            migration_key = self._require_scheduled_task_text(
+                migration_key, field="scheduled task migration key"
+            )
+        runtime_options_json = canonical_json_object(
+            runtime_options,
+            field="scheduled task runtime options",
+        )
+        required_runtime_capabilities_json = canonical_capabilities_json(
+            required_runtime_capabilities,
+            field="scheduled task required runtime capabilities",
+        )
+        now_value = ensure_utc_datetime(
+            now or datetime.now(timezone.utc),
+            field="scheduled task now",
+        )
+        now_text = now_value.isoformat(timespec="seconds")
+        with self._immediate_write_transaction() as db:
+            if migration_key is not None:
+                existing = db.execute(
+                    f"select {self._scheduled_task_columns()} "
+                    "from scheduled_tasks where migration_key=?",
+                    (migration_key,),
+                ).fetchone()
+                if existing is not None:
+                    return self._scheduled_task_from_row(db, existing)
+            refs = self._validate_scheduled_task_skill_refs(db, skill_refs)
+            cursor = db.execute(
+                """
+                insert into scheduled_tasks (
+                    migration_key, name, prompt, cron_expression, timezone,
+                    runtime_id, runtime_options_json, working_directory,
+                    required_runtime_capabilities_json, enabled, version,
+                    created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    migration_key,
+                    name,
+                    prompt,
+                    cron_expression,
+                    timezone_name,
+                    runtime_id,
+                    runtime_options_json,
+                    working_directory,
+                    required_runtime_capabilities_json,
+                    int(enabled),
+                    now_text,
+                    now_text,
+                ),
+            )
+            task_id = int(cursor.lastrowid)
+            self._replace_scheduled_task_skill_refs(db, task_id, refs)
+            row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+            assert row is not None
+            return self._scheduled_task_from_row(db, row)
+
+    def get_scheduled_task(
+        self,
+        task_id: int,
+        *,
+        include_deleted: bool = False,
+    ) -> ScheduledTask | None:
+        deleted_filter = "" if include_deleted else " and deleted_at is null"
+        with self._connect() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                f"from scheduled_tasks where id=?{deleted_filter}",
+                (task_id,),
+            ).fetchone()
+            return self._scheduled_task_from_row(db, row) if row is not None else None
+
+    def list_scheduled_tasks(
+        self,
+        *,
+        include_deleted: bool = False,
+    ) -> tuple[ScheduledTask, ...]:
+        deleted_filter = "" if include_deleted else " where deleted_at is null"
+        with self._connect() as db:
+            rows = db.execute(
+                f"select {self._scheduled_task_columns()} from scheduled_tasks"
+                f"{deleted_filter} order by id"
+            ).fetchall()
+            return tuple(self._scheduled_task_from_row(db, row) for row in rows)
+
+    def backfill_scheduled_task_runtime_capabilities(
+        self,
+        *,
+        migration_key: str,
+        required_capabilities: Collection[str],
+        eligible_runtime_ids: Collection[str],
+        now: datetime | None = None,
+    ) -> ScheduledTask | None:
+        """Atomically backfill legacy seed requirements without replacing edits."""
+        migration_key = self._require_scheduled_task_text(
+            migration_key,
+            field="scheduled task migration key",
+        )
+        required_json = canonical_capabilities_json(
+            required_capabilities,
+            field="scheduled task required runtime capabilities",
+        )
+        required = frozenset(
+            decode_capabilities_json(
+                required_json,
+                field="scheduled task required runtime capabilities",
+            )
+        )
+        eligible = frozenset(
+            self._require_scheduled_task_text(
+                runtime_id,
+                field="eligible scheduled task runtime id",
+            )
+            for runtime_id in eligible_runtime_ids
+        )
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc),
+            field="scheduled task now",
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if row is None:
+                return None
+            current = self._scheduled_task_from_row(db, row)
+            if current.deleted_at is not None:
+                return current
+            current_required = frozenset(current.required_runtime_capabilities)
+            missing = required - current_required
+            must_disable = current.enabled and current.runtime_id not in eligible
+            if not missing and not must_disable:
+                return current
+            merged_json = canonical_capabilities_json(
+                current_required | required,
+                field="scheduled task required runtime capabilities",
+            )
+            enabled = current.enabled and not must_disable
+            db.execute(
+                """
+                update scheduled_tasks
+                   set required_runtime_capabilities_json=?, enabled=?,
+                       version=version + 1, updated_at=?
+                 where id=?
+                """,
+                (merged_json, int(enabled), now_text, current.id),
+            )
+            updated_row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=?",
+                (current.id,),
+            ).fetchone()
+            assert updated_row is not None
+            return self._scheduled_task_from_row(db, updated_row)
+
+    def update_scheduled_task(
+        self,
+        task_id: int,
+        *,
+        expected_version: int,
+        name: str | None = None,
+        prompt: str | None = None,
+        cron_expression: str | None = None,
+        timezone_name: str | None = None,
+        runtime_id: str | None = None,
+        runtime_options: Mapping[str, object] | None = None,
+        required_runtime_capabilities: Sequence[str] | None = None,
+        working_directory: str | None = None,
+        skill_refs: Sequence[ScheduledTaskSkillRef] | None = None,
+        now: datetime | None = None,
+    ) -> ScheduledTask:
+        expected_version = self._require_scheduled_task_version(expected_version)
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc),
+            field="scheduled task now",
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=? and deleted_at is null",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("scheduled task does not exist")
+            current = self._scheduled_task_from_row(db, row)
+            if current.version != expected_version:
+                raise ScheduledTaskVersionConflictError(
+                    "scheduled task version conflict"
+                )
+            updates = {
+                "name": (
+                    self._require_scheduled_task_text(
+                        name, field="scheduled task name"
+                    )
+                    if name is not None
+                    else current.name
+                ),
+                "prompt": (
+                    self._require_scheduled_task_text(
+                        prompt, field="scheduled task prompt"
+                    )
+                    if prompt is not None
+                    else current.prompt
+                ),
+                "cron_expression": (
+                    self._require_scheduled_task_text(
+                        cron_expression, field="scheduled task Cron expression"
+                    )
+                    if cron_expression is not None
+                    else current.cron_expression
+                ),
+                "timezone": (
+                    self._require_scheduled_task_text(
+                        timezone_name, field="scheduled task timezone"
+                    )
+                    if timezone_name is not None
+                    else current.timezone_name
+                ),
+                "runtime_id": (
+                    self._require_scheduled_task_text(
+                        runtime_id, field="scheduled task runtime"
+                    )
+                    if runtime_id is not None
+                    else current.runtime_id
+                ),
+                "runtime_options_json": (
+                    canonical_json_object(
+                        runtime_options,
+                        field="scheduled task runtime options",
+                    )
+                    if runtime_options is not None
+                    else current.runtime_options_json
+                ),
+                "required_runtime_capabilities_json": (
+                    canonical_capabilities_json(
+                        required_runtime_capabilities,
+                        field="scheduled task required runtime capabilities",
+                    )
+                    if required_runtime_capabilities is not None
+                    else current.required_runtime_capabilities_json
+                ),
+                "working_directory": (
+                    working_directory
+                    if working_directory is not None
+                    else current.working_directory
+                ),
+            }
+            if not isinstance(updates["working_directory"], str):
+                raise ValueError("scheduled task working directory must be text")
+            next_refs = current.skill_refs if skill_refs is None else tuple(skill_refs)
+            validated_refs = self._validate_scheduled_task_skill_refs(
+                db,
+                next_refs,
+                scheduled_task_id=task_id,
+            )
+            cursor = db.execute(
+                """
+                update scheduled_tasks
+                   set name=?, prompt=?, cron_expression=?, timezone=?,
+                       runtime_id=?, runtime_options_json=?, working_directory=?,
+                       required_runtime_capabilities_json=?,
+                       version=version + 1, updated_at=?
+                 where id=? and version=? and deleted_at is null
+                """,
+                (
+                    updates["name"],
+                    updates["prompt"],
+                    updates["cron_expression"],
+                    updates["timezone"],
+                    updates["runtime_id"],
+                    updates["runtime_options_json"],
+                    updates["working_directory"],
+                    updates["required_runtime_capabilities_json"],
+                    now_text,
+                    task_id,
+                    expected_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ScheduledTaskVersionConflictError(
+                    "scheduled task version conflict"
+                )
+            self._replace_scheduled_task_skill_refs(db, task_id, validated_refs)
+            updated_row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+            assert updated_row is not None
+            return self._scheduled_task_from_row(db, updated_row)
+
+    def set_scheduled_task_enabled(
+        self,
+        task_id: int,
+        *,
+        enabled: bool,
+        expected_version: int,
+        now: datetime | None = None,
+    ) -> ScheduledTask:
+        if not isinstance(enabled, bool):
+            raise ValueError("scheduled task enabled must be a boolean")
+        expected_version = self._require_scheduled_task_version(expected_version)
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc),
+            field="scheduled task now",
+        )
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update scheduled_tasks
+                   set enabled=?, version=version + 1, updated_at=?
+                 where id=? and version=? and deleted_at is null
+                """,
+                (int(enabled), now_text, task_id, expected_version),
+            )
+            if cursor.rowcount != 1:
+                row = db.execute(
+                    "select 1 from scheduled_tasks where id=? and deleted_at is null",
+                    (task_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("scheduled task does not exist")
+                raise ScheduledTaskVersionConflictError(
+                    "scheduled task version conflict"
+                )
+            row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+            assert row is not None
+            return self._scheduled_task_from_row(db, row)
+
+    def delete_scheduled_task(
+        self,
+        task_id: int,
+        *,
+        expected_version: int,
+        now: datetime | None = None,
+    ) -> ScheduledTask:
+        expected_version = self._require_scheduled_task_version(expected_version)
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc),
+            field="scheduled task now",
+        )
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update scheduled_tasks
+                   set enabled=0, deleted_at=?, updated_at=?, version=version + 1
+                 where id=? and version=? and deleted_at is null
+                """,
+                (now_text, now_text, task_id, expected_version),
+            )
+            if cursor.rowcount != 1:
+                row = db.execute(
+                    "select 1 from scheduled_tasks where id=? and deleted_at is null",
+                    (task_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("scheduled task does not exist")
+                raise ScheduledTaskVersionConflictError(
+                    "scheduled task version conflict"
+                )
+            row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+            assert row is not None
+            return self._scheduled_task_from_row(db, row)
+
+    @staticmethod
+    def _scheduled_task_run_columns() -> str:
+        return (
+            "id, event_id, scheduled_task_id, trigger_kind, scheduled_for, "
+            "dispatch_status, skip_or_error_reason, snapshot_json, "
+            "execution_kind, execution_id, lease_owner, lease_expires_at, "
+            "created_at, dispatched_at"
+        )
+
+    @classmethod
+    def _scheduled_task_run_from_row(cls, row: sqlite3.Row) -> ScheduledTaskRun:
+        lease_expires_at = row["lease_expires_at"]
+        dispatched_at = row["dispatched_at"]
+        try:
+            snapshot = ScheduledTaskSnapshot.from_json(str(row["snapshot_json"]))
+        except ValueError as exc:
+            raise ValueError("scheduled task run snapshot is invalid") from exc
+        scheduled_task_id = int(row["scheduled_task_id"])
+        if snapshot.task_id != scheduled_task_id:
+            raise ValueError("scheduled task run snapshot task identity is invalid")
+        return ScheduledTaskRun(
+            id=int(row["id"]),
+            event_id=str(row["event_id"]),
+            scheduled_task_id=scheduled_task_id,
+            trigger_kind=str(row["trigger_kind"]),
+            scheduled_for=parse_utc_datetime(
+                row["scheduled_for"], field="scheduled task run scheduled_for"
+            ),
+            dispatch_status=str(row["dispatch_status"]),
+            skip_or_error_reason=str(row["skip_or_error_reason"]),
+            snapshot=snapshot,
+            execution_kind=str(row["execution_kind"]),
+            execution_id=str(row["execution_id"]),
+            lease_owner=str(row["lease_owner"]),
+            lease_expires_at=(
+                parse_utc_datetime(
+                    lease_expires_at,
+                    field="scheduled task run lease_expires_at",
+                )
+                if lease_expires_at is not None
+                else None
+            ),
+            created_at=parse_utc_datetime(
+                row["created_at"], field="scheduled task run created_at"
+            ),
+            dispatched_at=(
+                parse_utc_datetime(
+                    dispatched_at,
+                    field="scheduled task run dispatched_at",
+                )
+                if dispatched_at is not None
+                else None
+            ),
+        )
+
+    def create_scheduled_task_run(
+        self,
+        task_id: int,
+        *,
+        trigger_kind: str,
+        scheduled_for: datetime,
+        now: datetime | None = None,
+        event_id: str | None = None,
+    ) -> ScheduledTaskRun:
+        run, _created = self._create_scheduled_task_run(
+            task_id,
+            trigger_kind=trigger_kind,
+            scheduled_for=scheduled_for,
+            now=now,
+            event_id=event_id,
+            dispatch_status="pending",
+            reason="",
+        )
+        return run
+
+    def create_scheduled_task_run_if_current(
+        self,
+        task_id: int,
+        *,
+        expected_version: int,
+        expected_overlap_run_id: int | None,
+        scheduled_for: datetime,
+        now: datetime | None = None,
+        event_id: str | None = None,
+        reason: str = "",
+    ) -> ScheduledTaskRunCreateResult:
+        """Validate scheduling facts and insert one trigger in one write lock."""
+        expected_version = self._require_scheduled_task_version(expected_version)
+        if expected_overlap_run_id is not None and (
+            type(expected_overlap_run_id) is not int or expected_overlap_run_id <= 0
+        ):
+            raise ValueError("expected overlap run id must be positive")
+        if not isinstance(reason, str):
+            raise ValueError("initial scheduled task dispatch reason must be text")
+        reason = reason.strip()
+        scheduled_for_text = self._scheduled_task_time_text(
+            scheduled_for,
+            field="scheduled task run scheduled_for",
+        )
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc),
+            field="scheduled task run now",
+        )
+        event_id = self._require_scheduled_task_text(
+            event_id or uuid4().hex,
+            field="scheduled task run event id",
+        )
+        with self._immediate_write_transaction() as db:
+            task_row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+            if (
+                task_row is None
+                or int(task_row["version"]) != expected_version
+                or not bool(task_row["enabled"])
+                or task_row["deleted_at"] is not None
+            ):
+                return ScheduledTaskRunCreateResult(
+                    ScheduledTaskRunCreateState.STALE_TASK
+                )
+
+            overlap_row = db.execute(
+                "select id from scheduled_task_runs "
+                "where scheduled_task_id=? and (dispatch_status='pending' or "
+                "(execution_kind<>'' and execution_id<>'')) "
+                "order by id desc limit 1",
+                (task_id,),
+            ).fetchone()
+            overlap_run_id = (
+                int(overlap_row["id"]) if overlap_row is not None else None
+            )
+            if overlap_run_id != expected_overlap_run_id:
+                return ScheduledTaskRunCreateResult(
+                    ScheduledTaskRunCreateState.RETRY
+                )
+
+            task = self._scheduled_task_from_row(db, task_row)
+            snapshot_json = ScheduledTaskSnapshot.from_task(task).to_json()
+            ScheduledTaskSnapshot.from_json(snapshot_json)
+            dispatch_status = "skipped" if reason else "pending"
+            try:
+                cursor = db.execute(
+                    """
+                    insert into scheduled_task_runs (
+                        event_id, scheduled_task_id, trigger_kind, scheduled_for,
+                        dispatch_status, skip_or_error_reason, snapshot_json,
+                        created_at, dispatched_at
+                    ) values (?, ?, 'scheduled', ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        task_id,
+                        scheduled_for_text,
+                        dispatch_status,
+                        reason,
+                        snapshot_json,
+                        now_text,
+                        now_text if reason else None,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                existing = db.execute(
+                    f"select {self._scheduled_task_run_columns()} "
+                    "from scheduled_task_runs "
+                    "where scheduled_task_id=? and trigger_kind='scheduled' "
+                    "and scheduled_for=?",
+                    (task_id, scheduled_for_text),
+                ).fetchone()
+                if existing is None:
+                    raise
+                return ScheduledTaskRunCreateResult(
+                    ScheduledTaskRunCreateState.DUPLICATE,
+                    self._scheduled_task_run_from_row(existing),
+                )
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return ScheduledTaskRunCreateResult(
+                ScheduledTaskRunCreateState.CREATED,
+                self._scheduled_task_run_from_row(row),
+            )
+
+    def _create_scheduled_task_run(
+        self,
+        task_id: int,
+        *,
+        trigger_kind: str,
+        scheduled_for: datetime,
+        now: datetime | None,
+        event_id: str | None,
+        dispatch_status: str,
+        reason: str,
+    ) -> tuple[ScheduledTaskRun, bool]:
+        if trigger_kind not in {"scheduled", "manual"}:
+            raise ValueError("scheduled task trigger kind is invalid")
+        if dispatch_status not in {"pending", "skipped"}:
+            raise ValueError("initial scheduled task dispatch status is invalid")
+        if not isinstance(reason, str):
+            raise ValueError("initial scheduled task dispatch reason must be text")
+        reason = reason.strip()
+        if (dispatch_status == "skipped") != bool(reason):
+            raise ValueError("initial skipped status requires exactly one reason")
+        scheduled_for_text = self._scheduled_task_time_text(
+            scheduled_for,
+            field="scheduled task run scheduled_for",
+        )
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc),
+            field="scheduled task run now",
+        )
+        if event_id is None:
+            event_id = uuid4().hex
+        event_id = self._require_scheduled_task_text(
+            event_id, field="scheduled task run event id"
+        )
+        with self._immediate_write_transaction() as db:
+            task_row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=? and deleted_at is null",
+                (task_id,),
+            ).fetchone()
+            if task_row is None:
+                raise ValueError("scheduled task does not exist")
+            task = self._scheduled_task_from_row(db, task_row)
+            snapshot_json = ScheduledTaskSnapshot.from_task(task).to_json()
+            # Verify the exact bytes that will be persisted are readable.
+            ScheduledTaskSnapshot.from_json(snapshot_json)
+            try:
+                cursor = db.execute(
+                    """
+                    insert into scheduled_task_runs (
+                        event_id, scheduled_task_id, trigger_kind, scheduled_for,
+                        dispatch_status, skip_or_error_reason, snapshot_json,
+                        created_at, dispatched_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        task_id,
+                        trigger_kind,
+                        scheduled_for_text,
+                        dispatch_status,
+                        reason,
+                        snapshot_json,
+                        now_text,
+                        now_text if dispatch_status == "skipped" else None,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                if trigger_kind != "scheduled":
+                    raise
+                existing = db.execute(
+                    f"select {self._scheduled_task_run_columns()} "
+                    "from scheduled_task_runs "
+                    "where scheduled_task_id=? and trigger_kind='scheduled' "
+                    "and scheduled_for=?",
+                    (task_id, scheduled_for_text),
+                ).fetchone()
+                if existing is None:
+                    raise
+                return self._scheduled_task_run_from_row(existing), False
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return self._scheduled_task_run_from_row(row), True
+
+    def claim_scheduled_task_run(
+        self,
+        run_id: int | None = None,
+        *,
+        owner: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> ScheduledTaskRun | None:
+        owner = self._require_scheduled_task_text(
+            owner, field="scheduled task run lease owner"
+        )
+        if not isinstance(lease_seconds, int) or lease_seconds <= 0:
+            raise ValueError("scheduled task run lease must be positive")
+        now_value = ensure_utc_datetime(
+            now or datetime.now(timezone.utc),
+            field="scheduled task run claim time",
+        )
+        now_text = now_value.isoformat(timespec="seconds")
+        lease_text = (now_value + timedelta(seconds=lease_seconds)).isoformat(
+            timespec="seconds"
+        )
+        with self._immediate_write_transaction() as db:
+            if run_id is None:
+                candidate = db.execute(
+                    """
+                    select id from scheduled_task_runs
+                     where dispatch_status='pending'
+                       and scheduled_for <= ?
+                       and (lease_owner='' or lease_expires_at <= ?)
+                     order by scheduled_for, id
+                     limit 1
+                    """,
+                    (now_text, now_text),
+                ).fetchone()
+                if candidate is None:
+                    return None
+                run_id = int(candidate["id"])
+            cursor = db.execute(
+                """
+                update scheduled_task_runs
+                   set lease_owner=?, lease_expires_at=?
+                 where id=? and dispatch_status='pending'
+                   and scheduled_for <= ?
+                   and (lease_owner='' or lease_expires_at <= ?)
+                """,
+                (owner, lease_text, run_id, now_text, now_text),
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            assert row is not None
+            return self._scheduled_task_run_from_row(row)
+
+    def link_scheduled_task_run_execution(
+        self,
+        run_id: int,
+        *,
+        owner: str,
+        execution_kind: str,
+        execution_id: str,
+        now: datetime | None = None,
+    ) -> ScheduledTaskRun:
+        owner = self._require_scheduled_task_text(
+            owner, field="scheduled task run lease owner"
+        )
+        execution_kind = self._require_scheduled_task_text(
+            execution_kind, field="scheduled task run execution kind"
+        )
+        execution_id = self._require_scheduled_task_text(
+            execution_id, field="scheduled task run execution id"
+        )
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc),
+            field="scheduled task run execution link time",
+        )
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update scheduled_task_runs
+                   set execution_kind=?, execution_id=?
+                 where id=? and dispatch_status='pending' and lease_owner=?
+                   and lease_expires_at > ?
+                   and execution_kind='' and execution_id=''
+                """,
+                (execution_kind, execution_id, run_id, owner, now_text),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(
+                    "scheduled task run lease owner, expiry, or state changed"
+                )
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            assert row is not None
+            return self._scheduled_task_run_from_row(row)
+
+    def dispatch_scheduled_task_reply_execution(
+        self, run_id: int, *, owner: str, claim_generation: int,
+        execution_context_json: str, now: datetime | None = None,
+    ) -> tuple[ScheduledTaskRun, ReplyTask]:
+        """Atomically persist the execution source and complete its trigger claim."""
+        owner = self._require_scheduled_task_text(owner, field="scheduled task run lease owner")
+        if type(claim_generation) is not int or claim_generation <= 0:
+            raise ValueError("scheduled dispatcher claim generation must be positive")
+        if not isinstance(execution_context_json, str):
+            raise ValueError("scheduled execution context must be text")
+        try:
+            context_payload = json.loads(execution_context_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("scheduled execution context must be JSON") from exc
+        if context_payload.get("schema") != "scheduled_agent_execution.v1":
+            raise ValueError("scheduled execution context schema is invalid")
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc), field="scheduled task run execution link time"
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} from scheduled_task_runs "
+                "where id=? and dispatch_status='pending' and lease_owner=? and lease_expires_at>?",
+                (run_id, owner, now_text),
+            ).fetchone()
+            claim = db.execute(
+                "select 1 from dispatcher_claim_leases where adapter_name='scheduled' "
+                "and source_id=? and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
+                (str(run_id), owner, claim_generation, now_text),
+            ).fetchone()
+            if row is None or claim is None:
+                raise ValueError("scheduled dispatch claim is no longer current")
+            run = self._scheduled_task_run_from_row(row)
+            spec = ReplyTaskSpec(
+                channel="scheduled", conversation_id=f"scheduled-task-run:{run.id}",
+                conversation_title=run.snapshot.name, single_chat=False,
+                trigger_message_id=run.event_id, trigger_create_time=run.scheduled_for.isoformat(),
+                trigger_sender="Agent Cron", trigger_text=run.snapshot.prompt,
+                trigger_message_json=execution_context_json,
+                execution_generation=f"scheduled-run-{run.id}",
+                business_object_key=f"scheduled-task-run:{run.id}",
+            )
+            task, _created = self._ensure_business_reply_task(db, spec)
+            if run.execution_kind and (
+                run.execution_kind != "reply_task" or run.execution_id != str(task.id)
+            ):
+                raise ValueError("scheduled task execution link is invalid")
+            cursor = db.execute(
+                "update scheduled_task_runs set execution_kind='reply_task', execution_id=?, "
+                "dispatch_status='dispatched', skip_or_error_reason='', lease_owner='', "
+                "lease_expires_at=null, dispatched_at=? where id=? and dispatch_status='pending' "
+                "and lease_owner=? and lease_expires_at>?",
+                (str(task.id), now_text, run.id, owner, now_text),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("scheduled task dispatch claim changed")
+            ledger = db.execute(
+                "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+                "terminal_at=?, last_error='', updated_at=? where adapter_name='scheduled' "
+                "and source_id=? and owner=? and generation=? and lease_expires_at>? "
+                "and terminal_at=''",
+                (now_text, now_text, str(run.id), owner, claim_generation, now_text),
+            )
+            if ledger.rowcount != 1:
+                raise ValueError("scheduled dispatcher ledger claim changed")
+            linked = db.execute(
+                f"select {self._scheduled_task_run_columns()} from scheduled_task_runs where id=?",
+                (run.id,),
+            ).fetchone()
+            assert linked is not None
+            return self._scheduled_task_run_from_row(linked), task
+
+    def finish_scheduled_task_dispatch(
+        self,
+        run_id: int,
+        *,
+        owner: str,
+        status: str,
+        reason: str = "",
+        now: datetime | None = None,
+    ) -> ScheduledTaskRun:
+        owner = self._require_scheduled_task_text(
+            owner, field="scheduled task run lease owner"
+        )
+        if status not in {"dispatched", "skipped", "failed"}:
+            raise ValueError("scheduled task dispatch terminal status is invalid")
+        if not isinstance(reason, str):
+            raise ValueError("scheduled task dispatch reason must be text")
+        if status != "dispatched" and not reason.strip():
+            raise ValueError("skipped or failed dispatch requires a reason")
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc),
+            field="scheduled task dispatch completion time",
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                """
+                select execution_kind, execution_id
+                 from scheduled_task_runs
+                 where id=? and dispatch_status='pending' and lease_owner=?
+                   and lease_expires_at > ?
+                """,
+                (run_id, owner, now_text),
+            ).fetchone()
+            if row is None:
+                raise ValueError(
+                    "scheduled task run lease owner, expiry, or state changed"
+                )
+            if status == "dispatched" and (
+                not str(row["execution_kind"]) or not str(row["execution_id"])
+            ):
+                raise ValueError("dispatched scheduled task run requires execution link")
+            db.execute(
+                """
+                update scheduled_task_runs
+                   set dispatch_status=?, skip_or_error_reason=?,
+                       lease_owner='', lease_expires_at=null, dispatched_at=?
+                 where id=? and dispatch_status='pending' and lease_owner=?
+                   and lease_expires_at > ?
+                """,
+                (status, reason.strip(), now_text, run_id, owner, now_text),
+            )
+            finished = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            assert finished is not None
+            return self._scheduled_task_run_from_row(finished)
+
+    def list_scheduled_task_runs(
+        self,
+        task_id: int,
+    ) -> tuple[ScheduledTaskRun, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where scheduled_task_id=? order by id",
+                (task_id,),
+            ).fetchall()
+        return tuple(self._scheduled_task_run_from_row(row) for row in rows)
+
+    def get_scheduled_task_run(self, run_id: int) -> ScheduledTaskRun | None:
+        if type(run_id) is not int or run_id <= 0:
+            raise ValueError("scheduled task run id must be positive")
+        with self._connect() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where id=?", (run_id,),
+            ).fetchone()
+        return self._scheduled_task_run_from_row(row) if row is not None else None
+
+    def get_scheduled_task_run_for_reply_execution(
+        self, reply_task_id: int
+    ) -> ScheduledTaskRun | None:
+        if type(reply_task_id) is not int or reply_task_id <= 0:
+            raise ValueError("scheduled reply execution id must be positive")
+        with self._connect() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where execution_kind='reply_task' "
+                "and execution_id=? order by id desc limit 1",
+                (str(reply_task_id),),
+            ).fetchone()
+        return self._scheduled_task_run_from_row(row) if row is not None else None
+
+    def latest_scheduled_task_overlap_candidate(
+        self,
+        task_id: int,
+    ) -> ScheduledTaskRun | None:
+        """Return the latest pending trigger or linked execution fact."""
+        with self._connect() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where scheduled_task_id=? and ("
+                "dispatch_status='pending' or "
+                "(execution_kind<>'' and execution_id<>'')) "
+                "order by id desc limit 1",
+                (task_id,),
+            ).fetchone()
+        return self._scheduled_task_run_from_row(row) if row is not None else None
+
+    def latest_scheduled_task_runs(
+        self,
+        task_ids: Sequence[int],
+    ) -> dict[int, ScheduledTaskRun]:
+        normalized_ids = tuple(task_ids)
+        if any(type(task_id) is not int or task_id <= 0 for task_id in normalized_ids):
+            raise ValueError("scheduled task ids must be positive integers")
+        if not normalized_ids:
+            return {}
+        placeholders = ",".join("?" for _ in normalized_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select {self._scheduled_task_run_columns()}
+                  from scheduled_task_runs as run
+                 where run.scheduled_task_id in ({placeholders})
+                   and run.id = (
+                       select max(latest.id)
+                         from scheduled_task_runs as latest
+                        where latest.scheduled_task_id=run.scheduled_task_id
+                   )
+                 order by run.scheduled_task_id
+                """,
+                normalized_ids,
+            ).fetchall()
+        runs = tuple(self._scheduled_task_run_from_row(row) for row in rows)
+        return {run.scheduled_task_id: run for run in runs}
+
+    def list_scheduled_task_runs_page(
+        self,
+        task_id: int,
+        *,
+        before_id: int | None,
+        limit: int,
+    ) -> tuple[ScheduledTaskRun, ...]:
+        if type(task_id) is not int or task_id <= 0:
+            raise ValueError("scheduled task id must be a positive integer")
+        if before_id is not None and (type(before_id) is not int or before_id <= 0):
+            raise ValueError("scheduled task run cursor must be a positive integer")
+        if type(limit) is not int or limit <= 0:
+            raise ValueError("scheduled task run page limit must be positive")
+        cursor_sql = " and id < ?" if before_id is not None else ""
+        parameters: tuple[object, ...] = (
+            (task_id, before_id, limit)
+            if before_id is not None
+            else (task_id, limit)
+        )
+        with self._connect() as db:
+            rows = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from scheduled_task_runs where scheduled_task_id=?"
+                f"{cursor_sql} order by id desc limit ?",
+                parameters,
+            ).fetchall()
+        return tuple(self._scheduled_task_run_from_row(row) for row in rows)
+
+    @staticmethod
+    def _runtime_capability_state_key(route_name: str) -> str:
+        if not isinstance(route_name, str) or not route_name.strip():
+            raise ValueError("runtime capability route name must be non-empty")
+        return f"agent-runtime-capability:{route_name}"
+
+    def record_runtime_capability_snapshot(
+        self,
+        snapshot: RuntimeCapabilitySnapshot,
+        *,
+        pid: int,
+    ) -> None:
+        if not isinstance(snapshot, RuntimeCapabilitySnapshot):
+            raise ValueError("runtime capability snapshot is invalid")
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("runtime capability snapshot pid must be positive")
+        self.set_service_state(
+            self._runtime_capability_state_key(snapshot.route_name),
+            json.dumps(
+                {
+                    "pid": pid,
+                    "snapshot": snapshot.model_dump(mode="json"),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+
+    def runtime_capability_snapshots_for_pid(
+        self,
+        route_names: Sequence[str],
+        *,
+        pid: int,
+    ) -> dict[str, RuntimeCapabilitySnapshot]:
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("runtime capability snapshot pid must be positive")
+        names = tuple(route_names)
+        keys = tuple(self._runtime_capability_state_key(name) for name in names)
+        if not keys:
+            return {}
+        placeholders = ",".join("?" for _ in keys)
+        with self._connect() as db:
+            rows = db.execute(
+                f"select key, value from service_state where key in ({placeholders})",
+                keys,
+            ).fetchall()
+        snapshots: dict[str, RuntimeCapabilitySnapshot] = {}
+        route_by_key = dict(zip(keys, names, strict=True))
+        for row in rows:
+            payload = json.loads(str(row["value"]))
+            if not isinstance(payload, dict) or payload.get("pid") != pid:
+                continue
+            route_name = route_by_key[str(row["key"])]
+            snapshot = RuntimeCapabilitySnapshot.model_validate(payload.get("snapshot"))
+            if snapshot.route_name != route_name:
+                raise ValueError("persisted runtime capability route mismatch")
+            snapshots[route_name] = snapshot
+        return snapshots
+
+    @staticmethod
     def _managed_skill_export_receipt_from_row(
         row: sqlite3.Row,
     ) -> ManagedSkillExportReceipt:
@@ -4983,6 +6481,25 @@ class AutoReplyStore:
                 (config_id,),
             ).fetchall()
         return tuple(self._runtime_skill_load_receipt_from_row(row) for row in rows)
+
+    def latest_runtime_skill_load_receipt_for_pid(
+        self,
+        pid: int,
+    ) -> RuntimeSkillLoadReceipt | None:
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("runtime Skill load receipt pid must be positive")
+        with self._connect() as db:
+            row = db.execute(
+                """select id, config_id, pid, loaded_json, error, created_at
+                     from runtime_skill_load_receipts
+                    where pid=? order by id desc limit 1""",
+                (pid,),
+            ).fetchone()
+        return (
+            self._runtime_skill_load_receipt_from_row(row)
+            if row is not None
+            else None
+        )
 
     @staticmethod
     def _migrate_runtime_attempt_session_evidence(db: sqlite3.Connection) -> None:
@@ -9854,6 +11371,75 @@ class AutoReplyStore:
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
+    def skip_scheduled_reply_task(
+        self,
+        task_id: int,
+        reason: str,
+        *,
+        expected_execution_generation: str,
+        dispatcher_owner: str,
+        dispatcher_generation: int,
+        now: datetime,
+    ) -> int:
+        """Persist a pre-Agent scheduled skip without manufacturing an Agent run."""
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("scheduled reply skip reason must be non-empty")
+        if not dispatcher_owner.strip() or dispatcher_generation <= 0:
+            raise ValueError("scheduled execution dispatcher claim is invalid")
+        now_text = now.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        with self._immediate_write_transaction() as db:
+            current_claim = db.execute(
+                "select 1 from dispatcher_claim_leases "
+                "where adapter_name='scheduled_execution' and source_id=? "
+                "and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
+                (str(task_id), dispatcher_owner, dispatcher_generation, now_text),
+            ).fetchone()
+            if current_claim is None:
+                raise ValueError("scheduled execution claim is no longer current")
+            task = db.execute(
+                "select * from reply_tasks where id=? and channel='scheduled' "
+                "and status='processing' and execution_generation=?",
+                (task_id, expected_execution_generation),
+            ).fetchone()
+            if task is None:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            cursor = db.execute(
+                """
+                insert into reply_attempts (
+                    conversation_id, conversation_title, trigger_message_id,
+                    trigger_sender, trigger_text, action, sensitivity_kind,
+                    codex_reason, audit_summary, send_status, send_error, channel
+                ) values (?, ?, ?, ?, ?, 'scheduled_preflight', 'general',
+                          'scheduled_execution_unavailable', ?, 'skipped', ?, 'scheduled')
+                """,
+                (
+                    task["conversation_id"], task["conversation_title"],
+                    task["trigger_message_id"], task["trigger_sender"],
+                    task["trigger_text"], reason.strip(), reason.strip(),
+                ),
+            )
+            db.execute(
+                "update reply_tasks set status='done', locked_at=null, error='', "
+                "updated_at=current_timestamp where id=? and status='processing' "
+                "and execution_generation=?",
+                (task_id, expected_execution_generation),
+            )
+            ledger = db.execute(
+                "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+                "terminal_at=?, last_error='', updated_at=? "
+                "where adapter_name='scheduled_execution' and source_id=? "
+                "and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
+                (
+                    now_text, now_text, str(task_id), dispatcher_owner,
+                    dispatcher_generation, now_text,
+                ),
+            )
+            if ledger.rowcount != 1:
+                raise ValueError("scheduled execution claim is no longer current")
+            return int(cursor.lastrowid)
+
     def defer_reply_task_for_authorization(
         self,
         task_id: int,
@@ -12315,12 +13901,19 @@ class AutoReplyStore:
     ) -> list[OkrReviewRequest]:
         with self._immediate_write_transaction() as db:
             params: list[object] = []
-            processing_clause = "status='processing'"
+            processing_clause = (
+                "status='processing' and not exists ("
+                "select 1 from dispatcher_claim_leases claim "
+                "where claim.adapter_name='okr_review' "
+                "and claim.source_id=cast(okr_review_requests.id as text) "
+                "and claim.owner<>'' and claim.terminal_at='' "
+                "and claim.lease_expires_at>current_timestamp)"
+            )
             if processing_max_age_seconds is not None:
                 if processing_max_age_seconds <= 0:
                     return []
                 processing_clause = (
-                    "status='processing' "
+                    processing_clause + " "
                     "and datetime(updated_at) <= datetime('now', ?)"
                 )
                 params.append(f"-{int(processing_max_age_seconds)} seconds")
@@ -18942,20 +20535,28 @@ class AutoReplyStore:
             ).fetchone()
             return int(row["id"])
 
-    def claim_work_summary_inputs(self, limit: int) -> list[WorkSummaryInput]:
+    def claim_work_summary_inputs(
+        self,
+        limit: int,
+        *,
+        now: str | None = None,
+    ) -> list[WorkSummaryInput]:
         if limit <= 0:
             return []
         with self._immediate_write_transaction() as db:
+            now_expression = "current_timestamp" if now is None else "?"
+            args: list[object] = [] if now is None else [now]
+            args.append(limit)
             rows = db.execute(
-                """
+                f"""
                 select *
                 from work_summary_inputs
                 where status='pending'
-                  and (available_at='' or available_at <= current_timestamp)
+                  and (available_at='' or available_at <= {now_expression})
                 order by id
                 limit ?
                 """,
-                (limit,),
+                args,
             ).fetchall()
             ids = [row["id"] for row in rows]
             if not ids:
@@ -18983,6 +20584,13 @@ class AutoReplyStore:
                 ids,
             ).fetchall()
             return [WorkSummaryInput.model_validate(dict(row)) for row in claimed]
+
+    def get_work_summary_input(self, input_id: int) -> WorkSummaryInput | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from work_summary_inputs where id=?", (input_id,)
+            ).fetchone()
+        return WorkSummaryInput.model_validate(dict(row)) if row is not None else None
 
     def reset_stale_processing_work_summary_inputs(self, max_age_seconds: int) -> int:
         if max_age_seconds <= 0:
@@ -19716,6 +21324,12 @@ class AutoReplyStore:
         with self._connect() as db:
             return list(db.execute(f"{query} order by id", args).fetchall())
 
+    def get_task_todo_sync_outbox(self, outbox_id: int) -> sqlite3.Row | None:
+        with self._connect() as db:
+            return db.execute(
+                "select * from task_todo_sync_outbox where id=?", (outbox_id,)
+            ).fetchone()
+
     def claim_task_todo_sync_outbox(
         self, *, owner: str, now: str, lease_seconds: int = 300
     ) -> sqlite3.Row | None:
@@ -19747,11 +21361,18 @@ class AutoReplyStore:
             return row if changed.rowcount == 1 else None
 
     def finish_task_todo_sync_outbox(
-        self, *, outbox_id: int, owner: str, status: str, receipt_json: str = "{}", error: str = ""
+        self,
+        *,
+        outbox_id: int,
+        owner: str,
+        status: str,
+        receipt_json: str = "{}",
+        error: str = "",
+        _db: sqlite3.Connection | None = None,
     ) -> None:
         if status not in {"completed", "failed", "unknown"}:
             raise ValueError("task todo sync terminal status is invalid")
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             changed = db.execute(
                 "update task_todo_sync_outbox set status=?, receipt_json=?, error=?, "
                 "lease_owner='', lease_expires_at='', completed_at=current_timestamp, "
@@ -19762,9 +21383,15 @@ class AutoReplyStore:
                 raise ValueError("task todo sync receipt ownership lost")
 
     def retry_task_todo_sync_outbox(
-        self, *, outbox_id: int, owner: str, error: str, now: str
+        self,
+        *,
+        outbox_id: int,
+        owner: str,
+        error: str,
+        now: str,
+        _db: sqlite3.Connection | None = None,
     ) -> None:
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             row = db.execute("select attempt_count from task_todo_sync_outbox where id=?", (outbox_id,)).fetchone()
             if row is None:
                 raise ValueError("task todo sync outbox does not exist")
@@ -22061,6 +23688,10 @@ class AutoReplyStore:
         *,
         state: str,
         detail: str = "",
+        status: str | None = None,
+        latest_tick_at: str | None = None,
+        latest_error: str | None = None,
+        latest_error_at: str | None = None,
     ) -> None:
         """Persist the current health of a service component, not a task."""
         normalized_component = component.strip()
@@ -22069,17 +23700,41 @@ class AutoReplyStore:
             raise ValueError("service health component must be non-empty")
         if normalized_state not in SERVICE_HEALTH_STATES:
             raise ValueError("invalid service health state")
-        self.set_service_state(
-            f"{SERVICE_HEALTH_STATE_PREFIX}{normalized_component}",
-            json.dumps(
-                {
-                    "state": normalized_state,
-                    "detail": detail.strip()[:500],
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-        )
+        key = f"{SERVICE_HEALTH_STATE_PREFIX}{normalized_component}"
+        with self._immediate_write_transaction() as db:
+            existing_row = db.execute(
+                "select value from service_state where key=?", (key,)
+            ).fetchone()
+            try:
+                existing = json.loads(str(existing_row["value"] or "")) if existing_row else {}
+            except json.JSONDecodeError:
+                existing = {}
+            if not isinstance(existing, dict):
+                existing = {}
+            payload = {
+                "state": normalized_state,
+                "status": (status or normalized_state).strip().lower(),
+                "detail": detail.strip()[:500],
+                "latest_tick_at": (
+                    latest_tick_at if latest_tick_at is not None
+                    else str(existing.get("latest_tick_at") or "")
+                ),
+                "latest_error": (
+                    latest_error.strip()[:500] if latest_error is not None
+                    else str(existing.get("latest_error") or "")
+                ),
+                "latest_error_at": (
+                    latest_error_at if latest_error_at is not None
+                    else str(existing.get("latest_error_at") or "")
+                ),
+            }
+            db.execute(
+                """insert into service_state (key, value, updated_at)
+                   values (?, ?, current_timestamp)
+                   on conflict(key) do update set
+                     value=excluded.value, updated_at=current_timestamp""",
+                (key, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+            )
 
     def list_service_health_components(self) -> list[dict[str, str]]:
         """Return the current health projection for each service component."""
@@ -22110,7 +23765,11 @@ class AutoReplyStore:
                         SERVICE_HEALTH_STATE_PREFIX
                     ),
                     "state": state,
+                    "status": str(payload.get("status") or state),
                     "detail": str(payload.get("detail") or ""),
+                    "latest_tick_at": str(payload.get("latest_tick_at") or ""),
+                    "latest_error": str(payload.get("latest_error") or ""),
+                    "latest_error_at": str(payload.get("latest_error_at") or ""),
                     "updated_at": str(row["updated_at"] or ""),
                 }
             )

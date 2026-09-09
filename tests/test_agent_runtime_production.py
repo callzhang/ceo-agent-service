@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -250,8 +251,9 @@ def test_production_refresher_publishes_into_shared_registry(tmp_path, monkeypat
             {"type": "turn.completed"},
         )
     )
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
     refresher = build_production_runtime_refresher(
-        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+        store=store,
         codex_bin="codex-test",
         executor=lambda *_args, **_kwargs: ProcessRunResult(0, stdout, ""),
         temporary_root=tmp_path,
@@ -261,6 +263,9 @@ def test_production_refresher_publishes_into_shared_registry(tmp_path, monkeypat
 
     assert snapshots["codex_oauth"].healthy is True
     assert PRODUCTION_RUNTIME_CAPABILITIES["codex_oauth"].healthy is True
+    assert store.runtime_capability_snapshots_for_pid(
+        ("codex_oauth",), pid=os.getpid()
+    ) == {"codex_oauth": snapshots["codex_oauth"]}
 
 
 def test_production_execution_factory_never_probes_or_spawns(tmp_path, monkeypatch):

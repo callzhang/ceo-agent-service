@@ -5,6 +5,7 @@ import pytest
 
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeFailureClass
+from app.agent_runtime_contracts import LOCAL_SERVICE_RUNTIME_CAPABILITIES
 from app.agent_runtime_probe import (
     AgentRuntimeProbe,
     RuntimeCapabilityRefresher,
@@ -307,7 +308,7 @@ def test_claude_probe_proves_only_runtime_health_and_typed_result(
     assert snapshot.failure is None
     assert snapshot.capabilities == frozenset(
         {"structured_output", "local_schema_validation"}
-    )
+    ) | LOCAL_SERVICE_RUNTIME_CAPABILITIES
     assert len(calls) == 1
     command, kwargs = calls[0]
     assert command[0:2] == ["claude-test", "-p"]
@@ -612,7 +613,7 @@ def test_successful_no_tools_probe_does_not_claim_unverified_business_capabiliti
             "structured_output",
             "local_schema_validation",
         }
-    )
+    ) | LOCAL_SERVICE_RUNTIME_CAPABILITIES
     assert "reviewed_read_tools" not in snapshot.capabilities
     assert "memory_connector_read" not in snapshot.capabilities
     assert "reviewed_write_tools" not in snapshot.capabilities

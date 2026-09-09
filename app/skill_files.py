@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import yaml
 
 from app.business_skills import (
     MANAGED_BY,
@@ -25,6 +26,10 @@ class SkillFileError(RuntimeError):
 
 class SkillFileValidationError(SkillFileError):
     """A Skill name, path, or frontmatter is invalid."""
+
+
+class SkillFileOwnershipError(SkillFileValidationError):
+    """A service-managed Skill was presented as an operation Skill."""
 
 
 class SkillFileConflict(SkillFileError):
@@ -50,7 +55,7 @@ class ProjectSkill:
 class SkillDocument:
     name: str
     description: str
-    managed_by: str
+    managed_by: str | None
     path: Path
     content: str
     sha256: str
@@ -85,12 +90,7 @@ class SkillFileService:
         return tuple(result)
 
     def get_skill(self, name: str) -> SkillDocument:
-        path = self._resolve_skill_path(name)
-        try:
-            raw_bytes = path.read_bytes()
-            content = raw_bytes.decode("utf-8")
-        except (OSError, UnicodeError) as exc:
-            raise SkillFileValidationError(f"unable to read Skill: {path}: {exc}") from exc
+        path, raw_bytes, content = self._read_skill_file(name)
         try:
             frontmatter = _parse_frontmatter(content, path)
         except BusinessSkillValidationError as exc:
@@ -110,6 +110,49 @@ class SkillFileService:
             sha256=hashlib.sha256(raw_bytes).hexdigest(),
             raw_bytes=raw_bytes,
         )
+
+    def read_operation_skill(self, project_skill: ProjectSkill) -> SkillDocument:
+        """Read one safely enumerated operation Skill using its declared identity."""
+        if not isinstance(project_skill, ProjectSkill):
+            raise SkillFileValidationError("operation Skill entry is invalid")
+        path, raw_bytes, content = self._read_skill_file(project_skill.name)
+        if path != project_skill.path:
+            raise SkillFileValidationError(
+                f"operation Skill entry does not match its controlled path: {path}"
+            )
+        frontmatter = _parse_standard_skill_frontmatter(content, path)
+        declared_name = frontmatter.get("name")
+        description = frontmatter.get("description")
+        metadata = frontmatter.get("metadata", {})
+        if not isinstance(declared_name, str) or not declared_name.strip():
+            raise SkillFileValidationError(f"Skill must have nonempty name: {path}")
+        if not isinstance(description, str) or not description.strip():
+            raise SkillFileValidationError(f"Skill must have nonempty description: {path}")
+        if not isinstance(metadata, dict):
+            raise SkillFileValidationError(f"Skill metadata must be a mapping: {path}")
+        managed_by = metadata.get("managed_by")
+        if managed_by == MANAGED_BY:
+            raise SkillFileOwnershipError(
+                f"service-managed Skill cannot be used as an operation Skill: {path}"
+            )
+        return SkillDocument(
+            name=declared_name.strip(),
+            description=description.strip(),
+            managed_by=managed_by if isinstance(managed_by, str) else None,
+            path=path,
+            content=content,
+            sha256=hashlib.sha256(raw_bytes).hexdigest(),
+            raw_bytes=raw_bytes,
+        )
+
+    def _read_skill_file(self, name: str) -> tuple[Path, bytes, str]:
+        path = self._resolve_skill_path(name)
+        try:
+            raw_bytes = path.read_bytes()
+            content = raw_bytes.decode("utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise SkillFileValidationError(f"unable to read Skill: {path}: {exc}") from exc
+        return path, raw_bytes, content
 
     def save_skill(self, name: str, content: str, expected_sha256: str) -> SkillDocument:
         if not isinstance(content, str):
@@ -194,3 +237,30 @@ def _validate_skill_name(name: str) -> None:
         or any(ord(char) < 32 or ord(char) == 127 for char in name)
     ):
         raise SkillFileValidationError(f"invalid Skill name: {name!r}")
+
+
+def _parse_standard_skill_frontmatter(
+    content: str, source_path: Path
+) -> dict[str, object]:
+    lines = content.splitlines()
+    if not lines or lines[0] != "---":
+        raise SkillFileValidationError(
+            f"Skill must start with YAML frontmatter: {source_path}"
+        )
+    try:
+        end = lines.index("---", 1)
+    except ValueError as exc:
+        raise SkillFileValidationError(
+            f"Skill frontmatter is not closed: {source_path}"
+        ) from exc
+    try:
+        parsed = yaml.safe_load("\n".join(lines[1:end]))
+    except yaml.YAMLError as exc:
+        raise SkillFileValidationError(
+            f"invalid Skill YAML frontmatter: {source_path}: {exc}"
+        ) from exc
+    if not isinstance(parsed, dict) or any(not isinstance(key, str) for key in parsed):
+        raise SkillFileValidationError(
+            f"Skill frontmatter must be a string-keyed mapping: {source_path}"
+        )
+    return parsed

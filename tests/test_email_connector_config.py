@@ -225,7 +225,6 @@ def _account_payload(account_id: str = "work_mail") -> dict[str, object]:
         "smtp_secret_reference": f"CEO_EMAIL_{account_id.upper()}_SMTP_SECRET",
         "enabled": True,
         "scan_folders": ["INBOX", "Archive/Follow Up"],
-        "scan_interval_seconds": 60,
     }
 
 
@@ -315,7 +314,6 @@ def test_legacy_smtp_secret_is_accepted_but_not_saved_or_reported(
         ("imap_port", "993"),
         ("imap_tls", 1),
         ("enabled", "true"),
-        ("scan_interval_seconds", 14),
         ("scan_folders", ()),
         ("scan_folders", ("INBOX", "INBOX")),
         ("imap_secret_reference", "CEO_EMAIL_WORK_SMTP_SECRET"),

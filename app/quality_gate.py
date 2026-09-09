@@ -16,7 +16,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from app.agent_cron.scheduler import SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS
 from app.leak_check import contains_credential, contains_local_runtime_leak
+from app.store import SERVICE_HEALTH_STATE_PREFIX
 
 
 REQUIRED_SOURCES = (
@@ -43,6 +45,7 @@ PENDING_STALE_SECONDS = 15 * 60
 MEETING_PROCESSING_STALE_SECONDS = 21 * 60
 OKR_PROCESSING_STALE_SECONDS = 21 * 60
 RECENT_ERROR_WINDOW_SECONDS = 4 * 60 * 60
+AGENT_CRON_SCHEDULER_STALE_SECONDS = 5 * 60
 RECOVERED_REPLY_ATTEMPT_STATUSES = (
     "calendar",
     "commented",
@@ -146,9 +149,10 @@ def scan_hourly_quality(
         _check_external_delivery_queues(db, checked_now, violations, attention)
         _check_feedback(db, violations)
         _check_scan_health(db, violations, attention)
+        _check_scheduler_health(db, checked_now, violations)
         _check_codex_capacity_pause(db, checked_now, attention)
         _check_runtime_route_pauses(db, checked_now, attention)
-        _check_recent_errors(db, checked_now, violations)
+        _check_recent_errors(db, checked_now, violations, attention)
     return QualityGateReport(
         checked_at=now_text,
         checked_sources=checked,
@@ -678,7 +682,25 @@ def _check_recent_errors(
     db: sqlite3.Connection,
     now: datetime,
     violations: list[QualityIssue],
+    attention: list[QualityIssue],
 ) -> None:
+    scheduled_kinds = tuple(sorted(SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS))
+    scheduled_predicate = """error_event.conversation_id like 'scheduled-task:%'
+        and error_event.kind in ({})""".format(
+        ",".join("?" for _ in scheduled_kinds)
+    )
+    scheduled_count = _count(
+        db,
+        f"""select count(*) from errors error_event
+            where datetime(error_event.created_at) >= datetime(?)
+              and coalesce(error_event.resolved_at, '') = ''
+              and {scheduled_predicate}""",
+        (_cutoff(now, RECENT_ERROR_WINDOW_SECONDS), *scheduled_kinds),
+    )
+    _add(attention, source="scheduled_task_runs",
+         code="scheduled_task_execution_unavailable", count=scheduled_count,
+         severity="warning",
+         detail="a scheduled task could not use its pinned Runtime or Skill")
     _add(violations, source="errors", code="recent_error", count=_count(
         db,
         """select count(*)
@@ -690,6 +712,7 @@ def _check_recent_errors(
                 or coalesce(error_event.message_id, '') <> ''
              )
              and error_event.kind <> 'codex_capacity_pause'
+             and not ({})
              and not exists (
                 select 1
                 from reply_attempts recovery
@@ -698,13 +721,46 @@ def _check_recent_errors(
                   and datetime(recovery.updated_at) >= datetime(error_event.created_at)
                   and lower(recovery.send_status) in ({})
              )""".format(
-            ",".join("?" for _ in RECOVERED_REPLY_ATTEMPT_STATUSES)
+            scheduled_predicate,
+            ",".join("?" for _ in RECOVERED_REPLY_ATTEMPT_STATUSES),
         ),
         (
             _cutoff(now, RECENT_ERROR_WINDOW_SECONDS),
+            *scheduled_kinds,
             *RECOVERED_REPLY_ATTEMPT_STATUSES,
         ),
     ), severity="error", detail="a service error was recorded within the four-hour repair window")
+
+
+def _check_scheduler_health(
+    db: sqlite3.Connection,
+    now: datetime,
+    violations: list[QualityIssue],
+) -> None:
+    row = db.execute(
+        "select value from service_state where key=?",
+        (f"{SERVICE_HEALTH_STATE_PREFIX}agent-cron-scheduler",),
+    ).fetchone()
+    if row is None:
+        return
+    try:
+        payload = json.loads(str(row["value"] or ""))
+        latest_tick = datetime.fromisoformat(
+            str(payload.get("latest_tick_at") or "").replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        latest_tick = None
+    stale = latest_tick is None or (
+        now - latest_tick
+    ).total_seconds() > AGENT_CRON_SCHEDULER_STALE_SECONDS
+    _add(
+        violations,
+        source="service_state",
+        code="scheduler_tick_stale",
+        count=int(stale),
+        severity="error",
+        detail="the Agent Cron scheduler health observation stopped updating",
+    )
 
 
 def _check_codex_capacity_pause(

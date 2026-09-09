@@ -105,6 +105,7 @@ class CodexRuntimeAdapter:
         use_approval_bypass: bool,
         sandbox_mode: str | None = None,
         skip_git_repo_check: bool = False,
+        reasoning_effort: str | None = None,
     ) -> list[str]:
         configured_route = self._configured_route(route)
         return self.runner.build_command(
@@ -126,6 +127,7 @@ class CodexRuntimeAdapter:
             shell_environment_policy_core=True,
             sandbox_mode=sandbox_mode,
             skip_git_repo_check=skip_git_repo_check,
+            reasoning_effort=reasoning_effort,
         )
 
     def build_env(

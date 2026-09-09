@@ -691,6 +691,42 @@ def test_friday_runtime_fallback_completes_consumer_run(tmp_path):
     assert attempts[-1].transcript_reference == "friday_operation:friday-operation"
 
 
+def test_forced_runtime_provider_failure_never_falls_back(tmp_path):
+    store = AutoReplyStore(tmp_path / "forced-route.sqlite3")
+    task = _task(store)
+    config = load_runtime_config({
+        "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,friday_runtime",
+        "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-agent",
+        "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1",
+    })
+    route = config.routes[0]
+    class Router:
+        def first_route_decision(self, **_kwargs):
+            raise AssertionError("forced route bypasses selection")
+        def next_route(self, **_kwargs):
+            raise AssertionError("forced route never falls back")
+    calls = []
+    def executor(command, **_kwargs):
+        calls.append(command)
+        return ProcessRunResult(1, "", "unexpected status 401 unauthorized")
+    claim = _claim_consumer(store, task)
+    with pytest.raises(Exception):
+        AgentTurnProcess(
+            store=store, task=task, workspace=tmp_path, owner="consumer",
+            executor=executor, runtime_config=config, runtime_router=Router(),
+            forced_runtime_route=route,
+            codex_adapter=CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test"),
+        ).execute(
+            run=claim.run, prompt="Scheduled", session_id=None,
+            developer_instructions="Return schema",
+            configure_command=lambda command: None,
+            parse_result=parse_consumer_agent_wire_result,
+            persist_conversation_session=False,
+        )
+    assert [attempt.route_name for attempt in store.list_agent_runtime_attempts(claim.run.id)] == [route.name]
+    assert len(calls) == 1
+
+
 @pytest.mark.parametrize("codex_failure", [
     "missing bearer or basic authentication for /v1/responses",
     "workspace is out of credits",
