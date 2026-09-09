@@ -34,6 +34,16 @@ pending -> running -> done
               -> 审核 Agent 审核 R1
 ```
 
+### 主页面执行入口
+
+`/` 主页面是 Service 的 Web 入口，不是独立 Agent Runtime。主页面创建的 turn 作为
+`workbench` workload 进入统一 `RoutedCodexExecution`，与后台 Agent 共用模型路由、会话、
+runtime attempt、失败切换和 CLI 原生 `auto_review`。页面后端只把统一运行事件投影为时间线并
+维护停止请求；不得自行构造 provider 命令、启用 approval bypass，或实现第二套命令审批。
+
+历史 `workbench_confirmations` 仅用于读取既有记录，不属于新 turn 的执行路径；确认与取消
+接口固定拒绝执行，主页也不再显示操作按钮。
+
 审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许三个内容反馈周期，基础设施失败不消耗反馈周期。反馈次数耗尽本身是自动闭环失败，不是人工决策依据；只有 Audit 自身返回满足高风险、低置信度和 Skill 缺口约束的结构化结果时才进入 `needs_human`。
 
 所有任务都禁止使用 `discard` 动作或写入 `discarded` 状态。无需动作的结果在 trace 记录 `no_action` 后进入 `done`；需要修正时由审核 Agent 写入 `audit_feedback`，执行 Agent 生成新 revision；处理失败使用 `failed`；无法自动解决使用 `needs_human`。

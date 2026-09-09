@@ -129,6 +129,7 @@ class RuntimeRequest:
     turn_id: str
     workspace: Path
     prompt: str
+    conversation_id: str = ""
     provider_session_ref: str = ""
     model: str = ""
     attachment_paths: tuple[Path, ...] = ()

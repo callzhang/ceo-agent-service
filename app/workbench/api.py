@@ -337,6 +337,7 @@ _PUBLIC_ERROR_DETAILS = {
     "client_request_conflict": "Client request ID conflicts with an existing turn",
     "attachment_request_conflict": "Client request ID conflicts with an existing attachment",
     "attachment_invalid": "Attachment data is invalid",
+    "confirmation_history_read_only": "Historical confirmations are read-only",
 }
 
 
@@ -1127,27 +1128,14 @@ def register_workbench_routes(
         task_id: UUID, turn_id: UUID, confirmation_id: UUID, request: Request
     ) -> PublicConfirmation:
         await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
-        confirmation_id_text = _uuid_text(confirmation_id)
         await anyio.to_thread.run_sync(
             _owned_confirmation,
             store,
             _uuid_text(task_id),
             _uuid_text(turn_id),
-            confirmation_id_text,
+            _uuid_text(confirmation_id),
         )
-        try:
-            result = await anyio.to_thread.run_sync(
-                executor.confirm, confirmation_id_text, abandon_on_cancel=False
-            )
-            broker.notify(_uuid_text(turn_id))
-            scheduler.wake()
-            return await anyio.to_thread.run_sync(
-                lambda: _public_confirmation(
-                    store, result, workspace=executor.workspace
-                )
-            )
-        except ValueError as exc:
-            raise _public_error(409, "unknown") from exc
+        raise _public_error(410, "confirmation_history_read_only")
 
     @app.post(
         "/api/workbench/tasks/{task_id}/turns/{turn_id}/confirmations/{confirmation_id}/cancel",
@@ -1157,27 +1145,14 @@ def register_workbench_routes(
         task_id: UUID, turn_id: UUID, confirmation_id: UUID, request: Request
     ) -> PublicConfirmation:
         await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
-        confirmation_id_text = _uuid_text(confirmation_id)
         await anyio.to_thread.run_sync(
             _owned_confirmation,
             store,
             _uuid_text(task_id),
             _uuid_text(turn_id),
-            confirmation_id_text,
+            _uuid_text(confirmation_id),
         )
-        try:
-            result = await anyio.to_thread.run_sync(
-                executor.cancel, confirmation_id_text, abandon_on_cancel=False
-            )
-            broker.notify(_uuid_text(turn_id))
-            scheduler.wake()
-            return await anyio.to_thread.run_sync(
-                lambda: _public_confirmation(
-                    store, result, workspace=executor.workspace
-                )
-            )
-        except ValueError as exc:
-            raise _public_error(409, "unknown") from exc
+        raise _public_error(410, "confirmation_history_read_only")
 
     @app.get(
         "/api/workbench/runtimes", response_model=list[RuntimeCapabilitiesResponse]

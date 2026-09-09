@@ -90,7 +90,7 @@ describe("ConversationTimeline", () => {
     expect(screen.getByText(/\/Users\/private\/secret/)).toBeInTheDocument();
     expect(screen.getByText(/visible-secret/)).toBeInTheDocument();
     expect(screen.getByText("发送群消息")).toBeInTheDocument();
-    expect(screen.getByText("等待执行器安全停稳")).toBeInTheDocument();
+    expect(screen.getByText("旧版待确认操作不会再执行")).toBeInTheDocument();
     const artifact = screen.getByRole("link", { name: /结果.txt/ });
     expect(artifact).toHaveAttribute("href", "/api/workbench/tasks/task-1/turns/turn-1/artifacts/artifact-1/download");
     expect(artifact).toHaveAttribute("target", "_blank");
@@ -319,49 +319,22 @@ describe("ConversationTimeline", () => {
 });
 
 describe("ConfirmationCard", () => {
-  it("guards a decision immediately and permits retry after an unpersisted failure", async () => {
-    const user = userEvent.setup();
+  it("renders legacy confirmations as read-only history", () => {
     const confirmation = timeline.confirmations[0];
-    let rejectFirst!: (error: Error) => void;
-    const firstDecision = new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
-    const onConfirm = vi.fn().mockReturnValueOnce(firstDecision).mockResolvedValue(undefined);
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
     render(
-      <StrictMode>
-        <ConfirmationCard confirmation={{ ...confirmation, decision_requested: "", proposer_quiesced: true }} onConfirm={onConfirm} onCancel={vi.fn()} />
-      </StrictMode>,
+      <ConfirmationCard confirmation={confirmation} onConfirm={onConfirm} onCancel={onCancel} />,
     );
 
-    const confirm = screen.getByRole("button", { name: "确认执行" });
-    await user.click(confirm);
-    await user.click(confirm);
-    expect(onConfirm).toHaveBeenCalledOnce();
-    expect(confirm).toBeDisabled();
-    await act(async () => rejectFirst(new Error("offline")));
-    expect(await screen.findByRole("alert")).toHaveTextContent("确认失败，请重试");
-    expect(confirm).toBeEnabled();
-    await user.click(confirm);
-    expect(onConfirm).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("历史确认记录（只读）")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "取消" })).not.toBeInTheDocument();
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
-  it("accepts one decision intent before proposer quiescence", async () => {
-    const user = userEvent.setup();
-    const onConfirm = vi.fn().mockResolvedValue(undefined);
-    render(
-      <ConfirmationCard
-        confirmation={{ ...timeline.confirmations[0], decision_requested: "", proposer_quiesced: false }}
-        onConfirm={onConfirm}
-        onCancel={vi.fn()}
-      />,
-    );
-
-    const confirm = screen.getByRole("button", { name: "确认执行" });
-    expect(confirm).toBeEnabled();
-    await user.click(confirm);
-    await user.click(confirm);
-    expect(onConfirm).toHaveBeenCalledOnce();
-  });
-
-  it("describes persisted confirm and cancel intents according to quiescence", () => {
+  it("does not resume persisted legacy decision intents", () => {
     const { rerender } = render(
       <ConfirmationCard
         confirmation={{ ...timeline.confirmations[0], decision_requested: "confirm", proposer_quiesced: true }}
@@ -369,7 +342,7 @@ describe("ConfirmationCard", () => {
         onCancel={vi.fn()}
       />,
     );
-    expect(screen.getByText("正在执行已确认操作")).toBeInTheDocument();
+    expect(screen.getByText("旧版待确认操作不会再执行")).toBeInTheDocument();
     rerender(
       <ConfirmationCard
         confirmation={{ ...timeline.confirmations[0], decision_requested: "cancel", proposer_quiesced: true }}
@@ -377,7 +350,7 @@ describe("ConfirmationCard", () => {
         onCancel={vi.fn()}
       />,
     );
-    expect(screen.getByText("正在取消操作")).toBeInTheDocument();
+    expect(screen.getByText("旧版待确认操作不会再执行")).toBeInTheDocument();
   });
 
   it("shows persisted confirmation outcomes instead of an in-progress label", () => {
@@ -391,7 +364,7 @@ describe("ConfirmationCard", () => {
 
     expect(screen.getByText("操作已执行")).toBeInTheDocument();
     expect(screen.queryByText("正在执行已确认操作")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "确认执行" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
   });
 });
 

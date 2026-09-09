@@ -1128,8 +1128,7 @@ describe("App", () => {
     expect(await screen.findByText("任务已有 1 个附件")).toBeInTheDocument();
   });
 
-  it("applies the confirmation response immediately without requiring a manual refresh", async () => {
-    const user = userEvent.setup();
+  it("shows legacy confirmations as read-only history", async () => {
     vi.stubGlobal("EventSource", class {
       onopen = null;
       onerror = null;
@@ -1145,27 +1144,18 @@ describe("App", () => {
       canonical_capability: "chat", canonical_operation: "发送消息", canonical_targets: ["群"], status: "pending" as const,
       decision_requested: "", decision_requested_at: "", proposer_quiesced: false, created_at: "", decided_at: "",
     };
-    const refresh = deferred<Timeline>();
     api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
-    api.getTimeline
-      .mockResolvedValueOnce({
+    api.getTimeline.mockResolvedValueOnce({
         ...emptyTimeline(first, [waiting]),
         confirmations: [confirmation],
         events: [{ id: 1, turn_id: waiting.id, sequence: 1, event_type: "confirmation_required", payload: { confirmation_id: confirmation.id }, created_at: "" }],
-      })
-      .mockReturnValueOnce(refresh.promise);
-    api.confirmAction.mockResolvedValue({ ...confirmation, decision_requested: "confirm" });
+      });
     window.history.replaceState({}, "", `/?task=${first.id}`);
     render(<App />);
 
-    const confirm = await screen.findByRole("button", { name: "确认执行" });
-    expect(confirm).toBeEnabled();
-    await user.click(confirm);
-    await user.click(confirm);
-
-    expect(api.confirmAction).toHaveBeenCalledOnce();
-    expect(await screen.findByText("等待执行器安全停稳")).toBeInTheDocument();
-    expect(confirm).toBeDisabled();
+    expect(await screen.findByText("历史确认记录（只读）")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
+    expect(api.confirmAction).not.toHaveBeenCalled();
   });
 
   it("coalesces a confirmation progress event into an authoritative timeline refresh", async () => {
@@ -1198,7 +1188,6 @@ describe("App", () => {
       canonical_capability: "chat", canonical_operation: "发送消息", canonical_targets: ["群"], status: "pending" as const,
       decision_requested: "", decision_requested_at: "", proposer_quiesced: false, created_at: "", decided_at: "",
     };
-    const afterClick = { ...pending, decision_requested: "confirm" };
     const authoritative = deferred<Timeline>();
     api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
     api.getTimeline
@@ -1207,14 +1196,11 @@ describe("App", () => {
         confirmations: [pending],
         events: [{ id: 1, turn_id: waiting.id, sequence: 1, event_type: "confirmation_required", payload: { confirmation_id: pending.id }, created_at: "" }],
       })
-      .mockResolvedValueOnce({ ...emptyTimeline(first, [waiting]), confirmations: [afterClick] })
       .mockReturnValueOnce(authoritative.promise);
-    api.confirmAction.mockResolvedValue(afterClick);
     window.history.replaceState({}, "", `/?task=${first.id}`);
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "确认执行" }));
-    expect(await screen.findByText("等待执行器安全停稳")).toBeInTheDocument();
+    expect(await screen.findByText("旧版待确认操作不会再执行")).toBeInTheDocument();
 
     sources[0].emit("status_changed", 2, waiting.id, {
       status: "queued",
@@ -1227,11 +1213,11 @@ describe("App", () => {
     });
 
     expect(await screen.findByText("操作已执行")).toBeInTheDocument();
-    expect(screen.queryByText("等待执行器安全停稳")).not.toBeInTheDocument();
-    await waitFor(() => expect(api.getTimeline).toHaveBeenCalledTimes(3));
+    expect(screen.queryByText("旧版待确认操作不会再执行")).not.toBeInTheDocument();
+    await waitFor(() => expect(api.getTimeline).toHaveBeenCalledTimes(2));
     await act(async () => authoritative.resolve({
       ...emptyTimeline({ ...first, state: "running" }, [{ ...waiting, status: "running" }]),
-      confirmations: [{ ...afterClick, status: "executed", proposer_quiesced: true }],
+      confirmations: [{ ...pending, status: "executed", proposer_quiesced: true }],
     }));
 
     await waitFor(() => expect(within(screen.getByRole("button", { name: "打开任务 销售策略" })).getByText("执行中")).toBeInTheDocument());

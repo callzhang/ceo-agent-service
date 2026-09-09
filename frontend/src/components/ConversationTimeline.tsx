@@ -12,8 +12,8 @@ import { displayText, ExecutionStep } from "./ExecutionStep";
 interface ConversationTimelineProps {
   timeline: Timeline;
   activeTurnId: string | null;
-  onConfirm: (confirmation: Confirmation) => Promise<void>;
-  onCancel: (confirmation: Confirmation) => Promise<void>;
+  onConfirm?: (confirmation: Confirmation) => Promise<void>;
+  onCancel?: (confirmation: Confirmation) => Promise<void>;
 }
 
 export function assistantTurnKey(turn: Turn) {
@@ -68,15 +68,13 @@ const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
   );
 });
 
-function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, active, onConfirm, onCancel }: {
+function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, active }: {
   turn: Turn;
   events: WorkbenchEvent[];
   confirmationsById: Map<string, Confirmation>;
   artifactsById: Map<string, Artifact>;
   taskId: string;
   active: boolean;
-  onConfirm: ConversationTimelineProps["onConfirm"];
-  onCancel: ConversationTimelineProps["onCancel"];
 }) {
   const blocks = useMemo(() => timelineBlocks(turn.id, events, turn.status), [events, turn.id, turn.status]);
   const renderedText = blocks.some((block) => block.kind === "markdown");
@@ -92,7 +90,7 @@ function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, acti
           if (block.kind === "tool" || block.kind === "file") return <ExecutionStep key={block.key} kind={block.kind} status={block.status} payload={block.payload} startedAt={block.startedAt} completedAt={block.completedAt} />;
           if (block.kind === "confirmation") {
             const confirmation = confirmationsById.get(block.confirmationId ?? "");
-            return confirmation?.turn_id === turn.id ? <ConfirmationCard key={block.key} confirmation={confirmation} onConfirm={onConfirm} onCancel={onCancel} /> : null;
+            return confirmation?.turn_id === turn.id ? <ConfirmationCard key={block.key} confirmation={confirmation} /> : null;
           }
           const artifact = artifactsById.get(block.artifactId ?? "");
           return artifact?.turn_id === turn.id ? <ArtifactList key={block.key} taskId={taskId} turnId={turn.id} artifacts={[artifact]} /> : null;
@@ -110,7 +108,7 @@ function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, acti
   );
 }
 
-export function ConversationTimeline({ timeline, activeTurnId, onConfirm, onCancel }: ConversationTimelineProps) {
+export function ConversationTimeline({ timeline, activeTurnId }: ConversationTimelineProps) {
   const turns = useMemo(() => [...timeline.turns].reverse(), [timeline.turns]);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const eventsByTurn = useMemo(() => {
@@ -175,8 +173,6 @@ export function ConversationTimeline({ timeline, activeTurnId, onConfirm, onCanc
             artifactsById={artifactsById}
             taskId={timeline.task.id}
             active={turn.id === activeTurnId}
-            onConfirm={onConfirm}
-            onCancel={onCancel}
           />
         )}
       />

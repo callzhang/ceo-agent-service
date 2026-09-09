@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 import app.workbench.api as workbench_api_module
+import app.workbench.service_runtime as service_runtime_module
 from app.audit_web import create_audit_app
 from app.setup_wizard import SETUP_WIZARD_STEPS
 from app.store import AutoReplyStore
@@ -64,6 +65,35 @@ def _client(tmp_path: Path) -> TestClient:
         client=("127.0.0.1", 50000),
         headers={"Host": "127.0.0.1:8765"},
     )
+
+
+def test_default_main_page_runtime_uses_shared_service_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    created: dict[str, object] = {}
+
+    class TrackingServiceRuntime:
+        kind = "codex"
+
+        def __init__(self, *, workspace, store):
+            created["workspace"] = workspace
+            created["store"] = store
+
+        def capabilities(self):
+            raise AssertionError("capabilities are not read while wiring the app")
+
+    monkeypatch.setattr(
+        service_runtime_module, "ServiceWorkbenchRuntime", TrackingServiceRuntime
+    )
+
+    create_audit_app(
+        tmp_path / "worker.sqlite3",
+        workbench_asset_dir=tmp_path / "missing-assets",
+        workbench_workspace=tmp_path,
+    )
+
+    assert created["workspace"] == tmp_path.resolve()
+    assert isinstance(created["store"], AutoReplyStore)
 
 
 def test_task_turn_and_event_replay(tmp_path: Path):
@@ -740,7 +770,7 @@ def test_streaming_json_collector_rejects_large_content_length_before_receive():
     assert consumed is False
 
 
-def test_blocked_confirmation_does_not_block_unrelated_async_request(tmp_path: Path):
+def test_legacy_confirmation_endpoints_are_read_only(tmp_path: Path):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
     _complete_setup(store)
     task = store.create_task(title="Confirm", runtime_kind="codex")
@@ -756,21 +786,28 @@ def test_blocked_confirmation_does_not_block_unrelated_async_request(tmp_path: P
         owner="seed",
     )
 
-    class BlockingExecutor:
+    class RecordingExecutor:
         workspace = tmp_path
+        called = False
 
         def recover(self): return 0
         def run_once(self): return []
         def close(self): return True
         def confirm(self, confirmation_id):
-            time.sleep(0.4)
-            return store.get_confirmation(confirmation_id)
+            self.called = True
+            raise AssertionError(f"unexpected legacy confirmation: {confirmation_id}")
+
+        def cancel(self, confirmation_id):
+            self.called = True
+            raise AssertionError(f"unexpected legacy cancellation: {confirmation_id}")
+
+    executor = RecordingExecutor()
 
     app = create_audit_app(
         store.path,
         workbench_asset_dir=tmp_path / "assets",
         workbench_workspace=tmp_path,
-        workbench_executor=BlockingExecutor(),
+        workbench_executor=executor,
     )
 
     async def exercise():
@@ -780,20 +817,21 @@ def test_blocked_confirmation_does_not_block_unrelated_async_request(tmp_path: P
             base_url="http://127.0.0.1:8765",
             headers={"Host": "127.0.0.1:8765"},
         ) as client:
-            confirm_request = asyncio.create_task(client.post(
+            confirm_response = await client.post(
                 f"/api/workbench/tasks/{task.id}/turns/{turn.id}/confirmations/{confirmation.id}/confirm",
                 json={},
-            ))
-            await asyncio.sleep(0.05)
-            started = time.monotonic()
-            stats = await client.get("/api/workbench/stats")
-            elapsed = time.monotonic() - started
-            confirmed = await confirm_request
-            return stats, confirmed, elapsed
+            )
+            cancel_response = await client.post(
+                f"/api/workbench/tasks/{task.id}/turns/{turn.id}/confirmations/{confirmation.id}/cancel",
+                json={},
+            )
+            return confirm_response, cancel_response
 
-    stats, confirmed, elapsed = asyncio.run(exercise())
-    assert stats.status_code == confirmed.status_code == 200
-    assert elapsed < 0.25
+    confirm_response, cancel_response = asyncio.run(exercise())
+    assert confirm_response.status_code == cancel_response.status_code == 410
+    assert confirm_response.json()["detail"] == "Historical confirmations are read-only"
+    assert cancel_response.json()["detail"] == "Historical confirmations are read-only"
+    assert executor.called is False
 
 
 def test_slow_sse_snapshot_does_not_block_unrelated_async_request(

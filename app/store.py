@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
@@ -481,6 +481,7 @@ RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
         "memory",
         "email_classification",
         "email_description_optimization",
+        "workbench",
     }
 )
 MEETING_ALIGNMENT_RUN_TERMINAL_STATUSES = frozenset(
@@ -6871,6 +6872,14 @@ class AutoReplyStore:
                 raise ValueError(
                     "email description workload key must name a frozen snapshot"
                 )
+        elif workload_kind == "workbench":
+            try:
+                if str(UUID(workload_key)) != workload_key:
+                    raise ValueError
+            except (AttributeError, ValueError) as exc:
+                raise ValueError(
+                    "workbench workload key must name a persisted turn"
+                ) from exc
         else:
             source, separator, source_id = workload_key.partition(":")
             if (
@@ -6934,6 +6943,9 @@ class AutoReplyStore:
                 "where snapshot_id=? and frozen=1"
             )
             args = (snapshot_id,)
+        elif workload_kind == "workbench":
+            query = "select 1 from workbench_turns where id=? and status='running'"
+            args = (workload_key,)
         else:
             source, _, row_id = workload_key.partition(":")
             query = {

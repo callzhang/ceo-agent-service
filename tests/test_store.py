@@ -381,6 +381,19 @@ def _seed_runtime_operation_parent(
                 "values (?, 'running')",
                 (workload_key,),
             )
+        elif workload_kind == "workbench":
+            task_id = "00000000-0000-0000-0000-000000000001"
+            db.execute(
+                "insert into workbench_tasks (id, title, runtime_kind) "
+                "values (?, 'Workbench task', 'codex')",
+                (task_id,),
+            )
+            db.execute(
+                "insert into workbench_turns "
+                "(id, task_id, client_request_id, task_sequence, user_text, status) "
+                "values (?, ?, 'request-1', 1, 'Inspect sales', 'running')",
+                (workload_key, task_id),
+            )
         elif workload_kind == "email_description_optimization":
             snapshot_id, _, _ = workload_key.removeprefix(
                 "description-optimization:"
@@ -862,6 +875,7 @@ def test_runtime_attempt_upgrade_replaces_pretrim_session_evidence_triggers(
             "email_description_optimization",
             "description-optimization:snapshot-1:" + "b" * 64,
         ),
+        ("workbench", "00000000-0000-0000-0000-000000000002"),
     ],
 )
 def test_runtime_attempt_operation_accepts_approved_stable_workload_keys(

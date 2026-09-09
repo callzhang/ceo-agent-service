@@ -14,6 +14,11 @@
 
 执行 Agent 不确认自己的结果已经完成。审核 Agent 也不替执行 Agent 重写业务内容；如果业务含义、对象、证据或输出需要变化，审核 Agent 必须给出具体反馈，由执行 Agent 生成修正版。
 
+主页面 `/` 只是同一 Service Runtime 的一个输入和展示入口。页面 turn 使用 `workbench`
+workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime attempt、失败切换和 CLI
+原生 `auto_review`；页面不启动自己的 Codex runtime，也不定义独立审批策略。
+旧版确认记录只读，不能从页面或 API 恢复执行。
+
 ## 标准生命周期
 
 ```text
