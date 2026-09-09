@@ -11,6 +11,7 @@ describe("StatusBadge", () => {
     ["pending", "待处理", "status-warning"],
     ["warning", "警告", "status-warning"],
     ["completed", "已完成", "status-success"],
+    ["recovered", "已恢复", "status-success"],
     ["not ready", "未就绪", "status-danger"],
     ["Active", "进行中", "status-success"],
     ["Not active", "未启用", "status-neutral"],

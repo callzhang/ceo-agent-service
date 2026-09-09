@@ -80,6 +80,26 @@ describe("HistoryPage", () => {
     expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ status: "processing" }), expect.anything());
   });
 
+  it("offers recovered history separately from current failures", async () => {
+    const user = (await import("@testing-library/user-event")).default.setup();
+    render(<MemoryRouter><HistoryPage /></MemoryRouter>);
+
+    await user.click(await screen.findByRole("button", { name: "已恢复" }));
+
+    expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ status: "recovered" }), expect.anything());
+  });
+
+  it("shows an explicit zero when the current failure filter is empty", async () => {
+    listHistory.mockResolvedValueOnce({
+      items: [],
+      meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-09-09T00:00:00Z" },
+    });
+
+    render(<MemoryRouter initialEntries={["/history?status=failed"]}><HistoryPage /></MemoryRouter>);
+
+    expect(await screen.findByText("共 0 条")).toBeInTheDocument();
+  });
+
   it("refreshes visible queue history so completed work does not remain processing", async () => {
     vi.useFakeTimers();
     listHistory
