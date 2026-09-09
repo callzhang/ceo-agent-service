@@ -100,6 +100,13 @@ Fixture messages and models are synthetic; every API operation is in memory.
   No production runtime, authorization or unsubscribe behavior changed.
 - Integrated main `5024bbe6` (separate Connector and worker channel inventories),
   and reverted the earlier test-only three-channel expectation adjustment.
+- Independent source review identified the same environment leak in direct
+  legacy settings-handler tests in `test_audit_web.py`. The producer followed by
+  runtime-refresh test reproduced it (one passed, one failed); a module-scoped
+  test fixture now restores each test's process environment without forcing any
+  runtime default. Both source/victim checks and the Console restoration check
+  pass (three tests). The just-started full run was stopped at 462 passing tests
+  so this confirmed second source could be fixed before freezing another run.
 
 Feedback `ok=true` acknowledges the persisted classification feedback, not the
 completion of asynchronously executed mailbox actions. The page may advance to

@@ -7,6 +7,7 @@ import time
 from types import SimpleNamespace
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -78,6 +79,13 @@ def _claim_audit_run(store, task, *, owner="worker"):
         operation_id=f"audit-agent:{task.id}:{task.execution_generation}",
         owner=owner,
     )
+
+
+@pytest.fixture(autouse=True)
+def isolate_configuration_environment():
+    # Direct legacy settings handlers update process state as well as their file.
+    with patch.dict(os.environ):
+        yield
 
 
 def task_script_json(html: str, element_id: str):
