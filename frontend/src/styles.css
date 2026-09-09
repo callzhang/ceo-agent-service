@@ -933,8 +933,9 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-feedback-event-meta { display: flex; justify-content: space-between; gap: 10px; margin-top: 9px; font-weight: 500; }
 .attempt-runtime-list { display: grid; gap: 10px; }
 .attempt-runtime-entry { padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
-.attempt-runtime-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.attempt-runtime-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .attempt-runtime-heading strong { overflow-wrap: anywhere; }
+.attempt-runtime-heading p { margin: 4px 0 0; color: var(--ink-soft); font-size: .78rem; line-height: 1.45; }
 .attempt-runtime-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0; }
 .attempt-runtime-grid div { min-width: 0; }
 .attempt-runtime-grid dt { color: var(--ink-soft); font-size: .68rem; }
@@ -943,6 +944,9 @@ h1, h2, h3, p { margin-top: 0; }
 
 /* Attempt detail keeps the legacy reading order: one review card plus a side rail. */
 .attempt-conversation-banner { width: 100%; }
+.attempt-conversation-left { min-width: 0; }
+.attempt-conversation-title { display: flex; align-items: baseline; gap: 4px; min-width: 0; font-weight: 700; white-space: nowrap; }
+.attempt-conversation-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .attempt-banner-actions { min-width: 0; }
 .agent-log-button, .compact-button, .disabled-action {
   display: inline-flex;
@@ -985,6 +989,7 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-runtime-card > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 20px; color: var(--ink); cursor: pointer; list-style: none; }
 .attempt-runtime-card > summary::-webkit-details-marker { display: none; }
 .attempt-runtime-card > summary h2 { margin: 0; font-size: 1.05rem; }
+.attempt-runtime-card > summary p { max-width: 760px; margin: 5px 0 0; color: var(--ink-soft); font-size: .78rem; font-weight: 400; line-height: 1.45; }
 .attempt-runtime-card > summary span { color: var(--ink-soft); font-size: .76rem; }
 .attempt-runtime-card[open] > summary { border-bottom: 1px solid var(--line); }
 .attempt-runtime-card[open] > .attempt-runtime-list { padding: 16px 20px 20px; }

@@ -39,27 +39,32 @@ def _status_message(attempt: Any, attention: Any) -> tuple[str, bool]:
     return f"当前状态：{status or '未提供'}。", False
 
 
-def _runtime_payload(attempts: list[Any]) -> list[dict[str, Any]]:
+def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
     result = []
-    for item in attempts:
-        session_id = str(getattr(item, "session_id", "") or "").strip()
-        result.append(
-            {
-                "route": normalize_display_value(getattr(item, "route_name", "")),
-                "runtime": normalize_display_value(getattr(item, "runtime_kind", "")),
-                "credential_mode": normalize_display_value(getattr(item, "credential_mode", "")),
-                "model": normalize_display_value(getattr(item, "model", "")),
-                "session_available": bool(session_id),
-                "status": normalize_display_value(getattr(item, "status", "")),
-                "failure_code": normalize_display_value(getattr(item, "failure_code", "")),
-                "failover_permitted": bool(getattr(item, "failover_permitted", False)),
-                "transcript_start": int(getattr(item, "transcript_start", 0) or 0),
-                "transcript_end": int(getattr(item, "transcript_end", 0) or 0),
-                "effect_started_at": normalize_display_value(
-                    getattr(item, "first_effect_started_at", "")
-                ),
-            }
-        )
+    for run in agent_runs:
+        role = str(getattr(getattr(run, "role", None), "value", getattr(run, "role", "")) or "")
+        for item in store.list_agent_runtime_attempts(run.id):
+            session_id = str(getattr(item, "session_id", "") or "").strip()
+            result.append(
+                {
+                    "role": normalize_display_value(role),
+                    "proposal_revision": int(getattr(run, "proposal_revision", 0) or 0),
+                    "turn_attempt": int(getattr(run, "turn_attempt", 0) or 0),
+                    "route": normalize_display_value(getattr(item, "route_name", "")),
+                    "runtime": normalize_display_value(getattr(item, "runtime_kind", "")),
+                    "credential_mode": normalize_display_value(getattr(item, "credential_mode", "")),
+                    "model": normalize_display_value(getattr(item, "model", "")),
+                    "session_available": bool(session_id),
+                    "status": normalize_display_value(getattr(item, "status", "")),
+                    "failure_code": normalize_display_value(getattr(item, "failure_code", "")),
+                    "failover_permitted": bool(getattr(item, "failover_permitted", False)),
+                    "transcript_start": int(getattr(item, "transcript_start", 0) or 0),
+                    "transcript_end": int(getattr(item, "transcript_end", 0) or 0),
+                    "effect_started_at": normalize_display_value(
+                        getattr(item, "first_effect_started_at", "")
+                    ),
+                }
+            )
     return result
 
 
@@ -218,11 +223,7 @@ def build_attempt_detail(store: Any, attempt_id: int) -> tuple[int, dict[str, An
         task=reply_task,
         decision_options=_needs_human_decision_options(attempt, agent_runs),
     )
-    runtime_attempts = [
-        runtime
-        for run in agent_runs
-        for runtime in store.list_agent_runtime_attempts(run.id)
-    ]
+    runtime_attempts = _runtime_payload(agent_runs, store)
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
     status_message, requires_decision = _status_message(attempt, attention)
@@ -331,7 +332,7 @@ def build_attempt_detail(store: Any, attempt_id: int) -> tuple[int, dict[str, An
         "actions": _action_links(
             attempt, agent_runs, reply_task, sent_reply, wechat_delivery
         ),
-        "runtime_attempts": _runtime_payload(runtime_attempts),
+            "runtime_attempts": runtime_attempts,
         "created_at": normalize_display_value(attempt.created_at),
         "updated_at": normalize_display_value(attempt.updated_at),
     }

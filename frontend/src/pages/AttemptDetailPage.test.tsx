@@ -60,7 +60,7 @@ const detail = {
     terminal: true,
     action_label: "无需操作",
   },
-  runtime_attempts: [{ route: "consumer", runtime: "codex", credential_mode: "configured", model: "qwen", session_available: true, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 1, transcript_end: 2, effect_started_at: "" }],
+  runtime_attempts: [{ role: "consumer", proposal_revision: 0, turn_attempt: 0, route: "consumer", runtime: "codex", credential_mode: "configured", model: "qwen", session_available: true, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 1, transcript_end: 2, effect_started_at: "" }],
   created_at: "2026-08-29T10:00:00Z",
   updated_at: "2026-08-29T10:01:00Z",
 };
@@ -103,14 +103,18 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("岗位画像")).toBeInTheDocument();
     expect(screen.getByText("判断岗位要求")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Tool uses" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("attempt-conversation-summary")).toHaveTextContent("群名：吴柯欣");
+    expect(screen.getByTestId("attempt-title-row")).not.toContainElement(screen.getByRole("link", { name: "查看 Agent session" }));
+    expect(screen.getByTestId("attempt-conversation-actions")).toContainElement(screen.getByRole("link", { name: "查看 Agent session" }));
     expect(screen.getByRole("link", { name: "查看 Agent session" })).toHaveAttribute("href", "/codex/session-8448");
     expect(screen.queryByRole("heading", { name: "Draft reply (raw Codex reply)" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Runtime attempts" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "处理过程" })).toBeInTheDocument();
+    expect(screen.getByText(/每一轮会先由处理 Agent 形成方案，再由审计 Agent 核验。多条记录表示修订、重试或重新核验，不代表重复发送。/)).toBeInTheDocument();
+    expect(screen.getByText("处理判断 · 第 1 轮")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-grid")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-side")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-main .attempt-review-block + .attempt-review-block")).toBeInTheDocument();
     expect(document.querySelector(".attempt-status-card")).not.toBeInTheDocument();
-    expect(screen.getByText("已关联会话（标识已隐藏）")).toBeInTheDocument();
     expect(screen.queryByText("session-8448")).not.toBeInTheDocument();
   });
 

@@ -6,6 +6,9 @@ export interface AttemptMetadata {
 }
 
 export interface AttemptRuntimeEntry {
+  role: string;
+  proposal_revision: number;
+  turn_attempt: number;
   route: string;
   runtime: string;
   credential_mode: string;
