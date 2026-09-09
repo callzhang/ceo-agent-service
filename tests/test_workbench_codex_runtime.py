@@ -1331,6 +1331,19 @@ def test_owned_executor_records_spawned_pid_without_live_pgid_lookup(
     assert result.returncode == 0
 
 
+def test_owned_executor_supports_non_streaming_runtime_probe_calls(tmp_path: Path):
+    result = _CancellableProcessExecutor(cwd=tmp_path)(
+        [sys.executable, "-c", "print('probe')"],
+        prompt="",
+        env=None,
+        total_timeout_seconds=5,
+        idle_timeout_seconds=5,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "probe"
+
+
 def test_repeated_fast_exit_runs_do_not_leak_parent_file_descriptors(tmp_path: Path):
     initial_fd_count = len(os.listdir("/dev/fd"))
 

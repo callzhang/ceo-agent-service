@@ -466,7 +466,7 @@ class _CancellableProcessExecutor:
         env: dict[str, str] | None,
         total_timeout_seconds: float,
         idle_timeout_seconds: float,
-        on_stdout_line: Callable[[str], None],
+        on_stdout_line: Callable[[str], None] | None = None,
     ) -> ProcessRunResult:
         started_at = time.monotonic()
         last_output_at = started_at
@@ -580,7 +580,8 @@ class _CancellableProcessExecutor:
                         line_buffer += decoder.decode(chunk)
                         while "\n" in line_buffer:
                             line, line_buffer = line_buffer.split("\n", 1)
-                            on_stdout_line(line.removesuffix("\r"))
+                            if on_stdout_line is not None:
+                                on_stdout_line(line.removesuffix("\r"))
                     last_output_at = time.monotonic()
                 if process.poll() is not None:
                     if selector.get_map():
@@ -606,7 +607,7 @@ class _CancellableProcessExecutor:
             with self._lock:
                 self._process = None
         line_buffer += decoder.decode(b"", final=True)
-        if line_buffer:
+        if line_buffer and on_stdout_line is not None:
             on_stdout_line(line_buffer.removesuffix("\r"))
         return ProcessRunResult(
             returncode=returncode,
