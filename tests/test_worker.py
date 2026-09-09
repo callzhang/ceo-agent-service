@@ -1883,8 +1883,6 @@ def test_disabled_message_triage_does_not_create_manual_rerun_task(tmp_path, mon
 
 
 def test_worker_defaults_to_real_channel_gates(tmp_path, monkeypatch):
-    from app.channel_gate import FxiaokeCliGate
-
     monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
     monkeypatch.setattr(worker_module, "default_channel_gates", default_channel_gates)
     worker = worker_module.DingTalkAutoReplyWorker(
@@ -1895,8 +1893,7 @@ def test_worker_defaults_to_real_channel_gates(tmp_path, monkeypatch):
 
     assert isinstance(worker.channel_gates["dingtalk"], DwsChannelGate)
     assert isinstance(worker.channel_gates["lark"], LarkChannelGate)
-    assert isinstance(worker.channel_gates["fxiaoke"], FxiaokeCliGate)
-    assert set(worker.channel_gates) == {"dingtalk", "lark", "fxiaoke"}
+    assert set(worker.channel_gates) == {"dingtalk", "lark"}
 
 
 def test_notification_url_includes_attempt_id(tmp_path, monkeypatch):
