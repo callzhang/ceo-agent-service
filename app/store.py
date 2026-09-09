@@ -17052,8 +17052,8 @@ class AutoReplyStore:
                         human_decision_options_json,
                         oa_process_instance_id, oa_task_id, oa_url, oa_action,
                         oa_remark, oa_action_result_json, send_status, send_error,
-                        channel
-                    ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        final_reply_text, channel
+                    ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         conversation_id,
@@ -17062,6 +17062,7 @@ class AutoReplyStore:
                         trigger_sender,
                         trigger_text,
                         *projection_values,
+                        sent_reply_text,
                         channel,
                     ),
                 )
@@ -17080,7 +17081,7 @@ class AutoReplyStore:
                         human_decision_options_json=?, oa_process_instance_id=?,
                         oa_task_id=?, oa_url=?, oa_action=?, oa_remark=?,
                         oa_action_result_json=?, send_status=?, send_error=?,
-                        final_reply_text='', permission_action='',
+                        final_reply_text=?, permission_action='',
                         permission_reason='', retry_count=0,
                         updated_at=current_timestamp
                     where id=?
@@ -17092,6 +17093,7 @@ class AutoReplyStore:
                         trigger_sender,
                         trigger_text,
                         *projection_values,
+                        sent_reply_text,
                         attempt_id,
                     ),
                 )
