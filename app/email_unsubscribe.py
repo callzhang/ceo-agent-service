@@ -318,6 +318,23 @@ class UnsubscribeAuthenticationControlsError(UnsubscribeBrowserError):
     """The page exposes authentication or credential controls."""
 
 
+_BROWSER_FAILURE_CODES = {
+    "browser operation timed out": "email_unsubscribe_browser_timeout",
+    "browser network request rejected": "email_unsubscribe_browser_network_rejected",
+    "unsubscribe page state is unknown": "email_unsubscribe_page_state_unknown",
+    "unsubscribe page has no visible state": "email_unsubscribe_page_state_missing",
+}
+
+
+def _browser_failure_code(error: Exception) -> str:
+    if isinstance(error, UnsubscribeBrowserError):
+        return _BROWSER_FAILURE_CODES.get(
+            str(error),
+            "email_unsubscribe_browser_failed",
+        )
+    return "email_unsubscribe_browser_failed"
+
+
 _AUTHENTICATION_CONTROL_PREDICATE_JS = r"""
 const reflectApply = Reflect.apply;
 const elementGetAttribute = Element.prototype.getAttribute;
@@ -2846,7 +2863,9 @@ class PlaywrightUnsubscribeBrowser:
             return observation
         except (UnsubscribeBrowserError, UnsubscribeProviderAuthError):
             raise
-        except Exception:
+        except Exception as exc:
+            if "timeout" in type(exc).__name__.casefold():
+                raise UnsubscribeBrowserError("browser operation timed out") from None
             raise UnsubscribeBrowserError("browser operation failed") from None
 
 
@@ -3742,14 +3761,14 @@ class UnsubscribeExecutor:
                 journal,
                 error_code="email_unsubscribe_provider_auth_failed",
             )
-        except Exception:
+        except Exception as exc:
             return _result(
                 UnsubscribeOutcome.FAILED_BROWSER,
                 journal,
                 error_code=(
                     _UNRESOLVED_ERROR
                     if reconciliation_only
-                    else "email_unsubscribe_browser_failed"
+                    else _browser_failure_code(exc)
                 ),
             )
         if receipt is not None:
@@ -3836,14 +3855,14 @@ class UnsubscribeExecutor:
                 journal,
                 error_code="email_unsubscribe_provider_auth_failed",
             )
-        except Exception:
+        except Exception as exc:
             return _result(
                 UnsubscribeOutcome.FAILED_BROWSER,
                 journal,
                 error_code=(
                     _UNRESOLVED_ERROR
                     if reconciliation_only
-                    else "email_unsubscribe_browser_failed"
+                    else _browser_failure_code(exc)
                 ),
             )
         reconcile_step = (
@@ -3935,11 +3954,11 @@ class UnsubscribeExecutor:
                     journal,
                     error_code="email_unsubscribe_provider_auth_failed",
                 )
-            except Exception:
+            except Exception as exc:
                 return _result(
                     UnsubscribeOutcome.FAILED_BROWSER,
                     journal,
-                    error_code="email_unsubscribe_browser_failed",
+                    error_code=_browser_failure_code(exc),
                 )
             operation_step = RedactedUnsubscribeStep(
                 operation=operation.kind.value,

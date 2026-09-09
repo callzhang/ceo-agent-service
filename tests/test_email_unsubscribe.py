@@ -1338,6 +1338,11 @@ def test_reconciled_business_terminal_states_do_not_execute(
             "email_unsubscribe_browser_failed",
         ),
         (
+            UnsubscribeBrowserError("browser operation timed out"),
+            UnsubscribeOutcome.FAILED_BROWSER,
+            "email_unsubscribe_browser_timeout",
+        ),
+        (
             UnsubscribeProviderAuthError("auth token=private"),
             UnsubscribeOutcome.FAILED_PROVIDER_AUTH,
             "email_unsubscribe_provider_auth_failed",
