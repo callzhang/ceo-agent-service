@@ -326,7 +326,7 @@ def _complete_setup(store: WorkbenchStore) -> None:
         )
 
 
-def test_workbench_stream_stop_and_reviewed_confirmation_are_end_to_end(
+def test_workbench_stream_stop_and_legacy_confirmation_read_only_are_end_to_end(
     tmp_path: Path, monkeypatch
 ) -> None:
     db_path = tmp_path / "workbench.sqlite3"
@@ -509,38 +509,29 @@ def test_workbench_stream_stop_and_reviewed_confirmation_are_end_to_end(
             assert (
                 requested.status_code
                 == duplicate_before_quiescence.status_code
-                == 200
+                == 410
             )
-            assert requested.json()["status"] == "pending"
-            assert requested.json()["decision_requested"] == "confirm"
+            assert requested.json()["detail"] == "Historical confirmations are read-only"
             assert writer_calls == []
 
             runtime.release(confirm_turn_id)
-            confirmed_terminal = _wait_for_json(
+            stopped_confirmation = client.post(
+                f"/api/workbench/tasks/{task_id}/turns/{confirm_turn_id}/stop",
+                json={},
+            )
+            assert stopped_confirmation.status_code == 200
+            confirmation_terminal = _wait_for_json(
                 client,
                 f"/api/workbench/turns/{confirm_turn_id}",
-                lambda payload: payload["status"] == "completed",
+                lambda payload: payload["status"] == "stopped",
             )
-            assert confirmed_terminal["final_text"] == "Reviewed action completed"
+            assert confirmation_terminal["final_text"] == ""
             duplicate_after_execution = client.post(confirm_path, json={})
-            assert duplicate_after_execution.status_code == 200
-            assert duplicate_after_execution.json()["status"] == "executed"
-            assert writer_calls == [
-                [
-                    "/fixture/bin/dws",
-                    "chat",
-                    "message",
-                    "send",
-                    "--group",
-                    "fixture-group",
-                    "--text",
-                    "fixture update",
-                    "--yes",
-                ]
-            ]
+            assert duplicate_after_execution.status_code == 410
+            assert writer_calls == []
             assert (
                 [request.turn_id for request in runtime.requests].count(confirm_turn_id)
-                == 2
+                == 1
             )
             confirm_events = client.get(
                 f"/api/workbench/turns/{confirm_turn_id}/events", params={"after": 0}

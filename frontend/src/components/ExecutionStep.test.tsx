@@ -66,6 +66,29 @@ describe("ExecutionStep", () => {
     expect(screen.getByText(/"structuredContent"/)).toBeInTheDocument();
   });
 
+  it("renders a session trace with separate tool identity, input and output", () => {
+    render(
+      <ExecutionStep
+        kind="tool"
+        status="completed"
+        payload={{
+          kind: "trace",
+          name: "functions.exec_command",
+          tool_call_id: "call-3",
+          input: { cmd: "rg --files app" },
+          output: "app/codex_history.py\n",
+        }}
+      />,
+    );
+
+    expect(screen.getAllByText("functions.exec_command")).toHaveLength(2);
+    expect(screen.getByText("调用名称")).toBeInTheDocument();
+    expect(screen.getByText("输入")).toBeInTheDocument();
+    expect(screen.getByText(/rg --files app/)).toBeInTheDocument();
+    expect(screen.getByText("输出")).toBeInTheDocument();
+    expect(screen.getByText(/app\/codex_history\.py/)).toBeInTheDocument();
+  });
+
   it("truthfully marks historical generic tool events as incomplete", () => {
     render(<ExecutionStep kind="tool" status="completed" payload={{ tool: "本地命令", summary: "已完成" }} />);
 

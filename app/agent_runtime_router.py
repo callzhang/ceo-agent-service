@@ -366,6 +366,16 @@ class RoutedCodexExecutionError(RuntimeError):
         super().__init__(code)
 
 
+class RoutedCodexExecutionCancelled(RoutedCodexExecutionError):
+    def __init__(self) -> None:
+        super().__init__(
+            "runtime_cancelled",
+            "the caller requested cancellation",
+            failure_class=RuntimeFailureClass.PROCESS,
+            failure_code="runtime_cancelled",
+        )
+
+
 def _runtime_failure_from_friday_error(error: FridayRuntimeError) -> RuntimeFailure:
     """Map Friday's transport result into the shared route-failover contract."""
 
@@ -786,7 +796,11 @@ class RoutedCodexExecution:
         conversation_id: str | None = None,
         required_capabilities: frozenset[str] = frozenset(),
         result_validation_retry: RoutedResultValidationRetry | None = None,
+        on_stdout_line: Callable[[str], None] | None = None,
+        cancel_requested: Callable[[], bool] | None = None,
     ) -> RoutedCodexExecutionResult[ResultT]:
+        if cancel_requested is not None and cancel_requested():
+            raise RoutedCodexExecutionCancelled()
         if self._refresh_runtime_capabilities is not None:
             self._refresh_runtime_capabilities(force=False)
         if not isinstance(command_factory, CodexCommandFactory):
@@ -1042,6 +1056,8 @@ class RoutedCodexExecution:
                         owner=self._owner,
                         now=self._now(),
                     )
+                if on_stdout_line is not None:
+                    on_stdout_line(line)
             active_attempt = self._finalized_step(
                 active_attempt,
                 stage="lease_renewal",
@@ -1179,6 +1195,18 @@ class RoutedCodexExecution:
                         on_stdout_line=observe_stdout_line,
                     ),
                 )
+
+            if cancel_requested is not None and cancel_requested():
+                self._terminalize_active_attempt(
+                    active_attempt,
+                    failure_class=RuntimeFailureClass.PROCESS,
+                    failure_code="runtime_cancelled",
+                    session_id=observed_session_id,
+                    transcript_reference=transcript_reference,
+                    transcript_start=transcript_start,
+                    transcript_end=max(transcript_start + line_count, transcript_start),
+                )
+                raise RoutedCodexExecutionCancelled()
 
             buffered_session_id = self._finalized_step(
                 active_attempt,

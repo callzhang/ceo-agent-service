@@ -9920,16 +9920,21 @@ def create_audit_app(
     audit_store = _audit_store(db_path)
 
     from app.workbench.api import register_workbench_routes
-    from app.workbench.codex_runtime import CodexRuntime
     from app.workbench.executor import WorkbenchExecutor
     from app.workbench.runtime import RuntimeRegistry
+    from app.workbench.service_runtime import ServiceWorkbenchRuntime
     from app.workbench.store import WorkbenchStore
 
     asset_dir = Path(workbench_asset_dir or _workbench_asset_dir()).resolve()
     workbench_store = WorkbenchStore(db_path)
     effective_workspace = Path(workbench_workspace or workspace_path()).resolve()
     runtime_registry = workbench_runtime_registry or RuntimeRegistry(
-        [CodexRuntime(workspace=effective_workspace)]
+        [
+            ServiceWorkbenchRuntime(
+                workspace=effective_workspace,
+                store=audit_store,
+            )
+        ]
     )
     executor = workbench_executor or WorkbenchExecutor(
         workbench_store,

@@ -31,6 +31,7 @@ from app.workbench.runtime import (
     _release_runtime_owner,
     _runtime_owner,
 )
+from app.wechat.codex_safety import make_role_agent_command
 
 
 _MAX_PREAMBLE_BYTES = 8 * 1024
@@ -465,7 +466,7 @@ class _CancellableProcessExecutor:
         env: dict[str, str] | None,
         total_timeout_seconds: float,
         idle_timeout_seconds: float,
-        on_stdout_line: Callable[[str], None],
+        on_stdout_line: Callable[[str], None] | None = None,
     ) -> ProcessRunResult:
         started_at = time.monotonic()
         last_output_at = started_at
@@ -579,7 +580,8 @@ class _CancellableProcessExecutor:
                         line_buffer += decoder.decode(chunk)
                         while "\n" in line_buffer:
                             line, line_buffer = line_buffer.split("\n", 1)
-                            on_stdout_line(line.removesuffix("\r"))
+                            if on_stdout_line is not None:
+                                on_stdout_line(line.removesuffix("\r"))
                     last_output_at = time.monotonic()
                 if process.poll() is not None:
                     if selector.get_map():
@@ -605,7 +607,7 @@ class _CancellableProcessExecutor:
             with self._lock:
                 self._process = None
         line_buffer += decoder.decode(b"", final=True)
-        if line_buffer:
+        if line_buffer and on_stdout_line is not None:
             on_stdout_line(line_buffer.removesuffix("\r"))
         return ProcessRunResult(
             returncode=returncode,
@@ -710,16 +712,17 @@ class CodexRuntime:
             image_paths=validated_images,
             use_output_schema=False,
             approval_policy="on-failure",
-            use_approval_bypass=True,
+            use_approval_bypass=False,
             preserve_native_model_config=True,
             preserve_native_instructions=True,
-            preserve_native_approval_config=True,
+            preserve_native_approval_config=False,
         )
         insert_at = 3 if provider_session_ref else 2
         overlay: list[str] = []
         if model.strip():
             overlay[0:0] = ["-m", model.strip()]
         command[insert_at:insert_at] = overlay
+        make_role_agent_command(command)
         return command
 
     def start(

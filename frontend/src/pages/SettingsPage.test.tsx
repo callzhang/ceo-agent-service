@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -236,6 +236,29 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("unknown")).not.toBeInTheDocument();
   });
 
+  it("renders Fxiaoke CLI as a Connector with its local login status", async () => {
+    getSettings.mockResolvedValueOnce({
+      item: {
+        section: "connectors",
+        fxiaoke: {
+          channel: "fxiaoke",
+          state: "ready",
+          reason_code: "ready",
+          detail: "已登录纷享销客：章磊；CLI 1.1.12",
+          commands: [["sharecrm", "auth", "status"]],
+        },
+      },
+      meta: { snapshot_at: "2026-09-08T00:00:00Z" },
+    });
+
+    renderSettings("/settings?tab=connectors&connector=fxiaoke");
+
+    expect(await screen.findByRole("tab", { name: "纷享销客 CLI" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "纷享销客 CLI" })).toBeInTheDocument();
+    expect(screen.getByText("已登录纷享销客：章磊；CLI 1.1.12")).toBeInTheDocument();
+    expect(screen.getByText("sharecrm auth status")).toBeInTheDocument();
+  });
+
   it("keeps WeChat reading separate from the automatic-reply switch", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
@@ -245,7 +268,7 @@ describe("SettingsPage", () => {
     renderSettings("/settings?tab=connectors&connector=wechat");
 
     const toggle = await screen.findByRole("switch", { name: "启用微信自动回复" });
-    expect(toggle).toBeChecked();
+    await waitFor(() => expect(toggle).toBeChecked());
     expect(screen.getByText(/关闭后仍会保留微信读取和已选对象/)).toBeInTheDocument();
     expect(screen.getByText(/已生成的待发送消息保持原状态/)).toBeInTheDocument();
     await user.click(toggle);

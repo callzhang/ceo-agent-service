@@ -523,14 +523,88 @@ class LarkChannelGate:
         return _result(self.channel_name, ChannelGateState.READY, "ready", commands)
 
 
+class FxiaokeCliGate:
+    channel_name = "fxiaoke"
+
+    def __init__(
+        self,
+        *,
+        binary: str = "sharecrm",
+        runner: CliRunner = subprocess.run,
+    ):
+        self.binary = binary
+        self.runner = runner
+
+    def check(self) -> ChannelGateResult:
+        status_command = [self.binary, "auth", "status"]
+        commands: list[list[str]] = []
+        if not self.binary.strip():
+            return _result(
+                self.channel_name,
+                ChannelGateState.BLOCKED,
+                "configuration_missing",
+                commands,
+                detail="ShareCRM CLI binary is not configured",
+            )
+        status = _run_command(
+            channel=self.channel_name,
+            phase="status",
+            command=status_command,
+            commands=commands,
+            runner=self.runner,
+            env=os.environ.copy(),
+        )
+        if isinstance(status, ChannelGateResult):
+            return status
+        payloads = _json_objects(status.stdout, status.stderr)
+        classified = _classify_structured_failure(
+            channel=self.channel_name,
+            phase="status",
+            completed=status,
+            payloads=payloads,
+            commands=commands,
+        )
+        if classified is not None:
+            return classified
+        if status.returncode != 0:
+            return _generic_failure(
+                channel=self.channel_name,
+                phase="status",
+                completed=status,
+                commands=commands,
+            )
+        if not payloads:
+            return _invalid_json(self.channel_name, "status", status, commands)
+
+        payload = payloads[0]
+        if payload.get("identity") != "user" or payload.get("tokenStatus") != "normal":
+            return _result(
+                self.channel_name,
+                ChannelGateState.NEEDS_LOGIN,
+                "status_auth_invalid",
+                commands,
+            )
+        user_name = str(payload.get("userName") or "当前用户")
+        cli_version = str(payload.get("cliVersion") or "未知版本")
+        return _result(
+            self.channel_name,
+            ChannelGateState.READY,
+            "ready",
+            commands,
+            detail=f"已登录纷享销客：{user_name}；CLI {cli_version}",
+        )
+
+
 def default_channel_gates(
     *,
     dws_binary: str = "dws",
     lark_binary: str = "lark-cli",
+    fxiaoke_binary: str = "sharecrm",
 ) -> dict[str, ChannelGate]:
     gates: tuple[ChannelGate, ...] = (
         DwsChannelGate(binary=dws_binary),
         LarkChannelGate(binary=lark_binary),
+        FxiaokeCliGate(binary=fxiaoke_binary),
     )
     return {gate.channel_name: gate for gate in gates}
 

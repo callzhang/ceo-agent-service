@@ -1,5 +1,16 @@
 # Changelog
 
+- 2026-09-08: register the installed Fxiaoke `sharecrm` CLI in Settings →
+  Connectors. The page now reports executable/authentication readiness, current
+  CRM user, CLI version, and the read-only status check used by the service.
+
+- 2026-09-08: route main-page Agent turns through the shared Service Runtime.
+  Main-page work now shares route selection, runtime-attempt persistence,
+  session continuity, failover, cancellation, and native CLI `auto_review`
+  with other service Agents; the production path no longer starts the separate
+  Workbench Codex runtime or uses approval bypass. Legacy Workbench confirmations
+  remain visible as read-only history and cannot execute from the UI or API.
+
 - 2026-09-08: allow `send-attempt` to reopen a `needs_human` result only when
   an explicit reviewed instruction is supplied. The instruction creates a new
   Consumer/Audit revision while preserving the original decision record; sent

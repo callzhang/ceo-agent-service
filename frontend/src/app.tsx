@@ -3,8 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   archiveTask,
-  cancelAction,
-  confirmAction,
   createTask,
   createTurn,
   getStats,
@@ -28,7 +26,6 @@ import { TaskList } from "./components/TaskList";
 import { TurnInspector } from "./components/TurnInspector";
 import { applyWorkbenchEvent, createEventState, EventStreamConnection } from "./events";
 import type {
-  Confirmation,
   ConfirmationStatus,
   RuntimeCapabilities,
   Task,
@@ -278,7 +275,6 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
   const resourceQueuesRef = useRef<ResourcePageQueues>(emptyResourcePageQueues());
   const loadedOlderTimelineRef = useRef(false);
   const streamRef = useRef<EventStreamConnection | null>(null);
-  const confirmationMutationsRef = useRef(new Set<string>());
   const feedbackLoadRef = useRef<{ id: number; controller: AbortController } | null>(null);
   const feedbackPreloadRef = useRef<{ generation: number; controller: AbortController } | null>(null);
   const feedbackPreloadGenerationRef = useRef(0);
@@ -1214,31 +1210,6 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
     };
   }, [activeTurn?.id, scheduleSelectedTimelineRefresh, scheduleStatsRefresh, selectedTaskId, writeTasks, writeTimeline]);
 
-  async function decideConfirmation(confirmation: Confirmation, decision: "confirm" | "cancel") {
-    const taskId = selectedTaskIdRef.current;
-    if (!taskId || confirmationMutationsRef.current.has(confirmation.id)) return;
-    confirmationMutationsRef.current.add(confirmation.id);
-    try {
-      const decided = await (decision === "confirm" ? confirmAction : cancelAction)(
-        taskId,
-        confirmation.turn_id,
-        confirmation.id,
-      );
-      if (selectedTaskIdRef.current !== taskId) return;
-      writeTimeline((current) => current && current.task.id === taskId ? {
-        ...current,
-        confirmations: current.confirmations.map((item) => item.id === decided.id ? decided : item),
-      } : current);
-      scheduleStatsRefresh();
-      await loadSelectedTimeline(taskId, "recent");
-    } catch (error) {
-      if (selectedTaskIdRef.current === taskId) await loadSelectedTimeline(taskId, "recent");
-      throw error;
-    } finally {
-      confirmationMutationsRef.current.delete(confirmation.id);
-    }
-  }
-
   async function handleTurnCreated(turn: Turn) {
     const taskId = selectedTaskIdRef.current;
     if (!taskId || turn.task_id !== taskId) return;
@@ -1514,8 +1485,6 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
                     <ConversationTimeline
                       timeline={timeline}
                       activeTurnId={activeTurn?.id ?? null}
-                      onConfirm={(confirmation) => decideConfirmation(confirmation, "confirm")}
-                      onCancel={(confirmation) => decideConfirmation(confirmation, "cancel")}
                     />
                   ) : (
                     <div className="conversation-empty">

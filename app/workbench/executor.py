@@ -203,11 +203,6 @@ class WorkbenchExecutor:
         with self._map_lock:
             if self._closed:
                 raise RuntimeError("workbench executor is closed")
-        for confirmation_id, intent in self.store.requested_quiesced_confirmation_ids():
-            if intent == "confirm":
-                self.confirm(confirmation_id)
-            elif intent == "cancel":
-                self.cancel(confirmation_id)
         claimed: list[WorkbenchTurn] = []
         futures = []
         with self._schedule_lock:
@@ -475,6 +470,7 @@ class WorkbenchExecutor:
                     turn_id=turn.id,
                     workspace=self.workspace,
                     prompt=prompt,
+                    conversation_id=turn.task_id,
                     provider_session_ref=task.provider_session_ref,
                     attachment_paths=attachment_paths,
                     image_paths=image_paths,

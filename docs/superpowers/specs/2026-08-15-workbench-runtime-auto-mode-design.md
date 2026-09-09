@@ -1,5 +1,9 @@
 # Workbench Runtime Auto Mode Design
 
+> Superseded on 2026-09-08. The main page now enters the shared Service Runtime
+> with native CLI `auto_review`; it no longer uses approval bypass or a separate
+> Workbench provider runtime. See `docs/architecture.md`.
+
 ## Goal
 
 Make the local, single-user Agent Workbench a white-box runtime console instead of a second permission system.
@@ -8,7 +12,7 @@ Make the local, single-user Agent Workbench a white-box runtime console instead 
 
 The Workbench runs for one CEO under that person's macOS account. It coordinates the selected Agent runtime, persists state, streams progress, and renders the runtime's evidence. It does not classify commands as safe or unsafe, inject a separate confirmation tool, mask local paths, or reject/redact provider output because it resembles a credential.
 
-Codex runs with its non-interactive approval-and-sandbox bypass so local commands and MCP tools do not pause behind Codex approval review. Claude and Pi adapters must map the same Workbench contract to their corresponding automatic execution modes when those adapters are added.
+This historical design used non-interactive approval bypass. That decision is no longer active: all new main-page turns use the shared Service Runtime and native CLI `auto_review`.
 
 ## Runtime flow
 
@@ -41,7 +45,7 @@ These mechanisms prevent duplicate work and corrupt state; they do not judge whe
 
 ## Verification
 
-- Command construction proves bypass mode is present and confirmation overlays/instructions are absent.
+- Command construction proves native CLI `auto_review` is present and approval bypass is absent.
 - A provider event named like the former confirmation tool remains a normal MCP tool event and cannot pause the turn.
 - Credential-shaped assistant, command, MCP result, path, and provider data survive normalization unchanged.
 - Frontend tool cards render the same values unchanged.

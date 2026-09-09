@@ -3,6 +3,8 @@ import { Link, useParams } from "react-router-dom";
 
 import { displayValue, getCodexSession } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
+import { ExecutionStep } from "../components/ExecutionStep";
+import { MarkdownContent } from "../components/MarkdownContent";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { StatusBadge } from "../components/status/StatusBadge";
 
@@ -11,6 +13,12 @@ type CodexSessionEvent = {
   kind?: string;
   title?: string;
   body?: string;
+  trace?: {
+    call_id?: string;
+    name?: string;
+    input?: string;
+    output?: string;
+  };
 };
 
 type CodexSessionPayload = {
@@ -30,7 +38,7 @@ function eventLabel(kind?: string) {
   if (kind === "user") return "任务与上下文";
   if (kind === "assistant") return "Agent 输出";
   if (kind === "reasoning") return "思考摘要";
-  if (kind === "tool") return "工具执行";
+  if (kind === "tool" || kind === "tool_call") return "工具调用";
   return "执行事件";
 }
 
@@ -52,13 +60,67 @@ function eventText(event: CodexSessionEvent) {
   return body;
 }
 
+function traceValue(value?: string): unknown {
+  if (!value) return "未记录";
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+type TimelineRow = {
+  event: CodexSessionEvent;
+  output?: CodexSessionEvent;
+};
+
+function callId(event: CodexSessionEvent) {
+  return event.trace?.call_id || "";
+}
+
+function timelineRows(events: CodexSessionEvent[]): TimelineRow[] {
+  const outputsByCallId = new Map<string, CodexSessionEvent>();
+  for (const event of events) {
+    if (event.kind === "tool_output" && callId(event)) outputsByCallId.set(callId(event), event);
+  }
+  return events.flatMap((event) => {
+    if (event.kind === "tool_output") return [];
+    if (event.kind !== "tool_call") return [{ event }];
+    return [{ event, output: outputsByCallId.get(callId(event)) }];
+  });
+}
+
+function SessionMarkdown({ event }: { event: CodexSessionEvent }) {
+  const text = eventText(event);
+  const shouldCollapse = text.length > 1_200 || event.kind === "system_context";
+  if (!shouldCollapse) return <MarkdownContent text={text} />;
+  return <details className="codex-session-event-content-collapse"><summary>查看完整内容（{text.length.toLocaleString()} 字）</summary><MarkdownContent text={text} /></details>;
+}
+
+function SessionTrace({ event, output }: { event: CodexSessionEvent; output?: CodexSessionEvent }) {
+  const trace = event.trace || {};
+  const result = output?.trace?.output ?? trace.output;
+  return <ExecutionStep
+    kind="tool"
+    status={result === undefined ? "running" : "completed"}
+    payload={{
+      kind: "trace",
+      name: trace.name || event.title?.replace(/^Tool call:\s*/, "") || "工具调用",
+      tool_call_id: trace.call_id,
+      input: traceValue(trace.input ?? event.body),
+      ...(result !== undefined ? { output: traceValue(result) } : {}),
+    }}
+  />;
+}
+
 function SessionTimeline({ events }: { events: CodexSessionEvent[] }) {
   if (!events.length) return <section className="console-card page-state">本次没有可展示的执行事件。</section>;
+  const rows = timelineRows(events);
   return <section className="console-card codex-session-timeline" aria-label="Agent 执行时间线">
-    <div className="codex-session-timeline-header"><div><h2>Agent 执行过程</h2><p>按发生顺序记录任务输入、Agent 输出与可见执行结果。</p></div><span>{events.length} 个事件</span></div>
-    <ol>{events.map((event, index) => <li className={`codex-session-event codex-session-event-${event.kind || "system"}`} key={`${event.timestamp}-${index}`}>
+    <div className="codex-session-timeline-header"><div><h2>Agent 执行过程</h2><p>按发生顺序记录任务输入、Agent 输出与可见工具调用；展开工具卡可查看输入与输出。</p></div><span>{rows.length} 条记录</span></div>
+    <ol>{rows.map(({ event, output }, index) => <li className={`codex-session-event codex-session-event-${event.kind || "system"}`} key={`${event.timestamp}-${index}`}>
       <div className="codex-session-event-rail"><span aria-hidden="true" /><time>{displayEventTime(event.timestamp)}</time></div>
-      <article><header><span>{eventLabel(event.kind)}</span>{event.kind !== "reasoning" && <small>{event.title || "已记录"}</small>}</header><p>{eventText(event)}</p></article>
+      <article>{event.kind === "tool" || event.kind === "tool_call" ? <SessionTrace event={event} output={output} /> : <><header><span>{eventLabel(event.kind)}</span>{event.kind !== "reasoning" && <small>{event.title || "已记录"}</small>}</header><SessionMarkdown event={event} /></>}</article>
     </li>)}</ol>
   </section>;
 }

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
@@ -481,6 +481,7 @@ RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
         "memory",
         "email_classification",
         "email_description_optimization",
+        "workbench",
     }
 )
 MEETING_ALIGNMENT_RUN_TERMINAL_STATUSES = frozenset(
@@ -6871,6 +6872,14 @@ class AutoReplyStore:
                 raise ValueError(
                     "email description workload key must name a frozen snapshot"
                 )
+        elif workload_kind == "workbench":
+            try:
+                if str(UUID(workload_key)) != workload_key:
+                    raise ValueError
+            except (AttributeError, ValueError) as exc:
+                raise ValueError(
+                    "workbench workload key must name a persisted turn"
+                ) from exc
         else:
             source, separator, source_id = workload_key.partition(":")
             if (
@@ -6934,6 +6943,9 @@ class AutoReplyStore:
                 "where snapshot_id=? and frozen=1"
             )
             args = (snapshot_id,)
+        elif workload_kind == "workbench":
+            query = "select 1 from workbench_turns where id=? and status='running'"
+            args = (workload_key,)
         else:
             source, _, row_id = workload_key.partition(":")
             query = {
@@ -22514,7 +22526,31 @@ class AutoReplyStore:
                     updated_at as occurred_at,
                     'Reply' as category,
                     action as action,
-                    send_status as status,
+                    case
+                        when send_status='failed' and (
+                            exists (
+                                select 1
+                                from reply_attempts as later_attempts
+                                where later_attempts.channel=reply_attempts.channel
+                                  and later_attempts.conversation_id=reply_attempts.conversation_id
+                                  and later_attempts.trigger_message_id=reply_attempts.trigger_message_id
+                                  and later_attempts.id>reply_attempts.id
+                                  and later_attempts.send_status in (
+                                      'sent', 'completed', 'skipped', 'needs_human',
+                                      'reacted', 'commented', 'calendar', 'document'
+                                  )
+                            )
+                            or exists (
+                                select 1
+                                from reply_tasks as terminal_tasks
+                                where terminal_tasks.channel=reply_attempts.channel
+                                  and terminal_tasks.conversation_id=reply_attempts.conversation_id
+                                  and terminal_tasks.trigger_message_id=reply_attempts.trigger_message_id
+                                  and terminal_tasks.status in ('done', 'skipped', 'needs_human')
+                            )
+                        ) then 'recovered'
+                        else send_status
+                    end as status,
                     case
                         when action='oa_approval' or oa_process_instance_id<>'' then 'approval'
                         when channel='wechat' then 'wechat'
@@ -22543,6 +22579,9 @@ class AutoReplyStore:
                     end as action,
                     case
                         when runs.status='no_action' then 'skipped'
+                        when runs.status in ('retry', 'failed')
+                             and jobs.status in ('sent', 'no_action', 'skipped', 'done')
+                            then 'recovered'
                         when runs.status in ('retry', 'failed') then 'failed'
                         when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
                         when runs.status='ready_to_send' and jobs.status in ('retry', 'failed') then 'failed'

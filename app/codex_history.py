@@ -19,6 +19,7 @@ class RenderedCodexEvent:
     title: str
     body: str
     expanded: bool = False
+    trace: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -369,6 +370,8 @@ def _render_jsonl_event(payload: Any) -> RenderedCodexEvent | None:
         )
     if event_type == "response_item" and isinstance(body, dict):
         return _render_response_item(timestamp, body)
+    if event_type == "event_msg" and isinstance(body, dict):
+        return _render_event_msg(timestamp, body)
     return None
 
 
@@ -399,6 +402,7 @@ def _render_response_item(
         )
     if item_type == "function_call":
         name = _string(payload.get("name")) or "tool"
+        call_id = _string(payload.get("call_id"))
         arguments = _pretty_json_string(_string(payload.get("arguments")))
         return RenderedCodexEvent(
             timestamp=timestamp,
@@ -406,15 +410,25 @@ def _render_response_item(
             title=f"Tool call: {name}",
             body=_truncate(arguments),
             expanded=False,
+            trace={
+                **({"call_id": call_id} if call_id else {}),
+                "name": name,
+                "input": _truncate(arguments),
+            },
         )
     if item_type == "function_call_output":
         call_id = _string(payload.get("call_id"))
+        output = _truncate(_string(payload.get("output")))
         return RenderedCodexEvent(
             timestamp=timestamp,
             kind="tool_output",
             title=f"Tool output: {call_id}" if call_id else "Tool output",
-            body=_truncate(_string(payload.get("output"))),
+            body=output,
             expanded=False,
+            trace={
+                **({"call_id": call_id} if call_id else {}),
+                "output": output,
+            },
         )
     if item_type == "reasoning":
         summary = _content_text(payload.get("summary"))
@@ -622,18 +636,55 @@ def _render_event_msg(
     timestamp: str,
     payload: dict[str, Any],
 ) -> RenderedCodexEvent | None:
-    kind = _string(payload.get("type")) or "event"
-    text = (
-        _string(payload.get("message"))
-        or _string(payload.get("text"))
-        or _short_json(payload)
-    )
-    return RenderedCodexEvent(
-        timestamp=timestamp,
-        kind=f"event:{kind}",
-        title=f"Event: {kind}",
-        body=_truncate(text),
-    )
+    if payload.get("type") != "item_completed":
+        return None
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return None
+    item_type = _string(item.get("type"))
+    call_id = _string(item.get("id"))
+    if item_type == "McpToolCall":
+        server = _string(item.get("server"))
+        tool = _string(item.get("tool")) or "tool"
+        input_text = _truncate(_json_argument_text(item.get("arguments")))
+        output_text = _truncate(_json_value_text(item.get("result")))
+        name = f"{server}.{tool}" if server else tool
+        return RenderedCodexEvent(
+            timestamp=timestamp,
+            kind="tool",
+            title=f"Tool: {name}",
+            body=output_text or "工具调用已完成。",
+            trace={
+                **({"call_id": call_id} if call_id else {}),
+                "name": name,
+                "input": input_text,
+                "output": output_text,
+            },
+        )
+    if item_type == "CommandExecution":
+        command = _command_text(item.get("command")) or "command"
+        cwd = _string(item.get("cwd"))
+        output_text = _truncate(
+            _string(item.get("aggregated_output"))
+            or _string(item.get("formatted_output"))
+            or _string(item.get("stdout"))
+        )
+        input_text = _json_argument_text(
+            {key: value for key, value in (("command", command), ("cwd", cwd)) if value}
+        )
+        return RenderedCodexEvent(
+            timestamp=timestamp,
+            kind="tool",
+            title=f"Command: {command}",
+            body=output_text or "命令已完成。",
+            trace={
+                **({"call_id": call_id} if call_id else {}),
+                "name": command,
+                "input": _truncate(input_text),
+                "output": output_text,
+            },
+        )
+    return None
 
 
 def _session_meta_body(payload: dict[str, Any]) -> str:
@@ -687,6 +738,14 @@ def _json_argument_text(value: Any) -> str:
         return _pretty_json_string(value)
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False, indent=2)
+    return ""
+
+
+def _command_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(part, str) for part in value):
+        return " ".join(part for part in value if part)
     return ""
 
 

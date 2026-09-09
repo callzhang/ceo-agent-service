@@ -169,7 +169,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .codex-session-event article header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
 .codex-session-event article header span { color: var(--ink); font-size: .82rem; font-weight: 800; }
 .codex-session-event article header small { color: var(--ink-soft); font-size: .72rem; }
-.codex-session-event article p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.6; }
+.codex-session-event article .assistant-markdown { overflow-wrap: anywhere; }
+.codex-session-event article .execution-step { margin: 0; border: 0; border-radius: 0; background: transparent; }
+.codex-session-event-content-collapse { min-width: 0; }
+.codex-session-event-content-collapse > summary { cursor: pointer; color: var(--accent); font-size: .82rem; font-weight: 750; }
+.codex-session-event-content-collapse[open] > summary { margin-bottom: 12px; }
 .codex-session-event-reasoning article { border-style: dashed; background: transparent; }
 .codex-related-attempts { align-items: center; }
 .codex-related-attempts ul { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin: 0; padding: 0; list-style: none; }

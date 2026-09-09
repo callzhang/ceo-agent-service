@@ -243,7 +243,7 @@ def test_codex_resume_command_keeps_provider_reference_process_private(tmp_path:
     assert SESSION_ID not in result.error_detail
 
 
-def test_command_uses_runtime_auto_mode_without_workbench_security_overlay(
+def test_command_uses_service_auto_review_without_approval_bypass(
     tmp_path: Path,
 ):
     image = tmp_path / "image.png"
@@ -256,9 +256,9 @@ def test_command_uses_runtime_auto_mode_without_workbench_security_overlay(
         image_paths=[image],
     )
     command_text = " ".join(command)
-    assert not any(option.startswith("approval_policy=") for option in command)
-    assert not any(option.startswith("approvals_reviewer=") for option in command)
-    assert "--dangerously-bypass-approvals-and-sandbox" in command
+    assert 'approval_policy="on-failure"' in command
+    assert 'approvals_reviewer="auto_review"' in command
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
     assert "--output-schema" not in command
     assert "--ignore-user-config" not in command
     assert "--ignore-rules" not in command
@@ -1329,6 +1329,19 @@ def test_owned_executor_records_spawned_pid_without_live_pgid_lookup(
     )
 
     assert result.returncode == 0
+
+
+def test_owned_executor_supports_non_streaming_runtime_probe_calls(tmp_path: Path):
+    result = _CancellableProcessExecutor(cwd=tmp_path)(
+        [sys.executable, "-c", "print('probe')"],
+        prompt="",
+        env=None,
+        total_timeout_seconds=5,
+        idle_timeout_seconds=5,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "probe"
 
 
 def test_repeated_fast_exit_runs_do_not_leak_parent_file_descriptors(tmp_path: Path):

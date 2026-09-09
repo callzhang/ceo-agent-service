@@ -910,7 +910,7 @@ def test_runtime_recovery_fails_corrupt_blank_legacy_proposer(tmp_path: Path):
     executor.close()
 
 
-def test_other_executor_picks_persisted_quiesced_confirm_intent(
+def test_scheduler_never_executes_persisted_legacy_confirmation_intent(
     tmp_path: Path, monkeypatch
 ):
     store = _store(tmp_path)
@@ -945,10 +945,10 @@ def test_other_executor_picks_persisted_quiesced_confirm_intent(
         ),
     )
 
-    assert executor.run_once() == [turn.id]
-    assert len(calls) == 1
-    assert store.get_confirmation(confirmation.id).status is ConfirmationStatus.EXECUTED
-    assert store.get_turn(turn.id).status is TurnStatus.COMPLETED
+    assert executor.run_once() == []
+    assert calls == []
+    assert store.get_confirmation(confirmation.id).status is ConfirmationStatus.PENDING
+    assert store.get_turn(turn.id).status is TurnStatus.WAITING_CONFIRMATION
     executor.close()
 
 

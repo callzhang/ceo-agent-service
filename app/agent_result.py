@@ -88,6 +88,16 @@ def parse_typed_agent_result(
     raise ResultParseError("no valid typed result JSON found in Codex JSONL")
 
 
+def parse_agent_text_result(raw: str) -> str:
+    """Return the final non-empty assistant message from a Codex JSONL turn."""
+    payloads = _primary_turn_payloads(_parse_jsonl_payloads(raw))
+    for payload in reversed(payloads):
+        candidate = _agent_message_candidate(payload)
+        if candidate is not None and candidate.strip():
+            return candidate
+    raise ResultParseError("no agent text result found in Codex JSONL")
+
+
 def _primary_turn_payloads(payloads: list[dict]) -> list[dict]:
     start = next(
         (

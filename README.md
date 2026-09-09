@@ -29,7 +29,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **Task 总结**：从已处理对话、AI 听记和 `CEO_WORKSPACE` 新增文件里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
 - **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时生成跟进。内容为客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动的会议，始终发到 Agent 核验过、明确承接该业务或后续行动的团队群；仅当内容属于个人、非业务议题，且完整日历参会名单明确证明为两人会议时，才可以私信另一位参会人。
 - **审计 Web UI**：本地 FastAPI 页面查看历史、attempt 详情、Codex session、错误、Prompt 模板和路由配置。
-- **Agent Workbench**：在本地 Web 界面中创建 agent 任务、连续对话、查看流式事件和产物，并在高风险工具调用前进行人工确认。
+- **主页面**：在本地 Web 界面中创建 Agent 任务、连续对话并查看流式事件和产物；执行统一进入 Service Runtime，命令审查使用 CLI 原生 `auto_review`。
 - **自动修复 heartbeat**：消费 fail-closed 质量巡检结果，覆盖必需队列、最新 trigger、陈旧处理、外部投递、反馈和近期错误；将须恢复的问题与仍在进行的工作分开呈现。未知写操作只做只读核对，不自动重放。
 - **管理者 OKR 周报**：每周日读取 CEO-2 管理群成员的实时叮当 OKR 和可访问证据，按 `dingtang-okr-review` 生成可审计评分、知识库报告和群内重点摘要。
 
@@ -80,7 +80,7 @@ Service 不解释业务材料，不替 Agent 选择文件或猜测 OA 对象，�
 
 `ceo-sales-weekly-report` 仅在明确请求时读取当前目标与纷享销客实际数据，生成公司及业务线销售进度评分并把最终 Markdown 保存到 `CEO_WORKSPACE`；它不创建定时任务，也不执行 CRM 写入。
 
-Agent Workbench 的运行协议与模型提供商无关：SQLite 是任务、回合、确认和产物的权威状态，SSE 只流式传送可重放的事件，不成为第二份状态。需要外部效果的操作必须先生成持久化确认，只有当前回合的确认可以被消费。首个生产 runtime 是 Codex；Claude 和 Pi 尚未实现专用 adapter，未来只需实现同一事件、停止、恢复和确认契约即可接入。
+主页面只是 Service Runtime 的 Web 入口：页面任务和回合保存用户输入与展示状态，实际 Agent 执行统一使用 `RoutedCodexExecution`，与周报、任务 Agent 和其他后台 Agent 共用模型路由、会话、运行记录、失败切换和 CLI 原生 `auto_review`。SSE 只投影这条统一执行链路产生的事件，不启动第二套 provider runtime，也不提供独立审批机制。历史 Workbench 确认记录继续可读，但页面不显示执行按钮，确认与取消 API 也不会恢复执行。
 
 当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取以临时网络错误或未分类的命令输出失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。明确的登录或授权失败仍保持阻断，避免无效重试。
 
@@ -457,7 +457,7 @@ http://127.0.0.1:8765/
 
 常用页面：
 
-- `/`：Agent Workbench，用于创建和继续 agent 任务、查看流式进度、产物与待确认操作；工作区高度由 SPA 外层布局扣除顶部导航的实际高度，桌面单行导航和移动端双行导航都不使用固定像素猜测
+- `/`：主页面，用于创建和继续 Agent 任务、查看统一 Service Runtime 的流式进度与产物；工作区高度由 SPA 外层布局扣除顶部导航的实际高度，桌面单行导航和移动端双行导航都不使用固定像素猜测
 - `/history`：React SPA 回复与执行历史；“检索对象”可分别筛选普通钉钉回复、微信、审批、task 和 meeting，状态筛选支持 sent、reacted、skipped、blocked、failed 和 done。详情页统一显示业务结果，Runtime details 默认折叠。
 - Attention 中的运行错误使用 `/history/errors/{error_id}` 只读详情页；错误记录 ID 属于 `errors` 表，不会再被误当成 `reply_attempts` 的 Attempt ID。
 - History 的状态筛选按当前可处理性展示：同一触发消息或同一会后任务已经有后续结果时，旧 `failed` / `blocked` / `ready_to_send` 行保留为审计证据，但不再进入 active failed/blocked/pending 筛选；尚无后续结果的 blocked 统一显示为可恢复的 `Blocked`。
@@ -466,7 +466,7 @@ http://127.0.0.1:8765/
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录；Facts 在桌面端为宽 Description/Source 与固定操作列的可比较表格，在移动端为单列事实卡片，完整描述和来源可逐条展开
 - `/attempts/{id}`：单次处理详情；同一触发消息后续重跑成功时，旧记录顶部会链接到后续 attempt 并展示其最新动作，原始状态仍保留在详情字段中供审计。Consumer 与 Audit 执行记录只能从该 Attempt 打开，不显示内部会话标识或本地文件路径。
 - `/developer-prompt`：Developer/User Prompt 模板管理
-- `/settings`：Settings 使用 React SPA 统一导航（Status、Info、Configuration、Agent Runtime、Prompts、Connectors、Audit Rules、Attention）。Configuration 汇总 `.env` 中的运行参数和 Prompt variables；Prompts 页面用 Developer/User tab 与 Template/Rendered preview 切换；Connectors 内含 DingTalk、Lark、WeChat；Workers 通过 `/status` 映射到 Runtime Monitor，Attention 单独展示未解决运行项。`/config`、`/workers`、`/logs` 保留为兼容入口并在 SPA 内映射；Logs 不再作为 Settings 一级导航。
+- `/settings`：Settings 使用 React SPA 统一导航（Status、Info、Configuration、Agent Runtime、Prompts、Connectors、Audit Rules、Attention）。Configuration 汇总 `.env` 中的运行参数和 Prompt variables；Prompts 页面用 Developer/User tab 与 Template/Rendered preview 切换；Connectors 内含 DingTalk、Lark、纷享销客 CLI、WeChat 和 Email；Workers 通过 `/status` 映射到 Runtime Monitor，Attention 单独展示未解决运行项。`/config`、`/workers`、`/logs` 保留为兼容入口并在 SPA 内映射；Logs 不再作为 Settings 一级导航。
 
 除 DingTalk bridge/popup、通知 Service Worker 和 `/api/workbench/*` 外，业务页面统一由同一个 React SPA 渲染。FastAPI 的 `/api/console/*` 按 History、Tasks、Settings、Feedback、Tutorial、Notifications、Codex 和 WeChat 领域返回 JSON DTO；因此 `/tasks/836` 等业务深链可以直接打开或刷新，而未知 `/api/*` 仍返回 JSON 404。
 - `/errors`：错误列表

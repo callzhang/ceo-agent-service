@@ -18,6 +18,7 @@ from app.agent_runtime_router import (
     AgentRuntimeRouter,
     CodexCommandFactory,
     RoutedCodexExecution,
+    RoutedCodexExecutionCancelled,
     RoutedCodexExecutionError,
     RoutedResultCodec,
     RoutedResultValidationError,
@@ -374,6 +375,90 @@ def test_standard_execution_fails_over_from_oauth_to_api(store, config):
     assert (
         store.get_conversation_runtime_session("cid-12", "codex_api") == "api-session"
     )
+
+
+def test_standard_execution_forwards_native_output_to_ui_projection(store, config):
+    key = seed_structured_parent(store, 18)
+    observed: list[str] = []
+
+    def executor(_command, **kwargs):
+        lines = [
+            json.dumps({"type": "thread.started", "thread_id": "session-18"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": "done"},
+                }
+            ),
+        ]
+        for line in lines:
+            kwargs["on_stdout_line"](line)
+        return ProcessRunResult(0, "\n".join(lines), "")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+        session_line_counter=lambda _session_id: 2,
+    )
+
+    routed.execute(
+        workload_kind="structured",
+        workload_key=key,
+        prompt="analyze",
+        command_factory=CodexCommandFactory.standard(
+            developer_instructions="normal service runtime"
+        ),
+        parser=lambda _raw: "done",
+        result_codec=TEXT_CODEC,
+        on_stdout_line=observed.append,
+    )
+
+    assert [json.loads(line)["type"] for line in observed] == [
+        "thread.started",
+        "item.completed",
+    ]
+
+
+def test_user_stop_terminalizes_current_attempt_without_route_failover(store, config):
+    key = seed_structured_parent(store, 19)
+    stopped = False
+    calls = []
+
+    def executor(command, **_kwargs):
+        nonlocal stopped
+        calls.append(command)
+        stopped = True
+        return ProcessRunResult(-15, "", "")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+    )
+
+    with pytest.raises(RoutedCodexExecutionCancelled):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="analyze",
+            command_factory=CodexCommandFactory.standard(
+                developer_instructions="normal service runtime"
+            ),
+            parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
+            cancel_requested=lambda: stopped,
+        )
+
+    assert len(calls) == 1
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert len(attempts) == 1
+    assert attempts[0].status == "failed"
+    assert attempts[0].failure_code == "runtime_cancelled"
 
 
 def test_pause_opened_after_selection_prevents_attempt_and_child(store, config):
