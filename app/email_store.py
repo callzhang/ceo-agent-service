@@ -9791,7 +9791,8 @@ class EmailStore:
     ) -> None:
         """Bind every accepted effect prefix to its exact Consumer/Audit round."""
 
-        previous_audit_run_id: int | None = None
+        effect_audit_run_ids: list[int] = []
+        previous_revision: int | None = None
         lineage_task_id: int | None = None
         lineage_generation: str | None = None
         for depth, effect in enumerate(chain, start=1):
@@ -9833,7 +9834,6 @@ class EmailStore:
                 """,
                 (audit_agent_run_id,),
             ).fetchone()
-            expected_revision = depth - 1
             is_current_head = (
                 depth == len(chain)
                 and expected_audit_agent_run_id == audit_agent_run_id
@@ -9875,14 +9875,13 @@ class EmailStore:
                 or row["audit_id"] != audit_agent_run_id
                 or row["audit_role"] != "audit"
                 or row["audit_status"] not in allowed_statuses
-                or row["audit_revision"] != expected_revision
                 or not isinstance(row["audit_turn_attempt"], int)
                 or row["audit_turn_attempt"] < 0
                 or not str(row["audit_operation_id"]).strip()
                 or row["consumer_id"] != row["audit_parent_id"]
                 or row["consumer_role"] != "consumer"
                 or row["consumer_status"] != "completed"
-                or row["consumer_revision"] != expected_revision
+                or row["consumer_revision"] != row["audit_revision"]
                 or str(row["consumer_operation_id"])
                 or row["consumer_task_id"] != row["reply_task_id"]
                 or row["consumer_generation"] != row["execution_generation"]
@@ -9900,8 +9899,6 @@ class EmailStore:
                     and entry.get("reference") == claim["entry_reference"]
                     for entry in payload_entries
                 )
-                or (depth == 1 and row["consumer_parent_id"] is not None)
-                or (depth > 1 and row["consumer_parent_id"] != previous_audit_run_id)
             ):
                 raise EmailPersistenceCorruption(
                     "unsubscribe terminal effect Audit lineage is invalid"
@@ -9931,7 +9928,13 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     "unsubscribe terminal effect Audit lineage changed task"
                 )
-            previous_audit_run_id = audit_agent_run_id
+            current_revision = int(row["audit_revision"])
+            if previous_revision is not None and current_revision <= previous_revision:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect Audit revisions are not increasing"
+                )
+            previous_revision = current_revision
+            effect_audit_run_ids.append(audit_agent_run_id)
 
         if (
             lineage_task_id is None
@@ -9943,6 +9946,28 @@ class EmailStore:
         ):
             raise EmailPersistenceCorruption(
                 "unsubscribe terminal effect Audit task binding is invalid"
+            )
+        audited_chain = _audited_unsubscribe_run_chain(
+            db,
+            task_id=lineage_task_id,
+            execution_generation=str(lineage_generation),
+            final_audit_run_id=effect_audit_run_ids[-1],
+        )
+        if audited_chain is None:
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal effect Audit lineage is disconnected"
+            )
+        _consumer_run_ids, audit_run_ids = audited_chain
+        positions = {run_id: index for index, run_id in enumerate(audit_run_ids)}
+        try:
+            effect_positions = [positions[run_id] for run_id in effect_audit_run_ids]
+        except KeyError as exc:
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal effect Audit lineage is incomplete"
+            ) from exc
+        if effect_positions != sorted(effect_positions):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal effect Audit lineage is out of order"
             )
 
     def get_email_unsubscribe_effect(
@@ -10387,6 +10412,66 @@ class EmailStore:
             if updated != 1:
                 raise EmailUnsubscribeClaimConflict(
                     "unsubscribe claim owner fence changed"
+                )
+
+    def release_email_unsubscribe_preflight_failure(
+        self,
+        action_identity: str,
+        *,
+        effect_digest: str,
+        owner: Mapping[str, object],
+    ) -> None:
+        """Release a claim when browser preflight failed before any operation."""
+
+        owner = _validate_email_unsubscribe_owner(owner)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            claim = db.execute(
+                "select * from email_unsubscribe_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            if claim is None or any(
+                claim[column] != expected
+                for column, expected in (
+                    ("effect_digest", effect_digest),
+                    ("owner_id", owner["owner_id"]),
+                    ("owner_generation", owner["generation"]),
+                    ("lease_token", owner["lease_token"]),
+                    ("status", "dispatching"),
+                    ("phase", "navigating"),
+                )
+            ):
+                raise EmailUnsubscribeClaimConflict(
+                    "unsubscribe preflight claim owner fence changed"
+                )
+            related = db.execute(
+                """
+                select
+                    (select count(*) from email_unsubscribe_steps
+                     where action_identity=?) as steps,
+                    (select count(*) from email_unsubscribe_receipts
+                     where action_identity=?) as receipts,
+                    (select count(*) from email_unsubscribe_continuations
+                     where action_identity=?) as continuations
+                """,
+                (action_identity, action_identity, action_identity),
+            ).fetchone()
+            if related is None or any(int(related[name]) for name in related.keys()):
+                raise EmailUnsubscribeClaimConflict(
+                    "unsubscribe preflight failure has durable browser state"
+                )
+            deleted_effect = db.execute(
+                "delete from email_unsubscribe_effects "
+                "where action_identity=? and effect_digest=?",
+                (action_identity, effect_digest),
+            ).rowcount
+            deleted_claim = db.execute(
+                "delete from email_unsubscribe_claims where action_identity=?",
+                (action_identity,),
+            ).rowcount
+            if deleted_effect != 1 or deleted_claim != 1:
+                raise EmailUnsubscribeClaimConflict(
+                    "unsubscribe preflight failure changed concurrently"
                 )
 
     def advance_email_unsubscribe_phase(

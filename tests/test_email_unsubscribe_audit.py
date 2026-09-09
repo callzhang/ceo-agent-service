@@ -37,6 +37,7 @@ from app.email_unsubscribe import (
     UnsubscribeOutcome,
     UnsubscribePageState,
     UnsubscribeTerminalReceipt,
+    disposition_for_unsubscribe_outcome,
     extract_unsubscribe_entries,
     normalize_unsubscribe_result_text,
 )
@@ -1010,6 +1011,76 @@ def test_executor_persisted_receipt_rejects_step_effect_digest_tamper(
     )
 
     assert result["status"] == "failed", result
+
+
+def test_revised_initial_proposal_is_not_treated_as_a_later_browser_step(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    terminal_callback = fixture.operation.execute_effect
+    fixture.operation.execute_effect = lambda *_args, **_kwargs: (
+        UnsubscribeExecutionResult(
+            outcome=UnsubscribeOutcome.FAILED_BROWSER,
+            disposition=disposition_for_unsubscribe_outcome(
+                UnsubscribeOutcome.FAILED_BROWSER
+            ),
+            journal=(),
+            error_code="email_unsubscribe_browser_failed",
+            operation_attempted=False,
+        )
+    )
+    first_result = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action=_accepted_action(),
+    )
+    assert first_result["status"] == "failed"
+    assert fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY) is None
+    fixture.operation.execute_effect = terminal_callback
+    first_audit = fixture.task_store.complete_agent_run(
+        fixture.audit_run.id,
+        {"outcome": "feedback_provided", "proposal_revision": 0},
+        owner="audit-owner",
+    )
+    revised_consumer = fixture.task_store.claim_agent_run(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=first_audit.id,
+        operation_id="",
+        owner="consumer-revision-owner",
+    ).run
+    revised_consumer = fixture.task_store.complete_agent_run(
+        revised_consumer.id,
+        _consumer_proposal_result(_accepted_action()),
+        owner="consumer-revision-owner",
+    )
+    revised_audit = fixture.task_store.claim_agent_run(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=revised_consumer.id,
+        operation_id="audit-operation-revision-1",
+        owner="audit-revision-owner",
+    ).run
+
+    result = fixture.operation._execute_bound_effect(
+        task=fixture.task,
+        audit_run=revised_audit,
+        effect=accepted_email_unsubscribe_effect(
+            fixture.task,
+            ProposedAction.model_validate(_accepted_action()),
+        ),
+        entries=(ENTRY,),
+    )
+
+    assert result["status"] == "done", result
+    assert len(fixture.executed) == 1
 
 
 def test_current_running_audit_executes_one_operation_and_persists_exact_run_id(

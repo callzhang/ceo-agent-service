@@ -1152,6 +1152,7 @@ class UnsubscribeExecutionResult:
     result_text_truncated: bool = False
     started_at: str = ""
     completed_at: str = ""
+    operation_attempted: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.outcome, UnsubscribeOutcome):
@@ -1167,6 +1168,8 @@ class UnsubscribeExecutionResult:
             raise ValueError("observation_digest must be canonical sha256 hex")
         if type(self.result_text_truncated) is not bool:
             raise TypeError("result_text_truncated must be bool")
+        if type(self.operation_attempted) is not bool:
+            raise TypeError("operation_attempted must be bool")
         if not self.result_text:
             if (
                 self.observation_digest
@@ -1201,6 +1204,7 @@ class UnsubscribeExecutionResult:
             "observation_digest": self.observation_digest,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "operation_attempted": self.operation_attempted,
         }
 
 
@@ -3328,6 +3332,7 @@ def _result(
     result_text_truncated: bool = False,
     started_at: str = "",
     completed_at: str = "",
+    operation_attempted: bool = False,
 ) -> UnsubscribeExecutionResult:
     return UnsubscribeExecutionResult(
         outcome=outcome,
@@ -3341,6 +3346,7 @@ def _result(
         result_text_truncated=result_text_truncated,
         started_at=started_at,
         completed_at=completed_at,
+        operation_attempted=operation_attempted,
     )
 
 
@@ -3793,6 +3799,7 @@ class UnsubscribeExecutor:
                     UnsubscribeOutcome.FAILED_BROWSER,
                     journal,
                     error_code=("email_unsubscribe_authentication_controls_blocked"),
+                    operation_attempted=True,
                 )
             except (UnsubscribeBrowserError, UnsubscribeProviderAuthError):
                 return existing_continuation
@@ -3949,6 +3956,7 @@ class UnsubscribeExecutor:
                     UnsubscribeOutcome.FAILED_PROVIDER_AUTH,
                     journal,
                     error_code="email_unsubscribe_provider_auth_failed",
+                    operation_attempted=True,
                 )
             except Exception:
                 self.store.mark_email_unsubscribe_uncertain(
@@ -3959,6 +3967,7 @@ class UnsubscribeExecutor:
                     UnsubscribeOutcome.FAILED_BROWSER,
                     journal,
                     error_code="email_unsubscribe_browser_failed",
+                    operation_attempted=True,
                 )
             operation_step = RedactedUnsubscribeStep(
                 operation=operation.kind.value,
