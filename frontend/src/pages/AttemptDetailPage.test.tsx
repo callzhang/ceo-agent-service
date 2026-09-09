@@ -65,11 +65,12 @@ const detail = {
   updated_at: "2026-08-29T10:01:00Z",
 };
 
-function renderPage() {
+function renderPage(path = "/attempts/8448") {
   return render(
-    <MemoryRouter initialEntries={["/attempts/8448"]}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/attempts/:attemptId" element={<AttemptDetailPage />} />
+        <Route path="/attempts/:attemptId/execution/:role" element={<AttemptDetailPage />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -116,6 +117,16 @@ describe("AttemptDetailPage", () => {
     expect(document.querySelector(".attempt-review-main .attempt-review-block + .attempt-review-block")).toBeInTheDocument();
     expect(document.querySelector(".attempt-status-card")).not.toBeInTheDocument();
     expect(screen.queryByText("session-8448")).not.toBeInTheDocument();
+  });
+
+  it("opens the requested Consumer execution instead of silently rendering the generic Attempt page", async () => {
+    renderPage("/attempts/8448/execution/consumer");
+
+    expect(await screen.findByRole("heading", { name: "处理过程 · Consumer" })).toBeInTheDocument();
+    expect(screen.getByText("这里只展示处理 Agent 形成方案的记录。")).toBeInTheDocument();
+    expect(screen.getByText("处理判断 · 第 1 轮")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回 Attempt" })).toHaveAttribute("href", "/attempts/8448");
+    expect(screen.queryByRole("heading", { name: "生成回复" })).not.toBeInTheDocument();
   });
 
   it("submits the inline feedback form with the edited values", async () => {

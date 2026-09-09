@@ -28,6 +28,31 @@ function RuntimeEntry({ entry }: { entry: AttemptRuntimeEntry }) {
   return <article className="attempt-runtime-entry"><div className="attempt-runtime-heading"><div><strong>{phase} · 第 {entry.proposal_revision + 1} 轮{retry}</strong><p>{description}</p></div><StatusBadge value={entry.status} /></div>{(entry.failure_code || entry.effect_started_at) && <dl className="attempt-runtime-grid">{entry.failure_code && <div><dt>结果说明</dt><dd>{entry.failure_code}</dd></div>}{entry.effect_started_at && <div><dt>开始外部动作</dt><dd>{entry.effect_started_at}</dd></div>}</dl>}</article>;
 }
 
+function ExecutionDetail({ detail, role, snapshot }: { detail: AttemptDetail; role: "consumer" | "audit"; snapshot: string }) {
+  const isAudit = role === "audit";
+  const roleLabel = isAudit ? "Audit" : "Consumer";
+  const title = isAudit ? "审计过程" : "处理过程";
+  const explanation = isAudit
+    ? "这里只展示审计 Agent 对方案、边界和对外动作的核验记录。"
+    : "这里只展示处理 Agent 形成方案的记录。";
+  const entries = detail.runtime_attempts.filter((entry) => entry.role === role);
+
+  return <ConsolePageLayout title={`${title} · ${roleLabel}`} actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to={`/attempts/${detail.id}`}>返回 Attempt</Link></>}>
+    <section className="console-card execution-detail-overview">
+      <div><p className="eyebrow">ATTEMPT #{detail.id}</p><h2>执行概览</h2><p>{explanation}</p></div>
+      <StatusBadge value={detail.status.raw} />
+    </section>
+    <section className="console-card execution-detail-context">
+      <span>会话：<strong>{detail.conversation.title || "未记录"}</strong></span>
+      <span>触发人：<strong>{detail.conversation.trigger_sender || "未提供"}</strong></span>
+    </section>
+    <section className="console-card execution-detail-list" aria-label={`${roleLabel} 执行记录`}>
+      <div className="execution-detail-list-header"><div><h2>执行步骤</h2><p>每一条代表一轮处理或一次重试；它们不会自动等同于重复发送。</p></div><span>{entries.length} 个步骤</span></div>
+      {entries.length ? <div className="attempt-runtime-list">{entries.map((entry, index) => <RuntimeEntry entry={entry} key={`${entry.proposal_revision}-${entry.turn_attempt}-${index}`} />)}</div> : <p className="page-state">没有可展示的{roleLabel}执行记录。</p>}
+    </section>
+  </ConsolePageLayout>;
+}
+
 function References({ references }: { references: AttemptDetail["references"] }) {
   if (!references.length) return null;
   return <section className="console-card attempt-references-card"><h2>参考资料</h2><ul>{references.map((reference, index) => <li key={`${reference.title}-${reference.source}-${index}`}><strong>{reference.title || reference.source || "未命名资料"}</strong>{reference.source && reference.source !== reference.title && <span>{reference.source}</span>}{reference.relevance && <small>{reference.relevance}</small>}</li>)}</ul></section>;
@@ -58,7 +83,7 @@ function FeedbackPanel({ detail, onSaved }: { detail: AttemptDetail; onSaved: (m
 }
 
 export function AttemptDetailPage() {
-  const { attemptId = "" } = useParams();
+  const { attemptId = "", role = "" } = useParams();
   const [detail, setDetail] = useState<AttemptDetail | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -111,6 +136,9 @@ export function AttemptDetailPage() {
       setDecisionSubmitting(false);
     }
   };
+
+  const executionRole = role === "consumer" || role === "audit" ? role : null;
+  if (detail && executionRole) return <ExecutionDetail detail={detail} role={executionRole} snapshot={snapshot} />;
 
   return <ConsolePageLayout title={detail ? `Attempt #${detail.id}` : "Attempt"} showHeader={false} suppressHiddenTitle>
     <header className="attempt-title-row" data-testid="attempt-title-row"><div className="attempt-title-leading"><Link className="secondary-button icon-button" to="/history" aria-label="返回 History" title="返回 History"><span aria-hidden="true">←</span></Link><div><p className="eyebrow">CEO AGENT CONSOLE</p><h1 id="console-page-title">{detail ? `Attempt #${detail.id}` : "Attempt"}</h1></div></div><div className="attempt-title-actions"><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />{detail?.actions.wechat_open_url && <button type="button" className="secondary-button" onClick={() => void runAction(detail.actions.wechat_open_url || "", "已打开微信消息")}>查看微信消息</button>}{detail?.actions.delivery_action_url && <button type="button" className="primary-button" onClick={() => { if (window.confirm(detail.actions.delivery_action_label === "发送" ? "确认发送这条微信回复？" : "确认重新尝试发送这条微信回复？")) void runAction(detail.actions.delivery_action_url || "", `${detail.actions.delivery_action_label}已提交`); }}>{detail.actions.delivery_action_label}</button>}</div></header>
