@@ -377,6 +377,108 @@ def test_promoted_scan_persists_accepted_model_result_without_agent_task(tmp_pat
     assert accepted[0][2]
 
 
+def test_snapshot_online_and_benchmark_use_identical_canonical_input(tmp_path):
+    import json
+    from datetime import datetime, timezone
+    from app.email_candidate_benchmark import _online_input
+    from app.email_important import ImportantSignals
+    from app.email_training_observer import _provider_observation
+    from app.email_training_snapshot import build_folder_training_snapshot, MODEL_INPUT_SCHEMA_VERSION
+
+    message = _message() | {
+        "providerUnread": True, "stableMessageIdentity": "same-input",
+        "importantSignals": ImportantSignals((), False),
+        "toRecipients": [{"name": "Derek", "email": "d@example.test"}],
+        "ccRecipients": [{"email": "cc@example.test"}],
+        "textBody": "Current reply\n\n> Quoted historical reply\n> retain this context",
+        "markdownBody": "Must use canonical textBody even if markdown differs",
+        "inReplyTo": "<parent@example.test>", "references": ["<parent@example.test>"],
+        "autoSubmitted": "auto-generated",
+        "listUnsubscribe": "<https://example.test/unsubscribe?token=private>",
+        "listUnsubscribePost": "List-Unsubscribe=One-Click",
+        "attachments": [{"filename": "合同.pdf", "mime_type": "application/pdf",
+                         "size_bytes": 1234, "inline": False, "content_id": "cid-1",
+                         "disposition": "attachment"}],
+    }
+    observation = _provider_observation(
+        account_id=message["accountId"],
+        folder=SimpleNamespace(provider_folder_id="work", display_name="Work"),
+        role=FolderRole.CATEGORY, binding={"category_key": "work", "binding_status": "active"},
+        message=message, email_store=SimpleNamespace(has_stable_classification=lambda _: True),
+    )
+    snapshot = build_folder_training_snapshot(
+        [observation], snapshot_id="same-input-snapshot", description_version="description-v1",
+        observed_at=datetime(2026, 9, 8, tzinfo=timezone.utc), seed=17,
+        proposed_splits={"same-input": "train"},
+    )
+    frozen = snapshot.observations[0]
+    captured = []
+    runtime = SimpleNamespace(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        input_schema_version=MODEL_INPUT_SCHEMA_VERSION,
+        model_predict=lambda value: (captured.append(value) or OnlineClassificationResult(
+            source="model", value="accepted-prediction")),
+    )
+    scan_agent_classification_batch(
+        FakeSource([message]), EmailStore(tmp_path / "same-input.sqlite3"),
+        SimpleNamespace(adapter=SimpleNamespace(has_stable_record=lambda _: False),
+                        produce=lambda *a, **kw: pytest.fail("unexpected Agent fallback")),
+        AgentScanContext(allowed_category_keys=("work", "junk"), category_descriptions={"work": {}, "junk": {}},
+                         folder_targets={"work": "Work"}, config_version="config-v1"),
+        folder_role=FolderRole.INBOX, configured_unclassified_source=False, online_runtime=runtime,
+        accept_model=lambda *a: OnlineModelAcceptOutcome.accepted({"id": 1}),
+    )
+    assert captured[0].normalized_text == frozen.normalized_model_input
+    benchmark_input = _online_input(frozen.to_dict(), MODEL_INPUT_SCHEMA_VERSION)
+    assert benchmark_input == captured[0]
+    from app.email_embedding_cache import EmbeddingCacheKey
+    keys = [EmbeddingCacheKey.for_text(
+        normalized_text=text, input_schema_version=MODEL_INPUT_SCHEMA_VERSION,
+        embedding_model_id="jina-small", embedding_revision="same-revision",
+    ) for text in (frozen.normalized_model_input, captured[0].normalized_text, benchmark_input.normalized_text)]
+    assert keys[0] == keys[1] == keys[2]
+    assert keys[0].normalized_input_hash == frozen.normalized_model_input_hash
+    payload = json.loads(captured[0].normalized_text)
+    assert "> Quoted historical reply" in payload["body"]
+    assert payload["attachments"][0]["filename"] == "合同.pdf"
+    assert payload["attachment_count"] == 1
+    assert payload["headers"]["in-reply-to"] == "<parent@example.test>"
+    assert payload["unsubscribe"]["one_click"] is True
+    assert "token=private" not in captured[0].normalized_text
+
+
+@pytest.mark.parametrize("malformed", [
+    {"attachments": [{"filename": "bad.pdf", "size_bytes": "not-an-integer"}]},
+    {"toRecipients": "not-an-address-list"},
+    {"references": [123]},
+])
+def test_canonical_input_error_uses_agent_fallback_and_continues_batch(tmp_path, malformed):
+    messages = [
+        _message() | {"providerUnread": True, **malformed},
+        _message() | {"providerUnread": True, "uid": 2, "messageId": "<second@example.test>"},
+    ]
+    agents, predictions, accepted = [], [], []
+    runtime = SimpleNamespace(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        input_schema_version="email-folder-model-input-v2",
+        model_predict=lambda value: (predictions.append(value) or OnlineClassificationResult(source="model", value="accepted")),
+    )
+    store = EmailStore(tmp_path / "input-error.sqlite3")
+    result = scan_agent_classification_batch(
+        FakeSource(messages), store,
+        SimpleNamespace(adapter=SimpleNamespace(has_stable_record=lambda _: False),
+                        produce=lambda message, **kw: agents.append(message)),
+        AgentScanContext(allowed_category_keys=("work", "junk"), category_descriptions={"work": {}, "junk": {}},
+                         folder_targets={"work": "Work"}, config_version="config-v1"),
+        folder_role=FolderRole.INBOX, configured_unclassified_source=False, online_runtime=runtime,
+        accept_model=lambda *args: (accepted.append(args) or OnlineModelAcceptOutcome.accepted({"id": 1})),
+    )
+    assert agents == [messages[0]]
+    assert len(predictions) == len(accepted) == 1
+    assert result.persisted_count == 2
+    assert store.get_scan_cursor("dingtalk-account", "INBOX")["last_seen_uid"] == 2
+
+
 def test_scan_binds_each_message_to_one_runtime_snapshot_during_refresh(tmp_path):
     first_prediction = object()
     second_prediction = object()

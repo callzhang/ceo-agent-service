@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from contextlib import nullcontext
+from datetime import datetime, timezone
 from pathlib import Path
 from pickle import UnpicklingError
 from types import MappingProxyType
+from sys import float_info
 import threading
 from collections import deque
 from collections.abc import Callable
@@ -359,7 +361,92 @@ class OnlineEmbeddingMicrobatcher:
         request.event.set()
 
 
-def activate_online_model(
+def _finite_evidence_number(value: object) -> int | float | None:
+    # JSON integers can exceed float range; compare before any float conversion.
+    return value if type(value) in (int, float) and -float_info.max <= value <= float_info.max else None
+
+
+def measured_end_to_end_latency(value: object) -> dict[str, object] | None:
+    """Accept only the resident benchmark's warmed, forced-remote wall totals.
+
+    The boundary includes canonical input construction through prediction;
+    mailbox fetch, MIME decoding and downstream actions are outside it.
+    Missing or incompatible provenance is unmeasured, never head timing.
+    """
+    if not isinstance(value, dict):
+        return None
+    stages = ["input_build", "cache_lookup", "queue", "http", "embedding", "head"]
+    if (
+        value.get("protocol") != "email-training-input-to-prediction-v2"
+        or value.get("input_contract_verified") is not True
+        or value.get("boundary") != "canonical_snapshot_message_to_prediction"
+        or value.get("runtime_warm") is not True
+        or value.get("cache_hit") is not False
+        or value.get("stages") != stages
+        or type(value.get("sample_count")) is not int
+        or value["sample_count"] <= 0
+    ):
+        return None
+    percentiles = [value.get(key) for key in ("p50", "p95", "p99")]
+    if any(_finite_evidence_number(item) is None or item < 0
+           for item in percentiles) or percentiles != sorted(percentiles):
+        return None
+    return {key: value[key] for key in (
+        "protocol", "input_contract_verified", "boundary", "runtime_warm", "cache_hit", "stages",
+        "sample_count", "p50", "p95", "p99",
+    )}
+
+
+def assess_online_promotion_gate(
+    *, evidence, config, enabled_category_keys, description_version,
+    readiness, registry_issues=(), artifact_verified=False,
+) -> dict[str, object]:
+    """Evaluate measured candidate quality against the current configuration."""
+    def mapping(value):
+        return value if isinstance(value, Mapping) else {}
+
+    row = mapping(evidence)
+    compatibility = mapping(row.get("compatibility"))
+    metrics = mapping(mapping(row.get("metrics")).get("categories"))
+    checks = []
+
+    def check(key, actual, target, operator=">=", reason="threshold_not_met"):
+        value = _finite_evidence_number(actual)
+        passed = value is not None and (value >= target if operator == ">=" else value <= target)
+        checks.append({"key": key, "actual": value, "target": target,
+                       "operator": operator, "passed": passed,
+                       "reason": "passed" if passed else ("not_measured" if value is None else reason)})
+
+    f1s = [_finite_evidence_number(mapping(metrics.get(key)).get("f1")) for key in enabled_category_keys]
+    macro = sum(f1s) / len(f1s) if f1s and all(v is not None and 0 <= v <= 1 for v in f1s) else None
+    check("macro_f1", macro, config["macro_f1_min"])
+    for key in enabled_category_keys:
+        category = mapping(metrics.get(key))
+        precision = _finite_evidence_number(category.get("precision"))
+        check(f"category_precision:{key}", precision if precision is not None and 0 <= precision <= 1 else None,
+              config["category_precision_min"])
+        support = category.get("support")
+        check(f"category_validation_samples:{key}", support if type(support) is int and support >= 0 else None,
+              config["category_validation_samples_min"])
+    latency = measured_end_to_end_latency(row.get("end_to_end_latency_ms"))
+    check("p95_latency", latency["p95"] if latency else None, config["p95_latency_max_ms"], "<=")
+    categories = compatibility.get("enabled_categories")
+    compatible = bool(enabled_category_keys) and isinstance(categories, (list, tuple)) and (
+        all(isinstance(key, str) for key in categories)
+        and len(categories) == len(set(categories))
+        and set(categories) == set(enabled_category_keys)
+        and compatibility.get("description_version") == description_version
+    )
+    system_pass = bool(compatible and artifact_verified and not registry_issues and readiness.ready
+                       and readiness.passing_model_ids and readiness.passing_model_ids[-1] == row.get("model_id"))
+    checks.append({"key": "system_integrity", "actual": system_pass, "target": True,
+                   "operator": "==", "passed": system_pass,
+                   "reason": "passed" if system_pass else "model_evidence_or_configuration_not_ready"})
+    return {"config": dict(config), "candidate_model_id": row.get("model_id"),
+            "promotion_eligible": all(item["passed"] for item in checks), "checks": checks}
+
+
+def _prepare_online_activation(
     registry: object,
     model_id: str,
     *,
@@ -389,11 +476,10 @@ def activate_online_model(
         artifact_sha256=expected_digest,
         compatibility=dict(compatibility),
     )
-    payload = {
-        "model_id": activation.model_id,
-        "artifact_sha256": activation.artifact_sha256,
-        "compatibility": dict(activation.compatibility),
-    }
+    return activation
+
+
+def _write_online_control(registry, payload):
     root = Path(registry.root)
     root.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
@@ -415,7 +501,119 @@ def activate_online_model(
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-    return activation
+    directory = os.open(root, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def _read_online_control(registry) -> dict[str, object]:
+    """Validate the authoritative mode and every committed transition together."""
+    path = Path(registry.root) / ONLINE_ACTIVATION_FILENAME
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    def text(value):
+        return isinstance(value, str) and bool(value.strip())
+
+    def state(mode, model):
+        return ((mode == "agent_primary" and model is None)
+                or (mode == "model_primary" and text(model)))
+
+    if not isinstance(payload, dict) or not state(payload.get("mode"), payload.get("model_id")):
+        raise ValueError("invalid online control state")
+    fields = {"mode", "promotion_config_version", "mode_transitions"}
+    if payload["mode"] == "model_primary":
+        fields |= {"model_id", "artifact_sha256", "compatibility"}
+        digest = payload.get("artifact_sha256")
+        if (not isinstance(digest, str) or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)
+                or not isinstance(payload.get("compatibility"), dict)):
+            raise ValueError("invalid online activation identity")
+    if set(payload) != fields or not text(payload.get("promotion_config_version")):
+        raise ValueError("invalid online control fields")
+    history = payload["mode_transitions"]
+    if not isinstance(history, list) or not history:
+        raise ValueError("invalid mode transition history")
+    transition_fields = {
+        "request_id", "actor", "from_mode", "to_mode", "from_model_id", "target_model_id",
+        "promotion_config_version", "status", "reason", "created_at",
+    }
+    seen = set()
+    for entry in history:
+        if not isinstance(entry, dict) or set(entry) != transition_fields:
+            raise ValueError("invalid mode transition fields")
+        if (any(not text(entry[key]) for key in ("request_id", "actor", "promotion_config_version", "created_at"))
+                or not state(entry["from_mode"], entry["from_model_id"])
+                or not state(entry["to_mode"], entry["target_model_id"])
+                or entry["status"] != "applied"
+                or entry["reason"] != ("user_enabled_primary_model" if entry["target_model_id"]
+                                       else "user_disabled_primary_model")):
+            raise ValueError("invalid mode transition values")
+        if entry["request_id"] in seen:
+            raise ValueError("duplicate mode transition request")
+        seen.add(entry["request_id"])
+        if datetime.fromisoformat(entry["created_at"]).utcoffset() is None:
+            raise ValueError("mode transition timestamp requires timezone")
+    last = history[-1]
+    if (last["to_mode"] != payload["mode"]
+            or last["target_model_id"] != payload.get("model_id")
+            or last["promotion_config_version"] != payload["promotion_config_version"]):
+        raise ValueError("mode transition history does not match current state")
+    return payload
+
+
+def online_control_history(registry) -> list[dict[str, object]]:
+    return _read_online_control(registry).get("mode_transitions", [])
+
+
+def switch_online_model(
+    registry, *, mode, model_id, expected_mode, expected_model_id, request_id,
+    actor, validate_promotion,
+    classifier_loader=DescriptionAwareEmailClassifier.load,
+    configuration_guard=nullcontext,
+):
+    """Commit activation and request history in one atomic manifest replacement."""
+    modes = {"agent_primary", "model_primary"}
+    if mode not in modes or expected_mode not in modes:
+        raise ValueError("invalid runtime mode")
+    if (not isinstance(request_id, str) or not request_id.strip()
+            or not isinstance(actor, str) or not actor.strip()
+            or (mode == "model_primary" and (not isinstance(model_id, str) or not model_id.strip()))
+            or (mode == "agent_primary" and model_id is not None)
+            or (expected_mode == "model_primary" and (not isinstance(expected_model_id, str) or not expected_model_id.strip()))
+            or (expected_mode == "agent_primary" and expected_model_id is not None)):
+        raise ValueError("invalid runtime request")
+    request = {"request_id": request_id, "actor": actor, "from_mode": expected_mode,
+               "to_mode": mode, "from_model_id": expected_model_id, "target_model_id": model_id}
+    with registry._locked(), configuration_guard():
+        current = _read_online_control(registry)
+        history = current.get("mode_transitions", [])
+        for previous in history:
+            if previous["request_id"] == request_id:
+                if any(previous.get(key) != value for key, value in request.items()):
+                    raise ValueError("runtime request identity conflicts")
+                return {"mode": previous["to_mode"], "active_model_id": previous["target_model_id"]}
+        current_mode = derive_runtime_mode(registry).value
+        current_model = current.get("model_id") if current_mode == "model_primary" else None
+        if current_mode != expected_mode or current_model != expected_model_id:
+            raise ValueError("runtime state changed")
+        config_version = validate_promotion() if mode == "model_primary" else current.get("promotion_config_version", "email-promotion-gate-v1")
+        if not isinstance(config_version, str) or not config_version.strip():
+            raise ValueError("invalid promotion configuration version")
+        payload = {"mode": mode, "promotion_config_version": config_version}
+        if mode == "model_primary":
+            activation = _prepare_online_activation(registry, model_id, classifier_loader=classifier_loader)
+            payload.update(model_id=activation.model_id, artifact_sha256=activation.artifact_sha256,
+                           compatibility=dict(activation.compatibility))
+        transition = {**request, "promotion_config_version": config_version, "status": "applied",
+                      "reason": "user_enabled_primary_model" if model_id else "user_disabled_primary_model",
+                      "created_at": datetime.now(timezone.utc).isoformat()}
+        payload["mode_transitions"] = [*history, transition]
+        _write_online_control(registry, payload)
+        return {"mode": mode, "active_model_id": model_id}
 
 
 def derive_runtime_mode(
@@ -426,13 +624,9 @@ def derive_runtime_mode(
     if manual_historical:
         return EmailClassifierRuntimeMode.SHADOW_HISTORY
     try:
-        payload = json.loads(
-            (Path(registry.root) / ONLINE_ACTIVATION_FILENAME).read_text(
-                encoding="utf-8"
-            )
-        )
-        if not isinstance(payload, Mapping):
-            raise ValueError("activation must be an object")
+        payload = _read_online_control(registry)
+        if payload.get("mode") != "model_primary":
+            return EmailClassifierRuntimeMode.AGENT_PRIMARY
         model_id = str(payload["model_id"])
         artifact_digest = str(payload["artifact_sha256"])
         evidence_rows = tuple(registry.list_staged_evidence())
@@ -450,7 +644,7 @@ def derive_runtime_mode(
         artifact = Path(registry.embedding_artifacts) / f"{model_id}.artifact"
         if sha256(artifact.read_bytes()).hexdigest() != artifact_digest:
             raise ValueError("activation artifact changed")
-    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError, ModelRegistryError):
         return EmailClassifierRuntimeMode.AGENT_PRIMARY
     return EmailClassifierRuntimeMode.MODEL_PRIMARY
 

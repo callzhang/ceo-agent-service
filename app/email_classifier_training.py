@@ -11,7 +11,7 @@ import time
 import warnings
 from importlib.metadata import version as dependency_version
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -60,7 +60,7 @@ class FrozenEmbeddingCandidateResult:
     test_count: int
     category_metrics: Mapping[str, Mapping[str, object]]
     important_metrics: Mapping[str, object]
-    latency_ms: Mapping[str, float]
+    head_latency_ms: Mapping[str, float | int]
     failure_reason: str
     maturity: CandidateMaturityEvidence
 
@@ -80,9 +80,12 @@ def train_frozen_embedding_candidate(
     expected_snapshot_sha: str | None = None,
     expected_description_version: str | None = None,
     description_overlay: DescriptionSetOverlay | None = None,
+    benchmark_candidate: Callable[[object, Sequence[Mapping[str, object]]], Mapping[str, object]] | None = None,
 ) -> FrozenEmbeddingCandidateResult:
     """Train both heads from one frozen Task 5 split and only stage evidence."""
 
+    training_started_at = datetime.now(timezone.utc)
+    training_started_clock = time.perf_counter()
     if type(historical_systematic_error_state) is not HistoricalSystematicErrorState:
         raise TypeError(
             "historical_systematic_error_state must be HistoricalSystematicErrorState"
@@ -271,12 +274,10 @@ def train_frozen_embedding_candidate(
         important_embeddings=important_train_matrix,
     )
 
-    started = time.perf_counter()
     test_predictions = tuple(classifier.predict(vector_for(row)) for row in test)
     important_test_predictions = tuple(
         classifier.predict(vector_for(row)) for row in important_test
     )
-    elapsed_ms = (time.perf_counter() - started) * 1000.0
     category_metrics = {
         category: _category_acceptance_metrics(
             category=category,
@@ -292,12 +293,12 @@ def train_frozen_embedding_candidate(
         threshold=important_threshold,
     )
     head_latencies = [float(item.head_ms) for item in important_test_predictions]
-    latency_ms = {
+    head_latency_ms = {
         "p50": _numeric_percentile(head_latencies, 0.50),
         "p95": _numeric_percentile(head_latencies, 0.95),
         "p99": _numeric_percentile(head_latencies, 0.99),
         "max": max(head_latencies),
-        "batch_total": elapsed_ms,
+        "sample_count": len(head_latencies),
     }
     if trained_at is not None and (
         trained_at.tzinfo is None or trained_at.utcoffset() is None
@@ -380,6 +381,47 @@ def train_frozen_embedding_candidate(
     whole_readiness = assess_staged_candidate_readiness(
         (*registry.list_staged_evidence(), current_readiness_evidence)
     )
+    benchmark_evidence: dict[str, object] = {
+        "status": "unmeasured", "reason": "benchmark_not_configured",
+    }
+    if benchmark_candidate is not None:
+        from app.email_candidate_benchmark import (
+            BENCHMARK_BOUNDARY, BENCHMARK_PROTOCOL, BENCHMARK_STAGES,
+        )
+
+        benchmark_failure_reason = "benchmark_callback_failed"
+        try:
+            report = benchmark_candidate(
+                classifier, tuple(MappingProxyType(dict(row)) for row in test),
+            )
+            benchmark_failure_reason = "benchmark_evidence_invalid"
+            benchmark_evidence = json.loads(json.dumps(dict(report), allow_nan=False))
+            if benchmark_evidence.get("status") == "measured":
+                measured = benchmark_evidence["end_to_end_latency_ms"]
+                if (
+                    measured["protocol"] != BENCHMARK_PROTOCOL
+                    or measured["boundary"] != BENCHMARK_BOUNDARY
+                    or measured["runtime_warm"] is not True
+                    or measured.get("input_contract_verified") is not True
+                    or measured["cache_hit"] is not False
+                    or measured["stages"] != list(BENCHMARK_STAGES)
+                ):
+                    raise ValueError("benchmark boundary does not cover end-to-end prediction")
+                count = measured["sample_count"]
+                if type(count) is not int or count <= 0:
+                    raise ValueError("benchmark sample count is invalid")
+                percentiles = [measured[key] for key in ("p50", "p95", "p99")]
+                if any(type(value) not in (int, float) or not math.isfinite(value)
+                       or value < 0 for value in percentiles) or percentiles != sorted(percentiles):
+                    raise ValueError("benchmark percentiles are invalid")
+            elif benchmark_evidence.get("status") != "unmeasured":
+                raise ValueError("benchmark status is invalid")
+        except Exception as exc:
+            benchmark_evidence = {
+                "status": "unmeasured", "reason": benchmark_failure_reason,
+                "error_type": type(exc).__name__,
+            }
+    training_completed_at = datetime.now(timezone.utc)
     evidence = {
         "model_id": model_id,
         "source_snapshot_id": snapshot_id,
@@ -402,8 +444,29 @@ def train_frozen_embedding_candidate(
             },
         },
         "metrics": {
+            "accuracy": float(accuracy_score(
+                [str(row["category_key"]) for row in test],
+                [item.category for item in test_predictions],
+            )),
+            "macro_f1": float(np.mean([
+                float(category_metrics[category]["f1"]) for category in categories
+            ])),
             "categories": category_metrics,
             "important": important_metrics,
+        },
+        "evaluation": {
+            "protocol": "email-folder-heldout-v1",
+            "test_digest": _heldout_test_digest(important_test),
+            "category_keys": list(categories),
+        },
+        "training": {
+            "started_at": training_started_at.isoformat(),
+            "completed_at": training_completed_at.isoformat(),
+            "duration_ms": (time.perf_counter() - training_started_clock) * 1000.0,
+            "sample_count": len(all_rows),
+            "category_sample_count": len(rows),
+            "account_count": len({str(row["account_id"]) for row in all_rows}),
+            "group_count": len({str(row["group_key"]) for row in all_rows}),
         },
         "classification_conflicts": classification_conflicts,
         "historical_eligibility": {
@@ -428,7 +491,8 @@ def train_frozen_embedding_candidate(
             "passing_model_ids": list(whole_readiness.passing_model_ids),
             "reason": whole_readiness.reason,
         },
-        "latency_ms": latency_ms,
+        "head_latency_ms": head_latency_ms,
+        "candidate_benchmark": benchmark_evidence,
         "parameters": {
             "alpha": classifier.alpha,
             "beta": classifier.beta,
@@ -465,6 +529,8 @@ def train_frozen_embedding_candidate(
             unresolved_historical_systematic_error
         ),
     }
+    if benchmark_evidence.get("status") == "measured":
+        evidence["end_to_end_latency_ms"] = benchmark_evidence["end_to_end_latency_ms"]
     if description_overlay is not None:
         evidence["description_proposal"] = {
             "proposal_id": description_overlay.proposal_id,
@@ -491,7 +557,7 @@ def train_frozen_embedding_candidate(
         test_count=len(test),
         category_metrics=category_metrics,
         important_metrics=important_metrics,
-        latency_ms=latency_ms,
+        head_latency_ms=head_latency_ms,
         failure_reason="",
         maturity=maturity,
     )
@@ -560,6 +626,10 @@ def _category_acceptance_metrics(*, category, rows, predictions, threshold):
     ]
     hits = [index for index in accepted if expected[index] == category]
     return {
+        "support": sum(value == category for value in expected),
+        "test_independent_groups": len({
+            str(row["group_key"]) for row in rows if row["category_key"] == category
+        }),
         "precision": float(precision[0]),
         "recall": float(recall[0]),
         "f1": float(f1[0]),
@@ -568,6 +638,24 @@ def _category_acceptance_metrics(*, category, rows, predictions, threshold):
         "independent_groups": len({str(rows[index]["group_key"]) for index in hits}),
         "threshold": float(threshold),
     }
+
+
+def _heldout_test_digest(rows: Sequence[Mapping[str, object]]) -> str:
+    """Hash held-out membership, inputs, groups and labels, independent of row order.
+
+    Snapshot IDs and training rows are deliberately excluded: a new training
+    snapshot can still evaluate the exact same held-out examples. Both heads'
+    test rows participate, including examples without a business category.
+    """
+    fields = (
+        "account_id", "stable_message_identity", "normalized_model_input_hash",
+        "group_key", "category_key", "important",
+    )
+    records = sorted(
+        json.dumps({key: row[key] for key in fields}, sort_keys=True, separators=(",", ":"))
+        for row in rows
+    )
+    return sha256(json.dumps(records, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def _important_acceptance_metrics(*, rows, predictions, threshold):

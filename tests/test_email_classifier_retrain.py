@@ -837,6 +837,8 @@ def test_training_subprocess_reads_frozen_error_state_and_description_overlay(
     assert observed["descriptions"] == overlay.descriptions
     assert observed["description_overlay"] == overlay
     assert observed["historical_systematic_error_state"] == error_state
+    from app.email_candidate_benchmark import benchmark_candidate
+    assert observed["benchmark_candidate"] is benchmark_candidate
     assert evaluations == [(proposal.proposal_id, "email-embedding-mlp-overlay")]
 
 

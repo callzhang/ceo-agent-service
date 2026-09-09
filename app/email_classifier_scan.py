@@ -247,23 +247,37 @@ def scan_agent_classification_batch(
                 runtime_snapshot = snapshot_reader()
                 mode = EmailClassifierRuntimeMode(runtime_snapshot.mode)
                 predictor = runtime_snapshot.predictor
-                input_version = str(runtime_snapshot.input_schema_version or "")
                 snapshot_model_id = str(runtime_snapshot.model_id or "")
             else:
                 mode = EmailClassifierRuntimeMode(online_runtime.mode)
                 predictor = online_runtime.model_predict
-                input_version = str(online_runtime.input_schema_version or "")
                 snapshot_model_id = str(getattr(online_runtime, "model_id", "") or "")
             if mode is EmailClassifierRuntimeMode.SHADOW_HISTORY:
                 raise ValueError("shadow_history cannot enter the realtime scan loop")
             if mode is EmailClassifierRuntimeMode.MODEL_PRIMARY:
                 if accept_model is None or predictor is None:
                     raise ValueError("model_primary scan dependencies are incomplete")
-                model_text = email_message_to_text(message)
+                from app.email_training_snapshot import (
+                    MODEL_INPUT_SCHEMA_VERSION,
+                    canonical_model_input,
+                    provider_model_input_fields,
+                )
+
+                model_text = ""
+
+                def predict_canonical_input(raw_message: Mapping[str, object]):
+                    nonlocal model_text
+                    model_text = canonical_model_input(
+                        provider_model_input_fields(raw_message)
+                    )
+                    return predictor(
+                        OnlineModelInput(model_text, MODEL_INPUT_SCHEMA_VERSION)
+                    )
+
                 route_online_classification(
                     mode=mode,
-                    current_input=OnlineModelInput(model_text, input_version),
-                    model_predict=predictor,
+                    current_input=message,
+                    model_predict=predict_canonical_input,
                     enqueue_agent=enqueue_agent,
                     accept_model=lambda prediction: accept_model(
                         message,

@@ -301,6 +301,24 @@ consumer、训练三个组件都至少成功完成一轮后才发布 `ready`。
 
 ### Email folder classifier live verification
 
+Console 的“模型训练”提供版本化门槛配置及显式主模型开关。四项默认值为 Macro F1 0.95、
+逐类别 Precision 0.95、逐类别独立测试样本 20、常驻端到端 P95 500ms；缺失测量不能达标。
+达标显示红点，用户操作开关才调用 runtime-mode API。运行状态和切换身份/历史在同一个
+online-active.json 中原子提交，expected mode/model 冲突返回 409；关闭模型保留证据和历史。
+Registry 锁串行化模式切换，提交期间配置写锁保持当前描述和门槛不变。模式改变由 worker tick
+读取生效。门槛和类别描述使用 schema 34 的追加版本记录；线上数据库升级前执行并验证 SQLite
+在线备份。代码回滚至 schema 33 不能直接打开升级后的库，须使用已验证的升级前备份。
+
+训练证据区分 head latency 和端到端 latency。趋势图只连接同一评测协议、独立测试集摘要和
+类别集合的版本；旧版本缺少这些字段时显示不可比较。单个损坏的 staged 文件仍显示异常条目，
+其他健康版本继续展示，晋升判定保留损坏事实。
+
+Embedding 训练观察与线上预测共用 provider 字段映射和 canonical JSON 序列化；正文（含引用）、
+允许的邮件头及附件元数据必须产生相同输入和缓存键。旧 TF-IDF 的分词文本不能冒充该输入
+schema。候选计时从已读取邮件的输入构建开始，覆盖预热后的缓存查询、远端 Embedding 和输出头，
+不包含邮箱网络读取或分类后的外部动作；远端未命中路径和缓存命中路径分别记录。无法验证输入
+一致性、缺少 Embedding 配置或测量失败时记录未测量原因，不生成可晋升的延迟数值。
+
 Live checks are opt-in and excluded from normal test runs. The mailbox check requires a
 designated reversible message plus `CEO_LIVE_EMAIL_FOLDER_CLASSIFIER_E2E=1`,
 `CEO_LIVE_EMAIL_IMAP_HOST`, `CEO_LIVE_EMAIL_IMAP_PORT` (default 993),

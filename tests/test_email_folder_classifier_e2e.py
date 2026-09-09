@@ -33,7 +33,7 @@ from app.email_classifier_runtime import (
     EmailClassifierRuntimeMode,
     OnlineClassificationResult,
     OnlineModelAcceptOutcome,
-    activate_online_model,
+    switch_online_model,
 )
 from app.email_classifier_training import train_frozen_embedding_candidate
 from app.email_classifier_scan import route_online_classification
@@ -586,25 +586,29 @@ def _train_real_candidate_pair(tmp_path):
         historical_systematic_error_state=error_state,
         trained_at=later_observed_at,
     )
-    activate_online_model(registry, second.model_id)
+    switch_online_model(
+        registry, mode="model_primary", model_id=second.model_id,
+        expected_mode="agent_primary", expected_model_id=None,
+        request_id="runtime-fixture", actor="test", validate_promotion=lambda: "test-gate-v1",
+    )
     return store, registry, cache, first, second, stored
 
 
 def test_warmed_production_runtime_cached_path_includes_full_local_pipeline(tmp_path):
-    from app.email_classifier_model import email_message_to_text
+    from app.email_training_snapshot import canonical_model_input, provider_model_input_fields
 
     store, registry, cache, _first, second, snapshot = _train_real_candidate_pair(
         tmp_path
     )
     message = {
-        "sender": {"name": "Counsel", "email": "law@example.test"},
+        "from": {"name": "Counsel", "email": "law@example.test"},
         "toRecipients": [{"name": "Derek", "email": "derek@example.test"}],
         "ccRecipients": [],
         "subject": "Legal contract review",
-        "markdownBody": "External contract compliance obligation.",
-        "attachments": [{"filename": "contract.pdf", "contentType": "application/pdf"}],
+        "textBody": "External contract compliance obligation.",
+        "attachments": [{"filename": "contract.pdf", "mime_type": "application/pdf"}],
     }
-    normalized = email_message_to_text(message)
+    normalized = canonical_model_input(provider_model_input_fields(message))
     cache.put(
         EmbeddingCacheKey.for_text(
             normalized_text=normalized,
@@ -633,7 +637,7 @@ def test_warmed_production_runtime_cached_path_includes_full_local_pipeline(tmp_
         warm_snapshot = runtime.snapshot()
         warm_snapshot.predictor(
             OnlineModelInput(
-                email_message_to_text(message),
+                canonical_model_input(provider_model_input_fields(message)),
                 warm_snapshot.input_schema_version or "",
             )
         )
@@ -642,7 +646,7 @@ def test_warmed_production_runtime_cached_path_includes_full_local_pipeline(tmp_
             runtime_snapshot = runtime.snapshot()
             result = runtime_snapshot.predictor(
                 OnlineModelInput(
-                    email_message_to_text(message),
+                    canonical_model_input(provider_model_input_fields(message)),
                     runtime_snapshot.input_schema_version or "",
                 )
             )
@@ -1690,7 +1694,11 @@ def test_live_cached_and_gpu_latency_budgets_are_opt_in(tmp_path):
         }
         registry.stage_embedding_candidate(model_id, source, evidence)
         model_ids.append(model_id)
-    activate_online_model(registry, model_ids[-1])
+    switch_online_model(
+        registry, mode="model_primary", model_id=model_ids[-1],
+        expected_mode="agent_primary", expected_model_id=None,
+        request_id="runtime-fixture", actor="test", validate_promotion=lambda: "test-gate-v1",
+    )
     cache = EmbeddingCache(registry.root, dimension=client.dimension)
     runtime = PromotedEmailClassifierRuntime(
         registry,
@@ -1699,17 +1707,17 @@ def test_live_cached_and_gpu_latency_budgets_are_opt_in(tmp_path):
         cache_factory=lambda _model: cache,
     )
     message = {
-        "sender": {"name": "Counsel", "email": "law@example.test"},
+        "from": {"name": "Counsel", "email": "law@example.test"},
         "toRecipients": [{"name": "Derek", "email": "derek@example.test"}],
         "ccRecipients": [],
         "subject": "Legal contract review",
-        "markdownBody": "External contract compliance obligation.",
-        "attachments": [{"filename": "contract.pdf", "contentType": "application/pdf"}],
+        "textBody": "External contract compliance obligation.",
+        "attachments": [{"filename": "contract.pdf", "mime_type": "application/pdf"}],
     }
-    from app.email_classifier_model import email_message_to_text
+    from app.email_training_snapshot import canonical_model_input, provider_model_input_fields
 
     def classify_message(current_message):
-        normalized = email_message_to_text(current_message)
+        normalized = canonical_model_input(provider_model_input_fields(current_message))
         snapshot = runtime.snapshot()
         assert snapshot.predictor is not None
         return snapshot.predictor(
@@ -1728,7 +1736,7 @@ def test_live_cached_and_gpu_latency_budgets_are_opt_in(tmp_path):
         remote_ms = []
         for index in range(10):
             current = dict(message)
-            current["markdownBody"] = (
+            current["textBody"] = (
                 f"External contract compliance obligation {index}."
             )
             started = time.perf_counter()

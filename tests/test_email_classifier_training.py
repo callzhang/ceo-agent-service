@@ -1057,8 +1057,10 @@ def test_retrain_failure_does_not_advance_state_or_create_model(tmp_path: Path):
     assert result.training_result is None
 
 
+@pytest.mark.parametrize("benchmark_case", ["absent", "measured", "failed", "invalid", "wrong_boundary", "cold", "cache_only", "head_only", "unverified"])
 def test_frozen_snapshot_embedding_training_stages_metrics_without_activation(
     tmp_path: Path,
+    benchmark_case,
 ):
     store = EmailStore(tmp_path / "email.sqlite3")
     observed_at = datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc)
@@ -1278,8 +1280,47 @@ def test_frozen_snapshot_embedding_training_stages_metrics_without_activation(
     invalid_prior.pop("unresolved_historical_systematic_error")
     registry.persist_staged_evidence(invalid_prior["model_id"], invalid_prior)
 
+    benchmark_args = {}
+    benchmark_calls = []
+    benchmark_report = {
+        "status": "measured",
+        "end_to_end_latency_ms": {"p50": 300., "p95": 400., "p99": 450.,
+                                  "sample_count": 4,
+                                  "runtime_warm": True, "cache_hit": False,
+                                  "input_contract_verified": True,
+                                  "boundary": "canonical_snapshot_message_to_prediction",
+                                  "stages": ["input_build", "cache_lookup", "queue", "http", "embedding", "head"],
+                                  "protocol": "email-training-input-to-prediction-v2"},
+    }
+    if benchmark_case != "absent":
+        def benchmark(classifier, test_rows):
+            benchmark_calls.append((classifier, test_rows))
+            assert all(row["split"] == "test" for row in test_rows)
+            assert registry.list_staged_evidence() == [invalid_prior]
+            if benchmark_case == "failed":
+                raise RuntimeError("private endpoint detail")
+            if benchmark_case == "invalid":
+                return {"status": "measured"}
+            if benchmark_case == "unverified":
+                return {"status": "measured", "end_to_end_latency_ms": {
+                    key: value for key, value in benchmark_report["end_to_end_latency_ms"].items()
+                    if key != "input_contract_verified"
+                }}
+            if benchmark_case == "wrong_boundary":
+                return {"status": "measured", "end_to_end_latency_ms": {
+                    **benchmark_report["end_to_end_latency_ms"], "protocol": "normalized-input-only-v1",
+                }}
+            if benchmark_case in ("cold", "cache_only", "head_only"):
+                incorrect = {"cold": {"runtime_warm": False}, "cache_only": {"cache_hit": True},
+                             "head_only": {"stages": ["head"]}}[benchmark_case]
+                return {"status": "measured", "end_to_end_latency_ms": {
+                    **benchmark_report["end_to_end_latency_ms"], **incorrect,
+                }}
+            return benchmark_report
+        benchmark_args["benchmark_candidate"] = benchmark
     result = train_frozen_embedding_candidate(
         **common_training_args,
+        **benchmark_args,
         expected_snapshot_sha=snapshot.snapshot_digest,
         expected_description_version=description_set_version,
     )
@@ -1297,7 +1338,32 @@ def test_frozen_snapshot_embedding_training_stages_metrics_without_activation(
     assert persisted["parameters"]["alpha"] >= 0
     assert persisted["dependencies"]["embedding_model_revision"] == "gpu4-r1"
     assert persisted["compatibility"]["description_version"] == description_set_version
-    assert persisted["latency_ms"].keys() >= {"p50", "p95", "p99"}
+    assert persisted["head_latency_ms"].keys() >= {"p50", "p95", "p99", "sample_count"}
+    assert "latency_ms" not in persisted
+    if benchmark_case == "measured":
+        assert persisted["end_to_end_latency_ms"] == benchmark_report["end_to_end_latency_ms"]
+        assert len(benchmark_calls) == 1
+    else:
+        assert "end_to_end_latency_ms" not in persisted
+        assert persisted["candidate_benchmark"]["status"] == "unmeasured"
+    assert "private endpoint detail" not in json.dumps(persisted)
+    assert persisted["metrics"]["accuracy"] == 1.0
+    assert persisted["metrics"]["macro_f1"] == 1.0
+    for category in ("work", "legal"):
+        assert persisted["metrics"]["categories"][category]["support"] == 2
+        assert persisted["metrics"]["categories"][category]["test_independent_groups"] == 2
+    assert persisted["evaluation"]["category_keys"] == ["work", "legal"]
+    assert persisted["evaluation"]["protocol"] == "email-folder-heldout-v1"
+    assert dict(result.head_latency_ms) == persisted["head_latency_ms"]
+    assert len(persisted["evaluation"]["test_digest"]) == 64
+    training_evidence = persisted["training"]
+    assert datetime.fromisoformat(training_evidence["completed_at"]) >= datetime.fromisoformat(training_evidence["started_at"])
+    assert training_evidence["duration_ms"] >= 0
+    assert training_evidence["sample_count"] == 30
+    assert training_evidence["category_sample_count"] == 16
+    assert training_evidence["account_count"] == 1
+    assert training_evidence["group_count"] == 30
+    assert "new_sample_count" not in training_evidence
     assert persisted["split_counts"]["important"] == {
         "train": 14,
         "validation": 8,

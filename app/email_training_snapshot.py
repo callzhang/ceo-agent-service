@@ -689,6 +689,39 @@ def _candidate(value: Mapping[str, object], *, observed_at: str) -> _Candidate |
     )
 
 
+def provider_model_input_fields(message: Mapping[str, object]) -> dict[str, object]:
+    """Map an already-read provider message to the training input fields.
+
+    Shared by provider observations and online inference. Folder/label facts,
+    store access and mailbox actions are deliberately outside this pure adapter.
+    Preserve the established textBody and metadata-only attachment contract.
+    """
+    unsubscribe_headers = {
+        "list-unsubscribe": message.get("listUnsubscribe", ""),
+        "list-unsubscribe-post": message.get("listUnsubscribePost", ""),
+    }
+    return {
+        "sender": message.get("from", {}),
+        "to_recipients": message.get("toRecipients", ()),
+        "cc_recipients": message.get("ccRecipients", ()),
+        "subject": message.get("subject", ""),
+        "body": message.get("textBody", ""),
+        "headers": {
+            "message-id": message.get("messageId", ""),
+            "in-reply-to": message.get("inReplyTo", ""),
+            "references": " ".join(message.get("references", ())),
+            "auto-submitted": message.get("autoSubmitted", ""),
+        },
+        "unsubscribe_features": unsubscribe_training_features(unsubscribe_headers),
+        "attachments": message.get("attachments", ()),
+    }
+
+
+def canonical_model_input(value: Mapping[str, object]) -> str:
+    """Serialize model fields using the exact existing snapshot normalization."""
+    return _model_input(value)[0]
+
+
 def _model_input(value: Mapping[str, object]) -> tuple[str, str, str | None]:
     sender = _address(value.get("sender"), "sender")
     to_recipients = _addresses(value.get("to_recipients"), "to_recipients")

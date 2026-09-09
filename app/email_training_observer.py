@@ -17,7 +17,7 @@ from typing import Any
 from app.email_important import ImportantSignals
 from app.email_imap_readonly import ProviderFolderFingerprint
 from app.email_provider_folders import FolderRole
-from app.email_training_snapshot import unsubscribe_training_features
+from app.email_training_snapshot import provider_model_input_fields
 
 
 _STATE_VERSION = 2
@@ -559,10 +559,6 @@ def _provider_observation(
     stable_identity = _required_text(
         message.get("stableMessageIdentity"), "stableMessageIdentity"
     )
-    unsubscribe_headers = {
-        "list-unsubscribe": message.get("listUnsubscribe", ""),
-        "list-unsubscribe-post": message.get("listUnsubscribePost", ""),
-    }
     return {
         "account_id": account_id,
         "stable_message_identity": stable_identity,
@@ -577,19 +573,7 @@ def _provider_observation(
             stable_identity
         ),
         "important_signals": message["importantSignals"],
-        "sender": message.get("from", {}),
-        "to_recipients": message.get("toRecipients", ()),
-        "cc_recipients": message.get("ccRecipients", ()),
-        "subject": message.get("subject", ""),
-        "body": message.get("textBody", ""),
-        "headers": {
-            "message-id": message.get("messageId", ""),
-            "in-reply-to": message.get("inReplyTo", ""),
-            "references": " ".join(message.get("references", ())),
-            "auto-submitted": message.get("autoSubmitted", ""),
-        },
-        "unsubscribe_features": unsubscribe_training_features(unsubscribe_headers),
-        "attachments": message.get("attachments", ()),
+        **provider_model_input_fields(message),
         "provider_thread_id": message.get("threadId"),
         "explicit_matter_group": None,
         "source": "natural",

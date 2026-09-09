@@ -667,6 +667,36 @@ class EmailModelRegistry:
             ),
         )
 
+    def list_staged_evidence_inventory(self) -> list[dict[str, object]]:
+        """Read files independently for display; never use this for promotion.
+
+        Readable means JSON and file/model identity agree, not that maturity or
+        artifact integrity passed. Consumers still validate the evidence they
+        project. Corruption is retained under the filename's identity.
+        """
+        entries: list[dict[str, object]] = []
+        for path in sorted(self.staged_evidence.glob("*.json")):
+            try:
+                model_id = _staged_model_id(path.stem)
+                evidence = _read_json(path)
+                if evidence.get("model_id") != model_id:
+                    raise ModelRegistryError("staged evidence model identity mismatch")
+            except (OSError, TypeError, ValueError, ModelRegistryError):
+                entries.append({
+                    "model_id": path.stem,
+                    "evidence": None,
+                    "integrity_status": "corrupt",
+                    "integrity_error": "staged_evidence_invalid",
+                })
+            else:
+                entries.append({
+                    "model_id": model_id,
+                    "evidence": evidence,
+                    "integrity_status": "readable",
+                    "integrity_error": None,
+                })
+        return entries
+
     def persist_embedding_artifact(self, model_id: str, source: str | Path) -> Path:
         model_id = _staged_model_id(model_id)
         destination = self.embedding_artifacts / f"{model_id}.artifact"

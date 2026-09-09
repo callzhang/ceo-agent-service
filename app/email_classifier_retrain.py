@@ -924,6 +924,8 @@ def _run_training_job(
                 for row in store.list_category_configs()
                 if row["enabled"]
             }
+        from app.email_candidate_benchmark import benchmark_candidate
+
         result = train_frozen_embedding_candidate(
             store=store,
             snapshot_id=snapshot_id,
@@ -941,6 +943,7 @@ def _run_training_job(
             expected_description_version=started.description_version,
             historical_systematic_error_state=historical_error_state,
             description_overlay=description_overlay,
+            benchmark_candidate=benchmark_candidate,
         )
         if description_overlay is not None:
             proposal_repository.record_evaluation(

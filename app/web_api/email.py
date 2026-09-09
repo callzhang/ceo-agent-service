@@ -7,6 +7,7 @@ account connectivity test is IMAP-only; SMTP remains disabled.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import imaplib
@@ -15,7 +16,9 @@ import math
 from pathlib import Path
 import re
 import sqlite3
-from typing import Any
+from hashlib import sha256
+from typing import Any, Literal
+from uuid import uuid4
 
 from fastapi import HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -40,12 +43,17 @@ from app.email_classifier_runtime import (
     ONLINE_ACTIVATION_FILENAME,
     EmailClassifierRuntimeMode,
     derive_runtime_mode,
+    assess_online_promotion_gate,
+    switch_online_model,
+    online_control_history,
+    measured_end_to_end_latency,
 )
 from app.email_model_registry import (
     EMBEDDING_MODEL_ID_PREFIX,
     MODEL_ID_PREFIX,
     ModelRegistryError,
     candidate_maturity_from_mapping,
+    assess_staged_candidate_readiness,
 )
 from app.email_pipeline import apply_human_confirmation
 from app.email_store import (
@@ -206,6 +214,9 @@ def _project_staged_model_evidence(
 
     if not isinstance(evidence, dict):
         raise ValueError("model evidence must be an object")
+    for key in ("metrics", "head_latency_ms", "end_to_end_latency_ms", "evaluation", "training", "parameters"):
+        if key in evidence and not isinstance(evidence[key], dict):
+            raise ValueError(f"{key} evidence must be an object")
     maturity = candidate_maturity_from_mapping(evidence)
     hashes_value = evidence.get("hashes")
     if (
@@ -217,7 +228,8 @@ def _project_staged_model_evidence(
     compatibility = evidence.get("compatibility")
     historical = evidence.get("historical_eligibility")
     readiness = evidence.get("whole_model_readiness")
-    latency = evidence.get("latency_ms")
+    # Earlier immutable evidence named classifier-head measurements latency_ms.
+    latency = evidence.get("head_latency_ms", evidence.get("latency_ms"))
     split_counts = evidence.get("split_counts")
     hashes = evidence.get("hashes")
     if not isinstance(compatibility, dict) or not isinstance(historical, dict):
@@ -332,7 +344,81 @@ def _project_staged_model_evidence(
             raise ValueError("important split counts are invalid")
     else:
         raise ValueError("split counts are invalid")
+    def measured(value, *, unit=False, count=False):
+        if value is None:
+            return None
+        return (_safe_evidence_count(value, "metric") if count
+                else _safe_evidence_float(value, "metric", unit=unit))
+
+    training = evidence.get("training")
+    projected_training = None
+    if training is not None:
+        times = {key: (_safe_evidence_timestamp(training[key], key) if training.get(key) is not None else None)
+                 for key in ("started_at", "completed_at")}
+        if (all(times.values()) and datetime.fromisoformat(times["completed_at"])
+                < datetime.fromisoformat(times["started_at"])):
+            raise ValueError("training completion precedes start")
+        projected_training = {
+            **times, "duration_ms": measured(training.get("duration_ms")),
+            **{key: measured(training.get(key), count=True) for key in (
+                "sample_count", "category_sample_count", "account_count", "group_count",
+            )},
+        }
+    parameters = evidence.get("parameters")
+    projected_parameters = None
+    if parameters is not None:
+        layers = parameters.get("hidden_layer_sizes")
+        if layers is not None and (not isinstance(layers, list) or not layers
+                or any(type(size) is not int or not 0 < size <= 1_000_000_000 for size in layers)):
+            raise ValueError("hidden layer sizes are invalid")
+        thresholds = parameters.get("category_thresholds")
+        if thresholds is not None and not isinstance(thresholds, dict):
+            raise ValueError("category thresholds are invalid")
+        projected_parameters = {
+            **{key: measured(parameters.get(key)) for key in ("alpha", "beta", "regularization_alpha")},
+            **{key: measured(parameters.get(key), count=True) for key in ("max_iter", "random_seed")},
+            "important_threshold": measured(parameters.get("important_threshold"), unit=True),
+            "category_thresholds": ({key: measured(thresholds.get(key), unit=True) for key in safe_categories}
+                                    if thresholds is not None else None),
+            "hidden_layer_sizes": layers,
+            "solver": (_safe_exact_evidence_value(parameters["solver"], "solver", "lbfgs")
+                       if parameters.get("solver") is not None else None),
+            "head_format": (_safe_exact_evidence_value(parameters["head_format"], "head_format", "description-mlp-v1")
+                            if parameters.get("head_format") is not None else None),
+        }
+    raw_metrics = evidence.get("metrics", {})
+    metric_categories = raw_metrics.get("categories", {})
+    projected_metrics = {
+        "accuracy": measured(raw_metrics.get("accuracy"), unit=True),
+        "macro_f1": measured(raw_metrics.get("macro_f1"), unit=True),
+        "categories": {
+            category: {
+                **{key: measured(metric_categories[category].get(key), unit=True)
+                   for key in ("precision", "recall", "f1", "accepted_precision", "threshold")},
+                **{key: measured(metric_categories[category].get(key), count=True)
+                   for key in ("support", "accepted_hits", "independent_groups")},
+            } for category in safe_categories
+        },
+        "important": {
+            key: measured(raw_metrics.get("important", {}).get(key), unit=True)
+            for key in ("precision", "recall", "f1", "accepted_precision")
+        },
+    }
+    evaluation = evidence.get("evaluation")
+    projected_evaluation = None
+    if isinstance(evaluation, dict) and evaluation.get("protocol") == "email-folder-heldout-v1":
+        test_digest = _safe_digest(evaluation.get("test_digest"), "test_digest")
+        comparison = json.dumps([evaluation["protocol"], test_digest, sorted(safe_categories)])
+        projected_evaluation = {"protocol": evaluation["protocol"], "test_digest": test_digest,
+                                "comparability_key": sha256(comparison.encode()).hexdigest()}
+    projected_end_to_end = measured_end_to_end_latency(evidence.get("end_to_end_latency_ms"))
     return {
+        "training": projected_training,
+        "parameters": projected_parameters,
+        "metrics": projected_metrics,
+        "evaluation": projected_evaluation,
+        "head_timing_percentiles_ms": projected_latency,
+        "end_to_end_latency_ms": projected_end_to_end,
         "model_id": _safe_evidence_identifier(
             evidence["model_id"], "model_id", _MODEL_EVIDENCE_ID
         ),
@@ -373,7 +459,7 @@ def _safe_staged_evidence(
     registry: Any, registry_issues: list[dict[str, str]]
 ) -> list[dict[str, object]]:
     try:
-        rows = registry.list_staged_evidence()
+        inventory = registry.list_staged_evidence_inventory()
     except (OSError, TypeError, ValueError, ModelRegistryError):
         registry_issues.append(
             {
@@ -384,20 +470,23 @@ def _safe_staged_evidence(
         )
         return []
     valid: list[dict[str, object]] = []
-    for row in rows:
+    for entry in inventory:
+        row = entry["evidence"]
         try:
+            if row is None:
+                raise ValueError("unreadable staged evidence")
             _project_staged_model_evidence(row)
         except (KeyError, OverflowError, TypeError, ValueError):
             registry_issues.append(
                 {
-                    "model_id": "staged-evidence",
+                    "model_id": (entry["model_id"] if _MODEL_EVIDENCE_ID.fullmatch(str(entry["model_id"])) else "staged-evidence"),
                     "integrity_status": "corrupt",
                     "integrity_error": "staged_evidence_invalid",
                 }
             )
             continue
         valid.append(dict(row))
-    return valid
+    return sorted(valid, key=lambda row: (str(row.get("trained_at", "")), str(row["model_id"])))
 
 
 def _project_legacy_model_inventory(entry: object) -> dict[str, object] | None:
@@ -607,8 +696,8 @@ class EmailCategoryCreatePayload(BaseModel):
     actions: list[str] = Field(default_factory=list)
     action_parameters: dict[str, dict[str, object]] = Field(default_factory=dict)
     enabled: bool = True
-    description_version: str = Field(min_length=1)
-    config_version: str = Field(min_length=1)
+    description_version: str = Field(default_factory=lambda: str(uuid4()), min_length=1)
+    config_version: str = Field(default_factory=lambda: str(uuid4()), min_length=1)
 
 
 class EmailCategoryUpdatePayload(BaseModel):
@@ -619,8 +708,34 @@ class EmailCategoryUpdatePayload(BaseModel):
     exclude: list[str] = Field(min_length=1)
     threshold: float = Field(ge=0.0, le=1.0)
     enabled: bool = True
-    description_version: str = Field(min_length=1)
-    config_version: str = Field(min_length=1)
+    description_version: str = Field(default_factory=lambda: str(uuid4()), min_length=1)
+    config_version: str = Field(default_factory=lambda: str(uuid4()), min_length=1)
+    expected_current_version: str = Field(min_length=1)
+
+    @field_validator("expected_current_version")
+    @classmethod
+    def require_current_version(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("expected_current_version must not be blank")
+        return value
+
+
+class EmailPromotionConfigPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+    macro_f1_min: float = Field(gt=0, le=1)
+    category_precision_min: float = Field(gt=0, le=1)
+    category_validation_samples_min: int = Field(gt=0)
+    p95_latency_max_ms: float = Field(gt=0)
+    expected_current_version: str = Field(min_length=1)
+
+
+class EmailRuntimeModePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    mode: Literal["agent_primary", "model_primary"]
+    model_id: str | None = None
+    request_id: str = Field(min_length=1, max_length=200)
+    expected_mode: Literal["agent_primary", "model_primary"]
+    expected_model_id: str | None = None
 
 
 class EmailFeedbackPayload(BaseModel):
@@ -998,8 +1113,14 @@ def register_email_routes(
             limit=page_size,
             offset=(page - 1) * page_size,
         )
+        items = []
+        for row in rows:
+            provider_state = email_store.get_provider_classification_state(row["id"])
+            items.append({**row, "id": str(row["id"]),
+                          "important": provider_state.get("important"),
+                          "provider_classification": provider_state})
         return {
-            "items": [{**row, "id": str(row["id"])} for row in rows],
+            "items": items,
             "meta": meta(page=page, page_size=page_size, total=total),
         }
 
@@ -1156,6 +1277,122 @@ def register_email_routes(
             status_code=202 if run else 200,
         )
 
+    def training_controls(service, email_store, staged_evidence, registry_issues):
+        from app.email_description_optimizer import description_set_digest
+        from app.email_embedding_classifier import CategoryDescription
+
+        try:
+            transitions = online_control_history(service.registry)
+        except (OSError, ValueError, TypeError):
+            transitions = []
+            registry_issues.append({"model_id": "online-control", "integrity_status": "corrupt",
+                                    "integrity_error": "online_control_invalid"})
+        config = email_store.current_model_promotion_config()
+        descriptions = {
+            row["category_key"]: CategoryDescription(
+                core=row["core_description"], include=tuple(row["include"]),
+                exclude=tuple(row["exclude"]), version=row["description_version"],
+            ) for row in email_store.list_category_configs() if row["enabled"]
+        }
+        latest = staged_evidence[-1] if staged_evidence else None
+        verified = False
+        if latest:
+            artifact = Path(service.registry.embedding_artifacts) / f"{latest['model_id']}.artifact"
+            try:
+                verified = artifact.is_file() and sha256(artifact.read_bytes()).hexdigest() == latest["hashes"]["artifact_sha256"]
+            except OSError:
+                registry_issues.append({"model_id": latest["model_id"], "integrity_status": "corrupt",
+                                        "integrity_error": "artifact_unreadable"})
+        readiness = assess_staged_candidate_readiness(staged_evidence)
+        gate = assess_online_promotion_gate(
+            evidence=latest, config=config, enabled_category_keys=tuple(descriptions),
+            description_version=("description-set-sha256:" + description_set_digest(descriptions)
+                                 if descriptions else "description-set-unavailable"),
+            readiness=readiness, registry_issues=registry_issues, artifact_verified=verified,
+        )
+        mode = _active_runtime_mode(service.registry)
+        active_id = _active_embedding_model_id(service.registry, mode)
+        eligible = gate["promotion_eligible"]
+        runtime = {"mode": mode.value, "active_model_id": active_id,
+                   "candidate_model_id": latest["model_id"] if latest else None,
+                   "candidate_ready": bool(eligible and mode is EmailClassifierRuntimeMode.AGENT_PRIMARY),
+                   "toggle_enabled": bool(eligible or mode is EmailClassifierRuntimeMode.MODEL_PRIMARY)}
+        return {"runtime": runtime, "promotion_gate": gate, "mode_transitions": list(reversed(transitions))}
+
+    def registry_inventory(registry, issues):
+        """Use the same complete registry assessment for display and activation."""
+        try:
+            manifest = registry.active_manifest()
+            active_id = manifest.model_id if manifest is not None else None
+        except (OSError, ValueError, ModelRegistryError):
+            active_id = None
+            issues.append({"model_id": "active-manifest", "integrity_status": "corrupt",
+                           "integrity_error": "active_manifest_invalid"})
+        models = []
+        for entry in registry.list_model_inventory():
+            if entry.integrity_status != "verified":
+                issues.append({
+                    "model_id": "model-inventory-evidence",
+                    "integrity_status": entry.integrity_status,
+                    "integrity_error": _controlled_integrity_error(entry.integrity_error),
+                })
+            projected = _project_legacy_model_inventory(entry)
+            if projected is not None:
+                models.append(projected)
+        return active_id, models
+
+    @app.put("/api/console/email/promotion-config")
+    async def update_promotion_config(request: Request):
+        email_store = require_store()
+        try:
+            payload = EmailPromotionConfigPayload.model_validate(await request.json())
+        except (ValueError, TypeError):
+            return error_response("invalid_promotion_config", "晋升门槛格式不正确", 400)
+        try:
+            config = email_store.create_model_promotion_config(**payload.model_dump())
+        except ValueError:
+            return error_response("promotion_config_conflict", "门槛版本已更新，请刷新后重试", 409)
+        return {"ok": True, "config": config}
+
+    @app.put("/api/console/email/runtime-mode")
+    async def update_runtime_mode(request: Request):
+        email_store = require_store()
+        if email_learning_factory is None:
+            return error_response("email_learning_unavailable", "模型训练服务不可用", 503)
+        try:
+            payload = EmailRuntimeModePayload.model_validate(await request.json())
+        except (ValueError, TypeError):
+            return error_response("invalid_runtime_mode", "模式切换请求不正确", 400)
+        service = email_learning_factory()
+
+        @contextmanager
+        def configuration_guard():
+            with email_store._connect() as db:
+                db.execute("begin immediate")
+                yield
+
+        def validate_promotion():
+            issues = []
+            registry_inventory(service.registry, issues)
+            rows = _safe_staged_evidence(service.registry, issues)
+            controls = training_controls(service, email_store, rows, issues)
+            gate = controls["promotion_gate"]
+            if not gate["promotion_eligible"] or gate["candidate_model_id"] != payload.model_id:
+                raise ValueError("candidate is not eligible")
+            return gate["config"]["config_version"]
+
+        try:
+            switch_online_model(service.registry, **payload.model_dump(), actor="console-user",
+                                validate_promotion=validate_promotion,
+                                configuration_guard=configuration_guard)
+            issues = []
+            registry_inventory(service.registry, issues)
+            rows = _safe_staged_evidence(service.registry, issues)
+            controls = training_controls(service, email_store, rows, issues)
+        except (OSError, ValueError, ModelRegistryError):
+            return error_response("runtime_mode_conflict", "模型未达标或状态已变化，请刷新后重试", 409)
+        return {"ok": True, **controls}
+
     @app.get("/api/console/email/learning")
     def email_learning():
         """Expose immutable model evidence and current retraining state."""
@@ -1170,35 +1407,7 @@ def register_email_routes(
         service = email_learning_factory()
         state = load_retrain_state(service.retrain_state_path)
         registry_issues: list[dict[str, str]] = []
-        try:
-            active_manifest = service.registry.active_manifest()
-            active_model_id = (
-                active_manifest.model_id if active_manifest is not None else None
-            )
-        except (OSError, ValueError, ModelRegistryError):
-            active_model_id = None
-            registry_issues.append(
-                {
-                    "model_id": "active-manifest",
-                    "integrity_status": "corrupt",
-                    "integrity_error": "active_manifest_invalid",
-                }
-            )
-        models: list[dict[str, Any]] = []
-        for entry in service.registry.list_model_inventory():
-            if entry.integrity_status != "verified":
-                registry_issues.append(
-                    {
-                        "model_id": "model-inventory-evidence",
-                        "integrity_status": entry.integrity_status,
-                        "integrity_error": _controlled_integrity_error(
-                            entry.integrity_error
-                        ),
-                    }
-                )
-            projected = _project_legacy_model_inventory(entry)
-            if projected is not None:
-                models.append(projected)
+        active_model_id, models = registry_inventory(service.registry, registry_issues)
         staged_evidence = _safe_staged_evidence(service.registry, registry_issues)
         latest_evidence = staged_evidence[-1] if staged_evidence else None
         latest_projection = (
@@ -1227,6 +1436,7 @@ def register_email_routes(
         return {
             "ok": True,
             "learning": {
+                **training_controls(service, email_store, staged_evidence, registry_issues),
                 "active_model_id": active_model_id,
                 "active_mode": active_mode.value,
                 "pending_examples": pending_examples,
@@ -1399,6 +1609,26 @@ def register_email_routes(
             "meta": meta(),
         }
 
+    @app.get("/api/console/email/config/{category_key}/history")
+    def email_config_history(category_key: str):
+        email_store = require_store()
+        try:
+            category_key = validate_email_category_key(category_key)
+        except ValueError:
+            return error_response("invalid_email_category", "Email category is invalid", 400)
+        if email_store.get_category_config(category_key) is None:
+            return error_response("email_category_not_found", "Email category was not found", 404)
+        fields = (
+            "category_key", "display_name", "core_description", "include", "exclude",
+            "threshold", "enabled", "description_version", "config_version", "updated_at",
+        )
+        return {"ok": True, "items": [
+            {**{key: revision[key] for key in ("revision_id", "category_key", "config_version", "created_at")},
+             "description_version": revision["config"]["description_version"],
+             "config": {key: revision["config"][key] for key in fields}}
+            for revision in email_store.list_category_description_revisions(category_key)
+        ]}
+
     @app.post("/api/console/email/config")
     async def email_config_create(request: Request):
         email_store = require_store()
@@ -1564,6 +1794,8 @@ def register_email_routes(
                     "Email category was not found",
                     404,
                 )
+            if payload.expected_current_version != existing["config_version"]:
+                return error_response("email_category_version_conflict", "类别配置已更新，请刷新后重试", 409)
             enabled_accounts = [
                 account for account in email_store.list_accounts() if account["enabled"]
             ]
@@ -1601,6 +1833,7 @@ def register_email_routes(
                 description_version=payload.description_version,
                 config_version=payload.config_version,
                 bindings=tuple(coordinator_bindings),
+                expected_current_version=payload.expected_current_version,
             )
         except EmailFolderBindingConflict:
             return error_response(

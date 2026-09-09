@@ -178,6 +178,30 @@ def test_staged_evidence_is_immutable_and_never_changes_active_manifest(
         registry.persist_staged_evidence("email-embedding-mlp-example", evidence)
 
 
+@pytest.mark.parametrize("bad_content", ["{", "[]", '{"model_id":"wrong"}', '\ufffd'])
+def test_staged_inventory_retains_healthy_files_and_corrupt_identity(tmp_path, bad_content):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    model_id = "email-embedding-mlp-healthy"
+    evidence = _maturity_mapping(model_id)
+    registry.persist_staged_evidence(model_id, evidence)
+    broken = registry.staged_evidence / "email-embedding-mlp-broken.json"
+    broken.write_text(bad_content)
+    before = broken.read_bytes()
+
+    entries = {item["model_id"]: item for item in registry.list_staged_evidence_inventory()}
+    assert entries[model_id] == dict(model_id=model_id, evidence=evidence,
+                                    integrity_status="readable", integrity_error=None)
+    assert entries[broken.stem]["evidence"] is None
+    assert entries[broken.stem]["integrity_status"] == "corrupt"
+    assert entries[broken.stem]["integrity_error"] == "staged_evidence_invalid"
+    assert broken.read_bytes() == before
+    if bad_content != '{"model_id":"wrong"}':
+        with pytest.raises(ModelRegistryError):
+            registry.list_staged_evidence()
+    with pytest.raises(ModelRegistryError, match="already exists"):
+        registry.persist_staged_evidence(model_id, evidence)
+
+
 @pytest.mark.parametrize(
     "crash_window",
     ("truncated_artifact", "truncated_evidence", "missing_artifact"),

@@ -290,6 +290,18 @@ fallback code 写入 `EmailStore`；Web 进程只读取这些跨进程聚合，�
 classification detail 从该投影读取当前文件夹事实，不从冻结训练 snapshot 推断，也不在 API 请求中
 访问邮箱网络。训练相关字段明确使用 snapshot 命名，避免把历史冻结状态误称为当前状态。
 
+Email Console 的“模型训练”页读取后端统一计算的晋升资格。默认门槛为 Macro F1 ≥ 0.95、
+每个启用类别 Precision ≥ 0.95、逐类独立测试 support ≥ 20、常驻端到端 P95 ≤ 500ms。
+门槛通过带 expected-current version 的接口追加新版本；修改门槛不激活模型。
+现有双候选、important 和完整性条件继续适用，并比较候选与当前描述集和类别集合。
+缺失指标显示未测量，历史 classifier-head latency 不充当端到端测量。
+
+用户打开主模型开关后，runtime 在 Registry 锁与配置写锁内重读当前事实、重验候选，并原子
+替换 online-active.json。该文件同时持久化运行模式、模型身份和模式切换历史，是这次切换的
+提交事实源；进程中断不会留下没有切换身份的已激活模型。关闭开关保存 Agent 主分类及历史，
+不删除任何模型。worker 在 tick 时读取新事实，不需要为开关本身重启进程。
+描述编辑把当前配置和不可变版本快照在同一 SQLite 事务中保存，过期编辑返回冲突。
+
 ### Repository Upgrade
 
 服务周期性读取配置的 `origin/main`，只识别可安全 fast-forward 的更新；分叉、状态指纹变化或

@@ -206,6 +206,10 @@ def test_email_routes_initialize_and_reuse_one_store(
                 "enabled": True,
                 "description_version": "work-description-v2",
                 "config_version": "email-config-v1",
+                "expected_current_version": next(
+                    item["config_version"] for item in configs.json()["items"]
+                    if item["category_key"] == "work"
+                ),
             },
         )
         feedback = client.post(
@@ -646,7 +650,16 @@ def test_email_learning_registry_issues_never_echo_corrupt_model_id(
         def list_staged_evidence(self):
             return []
 
+        def list_staged_evidence_inventory(self):
+            return []
+
     class LearningStore:
+        def current_model_promotion_config(self):
+            return EmailStore(tmp_path / "controls.sqlite3").current_model_promotion_config()
+
+        def list_category_configs(self):
+            return []
+
         def list_unincluded_training_examples(self):
             return []
 
@@ -1031,7 +1044,17 @@ def test_email_learning_and_model_version_expose_safe_modern_evidence(tmp_path) 
                 raise ValueError("unknown")
             return evidence
 
+        def list_staged_evidence_inventory(self):
+            return [{"model_id": row["model_id"], "evidence": row, "integrity_status": "readable"}
+                    for row in self.list_staged_evidence()]
+
     class LearningStore:
+        def current_model_promotion_config(self):
+            return EmailStore(tmp_path / "controls.sqlite3").current_model_promotion_config()
+
+        def list_category_configs(self):
+            return []
+
         def list_unincluded_training_examples(self):
             return []
 
@@ -1089,15 +1112,17 @@ def test_email_learning_and_model_version_expose_safe_modern_evidence(tmp_path) 
     (registry.staged_evidence / f"{_CANONICAL_EMBEDDING_MODEL_SECOND}.json").write_text(
         json.dumps(evidence), encoding="utf-8"
     )
-    (registry.root / "online-active.json").write_text(
-        json.dumps(
-            {
-                "model_id": _CANONICAL_EMBEDDING_MODEL_SECOND,
-                "artifact_sha256": artifact_digest,
-                "compatibility": evidence["compatibility"],
-            }
+    from app.email_classifier_runtime import switch_online_model
+    registry._locked = EmailModelRegistry(registry.root)._locked
+    switch_online_model(
+        registry, mode="model_primary", model_id=_CANONICAL_EMBEDDING_MODEL_SECOND,
+        expected_mode="agent_primary", expected_model_id=None, request_id="fixture-activation",
+        actor="test", validate_promotion=lambda: "gate-v1",
+        classifier_loader=lambda _: SimpleNamespace(
+            **{key: evidence["compatibility"][key] for key in (
+                "enabled_categories", "input_schema_version", "embedding_model_id", "embedding_revision",
+            )}
         ),
-        encoding="utf-8",
     )
     service = SimpleNamespace(
         registry=registry,
@@ -1203,6 +1228,74 @@ def test_email_model_version_distinguishes_missing_from_corrupt_evidence(
     assert backslash_traversal.status_code == 400
     assert backslash_traversal.json()["code"] == "invalid_email_model_id"
     assert "secret" not in backslash_traversal.text
+
+
+def test_model_training_metrics_preserve_missing_values_and_comparability():
+    from app.web_api.email import _project_staged_model_evidence
+    evidence = _valid_model_detail_evidence()
+    old = _project_staged_model_evidence(evidence)
+    assert old["metrics"]["macro_f1"] is None
+    assert old["end_to_end_latency_ms"] is None
+    evidence["metrics"]["categories"]["legal"].update(precision=.97, recall=.95, f1=.96, support=25)
+    evidence["metrics"].update(accuracy=.97, macro_f1=.96)
+    evidence["evaluation"] = {"protocol": "email-folder-heldout-v1", "test_digest": "c" * 64}
+    current = _project_staged_model_evidence(evidence)
+    assert current["metrics"]["macro_f1"] == .96
+    assert current["metrics"]["categories"]["legal"]["support"] == 25
+    assert current["evaluation"]["comparability_key"]
+    assert current["head_timing_percentiles_ms"]["p95"] == 20
+    assert current["end_to_end_latency_ms"] is None
+
+
+def _training_metadata():
+    return {
+        "started_at": "2026-09-08T08:00:00+00:00",
+        "completed_at": "2026-09-08T08:01:00+00:00", "duration_ms": 60000.,
+        "sample_count": 80, "category_sample_count": 70, "account_count": 2,
+        "group_count": 35,
+    }
+
+
+def _training_parameters():
+    return {"alpha": .7, "beta": .3, "category_thresholds": {"legal": .95},
+            "important_threshold": .96, "head_format": "description-mlp-v1",
+            "hidden_layer_sizes": [8], "solver": "lbfgs", "regularization_alpha": .001,
+            "max_iter": 1000, "random_seed": 20260905}
+
+
+def test_training_metadata_and_parameters_projection_is_explicit_and_private_rows_never_escape():
+    from app.web_api.email import _project_staged_model_evidence
+    from test_email_promotion_gate import measured_latency
+    evidence = _valid_model_detail_evidence()
+    missing = _project_staged_model_evidence(evidence)
+    assert missing["training"] is None
+    assert missing["parameters"] is None
+    evidence.update(training={**_training_metadata(), "raw_rows": ["private-training-row"]},
+                    parameters={**_training_parameters(), "api_key": "private-key"},
+                    end_to_end_latency_ms={**measured_latency(), "raw_rows": ["private-timing-row"]},
+                    classification_conflicts=["private-conflict-row"])
+    projected = _project_staged_model_evidence(evidence)
+    assert projected["training"] == _training_metadata()
+    assert projected["parameters"] == _training_parameters()
+    assert projected["end_to_end_latency_ms"] == measured_latency()
+    assert "private-" not in json.dumps(projected)
+
+
+@pytest.mark.parametrize("container,field,value", [
+    ("training", "duration_ms", float("inf")), ("training", "sample_count", True),
+    ("training", "account_count", -1), ("training", "started_at", "private-time"),
+    ("training", "completed_at", "2026-09-08T07:00:00+00:00"),
+    ("parameters", "solver", "private-path"), ("parameters", "hidden_layer_sizes", "private-layers"),
+    ("parameters", "category_thresholds", []), ("parameters", "max_iter", True),
+    ("parameters", "alpha", float("nan")),
+])
+def test_training_projection_rejects_invalid_metadata(container, field, value):
+    from app.web_api.email import _project_staged_model_evidence
+    evidence = _valid_model_detail_evidence()
+    evidence.update(training=_training_metadata(), parameters=_training_parameters())
+    evidence[container][field] = value
+    with pytest.raises(ValueError):
+        _project_staged_model_evidence(evidence)
 
 
 def _valid_model_detail_evidence() -> dict[str, object]:
@@ -2925,6 +3018,8 @@ def test_email_config_post_returns_conflict_for_active_provider_folder_collision
 
 def test_email_config_put_updates_structured_descriptions_and_versions(tmp_path: Path):
     with _client(tmp_path) as client:
+        current = next(item for item in client.get("/api/console/email/config").json()["items"]
+                       if item["category_key"] == "work")
         response = client.put(
             "/api/console/email/config/work",
             json={
@@ -2935,6 +3030,7 @@ def test_email_config_put_updates_structured_descriptions_and_versions(tmp_path:
                 "enabled": True,
                 "description_version": "work-description-v2",
                 "config_version": "work-config-v2",
+                "expected_current_version": current["config_version"],
             },
         )
 
@@ -2972,6 +3068,7 @@ def test_email_config_put_refreshes_provider_folder_bindings(tmp_path: Path):
             "enabled": True,
             "description_version": "work-description-v2",
             "config_version": "work-config-v2",
+            "expected_current_version": store.get_category_config("work")["config_version"],
         },
     )
 
@@ -3036,6 +3133,7 @@ def test_email_config_put_pauses_junk_writes_after_negative_trash_readback(
             "enabled": True,
             "description_version": junk["description_version"],
             "config_version": f"junk-{negative_status}-readback",
+            "expected_current_version": enabled["config_version"],
         },
     )
 
@@ -3121,6 +3219,7 @@ def test_email_config_put_maps_second_account_binding_conflict_and_rolls_back(
             "enabled": False,
             "description_version": "work-description-conflict",
             "config_version": "work-config-conflict",
+            "expected_current_version": before_config["config_version"],
         },
     )
 

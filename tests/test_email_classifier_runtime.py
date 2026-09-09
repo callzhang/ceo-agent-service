@@ -40,7 +40,8 @@ from app.email_classifier_runtime import (
     RuntimeSnapshot,
     SequentialOnlineClassifier,
     StageLatencyRecorder,
-    activate_online_model,
+    switch_online_model,
+    online_control_history,
     derive_runtime_mode,
     load_active_classifier,
     scan_with_active_model,
@@ -268,11 +269,9 @@ def _mature_evidence(model_id, artifact_sha, *, parent="same-parent"):
     }
 
 
-class _ActivationRegistry:
+class _ActivationRegistry(EmailModelRegistry):
     def __init__(self, root, evidence):
-        self.root = root
-        self.embedding_artifacts = root / "embedding-artifacts"
-        self.embedding_artifacts.mkdir(parents=True)
+        super().__init__(root)
         self._evidence = evidence
 
     def _project_evidence(self):
@@ -315,6 +314,20 @@ class _LoadedOnlineModel:
     embedding_revision = "r17"
 
 
+def _activate_test_model(registry, model_id, *, classifier_loader):
+    """Exercise the canonical control commit while isolating classifier loading."""
+    import json
+    mode = derive_runtime_mode(registry).value
+    active_id = (json.loads((registry.root / "online-active.json").read_text())["model_id"]
+                 if mode == "model_primary" else None)
+    return switch_online_model(
+        registry, mode="model_primary", model_id=model_id,
+        expected_mode=mode, expected_model_id=active_id,
+        request_id=f"test-switch-{len(online_control_history(registry))}", actor="test",
+        validate_promotion=lambda: "test-gate-v1", classifier_loader=classifier_loader,
+    )
+
+
 def test_atomic_activation_requires_latest_whole_model_ready_candidate(tmp_path):
     root = tmp_path / "registry"
     first_id = "email-embedding-mlp-first"
@@ -332,7 +345,7 @@ def test_atomic_activation_requires_latest_whole_model_ready_candidate(tmp_path)
     artifact = registry.embedding_artifacts / f"{second_id}.artifact"
     artifact.write_bytes(second_bytes)
 
-    activation = activate_online_model(
+    activation = _activate_test_model(
         registry,
         second_id,
         classifier_loader=lambda path: _LoadedOnlineModel()
@@ -340,7 +353,7 @@ def test_atomic_activation_requires_latest_whole_model_ready_candidate(tmp_path)
         else None,
     )
 
-    assert activation.model_id == second_id
+    assert activation["active_model_id"] == second_id
     assert derive_runtime_mode(registry) is EmailClassifierRuntimeMode.MODEL_PRIMARY
     assert not list(root.glob(".online-active.*.tmp"))
 
@@ -595,17 +608,40 @@ def test_online_microbatcher_never_combines_incompatible_runtime_requests():
     assert sorted(calls) == [("first",), ("second",)]
 
 
-def test_online_microbatcher_dispatched_request_waits_for_remote_before_returning():
+def test_online_microbatcher_dispatched_request_waits_for_remote_before_returning(monkeypatch):
     runtime_module = __import__(
         "app.email_classifier_runtime",
         fromlist=["OnlineEmbeddingMicrobatcher", "OnlineEmbeddingBatchTimeout"],
     )
     release = Event()
+    entered = Event()
+    waiting_after_timeout = Event()
+
+    class RequestEvent(Event):
+        def wait(self, timeout=None):
+            if timeout is not None:
+                # Expire the initial deadline only after dispatch is observed.
+                # This exercises the timeout branch without a scheduler delay.
+                assert entered.wait(10.0), "managed worker did not dispatch the request"
+                return False
+            waiting_after_timeout.set()
+            assert super().wait(10.0), "request did not complete after release"
+            return True
+
+    request_type = runtime_module._OnlineEmbeddingRequest
+
+    def request(*args, **kwargs):
+        value = request_type(*args, **kwargs)
+        value.event = RequestEvent()
+        return value
+
+    monkeypatch.setattr(runtime_module, "_OnlineEmbeddingRequest", request)
 
     class Client:
         def embed(self, texts, *, queued_at=None):
             del texts, queued_at
-            release.wait(1.0)
+            entered.set()
+            assert release.wait(10.0), "test controller did not release the blocked client"
             return EmbeddingResult(
                 vectors=np.ones((1, 2), dtype=np.float32),
                 timing=EmbeddingTiming(0.0, 1.0, 1.0, 0.0, 2.0),
@@ -619,30 +655,37 @@ def test_online_microbatcher_dispatched_request_waits_for_remote_before_returnin
             future = pool.submit(
                 batcher.embed_one, "timeout", _batch_compatibility()
             )
-            time.sleep(0.08)
-            assert not future.done()
-            assert batcher.pending_count == 1
-            release.set()
-            assert future.result(timeout=1.0).vectors.shape == (1, 2)
+            try:
+                assert waiting_after_timeout.wait(10.0), "caller did not wait beyond its remote deadline"
+                assert not future.done()
+                assert batcher.pending_count == 1
+            finally:
+                release.set()
+            assert future.result(timeout=10.0).vectors.shape == (1, 2)
     finally:
         release.set()
         batcher.close()
 
 
 def test_online_microbatcher_blocking_client_has_only_managed_worker_thread():
-    from threading import enumerate as enumerate_threads
+    from threading import current_thread, enumerate as enumerate_threads
 
     runtime_module = __import__(
         "app.email_classifier_runtime", fromlist=["OnlineEmbeddingMicrobatcher"]
     )
     release = Event()
+    entered = Event()
+    start = Barrier(4, timeout=10.0)
     calls = []
+    workers = []
 
     class Client:
         def embed(self, texts, *, queued_at=None):
             del queued_at
             calls.append(tuple(texts))
-            release.wait(1.0)
+            workers.append((current_thread().ident, current_thread().name))
+            entered.set()
+            assert release.wait(10.0), "test controller did not release the blocked client"
             return EmbeddingResult(
                 vectors=np.ones((len(texts), 2), dtype=np.float32),
                 timing=EmbeddingTiming(0.0, 1.0, 1.0, 0.0, 2.0),
@@ -654,20 +697,31 @@ def test_online_microbatcher_blocking_client_has_only_managed_worker_thread():
         if thread.name == "email-online-embedding-request"
     }
     batcher = runtime_module.OnlineEmbeddingMicrobatcher(
-        Client(), maximum_wait_seconds=0.005, remote_timeout_seconds=0.03
+        Client(), maximum_wait_seconds=0.005, remote_timeout_seconds=10.0
     )
+
+    def request(index):
+        start.wait()
+        return batcher.embed_one(f"blocked-{index}", _batch_compatibility())
+
     try:
         with ThreadPoolExecutor(max_workers=3) as pool:
-            futures = [
-                pool.submit(
-                    batcher.embed_one, f"timeout-{index}", _batch_compatibility()
+            futures = [pool.submit(request, index) for index in range(3)]
+            try:
+                start.wait()
+                assert entered.wait(10.0), "managed worker did not enter the client"
+                # Watchdogs bound failures; the event handshake determines when
+                # assertions run. The client cannot silently succeed on timeout.
+                assert all(not future.done() for future in futures)
+                assert workers == [(batcher._thread.ident, "email-online-embedding-batcher")]
+                assert not any(
+                    thread.name == "email-online-embedding-request" and thread.ident not in baseline
+                    for thread in enumerate_threads()
                 )
-                for index in range(3)
-            ]
-            time.sleep(0.08)
-            assert all(not future.done() for future in futures)
-            release.set()
-            assert all(future.result(timeout=1.0) for future in futures)
+            finally:
+                # Release before executor shutdown, including failed assertions.
+                release.set()
+            assert all(future.result(timeout=10.0) for future in futures)
         untracked = {
             thread.ident
             for thread in enumerate_threads()
@@ -681,6 +735,7 @@ def test_online_microbatcher_blocking_client_has_only_managed_worker_thread():
         batcher.close()
 
     assert len(calls) >= 1
+    assert set(workers) == {(batcher._thread.ident, "email-online-embedding-batcher")}
 
 def test_predictor_never_starts_agent_while_dispatched_remote_is_active():
     runtime_module = __import__(
@@ -1178,7 +1233,7 @@ def test_promoted_runtime_owns_one_resident_batcher_and_closes_it(tmp_path):
     (registry.embedding_artifacts / f"{first_id}.artifact").write_bytes(first_bytes)
     artifact = registry.embedding_artifacts / f"{second_id}.artifact"
     artifact.write_bytes(second_bytes)
-    activate_online_model(
+    _activate_test_model(
         registry,
         second_id,
         classifier_loader=lambda _path: _LoadedOnlineModel(),
@@ -1237,7 +1292,7 @@ def test_promoted_runtime_owned_generation_closes_client_once_on_revoke(tmp_path
             self.close_calls += 1
 
     client = Client()
-    activate_online_model(registry, model_id, classifier_loader=lambda _path: Model())
+    _activate_test_model(registry, model_id, classifier_loader=lambda _path: Model())
     runtime = PromotedEmailClassifierRuntime(
         registry,
         classifier_loader=lambda _path: Model(),
@@ -1279,7 +1334,7 @@ def test_promoted_runtime_closes_owned_client_when_generation_build_fails(tmp_pa
             self.close_calls += 1
 
     client = Client()
-    activate_online_model(registry, model_id, classifier_loader=lambda _path: Model())
+    _activate_test_model(registry, model_id, classifier_loader=lambda _path: Model())
 
     runtime = PromotedEmailClassifierRuntime(
         registry,
@@ -1318,7 +1373,7 @@ def test_promoted_runtime_does_not_close_shared_factory_client_by_default(tmp_pa
             self.close_calls += 1
 
     client = Client()
-    activate_online_model(registry, model_id, classifier_loader=lambda _path: Model())
+    _activate_test_model(registry, model_id, classifier_loader=lambda _path: Model())
     runtime = PromotedEmailClassifierRuntime(
         registry,
         classifier_loader=lambda _path: Model(),
@@ -1461,7 +1516,7 @@ def test_promoted_runtime_continuous_generations_close_each_old_resource_once(tm
             _mature_evidence(previous_id, sha256(previous_bytes).hexdigest()),
             _mature_evidence(model_id, sha256(artifacts[model_id]).hexdigest()),
         )
-        activate_online_model(registry, model_id, classifier_loader=loader)
+        _activate_test_model(registry, model_id, classifier_loader=loader)
         if runtime is None:
             runtime = PromotedEmailClassifierRuntime(
                 registry,
@@ -1523,7 +1578,7 @@ def test_runtime_close_rejects_late_refresh_generation_and_closes_it_once(
         _mature_evidence(predecessor, sha256(payloads[predecessor]).hexdigest()),
         _mature_evidence(first_id, sha256(payloads[first_id]).hexdigest()),
     )
-    activate_online_model(registry, first_id, classifier_loader=lambda _path: Model())
+    _activate_test_model(registry, first_id, classifier_loader=lambda _path: Model())
     runtime = PromotedEmailClassifierRuntime(
         registry,
         classifier_loader=lambda _path: Model(),
@@ -1537,7 +1592,7 @@ def test_runtime_close_rejects_late_refresh_generation_and_closes_it_once(
         _mature_evidence(first_id, sha256(payloads[first_id]).hexdigest()),
         _mature_evidence(second_id, sha256(payloads[second_id]).hexdigest()),
     )
-    activate_online_model(registry, second_id, classifier_loader=lambda _path: Model())
+    _activate_test_model(registry, second_id, classifier_loader=lambda _path: Model())
     built = Event()
     release = Event()
     late_batchers = []
@@ -1603,7 +1658,7 @@ def test_promoted_runtime_tick_adopts_and_revokes_atomic_activation_without_rest
     )
     assert runtime.snapshot().mode is EmailClassifierRuntimeMode.AGENT_PRIMARY
 
-    activate_online_model(registry, model_id, classifier_loader=lambda _path: Model())
+    _activate_test_model(registry, model_id, classifier_loader=lambda _path: Model())
     assert runtime.tick() == "polled"
     promoted = runtime.snapshot()
     assert isinstance(promoted, RuntimeSnapshot)
@@ -1616,12 +1671,119 @@ def test_promoted_runtime_tick_adopts_and_revokes_atomic_activation_without_rest
     assert runtime.snapshot().mode is EmailClassifierRuntimeMode.AGENT_PRIMARY
     assert not old_batcher.is_alive
 
-    activate_online_model(registry, model_id, classifier_loader=lambda _path: Model())
+    _activate_test_model(registry, model_id, classifier_loader=lambda _path: Model())
     runtime.tick()
     artifact.write_bytes(b"tampered")
     runtime.tick()
     assert runtime.snapshot().mode is EmailClassifierRuntimeMode.AGENT_PRIMARY
     assert len(polls) == 4
+
+
+def test_console_mode_switch_commits_state_and_history_together(tmp_path):
+    from app.email_classifier_runtime import switch_online_model, online_control_history
+
+    first, second = b"first", b"second"
+    registry = _ActivationRegistry(tmp_path / "registry", (
+        _mature_evidence("email-embedding-mlp-first", sha256(first).hexdigest()),
+        _mature_evidence("email-embedding-mlp-second", sha256(second).hexdigest()),
+    ))
+    (registry.embedding_artifacts / "email-embedding-mlp-first.artifact").write_bytes(first)
+    (registry.embedding_artifacts / "email-embedding-mlp-second.artifact").write_bytes(second)
+    kwargs = dict(mode="model_primary", model_id="email-embedding-mlp-second",
+                  expected_mode="agent_primary", expected_model_id=None,
+                  request_id="switch-1", actor="console-user",
+                  validate_promotion=lambda: "gate-v1", classifier_loader=lambda _: _LoadedOnlineModel())
+    result = switch_online_model(registry, **kwargs)
+    assert result["mode"] == "model_primary"
+    assert len(online_control_history(registry)) == 1
+    assert switch_online_model(registry, **kwargs) == result
+    with pytest.raises(ValueError, match="request"):
+        switch_online_model(registry, **{**kwargs, "mode": "agent_primary", "model_id": None})
+    with pytest.raises(ValueError, match="changed"):
+        switch_online_model(registry, **{**kwargs, "request_id": "stale"})
+    result = switch_online_model(registry, mode="agent_primary", model_id=None,
+        expected_mode="model_primary", expected_model_id="email-embedding-mlp-second",
+        request_id="switch-2", actor="console-user", validate_promotion=lambda: "gate-v1")
+    assert result["mode"] == "agent_primary"
+    assert derive_runtime_mode(registry) is EmailClassifierRuntimeMode.AGENT_PRIMARY
+    assert len(online_control_history(registry)) == 2
+    assert (registry.embedding_artifacts / "email-embedding-mlp-second.artifact").exists()
+
+
+def test_no_alternate_activation_writer():
+    from app import email_classifier_runtime as runtime
+    assert not hasattr(runtime, "activate_online_model")
+
+
+@pytest.mark.parametrize("corruption", [
+    "missing_request_id", "duplicate_request_id", "empty_actor", "invalid_mode",
+    "wrong_model_for_mode", "invalid_timestamp", "missing_timezone", "unknown_status",
+    "private_extra_field", "wrong_manifest_mode", "wrong_config_version", "empty_history",
+    "non_object", "history_non_object",
+])
+def test_control_manifest_rejects_invalid_history_without_overwriting(tmp_path, corruption):
+    import json
+    from app.email_classifier_runtime import online_control_history, switch_online_model
+
+    registry = EmailModelRegistry(tmp_path / "registry")
+    request = dict(mode="agent_primary", model_id=None, expected_mode="agent_primary",
+                   expected_model_id=None, request_id="first", actor="console-user",
+                   validate_promotion=lambda: "gate-v1")
+    switch_online_model(registry, **request)
+    path = registry.root / "online-active.json"
+    payload = json.loads(path.read_text())
+    entry = payload["mode_transitions"][0]
+    if corruption == "missing_request_id":
+        del entry["request_id"]
+    elif corruption == "duplicate_request_id":
+        payload["mode_transitions"].append(dict(entry))
+    elif corruption == "empty_actor":
+        entry["actor"] = " "
+    elif corruption == "invalid_mode":
+        entry["from_mode"] = "invalid"
+    elif corruption == "wrong_model_for_mode":
+        entry["target_model_id"] = "unexpected-model"
+    elif corruption == "invalid_timestamp":
+        entry["created_at"] = "yesterday"
+    elif corruption == "missing_timezone":
+        entry["created_at"] = "2026-09-08T00:00:00"
+    elif corruption == "unknown_status":
+        entry["status"] = "failed"
+    elif corruption == "private_extra_field":
+        entry["private_rows"] = ["secret"]
+    elif corruption == "wrong_manifest_mode":
+        payload["mode"] = "model_primary"
+    elif corruption == "wrong_config_version":
+        payload["promotion_config_version"] = "other"
+    elif corruption == "empty_history":
+        payload["mode_transitions"] = []
+    elif corruption == "non_object":
+        payload = []
+    else:
+        payload["mode_transitions"] = [None]
+    path.write_text(json.dumps(payload))
+    before = path.read_bytes()
+    with pytest.raises(ValueError):
+        online_control_history(registry)
+    with pytest.raises(ValueError):
+        switch_online_model(registry, **{**request, "request_id": "second"})
+    assert path.read_bytes() == before
+
+
+def test_concurrent_switches_keep_single_history_and_replay_after_later_transition(tmp_path):
+    from app.email_classifier_runtime import online_control_history, switch_online_model
+
+    registry = EmailModelRegistry(tmp_path / "registry")
+    request = dict(mode="agent_primary", model_id=None, expected_mode="agent_primary",
+                   expected_model_id=None, request_id="same-request", actor="console-user",
+                   validate_promotion=lambda: "gate-v1")
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(lambda _: switch_online_model(registry, **request), range(4)))
+    assert all(result == results[0] for result in results)
+    assert len(online_control_history(registry)) == 1
+    switch_online_model(registry, **{**request, "request_id": "later"})
+    assert switch_online_model(registry, **request) == results[0]
+    assert [row["request_id"] for row in online_control_history(registry)] == ["same-request", "later"]
 
 
 def test_runtime_snapshot_is_immutable():
