@@ -2812,7 +2812,7 @@ def test_live_okr_source_failure_reuses_prior_proposal_for_audit(store):
     assert audit.calls[0]["proposal"].objective == "fallback applicant notification"
 
 
-def test_retryable_audit_exhaustion_returns_failed_latest_run(store):
+def test_retryable_audit_exhaustion_terminalizes_latest_run(store):
     task = _task(store)
     consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
     audit = ScriptedAudit(
@@ -2826,16 +2826,16 @@ def test_retryable_audit_exhaustion_returns_failed_latest_run(store):
         task,
     )
 
-    assert result.status == "failed_retryable"
+    assert result.status == "failed_terminal"
     assert result.final_role is AgentRole.AUDIT
     assert result.final_run_id == audit.calls[-1]["run_id"]
     assert result.error.code == "audit_unavailable"
-    assert result.error.retryable is True
+    assert result.error.retryable is False
     assert result.feedback_cycles == 0
     assert len(audit.calls) == 2
 
 
-def test_retryable_consumer_exhaustion_returns_failed_latest_run(store):
+def test_retryable_consumer_exhaustion_terminalizes_latest_run(store):
     failure = ConsumerAgentResult.model_validate(
         {
             "outcome": "failed",
@@ -2860,11 +2860,11 @@ def test_retryable_consumer_exhaustion_returns_failed_latest_run(store):
         task,
     )
 
-    assert result.status == "failed_retryable"
+    assert result.status == "failed_terminal"
     assert result.final_role is AgentRole.CONSUMER
     assert result.final_run_id == consumer.calls[-1]["run_id"]
     assert result.error.code == "consumer_unavailable"
-    assert result.error.retryable is True
+    assert result.error.retryable is False
     assert result.feedback_cycles == 0
     assert len(consumer.calls) == 2
 
@@ -2894,7 +2894,7 @@ def test_retryable_consumer_exhaustion_preserves_live_okr_read_error(store):
         task,
     )
 
-    assert result.status == "failed_retryable"
+    assert result.status == "failed_terminal"
     assert result.error.code == "live_okr_and_supporting_evidence_unavailable"
     assert result.summary == (
         "live_okr_and_supporting_evidence_unavailable; consumer retry attempts exhausted"
@@ -2930,7 +2930,7 @@ def test_recovered_failed_consumer_task_reclaims_same_run(store):
     )
 
     failed = _process(orchestrator, task)
-    assert failed.status == "failed_retryable"
+    assert failed.status == "failed_terminal"
     failed_run_id = failed.final_run_id
     store.fail_reply_task(
         task.id,

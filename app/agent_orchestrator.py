@@ -1337,13 +1337,13 @@ class AgentOrchestrator:
         if code != f"{role.value}_retry_exhausted":
             summary = f"{code}; {role.value} retry attempts exhausted"
         return OrchestrationResult(
-            status="failed_retryable",
+            status="failed_terminal",
             final_run_id=latest.id,
             final_role=role,
             summary=summary,
             error=AgentError(
                 code=code,
-                retryable=underlying.retryable or True,
+                retryable=False,
                 authorization_required=underlying.authorization_required,
             ),
             feedback_cycles=self._feedback_cycles(task),
