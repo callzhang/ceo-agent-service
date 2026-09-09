@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -245,7 +245,7 @@ describe("SettingsPage", () => {
     renderSettings("/settings?tab=connectors&connector=wechat");
 
     const toggle = await screen.findByRole("switch", { name: "启用微信自动回复" });
-    expect(toggle).toBeChecked();
+    await waitFor(() => expect(toggle).toBeChecked());
     expect(screen.getByText(/关闭后仍会保留微信读取和已选对象/)).toBeInTheDocument();
     expect(screen.getByText(/已生成的待发送消息保持原状态/)).toBeInTheDocument();
     await user.click(toggle);
