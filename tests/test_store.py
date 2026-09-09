@@ -8850,6 +8850,70 @@ def test_recover_stale_runtime_attempts_closes_expired_weekly_okr_parent(
     )
 
 
+def test_superseded_stale_weekly_okr_job_is_completed_and_can_be_reclaimed(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "superseded-weekly-okr.sqlite3")
+    stale_values = {
+        "week_end": "2026-08-28",
+        "manager_user_id": "manager-1",
+        "source_digest": "a" * 64,
+    }
+    stale = store.begin_weekly_okr_analysis_job(
+        **stale_values,
+        owner="stale-owner",
+        lease_seconds=60,
+        now="2026-08-28 00:00:00",
+    )
+    completed = store.begin_weekly_okr_analysis_job(
+        week_end="2026-09-06",
+        manager_user_id="manager-1",
+        source_digest="b" * 64,
+        owner="current-owner",
+        lease_seconds=60,
+        now="2026-09-06 00:00:00",
+    )
+    store.finish_weekly_okr_analysis_job(
+        completed.job_id,
+        status="completed",
+        owner="current-owner",
+        now="2026-09-06 00:00:01",
+    )
+
+    assert store.complete_superseded_stale_weekly_okr_analysis_jobs(
+        now="2026-09-08 00:00:00"
+    ) == 1
+    with store._connect() as db:
+        row = db.execute(
+            "select status, error, lease_owner, lease_expires_at from "
+            "weekly_okr_analysis_jobs where id=?",
+            (stale.job_id,),
+        ).fetchone()
+    assert tuple(row) == (
+        "completed",
+        "superseded_by_later_completed_week",
+        "",
+        "",
+    )
+
+    cache_hit = store.begin_weekly_okr_analysis_job(
+        **stale_values,
+        owner="retry-owner",
+        lease_seconds=60,
+        now="2026-09-08 00:01:00",
+    )
+    assert cache_hit.outcome == "cache_hit"
+    reclaimed = store.reclaim_weekly_okr_analysis_job_cache_miss(
+        cache_hit.job_id,
+        **stale_values,
+        owner="retry-owner",
+        lease_seconds=60,
+        now="2026-09-08 00:01:00",
+    )
+    assert reclaimed.outcome == "claimed"
+    assert reclaimed.job_id == stale.job_id
+
+
 def test_current_schema_reopens_and_adds_agent_run_recovery_index(
     tmp_path: Path,
 ):

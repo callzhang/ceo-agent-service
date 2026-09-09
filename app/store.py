@@ -20186,6 +20186,34 @@ class AutoReplyStore:
                 outcome=WeeklyOkrAnalysisJobClaimOutcome.IN_PROGRESS,
             )
 
+    def complete_superseded_stale_weekly_okr_analysis_jobs(
+        self,
+        *,
+        now: str | datetime | None = None,
+    ) -> int:
+        """Close expired analysis jobs superseded by a later completed week."""
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            cursor = db.execute(
+                """
+                update weekly_okr_analysis_jobs as stale
+                set status='completed', error='superseded_by_later_completed_week',
+                    lease_owner='', lease_expires_at='',
+                    finished_at=?, updated_at=?
+                where stale.status='running'
+                  and stale.lease_expires_at!=''
+                  and stale.lease_expires_at<=?
+                  and exists (
+                    select 1
+                    from weekly_okr_analysis_jobs as completed
+                    where completed.manager_user_id=stale.manager_user_id
+                      and completed.status='completed'
+                      and completed.week_end>stale.week_end
+                  )
+                """,
+                (now_text, now_text, now_text),
+            )
+            return cursor.rowcount
+
     def finish_weekly_okr_analysis_job(
         self,
         job_id: int,
