@@ -10136,7 +10136,7 @@ def test_render_log_list_marks_old_failed_attempt_historical(tmp_path: Path):
     assert '<span class="pill status-failed">failed</span>' not in html
 
 
-def test_render_log_list_keeps_failed_attempt_status_after_later_attempt(tmp_path: Path):
+def test_render_log_list_projects_recovery_without_overwriting_failed_attempt(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     failed_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -10161,9 +10161,9 @@ def test_render_log_list_keeps_failed_attempt_status_after_later_attempt(tmp_pat
 
     html = render_log_list(store)
 
-    assert failed_id
-    assert '<span class="pill status-resolved">recovered by later attempt</span>' not in html
-    assert '<span class="pill status-failed">failed</span>' in html
+    assert store.get_reply_attempt(failed_id).send_status == "failed"
+    assert '<span class="pill status-resolved">recovered</span>' in html
+    assert '<span class="pill status-failed">failed</span>' not in html
 
 
 def test_render_log_list_renders_non_error_terminal_states_without_red_status(tmp_path: Path):
