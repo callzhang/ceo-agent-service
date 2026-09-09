@@ -3276,6 +3276,9 @@ def _recover_processing_work_summary_inputs_on_service_start(
 ) -> int:
     store = AutoReplyStore(settings.db_path)
     recovered_runs = store.recover_orphaned_task_agent_runs()
+    completed_weekly_jobs = (
+        store.complete_superseded_stale_weekly_okr_analysis_jobs()
+    )
     recovered_runtime_attempts = store.recover_stale_runtime_attempts(
         stale_after_seconds=_work_summary_processing_stale_seconds(settings),
     )
@@ -3283,6 +3286,7 @@ def _recover_processing_work_summary_inputs_on_service_start(
     recovered_inputs = store.reset_processing_work_summary_inputs()
     return (
         recovered_runs
+        + completed_weekly_jobs
         + recovered_runtime_attempts
         + recovered_attempts
         + len(recovered_inputs)
