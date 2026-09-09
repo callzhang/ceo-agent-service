@@ -364,6 +364,74 @@ def test_quality_gate_keeps_scheduled_capability_skip_out_of_scheduler_health(tm
     )
 
 
+def test_quality_gate_only_downgrades_exact_scheduled_capability_errors(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    capability_kinds = (
+        "scheduled_task_runtime_unavailable",
+        "scheduled_task_managed_skill_unavailable",
+        "scheduled_task_operation_skill_unavailable",
+        "scheduled_task_execution_unavailable",
+    )
+    for index, kind in enumerate(capability_kinds):
+        store.record_error(
+            "scheduled-task:7",
+            f"scheduled:7:{index}",
+            kind,
+            "configured capability is unavailable",
+        )
+    store.record_error(
+        "scheduled-task:7",
+        "scheduled:7:database",
+        "scheduled_task_database_error",
+        "database disk write failed",
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert any(
+        issue.code == "scheduled_task_execution_unavailable" and issue.count == 4
+        for issue in report.attention
+    )
+    assert any(
+        issue.code == "recent_error" and issue.count == 1
+        for issue in report.violations
+    )
+
+
+def test_quality_gate_reports_scheduler_health_observation_that_stopped(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    store.set_service_health_component(
+        "agent-cron-scheduler",
+        state="healthy",
+        status="running",
+        latest_tick_at=(NOW - timedelta(minutes=6)).isoformat(),
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert any(
+        issue.source == "service_state"
+        and issue.code == "scheduler_tick_stale"
+        and issue.count == 1
+        for issue in report.violations
+    )
+
+
+def test_quality_gate_accepts_recent_scheduler_health_observation(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    store.set_service_health_component(
+        "agent-cron-scheduler",
+        state="healthy",
+        status="running",
+        latest_tick_at=(NOW - timedelta(minutes=4, seconds=59)).isoformat(),
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(
+        issue.code == "scheduler_tick_stale" for issue in report.violations
+    )
+
 def test_quality_gate_keeps_future_follow_up_as_attention_not_failure(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     future = (NOW + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")

@@ -124,6 +124,54 @@ def test_scheduler_reports_successful_start_and_each_scan_without_creating_runs(
     assert store.list_scheduled_task_runs(task.id) == ()
 
 
+def test_tick_observer_failure_never_stops_scheduler_work(tmp_path: Path, caplog) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _task(store, expression="0 * * * * *")
+    wakes: list[str] = []
+    observed: list[datetime] = []
+    failures = 0
+
+    def observe(now: datetime) -> None:
+        nonlocal failures
+        if failures < 2:
+            failures += 1
+            raise OSError("health database unavailable")
+        observed.append(now)
+        store.set_service_health_component(
+            "agent-cron-scheduler",
+            state="healthy",
+            status="running",
+            latest_tick_at=now.isoformat(),
+        )
+
+    scheduler = AgentCronScheduler(
+        store=store,
+        option_service=AvailableOptions(),
+        terminal_resolver=ExecutionTerminalResolverRegistry({}),
+        dispatcher_wake=lambda: wakes.append("wake"),
+        tick_observer=observe,
+    )
+
+    scheduler.start(NOW)
+    assert scheduler.next_run_at(task.id) == NOW + timedelta(minutes=1)
+    assert scheduler.tick(NOW + timedelta(minutes=1)) == 1
+    assert wakes == ["wake"]
+    assert len(store.list_scheduled_task_runs(task.id)) == 1
+
+    scheduler.tick(NOW + timedelta(minutes=1, seconds=30))
+    assert observed == [NOW + timedelta(minutes=1, seconds=30)]
+    [health] = store.list_service_health_components()
+    assert health["latest_tick_at"] == observed[0].isoformat()
+    assert [record.message for record in caplog.records].count(
+        "agent_cron_scheduler_tick_observer_failed"
+    ) == 2
+    assert all(
+        hasattr(record, "scheduler_tick_at")
+        for record in caplog.records
+        if record.message == "agent_cron_scheduler_tick_observer_failed"
+    )
+
+
 def test_start_tracks_only_the_first_future_instant_and_never_backfills(
     tmp_path: Path,
 ) -> None:

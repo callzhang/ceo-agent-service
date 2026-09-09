@@ -138,6 +138,24 @@ export interface FeedbackItem {
   processing_history?: FeedbackProcessingRound[];
 }
 export interface FeedbackList extends ConsoleList<FeedbackItem> { pending_count?: number; }
+export interface StatusService { label: string; target: string; ok: boolean; state: string; detail: string; pid: string; runs: string; initialized: string; last_terminating_signal: string; returncode: number; }
+export interface StatusSystemHealth { state: string; detail: string; checked_at: string; violations: number; components: StatusPersistedComponent[]; }
+export interface StatusPersistedComponent { component: string; state: string; status: string; detail: string; latest_tick_at: string; latest_error: string; latest_error_at: string; updated_at: string; }
+export interface StatusComponent { name: string; role: string; cadence: string; status: string; latest_tick_at: string; latest_error: string; latest_error_at: string; }
+export interface StatusDispatcherQueue { name: string; pending: number; due: number; oldest_available_at: string | null; running: number; latest_error: string; }
+export interface WorkerStatus {
+  service: StatusService;
+  system_health: StatusSystemHealth;
+  components: StatusComponent[];
+  connectors: Record<string, { channel: string; state: string; reason_code: string; detail: string; commands: string[][] }>;
+  email: { status: string; updated_at: string; entries: Array<Record<string, string | number>> };
+  wechat: { reader: { enabled: boolean; status: string; error: string }; sender: { enabled: boolean; status: string; error: string }; preflight: { status: string; error: string }; account: { ready: boolean; account_id: string } };
+  queues: Array<{ name: string; table: string; counts: Record<string, number>; pending: number; processing: number; failed: number; retryable: number; latest_updated_at: string; latest_error: string }>;
+  dispatcher_queues: StatusDispatcherQueue[];
+  attention_rows: Array<{ category: string; id: string; status: string; context: string; summary: string; updated_at: string; error: string; root_cause?: string; detail_url?: string }>;
+  database: { path: string };
+  summary: { queue_count: number; pending: number; processing: number; failed: number; retryable: number; attention: number };
+}
 export interface EmailAttachmentMetadata {
   filename: string;
   mime_type: string;
@@ -626,8 +644,113 @@ export function getFeedbackDetail(feedbackKey: string, signal?: AbortSignal) {
   return request<ConsoleResource<FeedbackItem>>(`/api/console/feedback/${encodeURIComponent(feedbackKey)}`, { signal });
 }
 
+function exactRecord(value: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const allowed = new Set([...required, ...optional]);
+  if (!required.every((key) => key in value) || Object.keys(value).some((key) => !allowed.has(key))) return null;
+  return value;
+}
+
+function strings(row: Record<string, unknown>, keys: readonly string[]): boolean {
+  return keys.every((key) => typeof row[key] === "string");
+}
+
+function counts(row: Record<string, unknown>, keys: readonly string[]): boolean {
+  return keys.every((key) => Number.isInteger(row[key]) && Number(row[key]) >= 0);
+}
+
+function statusComponent(value: unknown): value is StatusComponent {
+  const row = exactRecord(value, ["name", "role", "cadence", "status", "latest_tick_at", "latest_error", "latest_error_at"]);
+  return row !== null && strings(row, ["name", "role", "cadence", "status", "latest_tick_at", "latest_error", "latest_error_at"]);
+}
+
+function persistedComponent(value: unknown): value is StatusPersistedComponent {
+  const row = exactRecord(value, ["component", "state", "status", "detail", "latest_tick_at", "latest_error", "latest_error_at", "updated_at"]);
+  return row !== null && strings(row, ["component", "state", "status", "detail", "latest_tick_at", "latest_error", "latest_error_at", "updated_at"]);
+}
+
+function connectorStatus(value: unknown): boolean {
+  const row = exactRecord(value, ["channel", "state", "reason_code", "detail", "commands"]);
+  return row !== null
+    && strings(row, ["channel", "state", "reason_code", "detail"])
+    && Array.isArray(row.commands)
+    && row.commands.every((command) => Array.isArray(command) && command.every((part) => typeof part === "string"));
+}
+
+function emailHealth(value: unknown): boolean {
+  const row = exactRecord(value, ["status", "updated_at", "entries"]);
+  const allowedEntry = ["scope", "status", "error_code", "accounts", "components", "failures", "persisted_count", "task_count", "isolated_count", "superseded_count", "unresolved_count", "updated_at"];
+  return row !== null && strings(row, ["status", "updated_at"]) && Array.isArray(row.entries) && row.entries.every((value) => {
+    const entry = exactRecord(value, ["scope", "status", "updated_at"], allowedEntry.slice(2, -1));
+    return entry !== null && strings(entry, ["scope", "status", "updated_at"])
+      && Object.entries(entry).every(([key, item]) => key === "scope" || key === "status" || key === "updated_at" || key === "error_code" ? typeof item === "string" : Number.isInteger(item) && Number(item) >= 0);
+  });
+}
+
+function wechatStatus(value: unknown): boolean {
+  const row = exactRecord(value, ["reader", "sender", "preflight", "account"]);
+  if (row === null) return false;
+  const endpoint = (value: unknown) => {
+    const item = exactRecord(value, ["enabled", "status", "error"]);
+    return item !== null && typeof item.enabled === "boolean" && strings(item, ["status", "error"]);
+  };
+  const preflight = exactRecord(row.preflight, ["status", "error"]);
+  const account = exactRecord(row.account, ["ready", "account_id"]);
+  return endpoint(row.reader) && endpoint(row.sender)
+    && preflight !== null && strings(preflight, ["status", "error"])
+    && account !== null && typeof account.ready === "boolean" && typeof account.account_id === "string";
+}
+
+function queueStatus(value: unknown): boolean {
+  const row = exactRecord(value, ["name", "table", "counts", "pending", "processing", "failed", "retryable", "latest_updated_at", "latest_error"]);
+  return row !== null && strings(row, ["name", "table", "latest_updated_at", "latest_error"])
+    && counts(row, ["pending", "processing", "failed", "retryable"])
+    && isRecord(row.counts) && Object.values(row.counts).every((item) => Number.isInteger(item) && Number(item) >= 0);
+}
+
+function dispatcherQueueStatus(value: unknown): value is StatusDispatcherQueue {
+  const row = exactRecord(value, ["name", "pending", "due", "oldest_available_at", "running", "latest_error"]);
+  return row !== null && strings(row, ["name", "latest_error"])
+    && counts(row, ["pending", "due", "running"])
+    && (typeof row.oldest_available_at === "string" || row.oldest_available_at === null);
+}
+
+function attentionRow(value: unknown): boolean {
+  const row = exactRecord(value, ["category", "id", "status", "context", "summary", "updated_at", "error"], ["root_cause", "detail_url"]);
+  return row !== null && strings(row, ["category", "id", "status", "context", "summary", "updated_at", "error"])
+    && ["root_cause", "detail_url"].every((key) => !(key in row) || typeof row[key] === "string");
+}
+
+function workerStatus(value: unknown): value is WorkerStatus {
+  const row = exactRecord(value, ["service", "system_health", "components", "connectors", "email", "wechat", "queues", "dispatcher_queues", "attention_rows", "database", "summary"]);
+  if (row === null) return false;
+  const service = exactRecord(row.service, ["label", "target", "ok", "state", "detail", "pid", "runs", "initialized", "last_terminating_signal", "returncode"]);
+  const health = exactRecord(row.system_health, ["state", "detail", "checked_at", "violations", "components"]);
+  const database = exactRecord(row.database, ["path"]);
+  const summary = exactRecord(row.summary, ["queue_count", "pending", "processing", "failed", "retryable", "attention"]);
+  return service !== null && strings(service, ["label", "target", "state", "detail", "pid", "runs", "initialized", "last_terminating_signal"])
+    && typeof service.ok === "boolean" && Number.isInteger(service.returncode)
+    && health !== null && strings(health, ["state", "detail", "checked_at"]) && counts(health, ["violations"])
+    && Array.isArray(health.components) && health.components.every(persistedComponent)
+    && Array.isArray(row.components) && row.components.every(statusComponent)
+    && isRecord(row.connectors) && Object.values(row.connectors).every(connectorStatus)
+    && emailHealth(row.email) && wechatStatus(row.wechat)
+    && Array.isArray(row.queues) && row.queues.every(queueStatus)
+    && Array.isArray(row.dispatcher_queues) && row.dispatcher_queues.every(dispatcherQueueStatus)
+    && Array.isArray(row.attention_rows) && row.attention_rows.every(attentionRow)
+    && database !== null && typeof database.path === "string"
+    && summary !== null && counts(summary, ["queue_count", "pending", "processing", "failed", "retryable", "attention"]);
+}
+
 export function getStatus(signal?: AbortSignal) {
-  return request<{ item: Record<string, unknown>; meta: { snapshot_at: string } }>("/api/console/status", { signal });
+  return request<unknown>("/api/console/status", { signal }).then((value) => {
+    const envelope = exactRecord(value, ["item", "meta"]);
+    const meta = exactRecord(envelope?.meta, ["snapshot_at"]);
+    if (envelope === null || !workerStatus(envelope.item) || meta === null || typeof meta.snapshot_at !== "string") {
+      throw new Error("invalid status response");
+    }
+    return { item: envelope.item, meta: { snapshot_at: meta.snapshot_at } };
+  });
 }
 
 export function getSettings(section: string, signal?: AbortSignal) {

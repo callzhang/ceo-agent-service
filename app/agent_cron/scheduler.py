@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import logging
 from threading import Event, RLock
 from typing import Protocol
 
@@ -18,6 +19,17 @@ PREVIOUS_EXECUTION_ACTIVE = "scheduled_task_previous_execution_active"
 RUNTIME_UNAVAILABLE = "scheduled_task_runtime_unavailable"
 MANAGED_SKILL_UNAVAILABLE = "scheduled_task_managed_skill_unavailable"
 OPERATION_SKILL_UNAVAILABLE = "scheduled_task_operation_skill_unavailable"
+EXECUTION_UNAVAILABLE = "scheduled_task_execution_unavailable"
+SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS = frozenset(
+    {
+        RUNTIME_UNAVAILABLE,
+        MANAGED_SKILL_UNAVAILABLE,
+        OPERATION_SKILL_UNAVAILABLE,
+        EXECUTION_UNAVAILABLE,
+    }
+)
+
+logger = logging.getLogger(__name__)
 
 
 class ScheduledTaskOptions(Protocol):
@@ -85,7 +97,7 @@ class AgentCronScheduler:
         with self._lock:
             self._planned = {}
         self.reload(now)
-        self._tick_observer(_utc(now))
+        self._observe_tick(_utc(now))
 
     def reload(self, now: datetime) -> None:
         current = _utc(now)
@@ -171,8 +183,17 @@ class AgentCronScheduler:
                     )
                 continue
             self._dispatcher_wake()
-        self._tick_observer(current)
+        self._observe_tick(current)
         return created_count
+
+    def _observe_tick(self, tick_at: datetime) -> None:
+        try:
+            self._tick_observer(tick_at)
+        except Exception:
+            logger.exception(
+                "agent_cron_scheduler_tick_observer_failed",
+                extra={"scheduler_tick_at": tick_at.isoformat()},
+            )
 
     def seconds_until_next(self, now: datetime, *, maximum: float = 60.0) -> float:
         current = _utc(now)

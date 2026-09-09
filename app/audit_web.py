@@ -2406,6 +2406,8 @@ def _launchd_service_status(label: str) -> dict[str, object]:
             "pid": "",
             "runs": "",
             "initialized": "",
+            "last_terminating_signal": "",
+            "returncode": -1,
         }
     parsed = _parse_launchctl_print(completed.stdout)
     state = str(parsed.get("state") or ("error" if completed.returncode else "unknown"))
@@ -2709,7 +2711,7 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
     rows = []
     with store._connect() as db:
         if not _sqlite_table_exists(db, "service_state"):
-            return {"status": "unavailable", "entries": []}
+            return {"status": "unavailable", "updated_at": "", "entries": []}
         rows = db.execute(
             """
             select key, value, updated_at
@@ -9996,12 +9998,15 @@ def create_audit_app(
         return {
             "service": {
                 "label": "com.ceo-agent-service.main",
+                "target": "gui/unknown/com.ceo-agent-service.main",
                 "ok": True,
                 "state": "refreshing",
                 "detail": "Status refresh in progress.",
                 "pid": "",
                 "runs": "",
                 "initialized": "",
+                "last_terminating_signal": "",
+                "returncode": 0,
             },
             "components": _service_component_snapshots(),
             "connectors": {},
@@ -10044,9 +10049,9 @@ def create_audit_app(
         wechat_status = wechat_status_cache.get_or_refresh(
             lambda: _wechat_status_snapshot(audit_store),
             lambda: {
-                "reader": {"status": "refreshing"},
-                "sender": {"status": "refreshing"},
-                "preflight": {"status": "refreshing"},
+                "reader": {"enabled": False, "status": "refreshing", "error": ""},
+                "sender": {"enabled": False, "status": "refreshing", "error": ""},
+                "preflight": {"status": "refreshing", "error": ""},
                 "account": {"ready": False, "account_id": ""},
             },
         )

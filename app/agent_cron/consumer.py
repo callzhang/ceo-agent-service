@@ -10,6 +10,7 @@ from app.agent_cron.context import (
     ScheduledAgentContextBuilder,
     validate_scheduled_execution_availability,
 )
+from app.agent_cron.scheduler import EXECUTION_UNAVAILABLE
 from app.dispatcher.models import ClaimGuard, DispatchEnvelope
 from app.store import AutoReplyStore, ReplyTask
 
@@ -35,10 +36,10 @@ class ScheduledTaskTriggerConsumer:
         try:
             built = self._builder.build(run, reply_task_id=0)
         except ValueError as exc:
-            reason = f"scheduled_task_execution_unavailable: {exc}"
+            reason = f"{EXECUTION_UNAVAILABLE}: {exc}"
             self._store.record_error(
                 f"scheduled-task:{run.scheduled_task_id}", run.event_id,
-                "scheduled_task_execution_unavailable", reason,
+                EXECUTION_UNAVAILABLE, reason,
             )
             guard.finish_source(now, status="skipped", reason=reason)
             return
@@ -78,7 +79,7 @@ class ScheduledAgentConsumer:
         try:
             validate_scheduled_execution_availability(self._option_service, built)
         except ValueError as exc:
-            reason = f"scheduled_task_execution_unavailable: {exc}"
+            reason = f"{EXECUTION_UNAVAILABLE}: {exc}"
             guard.assert_current(self._now().astimezone(UTC))
             self._store.skip_scheduled_reply_task(
                 task.id, reason,
@@ -89,7 +90,7 @@ class ScheduledAgentConsumer:
             )
             self._store.record_error(
                 f"scheduled-task:{run.scheduled_task_id}", run.event_id,
-                "scheduled_task_execution_unavailable", reason,
+                EXECUTION_UNAVAILABLE, reason,
             )
             guard.accept_atomic_source_completion()
             return

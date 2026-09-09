@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 
 from app.web_api.attention import AttentionListEnvelope, group_attention_rows
 from app.web_api.attempts import build_attempt_detail
-from app.web_api.common import ApiItemEnvelope, ApiListMeta, ApiMeta, json_safe, normalize_display_value, snapshot_at
+from app.web_api.common import ApiListMeta, ApiMeta, json_safe, normalize_display_value, snapshot_at
 from app.web_api.tasks import (
     ConsoleTaskDetail,
     ConsoleTaskDetailEnvelope,
@@ -31,6 +31,7 @@ from app.web_api.tasks import (
     task_list_response,
 )
 from app.web_api.settings import info_payload
+from app.web_api.status import StatusEnvelope, StatusMeta, WorkerStatus
 from app.web_api.email import register_email_routes
 from app.web_api.scheduled_tasks import register_scheduled_task_routes
 from app.agent_cron.options import ScheduledTaskOptionService
@@ -322,10 +323,14 @@ def register_console_routes(
             meta=ApiMeta(snapshot_at=snapshot_at()),
         )
 
-    @app.get("/api/console/status", response_model=None)
+    @app.get(
+        "/api/console/status",
+        response_model=StatusEnvelope,
+        response_model_exclude_none=True,
+    )
     def console_status():
-        item = json_safe(status_payload_factory())
-        return ApiItemEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
+        item = WorkerStatus.model_validate(json_safe(status_payload_factory()))
+        return StatusEnvelope(item=item, meta=StatusMeta(snapshot_at=snapshot_at()))
 
     @app.get("/api/console/attention", response_model=AttentionListEnvelope)
     def console_attention():
