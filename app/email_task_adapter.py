@@ -972,6 +972,71 @@ def validate_unsubscribe_entry_operation_semantics(
         raise ValueError("one-click unsubscribe is not authenticated")
 
 
+def initial_email_unsubscribe_proposal_action(
+    metadata: Mapping[str, object],
+) -> dict[str, object]:
+    """Return the exact initial ProposedAction authorized by task metadata."""
+
+    entries = metadata.get("unsubscribe_entries")
+    if not isinstance(entries, list) or not entries:
+        raise EmailAgentTaskMetadataError(
+            "email unsubscribe requires at least one selected entry"
+        )
+    entry = entries[0]
+    if not isinstance(entry, Mapping):
+        raise EmailAgentTaskMetadataError("email unsubscribe entry is invalid")
+    entry_reference = entry.get("reference")
+    if not isinstance(entry_reference, str) or not entry_reference.strip():
+        raise EmailAgentTaskMetadataError("email unsubscribe entry is invalid")
+    action_identity = metadata.get("action_identity")
+    account_id = metadata.get("account_id")
+    stable_message_identity = metadata.get("stable_message_identity")
+    thread_identity = metadata.get("thread_identity")
+    network_policy_reference = metadata.get(
+        "unsubscribe_network_policy_reference"
+    )
+    network_policy_origin_references = metadata.get(
+        "unsubscribe_network_policy_origin_references"
+    )
+    if not all(
+        isinstance(value, str) and value.strip()
+        for value in (
+            action_identity,
+            account_id,
+            stable_message_identity,
+            thread_identity,
+            network_policy_reference,
+        )
+    ) or not isinstance(network_policy_origin_references, list):
+        raise EmailAgentTaskMetadataError(
+            "email unsubscribe proposal identity is invalid"
+        )
+    return {
+        "action_identity": action_identity,
+        "description": "Open the selected unsubscribe entry for live discovery.",
+        "capability": "email_browser",
+        "operation": "unsubscribe",
+        "target": {
+            "action_identity": action_identity,
+            "account_id": account_id,
+            "stable_message_identity": stable_message_identity,
+            "thread_identity": thread_identity,
+            "entry_reference": entry_reference,
+            "network_policy_reference": network_policy_reference,
+            "network_policy_origin_references": network_policy_origin_references,
+        },
+        "payload": {
+            "operations": [
+                {
+                    "operation_reference": "unsubscribe-operation:open-entry",
+                    "kind": "open_entry",
+                    "target_reference": entry_reference,
+                }
+            ]
+        },
+    }
+
+
 def accepted_email_unsubscribe_effect(
     task: ReplyTask,
     accepted_action: ProposedAction,
@@ -1596,6 +1661,7 @@ class EmailAgentTaskAdapter:
             for message in (*task_input.thread_messages, task_input.trigger)
         )
         prior_receipts = task_input.prior_receipts
+        required_proposal_action: dict[str, object] = {}
         if payload.get("action_type") == EmailAction.UNSUBSCRIBE.value:
             claim = self.email_store.get_email_unsubscribe_claim(
                 task.trigger_message_id
@@ -1624,6 +1690,10 @@ class EmailAgentTaskAdapter:
                     for receipt in prior_receipts
                     if receipt.operation != "unsubscribe_continuation"
                 ) + (continuation_receipt,)
+            else:
+                required_proposal_action = (
+                    initial_email_unsubscribe_proposal_action(payload)
+                )
         return AgentTaskContext(
             task_id=task.id,
             channel="email",
@@ -1641,6 +1711,7 @@ class EmailAgentTaskAdapter:
             ),
             prior_receipts=prior_receipts,
             trigger_raw_payload=payload,
+            required_proposal_action=required_proposal_action,
             image_paths=(),
             image_sha256s=(),
         )

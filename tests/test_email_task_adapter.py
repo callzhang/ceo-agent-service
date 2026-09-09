@@ -1738,6 +1738,21 @@ def test_email_context_contains_text_metadata_receipts_and_no_image_inputs(
     assert "attachment.bin" in rendered  # email text is allowed as text evidence
     assert "Actual Codex image inputs" not in rendered
     assert "read attachment" not in rendered.casefold()
+    assert "Task-bound proposal contract" in rendered
+    action = context.required_proposal_action
+    assert action["capability"] == "email_browser"
+    assert action["operation"] == "unsubscribe"
+    assert set(action["payload"]) == {"operations"}
+    assert set(action["target"]) == {
+        "action_identity",
+        "account_id",
+        "stable_message_identity",
+        "thread_identity",
+        "entry_reference",
+        "network_policy_reference",
+        "network_policy_origin_references",
+    }
+    assert "classification_id" not in json.dumps(action)
 
 
 def test_refreshed_email_context_contains_one_opaque_continuation_receipt(

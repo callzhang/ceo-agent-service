@@ -390,6 +390,8 @@ Consumer 修订版可以原样复用上一 revision 中已持久化的服务反�
 
 任务 Agent 生成非 skip 决策但遗漏 `project.memory_context` 时，服务将该结构校验错误送回同一正式校验修订流程，要求补做聚焦 memory recall 或明确记录实时不可用证据；不得直接把 work-summary 输入终止为 failed。
 
+邮件退订任务把不可变 ActionPlan 派生出的首步 `ProposedAction` 作为任务绑定契约直接提供给 Consumer。该动作固定使用 `email_browser/unsubscribe`、精确目标字段和 `operations` payload；内部 `classification_id` 不进入外部工具参数，避免 64 位标识经 JSON 数值链路发生精度变化。
+
 ## 进程、租约和恢复
 
 - 生产入口是 launchd 管理的 `com.ceo-agent-service.main`，由 supervisor 管理 worker 和 audit-web。

@@ -93,6 +93,7 @@ class AgentTaskContext:
     trigger_sender_open_dingtalk_id: str = ""
     trigger_mentioned_user_ids: tuple[str, ...] = ()
     trigger_raw_payload: dict[str, object] = field(default_factory=dict)
+    required_proposal_action: dict[str, object] = field(default_factory=dict)
     image_paths: tuple[str, ...] = ()
     image_sha256s: tuple[str, ...] = ()
 
@@ -216,6 +217,20 @@ class AgentTaskContext:
             "Recent conversation context\n" + _json(messages),
             "Raw material references and exact read commands\n" + _json(materials),
         ]
+        if self.required_proposal_action:
+            sections.append(
+                "Task-bound proposal contract\n"
+                + _json(
+                    {
+                        "instruction": (
+                            "Return this ProposedAction exactly. Do not rename its "
+                            "capability or operation, move metadata into it, or change "
+                            "the target or payload shape."
+                        ),
+                        "action": self.required_proposal_action,
+                    }
+                )
+            )
         if self.image_paths:
             sections.append(
                 "Actual Codex image inputs\n"
