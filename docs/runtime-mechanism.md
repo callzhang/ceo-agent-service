@@ -396,6 +396,7 @@ Consumer 修订版可以原样复用上一 revision 中已持久化的服务反�
 当前退订执行只投影明确成功或失败。浏览器动作返回失败且没有持久化步骤、完成记录或续跑记录时，释放本轮 claim 并交给统一重试；不得先写入不可重试的中间状态再让下一次 Audit 撞上 claim 冲突。
 退订浏览器仅把固定的内部失败类别投影到错误码；已识别的导航超时、网络策略拒绝和页面状态缺失必须与兜底 `email_unsubscribe_browser_failed` 区分，同时不得写入 URL、页面文本或凭证。
 首个退订页面导航若因重定向到未授权 origin 而由路由策略中断，异常处理必须先读取本地阻断标记并投影 `email_unsubscribe_browser_network_rejected`；不能让 Playwright 的导航异常覆盖真正根因。
+Google Workspace 退订入口允许在 `google.com` provider family 内进行 HTTPS 顶层重定向，但目标仍须实时解析为公网地址；该例外不允许跨 provider、非 HTTPS、私网或本地地址，其他重定向继续在发出目标请求前拒绝。
 Consumer 或 Audit 在同一 proposal revision 内耗尽统一重试 ceiling 后，编排结果必须进入 `failed_terminal`，保留最后一个 run 的真实根因但将其标记为不可继续重试；不得返回 `failed_retryable` 让外层重新进入同一 generation 并无限增加 `turn_attempt`。
 
 ## 进程、租约和恢复

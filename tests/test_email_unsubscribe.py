@@ -1366,6 +1366,24 @@ def test_technical_failures_use_fixed_redacted_errors(
     assert "token=" not in json.dumps(result.redacted, sort_keys=True)
 
 
+def test_network_policy_allows_only_same_google_provider_redirect() -> None:
+    addresses = lambda _host, _port: ("142.250.72.14",)
+    policy = BrowserNetworkPolicy(
+        allowed_origins=frozenset({"https://workspace.google.com"}),
+        resolver=addresses,
+    )
+
+    assert policy.validate_provider_redirect(
+        "https://workspace.google.com/unsubscribe",
+        "https://accounts.google.com/continue",
+    ) == "https://accounts.google.com/continue"
+    with pytest.raises(UnsubscribeBrowserError, match="network request rejected"):
+        policy.validate_provider_redirect(
+            "https://workspace.google.com/unsubscribe",
+            "https://example.com/continue",
+        )
+
+
 def test_no_reliable_browser_entry_is_skipped_without_calling_browser(
     tmp_path: Path,
 ) -> None:

@@ -325,6 +325,8 @@ _BROWSER_FAILURE_CODES = {
     "unsubscribe page has no visible state": "email_unsubscribe_page_state_missing",
 }
 
+_TRUSTED_UNSUBSCRIBE_REDIRECT_FAMILIES = ("google.com",)
+
 
 def _browser_failure_code(error: Exception) -> str:
     if isinstance(error, UnsubscribeBrowserError):
@@ -699,6 +701,31 @@ class BrowserNetworkPolicy:
         except Exception:
             raise UnsubscribeBrowserError("browser network request rejected") from None
         return value
+
+    def validate_provider_redirect(self, source_url: str, target_url: str) -> str:
+        """Allow a public HTTPS redirect only within a known provider family."""
+
+        self.validate_url(source_url)
+        source_host = (urlsplit(source_url).hostname or "").casefold()
+        target = urlsplit(target_url)
+        target_host = (target.hostname or "").casefold()
+        same_family = any(
+            (source_host == family or source_host.endswith("." + family))
+            and (target_host == family or target_host.endswith("." + family))
+            for family in _TRUSTED_UNSUBSCRIBE_REDIRECT_FAMILIES
+        )
+        try:
+            if target.scheme.casefold() != "https" or not same_family:
+                raise ValueError
+            port = target.port or 443
+            addresses = self.resolver(target_host, port)
+            if not addresses or any(
+                _is_forbidden_production_address(address) for address in addresses
+            ):
+                raise ValueError
+        except Exception:
+            raise UnsubscribeBrowserError("browser network request rejected") from None
+        return target_url
 
     @property
     def reference(self) -> str:
@@ -1435,6 +1462,7 @@ class PlaywrightUnsubscribeBrowser:
         self._blocked_request = False
         self._blocked_popup = False
         self._blocked_download = False
+        self._provider_redirect_origins: dict[str, str] = {}
         self._document_url = ""
         self._context = self.page.context
         try:
@@ -1487,12 +1515,34 @@ class PlaywrightUnsubscribeBrowser:
 
     def _guard_request(self, route: object, request: object) -> None:
         try:
-            self.network_policy.validate_url(request.url)
+            request_origin = _canonical_origin(request.url)
+            redirect_source = self._provider_redirect_origins.get(request_origin)
+            if redirect_source is not None:
+                self.network_policy.validate_provider_redirect(
+                    redirect_source,
+                    request.url,
+                )
+            else:
+                self.network_policy.validate_url(request.url)
             response = route.fetch(max_redirects=0, timeout=self.timeout_ms)
-            self.network_policy.validate_url(response.url)
+            if redirect_source is None:
+                self.network_policy.validate_url(response.url)
+            else:
+                self.network_policy.validate_provider_redirect(
+                    redirect_source,
+                    response.url,
+                )
             location = response.headers.get("location")
             if location:
-                self.network_policy.validate_url(urljoin(request.url, location))
+                target = urljoin(request.url, location)
+                try:
+                    self.network_policy.validate_url(target)
+                except UnsubscribeBrowserError:
+                    root_source = redirect_source or request.url
+                    self.network_policy.validate_provider_redirect(root_source, target)
+                    self._provider_redirect_origins[
+                        _canonical_origin(target)
+                    ] = root_source
         except Exception:
             self._blocked_request = True
             route.abort()
