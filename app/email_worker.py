@@ -257,18 +257,23 @@ def persist_model_primary_classification(
             if isinstance(sender_value, Mapping)
             else str(sender_value)
         )
+        from app.email_classifier_model import email_message_to_text
+
+        # Canonical embedding input is not the legacy redacted feedback column.
+        # Keep that column's existing contract and preserve readable body separately.
+        redacted_model_text = email_message_to_text(message)
         persisted = email_store.persist_scan_result(
             classification,
             sender=sender,
             recipients=tuple(),
             subject=str(message.get("subject") or ""),
-            normalized_text=model_text,
+            normalized_text=str(message.get("markdownBody") or message.get("textBody") or ""),
             attachment_metadata=tuple(
                 EmailAttachmentMetadata.model_validate(item)
                 for item in message.get("attachments") or ()
             ),
             received_at=str(message.get("date") or ""),
-            model_text=model_text,
+            model_text=redacted_model_text,
         )
         if plan is not None and plan.agent_actions:
             action_task_producer.produce(plan, message)

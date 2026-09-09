@@ -74,6 +74,18 @@ Fixture messages and models are synthetic; every API operation is in memory.
 - Read-only live body availability: all three sampled pending-feedback details
   returned text (323, 3,662, and 15,143 characters). One of three processed samples
   had neither stored body nor preview; the UI must not fabricate missing content.
+- Final integration regression: canonical embedding input was incorrectly sent
+  to the legacy redacted classification column. The worker now derives that
+  column with the existing redacted serializer while saving readable body in the
+  message column. Prediction, snapshot input and embedding cache keys are unchanged.
+  The original failing production-closure test now checks persisted body, redacted
+  legacy text and absence of an Agent fallback task. Related tests: 176 passed;
+  independent review: 25 passed, no P1/P2 findings.
+- Merged frontend full suite: 332 passed, two skipped; TypeScript and Vite build
+  passed. Full Python integration run found three failures among 7,164 tests:
+  the worker issue above and two test fixtures (missing category CAS version,
+  ambient runtime route). All three focused regressions now pass; a fresh full
+  run is in progress. Test-only fixture changes do not change WeChat behavior.
 
 Feedback `ok=true` acknowledges the persisted classification feedback, not the
 completion of asynchronously executed mailbox actions. The page may advance to

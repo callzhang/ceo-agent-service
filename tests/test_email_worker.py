@@ -795,6 +795,14 @@ def test_production_scan_account_model_primary_closure_persists_without_agent(
     assert persisted["model_id"] == "email-embedding-mlp-ready"
     with sqlite3.connect(settings.db_path) as db:
         assert db.execute(
+            "select normalized_text from email_messages"
+        ).fetchone()[0] == message["textBody"]
+        stored_text = db.execute(
+            "select model_text from email_classifications"
+        ).fetchone()[0]
+        assert "sender@example.com" not in stored_text
+        assert "__subject__" in stored_text
+        assert db.execute(
             "select count(*) from email_agent_classification_tasks"
         ).fetchone()[0] == 0
 
