@@ -1,5 +1,19 @@
 # Changelog
 
+- 2026-09-09: accept `null` as the wire `error_code` for results without an
+  error (normalized to the empty string). The fallback model kept returning
+  `"error_code": null` even after a correction turn, so the strict string
+  sentinel was rejecting otherwise valid proposals.
+
+- 2026-09-09: derive the route-unavailable failure code from the router's
+  typed per-route reasons instead of substring matching on the display
+  string (the route name `codex_oauth` used to classify a missing probe
+  snapshot as an authentication failure). Missing/expired snapshots and
+  non-authentication pauses defer the turn as `runtime_provider_unreachable`;
+  the Email task loop now requeues deferred orchestration results with
+  backoff like the DingTalk worker instead of failing them as
+  `email_consumer_runtime_error`.
+
 - 2026-09-09: classify Codex `server_overloaded` ("Selected model is at
   capacity") as a `capacity` runtime failure (`codex_provider_overloaded`).
   The turn now fails over to the next configured route inside the same Agent

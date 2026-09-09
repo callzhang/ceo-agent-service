@@ -725,10 +725,16 @@ run 才能被持久队列恢复。
   adapter 把它归为 `capacity` 类 `codex_provider_overloaded`：允许在同一个 Agent run 内切到下一条
   已配置路由，并暂停过载路由（健康探测通过后自动解除）。所有路由都过载时，任务按 provider
   恢复等待延期重试，不进入终态失败。
+- **路由暂不可用**：所有路由都不可用时，失败码由路由层给出的结构化原因决定，而不是从
+  显示字符串里找子串：探针快照缺失/过期或路由因非认证故障被暂停 → `runtime_provider_unreachable`
+  （延期重试）；全部路由缺能力 → `runtime_capability_missing`；仅认证类暂停 →
+  `runtime_provider_auth_failed`。Email 任务对 `failed_retryable` 的编排结果与 DingTalk worker
+  一致：按退避时间延期重入队，不再当作终态失败。
 - **结果不合契约**：Agent 返回了 JSON 但不满足 wire schema 时，解析器报 `codex_result_invalid`
   并保留失败字段位置（不保留模型原文）；同一角色、同一 revision 的下一次 turn 会收到
   `## Result Correction`，把这些位置反馈给模型，要求只返回修正后的结果。只有完全没有 JSON
   对象时才是 `codex_result_missing`，此时下一次 turn 同样收到修正块，说明上一轮只有说明文字。
+  wire 契约中的 `error_code` 接受 `null` 作为“无错误”（等价于空字符串）；模型无需为无错误结果编造字符串哨兵。
 
 ## 统一外发消息后缀
 

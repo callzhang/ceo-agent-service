@@ -433,6 +433,9 @@ class RuntimeRouteDecision:
     route: RuntimeRoute | None
     fresh_session: bool
     reason: str
+    # Per-route static reasons behind a ``no_eligible_route`` decision, so the
+    # caller can classify the outcome without parsing the display string.
+    ineligible_routes: tuple[tuple[str, str], ...] = ()
 
 
 class AgentRuntimeRouter:
@@ -479,14 +482,14 @@ class AgentRuntimeRouter:
     ) -> RuntimeRouteDecision:
         """Return the initial route plus a safe, persisted eligibility reason."""
         now = _parse_timestamp(self._now())
-        ineligible: list[str] = []
+        ineligible: list[tuple[str, str]] = []
         for route in self._routes:
             if route.name in excluded_routes:
-                ineligible.append(f"{route.name}=already_attempted")
+                ineligible.append((route.name, "already_attempted"))
                 continue
             pause_code = self._store.active_runtime_route_pause(route.name, now=now)
             if pause_code is not None:
-                ineligible.append(f"{route.name}=paused:{pause_code}")
+                ineligible.append((route.name, f"paused:{pause_code}"))
                 continue
             if self._snapshot_is_current_and_eligible(
                 route=route,
@@ -528,11 +531,13 @@ class AgentRuntimeRouter:
                             reason = "missing_capabilities:" + ",".join(missing_probe)
                         else:
                             reason = "surface_missing:" + ",".join(missing_surface)
-            ineligible.append(f"{route.name}={reason}")
+            ineligible.append((route.name, reason))
         return RuntimeRouteDecision(
             None,
             False,
-            "no_eligible_route:" + ";".join(ineligible),
+            "no_eligible_route:"
+            + ";".join(f"{name}={reason}" for name, reason in ineligible),
+            ineligible_routes=tuple(ineligible),
         )
 
     def next_route(

@@ -7989,6 +7989,49 @@ def test_consumer_task_failure_is_sanitized_isolated_and_heartbeated(monkeypatch
     assert "https://" not in repr(health)
 
 
+def test_deferred_orchestration_result_requeues_the_email_task():
+    module = _module()
+    task = SimpleNamespace(
+        id=8,
+        attempts=1,
+        execution_generation="generation-8",
+        conversation_id="conversation-8",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="trigger-8",
+        trigger_sender="sender@example.com",
+        trigger_text="unsubscribe",
+    )
+    captured = {}
+
+    class Store:
+        def get_agent_run(self, run_id):
+            raise AssertionError("a deferred result must not require a final run")
+
+        def defer_reply_task(self, task_id, error, *, expected_execution_generation, available_at):
+            captured.update(
+                task_id=task_id,
+                error=error,
+                generation=expected_execution_generation,
+                available_at=available_at,
+            )
+
+    result = SimpleNamespace(
+        status="failed_retryable",
+        final_run_id=0,
+        summary="runtime not ready",
+        error=SimpleNamespace(
+            code="runtime_provider_unreachable", authorization_required=False
+        ),
+    )
+
+    module._finalize_email_task(Store(), task, result)
+
+    assert captured["task_id"] == 8
+    assert captured["error"] == "runtime_provider_unreachable"
+    assert captured["generation"] == "generation-8"
+    assert captured["available_at"]
+
+
 def test_authorization_required_result_is_closed_as_needs_human():
     module = _module()
     task = SimpleNamespace(

@@ -26,7 +26,9 @@ class _WireBase(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     summary: str = Field(min_length=1)
-    error_code: str
+    # JSON's native "no error" value is null; the application contract carries
+    # the empty string, so both spellings map to the same AgentError.
+    error_code: str | None
     error_retryable: bool
     error_authorization_required: bool
     risk: RiskLevel
@@ -39,7 +41,7 @@ class _WireBase(BaseModel):
 
     def error_payload(self) -> dict[str, object]:
         return {
-            "code": self.error_code,
+            "code": self.error_code or "",
             "retryable": self.error_retryable,
             "authorization_required": self.error_authorization_required,
         }

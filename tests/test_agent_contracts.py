@@ -19,6 +19,7 @@ from app.agent_result import ResultParseError, parse_typed_agent_result
 from app.agent_wire_contracts import (
     AuditAgentWireResult,
     ConsumerAgentWireResult,
+    parse_consumer_agent_wire_result,
 )
 
 
@@ -766,6 +767,31 @@ def test_parse_typed_agent_result_uses_current_codex_output_shape():
     result = parse_typed_agent_result(raw, ConsumerAgentResult)
 
     assert result.outcome is ConsumerOutcome.PROPOSAL
+
+
+def test_wire_result_accepts_null_error_code_as_no_error():
+    payload = {
+        "outcome": "proposal",
+        "summary": "Prepare the notice.",
+        "proposal": _proposal(),
+        "decision_options": [],
+        "error_code": None,
+        "error_retryable": False,
+        "error_authorization_required": False,
+        "risk": "low",
+        "confidence": 0.9,
+    }
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": json.dumps(payload)},
+        }
+    )
+
+    result = parse_consumer_agent_wire_result(raw)
+
+    assert result.outcome is ConsumerOutcome.PROPOSAL
+    assert result.error.code == ""
 
 
 def test_parse_typed_agent_result_reports_schema_violation_locations():

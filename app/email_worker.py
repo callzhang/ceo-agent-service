@@ -2187,10 +2187,33 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
         raise ValueError("invalid email orchestration status") from exc
     if result.error.authorization_required:
         task_status, send_status = "done", "needs_human"
+    error = str(result.error.code or "")
+    if task_status == "pending":
+        # A deferred orchestration (runtime not ready, provider recovery, lease
+        # race) keeps the task and retries it later, exactly like the DingTalk
+        # worker; it is not a terminal Email failure.
+        from app.worker import (
+            REPLY_TASK_RETRY_BASE_DELAY_SECONDS,
+            REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
+        )
+
+        delay_seconds = min(
+            REPLY_TASK_RETRY_BASE_DELAY_SECONDS * (2 ** max(task.attempts - 1, 0)),
+            REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
+        )
+        available_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        store.defer_reply_task(
+            task.id,
+            error or "email_orchestration_deferred",
+            expected_execution_generation=task.execution_generation,
+            available_at=available_at,
+        )
+        return
     run = store.get_agent_run(result.final_run_id)
     if run is None:
         raise RuntimeError("email orchestration final run was not persisted")
-    error = str(result.error.code or "")
     store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,

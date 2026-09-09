@@ -2466,7 +2466,9 @@ def test_api_only_ineligible_route_is_typed_and_starts_no_process(
     expected_code = {
         "missing_capability": "runtime_capability_missing",
         "paused": "runtime_provider_unreachable",
-        "unprobed": "runtime_execution_failed",
+        # No probe snapshot yet (service just started): the runtime is not
+        # ready rather than broken, so the turn is deferred.
+        "unprobed": "runtime_provider_unreachable",
     }[eligibility]
     assert error["code"] == expected_code
     assert error["retryable"] is True
