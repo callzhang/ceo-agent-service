@@ -304,6 +304,45 @@ def test_model_at_capacity_fails_over_and_pauses_route(adapter):
     assert failure.route_pause_required is True
 
 
+@pytest.mark.parametrize("route_name", ["codex_oauth", "codex_api"])
+@pytest.mark.parametrize("session_id", [None, "session-1"])
+def test_route_commands_carry_the_service_mcp_manifest(
+    adapter, config, tmp_path, monkeypatch, route_name, session_id
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}},
+                "disabled_servers": ["cua_repl"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+
+    command = adapter.build_command(
+        route(config, route_name),
+        prompt="hello",
+        session_id=session_id,
+        image_paths=None,
+        output_schema_path=None,
+        use_output_schema=False,
+        approval_policy="on-failure",
+        developer_instructions="Read only.",
+        use_approval_bypass=False,
+    )
+
+    assert 'mcp_servers.exa.url="https://mcp.exa.ai/mcp"' in command
+    assert (
+        'mcp_servers.cua_repl={"enabled" = false, "command" = "/usr/bin/false"}'
+        in command
+    )
+    assert command[-1] == "-"
+    if session_id:
+        assert command[-2] == session_id
+
+
 def test_provider_authentication_is_typed_and_allows_failover(adapter):
     failure = adapter.classify_failure(
         stderr="missing bearer or basic authentication for /v1/responses",

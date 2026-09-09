@@ -9,6 +9,9 @@
   override, effective from the next Agent turn. `cua_repl` (the desktop
   computer-use REPL, which had leaked into audited email turns) is disabled by
   default.
+  The manifest is now applied by the runtime adapter to every routed Codex
+  command (task, meeting, classification, workbench, probe turns included),
+  not only to Consumer/Audit role commands.
 
 - 2026-09-09: remove the dead WeChat producer/consumer loop roles. The
   internal loop now only runs the sender (`_run_wechat_sender_loop`); reading

@@ -33,6 +33,7 @@ from app.codex_runner import (
     CodexRunner,
     resolved_codex_home,
 )
+from app.service_codex_config import service_mcp_config_options
 
 _SAFE_ENV_KEYS = {
     "CODEX_CA_CERTIFICATE",
@@ -81,6 +82,19 @@ _CREDENTIAL_NAME_MARKERS = (
 )
 
 
+def _insert_service_mcp_options(command: list[str], *, session_id: str | None) -> None:
+    """Every routed Codex invocation carries the service MCP manifest.
+
+    The manifest adds the service-owned transports and disables the personal
+    Codex servers that background Agents must not see, so it belongs to the
+    route command itself rather than to any single role or workload.
+    """
+    prompt_index = len(command) - 1  # the trailing "-" prompt marker
+    if session_id:
+        prompt_index -= 1  # `exec resume` keeps the session id before "-"
+    command[prompt_index:prompt_index] = service_mcp_config_options()
+
+
 class CodexRuntimeAdapter:
     """Build isolated native Codex invocations for configured runtime routes."""
 
@@ -109,7 +123,7 @@ class CodexRuntimeAdapter:
         reasoning_effort: str | None = None,
     ) -> list[str]:
         configured_route = self._configured_route(route)
-        return self.runner.build_command(
+        command = self.runner.build_command(
             prompt=prompt,
             session_id=session_id,
             image_paths=image_paths,
@@ -130,6 +144,8 @@ class CodexRuntimeAdapter:
             skip_git_repo_check=skip_git_repo_check,
             reasoning_effort=reasoning_effort,
         )
+        _insert_service_mcp_options(command, session_id=session_id)
+        return command
 
     def build_env(
         self,

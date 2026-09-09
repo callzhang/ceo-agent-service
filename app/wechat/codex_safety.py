@@ -7,7 +7,6 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX, _config_string
-from app.service_codex_config import service_mcp_config_options
 
 _TRANSPORT_OPTION = re.compile(
     r"^mcp_servers\.([A-Za-z0-9_-]+)\.(?:url|command)="
@@ -115,9 +114,9 @@ def make_role_agent_command(
 
     Consumer and Audit differ in their typed business contracts, not in their
     shell or MCP permissions.  The service therefore does not construct a
-    command allowlist or a role-specific read-only sandbox here.
+    command allowlist or a role-specific read-only sandbox here; the service
+    MCP manifest is already part of every routed Codex command.
     """
-    _insert_command_options(command, service_mcp_config_options())
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
         command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
     _remove_config_options(
