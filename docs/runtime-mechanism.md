@@ -398,6 +398,7 @@ Consumer 修订版可以原样复用上一 revision 中已持久化的服务反�
 首个退订页面导航若因重定向到未授权 origin 而由路由策略中断，异常处理必须先读取本地阻断标记并投影 `email_unsubscribe_browser_network_rejected`；不能让 Playwright 的导航异常覆盖真正根因。
 Google Workspace 退订入口允许在 `google.com` provider family 内进行 HTTPS 顶层重定向，但目标仍须实时解析为公网地址；该例外不允许跨 provider、非 HTTPS、私网或本地地址，其他重定向继续在发出目标请求前拒绝。
 Google Workspace 邮件使用的 `c.gle` 短入口只允许桥接到 `google.com` provider family；该精确映射不能作为通用短链放行规则。
+Google 退订页面只额外允许从 `gstatic.com` provider dependency family 加载 HTTPS 公网资源；页面中的普通跨站链接不进入许可集合，仍在请求发出前拒绝。
 Consumer 或 Audit 在同一 proposal revision 内耗尽统一重试 ceiling 后，编排结果必须进入 `failed_terminal`，保留最后一个 run 的真实根因但将其标记为不可继续重试；不得返回 `failed_retryable` 让外层重新进入同一 generation 并无限增加 `turn_attempt`。
 
 ## 进程、租约和恢复

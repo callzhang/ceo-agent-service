@@ -327,6 +327,7 @@ _BROWSER_FAILURE_CODES = {
 
 _TRUSTED_UNSUBSCRIBE_REDIRECT_FAMILIES = ("google.com",)
 _TRUSTED_UNSUBSCRIBE_REDIRECT_BRIDGES = {"c.gle": "google.com"}
+_TRUSTED_UNSUBSCRIBE_RESOURCE_FAMILIES = {"google.com": ("gstatic.com",)}
 
 
 def _browser_failure_code(error: Exception) -> str:
@@ -727,6 +728,42 @@ class BrowserNetworkPolicy:
                 raise ValueError
             port = target.port or 443
             addresses = self.resolver(target_host, port)
+            if not addresses or any(
+                _is_forbidden_production_address(address) for address in addresses
+            ):
+                raise ValueError
+        except Exception:
+            raise UnsubscribeBrowserError("browser network request rejected") from None
+        return target_url
+
+    def validate_provider_resource(self, source_url: str, target_url: str) -> str:
+        """Allow public HTTPS resources from an exact provider dependency family."""
+
+        source_host = (urlsplit(source_url).hostname or "").casefold()
+        source_family = _TRUSTED_UNSUBSCRIBE_REDIRECT_BRIDGES.get(source_host)
+        if source_family is None:
+            source_family = next(
+                (
+                    family
+                    for family in _TRUSTED_UNSUBSCRIBE_REDIRECT_FAMILIES
+                    if source_host == family or source_host.endswith("." + family)
+                ),
+                None,
+            )
+        target = urlsplit(target_url)
+        target_host = (target.hostname or "").casefold()
+        allowed_resources = _TRUSTED_UNSUBSCRIBE_RESOURCE_FAMILIES.get(
+            source_family or "",
+            (),
+        )
+        trusted_resource = any(
+            target_host == family or target_host.endswith("." + family)
+            for family in allowed_resources
+        )
+        try:
+            if target.scheme.casefold() != "https" or not trusted_resource:
+                raise ValueError
+            addresses = self.resolver(target_host, target.port or 443)
             if not addresses or any(
                 _is_forbidden_production_address(address) for address in addresses
             ):
@@ -1471,6 +1508,7 @@ class PlaywrightUnsubscribeBrowser:
         self._blocked_popup = False
         self._blocked_download = False
         self._provider_redirect_origins: dict[str, str] = {}
+        self._provider_root_source = ""
         self._document_url = ""
         self._context = self.page.context
         try:
@@ -1525,15 +1563,30 @@ class PlaywrightUnsubscribeBrowser:
         try:
             request_origin = _canonical_origin(request.url)
             redirect_source = self._provider_redirect_origins.get(request_origin)
+            provider_resource = False
             if redirect_source is not None:
                 self.network_policy.validate_provider_redirect(
                     redirect_source,
                     request.url,
                 )
             else:
-                self.network_policy.validate_url(request.url)
+                try:
+                    self.network_policy.validate_url(request.url)
+                except UnsubscribeBrowserError:
+                    if not self._provider_root_source:
+                        raise
+                    self.network_policy.validate_provider_resource(
+                        self._provider_root_source,
+                        request.url,
+                    )
+                    provider_resource = True
             response = route.fetch(max_redirects=0, timeout=self.timeout_ms)
-            if redirect_source is None:
+            if provider_resource:
+                self.network_policy.validate_provider_resource(
+                    self._provider_root_source,
+                    response.url,
+                )
+            elif redirect_source is None:
                 self.network_policy.validate_url(response.url)
             else:
                 self.network_policy.validate_provider_redirect(
@@ -1551,6 +1604,7 @@ class PlaywrightUnsubscribeBrowser:
                     self._provider_redirect_origins[
                         _canonical_origin(target)
                     ] = root_source
+                    self._provider_root_source = root_source
         except Exception:
             self._blocked_request = True
             route.abort()
