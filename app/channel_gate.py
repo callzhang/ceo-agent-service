@@ -599,14 +599,26 @@ def default_channel_gates(
     *,
     dws_binary: str = "dws",
     lark_binary: str = "lark-cli",
-    fxiaoke_binary: str = "sharecrm",
 ) -> dict[str, ChannelGate]:
     gates: tuple[ChannelGate, ...] = (
         DwsChannelGate(binary=dws_binary),
         LarkChannelGate(binary=lark_binary),
-        FxiaokeCliGate(binary=fxiaoke_binary),
     )
     return {gate.channel_name: gate for gate in gates}
+
+
+def default_connector_gates(
+    *,
+    dws_binary: str = "dws",
+    lark_binary: str = "lark-cli",
+    fxiaoke_binary: str = "sharecrm",
+) -> dict[str, ChannelGate]:
+    gates = default_channel_gates(
+        dws_binary=dws_binary,
+        lark_binary=lark_binary,
+    )
+    fxiaoke = FxiaokeCliGate(binary=fxiaoke_binary)
+    return {**gates, fxiaoke.channel_name: fxiaoke}
 
 
 def start_lark_auth_login(binary: str = "lark-cli") -> subprocess.Popen[str]:

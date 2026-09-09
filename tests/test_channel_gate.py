@@ -19,6 +19,7 @@ from app.channel_gate import (
     LoginCoordinator,
     classify_cli_read_failure,
     default_channel_gates,
+    default_connector_gates,
     start_lark_auth_login,
 )
 from app.store import AutoReplyStore
@@ -459,11 +460,13 @@ def test_fxiaoke_cli_gate_requires_normal_user_session():
     assert result.reason_code == "status_auth_invalid"
 
 
-def test_default_channel_gates_registers_fxiaoke_cli():
-    gates = default_channel_gates()
+def test_default_connector_gates_adds_fxiaoke_without_changing_worker_channels():
+    connector_gates = default_connector_gates()
+    channel_gates = default_channel_gates()
 
-    assert set(gates) == {"dingtalk", "lark", "fxiaoke"}
-    assert isinstance(gates["fxiaoke"], FxiaokeCliGate)
+    assert set(connector_gates) == {"dingtalk", "lark", "fxiaoke"}
+    assert isinstance(connector_gates["fxiaoke"], FxiaokeCliGate)
+    assert set(channel_gates) == {"dingtalk", "lark"}
 
 
 @pytest.mark.parametrize(
