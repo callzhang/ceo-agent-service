@@ -969,7 +969,9 @@ def _validate_task_agent_decision(
     if not memory_context.query.strip() or (
         not memory_context.summary.strip() and not memory_context.memories
     ):
-        raise ValueError("non-skip task decision requires project.memory_context")
+        raise RepairableTaskDecisionValidationError(
+            "non-skip task decision requires project.memory_context"
+        )
     if decision.action == "update_project" and decision.project.id is None:
         raise RepairableTaskDecisionValidationError(
             "update_project requires project.id"

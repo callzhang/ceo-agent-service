@@ -388,6 +388,8 @@ Consumer 修订版可以原样复用上一 revision 中已持久化的服务反�
 
 如果任务确定无需执行，应进入 `done`，并在 trace 写入 `agent_output/no_action`；如果结果需要修改，写入 `audit_feedback` 并保持 `running`；如果处理失败，应进入 `failed`。
 
+任务 Agent 生成非 skip 决策但遗漏 `project.memory_context` 时，服务将该结构校验错误送回同一正式校验修订流程，要求补做聚焦 memory recall 或明确记录实时不可用证据；不得直接把 work-summary 输入终止为 failed。
+
 ## 进程、租约和恢复
 
 - 生产入口是 launchd 管理的 `com.ceo-agent-service.main`，由 supervisor 管理 worker 和 audit-web。

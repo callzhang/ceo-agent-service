@@ -3436,6 +3436,77 @@ def test_non_discard_decision_requires_memory_context(tmp_path):
         )
 
 
+def test_process_work_item_repairs_missing_memory_context(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    invalid = {
+        "action": "create_project",
+        "project": {
+            "title": "售前知识库建设",
+            "category": "sales",
+            "status": "active",
+        },
+        "todo_changes": [],
+        "follow_up_drafts": [],
+        "follow_up_changes": [],
+        "update_summary": "创建项目。",
+        "merge_reason": "事项需要持续跟进。",
+        "memory_recall_used": False,
+        "confidence": 0.8,
+    }
+    repaired = {
+        **invalid,
+        "project": {
+            **invalid["project"],
+            "memory_context": _memory_context(),
+        },
+        "memory_recall_used": True,
+    }
+
+    class RepairingCodex(FakeCodexWithAuditEvents):
+        def __init__(self):
+            super().__init__(invalid, [])
+            self.payloads = [invalid, repaired]
+            self.calls = 0
+
+        def decide(self, **kwargs):
+            self.prompts.append(kwargs["prompt"])
+            payload = self.payloads[self.calls]
+            self.calls += 1
+            self.last_audit_tool_events = (
+                [] if self.calls == 1 else [{"tool": "memory_recall"}]
+            )
+            return TaskAgentDecision.model_validate(payload)
+
+    codex = RepairingCodex()
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        runs = db.execute(
+            "select status, error from task_agent_runs "
+            "where summary_input_id=? order by id",
+            (input_id,),
+        ).fetchall()
+    assert input_row == ("done", "")
+    assert runs == [
+        ("failed", "non-skip task decision requires project.memory_context"),
+        ("completed", ""),
+    ]
+    assert codex.calls == 2
+    assert "Call memory_recall now" in codex.prompts[1]
+
+
 def test_process_work_item_does_not_audit_memory_recall_tool_event(
     tmp_path,
     monkeypatch,
