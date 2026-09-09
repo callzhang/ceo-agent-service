@@ -1389,6 +1389,10 @@ def test_network_policy_allows_only_same_google_provider_redirect() -> None:
         "https://c.gle/workspace-unsubscribe",
         "https://ssl.gstatic.com/account.css",
     ) == "https://ssl.gstatic.com/account.css"
+    assert short_link_policy.validate_provider_resource(
+        "https://c.gle/workspace-unsubscribe",
+        "https://accounts.google.com/account.js",
+    ) == "https://accounts.google.com/account.js"
     with pytest.raises(UnsubscribeBrowserError, match="network request rejected"):
         short_link_policy.validate_provider_resource(
             "https://c.gle/workspace-unsubscribe",

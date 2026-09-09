@@ -327,7 +327,9 @@ _BROWSER_FAILURE_CODES = {
 
 _TRUSTED_UNSUBSCRIBE_REDIRECT_FAMILIES = ("google.com",)
 _TRUSTED_UNSUBSCRIBE_REDIRECT_BRIDGES = {"c.gle": "google.com"}
-_TRUSTED_UNSUBSCRIBE_RESOURCE_FAMILIES = {"google.com": ("gstatic.com",)}
+_TRUSTED_UNSUBSCRIBE_RESOURCE_FAMILIES = {
+    "google.com": ("google.com", "gstatic.com")
+}
 
 
 def _browser_failure_code(error: Exception) -> str:
