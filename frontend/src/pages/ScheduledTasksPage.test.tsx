@@ -405,6 +405,13 @@ describe("service command tasks", () => {
     expect(screen.queryByLabelText("Runtime")).toBeNull();
     expect(screen.queryByLabelText("任务描述")).toBeNull();
     expect(screen.queryByText("Agent Skills")).toBeNull();
+    expect(screen.queryByLabelText("Consumer Agent Runtime")).toBeNull();
+    expect(screen.queryByLabelText("Consumer Agent 自定义描述")).toBeNull();
+    expect(screen.queryByText("Consumer Agent 系统提示词")).toBeNull();
+    expect(screen.queryByText("从提示词提取的 Skills")).toBeNull();
+    expect(screen.getByText("这个命令在服务进程内直接执行，不启动 Agent。它发现的消息交给统一 Dispatcher 的 reply consumer 处理；该 consumer 的提示词、Skills 和 Runtime 路由由服务统一维护（Settings → Agent Runtime / Skills），不在这个任务上配置。")).toBeInTheDocument();
+    expect(screen.getByLabelText("服务命令")).toBeDisabled();
+    expect(screen.getByText("内置任务的执行类型由仓库维护，不能修改。")).toBeInTheDocument();
     expect(screen.getAllByText("检查钉钉消息").length).toBeGreaterThanOrEqual(1);
     expect(await screen.findByText("技术详情")).toBeInTheDocument();
     expect(screen.queryByText("技术详情：produce-once")).toBeNull();
@@ -418,5 +425,44 @@ describe("service command tasks", () => {
     await user.click(screen.getByRole("button", { name: "保存更改" }));
 
     await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(9, expect.objectContaining({ command: "produce-once", cron_expression: "0 */2 * * * *", prompt: "", runtime_id: "", skill_refs: [], version: 3 })));
+  });
+
+  it("keeps the execution type editable for a user-created command task", async () => {
+    setup([{ ...commandTask, migration_key: null }]);
+    api.listScheduledTaskRuns.mockResolvedValue({ scheduled_task: commandTask, items: [commandRun], meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false } });
+    renderPage("/scheduled-tasks?id=9");
+
+    expect(await screen.findByLabelText("服务命令")).toHaveValue("produce-once");
+    expect(screen.getByLabelText("服务命令")).toBeEnabled();
+    expect(screen.queryByText("内置任务的执行类型由仓库维护，不能修改。")).toBeNull();
+  });
+
+  it("shows the real task description for an Agent task without a fabricated system prompt", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByLabelText("任务描述")).toHaveValue("检查新的钉钉消息 $dingtalk-chat");
+    expect(screen.getByText("任务描述")).toBeInTheDocument();
+    expect(screen.getByLabelText("任务描述")).toHaveAttribute("placeholder", expect.stringContaining("$"));
+    expect(screen.getByLabelText("Runtime")).toBeInTheDocument();
+    expect(screen.getByText("Agent Skills")).toBeInTheDocument();
+    expect(screen.getByLabelText("服务命令")).toBeEnabled();
+    expect(screen.queryByText("Consumer Agent 系统提示词")).toBeNull();
+    expect(screen.queryByLabelText("Consumer Agent 自定义描述")).toBeNull();
+    expect(screen.queryByLabelText("Consumer Agent Runtime")).toBeNull();
+    expect(document.querySelector(".scheduled-task-system-prompt")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "新建任务" }));
+    expect(screen.getByLabelText("服务命令")).toBeEnabled();
+    expect(screen.queryByText("内置任务的执行类型由仓库维护，不能修改。")).toBeNull();
+  });
+
+  it("locks the execution type of a repository managed Agent task", async () => {
+    setup([{ ...task, migration_key: "dingtalk-agent-check-v1" }]);
+    renderPage();
+
+    expect(await screen.findByLabelText("任务描述")).toBeInTheDocument();
+    expect(screen.getByLabelText("服务命令")).toBeDisabled();
+    expect(screen.getByText("内置任务的执行类型由仓库维护，不能修改。")).toBeInTheDocument();
   });
 });
