@@ -30,6 +30,17 @@ from app.service_codex_config import ServiceMcpServer, load_service_mcp_servers
 
 ResultT = TypeVar("ResultT")
 _POLICY_SEAL = object()
+# Provider telemetry the Claude transport emits around a turn: the
+# subscription quota window (which can precede session init) and the
+# extended-thinking budget notice raised by --effort.  Neither carries a turn
+# item, and the terminal result still decides the outcome, so both map to no
+# runtime event.  Every other event shape stays a grammar violation.
+_TELEMETRY_EVENTS = frozenset(
+    {
+        ("rate_limit_event", None),
+        ("system", "thinking_tokens"),
+    }
+)
 
 
 class ClaudeEventPolicyError(RuntimeError):
@@ -571,12 +582,11 @@ class ClaudeEventNormalizer:
             return (
                 {"type": RuntimeEventType.TURN_STARTED.value, "session_id": session_id},
             )
-        self._require_active_session(session_id)
-        if event_type == "rate_limit_event":
-            # A subscription transport reports its quota windows between turn
-            # items.  The event carries no turn item, and the terminal result
-            # still decides success or failure, so it maps to no runtime event.
+        if (event_type, event.get("subtype")) in _TELEMETRY_EVENTS:
+            if self._init_seen:
+                self._require_active_session(session_id)
             return ()
+        self._require_active_session(session_id)
         if event_type in {"assistant", "user"}:
             message = event.get("message")
             if (

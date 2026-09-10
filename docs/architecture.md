@@ -707,6 +707,11 @@ CLI 自己解析本机登录态；`CLAUDE_CODE_SIMPLE=1` 与 `--bare` 等价，�
 不会进入服务运行。`claude_oauth` 复用本机登录态的代价是会话文件写入调用方的
 `~/.claude/projects/<cwd>`，与本人交互式会话共享订阅额度。
 
+Claude 事件语法只把 turn item 映射成 runtime 事件。传输层遥测不携带 turn item，
+统一映射为空事件：订阅额度窗口 `rate_limit_event`（可能出现在 session init 之前）和
+`--effort` 触发的 extended thinking 预算通知 `system/thinking_tokens`。终局 `result`
+仍然决定这一次调用的成败；除这两类以外的事件形状仍然是语法违规，不做静默丢弃。
+
 未登录时 `claude_oauth` 的健康探测失败，Router 直接跳过该路由，不影响其余路由。
 
 ### Friday Runtime 路由

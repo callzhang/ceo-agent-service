@@ -1,5 +1,14 @@
 # Changelog
 
+- 2026-09-10: the Claude event grammar recognizes the two telemetry events the
+  live transport emits around a turn — the subscription quota window
+  (`rate_limit_event`, which can arrive before session init) and the
+  extended-thinking budget notice (`system/thinking_tokens`, raised by
+  `--effort`). Both carry no turn item and map to no runtime event, while every
+  other event shape stays a grammar violation. Without this a real
+  `claude_oauth` turn failed with `claude_init_missing` or
+  `claude_event_unrecognized` before reaching its result.
+
 - 2026-09-10: the console's Agent Runtime panel carries the Claude route. The
   SPA settings bridge (`/api/console/settings/agent-runtime`) whitelists the
   fields it forwards to the legacy save handler, so a save from the console

@@ -1110,3 +1110,58 @@ def test_rate_limit_event_still_requires_the_active_session(normalizer):
         normalizer.normalize_events(
             {"type": "rate_limit_event", "session_id": "other-session"}
         )
+
+
+def test_rate_limit_event_before_session_init_is_accepted(normalizer):
+    """A subscription transport reports its quota window before the init event."""
+    assert (
+        normalizer.normalize_events(
+            {
+                "type": "rate_limit_event",
+                "session_id": "claude-session-1",
+                "rate_limit_info": {"status": "allowed"},
+            }
+        )
+        == ()
+    )
+    assert normalizer.normalize_event(SYSTEM_INIT) == {
+        "type": "turn.started",
+        "session_id": "claude-session-1",
+    }
+
+
+def test_thinking_budget_notice_produces_no_runtime_event(normalizer):
+    """--effort raises extended thinking, whose budget notice carries no item."""
+    normalizer.normalize_event(SYSTEM_INIT)
+
+    assert (
+        normalizer.normalize_events(
+            {
+                "type": "system",
+                "subtype": "thinking_tokens",
+                "estimated_tokens": 50,
+                "estimated_tokens_delta": 50,
+                "session_id": "claude-session-1",
+            }
+        )
+        == ()
+    )
+    assert normalizer.normalize_events(ASSISTANT_TEXT) == (
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": '{"ok":true}'},
+        },
+    )
+
+
+def test_unknown_system_subtype_is_still_a_grammar_violation(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+
+    with pytest.raises(ClaudeEventPolicyError, match="claude_event_unrecognized"):
+        normalizer.normalize_events(
+            {
+                "type": "system",
+                "subtype": "some_future_shape",
+                "session_id": "claude-session-1",
+            }
+        )
