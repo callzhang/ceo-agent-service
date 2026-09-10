@@ -257,15 +257,32 @@ class AuditAgentRunner:
         def parse(raw: str) -> AuditAgentResult:
             result = parse_audit_agent_wire_result(raw)
             if (
-                result.outcome is AuditOutcome.EXECUTED
-                and self.domain_continuation is not None
-                and not self.domain_continuation.audit_run_has_execution_evidence(
-                    task, audit_run_id=run.id
-                )
+                result.outcome is not AuditOutcome.EXECUTED
+                or self.domain_continuation is None
+            ):
+                return result
+            if not self.domain_continuation.audit_run_has_execution_evidence(
+                task, audit_run_id=run.id
             ):
                 raise ResultParseError(
                     "external_result: executed without a receipt from "
                     "execute_audited_email_unsubscribe"
+                )
+            if result.external_result is None:
+                raise ResultParseError(
+                    "external_result: executed requires external_result with "
+                    "the tool's live_result_reference"
+                )
+            # The tool receipt bound to this run is the evidence; the opaque
+            # operation id is service-owned, so bind it here instead of
+            # failing the turn when the model retyped it.
+            if result.external_result.operation_id != run.operation_id:
+                result = result.model_copy(
+                    update={
+                        "external_result": result.external_result.model_copy(
+                            update={"operation_id": run.operation_id}
+                        )
+                    }
                 )
             return result
 

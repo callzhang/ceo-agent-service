@@ -784,6 +784,8 @@ run 才能被持久队列恢复。
 - **无证据的 executed**：审计化退订任务里，Audit 只有在本轮真的调用了
   `execute_audited_email_unsubscribe`（存在绑定到该 Audit run 的 claim/effect）时才能返回 `executed`；
   否则解析阶段就判为 `codex_result_invalid`，下一轮带修正块重做，编排层的 continuation 守卫只作最后兜底。
+  有证据的 `executed` 其 `external_result.operation_id` 由服务从 Audit run 回填（不透明操作号是服务
+  自己的，模型抄错不应让任务终态失败）；缺少 `external_result` 则同样进入修正轮。
 - **结果不合契约**：Agent 返回了 JSON 但不满足 wire schema 时，解析器报 `codex_result_invalid`
   并保留失败字段位置（不保留模型原文）；同一角色、同一 revision 的下一次 turn 会收到
   `## Result Correction`，把这些位置反馈给模型，要求只返回修正后的结果。只有完全没有 JSON

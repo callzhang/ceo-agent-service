@@ -1,5 +1,12 @@
 # Changelog
 
+- 2026-09-10: an evidence-backed `executed` Audit result now takes its
+  `external_result.operation_id` from the Audit run itself. The tool receipt
+  bound to the run is the evidence; the opaque operation id is service-owned,
+  and a model that retyped it (e.g. wrote the action identity instead) used
+  to end the task in `domain_continuation_state_invalid`. `executed` without
+  any `external_result` is a `codex_result_invalid` correction instead.
+
 - 2026-09-10: email schema v36 finishes the network-policy removal: v35
   rewrote `reply_tasks.trigger_message_json` but left the immutable
   `reply_task_inputs` copy untouched, so every pre-v35 unsubscribe task that

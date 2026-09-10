@@ -1033,3 +1033,31 @@ def test_audit_result_revision_mismatch_is_failed_without_reconciliation(setup):
         turn_attempt=0,
     )
     assert run is not None and run.status == "failed"
+
+
+def test_audited_email_executed_binds_operation_id_from_the_run(setup):
+    store, email_task, email_context, parent = _audited_email_setup(setup)
+    executor = CapturingExecutor(
+        _audit_jsonl("email-action:retyped-by-model", session="session-email-audit")
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        domain_continuation=_EvidenceDriver(evidence=True),
+    ).run(email_task, email_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        email_task.id,
+        email_task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None and run.operation_id
+    assert result.result.outcome is AuditOutcome.EXECUTED
+    assert result.result.external_result is not None
+    assert result.result.external_result.operation_id == run.operation_id
+    persisted = json.loads(run.final_result_json)
+    assert persisted["external_result"]["operation_id"] == run.operation_id
