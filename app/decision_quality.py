@@ -38,7 +38,7 @@ class DecisionQualityResult(BaseModel):
     @field_validator("risk", mode="before")
     @classmethod
     def validate_risk(cls, value: Any) -> str:
-        if value not in {"low", "medium", "high"}:
+        if not isinstance(value, str) or value not in {"low", "medium", "high"}:
             raise ValueError("risk must be low, medium, or high")
         return value
 

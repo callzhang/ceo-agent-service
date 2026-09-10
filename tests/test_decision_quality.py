@@ -78,6 +78,8 @@ def test_low_rule_coverage_needs_human():
     ("field", "value"),
     [
         ("risk", "critical"),
+        ("risk", []),
+        ("risk", {}),
         ("confidence", -0.01),
         ("confidence", 1.01),
         ("rule_coverage", -0.01),
