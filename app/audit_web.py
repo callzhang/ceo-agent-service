@@ -89,7 +89,6 @@ from app.config import (
     handoff_ack,
     memory_connector_user_id,
     mention_aliases,
-    message_recovery_interval,
     poll_interval_seconds,
     principal_name,
     read_env_file,
@@ -3902,7 +3901,6 @@ _CONFIGURATION_GROUP_BY_KEY = {
     "CEO_POLL_INTERVAL_SECONDS": "Scheduling",
     "CEO_BATCH_SECONDS": "Scheduling",
     "FAST_PATH_UNREAD_BACKOFF": "Scheduling",
-    "MESSAGE_RECOVERY_INTERVAL": "Scheduling",
     "SINGLE_CHAT_READ_RECOVERY_WINDOW": "Scheduling",
     "SINGLE_CHAT_READ_RECOVERY_LIMIT": "Scheduling",
     "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL": "Paths & Storage",
@@ -3923,7 +3921,6 @@ _CONFIGURATION_INTEGER_KEYS = frozenset(
 _CONFIGURATION_DURATION_KEYS = frozenset(
     {
         "FAST_PATH_UNREAD_BACKOFF",
-        "MESSAGE_RECOVERY_INTERVAL",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
     }
 )
@@ -4289,11 +4286,6 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "快路径扫描到未读会话后等待多久再读取，给真人先回复或清未读的时间。",
         ),
         (
-            "MESSAGE_RECOVERY_INTERVAL",
-            _duration_label(message_recovery_interval()),
-            "每次慢路径兜底扫描之间至少间隔多久。",
-        ),
-        (
             "SINGLE_CHAT_READ_RECOVERY_WINDOW",
             _duration_label(single_chat_read_recovery_window()),
             "慢路径私聊恢复扫描回看多长时间内的会话。",
@@ -4642,7 +4634,6 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_POLL_INTERVAL_SECONDS",
         "CEO_BATCH_SECONDS",
         "FAST_PATH_UNREAD_BACKOFF",
-        "MESSAGE_RECOVERY_INTERVAL",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
     }
@@ -4680,7 +4671,6 @@ def _highlight_logic_text(text: str) -> str:
         "addresses_principal",
         "seen_messages",
         "reply_tasks",
-        _duration_label(message_recovery_interval()),
         _duration_label(single_chat_read_recovery_window()),
     ]
     for term in sorted({item for item in terms if item}, key=len, reverse=True):
@@ -4719,7 +4709,8 @@ def _config_logic_sections() -> list[tuple[str, list[tuple[str, str]]]]:
     slow_path_rows = [
         (
             "周期",
-            f"每 {_duration_label(message_recovery_interval())} 运行一次。",
+            "由 recover-recent-messages 这个独立定时任务触发，不再按固定间隔"
+            "夹在每分钟的快路径检查里。",
         ),
         (
             "私聊恢复",
@@ -10237,16 +10228,22 @@ def create_audit_app(
         raw_pid = str(service.get("pid") or "") if service.get("ok") else ""
         main_pid = int(raw_pid) if raw_pid.isdigit() and int(raw_pid) > 0 else None
         runtime_config = load_runtime_config(environment)
+        route_names = tuple(route.name for route in runtime_config.routes)
         runtime_snapshots = scheduled_task_runtime_snapshots
         if runtime_snapshots is None:
             runtime_snapshots = (
                 audit_store.runtime_capability_snapshots_for_pid(
-                    tuple(route.name for route in runtime_config.routes),
+                    route_names,
                     pid=main_pid,
                 )
                 if main_pid is not None
                 else {}
             )
+            # launchd reports the supervisor PID, while probes run in the
+            # service child.  Fall back to the latest persisted snapshots so
+            # the audit-web process does not manufacture snapshot_missing.
+            latest = audit_store.runtime_capability_snapshots_latest(route_names)
+            runtime_snapshots = {**latest, **runtime_snapshots}
         runtime_skill_snapshot = scheduled_task_runtime_skill_snapshot
         if runtime_skill_snapshot is None and main_pid is not None:
             runtime_skill_snapshot = runtime_skill_snapshot_for_process(

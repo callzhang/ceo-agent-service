@@ -6282,6 +6282,40 @@ class AutoReplyStore:
             snapshots[route_name] = snapshot
         return snapshots
 
+    def runtime_capability_snapshots_latest(
+        self,
+        route_names: Sequence[str],
+    ) -> dict[str, RuntimeCapabilitySnapshot]:
+        """Read the latest persisted route snapshots across service processes.
+
+        The service supervisor and its worker/audit children have different
+        PIDs.  Callers that only have the supervisor PID must still be able to
+        display the worker's probe result; freshness and health remain enforced
+        by ``AgentRuntimeRouter``.
+        """
+        names = tuple(route_names)
+        keys = tuple(self._runtime_capability_state_key(name) for name in names)
+        if not keys:
+            return {}
+        placeholders = ",".join("?" for _ in keys)
+        with self._connect() as db:
+            rows = db.execute(
+                f"select key, value from service_state where key in ({placeholders})",
+                keys,
+            ).fetchall()
+        snapshots: dict[str, RuntimeCapabilitySnapshot] = {}
+        route_by_key = dict(zip(keys, names, strict=True))
+        for row in rows:
+            payload = json.loads(str(row["value"]))
+            if not isinstance(payload, dict):
+                continue
+            route_name = route_by_key[str(row["key"])]
+            snapshot = RuntimeCapabilitySnapshot.model_validate(payload.get("snapshot"))
+            if snapshot.route_name != route_name:
+                raise ValueError("persisted runtime capability route mismatch")
+            snapshots[route_name] = snapshot
+        return snapshots
+
     @staticmethod
     def _managed_skill_export_receipt_from_row(
         row: sqlite3.Row,
