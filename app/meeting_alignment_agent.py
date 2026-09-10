@@ -19,6 +19,8 @@ from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
     MeetingSource,
+    meeting_alignment_rule_for_message,
+    render_meeting_alignment_cross_field_rules,
 )
 from app.prompt import work_profile_instruction
 from app.routed_result_privacy import audit_references_from_full_events
@@ -39,11 +41,21 @@ MEETING_RUNTIME_CAPABILITIES = frozenset(
 MEETING_RESULT_CODEC = RoutedResultCodec.text(
     schema_id="meeting_alignment.decision.v1"
 )
-# Third-party providers ignore Codex's --output-schema, so the prompt text is
-# the only place the model sees the AlignmentTopic / DeliveryTarget shapes.
-MEETING_ALIGNMENT_DECISION_PROMPT_SCHEMA = json.dumps(
-    MeetingAlignmentDecision.model_json_schema(), ensure_ascii=False, indent=2
-)
+def _meeting_alignment_prompt_schema() -> str:
+    """Serialize the decision schema for the prompt, minus its root description.
+
+    Third-party providers ignore Codex's --output-schema, so the prompt text is
+    the only place the model sees the AlignmentTopic / DeliveryTarget shapes.
+    The root description carries the cross-field rules for the routes that do
+    read the schema file; both prompts already print the same block above the
+    schema, so dropping it here keeps one copy per prompt instead of two.
+    """
+    schema = MeetingAlignmentDecision.model_json_schema()
+    schema.pop("description", None)
+    return json.dumps(schema, ensure_ascii=False, indent=2)
+
+
+MEETING_ALIGNMENT_DECISION_PROMPT_SCHEMA = _meeting_alignment_prompt_schema()
 MEETING_ALIGNMENT_SCHEMA_PROBLEM_LIMIT = 12
 
 
@@ -190,10 +202,10 @@ def _encode_meeting_alignment_result(raw: str) -> str:
 
 
 def _meeting_alignment_repair_prompt(raw: str) -> str:
-    """Tell the model which schema rules its last decision broke."""
+    """Tell the model which schema rules its last decision broke, and their shapes."""
     problems = _meeting_alignment_schema_problems(raw)
     detail = (
-        "\n".join(f"- {problem}" for problem in problems)
+        "\n".join(_meeting_alignment_problem_line(problem) for problem in problems)
         if problems
         else "- the reply did not contain a MeetingAlignmentDecision JSON object"
     )
@@ -201,9 +213,19 @@ def _meeting_alignment_repair_prompt(raw: str) -> str:
         "上一次输出不是合法的 MeetingAlignmentDecision JSON。请基于同一个上下文重新输出，"
         "只输出一个满足 schema 的 JSON 对象，不要调用工具，不要发送消息。\n\n"
         f"上一次输出的问题：\n{detail}\n\n"
+        # A pydantic after-validator stops at the first broken rule and this is
+        # the only correction turn, so repeating every rule is what keeps the
+        # model from fixing the reported one and breaking the next.
+        f"{render_meeting_alignment_cross_field_rules()}\n\n"
         "MeetingAlignmentDecision Pydantic JSON schema:\n"
         f"{MEETING_ALIGNMENT_DECISION_PROMPT_SCHEMA}"
     )
+
+
+def _meeting_alignment_problem_line(problem: str) -> str:
+    """Name the field combination a reported cross-field problem needs."""
+    rule = meeting_alignment_rule_for_message(problem)
+    return f"- {problem}（需要：{rule.requirement}）" if rule else f"- {problem}"
 
 
 def _meeting_alignment_schema_problems(raw: str) -> list[str]:
@@ -307,6 +329,8 @@ def build_meeting_alignment_prompt(
 - 只输出 MeetingAlignmentDecision JSON，严格遵守下方 schema，不添加字段。
 - action 固定为 send；final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同。
 - 没有人员敏感内容时 sensitive_private_message 必须为 null；存在混合内容时同时生成脱敏后的 final_message 和独立 sensitive_private_message。
+
+{render_meeting_alignment_cross_field_rules()}
 
 MeetingAlignmentDecision Pydantic JSON schema:
 {MEETING_ALIGNMENT_DECISION_PROMPT_SCHEMA}

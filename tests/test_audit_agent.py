@@ -744,6 +744,7 @@ def test_audit_uses_typed_result_without_application_receipt_validation(setup):
     assert result.result.outcome is AuditOutcome.EXECUTED
     assert persisted is not None and persisted.status == "completed"
     assert "execute_audited_email_unsubscribe" not in json.dumps(executor.commands)
+    assert "terminal skip" not in executor.prompts[0]
 
 
 def test_audit_prompt_uses_quality_gate_priority(setup):
@@ -757,6 +758,8 @@ def test_audit_prompt_uses_quality_gate_priority(setup):
     assert "information_completeness < 0.5" in prompt
     assert "2-4 mutually exclusive" in prompt
     assert "Technical/provider/read/route/schema/Audit/retry" in prompt
+    assert "needs_human is valid only when risk is high" not in prompt
+    assert "only risk and confidence" not in prompt
 
 
 def test_audit_runtime_environment_overrides_ambient_send_mode(
@@ -844,6 +847,10 @@ def test_audited_email_executed_without_tool_evidence_is_an_invalid_result(setup
     assert "execute_audited_email_unsubscribe" in error["detail"]
     assert driver.calls == [(email_task.id, run.id)]
     assert "Return executed only after execute_audited_email_unsubscribe" in executor.prompts[0]
+    assert (
+        "A receipt whose outcome is a terminal skip ends the operation"
+        in executor.prompts[0]
+    )
 
 
 def test_audited_email_executed_with_tool_evidence_completes(setup):

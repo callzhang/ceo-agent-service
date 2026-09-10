@@ -8084,6 +8084,207 @@ def test_domain_authorization_rejection_remains_failed():
     assert captured["send_error"] == "email_unsubscribe_risk_rejected"
 
 
+def _audited_unsubscribe_tool_event(outcome, *, status="done"):
+    return {
+        "type": "item.completed",
+        "item": {
+            "tool": "execute_audited_email_unsubscribe",
+            "status": "completed",
+            "result": {
+                "structured_content": {
+                    "status": status,
+                    "outcome": outcome,
+                    "receipt_id": f"unsubscribe-receipt:4d96610e8a5d070dbfbff1ed:{outcome}",
+                    "evidence": "terminal-page",
+                }
+            },
+        },
+    }
+
+
+def _finalize_audited_unsubscribe(module, result, tool_events, *, task_id=383232):
+    task = SimpleNamespace(
+        id=task_id,
+        attempts=3,
+        execution_generation="c529752524ec4378b919b499f6b2a200",
+        conversation_id=f"conversation-{task_id}",
+        conversation_title="Email unsubscribe",
+        trigger_message_id=f"trigger-{task_id}",
+        trigger_sender="sender@example.com",
+        trigger_text="unsubscribe",
+    )
+    run = SimpleNamespace(
+        id=result.final_run_id,
+        codex_session_id="",
+        transcript_start_line=0,
+        transcript_end_line=0,
+        tool_events=tool_events,
+    )
+    captured = {}
+
+    class Store:
+        def get_agent_run(self, run_id):
+            assert run_id == result.final_run_id
+            return run
+
+        def finalize_orchestrated_reply_task(self, **kwargs):
+            captured.update(kwargs)
+
+        def defer_reply_task(self, *args, **kwargs):
+            captured["deferred"] = True
+
+    module._finalize_email_task(Store(), task, result)
+    return captured
+
+
+def test_audited_unsubscribe_login_skip_is_closed_as_a_human_handoff():
+    module = _module()
+    # Live task 383232: the audited tool returned a terminal skip receipt and
+    # the Audit model reported failed/login_required for it anyway.
+    result = SimpleNamespace(
+        status="failed_terminal",
+        final_run_id=11859,
+        summary="login_required",
+        error=SimpleNamespace(code="login_required", authorization_required=False),
+    )
+
+    captured = _finalize_audited_unsubscribe(
+        module,
+        result,
+        [_audited_unsubscribe_tool_event("skipped_login_required")],
+    )
+
+    assert captured["task_status"] == "done"
+    assert captured["send_status"] == "needs_human"
+    assert captured["send_error"] == "skipped_login_required"
+    assert captured["task_error"] == "skipped_login_required"
+
+
+def test_audited_unsubscribe_retryable_login_skip_is_not_deferred():
+    module = _module()
+    # Live task 383234, Audit run 16936: the same skip receipt after the model
+    # called the terminal tool a second time. The domain rejection claimed an
+    # authorization boundary under its own code, so the orchestrator deferred
+    # it instead of ending the task.
+    result = SimpleNamespace(
+        status="failed_retryable",
+        final_run_id=16936,
+        summary="unsubscribe_operation_rejected:login_required",
+        error=SimpleNamespace(
+            code="unsubscribe_operation_rejected:login_required",
+            authorization_required=True,
+        ),
+    )
+
+    captured = _finalize_audited_unsubscribe(
+        module,
+        result,
+        [
+            _audited_unsubscribe_tool_event("skipped_login_required"),
+            _audited_unsubscribe_tool_event("failed_browser", status="failed"),
+        ],
+        task_id=383234,
+    )
+
+    assert "deferred" not in captured
+    assert captured["task_status"] == "done"
+    assert captured["send_status"] == "needs_human"
+    assert captured["send_error"] == "skipped_login_required"
+
+
+@pytest.mark.parametrize(
+    "outcome", ["skipped_no_reliable_entry", "already_unsubscribed"]
+)
+def test_audited_unsubscribe_no_work_skip_is_closed_as_no_action(outcome):
+    module = _module()
+    result = SimpleNamespace(
+        status="failed_terminal",
+        final_run_id=90,
+        summary=outcome,
+        error=SimpleNamespace(code="unsubscribe_entry_missing", authorization_required=False),
+    )
+
+    captured = _finalize_audited_unsubscribe(
+        module,
+        result,
+        [_audited_unsubscribe_tool_event(outcome)],
+    )
+
+    assert captured["task_status"] == "done"
+    assert captured["send_status"] == "skipped"
+    assert captured["send_error"] == ""
+    assert captured["task_error"] == ""
+
+
+def test_audited_unsubscribe_skip_never_overrides_a_management_decision():
+    module = _module()
+    # Audit reported a real needs_human decision (a sensitive target, a budget
+    # or approval boundary). The receipt says the browser step itself left
+    # nothing to do, but the decision the person has to make is the result.
+    result = SimpleNamespace(
+        status="needs_human",
+        final_run_id=92,
+        summary="sender is a sensitive target",
+        error=SimpleNamespace(
+            code="email_unsubscribe_target_sensitive",
+            authorization_required=False,
+        ),
+    )
+
+    captured = _finalize_audited_unsubscribe(
+        module,
+        result,
+        [_audited_unsubscribe_tool_event("already_unsubscribed")],
+    )
+
+    assert captured["task_status"] == "done"
+    assert captured["send_status"] == "needs_human"
+    assert captured["send_error"] == "email_unsubscribe_target_sensitive"
+
+
+def test_audited_unsubscribe_skip_never_overrides_the_authorization_boundary():
+    module = _module()
+    result = SimpleNamespace(
+        status="failed_terminal",
+        final_run_id=93,
+        summary="authorization_required",
+        error=SimpleNamespace(
+            code="authorization_required",
+            authorization_required=True,
+        ),
+    )
+
+    captured = _finalize_audited_unsubscribe(
+        module,
+        result,
+        [_audited_unsubscribe_tool_event("skipped_no_reliable_entry")],
+    )
+
+    assert captured["task_status"] == "done"
+    assert captured["send_status"] == "needs_human"
+    assert captured["send_error"] == "authorization_required"
+
+
+def test_audited_unsubscribe_browser_failure_remains_failed():
+    module = _module()
+    result = SimpleNamespace(
+        status="failed_terminal",
+        final_run_id=91,
+        summary="failed_browser",
+        error=SimpleNamespace(code="unsubscribe_browser_unavailable", authorization_required=False),
+    )
+
+    captured = _finalize_audited_unsubscribe(
+        module,
+        result,
+        [_audited_unsubscribe_tool_event("failed_browser", status="failed")],
+    )
+
+    assert captured["task_status"] == "failed"
+    assert captured["send_status"] == "failed"
+    assert captured["send_error"] == "unsubscribe_browser_unavailable"
+
+
 def test_training_failure_is_sanitized_isolated_and_heartbeated():
     module = _module()
     calls = 0

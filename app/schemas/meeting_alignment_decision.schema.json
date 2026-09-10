@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
     "AlignmentTopic": {
       "additionalProperties": false,
@@ -8,6 +9,7 @@
           "type": "string"
         },
         "state": {
+          "description": "aligned 还要求外层 trigger_reasons 含 aligned_disagreement，unresolved 要求外层含 unresolved_disagreement。",
           "enum": [
             "aligned",
             "unresolved"
@@ -23,10 +25,12 @@
           "type": "array"
         },
         "conclusion": {
+          "description": "state=aligned 时必须非空；state=unresolved 时写空字符串。",
           "title": "Conclusion",
           "type": "string"
         },
         "alignment_reason": {
+          "description": "state=aligned 时必须非空；state=unresolved 时写空字符串。",
           "title": "Alignment Reason",
           "type": "string"
         }
@@ -69,6 +73,7 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
+          "description": "group 与 direct 各自的必填/必空字段由所在对象的 description 规定；sensitive_private_message.target 只允许 direct。",
           "enum": [
             "group",
             "direct"
@@ -77,18 +82,22 @@
           "type": "string"
         },
         "conversation_id": {
+          "description": "群会话 id；direct 形态必须写空字符串。",
           "title": "Conversation Id",
           "type": "string"
         },
         "direct_user_id": {
+          "description": "收件人的稳定 user_id；group 形态必须写空字符串，direct 形态写对方在名册里的真实 user_id，只有名册解析不出 user_id 时才写空字符串。",
           "title": "Direct User Id",
           "type": "string"
         },
         "title": {
+          "description": "群名或收件人姓名。",
           "title": "Title",
           "type": "string"
         },
         "candidates": {
+          "description": "按业务承接证据排序的群候选；direct 形态必须写空数组。",
           "items": {
             "$ref": "#/$defs/TargetCandidate"
           },
@@ -182,7 +191,8 @@
       "additionalProperties": false,
       "properties": {
         "target": {
-          "$ref": "#/$defs/DeliveryTarget"
+          "$ref": "#/$defs/DeliveryTarget",
+          "description": "必须 kind=direct，且 direct_user_id 必须是非空的稳定 user_id，写收件人本人在名册里的 user_id。kind、conversation_id、direct_user_id、title、candidates 五个键同样都必须出现，未使用的一侧显式写空值而不是省略：conversation_id 写空字符串 \"\"、candidates 写空数组 []。"
         },
         "message": {
           "minLength": 1,
@@ -195,6 +205,7 @@
           "type": "string"
         },
         "recipient_evidence": {
+          "description": "至少一项且每一项非空，写清实时身份或职责依据。",
           "items": {
             "type": "string"
           },
@@ -240,6 +251,7 @@
     }
   },
   "additionalProperties": false,
+  "description": "跨字段规则（由 MeetingAlignmentDecision 及其子模型的校验器生成，违反任意一条整轮判定失败）：\n- aligned topic requires conclusion and alignment_reason：topics[].state=aligned 时，同一条 topic 的 conclusion 与 alignment_reason 都必须非空；state=unresolved 时两者写空字符串\n- aligned_disagreement requires an aligned topic：trigger_reasons 含 aligned_disagreement 时，topics 中至少一条 state=aligned\n- aligned topic requires aligned_disagreement trigger：topics 中出现 state=aligned 时，trigger_reasons 必须含 aligned_disagreement；与上一条互为充要，两者要么同时成立要么同时不成立\n- unresolved_disagreement requires an unresolved topic：trigger_reasons 含 unresolved_disagreement 时，topics 中至少一条 state=unresolved\n- unresolved topic requires unresolved_disagreement trigger：topics 中出现 state=unresolved 时，trigger_reasons 必须含 unresolved_disagreement；与上一条互为充要，两者要么同时成立要么同时不成立\n- unresolved_disagreement requires key_questions：trigger_reasons 含 unresolved_disagreement 时，key_questions 至少一条\n- derek_viewpoint trigger and payload must appear together：trigger_reasons 含 derek_viewpoint 与 derek_viewpoint 为对象必须同时成立；不含该 trigger 时 derek_viewpoint 必须是 null\n- send requires trigger_reasons：trigger_reasons 至少一项\n- send requires final_message：final_message 必须非空\n- send requires an explicit delivery target：target 必须是对象，不能是 null\n- group target requires candidates and conversation_id：target.kind=group 时，conversation_id 非空且 candidates 至少一条\n- group target must select the first ranked candidate：target.kind=group 时，conversation_id 必须等于 candidates[0].conversation_id\n- group target cannot contain direct_user_id：target.kind=group 时，direct_user_id 这个键仍然必填，但值必须是空字符串 \"\"\n- direct target cannot contain group delivery fields：target.kind=direct 时，conversation_id 与 candidates 两个键仍然必填，但值必须分别是空字符串 \"\" 与空数组 []\n- direct target requires title：target.kind=direct 时，title 必须非空\n- sensitive private message is only valid beside a business summary：sensitive_private_message 非 null 时，audience_scope 必须是 business\n- sensitive private message requires a direct target：sensitive_private_message.target.kind 必须是 direct\n- sensitive private message requires a stable direct user id：sensitive_private_message.target.direct_user_id 必须是非空的稳定 user_id，写收件人本人在名册里的 user_id，不能留空\n- sensitive private message requires non-empty recipient evidence：sensitive_private_message.recipient_evidence 至少一项，且每一项都非空",
   "properties": {
     "action": {
       "const": "send",
@@ -247,6 +259,7 @@
       "type": "string"
     },
     "audience_scope": {
+      "description": "business=业务承接群总结；personal=整场均为个人事项的完整日历 1:1。sensitive_private_message 非 null 时必须是 business。",
       "enum": [
         "business",
         "personal"
@@ -255,6 +268,7 @@
       "type": "string"
     },
     "trigger_reasons": {
+      "description": "至少一项。与 topics 的 state 互为充要：出现 state=aligned 必须含 aligned_disagreement，出现 state=unresolved 必须含 unresolved_disagreement 且 key_questions 非空；含 derek_viewpoint 时 derek_viewpoint 必须是对象。",
       "items": {
         "enum": [
           "aligned_disagreement",
@@ -268,6 +282,7 @@
       "type": "array"
     },
     "topics": {
+      "description": "每条 topic 的 state 反过来约束 trigger_reasons：aligned 需要 aligned_disagreement，unresolved 需要 unresolved_disagreement。",
       "items": {
         "$ref": "#/$defs/AlignmentTopic"
       },
@@ -282,9 +297,11 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "与 trigger_reasons 中的 derek_viewpoint 同现同缺：含该 trigger 时必须是对象，不含时必须是 null。"
     },
     "key_questions": {
+      "description": "trigger_reasons 含 unresolved_disagreement 时至少一条；否则可以是空数组。",
       "items": {
         "$ref": "#/$defs/KeyQuestion"
       },
@@ -306,9 +323,11 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "必填且不能为 null。group 与 direct 两种形态的字段互斥，但 kind、conversation_id、direct_user_id、title、candidates 五个键在任何形态下都必须出现，未使用的一侧要显式写成空值而不是省略：kind=group 时 conversation_id 非空、candidates 非空且 conversation_id 必须等于 candidates[0].conversation_id、direct_user_id 必须是 \"\"；kind=direct 时 title 非空、conversation_id 必须是 \"\"、candidates 必须是 []，direct_user_id 写对方在名册里的真实 user_id，只有名册解析不出 user_id 时才写 \"\"。"
     },
     "final_message": {
+      "description": "必须非空；人员敏感内容不得出现在这里。",
       "title": "Final Message",
       "type": "string"
     },
@@ -320,7 +339,8 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "没有人员敏感内容时必须是 null；非 null 时 audience_scope 必须是 business。"
     },
     "audit_summary": {
       "minLength": 1,
@@ -349,6 +369,5 @@
     "confidence"
   ],
   "title": "MeetingAlignmentDecision",
-  "type": "object",
-  "$schema": "https://json-schema.org/draft/2020-12/schema"
+  "type": "object"
 }

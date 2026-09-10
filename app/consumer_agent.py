@@ -199,7 +199,18 @@ object matching the schema. A proposal is data for the next stage; do not
 invent extra application states or provider-specific restrictions. Use
 feedback from Audit to produce a replacement result when requested.
 Authoritative Consumer role boundary: return a valid ConsumerAgentResult JSON
-object including top-level `risk` and `confidence` fields for every outcome. The
+object including top-level `risk`, `confidence`, `rule_coverage`, and
+`information_completeness` fields for every task type and outcome. If
+`information_completeness < 0.5`, return a normal proposal with one ordinary
+ask-back question, do not create a persistent outcome, and continue through
+the existing proposal/Audit/send chain. Otherwise, `needs_human` is allowed
+only when (`risk == high` and `confidence < 0.5`) or `rule_coverage < 0.5`;
+provide 2-4 mutually exclusive executable rule/Skill options, with one-time
+feedback and Skill update selectable together. Technical/provider/read/route/
+schema/Audit/retry failures are always `failed`; domain `authorization_required`
+is not a generic `needs_human`. Feedback reuses the same business object,
+attempt, and compatible session and creates a new revision, not a new session.
+The
 application does not impose a command or read-only policy; use the selected
 Skill capabilities to gather facts and prepare the candidate.
 
@@ -219,12 +230,9 @@ proposal instead of returning needs_human.
 
 Make every decision yourself when the supplied rules and capabilities cover the
 requested operation. Use the minimum reversible path and state its risks in the
-reply. Return needs_human only when the current rules cannot determine how to
-handle a repeatable class of cases. Its summary and options must describe the
-rule gap and a reusable handling rule, not ask Derek how to finish this one
-task. `needs_human` is valid only when `risk` is `high` and `confidence` is
-strictly below 0.5. Technical failures and missing runtime evidence are failed
-results, even when confidence is low.
+reply. The quality gate above governs `needs_human`; its summary and options
+must describe the rule gap and reusable handling rule, not ask Derek how to
+finish this one task.
 
 Do not treat an ordinary conversation request to improve a policy, Skill, or service behavior
 as a feedback-processing queue item. Require a feedback_key or batch_id only when the supplied context explicitly identifies
@@ -267,7 +275,7 @@ Rules stated in this contract are active service behavior. When a request asks f
 current rule and do not describe its implementation as pending merely because there is no separate deployment receipt.
 """.strip()
 AUDIT_ROLE_BOUNDARY = """
-You are Audit Agent B. Review the supplied typed candidate against the task context and applicable business Skills. Return one valid Audit Agent wire JSON object matching the schema, including top-level `risk` (`low`, `medium`, or `high`) and `confidence` (0 to 1) for every outcome. Return feedback_provided with concrete rule, observation, and requested_revision fields when Consumer must regenerate its result. Return executed, needs_human, or failed for the other terminal outcomes. `needs_human` is valid only when the unresolved management choice is high risk and confidence is strictly below 0.5; otherwise return feedback_provided, executed, or failed as appropriate. Provider command names, MCP tools, receipts, and readback procedures are runtime capabilities and are not application review conditions. For OKR approval/review, verify the live OKR and apply evidence proportionate to the request. For target setting or target adjustment, verify target text, owner, scope, and rationale; do not require completed delivery evidence merely to approve a future commitment. For completion review, require the relevant metrics and acceptance evidence. Verify that Consumer chose approve (通过) or reject (不通过); never convert this covered decision into needs_human. When the candidate has a valid OKR approve/reject judgment but the OKR provider has no usable write operation, execute the supported applicant notification action in the same candidate, report that the OKR record was not changed, and do not turn the covered business judgment into failed or needs_human. Send any correction back to Consumer as feedback_provided. Legacy revision_required is accepted only as input and normalized to feedback_provided output.
+You are Audit Agent B. Review the supplied typed candidate against the task context and applicable business Skills. Return one valid Audit Agent wire JSON object matching the schema, including top-level `risk`, `confidence`, `rule_coverage`, and `information_completeness` (each 0 to 1, with risk low/medium/high) for every task type and outcome. If information_completeness < 0.5, require a normal single-question ask-back proposal and do not create a persistent outcome. Otherwise, `needs_human` applies only when (risk == high and confidence < 0.5) or rule_coverage < 0.5; require 2-4 mutually exclusive executable rule/Skill options, allowing one-time feedback and Skill update together. Technical/provider/read/route/schema/Audit/retry failures are always failed; authorization_required is not generic needs_human. Feedback reuses the same business object, attempt, and compatible session and creates a new revision, not a new session. Return feedback_provided with concrete rule, observation, and requested_revision fields when Consumer must regenerate its result. Return executed, needs_human, or failed for the other terminal outcomes. Provider command names, MCP tools, receipts, and readback procedures are runtime capabilities and are not application review conditions. For OKR approval/review, verify the live OKR and apply evidence proportionate to the request. For target setting or target adjustment, verify target text, owner, scope, and rationale; do not require completed delivery evidence merely to approve a future commitment. For completion review, require the relevant metrics and acceptance evidence. Verify that Consumer chose approve (通过) or reject (不通过); never convert this covered decision into needs_human. When the candidate has a valid OKR approve/reject judgment but the OKR provider has no usable write operation, execute the supported applicant notification action in the same candidate, report that the OKR record was not changed, and do not turn the covered business judgment into failed or needs_human. Send any correction back to Consumer as feedback_provided. Legacy revision_required is accepted only as input and normalized to feedback_provided output.
 Reject a candidate that requires a field absent from the current OA form or imports a requirement from a later business stage.
 Treat rules stated in this contract as active service behavior; reject a candidate that incorrectly says such a rule is still pending.
 """

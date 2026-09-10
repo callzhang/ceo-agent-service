@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from enum import Enum
 import hashlib
 import hmac
 import inspect
@@ -29,6 +30,7 @@ from app.email_unsubscribe import (
     UnsubscribeEntry,
     UnsubscribeExecutionResult,
     UnsubscribeOperation,
+    UnsubscribeOutcome,
     browser_unsubscribe_entries,
 )
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
@@ -36,6 +38,118 @@ from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
 AUDITED_LIFECYCLE_VERSION = "email_unsubscribe_audited_v2"
 PAYLOAD_SCHEMA = "email_agent_action.v1"
+AUDITED_UNSUBSCRIBE_TOOL = "execute_audited_email_unsubscribe"
+AUDIT_BINDING_REJECTED_CODE = "unsubscribe_audit_run_invalid"
+# A binding rejection is worth a fresh Audit turn, not an unbounded supply of
+# them: the orchestrator turns any retryable Audit failure into another turn,
+# so a call that can never bind would otherwise consume every turn the process
+# allows. Two re-binding turns cover the ordering and visibility conditions a
+# newer turn satisfies by construction.
+MAX_AUDIT_BINDING_REJECTIONS = 2
+_REJECTION_DETAIL_LIMIT = 200
+
+
+class AuditedUnsubscribeTerminalState(str, Enum):
+    HANDOFF = "handoff"
+    NO_ACTION = "no_action"
+
+
+# `disposition_for_unsubscribe_outcome` files every terminal skip the same way
+# - "skipped", not retryable - because what the browser may do next is the same
+# for all of them: nothing. This map deliberately overrides that one
+# distinction for the task projection, because who has to finish the operation
+# differs: a login, CAPTCHA or payment wall is a sensitive target the service
+# must never cross, so it reaches a person in the isolated browser session that
+# is already open, while a missing entry or an already unsubscribed address
+# leaves nothing for anyone to do.
+_TERMINAL_SKIP_STATES: Mapping[UnsubscribeOutcome, AuditedUnsubscribeTerminalState] = {
+    UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED: AuditedUnsubscribeTerminalState.HANDOFF,
+    UnsubscribeOutcome.SKIPPED_CAPTCHA: AuditedUnsubscribeTerminalState.HANDOFF,
+    UnsubscribeOutcome.SKIPPED_PAYMENT: AuditedUnsubscribeTerminalState.HANDOFF,
+    UnsubscribeOutcome.SKIPPED_NO_RELIABLE_ENTRY: (
+        AuditedUnsubscribeTerminalState.NO_ACTION
+    ),
+    UnsubscribeOutcome.ALREADY_UNSUBSCRIBED: AuditedUnsubscribeTerminalState.NO_ACTION,
+}
+
+
+def audited_unsubscribe_skip_receipt(
+    run: object,
+) -> tuple[UnsubscribeOutcome, AuditedUnsubscribeTerminalState] | None:
+    """Read the terminal state the audited tool receipt already carries.
+
+    The service writes the receipt before the Audit model reports anything, so
+    a terminal skip is projected from the persisted outcome instead of from the
+    error code the model invented for an operation it may not complete. The
+    newest succeeded call of the turn decides.
+
+    A rejected later call on the same action is stepped over, because a
+    terminal receipt cannot be undone and a repeat call on a terminal effect is
+    exactly what that rejection is. A rejected later call on a different action
+    is not: a receipt settles only its own action, while the caller replaces
+    the whole task's state with it, so stepping over that rejection would erase
+    the other action's failure. Only a call that names the action it targeted
+    can be told apart this way; a transcript that recorded no arguments keeps
+    the older, step-over reading.
+    """
+
+    rejected_identities: set[str] = set()
+    for event in reversed(list(getattr(run, "tool_events", None) or ())):
+        if not isinstance(event, Mapping):
+            continue
+        item = event.get("item")
+        if (
+            not isinstance(item, Mapping)
+            or item.get("tool") != AUDITED_UNSUBSCRIBE_TOOL
+        ):
+            continue
+        structured = _tool_structured_content(item.get("result"))
+        if structured is None:
+            continue
+        identity = _tool_action_identity(item.get("arguments"))
+        if structured.get("status") != "done":
+            if identity:
+                rejected_identities.add(identity)
+            continue
+        try:
+            outcome = UnsubscribeOutcome(structured.get("outcome"))
+        except ValueError:
+            return None
+        state = _TERMINAL_SKIP_STATES.get(outcome)
+        if state is None:
+            return None
+        if rejected_identities - {identity}:
+            return None
+        return (outcome, state)
+    return None
+
+
+def _tool_action_identity(arguments: object) -> str:
+    """Name the action one recorded call targeted, or "" when unreadable."""
+
+    if not isinstance(arguments, Mapping):
+        return ""
+    accepted_action = arguments.get("accepted_action")
+    if not isinstance(accepted_action, Mapping):
+        return ""
+    identity = accepted_action.get("action_identity")
+    return identity if isinstance(identity, str) else ""
+
+
+def _tool_structured_content(result: object) -> Mapping[str, object] | None:
+    """Read one MCP result's structured content in either recorded spelling.
+
+    Runtimes record the same tool result under both spellings, so the readers
+    that already project receipts out of a transcript accept both.
+    """
+
+    if not isinstance(result, Mapping):
+        return None
+    for key in ("structured_content", "structuredContent"):
+        structured = result.get(key)
+        if isinstance(structured, Mapping):
+            return structured
+    return None
 
 
 class EmailUnsubscribeAuditOperationResult(BaseModel):
@@ -100,12 +214,22 @@ class EmailUnsubscribeAuditOperation:
             and not isinstance(audit_agent_run_id, bool)
             else None
         )
-        if not self._is_current_running_audit(
+        binding_failure = self._audit_binding_failure(
             task,
             audit_run,
             execution_generation,
-        ):
-            return self._failed("unsubscribe_audit_run_invalid")
+        )
+        if binding_failure:
+            # A binding rejection used to end the task: one opaque code covered
+            # every condition and was never retried. Name the condition and let
+            # a bounded number of fresh Audit turns re-bind - the effect itself
+            # stays fenced by the unsubscribe write claim and by the
+            # one-run-per-turn key.
+            return self._failed(
+                AUDIT_BINDING_REJECTED_CODE,
+                retryable=self._audit_binding_retry_available(task, audit_run),
+                detail=binding_failure,
+            )
         assert task is not None and audit_run is not None
         try:
             parent = self.task_store.get_agent_run(audit_run.parent_agent_run_id)
@@ -185,40 +309,98 @@ class EmailUnsubscribeAuditOperation:
         except Exception as exc:  # noqa: BLE001 - public tool fails closed
             return self._failed(
                 f"unsubscribe_operation_rejected:{type(exc).__name__}",
-                detail=str(exc),
+                detail=_rejection_detail(exc),
             )
 
-    def _is_current_running_audit(
+    def _audit_binding_retry_available(
+        self,
+        task: ReplyTask | None,
+        audit_run: AgentRun | None,
+    ) -> bool:
+        """Say whether this generation may spend another re-binding turn.
+
+        The budget is counted from the rejections the generation already
+        recorded, so it survives the process boundary the tool runs behind. A
+        call that resolves neither the task nor the Audit run cannot be
+        attributed to a generation at all and gets no retry.
+        """
+
+        if task is not None:
+            reply_task_id, generation = task.id, task.execution_generation
+        elif audit_run is not None:
+            reply_task_id = audit_run.reply_task_id
+            generation = audit_run.execution_generation
+        else:
+            return False
+        rejections = 0
+        for run in self.task_store.list_agent_runs_for_task_generation(
+            reply_task_id,
+            generation,
+        ):
+            if run.role is not AgentRole.AUDIT or run.status != "failed":
+                continue
+            try:
+                recorded = json.loads(run.structured_error_json or "{}")
+            except ValueError:
+                continue
+            if (
+                isinstance(recorded, Mapping)
+                and recorded.get("code") == AUDIT_BINDING_REJECTED_CODE
+            ):
+                rejections += 1
+        return rejections < MAX_AUDIT_BINDING_REJECTIONS
+
+    def _audit_binding_failure(
         self,
         task: ReplyTask | None,
         audit_run: AgentRun | None,
         execution_generation: object,
-    ) -> bool:
+    ) -> str:
+        """Name the first unmet binding condition, or "" when the call is bound.
+
+        Every condition keeps a fixed internal name. The name is the only thing
+        the caller reports, so a live rejection is attributable without reading
+        any task, run or page content back out of the database.
+        """
+
+        if task is None:
+            return "task_missing"
+        if audit_run is None:
+            return "audit_run_missing"
         if (
-            task is None
-            or audit_run is None
-            or not isinstance(execution_generation, str)
+            not isinstance(execution_generation, str)
             or not execution_generation.strip()
-            or task.status != "processing"
-            or task.execution_generation != execution_generation
-            or audit_run.reply_task_id != task.id
-            or audit_run.execution_generation != execution_generation
-            or audit_run.role is not AgentRole.AUDIT
-            or audit_run.status != "running"
-            or not audit_run.operation_id.strip()
-            or audit_run.parent_agent_run_id is None
         ):
-            return False
+            return "execution_generation_invalid"
+        if task.status != "processing":
+            return "task_not_processing"
+        if task.execution_generation != execution_generation:
+            return "task_generation_mismatch"
+        if audit_run.reply_task_id != task.id:
+            return "audit_run_task_mismatch"
+        if audit_run.execution_generation != execution_generation:
+            return "audit_run_generation_mismatch"
+        if audit_run.role is not AgentRole.AUDIT:
+            return "audit_run_role_invalid"
+        if audit_run.status != "running":
+            return "audit_run_not_running"
+        if not audit_run.operation_id.strip():
+            return "audit_run_operation_id_missing"
+        if audit_run.parent_agent_run_id is None:
+            return "audit_run_parent_missing"
         parent = self.task_store.get_agent_run(audit_run.parent_agent_run_id)
-        if (
-            parent is None
-            or parent.reply_task_id != task.id
-            or parent.execution_generation != execution_generation
-            or parent.role is not AgentRole.CONSUMER
-            or parent.status != "completed"
-            or parent.proposal_revision != audit_run.proposal_revision
-        ):
-            return False
+        if parent is None:
+            return "parent_missing"
+        if parent.reply_task_id != task.id:
+            return "parent_task_mismatch"
+        if parent.execution_generation != execution_generation:
+            return "parent_generation_mismatch"
+        if parent.role is not AgentRole.CONSUMER:
+            return "parent_role_invalid"
+        if parent.status != "completed":
+            return "parent_not_completed"
+        if parent.proposal_revision != audit_run.proposal_revision:
+            return "parent_revision_mismatch"
         runs = self.task_store.list_agent_runs_for_task_generation(
             task.id,
             execution_generation,
@@ -237,20 +419,17 @@ class EmailUnsubscribeAuditOperation:
             and run.status == "running"
             and run.proposal_revision == audit_run.proposal_revision
         ]
-        return (
-            bool(current_consumers)
-            and max(
-                current_consumers,
-                key=lambda run: (run.turn_attempt, run.id),
-            ).id
-            == parent.id
-            and bool(current_audits)
-            and max(
-                current_audits,
-                key=lambda run: (run.turn_attempt, run.id),
-            ).id
-            == audit_run.id
-        )
+        if not current_consumers or max(
+            current_consumers,
+            key=lambda run: (run.turn_attempt, run.id),
+        ).id != parent.id:
+            return "superseded_consumer_turn"
+        if not current_audits or max(
+            current_audits,
+            key=lambda run: (run.turn_attempt, run.id),
+        ).id != audit_run.id:
+            return "superseded_audit_turn"
+        return ""
 
     def _execute_bound_effect(
         self,
@@ -391,6 +570,21 @@ class EmailUnsubscribeAuditOperation:
                 retryable=retryable,
             ).model_dump(mode="json"),
         }
+
+
+def _rejection_detail(exc: Exception) -> str:
+    """Say why a call was rejected without echoing what the call carried.
+
+    Only this package's own rejection messages are reported: they name the
+    field that failed and never its value. A validator built out of the
+    proposal quotes the value it rejected - and a proposal carries the private
+    unsubscribe URL - so anything else keeps its type name and nothing more.
+    """
+
+    if type(exc) is not ValueError:
+        return ""
+    detail = " ".join(str(exc).split())
+    return detail if len(detail) <= _REJECTION_DETAIL_LIMIT else ""
 
 
 def _bound_parent_consumer_action(
@@ -739,7 +933,15 @@ def _normalize_result(value: object) -> EmailUnsubscribeAuditOperationResult:
     if isinstance(value, UnsubscribeContinuationResult):
         return EmailUnsubscribeAuditOperationResult(
             status="awaiting_audit",
-            summary="Unsubscribe requires one further audited operation.",
+            # The next operation is proposed by a new Consumer turn, not by
+            # another call inside this one: a second call from this turn still
+            # carries the persisted one-operation proposal and is rejected as a
+            # non-append-only continuation.
+            summary=(
+                "Unsubscribe needs one further audited operation. End this turn "
+                "without calling the tool again; the next operation comes from "
+                "a new Consumer proposal built on this continuation."
+            ),
             continuation=value.redacted["continuation"],
         )
     if isinstance(value, UnsubscribeExecutionResult):
@@ -757,10 +959,18 @@ def _normalize_result(value: object) -> EmailUnsubscribeAuditOperationResult:
             observation_digest=value.observation_digest,
             started_at=value.started_at,
             completed_at=value.completed_at,
-            summary=value.result_text or value.outcome.value,
+            # The summary is display and model facing: keep it the typed
+            # outcome. Page text stays in the redacted result_text field.
+            summary=value.outcome.value,
             error=AgentError(
                 code=value.error_code,
                 retryable=value.disposition.retryable,
+                # The code is the coarse, cross-module contract; the category
+                # names the internal condition it came from. AgentError already
+                # reserves source_code for exactly that diagnostic, so a
+                # generic browser failure stays attributable without composing
+                # the two into one string other modules would stop matching.
+                source_code=value.error_category,
             ),
             final_step=(
                 None

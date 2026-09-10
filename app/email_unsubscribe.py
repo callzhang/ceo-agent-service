@@ -306,30 +306,109 @@ class UnsubscribePageState(str, Enum):
     PAYMENT = "payment"
 
 
+class UnsubscribeBrowserFailure(str, Enum):
+    """Fixed internal category of one technical browser failure.
+
+    The category names the raising condition inside this module. It never
+    carries page text, a URL or provider state, so it is safe to persist and
+    to show the Audit model.
+    """
+
+    AUTHENTICATION_CONTROLS = "authentication_controls"
+    CAPTCHA_BINDING_INCOMPLETE = "captcha_binding_incomplete"
+    CONFIRMATION_ENTRY_MISSING = "confirmation_entry_missing"
+    CONFIRMATION_TARGET_REJECTED = "confirmation_target_rejected"
+    CONTROL_SEMANTICS_REJECTED = "control_semantics_rejected"
+    CONTROL_UNAVAILABLE = "control_unavailable"
+    DOWNLOAD_REJECTED = "download_rejected"
+    FORM_RESPONSE_REJECTED = "form_response_rejected"
+    NAVIGATION_TARGET_INVALID = "navigation_target_invalid"
+    ONE_CLICK_RESPONSE_REJECTED = "one_click_response_rejected"
+    ONE_CLICK_UNVERIFIED = "one_click_unverified"
+    OPERATION_FAILED = "operation_failed"
+    OPERATION_KIND_REJECTED = "operation_kind_rejected"
+    OPERATION_SEQUENCE_EMPTY = "operation_sequence_empty"
+    OPERATION_TIMEOUT = "operation_timeout"
+    OTP_BINDING_INCOMPLETE = "otp_binding_incomplete"
+    OTP_REQUEST_REJECTED = "otp_request_rejected"
+    OTP_RESPONSE_REJECTED = "otp_response_rejected"
+    PAGE_CONTROLS_UNMODELLED = "page_controls_unmodelled"
+    PAGE_STATE_MISSING = "page_state_missing"
+    PAGE_STATE_UNKNOWN = "page_state_unknown"
+    POPUP_REJECTED = "popup_rejected"
+    RECEIPT_READBACK_FAILED = "receipt_readback_failed"
+    RUNTIME_UNAVAILABLE = "runtime_unavailable"
+    SESSION_BINDING_REJECTED = "session_binding_rejected"
+    SESSION_CAPTURE_REJECTED = "session_capture_rejected"
+    SESSION_CONTROL_CHANGED = "session_control_changed"
+    SESSION_RESTORE_REJECTED = "session_restore_rejected"
+    STATE_READBACK_FAILED = "state_readback_failed"
+    TRUSTED_WORLD_UNAVAILABLE = "trusted_world_unavailable"
+
+
 class UnsubscribeBrowserError(RuntimeError):
     """The browser runtime or its state readback failed technically."""
+
+    def __init__(
+        self,
+        category: UnsubscribeBrowserFailure,
+        message: str = "",
+    ) -> None:
+        if not isinstance(category, UnsubscribeBrowserFailure):
+            raise TypeError("category must be UnsubscribeBrowserFailure")
+        super().__init__(message or category.value)
+        self.category = category
 
 
 class UnsubscribeAuthenticationControlsError(UnsubscribeBrowserError):
     """The page exposes authentication or credential controls."""
 
+    def __init__(self, message: str = "") -> None:
+        super().__init__(UnsubscribeBrowserFailure.AUTHENTICATION_CONTROLS, message)
 
+
+# Only these categories keep a dedicated task-level error code; every other
+# category keeps the generic browser failure code, and reports itself in the
+# separate category field instead. The code is a cross-module contract - the
+# explicit-retry release path in app/email_store.py matches it exactly - so the
+# category is carried beside it rather than composed into it.
 _BROWSER_FAILURE_CODES = {
-    "browser operation timed out": "email_unsubscribe_browser_timeout",
-    "unsubscribe page state is unknown": "email_unsubscribe_page_state_unknown",
-    "unsubscribe page has no visible state": "email_unsubscribe_page_state_missing",
+    UnsubscribeBrowserFailure.OPERATION_TIMEOUT: "email_unsubscribe_browser_timeout",
+    UnsubscribeBrowserFailure.PAGE_STATE_UNKNOWN: (
+        "email_unsubscribe_page_state_unknown"
+    ),
+    UnsubscribeBrowserFailure.PAGE_CONTROLS_UNMODELLED: (
+        "email_unsubscribe_page_state_unknown"
+    ),
+    UnsubscribeBrowserFailure.PAGE_STATE_MISSING: (
+        "email_unsubscribe_page_state_missing"
+    ),
 }
 _VISIBLE_TEXT_WAIT_MS = 5_000
 _VISIBLE_TEXT_POLL_MS = 250
 
 
 def _browser_failure_code(error: Exception) -> str:
-    if isinstance(error, UnsubscribeBrowserError):
-        return _BROWSER_FAILURE_CODES.get(
-            str(error),
-            "email_unsubscribe_browser_failed",
-        )
-    return "email_unsubscribe_browser_failed"
+    if not isinstance(error, UnsubscribeBrowserError):
+        return "email_unsubscribe_browser_failed"
+    return _BROWSER_FAILURE_CODES.get(
+        error.category,
+        "email_unsubscribe_browser_failed",
+    )
+
+
+def _browser_failure_category(error: Exception) -> str:
+    """Name the internal condition one browser failure came from.
+
+    The category is the diagnosable half of a browser failure: the code stays
+    the coarse contract other modules match on, while this names the raising
+    condition inside this module. It is a fixed enum member, so it can never
+    carry page text, a URL or provider state.
+    """
+
+    if not isinstance(error, UnsubscribeBrowserError):
+        return ""
+    return error.category.value
 
 
 _AUTHENTICATION_CONTROL_PREDICATE_JS = r"""
@@ -403,6 +482,36 @@ const isAuthenticationControl = node => {
 };
 """
 
+# Counts only; no text, attribute or URL leaves the page. The control selector
+# is the same one _ordinary_controls() models, so "the page has settled" means
+# "the snapshot below can see what this page offers".
+_SETTLED_DOCUMENT_JS = r"""
+  const htmlInnerText = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype, 'innerText'
+  ).get;
+  const elementHasAttribute = Element.prototype.hasAttribute;
+  const settledVisible = node => {
+    if (reflectApply(elementHasAttribute, node, ['hidden'])) return false;
+    const style = getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  // Bounded exactly like _ordinary_controls(): the count is only ever read
+  // as "this page offers something", so the first 64 candidates answer it
+  // without forcing layout over an unbounded link list.
+  const settledControls = trustedDocumentQuery(
+    'a[href], button:not([type]), button[type=submit], input[type=submit]'
+  ).slice(0, 64).filter(node => settledVisible(node));
+  const settledBody = document.body;
+  return {
+    textLength: settledBody
+      ? String(reflectApply(htmlInnerText, settledBody, []) || '').trim().length
+      : 0,
+    controlCount: settledControls.length
+  };
+"""
+
 
 class _ChromiumIsolatedWorld:
     """Evaluate bounded functions in a freshly resolved Chromium isolated world."""
@@ -445,7 +554,8 @@ class _ChromiumIsolatedWorld:
             return result["value"]
         except Exception:
             raise UnsubscribeBrowserError(
-                "trusted browser execution unavailable"
+                UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                "trusted browser execution unavailable",
             ) from None
 
 
@@ -466,7 +576,10 @@ def _validated_restored_audit_session(
 ) -> _RestoredAuditSession:
     """Bind one private profile snapshot to the exact append-only effect."""
 
-    invalid = UnsubscribeBrowserError("browser session binding rejected")
+    invalid = UnsubscribeBrowserError(
+        UnsubscribeBrowserFailure.SESSION_BINDING_REJECTED,
+        "browser session binding rejected",
+    )
     if set(payload) != _AUDIT_SESSION_FIELDS:
         raise invalid
     if (
@@ -525,7 +638,10 @@ def _validated_audit_session_cookies(
     *,
     document_url: str,
 ) -> tuple[dict[str, object], ...]:
-    invalid = UnsubscribeBrowserError("browser session binding rejected")
+    invalid = UnsubscribeBrowserError(
+        UnsubscribeBrowserFailure.SESSION_BINDING_REJECTED,
+        "browser session binding rejected",
+    )
     host = (urlsplit(document_url).hostname or "").casefold().rstrip(".")
     if not host or not isinstance(values, list) or len(values) > 64:
         raise invalid
@@ -983,6 +1099,9 @@ class UnsubscribeExecutionResult:
     journal: tuple[RedactedUnsubscribeStep, ...]
     receipt: UnsubscribeTerminalReceipt | None = None
     error_code: str = ""
+    # Fixed internal category of the browser failure the code came from. It
+    # never replaces the code, which other modules match on exactly.
+    error_category: str = ""
     result_text: str = ""
     observation_digest: str = ""
     result_text_digest: str = ""
@@ -995,6 +1114,10 @@ class UnsubscribeExecutionResult:
             raise TypeError("outcome must be UnsubscribeOutcome")
         if self.error_code:
             _assert_opaque_reference(self.error_code, field_name="error_code")
+        if self.error_category and self.error_category not in set(
+            UnsubscribeBrowserFailure
+        ):
+            raise ValueError("error_category must be a known browser failure")
         if any(not isinstance(item, RedactedUnsubscribeStep) for item in self.journal):
             raise TypeError("journal must contain RedactedUnsubscribeStep")
         if (
@@ -1034,6 +1157,7 @@ class UnsubscribeExecutionResult:
             "journal": [asdict(item) for item in self.journal],
             "receipt": asdict(self.receipt) if self.receipt is not None else None,
             "error_code": self.error_code,
+            "error_category": self.error_category,
             "result_text": self.result_text,
             "observation_digest": self.observation_digest,
             "started_at": self.started_at,
@@ -1183,7 +1307,10 @@ def _audited_control_reference(semantics: Mapping[str, object]) -> str:
         separators=(",", ":"),
     )
     if len(canonical.encode("utf-8")) > 65_536:
-        raise UnsubscribeBrowserError("browser control semantics rejected")
+        raise UnsubscribeBrowserError(
+            UnsubscribeBrowserFailure.CONTROL_SEMANTICS_REJECTED,
+            "browser control semantics rejected",
+        )
     return "unsubscribe-control:" + sha256(canonical.encode()).hexdigest()
 
 
@@ -1300,32 +1427,92 @@ class PlaywrightUnsubscribeBrowser:
 
     def _raise_if_blocked(self) -> None:
         if self._blocked_popup:
-            raise UnsubscribeBrowserError("browser popup rejected")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.POPUP_REJECTED,
+                "browser popup rejected",
+            )
         if self._blocked_download:
-            raise UnsubscribeBrowserError("browser download rejected")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.DOWNLOAD_REJECTED,
+                "browser download rejected",
+            )
 
     def _validate_navigation_target(self, value: str) -> str:
         """Accept any absolute http(s) navigation target."""
         parsed = urlsplit(value)
         if parsed.scheme.casefold() not in {"http", "https"} or not parsed.netloc:
-            raise UnsubscribeBrowserError("browser navigation target invalid")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.NAVIGATION_TARGET_INVALID,
+                "browser navigation target invalid",
+            )
         return value
 
-    def _visible_text(self) -> str:
-        # Navigation returns at domcontentloaded; script-rendered unsubscribe
-        # pages still have an empty body then. Poll briefly for the first
-        # rendered text before declaring the page state missing.
+    def _page_read_is_settled(
+        self,
+        bindings: Sequence[_AuditedControlBinding],
+        text: str,
+    ) -> bool:
+        """Say whether one read already carries something to act on.
+
+        Wording that names a terminal state settles the page on its own: there
+        is nothing left to render that could change it. A modelled control
+        only settles the page alongside rendered wording, because a control
+        read out of a pre-render shell is exactly what a render can still
+        replace - including with the terminal wording that means the control
+        must not be operated at all.
+        """
+
+        return self._state_from_text(text) is not None or bool(bindings and text)
+
+    def _awaited_page_read(self) -> tuple[tuple[_AuditedControlBinding, ...], str]:
+        """Read the page until it settles, within a bounded budget.
+
+        Navigation returns at domcontentloaded, so a script-rendered
+        unsubscribe page has neither its controls nor its wording yet. Both
+        signals are read together on every attempt and the wait ends on either
+        of them, because waiting for one alone classifies a half-rendered page
+        from whichever half arrived first: a pre-render shell exposing a submit
+        control contributes nothing to the body text, and prose that paints
+        before its control hydrates models nothing. An already-rendered page
+        costs exactly the one control read and one text read it always did.
+        """
+
         wait = getattr(self.page, "wait_for_timeout", None)
         budget_ms = min(self.timeout_ms, _VISIBLE_TEXT_WAIT_MS)
         waited_ms = 0
-        while True:
-            text = self.page.locator("body").inner_text(timeout=self.timeout_ms).strip()
-            if text:
-                return text
+        bindings = self._ordinary_controls()
+        text = self._visible_text()
+        while not self._page_read_is_settled(bindings, text):
             if wait is None or waited_ms >= budget_ms:
-                raise UnsubscribeBrowserError("unsubscribe page has no visible state")
+                break
             wait(_VISIBLE_TEXT_POLL_MS)
             waited_ms += _VISIBLE_TEXT_POLL_MS
+            bindings = self._ordinary_controls()
+            text = self._visible_text()
+        return bindings, text
+
+    def _document_structure(self) -> dict[str, int]:
+        value = self._trusted_world.evaluate(
+            "function() {"
+            + _AUTHENTICATION_CONTROL_PREDICATE_JS
+            + _SETTLED_DOCUMENT_JS
+            + "}"
+        )
+        if not isinstance(value, Mapping) or any(
+            not isinstance(value.get(key), int) or isinstance(value.get(key), bool)
+            for key in ("textLength", "controlCount")
+        ):
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                "trusted browser execution unavailable",
+            )
+        return {
+            "text_length": int(value["textLength"]),
+            "control_count": int(value["controlCount"]),
+        }
+
+    def _visible_text(self) -> str:
+        return self.page.locator("body").inner_text(timeout=self.timeout_ms).strip()
 
     def _assert_no_authentication_controls(self) -> None:
         """Reject auth UI using attributes/labels only, before reading form state."""
@@ -1763,7 +1950,10 @@ class PlaywrightUnsubscribeBrowser:
             """
         )
         if not isinstance(snapshot, Mapping):
-            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                "trusted browser execution unavailable",
+            )
         if snapshot.get("blocked") is not False:
             raise UnsubscribeAuthenticationControlsError(
                 "authentication controls are not permitted"
@@ -1771,13 +1961,19 @@ class PlaywrightUnsubscribeBrowser:
         bindings: list[_AuditedControlBinding] = []
         for item in snapshot.get("links", ()):
             if not isinstance(item, Mapping):
-                raise UnsubscribeBrowserError("trusted browser execution unavailable")
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                    "trusted browser execution unavailable",
+                )
             binding = self._link_binding(item)
             if binding is not None:
                 bindings.append(binding)
         for item in snapshot.get("forms", ()):
             if not isinstance(item, Mapping):
-                raise UnsubscribeBrowserError("trusted browser execution unavailable")
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                    "trusted browser execution unavailable",
+                )
             binding = self._form_binding(item)
             if binding is not None:
                 bindings.append(binding)
@@ -1916,7 +2112,10 @@ class PlaywrightUnsubscribeBrowser:
         if not isinstance(value, Mapping) or value.get("present") is not True:
             if isinstance(value, Mapping) and value.get("present") is False:
                 return None
-            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                "trusted browser execution unavailable",
+            )
         required = {
             "captcha",
             "autocompleteTokens",
@@ -1936,7 +2135,10 @@ class PlaywrightUnsubscribeBrowser:
             "documentGeneration",
         }
         if set(value) != required | {"present"}:
-            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                "trusted browser execution unavailable",
+            )
         if (
             value["captcha"] not in {True, False}
             or not isinstance(value["autocompleteTokens"], list)
@@ -1959,15 +2161,24 @@ class PlaywrightUnsubscribeBrowser:
             or not str(value["challengeIdentity"])
             or not str(value["documentGeneration"])
         ):
-            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                "trusted browser execution unavailable",
+            )
         if not value["captcha"] and not str(value["fieldSelector"]):
-            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                "trusted browser execution unavailable",
+            )
         if (
             "one-time-code" in value["autocompleteTokens"]
             and value["deliveryMethod"] == "email"
             and not str(value["submitterSelector"])
         ):
-            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                "trusted browser execution unavailable",
+            )
         return value
 
     @staticmethod
@@ -2023,9 +2234,22 @@ class PlaywrightUnsubscribeBrowser:
         self._validate_navigation_target(current_url)
         # Credential rejection and all ordinary form-state reads are one
         # atomic isolated-world evaluation inside _ordinary_controls().
-        bindings = self._ordinary_controls()
-        text = self._visible_text()
+        bindings, text = self._awaited_page_read()
         controls = tuple(item.control for item in bindings)
+        # The raw shape of the document is only ever needed to explain a read
+        # that modelled nothing, so it is read there and nowhere else.
+        structure = (
+            self._document_structure() if not text and not controls else None
+        )
+        if (
+            structure is not None
+            and not structure["text_length"]
+            and not structure["control_count"]
+        ):
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.PAGE_STATE_MISSING,
+                "unsubscribe page has no visible state",
+            )
         authentication_controls = tuple(
             item for item in controls if item.continuation_kind is not None
         )
@@ -2050,7 +2274,8 @@ class PlaywrightUnsubscribeBrowser:
                     )
                 ):
                     raise UnsubscribeBrowserError(
-                        "confirmation target binding rejected"
+                        UnsubscribeBrowserFailure.CONFIRMATION_TARGET_REJECTED,
+                        "confirmation target binding rejected",
                     )
                 controls = (
                     UnsubscribeDiscoveredControl(
@@ -2063,7 +2288,18 @@ class PlaywrightUnsubscribeBrowser:
                 operation.kind is UnsubscribeOperationKind.CONFIRM_EMAIL
                 for operation in effect.operations
             ):
-                raise UnsubscribeBrowserError("unsubscribe page state is unknown")
+                if structure is None:
+                    structure = self._document_structure()
+                # A settled page that offers controls none of which reached
+                # the model is this browser's own limit, not an undetermined
+                # page. Both keep the same task-level code; the category is
+                # what tells the live record which one happened.
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.PAGE_CONTROLS_UNMODELLED
+                    if structure["control_count"]
+                    else UnsubscribeBrowserFailure.PAGE_STATE_UNKNOWN,
+                    "unsubscribe page state is unknown",
+                )
         state_reference = (
             "state:"
             + sha256(
@@ -2196,7 +2432,10 @@ class PlaywrightUnsubscribeBrowser:
             or sanitized.get("blocked") not in {True, False}
             or not isinstance(sanitized.get("html"), str)
         ):
-            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                "trusted browser execution unavailable",
+            )
         return sanitized
 
     def capture_audit_session(
@@ -2212,12 +2451,18 @@ class PlaywrightUnsubscribeBrowser:
             discovery.state is not UnsubscribePageState.ACTION_REQUIRED
             or not discovery.controls
         ):
-            raise UnsubscribeBrowserError("browser session capture rejected")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.SESSION_CAPTURE_REJECTED,
+                "browser session capture rejected",
+            )
         if (
             not session_reference.startswith("email-browser-session:")
             or len(session_reference) != len("email-browser-session:") + 64
         ):
-            raise UnsubscribeBrowserError("browser session capture rejected")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.SESSION_CAPTURE_REJECTED,
+                "browser session capture rejected",
+            )
         return {
             "version": 2,
             "session_reference": session_reference,
@@ -2244,7 +2489,10 @@ class PlaywrightUnsubscribeBrowser:
         if discovery.state is not UnsubscribePageState.ACTION_REQUIRED or set(
             controls
         ) != set(session.control_references):
-            raise UnsubscribeBrowserError("browser session control changed")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.SESSION_CONTROL_CHANGED,
+                "browser session control changed",
+            )
         expected_kind = {
             UnsubscribeOperationKind.SUBMIT_FORM: "form",
             UnsubscribeOperationKind.CLICK_CONFIRMATION: "link",
@@ -2265,7 +2513,10 @@ class PlaywrightUnsubscribeBrowser:
         if control is None or control.kind not in allowed_kinds.get(
             appended.kind, {expected_kind}
         ):
-            raise UnsubscribeBrowserError("browser session control changed")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.SESSION_CONTROL_CHANGED,
+                "browser session control changed",
+            )
 
     def find_confirmation_receipt(
         self,
@@ -2279,7 +2530,8 @@ class PlaywrightUnsubscribeBrowser:
             raise
         except Exception:
             raise UnsubscribeBrowserError(
-                "confirmation receipt readback failed"
+                UnsubscribeBrowserFailure.RECEIPT_READBACK_FAILED,
+                "confirmation receipt readback failed",
             ) from None
 
     def inspect_current_state(
@@ -2291,7 +2543,8 @@ class PlaywrightUnsubscribeBrowser:
             if not self._document_url and getattr(self.page, "url") == "about:blank":
                 if not effect.operations:
                     raise UnsubscribeBrowserError(
-                        "accepted operation sequence is empty"
+                        UnsubscribeBrowserFailure.OPERATION_SEQUENCE_EMPTY,
+                        "accepted operation sequence is empty",
                     )
                 return UnsubscribeObservation(
                     state=UnsubscribePageState.ACTION_REQUIRED,
@@ -2327,7 +2580,10 @@ class PlaywrightUnsubscribeBrowser:
         except UnsubscribeBrowserError:
             raise
         except Exception:
-            raise UnsubscribeBrowserError("browser state readback failed") from None
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.STATE_READBACK_FAILED,
+                "browser state readback failed",
+            ) from None
 
     def _execute_audited_control(
         self,
@@ -2346,7 +2602,10 @@ class PlaywrightUnsubscribeBrowser:
             )
             return
         if binding.control.kind != "form":
-            raise UnsubscribeBrowserError("accepted browser control is unavailable")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                "accepted browser control is unavailable",
+            )
         pairs = [
             (name, value) for name, _field_type, value in binding.successful_controls
         ]
@@ -2368,7 +2627,10 @@ class PlaywrightUnsubscribeBrowser:
         if binding.method != "POST" or binding.enctype != (
             "application/x-www-form-urlencoded"
         ):
-            raise UnsubscribeBrowserError("browser control semantics rejected")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.CONTROL_SEMANTICS_REJECTED,
+                "browser control semantics rejected",
+            )
         response = self._context.request.post(
             binding.target_url,
             data=encoded,
@@ -2378,10 +2640,16 @@ class PlaywrightUnsubscribeBrowser:
         )
         response_url = self._validate_navigation_target(response.url)
         if response.status < 200 or response.status >= 300:
-            raise UnsubscribeBrowserError("form provider response rejected")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.FORM_RESPONSE_REJECTED,
+                "form provider response rejected",
+            )
         body = response.body()
         if len(body) > 1_048_576:
-            raise UnsubscribeBrowserError("form provider response rejected")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.FORM_RESPONSE_REJECTED,
+                "form provider response rejected",
+            )
         self._document_url = response_url
         self.page.set_content(
             response.text(),
@@ -2406,7 +2674,10 @@ class PlaywrightUnsubscribeBrowser:
             or binding.challenge_opened_at is None
             or binding.challenge_expires_at is None
         ):
-            raise UnsubscribeBrowserError("email OTP control binding is incomplete")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.OTP_BINDING_INCOMPLETE,
+                "email OTP control binding is incomplete",
+            )
         challenge = EmailOtpChallenge(
             recipient=self.connected_recipient,
             site_domain=site_domain,
@@ -2432,7 +2703,10 @@ class PlaywrightUnsubscribeBrowser:
                 binding.method != "POST"
                 or binding.enctype != "application/x-www-form-urlencoded"
             ):
-                raise UnsubscribeBrowserError("email OTP request semantics rejected")
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.OTP_REQUEST_REJECTED,
+                    "email OTP request semantics rejected",
+                )
             response = self._context.request.post(
                 binding.target_url,
                 data=urlencode(pairs),
@@ -2442,10 +2716,16 @@ class PlaywrightUnsubscribeBrowser:
             )
             response_url = self._validate_navigation_target(response.url)
             if response.status < 200 or response.status >= 300:
-                raise UnsubscribeBrowserError("email OTP provider response rejected")
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.OTP_RESPONSE_REJECTED,
+                    "email OTP provider response rejected",
+                )
             body = response.body()
             if len(body) > 1_048_576:
-                raise UnsubscribeBrowserError("email OTP provider response rejected")
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.OTP_RESPONSE_REJECTED,
+                    "email OTP provider response rejected",
+                )
             self._document_url = response_url
             self.page.set_content(
                 response.text(),
@@ -2466,7 +2746,10 @@ class PlaywrightUnsubscribeBrowser:
 
     def _attempt_rendered_challenge(self, binding: _AuditedControlBinding) -> None:
         if not binding.field_selector:
-            raise UnsubscribeBrowserError("CAPTCHA control binding is incomplete")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.CAPTCHA_BINDING_INCOMPLETE,
+                "CAPTCHA control binding is incomplete",
+            )
         checkbox = self.page.locator(binding.field_selector)
         if checkbox.count() == 1:
             checkbox.click(timeout=self.timeout_ms)
@@ -2494,7 +2777,8 @@ class PlaywrightUnsubscribeBrowser:
                     self._validate_navigation_target(response.url)
                     if response.status < 200 or response.status >= 300:
                         raise UnsubscribeBrowserError(
-                            "one-click provider response rejected"
+                            UnsubscribeBrowserFailure.ONE_CLICK_RESPONSE_REJECTED,
+                            "one-click provider response rejected",
                         )
                     visible = response.text()
                     if not visible.strip():
@@ -2508,7 +2792,10 @@ class PlaywrightUnsubscribeBrowser:
                     UnsubscribePageState.DONE,
                     UnsubscribePageState.ALREADY_UNSUBSCRIBED,
                 }:
-                    raise UnsubscribeBrowserError("one-click outcome is unverified")
+                    raise UnsubscribeBrowserError(
+                        UnsubscribeBrowserFailure.ONE_CLICK_UNVERIFIED,
+                        "one-click outcome is unverified",
+                    )
                 return UnsubscribeObservation(
                     state=state,
                     state_reference="state-one-click-terminal",
@@ -2556,7 +2843,8 @@ class PlaywrightUnsubscribeBrowser:
                 )
                 if control is None:
                     raise UnsubscribeBrowserError(
-                        "accepted browser control is unavailable"
+                        UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                        "accepted browser control is unavailable",
                     )
                 if control.control.kind == "email_otp":
                     self._execute_email_otp_control(effect, control)
@@ -2574,7 +2862,8 @@ class PlaywrightUnsubscribeBrowser:
                 )
                 if control is None:
                     raise UnsubscribeBrowserError(
-                        "accepted browser control is unavailable"
+                        UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                        "accepted browser control is unavailable",
                     )
                 if control.control.kind == "captcha_handoff":
                     self._attempt_rendered_challenge(control)
@@ -2588,7 +2877,8 @@ class PlaywrightUnsubscribeBrowser:
                 target = self.confirmation_target_resolver(effect)
                 if target is None:
                     raise UnsubscribeBrowserError(
-                        "confirmation email has no accepted entry"
+                        UnsubscribeBrowserFailure.CONFIRMATION_ENTRY_MISSING,
+                        "confirmation email has no accepted entry",
                     )
                 expected_reference = confirmation_target_reference(
                     target.confirmation_message_identity,
@@ -2599,7 +2889,8 @@ class PlaywrightUnsubscribeBrowser:
                     or target.target_reference != expected_reference
                 ):
                     raise UnsubscribeBrowserError(
-                        "confirmation target binding rejected"
+                        UnsubscribeBrowserFailure.CONFIRMATION_TARGET_REJECTED,
+                        "confirmation target binding rejected",
                     )
                 self.page.goto(
                     self._validate_navigation_target(target.private_url),
@@ -2611,7 +2902,10 @@ class PlaywrightUnsubscribeBrowser:
                     getattr(self.page, "url")
                 )
             else:
-                raise UnsubscribeBrowserError("browser operation kind rejected")
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.OPERATION_KIND_REJECTED,
+                    "browser operation kind rejected",
+                )
             observation = self.inspect_current_state(effect, private_url)
             if (
                 operation.kind is UnsubscribeOperationKind.CONFIRM_EMAIL
@@ -2638,8 +2932,14 @@ class PlaywrightUnsubscribeBrowser:
             raise
         except Exception as exc:
             if "timeout" in type(exc).__name__.casefold():
-                raise UnsubscribeBrowserError("browser operation timed out") from None
-            raise UnsubscribeBrowserError("browser operation failed") from None
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
+                    "browser operation timed out",
+                ) from None
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.OPERATION_FAILED,
+                "browser operation failed",
+            ) from None
 
 
 def execute_unsubscribe_in_dedicated_profile(
@@ -2705,7 +3005,10 @@ def execute_unsubscribe_in_dedicated_profile(
                 continue
             existing.close()
         if str(getattr(page, "url")) != "about:blank":
-            raise UnsubscribeBrowserError("browser session restore rejected")
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.SESSION_RESTORE_REJECTED,
+                "browser session restore rejected",
+            )
         return page
 
     def open_live_session() -> tuple[object, object, object, Callable[[], None]]:
@@ -2713,7 +3016,8 @@ def execute_unsubscribe_in_dedicated_profile(
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
             raise UnsubscribeBrowserError(
-                "headless browser runtime is unavailable"
+                UnsubscribeBrowserFailure.RUNTIME_UNAVAILABLE,
+                "headless browser runtime is unavailable",
             ) from exc
         playwright = sync_playwright().start()
         context = None
@@ -3105,6 +3409,7 @@ def _result(
     *,
     receipt: UnsubscribeTerminalReceipt | None = None,
     error_code: str = "",
+    error_category: str = "",
     result_text: str = "",
     observation_digest: str = "",
     result_text_digest: str = "",
@@ -3118,6 +3423,7 @@ def _result(
         journal=tuple(journal),
         receipt=receipt,
         error_code=error_code,
+        error_category=error_category,
         result_text=result_text,
         observation_digest=observation_digest,
         result_text_digest=result_text_digest,
@@ -3531,6 +3837,7 @@ class UnsubscribeExecutor:
                     if reconciliation_only
                     else _browser_failure_code(exc)
                 ),
+                error_category=_browser_failure_category(exc),
             )
         if receipt is not None:
             if (
@@ -3625,6 +3932,7 @@ class UnsubscribeExecutor:
                     if reconciliation_only
                     else _browser_failure_code(exc)
                 ),
+                error_category=_browser_failure_category(exc),
             )
         reconcile_step = (
             None
@@ -3720,6 +4028,7 @@ class UnsubscribeExecutor:
                     UnsubscribeOutcome.FAILED_BROWSER,
                     journal,
                     error_code=_browser_failure_code(exc),
+                    error_category=_browser_failure_category(exc),
                 )
             operation_step = RedactedUnsubscribeStep(
                 operation=operation.kind.value,

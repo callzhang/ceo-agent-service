@@ -40,6 +40,7 @@ from app.email_unsubscribe import (
     PlaywrightUnsubscribeBrowser,
     UnsubscribeAuthenticationEvidence,
     UnsubscribeBrowserError,
+    UnsubscribeBrowserFailure,
     UnsubscribeDisposition,
     UnsubscribeContinuationResult,
     UnsubscribeContinuationKind,
@@ -66,6 +67,11 @@ from app.email_unsubscribe import (
     unsubscribe_entry_reference,
     _ChromiumIsolatedWorld,
     _AuditedControlBinding,
+    _BROWSER_FAILURE_CODES,
+    _assert_opaque_reference,
+    _BROWSER_FAILURE_CODES,
+    _browser_failure_category,
+    _browser_failure_code,
     _terminal_result,
     _validated_restored_audit_session,
 )
@@ -1281,12 +1287,18 @@ def test_reconciled_business_terminal_states_do_not_execute(
     ("error", "outcome", "code"),
     [
         (
-            UnsubscribeBrowserError("browser leaked " + TOKEN_URL),
+            UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.STATE_READBACK_FAILED,
+                "browser leaked " + TOKEN_URL,
+            ),
             UnsubscribeOutcome.FAILED_BROWSER,
             "email_unsubscribe_browser_failed",
         ),
         (
-            UnsubscribeBrowserError("browser operation timed out"),
+            UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
+                "browser operation timed out",
+            ),
             UnsubscribeOutcome.FAILED_BROWSER,
             "email_unsubscribe_browser_timeout",
         ),
@@ -1575,7 +1587,10 @@ def test_uncertain_claim_missing_browser_state_stays_unresolved(tmp_path: Path) 
     )
     browser = _ScriptedBrowser(
         [],
-        error=UnsubscribeBrowserError("recoverable browser state is missing"),
+        error=UnsubscribeBrowserError(
+            UnsubscribeBrowserFailure.STATE_READBACK_FAILED,
+            "recoverable browser state is missing",
+        ),
     )
 
     result = UnsubscribeExecutor(
@@ -2983,48 +2998,257 @@ def test_user_handoff_reconciliation_allows_the_live_page_to_reach_terminal_stat
     )
 
 
-def test_visible_text_waits_for_script_rendered_body_before_failing() -> None:
-    waits: list[int] = []
-    texts = iter(["", "", "You have been unsubscribed"])
+def test_document_structure_reports_counts_without_reading_page_content() -> None:
+    scripts: list[str] = []
 
+    class World:
+        def evaluate(self, script):
+            scripts.append(script)
+            return {"textLength": 24, "controlCount": 2}
+
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser._trusted_world = World()
+
+    assert browser._document_structure() == {"text_length": 24, "control_count": 2}
+    assert "textLength" in scripts[0] and "controlCount" in scripts[0]
+
+
+def test_document_structure_rejects_a_probe_that_is_not_two_counts() -> None:
+    class World:
+        def evaluate(self, _script):
+            return {"textLength": True, "controlCount": 2}
+
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser._trusted_world = World()
+
+    with pytest.raises(UnsubscribeBrowserError) as failure:
+        browser._document_structure()
+
+    assert failure.value.category is (
+        UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE
+    )
+
+
+def test_visible_text_returns_the_trimmed_body_without_deciding_the_state() -> None:
     class Body:
         def inner_text(self, **_kwargs):
-            return next(texts)
+            return "  "
 
     class Page:
         def locator(self, selector):
             assert selector == "body"
             return Body()
 
-        def wait_for_timeout(self, timeout):
-            waits.append(timeout)
-
-    browser = object.__new__(PlaywrightUnsubscribeBrowser)
-    browser.page = Page()
-    browser.timeout_ms = 30_000
-
-    assert browser._visible_text() == "You have been unsubscribed"
-    assert len(waits) == 2
-
-
-def test_visible_text_reports_missing_state_after_bounded_wait() -> None:
-    waits: list[int] = []
-
-    class Body:
-        def inner_text(self, **_kwargs):
-            return "  "
-
-    class Page:
-        def locator(self, _selector):
-            return Body()
-
-        def wait_for_timeout(self, timeout):
-            waits.append(timeout)
-
     browser = object.__new__(PlaywrightUnsubscribeBrowser)
     browser.page = Page()
     browser.timeout_ms = 1_000
 
-    with pytest.raises(UnsubscribeBrowserError, match="no visible state"):
-        browser._visible_text()
-    assert sum(waits) == 1_000
+    assert browser._visible_text() == ""
+
+
+def _unsubscribe_form_snapshot(label: str = "Unsubscribe") -> dict[str, object]:
+    return {
+        "acceptCharset": "",
+        "action": "/confirm",
+        "enctype": "application/x-www-form-urlencoded",
+        "fields": [{"name": "list", "type": "hidden", "value": "news"}],
+        "formAssociation": {
+            "formAttribute": "",
+            "formId": "unsubscribe",
+            "formName": "",
+            "formIndex": 0,
+        },
+        "method": "post",
+        "submitter": {
+            "name": "decision",
+            "tag": "input",
+            "target": "",
+            "type": "submit",
+            "value": label,
+        },
+        "submitterLabel": label,
+        "target": "",
+    }
+
+
+def _discovery_browser(
+    *,
+    control_snapshots: list[dict[str, object]],
+    structures: list[dict[str, int]],
+    texts: list[str],
+    waits: list[int] | None = None,
+) -> PlaywrightUnsubscribeBrowser:
+    """Drive discover_current_page over a scripted trusted world and body."""
+
+    class World:
+        def evaluate(self, script):
+            if "settledControls" in script:
+                return structures.pop(0) if len(structures) > 1 else structures[0]
+            if "connectedRecipient" in script:
+                return {"present": False}
+            return (
+                control_snapshots.pop(0)
+                if len(control_snapshots) > 1
+                else control_snapshots[0]
+            )
+
+    class Body:
+        def inner_text(self, **_kwargs):
+            return texts.pop(0) if len(texts) > 1 else texts[0]
+
+    class Page:
+        url = "https://news.example.com/unsubscribe"
+
+        def locator(self, selector):
+            assert selector == "body"
+            return Body()
+
+        def wait_for_timeout(self, timeout):
+            if waits is not None:
+                waits.append(timeout)
+            return None
+
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser.page = Page()
+    browser._trusted_world = World()
+    browser._document_url = "https://news.example.com/unsubscribe"
+    browser._blocked_popup = False
+    browser._blocked_download = False
+    browser._challenge_bindings = {}
+    browser._clock = lambda: datetime(2026, 9, 10, tzinfo=timezone.utc)
+    browser.connected_recipient = "derek@example.com"
+    browser.confirmation_target_resolver = None
+    browser.timeout_ms = 1_000
+    return browser
+
+
+def test_discover_current_page_reads_controls_after_the_page_renders() -> None:
+    browser = _discovery_browser(
+        control_snapshots=[
+            {"blocked": False, "forms": [], "links": []},
+            {
+                "blocked": False,
+                "forms": [_unsubscribe_form_snapshot()],
+                "links": [],
+            },
+        ],
+        structures=[
+            {"textLength": 0, "controlCount": 0},
+            {"textLength": 24, "controlCount": 1},
+        ],
+        texts=["", "Manage your preferences"],
+    )
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert discovery.state is UnsubscribePageState.ACTION_REQUIRED
+    assert [control.kind for control in discovery.controls] == ["form"]
+    assert discovery.controls[0].intent == "unsubscribe"
+
+
+def test_page_without_visible_text_is_classified_from_its_control_structure() -> None:
+    browser = _discovery_browser(
+        control_snapshots=[
+            {
+                "blocked": False,
+                "forms": [_unsubscribe_form_snapshot()],
+                "links": [],
+            }
+        ],
+        structures=[{"textLength": 0, "controlCount": 1}],
+        texts=[""],
+    )
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert discovery.state is UnsubscribePageState.ACTION_REQUIRED
+    assert [control.kind for control in discovery.controls] == ["form"]
+
+
+def test_terminal_text_is_awaited_when_the_shell_already_exposes_a_control() -> None:
+    # A pre-render shell whose only control is a submit input contributes no
+    # body text, so reading that shell and giving up on the text classified the
+    # page from a control the render then replaced with its terminal wording.
+    browser = _discovery_browser(
+        control_snapshots=[
+            {
+                "blocked": False,
+                "forms": [_unsubscribe_form_snapshot()],
+                "links": [],
+            },
+            {"blocked": False, "forms": [], "links": []},
+        ],
+        structures=[
+            {"textLength": 0, "controlCount": 1},
+            {"textLength": 29, "controlCount": 0},
+        ],
+        texts=["", "You are already unsubscribed."],
+    )
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert discovery.state is UnsubscribePageState.ALREADY_UNSUBSCRIBED
+    assert discovery.controls == ()
+
+
+def test_settled_page_without_text_or_controls_reports_missing_state() -> None:
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": 0, "controlCount": 0}],
+        texts=[""],
+    )
+
+    with pytest.raises(UnsubscribeBrowserError) as failure:
+        browser.discover_current_page(_effect())
+
+    assert failure.value.category is UnsubscribeBrowserFailure.PAGE_STATE_MISSING
+    assert _browser_failure_code(failure.value) == (
+        "email_unsubscribe_page_state_missing"
+    )
+
+
+def test_settled_page_whose_controls_are_not_modelled_reports_unknown_state() -> None:
+    # The page is rendered and offers controls, but none of them reached the
+    # model: `_control_intent` only models a control whose label carries a
+    # fixed marker. That label gate is the remaining cause of the live
+    # `email_unsubscribe_page_state_unknown` failures and is reported, not
+    # widened, here - the split this pins is only MISSING (nothing rendered)
+    # against UNKNOWN (rendered, nothing modelled).
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": 0, "controlCount": 2}],
+        texts=[""],
+    )
+
+    with pytest.raises(UnsubscribeBrowserError) as failure:
+        browser.discover_current_page(_effect())
+
+    # The category separates this browser's own modelling limit from a page
+    # whose state is genuinely undetermined; both keep one task-level code.
+    assert failure.value.category is (
+        UnsubscribeBrowserFailure.PAGE_CONTROLS_UNMODELLED
+    )
+    assert _browser_failure_code(failure.value) == (
+        "email_unsubscribe_page_state_unknown"
+    )
+
+
+def test_browser_failure_codes_stay_a_coarse_cross_module_contract() -> None:
+    """Only a few categories earn a task-level code; the rest travel beside it.
+
+    `app/email_store.py` releases an uncertain claim by matching the generic
+    code exactly, so composing the category into the code would silently break
+    the explicit-retry path. The category is reported in its own field.
+    """
+    generic = "email_unsubscribe_browser_failed"
+    for category in UnsubscribeBrowserFailure:
+        error = UnsubscribeBrowserError(category, TOKEN_URL)
+        code = _browser_failure_code(error)
+        assert code == _BROWSER_FAILURE_CODES.get(category, generic)
+        assert TOKEN_URL not in code
+        assert _browser_failure_category(error) == category.value
+        if category not in _BROWSER_FAILURE_CODES:
+            assert code == generic
+
+    release_path = Path("app/email_store.py").read_text(encoding="utf-8")
+    assert f'!= "{generic}"' in release_path

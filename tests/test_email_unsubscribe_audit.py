@@ -5,7 +5,9 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -30,6 +32,13 @@ from app.email_task_adapter import (
     email_conversation_id,
 )
 from app.email_unsubscribe import (
+    EmailUnsubscribeContinuation,
+    UnsubscribeBrowserError,
+    UnsubscribeContinuationResult,
+    UnsubscribeDiscoveredControl,
+    UnsubscribeOperation,
+    UnsubscribeOperationKind,
+    UnsubscribeBrowserFailure,
     UnsubscribeExecutor,
     UnsubscribeExecutionResult,
     UnsubscribeObservation,
@@ -40,7 +49,14 @@ from app.email_unsubscribe import (
     extract_unsubscribe_entries,
     normalize_unsubscribe_result_text,
 )
-from app.email_unsubscribe_audit import EmailUnsubscribeAuditOperation
+from app.email_unsubscribe_audit import (
+    AUDIT_BINDING_REJECTED_CODE,
+    MAX_AUDIT_BINDING_REJECTIONS,
+    AuditedUnsubscribeTerminalState,
+    EmailUnsubscribeAuditOperation,
+    audited_unsubscribe_skip_receipt,
+)
+from app.email_unsubscribe_audit import _normalize_result, _rejection_detail
 from app.email_unsubscribe_audit import _store_arguments as audit_store_arguments
 from app.store import AgentRole, AutoReplyStore
 
@@ -656,7 +672,10 @@ def test_execute_accepts_identity_only_and_runs_consumer_proposal(
 
     def execute_effect(effect, entries, **_kwargs):
         executed.append(effect)
-        raise UnsubscribeBrowserError("unsubscribe page state is unknown")
+        raise UnsubscribeBrowserError(
+            UnsubscribeBrowserFailure.PAGE_STATE_UNKNOWN,
+            "unsubscribe page state is unknown",
+        )
 
     fixture.operation.execute_effect = execute_effect
     result = fixture.operation.execute(
@@ -1734,3 +1753,363 @@ def test_unbound_historical_claim_and_effect_rows_keep_null_audit_run_id(
             (ACTION_IDENTITY,),
         ).fetchone()[0]
     assert effect_run_id is None
+
+
+def _tool_event(
+    outcome: str,
+    *,
+    status: str = "done",
+    action_identity: str = ACTION_IDENTITY,
+) -> dict[str, object]:
+    return {
+        "type": "item.completed",
+        "item": {
+            "tool": "execute_audited_email_unsubscribe",
+            "status": "completed",
+            "arguments": {"accepted_action": {"action_identity": action_identity}},
+            "result": {
+                "structured_content": {
+                    "status": status,
+                    "outcome": outcome,
+                    "receipt_id": f"unsubscribe-receipt:test:{outcome}",
+                    "evidence": "terminal-page",
+                }
+            },
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "outcome, state",
+    [
+        (
+            UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED,
+            AuditedUnsubscribeTerminalState.HANDOFF,
+        ),
+        (UnsubscribeOutcome.SKIPPED_CAPTCHA, AuditedUnsubscribeTerminalState.HANDOFF),
+        (UnsubscribeOutcome.SKIPPED_PAYMENT, AuditedUnsubscribeTerminalState.HANDOFF),
+        (
+            UnsubscribeOutcome.SKIPPED_NO_RELIABLE_ENTRY,
+            AuditedUnsubscribeTerminalState.NO_ACTION,
+        ),
+        (
+            UnsubscribeOutcome.ALREADY_UNSUBSCRIBED,
+            AuditedUnsubscribeTerminalState.NO_ACTION,
+        ),
+    ],
+)
+def test_terminal_skip_receipt_projects_the_service_owned_state(outcome, state):
+    run = SimpleNamespace(tool_events=[_tool_event(outcome.value)])
+
+    assert audited_unsubscribe_skip_receipt(run) == (outcome, state)
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        UnsubscribeOutcome.DONE,
+        UnsubscribeOutcome.FAILED_BROWSER,
+        UnsubscribeOutcome.FAILED_PROVIDER_AUTH,
+    ],
+)
+def test_non_skip_outcomes_are_not_projected(outcome):
+    run = SimpleNamespace(tool_events=[_tool_event(outcome.value)])
+
+    assert audited_unsubscribe_skip_receipt(run) is None
+
+
+def test_the_camel_case_result_spelling_projects_the_same_state():
+    event = _tool_event(UnsubscribeOutcome.SKIPPED_CAPTCHA.value)
+    item = event["item"]
+    assert isinstance(item, dict)
+    result = item["result"]
+    assert isinstance(result, dict)
+    result["structuredContent"] = result.pop("structured_content")
+
+    assert audited_unsubscribe_skip_receipt(SimpleNamespace(tool_events=[event])) == (
+        UnsubscribeOutcome.SKIPPED_CAPTCHA,
+        AuditedUnsubscribeTerminalState.HANDOFF,
+    )
+
+
+def test_a_rejected_second_call_does_not_undo_a_terminal_receipt():
+    # Live task 383234: the effect was already terminal, so the second call on
+    # the same action was rejected. The receipt still decides the task.
+    run = SimpleNamespace(
+        tool_events=[
+            _tool_event(UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED.value),
+            _tool_event("failed_browser", status="failed"),
+        ]
+    )
+
+    assert audited_unsubscribe_skip_receipt(run) == (
+        UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED,
+        AuditedUnsubscribeTerminalState.HANDOFF,
+    )
+
+
+def test_another_actions_rejection_is_never_erased_by_a_terminal_receipt():
+    # The caller replaces the whole task's state with this projection, so a
+    # receipt may only settle the action it belongs to: one action's terminal
+    # skip must not clear another action's recorded failure.
+    run = SimpleNamespace(
+        tool_events=[
+            _tool_event(UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED.value),
+            _tool_event(
+                "failed_browser",
+                status="failed",
+                action_identity="email-action:" + "b" * 64,
+            ),
+        ]
+    )
+
+    assert audited_unsubscribe_skip_receipt(run) is None
+
+
+def test_a_rejection_that_names_no_action_keeps_the_step_over_reading():
+    # A transcript that recorded no call arguments cannot say which action was
+    # rejected, so it keeps the older reading: the receipt still decides.
+    event = _tool_event("failed_browser", status="failed")
+    item = event["item"]
+    assert isinstance(item, dict)
+    del item["arguments"]
+    run = SimpleNamespace(
+        tool_events=[
+            _tool_event(UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED.value),
+            event,
+        ]
+    )
+
+    assert audited_unsubscribe_skip_receipt(run) == (
+        UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED,
+        AuditedUnsubscribeTerminalState.HANDOFF,
+    )
+
+
+def test_a_failed_tool_call_never_projects_a_skip():
+    run = SimpleNamespace(
+        tool_events=[
+            _tool_event(
+                UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED.value,
+                status="failed",
+            )
+        ]
+    )
+
+    assert audited_unsubscribe_skip_receipt(run) is None
+
+
+def test_the_last_succeeded_receipt_of_the_turn_wins():
+    run = SimpleNamespace(
+        tool_events=[
+            _tool_event(UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED.value),
+            {"type": "item.completed", "item": {"tool": "read_email"}},
+            _tool_event(UnsubscribeOutcome.ALREADY_UNSUBSCRIBED.value),
+        ]
+    )
+
+    assert audited_unsubscribe_skip_receipt(run) == (
+        UnsubscribeOutcome.ALREADY_UNSUBSCRIBED,
+        AuditedUnsubscribeTerminalState.NO_ACTION,
+    )
+
+
+def test_an_unreadable_run_projects_nothing():
+    assert audited_unsubscribe_skip_receipt(SimpleNamespace(tool_events=[])) is None
+    assert audited_unsubscribe_skip_receipt(SimpleNamespace()) is None
+    assert (
+        audited_unsubscribe_skip_receipt(SimpleNamespace(tool_events=["not-an-event"]))
+        is None
+    )
+    assert (
+        audited_unsubscribe_skip_receipt(
+            SimpleNamespace(tool_events=[_tool_event("outcome_from_a_newer_lifecycle")])
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("break_binding", "condition"),
+    (
+        (
+            lambda fixture: fixture.task_store.fail_agent_run(
+                fixture.audit_run.id,
+                {"code": "stale", "retryable": False},
+                owner="audit-owner",
+            ),
+            "audit_run_not_running",
+        ),
+        (
+            lambda fixture: fixture.task_store.fail_reply_task(
+                fixture.task.id,
+                "unrelated",
+                expected_execution_generation=fixture.task.execution_generation,
+            ),
+            "task_not_processing",
+        ),
+    ),
+)
+def test_audit_binding_rejection_is_retryable_and_names_the_condition(
+    tmp_path: Path,
+    break_binding,
+    condition: str,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    break_binding(fixture)
+
+    result = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action=_accepted_action(),
+    )
+
+    assert _error_code(result) == "unsubscribe_audit_run_invalid"
+    error = result["error"]
+    assert isinstance(error, dict)
+    assert error["retryable"] is True
+    assert result["summary"] == f"unsubscribe_audit_run_invalid: {condition}"
+    assert fixture.executed == []
+
+
+def test_audit_binding_rejection_stops_retrying_once_the_budget_is_spent(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    for turn_attempt in range(1, MAX_AUDIT_BINDING_REJECTIONS + 1):
+        spent = fixture.task_store.claim_agent_run(
+            fixture.task.id,
+            fixture.task.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=0,
+            turn_attempt=turn_attempt,
+            parent_agent_run_id=fixture.consumer_run.id,
+            operation_id=f"audit-operation-{turn_attempt}",
+            owner="audit-owner",
+        ).run
+        fixture.task_store.fail_agent_run(
+            spent.id,
+            {"code": AUDIT_BINDING_REJECTED_CODE, "retryable": True},
+            owner="audit-owner",
+        )
+    fixture.task_store.fail_agent_run(
+        fixture.audit_run.id,
+        {"code": "stale", "retryable": False},
+        owner="audit-owner",
+    )
+
+    result = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action=_accepted_action(),
+    )
+
+    assert _error_code(result) == AUDIT_BINDING_REJECTED_CODE
+    error = result["error"]
+    assert isinstance(error, dict)
+    # A call that can never bind must not consume every turn the process
+    # allows; the condition stays in the summary either way.
+    assert error["retryable"] is False
+    assert result["summary"] == (
+        f"{AUDIT_BINDING_REJECTED_CODE}: audit_run_not_running"
+    )
+    assert fixture.executed == []
+
+
+def test_audit_binding_rejection_names_a_generation_mismatch(tmp_path: Path) -> None:
+    fixture = _make_fixture(tmp_path)
+
+    result = fixture.operation.execute(
+        fixture.task.id,
+        "generation-audit-other",
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action=_accepted_action(),
+    )
+
+    assert _error_code(result) == "unsubscribe_audit_run_invalid"
+    assert result["summary"] == (
+        "unsubscribe_audit_run_invalid: task_generation_mismatch"
+    )
+    assert fixture.executed == []
+
+
+def test_a_rejection_reports_its_own_reason_and_never_a_validated_value() -> None:
+    private_url = "https://news.example.com/u?token=secret&email=derek@example.com"
+
+    class _Rejected(ValueError):
+        pass
+
+    rejected = ValueError("accepted unsubscribe proposal is invalid")
+
+    assert _rejection_detail(rejected) == "accepted unsubscribe proposal is invalid"
+    # Only this package's own fixed messages are reported. A validator that
+    # quotes the value it rejected - and a proposal carries the private
+    # unsubscribe URL - keeps its type name in the code and nothing else.
+    assert _rejection_detail(_Rejected(f"url is invalid {private_url}")) == ""
+    assert _rejection_detail(RuntimeError(private_url)) == ""
+    assert _rejection_detail(ValueError("x" * 201)) == ""
+
+
+def test_terminal_summary_is_the_typed_outcome_and_never_page_text() -> None:
+    page_text, observation_digest = normalize_unsubscribe_result_text(
+        "Sign in\nThis subscription belongs to derek@example.com"
+    )
+    result = _normalize_result(
+        UnsubscribeExecutionResult(
+            outcome=UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED,
+            disposition=disposition_for_unsubscribe_outcome(
+                UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED
+            ),
+            journal=(),
+            receipt=UnsubscribeTerminalReceipt(
+                receipt_id="unsubscribe-terminal:login",
+                evidence="terminal-page",
+                entry_reference=ENTRY.reference,
+                effect_digest="d" * 64,
+            ),
+            result_text=page_text,
+            observation_digest=observation_digest,
+            result_text_digest=sha256(page_text.encode("utf-8")).hexdigest(),
+        )
+    )
+
+    assert result.summary == "skipped_login_required"
+    assert result.result_text == page_text
+
+
+def test_awaiting_audit_summary_directs_the_next_operation_to_a_new_turn() -> None:
+    continuation = EmailUnsubscribeContinuation(
+        action_identity=ACTION_IDENTITY,
+        action_plan_id=PLAN.action_plan_id,
+        action_plan_version=PLAN.action_plan_version,
+        classification_id=CLASSIFICATION_ID,
+        account_id=ACCOUNT_ID,
+        stable_message_identity=MESSAGE_IDENTITY,
+        thread_identity=THREAD_IDENTITY,
+        entry_reference=ENTRY.reference,
+        effect_digest="a" * 64,
+        previous_effect_digest="b" * 64,
+        executed_operations=(
+            UnsubscribeOperation(
+                operation_reference="unsubscribe-operation:open-entry",
+                kind=UnsubscribeOperationKind.OPEN_ENTRY,
+                target_reference=ENTRY.reference,
+            ),
+        ),
+        controls=(
+            UnsubscribeDiscoveredControl(
+                reference="unsubscribe-control:" + "c" * 64,
+                kind="form",
+                intent="unsubscribe",
+            ),
+        ),
+    )
+
+    result = _normalize_result(
+        UnsubscribeContinuationResult(continuation=continuation, journal=())
+    )
+
+    assert result.status == "awaiting_audit"
+    assert "End this turn without calling the tool again" in result.summary

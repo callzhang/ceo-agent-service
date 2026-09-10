@@ -12,7 +12,14 @@ from app.meeting_alignment_agent import (
     build_meeting_alignment_prompt,
     parse_meeting_alignment_decision,
 )
-from app.meeting_alignment_models import MeetingSource
+from app.meeting_alignment_models import (
+    MEETING_ALIGNMENT_CROSS_FIELD_RULES,
+    MeetingSource,
+)
+from tests.test_meeting_alignment_models import (
+    cross_field_rule_payloads,
+    valid_send_decision,
+)
 
 
 class FakeRoutedMeetingExecution:
@@ -461,6 +468,40 @@ def test_agent_accepts_personal_direct_for_complete_calendar_one_to_one():
     assert decision.target.direct_user_id == "alex"
 
 
+def test_personal_direct_guidance_matches_the_source_aware_target_rule():
+    """Emptying direct_user_id on a resolvable 1:1 is terminal, not a repairable schema miss.
+
+    Pydantic has no rule about the top-level direct_user_id, so the decision
+    validates, no correction turn fires, and the roster check then fails the job
+    with kind=meeting_target. Guidance that pointed the model at "" therefore had
+    to be dropped from every description the prompts and the schema file carry.
+    """
+    from app.meeting_alignment_models import MeetingAlignmentDecision
+
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "",
+        "title": "Alex",
+        "candidates": [],
+    }
+    payload = send_payload_with_target(target)
+    payload["audience_scope"] = "personal"
+    MeetingAlignmentDecision.model_validate(payload)
+
+    agent = MeetingAlignmentAgent(FakeMeetingCodex(payload))
+    with pytest.raises(
+        MeetingAlignmentTargetError, match="must target the other participant"
+    ):
+        agent.decide(source(participant_count=2))
+
+    schema = MeetingAlignmentDecision.model_json_schema()
+    direct_user_id_description = schema["$defs"]["DeliveryTarget"]["properties"][
+        "direct_user_id"
+    ]["description"]
+    assert "真实 user_id" in direct_user_id_description
+
+
 def test_agent_rejects_null_target_for_multi_party_meeting():
     with pytest.raises(ValidationError, match="explicit delivery target"):
         MeetingAlignmentAgent(
@@ -863,21 +904,31 @@ def test_meeting_repair_prompt_collapses_topic_indices_and_keeps_top_level_error
     assert "- confidence: Field required" in problems
 
 
+def embedded_prompt_schema():
+    """The derived schema as the prompts embed it: everything but the root rules.
+
+    Both prompts print the rendered rule block just above the schema, so the copy
+    inside the schema's root description would be the same instruction twice.
+    """
+    from app.meeting_alignment_models import MeetingAlignmentDecision
+
+    schema = MeetingAlignmentDecision.model_json_schema()
+    schema.pop("description")
+    return schema
+
+
 def test_meeting_repair_prompt_includes_derived_schema():
     from app.meeting_alignment_agent import _meeting_alignment_repair_prompt
-    from app.meeting_alignment_models import MeetingAlignmentDecision
 
     prompt = _meeting_alignment_repair_prompt("I could not decide.")
     prompt_schema = json.loads(
         prompt.split("MeetingAlignmentDecision Pydantic JSON schema:\n", 1)[1]
     )
 
-    assert prompt_schema == MeetingAlignmentDecision.model_json_schema()
+    assert prompt_schema == embedded_prompt_schema()
 
 
 def test_prompt_embeds_decision_schema():
-    from app.meeting_alignment_models import MeetingAlignmentDecision
-
     prompt = build_meeting_alignment_prompt(
         source(),
         work_profile="重视端到端结果",
@@ -887,8 +938,33 @@ def test_prompt_embeds_decision_schema():
         prompt.split("MeetingAlignmentDecision Pydantic JSON schema:\n", 1)[1]
     )
 
-    assert prompt_schema == MeetingAlignmentDecision.model_json_schema()
+    assert prompt_schema == embedded_prompt_schema()
     assert "严格遵守下方 schema" in prompt
+
+
+def test_prompts_state_the_cross_field_rules_exactly_once():
+    """Two copies of one instruction are their own drift risk, and cost ~2.2KB."""
+    from app.meeting_alignment_agent import _meeting_alignment_repair_prompt
+    from app.meeting_alignment_models import (
+        MeetingAlignmentDecision,
+        render_meeting_alignment_cross_field_rules,
+    )
+
+    block = render_meeting_alignment_cross_field_rules()
+    prompts = (
+        build_meeting_alignment_prompt(
+            source(),
+            work_profile="重视端到端结果",
+            work_profile_source="/configured/work_profile.md",
+        ),
+        _meeting_alignment_repair_prompt("I could not decide."),
+    )
+
+    for prompt in prompts:
+        assert prompt.count(block) == 1
+    # The routes that honor --output-schema read the block from the schema file,
+    # so it has to stay on the model even though the prompts drop it.
+    assert MeetingAlignmentDecision.model_json_schema()["description"] == block
 
 
 def test_runner_correction_turn_uses_repair_prompt_with_field_errors(tmp_path):
@@ -978,3 +1054,57 @@ def test_runner_correction_turn_uses_repair_prompt_with_field_errors(tmp_path):
     assert [attempt.status for attempt in attempts] == ["superseded", "completed"]
     assert attempts[0].failure_code == "runtime_result_validation_failed"
     assert [attempt.session_mode for attempt in attempts] == ["fresh", "resume"]
+
+
+@pytest.mark.parametrize(
+    "rule",
+    MEETING_ALIGNMENT_CROSS_FIELD_RULES,
+    ids=[rule.message for rule in MEETING_ALIGNMENT_CROSS_FIELD_RULES],
+)
+def test_repair_prompt_names_the_required_combination_for_each_validator_message(rule):
+    from app.meeting_alignment_agent import _meeting_alignment_repair_prompt
+
+    payload = cross_field_rule_payloads()[rule.message]
+
+    prompt = _meeting_alignment_repair_prompt(agent_message_jsonl(payload))
+    problems = prompt.split("上一次输出的问题：\n", 1)[1].split("\n\n", 1)[0]
+
+    assert rule.message in problems
+    assert f"（需要：{rule.requirement}）" in problems
+
+
+def test_repair_prompt_lists_every_cross_field_rule_even_when_one_fired():
+    """Live job 2770: one rule is reported, the next two are the ones it then broke."""
+    from app.meeting_alignment_agent import _meeting_alignment_repair_prompt
+    from app.meeting_alignment_models import (
+        ALIGNED_TOPIC_NEEDS_TRIGGER_RULE,
+        DIRECT_TARGET_NO_GROUP_FIELDS_RULE,
+    )
+
+    payload = valid_send_decision()
+    payload["audience_scope"] = "personal"
+    payload["target"] = {"kind": "direct", "title": "张三"}
+
+    prompt = _meeting_alignment_repair_prompt(agent_message_jsonl(payload))
+    problems = prompt.split("上一次输出的问题：\n", 1)[1].split("\n\n", 1)[0]
+
+    assert "- target.direct_user_id: Field required" in problems
+    for unreported in (
+        DIRECT_TARGET_NO_GROUP_FIELDS_RULE,
+        ALIGNED_TOPIC_NEEDS_TRIGGER_RULE,
+    ):
+        assert unreported.requirement not in problems
+        assert unreported.message in prompt
+        assert unreported.requirement in prompt
+
+
+def test_main_prompt_states_every_cross_field_rule():
+    prompt = build_meeting_alignment_prompt(
+        source(),
+        work_profile="重视端到端结果",
+        work_profile_source="/configured/work_profile.md",
+    )
+
+    for rule in MEETING_ALIGNMENT_CROSS_FIELD_RULES:
+        assert rule.message in prompt, rule.message
+        assert rule.requirement in prompt, rule.message

@@ -197,7 +197,12 @@ class AuditAgentRunner:
                 "SMTP, mailto, or attachment content. Return executed only after "
                 "execute_audited_email_unsubscribe has returned a receipt or "
                 "continuation for this turn; without that tool result return "
-                "failed or feedback_provided, never executed."
+                "failed or feedback_provided, never executed. A receipt whose "
+                "outcome is a terminal skip ends the operation for this turn: "
+                "report it in the summary, never call the tool again in the "
+                "same turn, and do not invent an error code for it, because "
+                "the service derives the task's terminal state from that "
+                "receipt."
             )
         prompt += (
             "\n\n### Needs Human Display Contract\n"

@@ -1,5 +1,41 @@
 # Changelog
 
+- 2026-09-10 (round 6): the remaining live email and meeting failure classes.
+  - A terminal unsubscribe **skip** now ends the task where the lifecycle
+    already put it instead of as a technical failure. The audited tool decides
+    the outcome before the model answers (`disposition_for_unsubscribe_outcome`
+    gives every `SKIPPED_*` a non-retryable `skipped` disposition and returns
+    `status="done"` with the typed outcome), but that decision was dropped at
+    the Audit boundary, so the free-text error code the model chose for an
+    operation the service is not allowed to complete became the task's
+    terminal state (tasks 383232 and 383234 ended `failed` with
+    `login_required` while their receipts read `skipped_login_required`).
+    `_finalize_email_task` now projects the persisted receipt:
+    `skipped_login_required` / `skipped_captcha` / `skipped_payment` close
+    done/needs_human as the user handoff the runtime doc requires for a
+    password, MFA or CAPTCHA wall the service must never pass itself, and
+    `skipped_no_reliable_entry` / `already_unsubscribed` close done/skipped
+    with an empty error. A genuine needs_human or authorization boundary is
+    never rewritten by the projection.
+  - `MeetingAlignmentDecision`'s 19 cross-field rules no longer live only
+    inside `raise ValueError(...)`: they are constants
+    (`MEETING_ALIGNMENT_CROSS_FIELD_RULES`) rendered into the main prompt, the
+    repair prompt and `model_json_schema()` (so the committed
+    `--output-schema` carries them too). The repair prompt appends the
+    requirement for the rule that fired and relists every rule, because a
+    pydantic after-validator short-circuits on the first one while the
+    correction turn happens once — six live `result_validation_correction`
+    attempts had each fixed one rule and broken the next.
+  - Browser failures carry a fixed internal category
+    (`UnsubscribeBrowserFailure`) beside the coarse task-level code, so a
+    generic `email_unsubscribe_browser_failed` is diagnosable without ever
+    recording page text or a URL. The code deliberately stays coarse: the
+    explicit-retry release path in `app/email_store.py` matches
+    `email_unsubscribe_browser_failed` exactly, and a test now pins that
+    cross-module dependency. A settled page whose controls none of the model
+    reached reports `page_controls_unmodelled` (this browser's own limit)
+    rather than an undetermined page state.
+
 - 2026-09-10: the Claude event grammar recognizes the two telemetry events the
   live transport emits around a turn — the subscription quota window
   (`rate_limit_event`, which can arrive before session init) and the

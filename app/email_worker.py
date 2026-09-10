@@ -2281,6 +2281,11 @@ def _load_email_task_context(
 
 
 def _finalize_email_task(store: object, task: object, result: object) -> None:
+    from app.email_unsubscribe_audit import (
+        AuditedUnsubscribeTerminalState,
+        audited_unsubscribe_skip_receipt,
+    )
+
     status_map = {
         "executed": ("done", "completed"),
         "no_action": ("done", "skipped"),
@@ -2303,6 +2308,29 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
     ):
         task_status, send_status = "done", "needs_human"
     error = str(result.error.code or "")
+    run = store.get_agent_run(result.final_run_id) if result.final_run_id else None
+    # A terminal unsubscribe skip is a lifecycle outcome, not a technical
+    # failure: the receipt the audited tool persisted decides where the task
+    # ends, never the error code the Audit model chose for an operation the
+    # service is not allowed to complete. A login, CAPTCHA or payment wall is
+    # handed to the user in the browser session that is already open; a missing
+    # entry or an already unsubscribed address leaves nothing to do. A result
+    # that already reached a person - a management decision or the generic
+    # authorization boundary above - keeps its own state and code: the receipt
+    # only replaces the state derived from the model's failure report.
+    skip = (
+        None
+        if run is None or send_status == "needs_human"
+        else audited_unsubscribe_skip_receipt(run)
+    )
+    if skip is not None:
+        outcome, terminal_state = skip
+        if terminal_state is AuditedUnsubscribeTerminalState.HANDOFF:
+            task_status, send_status = status_map["needs_human"]
+            error = outcome.value
+        else:
+            task_status, send_status = status_map["no_action"]
+            error = ""
     if task_status == "pending":
         # A deferred orchestration (runtime not ready, provider recovery, lease
         # race) keeps the task and retries it later, exactly like the DingTalk
@@ -2326,7 +2354,6 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
             available_at=available_at,
         )
         return
-    run = store.get_agent_run(result.final_run_id)
     if run is None:
         raise RuntimeError("email orchestration final run was not persisted")
     store.finalize_orchestrated_reply_task(

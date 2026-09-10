@@ -271,6 +271,8 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
         "decision_options": result.get("decision_options", []),
         "risk": result.get("risk", "low"),
         "confidence": result.get("confidence", 1.0),
+        "rule_coverage": result.get("rule_coverage", 1.0),
+        "information_completeness": result.get("information_completeness", 1.0),
         "error_code": error["code"],
         "error_retryable": error["retryable"],
         "error_authorization_required": error["authorization_required"],
@@ -689,6 +691,8 @@ def test_consumer_prompt_declares_common_quality_fields_and_priority():
     assert "same business object" in instructions
     assert "new revision" in instructions
     assert "compatible session" in instructions
+    assert "needs_human is valid only when risk is high" not in instructions
+    assert "only risk and confidence" not in instructions
 
 
 def test_consumer_instructions_leave_boundary_assessment_to_audit_model():

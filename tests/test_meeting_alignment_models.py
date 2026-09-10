@@ -1,9 +1,11 @@
+import ast
 import json
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+import app.meeting_alignment_models as models
 from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
     MeetingAlignmentJob,
@@ -554,3 +556,391 @@ def test_committed_schema_requires_explicit_sensitive_private_message():
     assert {entry.get("type") for entry in schema["properties"][
         "sensitive_private_message"
     ]["anyOf"]} >= {"null"}
+
+
+def direct_target():
+    return {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "u-a",
+        "title": "A",
+        "candidates": [],
+    }
+
+
+def aligned_topic():
+    return {
+        "title": "上线范围",
+        "state": "aligned",
+        "views": [{"speaker": "A", "view": "小流量", "reason": "控制风险"}],
+        "conclusion": "先小流量再逐步放量。",
+        "alignment_reason": "双方复述一致并承诺执行。",
+    }
+
+
+def sensitive_private_payload():
+    return {
+        "target": direct_target(),
+        "message": "候选人结论仅同步给人员负责人。",
+        "reason": "涉及候选人评价。",
+        "recipient_evidence": ["DWS 实时身份：A 为人员负责人"],
+    }
+
+
+def cross_field_rule_payloads() -> dict[str, dict]:
+    """One decision payload per cross-field rule, each breaking exactly that rule."""
+    payloads: dict[str, dict] = {}
+
+    topic_without_conclusion = valid_send_decision()
+    topic_without_conclusion["topics"][0]["state"] = "aligned"
+    payloads[models.ALIGNED_TOPIC_RESULT_RULE.message] = topic_without_conclusion
+
+    aligned_trigger_only = valid_send_decision()
+    aligned_trigger_only["trigger_reasons"] = ["aligned_disagreement"]
+    payloads[models.ALIGNED_TRIGGER_NEEDS_TOPIC_RULE.message] = aligned_trigger_only
+
+    aligned_topic_without_trigger = valid_send_decision()
+    aligned_topic_without_trigger["topics"] = [aligned_topic()]
+    payloads[models.ALIGNED_TOPIC_NEEDS_TRIGGER_RULE.message] = (
+        aligned_topic_without_trigger
+    )
+
+    unresolved_trigger_without_topic = valid_send_decision()
+    unresolved_trigger_without_topic["topics"] = [aligned_topic()]
+    unresolved_trigger_without_topic["trigger_reasons"] = [
+        "aligned_disagreement",
+        "unresolved_disagreement",
+    ]
+    payloads[models.UNRESOLVED_TRIGGER_NEEDS_TOPIC_RULE.message] = (
+        unresolved_trigger_without_topic
+    )
+
+    unresolved_topic_without_trigger = valid_send_decision()
+    unresolved_topic_without_trigger["trigger_reasons"] = ["meeting_summary"]
+    payloads[models.UNRESOLVED_TOPIC_NEEDS_TRIGGER_RULE.message] = (
+        unresolved_topic_without_trigger
+    )
+
+    unresolved_without_questions = valid_send_decision()
+    unresolved_without_questions["key_questions"] = []
+    payloads[models.UNRESOLVED_TRIGGER_NEEDS_QUESTIONS_RULE.message] = (
+        unresolved_without_questions
+    )
+
+    lonely_derek_trigger = valid_send_decision()
+    lonely_derek_trigger["trigger_reasons"] = [
+        "unresolved_disagreement",
+        "derek_viewpoint",
+    ]
+    payloads[models.DEREK_VIEWPOINT_PAIRING_RULE.message] = lonely_derek_trigger
+
+    without_triggers = valid_send_decision()
+    without_triggers["trigger_reasons"] = []
+    without_triggers["topics"] = []
+    without_triggers["key_questions"] = []
+    payloads[models.SEND_TRIGGER_REASONS_RULE.message] = without_triggers
+
+    without_final_message = valid_send_decision()
+    without_final_message["final_message"] = "  "
+    payloads[models.SEND_FINAL_MESSAGE_RULE.message] = without_final_message
+
+    without_target = valid_send_decision()
+    without_target["target"] = None
+    payloads[models.SEND_TARGET_RULE.message] = without_target
+
+    group_without_candidates = valid_send_decision()
+    group_without_candidates["target"]["candidates"] = []
+    payloads[models.GROUP_TARGET_FIELDS_RULE.message] = group_without_candidates
+
+    group_off_first_candidate = valid_send_decision()
+    group_off_first_candidate["target"]["candidates"][0]["conversation_id"] = "cid-2"
+    payloads[models.GROUP_TARGET_FIRST_CANDIDATE_RULE.message] = (
+        group_off_first_candidate
+    )
+
+    group_with_direct_user = valid_send_decision()
+    group_with_direct_user["target"]["direct_user_id"] = "u-a"
+    payloads[models.GROUP_TARGET_NO_DIRECT_USER_RULE.message] = group_with_direct_user
+
+    direct_with_group_fields = valid_send_decision()
+    direct_with_group_fields["audience_scope"] = "personal"
+    direct_with_group_fields["target"] = direct_target() | {"conversation_id": "cid-1"}
+    payloads[models.DIRECT_TARGET_NO_GROUP_FIELDS_RULE.message] = (
+        direct_with_group_fields
+    )
+
+    direct_without_title = valid_send_decision()
+    direct_without_title["audience_scope"] = "personal"
+    direct_without_title["target"] = direct_target() | {"title": " "}
+    payloads[models.DIRECT_TARGET_TITLE_RULE.message] = direct_without_title
+
+    private_outside_business = valid_send_decision()
+    private_outside_business["audience_scope"] = "personal"
+    private_outside_business["target"] = direct_target()
+    private_outside_business["sensitive_private_message"] = sensitive_private_payload()
+    payloads[models.PRIVATE_MESSAGE_BUSINESS_SCOPE_RULE.message] = (
+        private_outside_business
+    )
+
+    private_to_group = valid_send_decision()
+    private_to_group["sensitive_private_message"] = sensitive_private_payload() | {
+        "target": valid_send_decision()["target"]
+    }
+    payloads[models.PRIVATE_MESSAGE_DIRECT_TARGET_RULE.message] = private_to_group
+
+    private_without_user_id = valid_send_decision()
+    private_without_user_id["sensitive_private_message"] = (
+        sensitive_private_payload()
+        | {"target": direct_target() | {"direct_user_id": " "}}
+    )
+    payloads[models.PRIVATE_MESSAGE_USER_ID_RULE.message] = private_without_user_id
+
+    private_without_evidence = valid_send_decision()
+    private_without_evidence["sensitive_private_message"] = (
+        sensitive_private_payload() | {"recipient_evidence": []}
+    )
+    payloads[models.PRIVATE_MESSAGE_EVIDENCE_RULE.message] = private_without_evidence
+
+    return payloads
+
+
+def aligned_send_decision():
+    payload = valid_send_decision()
+    payload["trigger_reasons"] = ["aligned_disagreement"]
+    payload["topics"] = [aligned_topic()]
+    payload["key_questions"] = []
+    return payload
+
+
+def direct_send_decision():
+    payload = valid_send_decision()
+    payload["audience_scope"] = "personal"
+    payload["target"] = direct_target()
+    return payload
+
+
+def private_send_decision():
+    payload = valid_send_decision()
+    payload["sensitive_private_message"] = sensitive_private_payload()
+    return payload
+
+
+def cross_field_rule_satisfying_payloads() -> dict[str, dict]:
+    """One decision payload per cross-field rule, each built as its prose describes.
+
+    Written from the `requirement` text alone, so a requirement that describes a
+    shape the validators reject fails here instead of only misleading the model.
+    """
+    payloads: dict[str, dict] = {}
+
+    # topics[].state=aligned needs both results; state=unresolved writes them empty.
+    payloads[models.ALIGNED_TOPIC_RESULT_RULE.message] = aligned_send_decision()
+    payloads[models.ALIGNED_TRIGGER_NEEDS_TOPIC_RULE.message] = aligned_send_decision()
+    payloads[models.ALIGNED_TOPIC_NEEDS_TRIGGER_RULE.message] = aligned_send_decision()
+
+    # The unresolved half of both biconditionals, plus its key_questions duty.
+    payloads[models.UNRESOLVED_TRIGGER_NEEDS_TOPIC_RULE.message] = valid_send_decision()
+    payloads[models.UNRESOLVED_TOPIC_NEEDS_TRIGGER_RULE.message] = valid_send_decision()
+    payloads[models.UNRESOLVED_TRIGGER_NEEDS_QUESTIONS_RULE.message] = (
+        valid_send_decision()
+    )
+
+    paired_derek_viewpoint = valid_send_decision()
+    paired_derek_viewpoint["trigger_reasons"] = [
+        "unresolved_disagreement",
+        "derek_viewpoint",
+    ]
+    paired_derek_viewpoint["derek_viewpoint"] = valid_derek_viewpoint()
+    payloads[models.DEREK_VIEWPOINT_PAIRING_RULE.message] = paired_derek_viewpoint
+
+    payloads[models.SEND_TRIGGER_REASONS_RULE.message] = valid_send_decision()
+    payloads[models.SEND_FINAL_MESSAGE_RULE.message] = valid_send_decision()
+    payloads[models.SEND_TARGET_RULE.message] = valid_send_decision()
+
+    # kind=group: conversation_id non-empty, candidates non-empty and led by it,
+    # direct_user_id present as "".
+    payloads[models.GROUP_TARGET_FIELDS_RULE.message] = valid_send_decision()
+    payloads[models.GROUP_TARGET_FIRST_CANDIDATE_RULE.message] = valid_send_decision()
+    payloads[models.GROUP_TARGET_NO_DIRECT_USER_RULE.message] = valid_send_decision()
+
+    # kind=direct: the group keys stay present as ""/[] and title is non-empty,
+    # while direct_user_id carries the counterpart's real id.
+    payloads[models.DIRECT_TARGET_NO_GROUP_FIELDS_RULE.message] = (
+        direct_send_decision()
+    )
+    payloads[models.DIRECT_TARGET_TITLE_RULE.message] = direct_send_decision()
+
+    payloads[models.PRIVATE_MESSAGE_BUSINESS_SCOPE_RULE.message] = (
+        private_send_decision()
+    )
+    payloads[models.PRIVATE_MESSAGE_DIRECT_TARGET_RULE.message] = (
+        private_send_decision()
+    )
+    payloads[models.PRIVATE_MESSAGE_USER_ID_RULE.message] = private_send_decision()
+    payloads[models.PRIVATE_MESSAGE_EVIDENCE_RULE.message] = private_send_decision()
+
+    return payloads
+
+
+def raised_validator_messages(payload: dict) -> set[str]:
+    with pytest.raises(ValidationError) as raised:
+        MeetingAlignmentDecision.model_validate(payload)
+    return {
+        error["msg"].removeprefix("Value error, ") for error in raised.value.errors()
+    }
+
+
+def test_every_cross_field_validator_has_a_declared_rule():
+    raised: set[str] = set()
+    for message, payload in cross_field_rule_payloads().items():
+        messages = raised_validator_messages(payload)
+        assert message in messages, message
+        raised |= messages
+
+    assert raised == {
+        rule.message for rule in models.MEETING_ALIGNMENT_CROSS_FIELD_RULES
+    }
+    for rule in models.MEETING_ALIGNMENT_CROSS_FIELD_RULES:
+        assert rule.message.strip()
+        assert rule.requirement.strip()
+
+
+@pytest.mark.parametrize(
+    "rule",
+    models.MEETING_ALIGNMENT_CROSS_FIELD_RULES,
+    ids=[rule.message for rule in models.MEETING_ALIGNMENT_CROSS_FIELD_RULES],
+)
+def test_every_rule_requirement_describes_a_payload_that_validates(rule):
+    """The requirement half is what the model acts on, so pin it to the validators.
+
+    `test_cross_field_validators_raise_only_declared_rule_constants` ties the
+    message half to the raise sites. Without this the requirement stays free
+    prose and can quietly describe a shape the validators reject.
+    """
+    payload = cross_field_rule_satisfying_payloads()[rule.message]
+
+    MeetingAlignmentDecision.model_validate(payload)
+
+
+def test_every_rule_has_a_satisfying_payload():
+    assert set(cross_field_rule_satisfying_payloads()) == {
+        rule.message for rule in models.MEETING_ALIGNMENT_CROSS_FIELD_RULES
+    }
+
+
+def test_cross_field_validators_raise_only_declared_rule_constants():
+    """A validator rule added without a CrossFieldRule entry never reaches the prompts."""
+    module = ast.parse(
+        (
+            Path(__file__).parents[1] / "app" / "meeting_alignment_models.py"
+        ).read_text()
+    )
+    declared = {rule.message for rule in models.MEETING_ALIGNMENT_CROSS_FIELD_RULES}
+    raised_constants: list[str] = []
+    for function in ast.walk(module):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        if not any(
+            "validator" in ast.unparse(decorator)
+            for decorator in function.decorator_list
+        ):
+            continue
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Raise):
+                continue
+            assert isinstance(node.exc, ast.Call) and node.exc.args, function.name
+            argument = ast.unparse(node.exc.args[0])
+            assert argument.endswith(".message"), argument
+            raised_constants.append(argument.removesuffix(".message"))
+
+    assert raised_constants
+    for name in raised_constants:
+        assert getattr(models, name).message in declared, name
+
+
+def test_reported_problems_map_back_to_the_rule_that_fired():
+    messages = [rule.message for rule in models.MEETING_ALIGNMENT_CROSS_FIELD_RULES]
+    assert len(set(messages)) == len(messages)
+
+    for rule in models.MEETING_ALIGNMENT_CROSS_FIELD_RULES:
+        # No message may be a suffix of another, or the lookup would mismatch.
+        assert not any(
+            other != rule.message and other.endswith(rule.message)
+            for other in messages
+        ), rule.message
+        assert (
+            models.meeting_alignment_rule_for_message(f"Value error, {rule.message}")
+            == rule
+        )
+        assert (
+            models.meeting_alignment_rule_for_message(
+                f"sensitive_private_message: Value error, {rule.message}"
+            )
+            == rule
+        )
+
+    assert models.meeting_alignment_rule_for_message("topics[].title: Field required") is None
+
+
+def test_derived_schema_states_every_cross_field_rule():
+    description = MeetingAlignmentDecision.model_json_schema()["description"]
+
+    for rule in models.MEETING_ALIGNMENT_CROSS_FIELD_RULES:
+        assert rule.message in description, rule.message
+        assert rule.requirement in description, rule.message
+
+
+def test_target_field_description_states_group_and_direct_combinations():
+    description = MeetingAlignmentDecision.model_json_schema()["properties"]["target"][
+        "description"
+    ]
+
+    for key in ("kind", "conversation_id", "direct_user_id", "title", "candidates"):
+        assert key in description, key
+    # The trap behind the live `target.direct_user_id: Field required` loop: the
+    # unused side stays a required key and has to be emitted empty, not dropped.
+    assert "省略" in description
+    assert '""' in description
+    assert "[]" in description
+
+
+def test_sensitive_private_target_description_states_its_own_required_keys():
+    description = MeetingAlignmentDecision.model_json_schema()["$defs"][
+        "SensitivePrivateMessage"
+    ]["properties"]["target"]["description"]
+
+    assert "direct_user_id" in description
+    assert "非空" in description
+    # The nested target is the same five-key StrictModel as the top-level one,
+    # so it carries the same "emit the unused side empty, do not drop it" note.
+    for key in ("kind", "conversation_id", "title", "candidates"):
+        assert key in description, key
+    assert "省略" in description
+    assert '""' in description
+    assert "[]" in description
+
+
+def test_no_description_claims_the_two_direct_targets_contradict_each_other():
+    """The two slots differ in what they allow, not in what direct_user_id means.
+
+    `_validate_source_aware_target` requires the top-level direct target to carry
+    the counterpart's user_id whenever the roster resolves one, so guidance that
+    told the model to empty it there produced a terminal meeting_target failure
+    with no correction turn.
+    """
+    schema = MeetingAlignmentDecision.model_json_schema()
+    descriptions = [schema["description"]]
+    descriptions.extend(
+        prop["description"]
+        for prop in schema["properties"].values()
+        if "description" in prop
+    )
+    descriptions.extend(
+        prop["description"]
+        for definition in schema["$defs"].values()
+        for prop in definition.get("properties", {}).values()
+        if "description" in prop
+    )
+
+    for description in descriptions:
+        assert "相反" not in description, description
