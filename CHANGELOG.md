@@ -1,5 +1,13 @@
 # Changelog
 
+- 2026-09-09: when every runtime route is paused or unprobed at the start
+  of a routed workload (task agent, meeting, classification, workbench), the
+  router now reports the outage as a retryable external dependency, so the
+  work item is deferred with backoff instead of being failed and surfaced in
+  Attention. Authentication pauses and missing capabilities stay terminal.
+  The route-unavailability classifier moved into the router and is shared
+  with the Agent turn runner.
+
 - 2026-09-09: an audited email unsubscribe Audit turn may report `executed`
   only when `execute_audited_email_unsubscribe` actually ran for that turn
   (a claim or effect bound to the Audit run id). An unbacked `executed` is

@@ -461,6 +461,43 @@ def test_user_stop_terminalizes_current_attempt_without_route_failover(store, co
     assert attempts[0].failure_code == "runtime_cancelled"
 
 
+@pytest.mark.parametrize(
+    ("pause_code", "deferrable"),
+    [("codex_provider_overloaded", True), ("codex_login_required", False)],
+)
+def test_all_routes_paused_before_selection_is_deferred_only_for_transient_pauses(
+    store, config, pause_code, deferrable
+):
+    run_id = seed_agent_run_parent(store, task_id=945)
+    for route in config.routes:
+        store.open_runtime_route_pause(
+            route.name, pause_code, retry_at="2099-01-01T00:00:00+00:00"
+        )
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=lambda *_args, **_kwargs: ProcessRunResult(0, "42", ""),
+    )
+
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed") as info:
+        routed.execute(
+            workload_kind="agent_run",
+            workload_key=str(run_id),
+            prompt="read",
+            command_factory=CodexCommandFactory.standard(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+
+    assert info.value.retryable_external_dependency is deferrable
+    assert store.list_agent_runtime_attempts(run_id) == []
+
+
 def test_pause_opened_after_selection_prevents_attempt_and_child(store, config):
     run_id = seed_agent_run_parent(store, task_id=944)
     calls = []

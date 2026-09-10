@@ -4,10 +4,10 @@ import pytest
 
 from app.agent_runtime_production import build_production_agent_runtime
 from app.agent_runtime_router import RuntimeRouteDecision
+from app.agent_runtime_router import route_unavailable_code
 from app.agent_turn_runner import (
     AgentTurnProcess,
     RuntimeRouteUnavailableError,
-    _route_unavailable_code,
 )
 from app.agent_wire_contracts import parse_consumer_agent_wire_result
 from app.store import AgentRole, AutoReplyStore
@@ -129,7 +129,7 @@ def test_production_runtime_retains_the_service_owned_refresh_callable(
 def test_route_unavailable_code_is_derived_from_typed_route_reasons(
     ineligible_routes, expected
 ):
-    assert _route_unavailable_code(ineligible_routes) == expected
+    assert route_unavailable_code(ineligible_routes) == expected
     error = RuntimeRouteUnavailableError(
         "no_eligible_route", ineligible_routes=ineligible_routes
     )

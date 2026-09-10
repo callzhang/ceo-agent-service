@@ -31,7 +31,7 @@ from app.agent_runtime_contracts import (
     RuntimeKind,
     RuntimeRoute,
 )
-from app.agent_runtime_router import AgentRuntimeRouter
+from app.agent_runtime_router import AgentRuntimeRouter, route_unavailable_code
 from app.claude_runtime_adapter import (
     ClaudeEventNormalizer,
     ClaudeRuntimeAdapter,
@@ -106,51 +106,6 @@ _RUNTIME_RESULT_FORBIDDEN_DOCUMENT_FIELDS = frozenset(
     }
 )
 
-_ROUTE_AUTHENTICATION_FAILURE_CODES = frozenset(
-    {
-        "codex_login_required",
-        CODEX_PROVIDER_AUTH_FAILED,
-        "claude_authentication_failed",
-        "friday_runtime_auth_failed",
-    }
-)
-# A route without a current healthy probe snapshot, or one paused for a
-# non-authentication failure, becomes eligible again on its own; the turn is
-# deferred rather than failed.
-_TRANSIENT_ROUTE_REASONS = frozenset(
-    {"snapshot_missing", "snapshot_expired", "snapshot_invalid", "snapshot_unhealthy"}
-)
-
-
-def _route_unavailable_code(ineligible_routes: tuple[tuple[str, str], ...]) -> str:
-    reasons = [reason for _, reason in ineligible_routes]
-    if not reasons:
-        return "runtime_execution_failed"
-    capability = [
-        reason
-        for reason in reasons
-        if reason.startswith(("missing_capabilities:", "surface_missing:"))
-    ]
-    paused = [reason.removeprefix("paused:") for reason in reasons if reason.startswith("paused:")]
-    authentication = [code for code in paused if code in _ROUTE_AUTHENTICATION_FAILURE_CODES]
-    transient = [
-        reason
-        for reason in reasons
-        if reason in _TRANSIENT_ROUTE_REASONS
-        or (
-            reason.startswith("paused:")
-            and reason.removeprefix("paused:") not in _ROUTE_AUTHENTICATION_FAILURE_CODES
-        )
-    ]
-    if len(capability) == len(reasons):
-        return "runtime_capability_missing"
-    if transient:
-        return "runtime_provider_unreachable"
-    if authentication:
-        return "runtime_provider_auth_failed"
-    return "runtime_execution_failed"
-
-
 class RuntimeRouteUnavailableError(RuntimeError):
     """No configured runtime route can serve this turn."""
 
@@ -163,7 +118,7 @@ class RuntimeRouteUnavailableError(RuntimeError):
         ineligible_routes: tuple[tuple[str, str], ...] = (),
     ) -> None:
         self.reason = reason
-        self.code = _route_unavailable_code(ineligible_routes)
+        self.code = route_unavailable_code(ineligible_routes)
         super().__init__(self.code)
 
 

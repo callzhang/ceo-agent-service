@@ -25,6 +25,7 @@ from app.agent_runtime_contracts import (
     runtime_route_surface_capabilities,
 )
 from app.codex_decision import extract_codex_session_id
+from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.codex_history import count_codex_session_lines
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import (
@@ -399,6 +400,53 @@ def _runtime_failure_from_friday_error(error: FridayRuntimeError) -> RuntimeFail
         failover_permitted=error.retryable
         or error.code == "friday_runtime_auth_failed",
     )
+
+
+_ROUTE_AUTHENTICATION_FAILURE_CODES = frozenset(
+    {
+        "codex_login_required",
+        CODEX_PROVIDER_AUTH_FAILED,
+        "claude_authentication_failed",
+        "friday_runtime_auth_failed",
+    }
+)
+# A route without a current healthy probe snapshot, or one paused for a
+# non-authentication failure, becomes eligible again on its own; the work is
+# deferred rather than failed.
+_TRANSIENT_ROUTE_REASONS = frozenset(
+    {"snapshot_missing", "snapshot_expired", "snapshot_invalid", "snapshot_unhealthy"}
+)
+
+
+def route_unavailable_code(ineligible_routes: tuple[tuple[str, str], ...]) -> str:
+    """Classify a ``no_eligible_route`` decision from its typed per-route reasons."""
+
+    reasons = [reason for _, reason in ineligible_routes]
+    if not reasons:
+        return "runtime_execution_failed"
+    capability = [
+        reason
+        for reason in reasons
+        if reason.startswith(("missing_capabilities:", "surface_missing:"))
+    ]
+    paused = [reason.removeprefix("paused:") for reason in reasons if reason.startswith("paused:")]
+    authentication = [code for code in paused if code in _ROUTE_AUTHENTICATION_FAILURE_CODES]
+    transient = [
+        reason
+        for reason in reasons
+        if reason in _TRANSIENT_ROUTE_REASONS
+        or (
+            reason.startswith("paused:")
+            and reason.removeprefix("paused:") not in _ROUTE_AUTHENTICATION_FAILURE_CODES
+        )
+    ]
+    if len(capability) == len(reasons):
+        return "runtime_capability_missing"
+    if transient:
+        return "runtime_provider_unreachable"
+    if authentication:
+        return "runtime_provider_auth_failed"
+    return "runtime_execution_failed"
 
 
 def _is_retryable_external_runtime_failure(failure: RuntimeFailure) -> bool:
@@ -962,7 +1010,10 @@ class RoutedCodexExecution:
                 retryable_external_dependency=(
                     _is_retryable_external_runtime_failure(terminal_failure)
                     if terminal_failure
-                    else False
+                    # Every route is merely paused or unprobed: the runtime is
+                    # not ready rather than broken, so callers defer the work.
+                    else route_unavailable_code(decision.ineligible_routes)
+                    == "runtime_provider_unreachable"
                 ),
             )
         route = decision.route

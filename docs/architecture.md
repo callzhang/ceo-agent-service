@@ -763,6 +763,8 @@ run 才能被持久队列恢复。
   （延期重试）；全部路由缺能力 → `runtime_capability_missing`；仅认证类暂停 →
   `runtime_provider_auth_failed`。Email 任务对 `failed_retryable` 的编排结果与 DingTalk worker
   一致：按退避时间延期重入队，不再当作终态失败。
+  路由层的其他工作负载（任务 Agent、会议、邮件分类、workbench）在选路阶段就发现所有路由暂停/未探测时，
+  同样按可重试的外部依赖延期，而不是判为执行失败。
 - **无证据的 executed**：审计化退订任务里，Audit 只有在本轮真的调用了
   `execute_audited_email_unsubscribe`（存在绑定到该 Audit run 的 claim/effect）时才能返回 `executed`；
   否则解析阶段就判为 `codex_result_invalid`，下一轮带修正块重做，编排层的 continuation 守卫只作最后兜底。
