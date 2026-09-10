@@ -139,6 +139,8 @@ class CodexRuntimeAdapter:
                 if configured_route.credential_mode == CredentialMode.SERVICE_API
                 else None
             ),
+            multi_agent=False,
+            apps=False,
             shell_environment_policy_core=True,
             sandbox_mode=sandbox_mode,
             skip_git_repo_check=skip_git_repo_check,

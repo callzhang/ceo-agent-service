@@ -75,6 +75,32 @@ def test_codex_command_inherits_principal_codex_config_and_skills(tmp_path: Path
     assert "features.apps=false" not in command
 
 
+def test_codex_command_can_disable_multi_agent_for_background_service(tmp_path: Path):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        multi_agent=False,
+    )
+
+    assert 'features.multi_agent=false' in command
+
+
+def test_codex_command_can_disable_host_app_instructions_for_background_service(
+    tmp_path: Path,
+):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        apps=False,
+    )
+
+    assert 'features.apps=false' in command
+
+
 def test_codex_command_supports_strict_read_only_policy(tmp_path: Path):
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 

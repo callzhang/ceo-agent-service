@@ -204,6 +204,8 @@ def test_adapter_builds_equivalent_route_command_options(adapter, config, tmp_pa
     assert str(tmp_path / "image.png") in command
     assert str(tmp_path / "result.schema.json") in command
     assert "Follow the contract." in " ".join(command)
+    assert 'features.multi_agent=false' in command
+    assert 'features.apps=false' in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
 
 

@@ -51,4 +51,7 @@ def test_wechat_decision_runner_uses_normal_runtime_command(
     assert "--sandbox read-only" not in command_text
     assert 'approval_policy="on-failure"' in command_text
     assert "features.plugins=false" not in command_text
-    assert "features.apps=false" not in command_text
+    # Every service Codex command pins the interactive-only features off, so
+    # the WeChat decision runner carries the same flags as the normal command.
+    assert "features.multi_agent=false" in command_text
+    assert "features.apps=false" in command_text

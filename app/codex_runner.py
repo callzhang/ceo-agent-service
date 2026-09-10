@@ -229,6 +229,8 @@ class CodexRunner:
         provider: str | None = None,
         reasoning_effort: str | None = None,
         model_provider_settings: Mapping[str, str] | None = None,
+        multi_agent: bool | None = None,
+        apps: bool | None = None,
         shell_environment_policy_core: bool = False,
         sandbox_mode: str | None = None,
         skip_git_repo_check: bool = False,
@@ -308,6 +310,16 @@ class CodexRunner:
                 )
             ),
             *codex_model_provider_settings_options(provider, model_provider_settings),
+            *(
+                ["-c", _config_string("features.multi_agent", multi_agent)]
+                if multi_agent is not None
+                else []
+            ),
+            *(
+                ["-c", _config_string("features.apps", apps)]
+                if apps is not None
+                else []
+            ),
             *(
                 [
                     "-c",
