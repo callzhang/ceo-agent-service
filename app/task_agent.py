@@ -25,6 +25,8 @@ from app.structured_agent import load_skill_text
 from app.task_models import (
     FollowUpDraftChange,
     FollowUpDraftDecision,
+    ProjectMemoryContext,
+    TaskProjectPatch,
     TaskAgentDecision,
     TodoChange,
     TodoStatus,
@@ -655,6 +657,11 @@ def process_work_item(
                 session_scope_id=session_scope_id,
             )
             decision = _normalize_follow_up_change_times(decision)
+            decision = _restore_structured_update_project(
+                decision,
+                work_item.summary,
+                candidates,
+            )
             _validate_task_agent_validation_repair(
                 rejected_decision,
                 decision,
@@ -1097,6 +1104,57 @@ def _json_object(value: str) -> dict[str, object]:
 
 class OwnerResolutionRequired(ValueError):
     pass
+
+
+def _restore_structured_update_project(
+    decision: TaskAgentDecision,
+    summary: str,
+    candidates: list[object],
+) -> TaskAgentDecision:
+    """Fill a missing update project from the source's stable project relation."""
+    if decision.action != "update_project" or decision.project is not None:
+        return decision
+    try:
+        payload = json.loads(summary)
+    except (TypeError, json.JSONDecodeError):
+        return decision
+    if not isinstance(payload, dict):
+        return decision
+    project_payload = payload.get("project")
+    if not isinstance(project_payload, dict):
+        return decision
+    project_id = project_payload.get("id")
+    if (
+        isinstance(project_id, bool)
+        or not isinstance(project_id, int)
+        or project_id <= 0
+    ):
+        return decision
+    candidate = next(
+        (
+            item
+            for item in candidates
+            if getattr(getattr(item, "project", None), "id", None) == project_id
+        ),
+        None,
+    )
+    if candidate is None:
+        return decision
+    project = candidate.project
+    try:
+        memory_context = ProjectMemoryContext.model_validate(
+            _json_object(project.memory_context_json)
+        )
+    except ValidationError:
+        return decision
+    return decision.model_copy(
+        update={
+            "project": TaskProjectPatch(
+                id=project.id,
+                memory_context=memory_context,
+            )
+        }
+    )
 
 
 def _require_supported_owner(

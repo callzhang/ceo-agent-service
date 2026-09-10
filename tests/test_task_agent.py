@@ -4430,6 +4430,94 @@ def test_process_work_item_repairs_update_project_without_project(
     assert "不得改成 create_project" in codex.prompts[1]
 
 
+def test_process_work_item_restores_structured_project_for_update_repair(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    memory_context = _memory_context()
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        memory_context_json=json.dumps(memory_context, ensure_ascii=False),
+    )
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "structured-project",
+                "title": "客户交付进展",
+                "conversation_id": "cid-1",
+                "conversation_title": "客户群",
+                "created_at": "2026-06-07 09:00:00",
+            },
+            "summary": json.dumps(
+                {"project": {"id": project_id}, "todo": {"title": "交付"}},
+                ensure_ascii=False,
+            ),
+            "project_name": "客户交付",
+            "context": {
+                "sender": "Mina",
+                "participants": [],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "客户群",
+            },
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    invalid_update = {
+        "action": "update_project",
+        "project": None,
+        "todo_changes": [],
+        "follow_up_drafts": [],
+        "follow_up_changes": [],
+        "update_summary": "更新客户交付。",
+        "merge_reason": "事项属于已有项目。",
+        "memory_recall_used": True,
+        "confidence": 0.8,
+    }
+
+    class RepairingCodex(FakeCodexWithAuditEvents):
+        def __init__(self):
+            super().__init__(invalid_update, [{"tool": "memory_recall"}])
+            self.calls = 0
+
+        def decide(self, **kwargs):
+            self.prompts.append(kwargs["prompt"])
+            self.calls += 1
+            self.last_audit_tool_events = [{"tool": "memory_recall"}]
+            return TaskAgentDecision.model_validate(invalid_update)
+
+    codex = RepairingCodex()
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        runs = db.execute(
+            "select status, error from task_agent_runs "
+            "where summary_input_id=? order by id",
+            (input_id,),
+        ).fetchall()
+    assert input_row == ("done", "")
+    assert runs == [
+        ("failed", "update_project requires project"),
+        ("completed", ""),
+    ]
+    assert codex.calls == 2
+
+
 def test_process_work_item_does_not_require_memory_recall_receipt(
     tmp_path,
     monkeypatch,
