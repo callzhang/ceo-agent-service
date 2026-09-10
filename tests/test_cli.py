@@ -7997,3 +7997,21 @@ def test_process_work_items_keeps_execution_failures_bounded(
     assert [(row["kind"], row["detail"]) for row in error_rows] == [
         ("task_agent", "runtime_execution_failed")
     ]
+
+
+def test_repair_exhausted_work_item_is_retried_then_bounded():
+    from app.task_agent import TaskDecisionRepairExhausted
+
+    exhausted = TaskDecisionRepairExhausted(
+        "task decision repair exhausted after 2 rounds: "
+        "non-skip task decision requires project.memory_context"
+    )
+    assert cli._should_retry_work_summary_input(exhausted, 1) is True
+    assert (
+        cli._should_retry_work_summary_input(
+            exhausted, cli.WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS
+        )
+        is False
+    )
+    # A plain validation error is still not retried.
+    assert cli._should_retry_work_summary_input(ValueError("update_project requires project"), 1) is False

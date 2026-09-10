@@ -80,7 +80,12 @@ from app.org_cache import (
     refresh_org_cache,
 )
 from app.store import AgentRunLeaseLostError, AutoReplyStore
-from app.task_agent import TaskAgentCodexRunner, TaskAgentRunner, process_work_item
+from app.task_agent import (
+    TaskAgentCodexRunner,
+    TaskAgentRunner,
+    TaskDecisionRepairExhausted,
+    process_work_item,
+)
 from app.task_memory_backfill import (
     ProjectMemoryContextCodexRunner,
     validate_project_memory_context,
@@ -1501,6 +1506,11 @@ def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> b
     if attempts >= WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS:
         return False
     if isinstance(error, Exception) and is_external_dependency_error(error):
+        return True
+    if isinstance(error, TaskDecisionRepairExhausted):
+        # The bounded repair rounds ended with a repairable rule unmet; the
+        # item is retried on a later pass with a fresh session rather than
+        # terminalized on a structural validation error.
         return True
     if _is_codex_provider_recovery_wait_reason(normalized_error):
         return True

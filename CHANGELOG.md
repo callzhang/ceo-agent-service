@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-10: a work item whose bounded decision repair rounds are exhausted
+  (`TaskDecisionRepairExhausted`) is retried on a later pass within the
+  work-item attempt budget instead of being terminalized on the structural
+  validation error.
+
 - 2026-09-10: `AutoReplyStore.complete_superseded_failed_weekly_okr_analysis_jobs`
   extends the documented supersede recovery to analysis jobs that ended with
   a technical failure (`runtime_route_unavailable`, `runtime_lease_expired`):
