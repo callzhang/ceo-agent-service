@@ -89,6 +89,11 @@ def test_retrieve_project_candidates_prioritizes_structured_project_id(tmp_path)
 
 def test_render_candidate_prompt_returns_project_context_json(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
+    memory_context = {
+        "query": "售前知识库",
+        "summary": "已确认的售前知识库背景。",
+        "memories": [{"source": "memory_recall", "text": "稳定背景"}],
+    }
     store.create_work_project(
         title="售前知识库建设",
         category="sales",
@@ -103,6 +108,7 @@ def test_render_candidate_prompt_returns_project_context_json(tmp_path):
             [{"description": "材料放在 business/售前知识库", "source": "memory"}],
             ensure_ascii=False,
         ),
+        memory_context_json=json.dumps(memory_context, ensure_ascii=False),
         source_conversations_json=json.dumps(
             [{"id": "cid-1", "title": "售前项目群"}],
             ensure_ascii=False,
@@ -119,6 +125,7 @@ def test_render_candidate_prompt_returns_project_context_json(tmp_path):
     assert payload[0]["category"] == "sales"
     assert payload[0]["title"] == "售前知识库建设"
     assert payload[0]["facts"][0]["source"] == "memory"
+    assert payload[0]["memory_context"] == memory_context
     assert payload[0]["source_conversations"][0]["id"] == "cid-1"
 
 

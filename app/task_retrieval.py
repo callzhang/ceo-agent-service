@@ -184,6 +184,10 @@ def render_candidate_prompt(candidates: list[ProjectCandidate]) -> str:
     payload = []
     for candidate in candidates:
         project = candidate.project
+        try:
+            memory_context = json.loads(project.memory_context_json or "{}")
+        except (TypeError, json.JSONDecodeError):
+            memory_context = {}
         payload.append(
             {
                 "id": project.id,
@@ -200,6 +204,7 @@ def render_candidate_prompt(candidates: list[ProjectCandidate]) -> str:
                 "current_state": project.current_state,
                 "blocker": project.blocker,
                 "next_step": project.next_step,
+                "memory_context": memory_context,
                 "source_conversations": _parse_json_list(
                     project.source_conversations_json
                 ),
