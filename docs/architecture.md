@@ -763,6 +763,9 @@ run 才能被持久队列恢复。
   （延期重试）；全部路由缺能力 → `runtime_capability_missing`；仅认证类暂停 →
   `runtime_provider_auth_failed`。Email 任务对 `failed_retryable` 的编排结果与 DingTalk worker
   一致：按退避时间延期重入队，不再当作终态失败。
+- **无证据的 executed**：审计化退订任务里，Audit 只有在本轮真的调用了
+  `execute_audited_email_unsubscribe`（存在绑定到该 Audit run 的 claim/effect）时才能返回 `executed`；
+  否则解析阶段就判为 `codex_result_invalid`，下一轮带修正块重做，编排层的 continuation 守卫只作最后兜底。
 - **结果不合契约**：Agent 返回了 JSON 但不满足 wire schema 时，解析器报 `codex_result_invalid`
   并保留失败字段位置（不保留模型原文）；同一角色、同一 revision 的下一次 turn 会收到
   `## Result Correction`，把这些位置反馈给模型，要求只返回修正后的结果。只有完全没有 JSON

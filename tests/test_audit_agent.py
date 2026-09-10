@@ -10,6 +10,7 @@ from app.agent_context import (
     AuditTurnContext,
     MaterialReference,
 )
+from app.agent_result import ResultParseError
 from app.agent_contracts import (
     AuditOutcome,
     ConsumerProposal,
@@ -763,6 +764,84 @@ def test_audit_runtime_environment_overrides_ambient_send_mode(
     assert result.result.outcome is AuditOutcome.EXECUTED
     assert executor.environments[0]["CEO_DRY_RUN"] == "1"
     assert executor.environments[0]["CEO_NOT_SEND_MESSAGE"] == "1"
+
+
+def _audited_email_setup(setup):
+    store, task, audit_context, parent = setup
+    store.complete_agent_run(
+        parent.id,
+        {"outcome": "proposal"},
+        owner="parent",
+    )
+    payload = {
+        "schema": "email_agent_action.v1",
+        "action_type": "unsubscribe",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+    }
+    email_task = task.model_copy(
+        update={"channel": "email", "trigger_message_json": json.dumps(payload)}
+    )
+    email_context = replace(
+        audit_context,
+        task=replace(audit_context.task, channel="email", trigger_raw_payload=payload),
+    )
+    return store, email_task, email_context, parent
+
+
+class _EvidenceDriver:
+    def __init__(self, evidence: bool) -> None:
+        self.evidence = evidence
+        self.calls: list[tuple[int, int]] = []
+
+    def audit_run_has_execution_evidence(self, task, *, audit_run_id: int) -> bool:
+        self.calls.append((task.id, audit_run_id))
+        return self.evidence
+
+
+def test_audited_email_executed_without_tool_evidence_is_an_invalid_result(setup):
+    store, email_task, email_context, parent = _audited_email_setup(setup)
+    driver = _EvidenceDriver(evidence=False)
+    executor = CapturingExecutor(
+        _audit_jsonl("operation-1", session="session-email-audit")
+    )
+
+    with pytest.raises(ResultParseError, match="execute_audited_email_unsubscribe"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+            domain_continuation=driver,
+        ).run(email_task, email_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        email_task.id,
+        email_task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None and run.status == "failed"
+    error = json.loads(run.structured_error_json)
+    assert error["code"] == "codex_result_invalid"
+    assert "execute_audited_email_unsubscribe" in error["detail"]
+    assert driver.calls == [(email_task.id, run.id)]
+    assert "Return executed only after execute_audited_email_unsubscribe" in executor.prompts[0]
+
+
+def test_audited_email_executed_with_tool_evidence_completes(setup):
+    store, email_task, email_context, parent = _audited_email_setup(setup)
+    executor = CapturingExecutor(
+        _audit_jsonl("operation-1", session="session-email-audit")
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        domain_continuation=_EvidenceDriver(evidence=True),
+    ).run(email_task, email_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert result.result.outcome is AuditOutcome.EXECUTED
 
 
 def test_audited_email_turn_receives_task_bound_cli_and_prompt_identity(setup):

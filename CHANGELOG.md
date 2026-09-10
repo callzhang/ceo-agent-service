@@ -1,5 +1,13 @@
 # Changelog
 
+- 2026-09-09: an audited email unsubscribe Audit turn may report `executed`
+  only when `execute_audited_email_unsubscribe` actually ran for that turn
+  (a claim or effect bound to the Audit run id). An unbacked `executed` is
+  now a `codex_result_invalid` result whose next turn carries the
+  `## Result Correction` block, instead of a task that ends in
+  `domain_continuation_state_invalid`; the orchestration guard stays as the
+  final backstop. The Audit prompt states the rule explicitly.
+
 - 2026-09-09: add Settings → MCP. The page lists every MCP server Codex would
   load for a run (from `codex mcp list --json`, URLs shown without query
   tokens) with a per-server "available to background agents" switch, plus the

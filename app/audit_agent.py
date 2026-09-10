@@ -4,10 +4,12 @@ from collections.abc import Callable, Mapping
 import json
 from pathlib import Path
 import sys
+from typing import Protocol
 from uuid import uuid4
 
 from app.agent_context import AuditTurnContext
-from app.agent_contracts import AuditAgentResult
+from app.agent_contracts import AuditAgentResult, AuditOutcome
+from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_router import AgentRuntimeRouter
@@ -34,6 +36,12 @@ from app.store import (
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
+
+
+class ExecutionEvidenceDriver(Protocol):
+    def audit_run_has_execution_evidence(
+        self, task: ReplyTask, *, audit_run_id: int
+    ) -> bool: ...
 
 
 class AuditAgentRunner:
@@ -64,8 +72,10 @@ class AuditAgentRunner:
         reasoning_effort: str = "",
         skill_protocol_override: str = "",
         execution_environment: Mapping[str, str] | None = None,
+        domain_continuation: ExecutionEvidenceDriver | None = None,
     ) -> None:
         self.store = store
+        self.domain_continuation = domain_continuation
         self.workspace = workspace
         self.codex_bin = codex_bin
         self.runtime_config = runtime_config
@@ -182,7 +192,10 @@ class AuditAgentRunner:
                 f"audit_agent_run_id={run.id}\n"
                 "Pass the accepted ProposedAction unchanged as accepted_action. "
                 "Execute at most one new browser operation and never use reply, "
-                "SMTP, mailto, or attachment content."
+                "SMTP, mailto, or attachment content. Return executed only after "
+                "execute_audited_email_unsubscribe has returned a receipt or "
+                "continuation for this turn; without that tool result return "
+                "failed or feedback_provided, never executed."
             )
         prompt += (
             "\n\n### Needs Human Display Contract\n"
@@ -217,12 +230,44 @@ class AuditAgentRunner:
                     cwd=str(SERVICE_ROOT),
                 ) if email_unsubscribe_tools else None,
             ),
-            parse_result=parse_audit_agent_wire_result,
+            parse_result=(
+                self._parse_evidenced_result(task, run)
+                if email_unsubscribe_tools
+                else parse_audit_agent_wire_result
+            ),
             persist_conversation_session=False,
             expected_actions=expected_actions,
             image_paths=[Path(path) for path in context.task.image_paths],
             required_capabilities=self._required_capabilities(context),
         )
+
+    def _parse_evidenced_result(
+        self, task: ReplyTask, run: AgentRun
+    ) -> Callable[[str], AuditAgentResult]:
+        """Accept `executed` only when the audited tool ran for this turn.
+
+        An executed result is a claim about an external write; the durable
+        receipt written by the tool is the evidence. Without it the result is
+        invalid, which sends the model a correction on its next turn instead
+        of ending the task on an unbacked success.
+        """
+
+        def parse(raw: str) -> AuditAgentResult:
+            result = parse_audit_agent_wire_result(raw)
+            if (
+                result.outcome is AuditOutcome.EXECUTED
+                and self.domain_continuation is not None
+                and not self.domain_continuation.audit_run_has_execution_evidence(
+                    task, audit_run_id=run.id
+                )
+            ):
+                raise ResultParseError(
+                    "external_result: executed without a receipt from "
+                    "execute_audited_email_unsubscribe"
+                )
+            return result
+
+        return parse
 
     def _email_unsubscribe_tools(
         self,

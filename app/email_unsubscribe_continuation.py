@@ -100,6 +100,35 @@ class EmailUnsubscribeContinuationDriver:
     def __init__(self, email_store: EmailStore) -> None:
         self.email_store = email_store
 
+    def audit_run_has_execution_evidence(
+        self, task: ReplyTask, *, audit_run_id: int
+    ) -> bool:
+        """Return whether the audited unsubscribe tool ran for this Audit turn.
+
+        The tool binds the claim and every effect it writes to the Audit run
+        that invoked it, so an `executed` result from that run must be backed by
+        a claim or effect carrying its id. Tasks outside the audited unsubscribe
+        lifecycle have no such evidence contract.
+        """
+        if task.channel != "email" or _validated_unsubscribe_task_payload(task) is None:
+            return True
+        try:
+            snapshot = self.email_store.get_email_unsubscribe_state_snapshot(
+                task.trigger_message_id
+            )
+        except Exception:
+            return False
+        if not isinstance(snapshot, dict):
+            return False
+        claim = snapshot.get("claim")
+        effects = snapshot.get("effects") or ()
+        return (
+            isinstance(claim, dict) and claim.get("audit_agent_run_id") == audit_run_id
+        ) or any(
+            isinstance(effect, dict) and effect.get("audit_agent_run_id") == audit_run_id
+            for effect in effects
+        )
+
     def load_snapshot(self, task: ReplyTask) -> _EmailUnsubscribeSnapshot:
         """Load and validate one immutable read view for one derivation pass."""
 

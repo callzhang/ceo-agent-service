@@ -963,3 +963,34 @@ def test_durable_unsubscribe_operation_limit_is_independent_and_bounded():
             entry_reference=ENTRY_REFERENCE,
             operations=operations,
         )
+
+
+@pytest.mark.parametrize(
+    ("claim_run", "effect_run", "audit_run_id", "expected"),
+    [
+        (23, 23, 23, True),
+        (23, None, 23, True),
+        (None, 23, 23, True),
+        (23, 23, 24, False),
+        (None, None, 23, False),
+    ],
+)
+def test_execution_evidence_requires_claim_or_effect_bound_to_the_audit_run(
+    claim_run, effect_run, audit_run_id, expected
+):
+    module = _module()
+    store = FakeEmailStore()
+    store.claim = None if claim_run is None else _claim(audit_agent_run_id=claim_run)
+    store.effect = None if effect_run is None else {**_effect(), "audit_agent_run_id": effect_run}
+
+    driver = module.EmailUnsubscribeContinuationDriver(store)
+
+    assert driver.audit_run_has_execution_evidence(_task(), audit_run_id=audit_run_id) is expected
+
+
+def test_execution_evidence_is_not_required_outside_the_audited_lifecycle():
+    module = _module()
+    driver = module.EmailUnsubscribeContinuationDriver(FakeEmailStore())
+    task = _task().model_copy(update={"channel": "dingtalk"})
+
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=99) is True

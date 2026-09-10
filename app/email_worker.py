@@ -1887,16 +1887,21 @@ def _build_agent_orchestrator(
         "friday_adapter": runtime.friday_adapter,
         "refresh_runtime_capabilities": runtime.refresh_runtime_capabilities,
     }
+    domain_continuation = EmailUnsubscribeContinuationDriver(
+        EmailStore(Path(settings.db_path))
+    )
     return AgentOrchestrator(
         store=store,
         consumer=ConsumerAgentRunner(
             **shared,
             runtime_skill_snapshot=runtime_skill_snapshot,
         ),
-        audit=AuditAgentRunner(**shared, dry_run=bool(settings.dry_run)),
-        domain_continuation=EmailUnsubscribeContinuationDriver(
-            EmailStore(Path(settings.db_path))
+        audit=AuditAgentRunner(
+            **shared,
+            dry_run=bool(settings.dry_run),
+            domain_continuation=domain_continuation,
         ),
+        domain_continuation=domain_continuation,
     )
 
 
