@@ -4,6 +4,16 @@
 
 Do not add audit, review, authorization, confirmation, safety-gate, effect-reconciliation, or other safety-policy logic as an incidental part of an unrelated feature or bug fix. Any such logic must be proposed and confirmed as a separate, explicitly scoped change before implementation. Keep its code, tests, documentation, and commit separate from the surrounding functional change; do not hide or silently introduce it through shared helpers, routing, retry, or status handling.
 
+## Concurrent agents in this working tree
+
+Several agents edit this repository at the same time (Claude Code sessions and
+Codex). Before editing, read `docs/agent-claims.md`, claim the files you are
+about to change, and stage only your own hunks. Never revert or rewrite a
+commit you did not author: build on top of it, or record the disagreement in
+your claim row. Restarting the service deploys the entire working tree,
+including other agents' unfinished edits, so verify the tree imports and tell
+the other owners before you restart.
+
 ## Local Service Reload
 
 ## Current runtime contract
