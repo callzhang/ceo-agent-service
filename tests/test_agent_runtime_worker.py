@@ -2971,14 +2971,23 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
 
     assert worker.consume_once(max_tasks=1) == 0
 
-    first = worker.store.get_reply_task(task_id)
-    assert first is not None and first.status == "pending"
-    assert first.attempts == 1
-    assert first.error == "audit_dependency_unavailable"
-    first_attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert first_attempt is not None
-    assert first_attempt.send_status == "failed"
-    assert first_attempt.send_error == "audit_dependency_unavailable"
+    # The Audit role retry ceiling is exhausted inside one worker pass, so the
+    # orchestration ends failed_terminal below the task attempt budget.
+    exhausted = worker.store.get_reply_task(task_id)
+    assert exhausted is not None and exhausted.status == "failed"
+    assert exhausted.attempts == 1
+    assert exhausted.error == "audit_dependency_unavailable"
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "audit_dependency_unavailable"
+    assert executor.audit_attempts == 2
+    audit_runs = [
+        run
+        for run in worker.store.list_agent_runs_for_task_generation(task_id, "g1")
+        if run.role is AgentRole.AUDIT
+    ]
+    assert [run.turn_attempt for run in audit_runs] == [0, 1]
     with worker.store._connect() as db:
         db.execute(
             "update reply_tasks set available_at='' where id=?",
@@ -2989,7 +2998,7 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
 
     retried = worker.store.get_reply_task(task_id)
     assert retried is not None and retried.status == "failed"
-    assert retried.attempts == 2
+    assert retried.attempts == 1
     attempts = [
         attempt
         for attempt in worker.store.list_reply_attempts(limit=10)
@@ -2997,7 +3006,7 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
     ]
     assert len(attempts) == 1
     assert {attempt.send_error for attempt in attempts} == {"audit_dependency_unavailable"}
-    assert executor.audit_attempts == 4
+    assert executor.audit_attempts == 2
 
 
 def test_oa_material_binds_exact_target_from_quoted_approval_card(tmp_path: Path):
@@ -5487,7 +5496,9 @@ def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
     assert worker.consume_once(max_tasks=1) == 0
 
     task = worker.store.get_reply_task(task_id)
-    assert task is not None and task.status == "pending"
+    assert task is not None and task.status == "failed"
+    assert task.attempts == 1
+    assert task.error == "native_write_failed"
     run = _get_audit_run(worker.store, task_id, "g1")
     assert run is not None
     assert run.status == "failed"

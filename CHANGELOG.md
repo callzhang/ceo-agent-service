@@ -1,5 +1,20 @@
 # Changelog
 
+- 2026-09-10: two `tests/test_agent_runtime_worker.py` baselines
+  (`test_worker_stops_retryable_orchestration_at_attempt_limit`,
+  `test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol`)
+  had been stale since 86060e4b (2026-09-08, "enforce durable role retry
+  ceiling"), which never got a changelog entry: a Consumer/Audit turn that
+  exhausts the in-process role retry ceiling (`MAX_ROLE_ATTEMPTS_PER_PROCESS`,
+  two turns per proposal revision) with a genuinely retryable failure
+  (`audit_dependency_unavailable`, `native_write_failed`) ends the
+  orchestration `failed_terminal`, so the DingTalk reply task ends `failed`
+  in the same pass with the last run's typed code instead of going back to
+  `pending` for another pass of Audit turns (which let the scheduled-task
+  consumer and the active-recovery path re-enter the same generation without
+  bound). Outage, authorization and deferred codes are excluded from that
+  ceiling and keep deferring without spending the budget. Test-only change.
+
 - 2026-09-10: scheduled-tasks page no longer shows fabricated configuration.
   The service-command branch had a hardcoded "Consumer Agent 系统提示词",
   an unsaved "Consumer Agent 自定义描述" textarea, hardcoded Skill chips and a

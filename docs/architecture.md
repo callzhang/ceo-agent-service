@@ -769,6 +769,11 @@ run 才能被持久队列恢复。
   同样按可重试的外部依赖延期，而不是判为执行失败。这种“没有进入任何路由”的状态由路由层以
   `runtime_unavailable` 标记；工作项 worker 据此只延期、不消耗自身的有限重试次数，也不记录逐条
   Service error（路由暂停本身就是信号）。
+- **同一 revision 的角色重试上限**：Consumer 或 Audit 在一次 worker pass 内对同一 proposal revision 最多 2 次
+  turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的结果/进程/依赖/原生写入失败时编排结果进入
+  `failed_terminal`，任务在本 pass 结束为 `failed` 并保留最后一个 run 的真实错误码，不再回到 `pending` 让下一个
+  pass 重进同一 generation（否则定时任务消费者和 active-recovery 路径会无限增加 `turn_attempt`）。
+  中断/授权/延期类错误码不计入该上限，按退避延期。
 - **进入最后一条可用路由后才发现的故障**：该路由以 capacity/transport 失败且其余路由均已暂停时，与
   `runtime_unavailable` 同等处理：工作项和钉钉回复任务以 `runtime_provider_unreachable` 退避延期、attempts 归还、
   不写 per-item Service error（判定由 `app.worker._is_runtime_outage_error` 统一提供）；认证、结果、进程类失败仍有界。
