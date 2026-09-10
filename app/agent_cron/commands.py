@@ -80,6 +80,15 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
         channel="work_summary",
     ),
     ServiceCommandOption(
+        name="sync-minutes-once",
+        display_name="同步 AI 听记",
+        description=(
+            "增量同步 DingTalk AI 听记到本地工作来源队列；"
+            "由 Work Summary Consumer 处理真实内容。"
+        ),
+        channel="work_summary",
+    ),
+    ServiceCommandOption(
         name="recover-recent-messages",
         display_name="恢复近期 DingTalk 消息",
         description=(

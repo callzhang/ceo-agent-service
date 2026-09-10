@@ -309,6 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
         "service",
         "email-worker",
         "produce-once",
+        "recover-recent-messages",
         "produce",
         "consume-once",
         "consume",
@@ -324,6 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh-okr-archive",
         "scan-task-sources",
         "scan-work-sources-once",
+        "sync-minutes-once",
         "scan-meetings-once",
         "scan-oa-approvals",
         "read-oa-approval-detail",
@@ -894,12 +896,27 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
     from app.agent_cron.commands import ServiceCommandRegistry
     from app.wechat.scheduled_command import WechatProduceOnceCommand
 
+    # The minute-by-minute check and the hourly recovery are the same producer
+    # over the same conversations, so one lock serialises them: whichever
+    # arrives second waits for the first pass to return instead of overlapping.
+    dingtalk_producer_lock = threading.Lock()
+
+    def produce_once_command() -> str:
+        with dingtalk_producer_lock:
+            queued = reply_worker.produce_once(max_tasks=settings.max_batches)
+        return f"produce-once queued={queued}"
+
+    def recover_recent_messages_command() -> str:
+        with dingtalk_producer_lock:
+            queued = reply_worker.produce_once(
+                recovery=True, max_tasks=settings.max_batches
+            )
+        return f"recover-recent-messages queued={queued}"
+
     return ServiceCommandRegistry(
         {
-            "produce-once": lambda: (
-                f"produce-once queued="
-                f"{reply_worker.produce_once(max_tasks=settings.max_batches)}"
-            ),
+            "produce-once": produce_once_command,
+            "recover-recent-messages": recover_recent_messages_command,
             "wechat-produce-once": WechatProduceOnceCommand(
                 store, restart_reader=_restart_wechat_reader_service
             ),
@@ -913,6 +930,10 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
             "scan-work-sources-once": lambda: (
                 "scan-work-sources-once "
                 f"queued={scan_work_sources_once_command(settings, max_new_items=settings.max_batches)}"
+            ),
+            "sync-minutes-once": lambda: (
+                "sync-minutes-once "
+                f"queued={sync_minutes_once_command(settings, max_new_items=settings.max_batches)}"
             ),
         }
     )
@@ -1314,6 +1335,19 @@ def produce_once(settings: WorkerSettings) -> int:
         _record_service_failure(settings, "producer", exc)
         raise
     print(f"produce-once queued={queued}", flush=True)
+    return queued
+
+
+def recover_recent_messages(settings: WorkerSettings) -> int:
+    """Run the widened DingTalk read that the minute-by-minute check skips."""
+    try:
+        queued = create_worker(settings).produce_once(
+            recovery=True, max_tasks=settings.max_batches
+        )
+    except Exception as exc:
+        _record_service_failure(settings, "producer", exc)
+        raise
+    print(f"recover-recent-messages queued={queued}", flush=True)
     return queued
 
 
@@ -1951,6 +1985,25 @@ def scan_work_sources_once_command(
         max_new_items=max_new_items,
     )
     print(f"scan-work-sources-once queued={queued}", flush=True)
+    return queued
+
+
+def sync_minutes_once_command(
+    settings: WorkerSettings,
+    *,
+    max_new_items: int | None = None,
+) -> int:
+    """Synchronize DingTalk AI minutes as a deterministic service operation."""
+    from app.task_scanners import scan_ai_minutes
+
+    store = AutoReplyStore(settings.db_path)
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+    )
+    queued = scan_ai_minutes(store, dws, max_new_items=max_new_items)
+    print(f"sync-minutes-once queued={queued}", flush=True)
     return queued
 
 
@@ -3977,6 +4030,8 @@ def main() -> None:
         run_email_worker(settings)
     elif args.command == "produce-once":
         produce_once(settings)
+    elif args.command == "recover-recent-messages":
+        recover_recent_messages(settings)
     elif args.command == "produce":
         run_producer_loop(
             create_worker(settings),
@@ -4053,6 +4108,8 @@ def main() -> None:
         scan_task_sources_command(settings)
     elif args.command == "scan-work-sources-once":
         scan_work_sources_once_command(settings)
+    elif args.command == "sync-minutes-once":
+        sync_minutes_once_command(settings)
     elif args.command == "scan-meetings-once":
         scan_meetings_once_command(settings)
     elif args.command == "scan-oa-approvals":
