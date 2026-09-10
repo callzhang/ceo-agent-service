@@ -400,12 +400,13 @@ describe("service command tasks", () => {
     expect(await screen.findByLabelText("服务命令")).toHaveValue("produce-once");
     expect(screen.getByLabelText("服务命令")).toHaveValue("produce-once");
     expect(screen.getByText("每分钟执行 · Asia/Shanghai")).toBeInTheDocument();
+    expect(screen.getByText("计划预览：每分钟执行 · Asia/Shanghai")).toBeInTheDocument();
     expect(screen.getByText("增量读取 DingTalk 未读消息，去重后写入 reply task。")).toBeInTheDocument();
     expect(screen.queryByLabelText("Runtime")).toBeNull();
     expect(screen.queryByLabelText("任务描述")).toBeNull();
     expect(screen.queryByText("Agent Skills")).toBeNull();
     expect(screen.getAllByText("检查钉钉消息").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("技术详情")).toBeInTheDocument();
+    expect(await screen.findByText("技术详情")).toBeInTheDocument();
     expect(screen.queryByText("技术详情：produce-once")).toBeNull();
     expect(screen.queryByText("service_command #produce-once")).toBeNull();
     expect(screen.getByRole("button", { name: "暂停任务" })).toBeEnabled();
@@ -413,6 +414,7 @@ describe("service command tasks", () => {
 
     await user.clear(screen.getByLabelText("Cron 表达式"));
     await user.type(screen.getByLabelText("Cron 表达式"), "0 */2 * * * *");
+    expect(screen.getByText("计划预览：按自定义计划执行 · Asia/Shanghai")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "保存更改" }));
 
     await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(9, expect.objectContaining({ command: "produce-once", cron_expression: "0 */2 * * * *", prompt: "", runtime_id: "", skill_refs: [], version: 3 })));

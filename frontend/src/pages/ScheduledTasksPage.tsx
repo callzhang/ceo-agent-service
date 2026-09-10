@@ -80,6 +80,19 @@ function timeLabel(value: string | null) {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function draftScheduleDescription(expression: string, timezone: string) {
+  const fields = expression.trim().split(/\s+/);
+  let description = "按自定义计划执行";
+  if (fields.length === 6) {
+    const [seconds, minutes, hours, days, months, weekdays] = fields;
+    if (seconds === "0" && minutes === "*" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = "每分钟执行";
+    else if (/^\*\/\d+$/.test(seconds) && minutes === "*" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = `每${Number(seconds.slice(2))}秒执行`;
+    else if (seconds === "0" && minutes === "0" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = "每小时整点执行";
+    else if (seconds === "0" && minutes === "0" && /^\d+$/.test(hours) && days === "*" && months === "*" && weekdays === "*") description = `每天${Number(hours).toString().padStart(2, "0")}:00执行`;
+  }
+  return `${description} · ${timezone}`;
+}
+
 function errorMessage(reason: unknown, fallback: string) {
   return reason instanceof Error && reason.message ? reason.message : fallback;
 }
@@ -480,7 +493,7 @@ export function ScheduledTasksPage() {
           {error && <div className="scheduled-task-form-error" role="alert"><span>{error}</span>{conflict && <button type="button" className="secondary-button" onClick={() => void load()}>重新加载最新版本</button>}</div>}
           <form className="scheduled-task-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
             <label><span>任务名称</span><input aria-label="任务名称" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} /></label>
-            <div className="scheduled-task-form-row"><label><span>Cron（秒 分 时 日 月 周）</span><input aria-label="Cron 表达式" value={draft.cron_expression} onChange={(event) => updateDraft("cron_expression", event.target.value)} />{selected && <small>当前计划：{selected.schedule_description}</small>}</label><label><span>时区</span><input aria-label="时区" value={draft.timezone_name} onChange={(event) => updateDraft("timezone_name", event.target.value)} /></label></div>
+            <div className="scheduled-task-form-row"><label><span>Cron（秒 分 时 日 月 周）</span><input aria-label="Cron 表达式" value={draft.cron_expression} onChange={(event) => updateDraft("cron_expression", event.target.value)} /><small>计划预览：{draftScheduleDescription(draft.cron_expression, draft.timezone_name)}</small></label><label><span>时区</span><input aria-label="时区" value={draft.timezone_name} onChange={(event) => updateDraft("timezone_name", event.target.value)} /></label></div>
             <div className="scheduled-task-command-field"><label><span>执行类型</span><select aria-label="服务命令" value={draft.command} onChange={(event) => selectCommand(event.target.value)}><option value="">Agent 任务（使用下方提示词）</option>{options?.service_command_options.map((option) => <option key={option.name} value={option.name}>{option.display_name}</option>)}</select></label>{commandTask && <small>{commandOption?.description || "由服务进程直接执行的确定性命令，不经过 Agent、Runtime 或 Skill。"}</small>}</div>
             {commandTask ? <>
             <section className="scheduled-task-system-prompt" aria-labelledby="scheduled-task-system-prompt-title"><div className="scheduled-task-section-heading"><h3 id="scheduled-task-system-prompt-title">Consumer Agent 系统提示词</h3><span>系统管理 · 只读</span></div><pre>你正在处理由 Trigger 产生的真实业务任务。加载 $ceo-message-triage 与 $dingtalk-chat；只处理当前业务对象，遵守对应 Skill、Runtime 和审计协议；不得把 Trigger 检查动作当作用户请求，不得重复消费或重复发送。</pre><small>系统只从明确的 $Skill 标记确定性提取 Skill。</small></section>
