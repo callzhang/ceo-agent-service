@@ -310,6 +310,20 @@
       "minimum": 0.0,
       "title": "Confidence",
       "type": "number"
+    },
+    "rule_coverage": {
+      "default": 1.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Rule Coverage",
+      "type": "number"
+    },
+    "information_completeness": {
+      "default": 1.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Information Completeness",
+      "type": "number"
     }
   },
   "required": [
@@ -320,7 +334,9 @@
     "external_result",
     "error",
     "risk",
-    "confidence"
+    "confidence",
+    "rule_coverage",
+    "information_completeness"
   ],
   "title": "AuditAgentResult",
   "type": "object"

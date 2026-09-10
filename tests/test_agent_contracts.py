@@ -118,12 +118,88 @@ def test_needs_human_requires_high_risk_and_low_confidence_for_all_task_types():
     assert audit.confidence == 0.49
 
 
-@pytest.mark.parametrize("field", ["risk", "confidence"])
+def test_decision_quality_fields_are_readable_and_classify_needs_human():
+    payload = {
+        "outcome": "needs_human",
+        "summary": "A management decision is required.",
+        "proposal": None,
+        "decision_options": _decision_options(),
+        "risk": "high",
+        "confidence": 0.49,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "error": _error(),
+    }
+    result = ConsumerAgentResult.model_validate(payload)
+
+    assert result.rule_coverage == 1.0
+    assert result.information_completeness == 1.0
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["confidence", "rule_coverage", "information_completeness"],
+)
+def test_decision_quality_scores_reject_boolean_and_out_of_range_values(field):
+    payload = {
+        "outcome": "no_action",
+        "summary": "Nothing to do.",
+        "proposal": None,
+        "decision_options": [],
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "error": _error(),
+    }
+    with pytest.raises(ValidationError):
+        ConsumerAgentResult.model_validate({**payload, field: True})
+    with pytest.raises(ValidationError):
+        ConsumerAgentResult.model_validate({**payload, field: 1.1})
+
+
+def test_failed_result_remains_failed_when_quality_is_low():
+    payload = {
+        "outcome": "failed",
+        "summary": "The dependency failed.",
+        "proposal": None,
+        "decision_options": [],
+        "risk": "high",
+        "confidence": 0.1,
+        "rule_coverage": 0.1,
+        "information_completeness": 0.1,
+        "error": _error(),
+    }
+    result = ConsumerAgentResult.model_validate(payload)
+    assert result.outcome is ConsumerOutcome.FAILED
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["risk", "confidence", "rule_coverage", "information_completeness"],
+)
 def test_wire_result_requires_generic_risk_assessment_fields(field):
     payload = _consumer_wire_payload()
     payload.pop(field)
     with pytest.raises((ValidationError, JsonSchemaValidationError)):
         _validate_wire_schema(ConsumerAgentWireResult, payload)
+    with pytest.raises(ValidationError):
+        ConsumerAgentWireResult.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("confidence", True),
+        ("rule_coverage", "complete"),
+        ("information_completeness", False),
+        ("rule_coverage", 1.1),
+    ],
+)
+def test_wire_decision_quality_fields_reject_non_numeric_or_out_of_range_values(
+    field, value
+):
+    payload = _consumer_wire_payload(**{field: value})
     with pytest.raises(ValidationError):
         ConsumerAgentWireResult.model_validate(payload)
 
@@ -139,6 +215,8 @@ def _consumer_wire_payload(**overrides: object) -> dict[str, object]:
         "error_authorization_required": False,
         "risk": "low",
         "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
     }
     payload.update(overrides)
     if payload["outcome"] == "needs_human" and "risk" not in overrides:
@@ -159,6 +237,8 @@ def _audit_wire_payload(**overrides: object) -> dict[str, object]:
         "error_authorization_required": False,
         "risk": "low",
         "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
     }
     payload.update(overrides)
     if payload["outcome"] == "needs_human" and "risk" not in overrides:
@@ -270,7 +350,15 @@ def test_wire_schema_is_discriminated_and_contains_only_nested_fields(model):
     assert schema["discriminator"]["propertyName"] == "outcome"
     assert schema["oneOf"]
     assert "contentSchema" not in serialized
-    assert "risk" in serialized and "confidence" in serialized
+    assert all(
+        field in serialized
+        for field in (
+            "risk",
+            "confidence",
+            "rule_coverage",
+            "information_completeness",
+        )
+    )
     for legacy_field in (
         "proposal_json",
         "decision_options_json",
@@ -501,6 +589,8 @@ def test_needs_human_requires_actionable_options_and_wire_preserves_them():
             "decision_options": options,
             "risk": "high",
             "confidence": 0.1,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "error_code": "decision_required",
             "error_retryable": False,
             "error_authorization_required": False,
@@ -669,6 +759,9 @@ def test_contract_schemas_match_models_and_do_not_enumerate_business_actions():
         committed = json.loads((SCHEMA_DIR / filename).read_text(encoding="utf-8"))
         assert committed == schema
         assert schema["type"] == "object"
+        assert set(
+            ("risk", "confidence", "rule_coverage", "information_completeness")
+        ).issubset(schema["required"])
         assert all(branch["type"] == "object" for branch in schema["anyOf"])
         serialized = json.dumps(schema, ensure_ascii=False)
         for business_action in (
@@ -780,6 +873,8 @@ def test_wire_result_accepts_null_error_code_as_no_error():
         "error_authorization_required": False,
         "risk": "low",
         "confidence": 0.9,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
     }
     raw = json.dumps(
         {
@@ -931,6 +1026,8 @@ def test_consumer_wire_result_preserves_nested_proposal_fields():
             "decision_options": [],
             "risk": "low",
             "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,
@@ -952,6 +1049,8 @@ def test_audit_wire_result_preserves_nested_result_fields():
             "decision_options": _decision_options(),
             "risk": "high",
             "confidence": 0.1,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "error_code": "decision_required",
             "error_retryable": False,
             "error_authorization_required": False,
@@ -977,6 +1076,8 @@ def test_audit_wire_result_preserves_revision_feedback_fields():
                 "external_result": None,
                 "risk": "medium",
                 "confidence": 0.8,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
                 "error_code": "dws_write_missing_yes",
             "error_retryable": True,
             "error_authorization_required": False,

@@ -33,6 +33,8 @@ class _WireBase(BaseModel):
     error_authorization_required: bool
     risk: RiskLevel
     confidence: float = Field(ge=0.0, le=1.0)
+    rule_coverage: float = Field(ge=0.0, le=1.0)
+    information_completeness: float = Field(ge=0.0, le=1.0)
 
     @field_validator("risk", mode="before")
     @classmethod
@@ -108,6 +110,8 @@ class ConsumerAgentWireResult(RootModel[ConsumerWirePayload]):
                 "decision_options": payload.decision_options,
                 "risk": payload.risk,
                 "confidence": payload.confidence,
+                "rule_coverage": payload.rule_coverage,
+                "information_completeness": payload.information_completeness,
                 "error": payload.error_payload(),
             }
         )
@@ -190,6 +194,8 @@ class AuditAgentWireResult(RootModel[AuditWirePayload]):
                 "decision_options": payload.decision_options,
                 "risk": payload.risk,
                 "confidence": payload.confidence,
+                "rule_coverage": payload.rule_coverage,
+                "information_completeness": payload.information_completeness,
                 "error": payload.error_payload(),
             }
         )

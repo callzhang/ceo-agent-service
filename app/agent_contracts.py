@@ -10,6 +10,7 @@ from pydantic import (
 )
 
 from app.agent_result import AgentError
+from app.decision_quality import DecisionQuality, classify_decision_quality
 
 
 NEEDS_HUMAN_CONFIDENCE_THRESHOLD = 0.5
@@ -24,7 +25,9 @@ class RiskLevel(StrEnum):
 
 
 def _consumer_result_json_schema(schema: dict[str, object]) -> None:
-    schema.setdefault("required", []).extend(("risk", "confidence"))
+    schema.setdefault("required", []).extend(
+        ("risk", "confidence", "rule_coverage", "information_completeness")
+    )
     schema["anyOf"] = [
         {
             "type": "object",
@@ -46,7 +49,9 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
 
 
 def _audit_result_json_schema(schema: dict[str, object]) -> None:
-    schema.setdefault("required", []).extend(("risk", "confidence"))
+    schema.setdefault("required", []).extend(
+        ("risk", "confidence", "rule_coverage", "information_completeness")
+    )
     null_value = {"type": "null"}
     schema["anyOf"] = [
         {
@@ -216,6 +221,8 @@ class ConsumerAgentResult(BaseModel):
         ge=0.0,
         le=1.0,
     )
+    rule_coverage: float = Field(default=1.0, ge=0.0, le=1.0)
+    information_completeness: float = Field(default=1.0, ge=0.0, le=1.0)
 
     @field_validator("outcome", mode="before")
     @classmethod
@@ -249,6 +256,16 @@ class ConsumerAgentResult(BaseModel):
             keys = [option.key for option in self.decision_options]
             if len(keys) != len(set(keys)):
                 raise ValueError("decision option keys must be unique")
+            quality = classify_decision_quality(
+                risk=self.risk.value,
+                confidence=self.confidence,
+                rule_coverage=self.rule_coverage,
+                information_completeness=self.information_completeness,
+            )
+            if quality.classification is not DecisionQuality.NEEDS_HUMAN:
+                raise ValueError(
+                    "needs_human outcome must match decision quality classification"
+                )
         elif self.decision_options:
             raise ValueError("decision options are only valid for needs_human")
         return self
@@ -297,6 +314,8 @@ class AuditAgentResult(BaseModel):
         ge=0.0,
         le=1.0,
     )
+    rule_coverage: float = Field(default=1.0, ge=0.0, le=1.0)
+    information_completeness: float = Field(default=1.0, ge=0.0, le=1.0)
 
     @field_validator("outcome", mode="before")
     @classmethod
@@ -340,6 +359,16 @@ class AuditAgentResult(BaseModel):
             keys = [option.key for option in self.decision_options]
             if len(keys) != len(set(keys)):
                 raise ValueError("decision option keys must be unique")
+            quality = classify_decision_quality(
+                risk=self.risk.value,
+                confidence=self.confidence,
+                rule_coverage=self.rule_coverage,
+                information_completeness=self.information_completeness,
+            )
+            if quality.classification is not DecisionQuality.NEEDS_HUMAN:
+                raise ValueError(
+                    "needs_human outcome must match decision quality classification"
+                )
         elif self.decision_options:
             raise ValueError("decision options are only valid for needs_human")
         if self.outcome is AuditOutcome.DRY_RUN:
