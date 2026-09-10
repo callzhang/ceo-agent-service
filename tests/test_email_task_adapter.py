@@ -1998,7 +1998,7 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
             assert authorization_checked.wait(timeout=1)
             competing_email_store = EmailStore(database)
 
-            def zero_timeout_connect() -> sqlite3.Connection:
+            def zero_timeout_open_connection() -> sqlite3.Connection:
                 connection = sqlite3.connect(database, timeout=0)
                 connection.execute("pragma busy_timeout = 0")
                 connection.execute("pragma foreign_keys = on")
@@ -2007,8 +2007,8 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
 
             monkeypatch.setattr(
                 competing_email_store,
-                "_connect",
-                zero_timeout_connect,
+                "_open_connection",
+                zero_timeout_open_connection,
             )
             with pytest.raises(sqlite3.OperationalError, match="locked"):
                 competing_email_store.append_action_plan_version(

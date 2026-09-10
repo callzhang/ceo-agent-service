@@ -19,6 +19,17 @@
   <key>KeepAlive</key>
   <true/>
 
+  <!-- launchd agents inherit a 256 soft open-file limit. The email worker
+       keeps several short-lived SQLite connections (db + WAL each) plus IMAP
+       sockets in flight across its threads, so raise the ceiling well above
+       that. launchctl kickstart does not re-read this: re-run
+       scripts/install-auto-reply-agents.sh (bootout + bootstrap) to apply. -->
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>4096</integer>
+  </dict>
+
   <key>StandardOutPath</key>
   <string>/tmp/ceo-agent-service-main.out.log</string>
 

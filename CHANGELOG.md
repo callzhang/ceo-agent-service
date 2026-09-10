@@ -1,5 +1,46 @@
 # Changelog
 
+- 2026-09-10 (round 5 + email worker stability, subagent-verified):
+  - `EmailStore._connect` is now a closing context manager (split into
+    `_open_connection` + `_connect`, mirroring `AutoReplyStore`): the bare
+    connection it used to return was only committed/rolled back by `with`,
+    and a reference cycle through the statement cache kept ~90 call sites'
+    connections (2 fds each: db + WAL) alive until cyclic GC. The
+    email-worker process climbed to launchd's 256-fd soft limit, then
+    `Too many open files` / `unable to open database file` killed its
+    threads (`email worker component exited unexpectedly`, 60 child
+    restarts), and every restart began with an empty capability registry so
+    `codex_api` showed `snapshot_missing` and the whole email queue sat in
+    `runtime_provider_unreachable` deferrals. The launchd plist template
+    now sets `SoftResourceLimits/NumberOfFiles=4096` (re-install with
+    `scripts/install-auto-reply-agents.sh`; `kickstart -k` does not re-read
+    it). A regression test asserts the fd count stays flat under repeated
+    store calls.
+  - Meeting alignment shares the workers' outage gate
+    (`app.worker._is_runtime_outage_error`): a no-route outage or a
+    capacity/transport failure of the last live route defers the job with a
+    capped per-turn backoff (attempt handed back, no Attention row) instead
+    of ending it `failed` on the first pass (jobs 2675/2695/2717/2743).
+  - An Audit result's `proposal_revision` is bound from the Audit run
+    instead of hard-failing the turn when the model echoes a different
+    number (`audit_proposal_revision_mismatch`; MiniMax wrote the revision it
+    was requesting). The Audit rules now state that the echoed value names
+    the candidate reviewed, never the requested revision.
+  - Task-agent decision repair runs up to `TASK_DECISION_REPAIR_ROUNDS` (2)
+    repair turns, so a repaired decision that trips another repairable rule
+    (live pattern: `update_project requires project`, then
+    `project.memory_context`) is repaired again instead of escaping as a
+    terminal work-item failure; exhaustion raises the typed
+    `TaskDecisionRepairExhausted`. The repair prompt's garbled memory_recall
+    sentence is fixed and it now states the `project.memory_context`
+    contract (query + summary/memories, the "no relevant memory found"
+    sentence, the `memory_connector_runtime_unavailable` escape hatch, and
+    `skip` when nothing changes).
+
+- 2026-09-10: keep domain-specific email unsubscribe policy rejections as
+  explicit failures instead of converting them to `needs_human`; only the
+  generic authorization boundary remains a human decision.
+
 - 2026-09-10 (round 4, owner decisions, subagent-verified): three contract
   decisions from Derek.
   - `StrictTaskModel` (app/task_models.py) treats JSON `null` on any optional

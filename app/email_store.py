@@ -6,7 +6,8 @@ provider and never creates Agent, Audit, reply-task, or run records.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.parser import Parser
@@ -2584,12 +2585,21 @@ class EmailStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _open_connection(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
         db.execute("pragma busy_timeout = 30000")
         db.execute("pragma foreign_keys = on")
         db.row_factory = sqlite3.Row
         return db
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        db = self._open_connection()
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def list_nonterminal_legacy_unsubscribe_task_attempts(
         self,
@@ -9406,8 +9416,7 @@ class EmailStore:
         This method is read-only and deliberately performs no recovery writes.
         """
 
-        db = self._connect()
-        try:
+        with self._connect() as db:
             db.execute("begin")
             claim_row = db.execute(
                 "select * from email_unsubscribe_claims where action_identity=?",
@@ -9456,10 +9465,6 @@ class EmailStore:
                 "continuation": continuation,
                 "effects": effects,
             }
-        finally:
-            if db.in_transaction:
-                db.rollback()
-            db.close()
 
     def get_email_unsubscribe_terminal_snapshot(
         self,
@@ -9519,8 +9524,7 @@ class EmailStore:
         ):
             raise ValueError("expected terminal effect identity changed")
 
-        db = self._connect()
-        try:
+        with self._connect() as db:
             db.execute("begin")
             claim_row = db.execute(
                 "select * from email_unsubscribe_claims where action_identity=?",
@@ -9612,10 +9616,6 @@ class EmailStore:
                 "receipt": safe_receipt,
                 "steps": projected_steps,
             }
-        finally:
-            if db.in_transaction:
-                db.rollback()
-            db.close()
 
     def _validate_email_unsubscribe_terminal_snapshot(
         self,
@@ -12858,33 +12858,33 @@ class EmailStore:
                 raise ValueError(
                     "inclusion snapshots must match unincluded validation snapshots"
                 )
-        db = self._connect()
         promotion_attempted = False
-        try:
-            db.execute("begin immediate")
-            self._verify_training_snapshots(
-                db,
-                validation_by_identity,
-                validation_identities,
-                inclusion_identities=inclusion_identities,
-                model_id=model_id,
-            )
-            promotion_attempted = True
-            promote()
-            self._update_training_inclusion(db, inclusion_identities, model_id=model_id)
-            db.commit()
-        except Exception as exc:
-            db.rollback()
-            if promotion_attempted:
-                try:
-                    restore()
-                except Exception as restore_exc:
-                    raise EmailTrainingConsistencyError(
-                        "training promotion manifest restore could not be proven"
-                    ) from restore_exc
-            raise exc
-        finally:
-            db.close()
+        with self._connect() as db:
+            try:
+                db.execute("begin immediate")
+                self._verify_training_snapshots(
+                    db,
+                    validation_by_identity,
+                    validation_identities,
+                    inclusion_identities=inclusion_identities,
+                    model_id=model_id,
+                )
+                promotion_attempted = True
+                promote()
+                self._update_training_inclusion(
+                    db, inclusion_identities, model_id=model_id
+                )
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                if promotion_attempted:
+                    try:
+                        restore()
+                    except Exception as restore_exc:
+                        raise EmailTrainingConsistencyError(
+                            "training promotion manifest restore could not be proven"
+                        ) from restore_exc
+                raise exc
 
     @staticmethod
     def _verify_training_snapshots(

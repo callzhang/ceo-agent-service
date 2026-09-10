@@ -69,9 +69,21 @@ TASK_RESULT_CODEC = RoutedResultCodec.text(
 )
 
 
+# Repair turns a work item may spend per pass on repairable rules.
+TASK_DECISION_REPAIR_ROUNDS = 2
+
+
 class RepairableTaskDecisionValidationError(ValueError):
     """A typed Agent decision can be corrected in one bounded follow-up turn."""
 
+
+
+class TaskDecisionRepairExhausted(RepairableTaskDecisionValidationError):
+    """The bounded repair rounds ended with a rule still unsatisfied.
+
+    The work item is not a terminal failure for this: the caller retries it
+    on a later pass with a fresh session.
+    """
 
 class TaskCodex(Protocol):
     last_session_id: str
@@ -502,11 +514,24 @@ Validation repair:
 The previous decision was rejected before any project, TODO, follow-up, or
 external message was created because: {validation_error}
 
-This repair is read-only. Call memory_recall now with a focused query about
-this work item, its project, prior commitments, and owner context. Do not
-reuse the previous decision's memory_recall_used flag unless the new session
-Return a complete replacement decision after
-the tool call; do not send messages or perform writes.
+This repair is read-only: do not send messages or perform writes.
+Call memory_recall now with a focused query about this work item, its
+project, prior commitments, and owner context, then return one complete
+replacement decision. Set memory_recall_used=true only because that call
+happened in this session, never by copying the previous decision's flag.
+
+project.memory_context contract for every non-skip decision:
+- query: the focused memory_recall query you ran (non-empty).
+- summary and memories: what that recall returned. When recall returns
+  nothing relevant, keep memories empty and write a one-sentence summary
+  saying no relevant memory was found for the query; an empty summary with
+  empty memories is rejected.
+- When memory_recall is unavailable after tool discovery, set
+  memories[].source exactly to "memory_connector_runtime_unavailable",
+  explain that in summary, and set memory_recall_used=false.
+- When there is nothing to change (for example a completion check that
+  found no completion evidence), return action="skip" with a clear
+  skip_reason instead of a non-skip decision.
 
 If the rejected decision used update_project but did not establish a stable
 integer project ID, the replacement may use update_project only with an ID
@@ -624,53 +649,56 @@ def process_work_item(
         )
         decision = _normalize_follow_up_change_times(decision)
         codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
-        try:
-            _validate_task_agent_decision(
-                decision,
-                now=now,
-            )
-        except ValueError as exc:
-            repairable_validation_error = isinstance(
-                exc, RepairableTaskDecisionValidationError
-            )
-            if not repairable_validation_error:
-                raise
-            rejected_decision = decision
-            store.finish_task_agent_run(
-                active_run_id,
-                status="failed",
-                codex_session_id=codex_session_id,
-                decision_json=_json_dumps(decision.model_dump(mode="json")),
-                audit_summary=decision.update_summary,
-                memory_recall_used=decision.memory_recall_used,
-                error=str(exc),
-            )
-            active_run_id = store.begin_task_agent_run(work_input.id)
-            session_scope_id = f"task:{active_run_id}"
-            decision = runner.repair_validation(
-                work_item,
-                candidate_prompt,
-                decision,
-                validation_error=str(exc),
-                memory_issue=memory_issue,
-                run_id=active_run_id,
-                session_scope_id=session_scope_id,
-            )
-            decision = _normalize_follow_up_change_times(decision)
-            decision = _restore_structured_update_project(
-                decision,
-                work_item.summary,
-                candidates,
-            )
-            _validate_task_agent_validation_repair(
-                rejected_decision,
-                decision,
-            )
-            codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
-            _validate_task_agent_decision(
-                decision,
-                now=now,
-            )
+        # Every repairable rule gets its own repair turn, bounded by
+        # TASK_DECISION_REPAIR_ROUNDS: a repaired decision that trips a
+        # different repairable rule (the live pattern: "update_project
+        # requires project" first, memory_context second) is repaired again
+        # instead of leaking out as a terminal work-item failure.
+        for repair_round in range(TASK_DECISION_REPAIR_ROUNDS + 1):
+            try:
+                _validate_task_agent_decision(
+                    decision,
+                    now=now,
+                )
+                break
+            except RepairableTaskDecisionValidationError as exc:
+                if repair_round == TASK_DECISION_REPAIR_ROUNDS:
+                    raise TaskDecisionRepairExhausted(
+                        f"task decision repair exhausted after "
+                        f"{TASK_DECISION_REPAIR_ROUNDS} rounds: {exc}"
+                    ) from exc
+                rejected_decision = decision
+                store.finish_task_agent_run(
+                    active_run_id,
+                    status="failed",
+                    codex_session_id=codex_session_id,
+                    decision_json=_json_dumps(decision.model_dump(mode="json")),
+                    audit_summary=decision.update_summary,
+                    memory_recall_used=decision.memory_recall_used,
+                    error=str(exc),
+                )
+                active_run_id = store.begin_task_agent_run(work_input.id)
+                session_scope_id = f"task:{active_run_id}"
+                decision = runner.repair_validation(
+                    work_item,
+                    candidate_prompt,
+                    decision,
+                    validation_error=str(exc),
+                    memory_issue=memory_issue,
+                    run_id=active_run_id,
+                    session_scope_id=session_scope_id,
+                )
+                decision = _normalize_follow_up_change_times(decision)
+                decision = _restore_structured_update_project(
+                    decision,
+                    work_item.summary,
+                    candidates,
+                )
+                _validate_task_agent_validation_repair(
+                    rejected_decision,
+                    decision,
+                )
+                codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
         try:
             _validate_owner_changes(store, decision)
         except OwnerResolutionRequired as exc:

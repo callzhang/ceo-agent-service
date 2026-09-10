@@ -5,6 +5,7 @@ import gc
 from hashlib import sha256
 from importlib import import_module
 import json
+import os
 from pathlib import Path
 import sqlite3
 from threading import Barrier
@@ -3308,14 +3309,14 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
     assert journal_mode == "delete"
 
     statements: list[str] = []
-    original_connect = EmailStore._connect
+    original_open_connection = EmailStore._open_connection
 
-    def traced_connect(self: EmailStore) -> sqlite3.Connection:
-        db = original_connect(self)
+    def traced_open_connection(self: EmailStore) -> sqlite3.Connection:
+        db = original_open_connection(self)
         db.set_trace_callback(statements.append)
         return db
 
-    monkeypatch.setattr(EmailStore, "_connect", traced_connect)
+    monkeypatch.setattr(EmailStore, "_open_connection", traced_open_connection)
 
     EmailStore(database)
 
@@ -3367,14 +3368,14 @@ def test_current_schema_accepts_case_insensitive_required_bare_identifiers(
         schema_version_before = db.execute("pragma schema_version").fetchone()[0]
 
     statements: list[str] = []
-    original_connect = EmailStore._connect
+    original_open_connection = EmailStore._open_connection
 
-    def traced_connect(self: EmailStore) -> sqlite3.Connection:
-        db = original_connect(self)
+    def traced_open_connection(self: EmailStore) -> sqlite3.Connection:
+        db = original_open_connection(self)
         db.set_trace_callback(statements.append)
         return db
 
-    monkeypatch.setattr(EmailStore, "_connect", traced_connect)
+    monkeypatch.setattr(EmailStore, "_open_connection", traced_open_connection)
 
     EmailStore(database)
 
@@ -3492,8 +3493,8 @@ def test_foreign_key_on_delete_metadata_rejects_non_text_value(tmp_path: Path):
             return self._row[key]
 
     class CorruptOnDeleteStore(EmailStore):
-        def _connect(self) -> sqlite3.Connection:
-            db = super()._connect()
+        def _open_connection(self) -> sqlite3.Connection:
+            db = super()._open_connection()
 
             def row_factory(cursor: sqlite3.Cursor, values: tuple[object, ...]):
                 row = sqlite3.Row(cursor, values)
@@ -7839,14 +7840,14 @@ def test_unsubscribe_state_snapshot_surfaces_real_sqlite_busy(
     authorization = _persist_unsubscribe_continuation_fixture(store)
     gc.collect()
 
-    original_connect = store._connect
+    original_open_connection = store._open_connection
 
-    def no_wait_connect():
-        db = original_connect()
+    def no_wait_open_connection():
+        db = original_open_connection()
         db.execute("pragma busy_timeout=0")
         return db
 
-    monkeypatch.setattr(store, "_connect", no_wait_connect)
+    monkeypatch.setattr(store, "_open_connection", no_wait_open_connection)
     blocker = sqlite3.connect(store.path, timeout=0)
     try:
         blocker.execute("begin exclusive")
@@ -9444,3 +9445,105 @@ def test_v36_drops_policy_keys_from_immutable_email_task_inputs(tmp_path: Path) 
     assert "unsubscribe_network_policy_origin_references" not in payload
     assert payload["action_type"] == "unsubscribe"
     assert versions[-1] == 36
+
+
+def _fd_regression_account_values() -> dict[str, object]:
+    return {
+        "account_id": "fd-regression-account",
+        "display_name": "FD Regression",
+        "email_address": "fd-regression@example.com",
+        "imap_host": "imap.example.com",
+        "imap_port": 993,
+        "imap_tls": True,
+        "imap_username": "fd-regression@example.com",
+        "imap_secret_reference": "keychain://imap-test",
+        "smtp_host": "smtp.example.com",
+        "smtp_port": 465,
+        "smtp_tls": True,
+        "smtp_username": "fd-regression@example.com",
+        "smtp_secret_reference": "keychain://smtp-test",
+        "enabled": True,
+        "scan_folders": ["INBOX"],
+        "scan_interval_seconds": 60,
+    }
+
+
+def test_connect_closes_connection_after_each_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = EmailStore(tmp_path / "connect-closes.sqlite3")
+    opened: list[sqlite3.Connection] = []
+    original_open_connection = EmailStore._open_connection
+
+    def recording_open_connection(self: EmailStore) -> sqlite3.Connection:
+        db = original_open_connection(self)
+        opened.append(db)
+        return db
+
+    monkeypatch.setattr(EmailStore, "_open_connection", recording_open_connection)
+
+    assert store.get_account("missing") is None
+    store.create_account(_fd_regression_account_values())
+    assert store.get_account("fd-regression-account") is not None
+    assert store.get_email_unsubscribe_state_snapshot("missing-identity") == {
+        "claim": None,
+        "continuation": None,
+        "effects": (),
+    }
+    assert store.get_email_unsubscribe_terminal_snapshot("missing-identity") is None
+
+    assert len(opened) >= 5
+    for db in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            db.execute("select 1")
+
+
+def test_connect_rolls_back_and_closes_when_the_body_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = EmailStore(tmp_path / "connect-rollback.sqlite3")
+    store.create_account(_fd_regression_account_values())
+    opened: list[sqlite3.Connection] = []
+    original_open_connection = EmailStore._open_connection
+
+    def recording_open_connection(self: EmailStore) -> sqlite3.Connection:
+        db = original_open_connection(self)
+        opened.append(db)
+        return db
+
+    monkeypatch.setattr(EmailStore, "_open_connection", recording_open_connection)
+
+    with pytest.raises(RuntimeError, match="body failed"):
+        with store._connect() as db:
+            db.execute(
+                "delete from email_accounts where account_id=?",
+                ("fd-regression-account",),
+            )
+            raise RuntimeError("body failed")
+
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        opened[0].execute("select 1")
+    assert store.get_account("fd-regression-account") is not None
+
+
+@pytest.mark.skipif(
+    not os.path.isdir("/dev/fd"), reason="process fd listing requires /dev/fd"
+)
+def test_read_loop_does_not_accumulate_file_descriptors(tmp_path: Path) -> None:
+    store = EmailStore(tmp_path / "fd-growth.sqlite3")
+    store.create_account(_fd_regression_account_values())
+    gc.collect()
+    gc.disable()
+    try:
+        before = len(os.listdir("/dev/fd"))
+        for _ in range(50):
+            store.get_account("fd-regression-account")
+            store.list_accounts()
+            store.get_email_unsubscribe_state_snapshot("missing-identity")
+        after = len(os.listdir("/dev/fd"))
+    finally:
+        gc.enable()
+    assert after == before

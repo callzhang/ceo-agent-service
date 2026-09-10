@@ -769,6 +769,16 @@ run 才能被持久队列恢复。
   同样按可重试的外部依赖延期，而不是判为执行失败。这种“没有进入任何路由”的状态由路由层以
   `runtime_unavailable` 标记；工作项 worker 据此只延期、不消耗自身的有限重试次数，也不记录逐条
   Service error（路由暂停本身就是信号）。
+- **Email worker 的文件描述符**：`EmailStore._connect` 是会关闭连接的 context manager（与 `AutoReplyStore`
+  一致）；裸连接只提交/回滚不关闭，靠循环 GC 回收，会把 launchd agent 的 256 个 fd 软上限耗尽并让 worker
+  线程退出、子进程反复重启。plist 模板把 `NumberOfFiles` 提到 4096，改动需 bootout/bootstrap 重装才生效。
+- **会议对齐的供应商中断**：会议消费者与 worker 共用中断判定；全部路由暂停或最后一条路由 capacity/transport
+  失败时任务延期（退避封顶、归还 attempt、不进 Attention），不再首轮判终态失败。
+- **Audit 的 proposal_revision**：由 Audit run 回填，模型回显不同数字不再让轮次硬失败；规则文本说明该值只标识
+  所审阅的候选，不是它请求的修订。
+- **任务 Agent 的修订轮次**：可修订规则最多修订 `TASK_DECISION_REPAIR_ROUNDS`（2）轮，修订后触发另一条可修订规则
+  会继续修订而不是漏成工作项终态失败；耗尽时抛出类型化的 `TaskDecisionRepairExhausted`。修订提示说明
+  `project.memory_context` 的契约（query、召回为空时的说明句、runtime 不可用出口、无变化返回 skip）。
 - **可选字段的 null**：任务 Agent 决策模型（`StrictTaskModel`）把可选字段上的 JSON `null` 视为“未提供”（等同省略，
   下游仍看到声明的默认值），派生 schema 把这些字段标为可空；必填字段与动作所需的证据对象仍不可为 null。
 - **模型输出不兼容旧结构**：微信/钉钉决策与 OKR 评审的 `AgentEnvelope` 解析不再接受任何旧结构（旧 `CodexDecision`

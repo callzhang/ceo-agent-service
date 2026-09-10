@@ -1123,6 +1123,237 @@ def test_runtime_attempt_conflict_stays_retryable_at_attempt_limit(tmp_path):
     assert run.status == "retry"
 
 
+def test_meeting_no_route_outage_defers_without_consuming_attempt(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    reason = (
+        "no_eligible_route:codex_oauth=paused:codex_provider_overloaded;"
+        "codex_api=paused:codex_provider_overloaded;"
+        "friday_runtime=paused:friday_runtime_unreachable"
+    )
+
+    class NoRouteRunner:
+        last_session_id = ""
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+
+        def decide(self, *, prompt: str, run_id=None):
+            # Mirrors MeetingAlignmentCodexRunner.decide wrapping the router's
+            # no-route raise (runtime_execution_failed, runtime_unavailable).
+            routed = RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                reason,
+                retryable_external_dependency=True,
+                runtime_unavailable=True,
+            )
+            raise ExternalDependencyError(
+                "codex meeting alignment", routed, dependency="codex"
+            ) from routed
+
+    runner = NoRouteRunner()
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1, max_attempts=1
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.attempts == 0
+    assert job.available_at == (NOW + timedelta(minutes=2)).isoformat()
+    error = json.loads(job.error)
+    assert error["kind"] == "runtime_provider_unreachable"
+    assert error["runtime"] == {"code": "runtime_execution_failed", "reason": reason}
+    assert [run.status for run in store.list_meeting_alignment_runs(job_id)] == [
+        "retry"
+    ]
+    assert store.list_errors() == []
+    assert store.active_codex_capacity_pause(now=NOW) == ""
+
+    assert consume_meeting_alignment_jobs(
+        store,
+        dws,
+        runner,
+        now=NOW + timedelta(minutes=2),
+        limit=1,
+        max_attempts=1,
+    ) == 1
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.attempts == 0
+    assert job.available_at == (NOW + timedelta(minutes=6)).isoformat()
+    assert [run.status for run in store.list_meeting_alignment_runs(job_id)] == [
+        "retry",
+        "retry",
+    ]
+    assert store.list_errors() == []
+
+
+def test_meeting_outage_backoff_stops_at_cap_over_a_long_outage(tmp_path):
+    # A multi-hour outage keeps deferring: the per-turn doubling stops at the
+    # shared 15-minute cap, so the turn count can never grow the delay past it
+    # (an unbounded 2**turn overflowed timedelta after 41 turns).
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class NoRouteRunner:
+        last_session_id = ""
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+
+        def decide(self, *, prompt: str, run_id=None):
+            raise RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "no_eligible_route:codex_oauth=paused:codex_provider_overloaded",
+                retryable_external_dependency=True,
+                runtime_unavailable=True,
+            )
+
+    runner = NoRouteRunner()
+    now = NOW
+    delays: list[timedelta] = []
+    for _ in range(45):
+        assert consume_meeting_alignment_jobs(
+            store, dws, runner, now=now, limit=1, max_attempts=1
+        ) == 1
+        job = store.get_meeting_alignment_job(job_id)
+        assert job.status == "retry"
+        assert job.attempts == 0
+        available_at = datetime.fromisoformat(job.available_at)
+        delays.append(available_at - now)
+        now = available_at
+
+    assert delays[:4] == [
+        timedelta(minutes=2),
+        timedelta(minutes=4),
+        timedelta(minutes=8),
+        timedelta(minutes=15),
+    ]
+    assert set(delays[4:]) == {timedelta(minutes=15)}
+    assert len(store.list_meeting_alignment_runs(job_id)) == 45
+    assert store.list_errors() == []
+
+
+def test_meeting_outage_backoff_counts_only_trailing_outage_turns(tmp_path):
+    # Earlier non-outage runs (result_invalid retries, startup requeues) do not
+    # number the outage turn: the first outage deferral of a job with a long
+    # history still waits one doubled retry_delay, not the cap.
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    for _ in range(45):
+        store.record_meeting_alignment_run(
+            job_id=job_id,
+            codex_session_id="",
+            decision_json="{}",
+            audit_summary="",
+            status="retry",
+            error=json.dumps({"kind": "meeting_agent", "message": "result_invalid"}),
+        )
+
+    class NoRouteRunner:
+        last_session_id = ""
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+
+        def decide(self, *, prompt: str, run_id=None):
+            raise RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "no_eligible_route:codex_oauth=paused:codex_provider_overloaded",
+                retryable_external_dependency=True,
+                runtime_unavailable=True,
+            )
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, NoRouteRunner(), now=NOW, limit=1, max_attempts=1
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.attempts == 0
+    assert job.available_at == (NOW + timedelta(minutes=2)).isoformat()
+    assert store.list_errors() == []
+
+
+def test_meeting_last_route_capacity_failure_defers_as_outage(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class LastRouteCapacityRunner:
+        last_session_id = ""
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+
+        def decide(self, *, prompt: str, run_id=None):
+            routed = RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "codex_provider_overloaded",
+                failure_class=RuntimeFailureClass.CAPACITY,
+                failure_code="codex_provider_overloaded",
+                retryable_external_dependency=True,
+            )
+            raise ExternalDependencyError(
+                "codex meeting alignment", routed, dependency="codex"
+            ) from routed
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, LastRouteCapacityRunner(), now=NOW, limit=1, max_attempts=1
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.attempts == 0
+    assert job.available_at == (NOW + timedelta(minutes=2)).isoformat()
+    error = json.loads(job.error)
+    assert error["kind"] == "runtime_provider_unreachable"
+    assert error["runtime"]["failure_class"] == "capacity"
+    assert [run.status for run in store.list_meeting_alignment_runs(job_id)] == [
+        "retry"
+    ]
+    # The route pause is the signal: no global capacity pause, no Attention row.
+    assert store.active_codex_capacity_pause(now=NOW) == ""
+    assert store.list_errors() == []
+
+
+def test_meeting_authentication_failure_stays_terminal(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class AuthFailureRunner:
+        last_session_id = ""
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+
+        def decide(self, *, prompt: str, run_id=None):
+            raise RoutedCodexExecutionError(
+                "codex_login_required",
+                failure_class=RuntimeFailureClass.AUTHENTICATION,
+                failure_code="codex_login_required",
+                retryable_external_dependency=False,
+            )
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, AuthFailureRunner(), now=NOW, limit=1
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "failed"
+    assert job.attempts == 1
+    error = json.loads(job.error)
+    assert error["kind"] == "meeting_agent"
+    assert error["message"] == "codex_login_required"
+    assert [run.status for run in store.list_meeting_alignment_runs(job_id)] == [
+        "failed"
+    ]
+
+
 def test_consumer_pauses_meeting_analysis_after_codex_capacity_exhaustion(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
@@ -1294,6 +1525,9 @@ def test_meeting_routed_failure_persists_runtime_reason_and_cause(tmp_path):
 
 
 def test_meeting_wrapped_external_routed_failure_persists_runtime_detail(tmp_path):
+    # A PROCESS-class failure is deliberately not an outage: only a no-route
+    # turn or a capacity/transport failure on the last live route defers
+    # (docs/architecture.md 'Agent 失败重试'); process failures stay bounded.
     store = AutoReplyStore(tmp_path / "meeting-wrapped-runtime-detail.sqlite3")
     dws = ConsumerDws()
     job_id = seed_consumer_job(store, dws)

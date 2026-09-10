@@ -29,6 +29,7 @@ from app.meeting_alignment_delivery import (
 )
 from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
+    MeetingAlignmentRun,
     MeetingParticipant,
     load_persisted_meeting_alignment_decision,
 )
@@ -50,6 +51,11 @@ from app.notification import (
 from app.store import AutoReplyStore
 from app.service_message_sender import ServiceMessageSender
 from app.skill_features import FeatureRegistry
+from app.worker import (
+    REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
+    RUNTIME_OUTAGE_WAIT_ERRORS,
+    _is_runtime_outage_error,
+)
 
 DISCOVERY_PAGE_LIMIT = 100
 DISCOVERY_PAGE_SIZE = 50
@@ -61,6 +67,11 @@ TERMINAL_STATUSES = frozenset(
 )
 DEFAULT_MEETING_RETRY_DELAY = timedelta(minutes=1)
 DEFAULT_MEETING_MAX_ATTEMPTS = 3
+# The provider-outage wait code shared with the DingTalk and WeChat workers:
+# a meeting decision turn that could not enter any route, or whose last live
+# route failed on capacity/transport with every other route paused, is a wait
+# for the route pause to lift, never a failure of the meeting itself.
+(RUNTIME_OUTAGE_WAIT_ERROR,) = RUNTIME_OUTAGE_WAIT_ERRORS
 CALENDAR_SUMMARY_START = "【CEO 会议总结】"
 CALENDAR_SUMMARY_END = "【/CEO 会议总结】"
 CALENDAR_DESCRIPTION_LIMIT = 5000
@@ -899,6 +910,31 @@ def _analyze_meeting_job(
                 external_dependency=True,
             )
             return
+        # A provider outage (no route entered, or the last live route failed
+        # on capacity/transport with every other route paused) is a wait for
+        # the route pause to lift, not a failure of this meeting: hand the
+        # claimed attempt back, close the run as retryable and write nothing
+        # Attention-visible. Classified before the terminal codes below
+        # because the router's no-route raise reuses `runtime_execution_failed`.
+        if routed_exc is not None and _is_runtime_outage_error(exc):
+            error = _runtime_error_json(RUNTIME_OUTAGE_WAIT_ERROR, routed_exc)
+            _record_agent_run(
+                store,
+                runner,
+                run_id,
+                job_id=job.id,
+                decision=None,
+                status="retry",
+                error=error,
+            )
+            store.defer_meeting_alignment_job_for_capacity(
+                job.id,
+                available_at=_outage_available_at(
+                    store, job.id, now=now, retry_delay=retry_delay
+                ),
+                error=error,
+            )
+            return
         if routed_exc is not None and (
             routed_exc.failure_class
             in {
@@ -1434,6 +1470,33 @@ def _retry_or_fail(
         error=error,
         **(extra_values or {}),
     )
+
+
+def _outage_available_at(
+    store: AutoReplyStore,
+    job_id: int,
+    *,
+    now: datetime,
+    retry_delay: timedelta,
+) -> str:
+    """Back off per outage turn: an outage wait hands its attempt back, so
+    the job's attempt counter cannot drive the delay; the trailing outage-wait
+    runs of the job (the just-closed one included) number the turn instead.
+    Doubling stops at the shared cap, so neither a long outage nor a long run
+    history can grow the delay past it."""
+    max_delay = timedelta(seconds=REPLY_TASK_RETRY_MAX_DELAY_SECONDS)
+    delay = retry_delay
+    for run in store.list_meeting_alignment_runs(job_id):  # newest first
+        if delay >= max_delay or not _is_outage_wait_run(run):
+            break
+        delay = min(delay * 2, max_delay)
+    return (now + delay).isoformat()
+
+
+def _is_outage_wait_run(run: MeetingAlignmentRun) -> bool:
+    if run.status != "retry" or not run.error:
+        return False
+    return json.loads(run.error).get("kind") in RUNTIME_OUTAGE_WAIT_ERRORS
 
 
 def _fail_job(

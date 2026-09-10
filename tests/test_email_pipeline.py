@@ -598,7 +598,7 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
             return super().execute(sql, parameters)
 
     class SignalingStore(EmailStore):
-        def _connect(self):
+        def _open_connection(self):
             db = sqlite3.connect(
                 self.path,
                 timeout=30,

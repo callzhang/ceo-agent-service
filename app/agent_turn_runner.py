@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -77,6 +78,8 @@ from app.store import (
     ReplyTask,
     RuntimeAttemptSessionMode,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
@@ -1300,7 +1303,7 @@ class AgentTurnProcess(Generic[ResultT]):
         persisted = self.store.get_agent_run(run.id)
         assert persisted is not None
         if run.role is AgentRole.AUDIT:
-            self._validate_audit_result(run, result)
+            result = self._bind_audit_result(run, result)
         claude_business_failure = outcome in {
             ConsumerOutcome.FAILED,
             AuditOutcome.FAILED,
@@ -1497,15 +1500,32 @@ class AgentTurnProcess(Generic[ResultT]):
             False,
         )
 
-    def _validate_audit_result(
+    def _bind_audit_result(
         self,
         run: AgentRun,
         result: ResultT,
-    ) -> None:
-        """Validate the typed Audit result without command policy checks."""
-        if getattr(result, "proposal_revision") != run.proposal_revision:
-            self._fail_running(run, "audit_proposal_revision_mismatch")
-            raise RuntimeError("audit_proposal_revision_mismatch")
+    ) -> ResultT:
+        """Bind the service-owned ``proposal_revision`` onto the Audit result.
+
+        The Audit run row defines the reviewed revision; the model only echoes
+        it (same rule as ``operation_id`` in ``audit_agent._parse_evidenced_result``).
+        A differing echo is logged and overwritten, never a run failure.
+        """
+        echoed = getattr(result, "proposal_revision")
+        if echoed == run.proposal_revision:
+            return result
+        _LOGGER.warning(
+            "audit result proposal_revision bound from run: task=%s run=%s "
+            "run_revision=%s echoed_revision=%s",
+            self.task.id,
+            run.id,
+            run.proposal_revision,
+            echoed,
+        )
+        return cast(
+            ResultT,
+            result.model_copy(update={"proposal_revision": run.proposal_revision}),
+        )
 
     def _raise_for_process_failure(
         self, process: ProcessRunResult, *, run: AgentRun

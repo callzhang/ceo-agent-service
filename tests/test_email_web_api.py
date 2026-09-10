@@ -91,7 +91,7 @@ def test_email_large_classification_id_round_trips_as_text(tmp_path: Path):
 
 
 class _ZeroTimeoutEmailStore(EmailStore):
-    def _connect(self) -> sqlite3.Connection:
+    def _open_connection(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=0)
         db.execute("pragma busy_timeout = 0")
         db.execute("pragma foreign_keys = on")
@@ -2377,7 +2377,7 @@ def test_audit_app_isolates_non_text_foreign_key_on_delete_metadata(
     database = tmp_path / "audit-app-invalid-email-fk-on-delete.sqlite3"
     AutoReplyStore(database)
     EmailStore(database)
-    original_connect = EmailStore._connect
+    original_open_connection = EmailStore._open_connection
 
     class CorruptOnDeleteRow:
         def __init__(self, row: sqlite3.Row):
@@ -2388,8 +2388,8 @@ def test_audit_app_isolates_non_text_foreign_key_on_delete_metadata(
                 return 7
             return self._row[key]
 
-    def corrupting_connect(self: EmailStore) -> sqlite3.Connection:
-        db = original_connect(self)
+    def corrupting_open_connection(self: EmailStore) -> sqlite3.Connection:
+        db = original_open_connection(self)
 
         def row_factory(cursor: sqlite3.Cursor, values: tuple[object, ...]):
             row = sqlite3.Row(cursor, values)
@@ -2400,7 +2400,7 @@ def test_audit_app_isolates_non_text_foreign_key_on_delete_metadata(
         db.row_factory = row_factory
         return db
 
-    monkeypatch.setattr(EmailStore, "_connect", corrupting_connect)
+    monkeypatch.setattr(EmailStore, "_open_connection", corrupting_open_connection)
 
     _assert_audit_app_email_unavailable(database, tmp_path)
 

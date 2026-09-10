@@ -5492,3 +5492,136 @@ def test_task_agent_parser_finds_decision_embedded_in_prose():
 
     assert _parse_task_agent_decision(raw) == TaskAgentDecision.model_validate(decision)
     assert _parse_task_agent_decision(message) == TaskAgentDecision.model_validate(decision)
+
+
+def _repair_codex(payloads):
+    class RepairingCodex(FakeCodexWithAuditEvents):
+        def __init__(self):
+            super().__init__(payloads[0], [])
+            self.payloads = list(payloads)
+            self.calls = 0
+
+        def decide(self, **kwargs):
+            self.prompts.append(kwargs["prompt"])
+            payload = self.payloads[self.calls]
+            self.calls += 1
+            self.last_audit_tool_events = (
+                [] if self.calls == 1 else [{"tool": "memory_recall"}]
+            )
+            return TaskAgentDecision.model_validate(payload)
+
+    return RepairingCodex()
+
+
+def _claimed_work_input(store):
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    return input_id, store.claim_work_summary_inputs(limit=1)[0]
+
+
+def test_process_work_item_repairs_a_second_repairable_rule(tmp_path, monkeypatch):
+    """A repaired decision that trips another repairable rule gets its own repair turn."""
+    from app.task_agent import TASK_DECISION_REPAIR_ROUNDS
+
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    input_id, work_input = _claimed_work_input(store)
+    base = {
+        "todo_changes": [],
+        "follow_up_drafts": [],
+        "follow_up_changes": [],
+        "update_summary": "创建项目。",
+        "merge_reason": "事项需要持续跟进。",
+        "confidence": 0.8,
+    }
+    project = {"title": "售前知识库建设", "category": "sales", "status": "active"}
+    # Turn 1: memory_context missing entirely.
+    first = {**base, "action": "create_project", "project": project, "memory_recall_used": False}
+    # Repair 1: a query but neither summary nor memories — still repairable.
+    second = {
+        **first,
+        "project": {**project, "memory_context": {"query": "售前知识库", "summary": "", "memories": []}},
+        "memory_recall_used": True,
+    }
+    third = {**second, "project": {**project, "memory_context": _memory_context()}}
+    codex = _repair_codex([first, second, third])
+
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?", (input_id,)
+        ).fetchone()
+        runs = db.execute(
+            "select status, error from task_agent_runs where summary_input_id=? order by id",
+            (input_id,),
+        ).fetchall()
+    assert TASK_DECISION_REPAIR_ROUNDS == 2
+    assert input_row == ("done", "")
+    assert runs == [
+        ("failed", "non-skip task decision requires project.memory_context"),
+        ("failed", "non-skip task decision requires project.memory_context"),
+        ("completed", ""),
+    ]
+    assert codex.calls == 3
+
+
+def test_process_work_item_repair_exhaustion_is_typed_not_silent(tmp_path, monkeypatch):
+    from app.task_agent import TaskDecisionRepairExhausted
+
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    input_id, work_input = _claimed_work_input(store)
+    invalid = {
+        "action": "create_project",
+        "project": {"title": "售前知识库建设", "category": "sales", "status": "active"},
+        "todo_changes": [],
+        "follow_up_drafts": [],
+        "follow_up_changes": [],
+        "update_summary": "创建项目。",
+        "merge_reason": "事项需要持续跟进。",
+        "memory_recall_used": True,
+        "confidence": 0.8,
+    }
+    codex = _repair_codex([invalid, invalid, invalid, invalid])
+
+    with pytest.raises(TaskDecisionRepairExhausted, match="repair exhausted after 2 rounds"):
+        process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    assert codex.calls == 3  # one decision turn plus two repair turns
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?", (input_id,)
+        ).fetchone()
+    assert input_row[0] == "failed"
+    assert input_row[1].startswith("task decision repair exhausted after 2 rounds")
+
+
+def test_validation_repair_prompt_states_the_memory_context_contract():
+    from app.task_agent import build_task_agent_validation_repair_prompt
+
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "skip",
+            "skip_reason": "draft",
+            "memory_recall_used": False,
+            "confidence": 0.5,
+        }
+    )
+    prompt = build_task_agent_validation_repair_prompt(
+        _work_item(),
+        "[]",
+        decision,
+        validation_error="non-skip task decision requires project.memory_context",
+    )
+
+    assert "Call memory_recall now" in prompt
+    assert "project.memory_context contract" in prompt
+    assert "no relevant memory was found for the query" in prompt
+    assert "memory_connector_runtime_unavailable" in prompt
+    assert 'return action="skip"' in prompt
+    assert "unless the new session\nReturn" not in prompt

@@ -1,4 +1,5 @@
 import json
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -585,15 +586,17 @@ def _dry_run_suppressed_jsonl(*, proposal_revision: int = 0) -> str:
     )
 
 
-def _revision_required_jsonl(observation: str) -> str:
+def _feedback_provided_jsonl(
+    observation: str, *, proposal_revision: int = 0
+) -> str:
     result = {
-        "outcome": "revision_required",
+        "outcome": "feedback_provided",
         "summary": observation,
-        "proposal_revision": 0,
+        "proposal_revision": proposal_revision,
         "feedback": {
-            "rule": "verified Skill handoff",
+            "rule": "Rule 15 (calendar_conflicts) - new meeting more important",
             "observation": observation,
-            "requested_revision": "Load the applicable business Skill and replace the proposal.",
+            "requested_revision": "Decline the existing meeting and notify its inviter.",
         },
         "external_result": None,
         "error": {
@@ -1010,18 +1013,43 @@ def test_audit_process_failure_is_a_regular_failed_run(setup):
     assert run.structured_error_json
 
 
-def test_audit_result_revision_mismatch_is_failed_without_reconciliation(setup):
+def test_audit_result_binds_proposal_revision_from_the_run(setup):
     store, task, audit_context, parent = setup
-    with pytest.raises(RuntimeError, match="audit_proposal_revision_mismatch"):
-        AuditAgentRunner(
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(
+            _audit_jsonl(
+                "operation-1",
+                session="session-revision",
+                proposal_revision=1,
+            )
+        ),
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None and run.status == "completed"
+    assert result.result.proposal_revision == run.proposal_revision == 0
+    assert json.loads(run.final_result_json)["proposal_revision"] == 0
+
+
+def test_audit_feedback_with_retyped_revision_is_accepted(setup, caplog):
+    """DingTalk task 383511: a schema-valid feedback_provided audit echoed the
+    revision it requested (1) for the revision-0 candidate it reviewed."""
+    store, task, audit_context, parent = setup
+    observation = "候选人判断正确，但缺少拒绝HR例会的动作"
+    with caplog.at_level(logging.WARNING, logger="app.agent_turn_runner"):
+        result = AuditAgentRunner(
             store=store,
             workspace=Path("/workspace"),
             executor=CapturingExecutor(
-                _audit_jsonl(
-                    "operation-1",
-                    session="session-revision",
-                    proposal_revision=1,
-                )
+                _feedback_provided_jsonl(observation, proposal_revision=1)
             ),
         ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
 
@@ -1032,7 +1060,72 @@ def test_audit_result_revision_mismatch_is_failed_without_reconciliation(setup):
         proposal_revision=0,
         turn_attempt=0,
     )
+    assert run is not None and run.status == "completed"
+    assert result.result.outcome is AuditOutcome.FEEDBACK_PROVIDED
+    assert result.result.feedback is not None
+    assert result.result.feedback.observation == observation
+    assert result.result.proposal_revision == 0
+    assert json.loads(run.final_result_json)["proposal_revision"] == 0
+    bound = [
+        record
+        for record in caplog.records
+        if "proposal_revision bound from run" in record.getMessage()
+    ]
+    assert len(bound) == 1
+    assert bound[0].levelno == logging.WARNING
+    assert f"run={run.id}" in bound[0].getMessage()
+    assert "run_revision=0" in bound[0].getMessage()
+    assert "echoed_revision=1" in bound[0].getMessage()
+
+
+def test_audit_result_missing_proposal_revision_is_result_invalid(setup):
+    store, task, audit_context, parent = setup
+    wire = _wire_result(
+        {
+            "outcome": "feedback_provided",
+            "summary": "Missing revision",
+            "proposal_revision": 0,
+            "feedback": {
+                "rule": "Rule 15",
+                "observation": "conflict",
+                "requested_revision": "decline the existing meeting",
+            },
+            "external_result": None,
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+        }
+    )
+    del wire["proposal_revision"]
+    jsonl = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "session-no-revision"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": json.dumps(wire)},
+                }
+            ),
+        )
+    )
+
+    with pytest.raises(ResultParseError):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(jsonl),
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
     assert run is not None and run.status == "failed"
+    error = json.loads(run.structured_error_json)
+    assert error["code"] == "codex_result_invalid"
+    assert error["session_continuable"] is True
+    assert "proposal_revision" in error["detail"]
 
 
 def test_audited_email_executed_binds_operation_id_from_the_run(setup):
@@ -1061,3 +1154,4 @@ def test_audited_email_executed_binds_operation_id_from_the_run(setup):
     assert result.result.external_result.operation_id == run.operation_id
     persisted = json.loads(run.final_result_json)
     assert persisted["external_result"]["operation_id"] == run.operation_id
+    assert persisted["proposal_revision"] == run.proposal_revision

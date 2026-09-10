@@ -89,21 +89,22 @@ def test_latest_snapshot_and_provider_truth_use_set_queries_and_lookup_index(
 ):
     store = EmailStore(tmp_path / "bounded-observability.sqlite3")
     statements: list[str] = []
-    original_connect = store._connect
+    original_open_connection = store._open_connection
 
-    def traced_connect():
-        db = original_connect()
+    def traced_open_connection():
+        db = original_open_connection()
         db.set_trace_callback(statements.append)
         return db
 
-    store._connect = traced_connect  # type: ignore[method-assign]
+    store._open_connection = traced_open_connection  # type: ignore[method-assign]
     assert store.latest_training_snapshot_state() is None
     select_statements = [
         statement for statement in statements if statement.lstrip().upper().startswith("SELECT")
     ]
     assert len(select_statements) <= 2
 
-    with original_connect() as db:
+    store._open_connection = original_open_connection  # type: ignore[method-assign]
+    with store._connect() as db:
         indexes = {
             row[1]
             for row in db.execute(
@@ -234,16 +235,16 @@ def test_latest_snapshot_projects_counts_and_provider_folder_truth(tmp_path):
         )
 
     statements: list[str] = []
-    original_connect = store._connect
+    original_open_connection = store._open_connection
 
-    def traced_connect():
-        db = original_connect()
+    def traced_open_connection():
+        db = original_open_connection()
         db.set_trace_callback(statements.append)
         return db
 
-    store._connect = traced_connect  # type: ignore[method-assign]
+    store._open_connection = traced_open_connection  # type: ignore[method-assign]
     state = store.latest_training_snapshot_state()
-    store._connect = original_connect  # type: ignore[method-assign]
+    store._open_connection = original_open_connection  # type: ignore[method-assign]
     store.record_current_provider_observations(
         [
             {

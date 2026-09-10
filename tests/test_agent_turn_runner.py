@@ -3,7 +3,7 @@ import json
 from types import SimpleNamespace
 
 import app.agent_turn_runner as agent_turn_runner
-from app.agent_contracts import ConsumerAgentResult
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_turn_runner import (
     AgentTurnProcess,
     _decode_runtime_domain_result,
@@ -28,6 +28,60 @@ def test_runner_has_no_application_effect_recovery_policy_helpers():
     assert not hasattr(AgentTurnProcess, "_normalized_effect_event")
     assert not hasattr(AgentTurnProcess, "_require_direct_send_receipt")
     assert not hasattr(AgentTurnProcess, "_record_direct_send_receipt")
+    assert not hasattr(AgentTurnProcess, "_validate_audit_result")
+
+
+def _audit_result(proposal_revision: int) -> AuditAgentResult:
+    return AuditAgentResult.model_validate(
+        {
+            "outcome": "feedback_provided",
+            "summary": "缺少冲突处理动作",
+            "proposal_revision": proposal_revision,
+            "feedback": {
+                "rule": "Rule 15 (calendar_conflicts)",
+                "observation": "两个会议在 14:00-14:30 重叠",
+                "requested_revision": "拒绝 HR 例会并通知发起人",
+            },
+            "external_result": None,
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+            "risk": "medium",
+            "confidence": 0.9,
+        }
+    )
+
+
+def test_audit_result_proposal_revision_is_bound_from_the_run():
+    """The run row owns proposal_revision; a retyped echo is overwritten, not failed."""
+    fail_calls: list[object] = []
+
+    class Store:
+        def fail_agent_run(self, *args, **kwargs):
+            fail_calls.append((args, kwargs))
+
+    runner = object.__new__(AgentTurnProcess)
+    runner.store = Store()
+    runner.owner = "test-owner"
+    runner.task = SimpleNamespace(id=383511)
+    run = SimpleNamespace(id=11776, proposal_revision=0)
+
+    echoed = _audit_result(3)
+    bound = runner._bind_audit_result(run, echoed)
+
+    assert bound.proposal_revision == 0
+    assert bound is not echoed
+    assert echoed.proposal_revision == 3
+    assert bound.feedback == echoed.feedback
+    assert bound.outcome is echoed.outcome
+    assert fail_calls == []
+
+    matching = _audit_result(0)
+    assert runner._bind_audit_result(run, matching) is matching
+    assert fail_calls == []
 
 
 def test_runner_wire_contract_has_no_application_recovery_evidence_fields():

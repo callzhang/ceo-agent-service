@@ -585,11 +585,13 @@ scripts/install-auto-reply-agents.sh
 
 安装前请先检查 `launchd/*.plist` 中的本地路径、用户名、workspace、数据库路径和 persona 配置。开源部署时通常需要替换这些值。安装脚本会在修改 plist 或 launchd 前验证 Workbench 的 `index.html` 和它引用的每个资源；缺少构建时直接失败，不会自动执行 npm install/build。
 
+plist 通过 `SoftResourceLimits/NumberOfFiles=4096` 提高进程可打开文件数上限：launchd agent 默认软上限只有 256，而 worker 会在多个线程里同时保持若干短生命周期的 SQLite 连接（每个连接占用 db 与 WAL 两个文件描述符）以及 IMAP 连接，256 不够用时会出现 `Too many open files` / `unable to open database file` 并导致 worker 线程退出。修改这个值后必须重新执行 `scripts/install-auto-reply-agents.sh`（bootout + bootstrap）才会生效；`launchctl kickstart -k` 不会重新读取 plist。
+
 运行模型只有一个 launchd job。它的 supervisor 运行 worker 和审计 Web 两个独立子进程；它们共享 SQLite，但不共享 Python 解释器。任一子进程退出时，supervisor 只退避重启该子进程，另一方继续服务；不会创建 meeting crontab 或第二个 plist：
 
 - `com.ceo-agent-service.main`：唯一 launchd job，托管队列 worker 与本地审计页面。
 - Agent Cron scheduler：按任务自己的 Cron 和时区创建 trigger；停机不补跑，重叠轮次跳过，手动运行不移动计划。启动时按稳定 migration key 幂等 seed 七个默认任务：钉钉消息、会议、微信、OA、每日工作来源、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）的 `ceo-minutes-sync`。
-- 服务命令任务：定时任务分两种执行形式。`command` 为空的任务由 Agent 按 prompt、Skill 和 Runtime 执行；`command` 非空的任务由 Dispatcher 在本进程内直接运行服务命令目录中的命令，不经过 Agent，也不产生 reply task 或历史记录。钉钉消息检查（`produce-once`，每分钟）和微信消息检查（`wechat-produce-once`，每 15 秒）是服务命令任务；其余五项是 Agent 任务。
+- 服务命令任务：定时任务分两种执行形式。`command` 为空的任务由 Agent 按 prompt、Skill 和 Runtime 执行；`command` 非空的任务由 Dispatcher 在本进程内直接运行确定性发现代码，不创建 synthetic scheduled Agent 任务。当前钉钉消息、会议、微信消息、OA、工作来源和 AI 听记检查都是服务命令；只有需要分析和编排的 OKR 周报保留为 Agent 任务。服务命令发现真实对象后，才由对应的 reply、meeting 或 work-summary Consumer 处理。
 - Agent 执行容量：单一 launchd 服务内按 `CEO_CONSUMER_WORKERS` 限制所有 Agent 队列合计并发，默认 2；各队列独立调度，Meeting 单类最多 1 个，同一会话仍串行。无需 Agent 的 trigger 和 Todo outbox 不占用 Agent 容量。
 - Consumer Dispatcher：直接从 scheduled trigger/execution、reply、meeting、work summary、OKR 和 Todo outbox 的既有事实来源领取；内部唤醒、等待、租约和 recovery 没有用户设置。
 - 消息入队：钉钉消息由 `produce-once` 服务命令按分钟增量读取、去重并写入 reply task；队列的 `available_at` 按实际时间解析，兼容带时区的 ISO 时间与数据库时间格式，不以字符串顺序判断是否到期。reply task 由 Dispatcher 的 reply consumer 领取，调用 Agent 后执行发送或跳过；同一会话仍串行。
