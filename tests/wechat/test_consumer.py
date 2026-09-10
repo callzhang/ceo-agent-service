@@ -205,18 +205,218 @@ def test_retryable_runtime_transport_failure_requeues_and_unlocks_task(store, ac
         now_provider=lambda: now,
     )
 
+    # A retryable transport failure only escapes the router when every other
+    # route is paused, so it is the provider outage wait, not a task failure.
+    assert consumer.run_once(limit=1) == 1
+
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 0
+    assert task.available_at == "2026-08-08 08:05:00"
+    assert task.locked_at is None
+    assert task.error == "runtime_provider_unreachable"
+    assert store.get_reply_attempt(1) is None
+    [run] = store.list_agent_runs_for_task_generation(1, "initial")
+    assert run.status == "failed"
+    assert "unsafe provider detail" not in run.structured_error_json
+
+
+def _enqueue_wechat_task(store):
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="u9",
+        conversation_title="Alex",
+        single_chat=True,
+        trigger_message_id="m1",
+        trigger_create_time="2026-07-17T10:00:00",
+        trigger_sender="Alex",
+        trigger_text="下午能给结论吗",
+    )
+
+
+class RaisingRunner:
+    def __init__(self, error: Exception):
+        self.error = error
+
+    def decide(self, *_args, **_kwargs):
+        raise self.error
+
+
+def _assert_outage_wait(store, *, available_at: str) -> None:
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 0
+    assert task.error == "runtime_provider_unreachable"
+    assert task.available_at == available_at
+    assert task.locked_at is None
+    assert store.get_reply_attempt(1) is None
+    assert store.list_current_unresolved_problem_attempts() == []
+    assert store.count_errors() == 0
+
+
+def test_runtime_outage_defers_wechat_task_without_spending_attempt(store, account):
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    _enqueue_wechat_task(store)
+    now = datetime(2026, 8, 8, 8, 0, tzinfo=timezone.utc)
+    consumer = WechatReplyConsumer(
+        store,
+        RaisingRunner(
+            RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "no_eligible_route",
+                retryable_external_dependency=True,
+                runtime_unavailable=True,
+            )
+        ),
+        reader=None,
+        account=account,
+        max_task_attempts=1,
+        retry_delay=timedelta(minutes=5),
+        now_provider=lambda: now,
+    )
+
+    assert consumer.run_once(limit=1) == 1
+
+    _assert_outage_wait(store, available_at="2026-08-08 08:05:00")
+    [run] = store.list_agent_runs_for_task_generation(1, "initial")
+    assert run.status == "failed"
+    assert __import__("json").loads(run.structured_error_json) == {
+        "code": "runtime_provider_unreachable",
+        "failure_class": "",
+        "failure_code": "",
+    }
+
+
+def test_last_live_route_capacity_failure_is_an_outage_wait(store, account):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    _enqueue_wechat_task(store)
+    now = datetime(2026, 8, 8, 8, 0, tzinfo=timezone.utc)
+    consumer = WechatReplyConsumer(
+        store,
+        RaisingRunner(
+            RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "provider overloaded",
+                failure_class=RuntimeFailureClass.CAPACITY,
+                failure_code="codex_provider_overloaded",
+                retryable_external_dependency=True,
+            )
+        ),
+        reader=None,
+        account=account,
+        max_task_attempts=1,
+        retry_delay=timedelta(minutes=5),
+        now_provider=lambda: now,
+    )
+
+    assert consumer.run_once(limit=1) == 1
+
+    _assert_outage_wait(store, available_at="2026-08-08 08:05:00")
+    [run] = store.list_agent_runs_for_task_generation(1, "initial")
+    assert run.status == "failed"
+    assert __import__("json").loads(run.structured_error_json) == {
+        "code": "runtime_provider_unreachable",
+        "failure_class": "capacity",
+        "failure_code": "codex_provider_overloaded",
+    }
+
+
+def test_repeated_outage_waits_keep_budget_and_turn_numbering(
+    fake_codex, store, account
+):
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    _enqueue_wechat_task(store)
+    clock = {"now": datetime(2026, 8, 8, 8, 0, tzinfo=timezone.utc)}
+    outage = RaisingRunner(
+        RoutedCodexExecutionError(
+            "runtime_execution_failed",
+            "no_eligible_route",
+            retryable_external_dependency=True,
+            runtime_unavailable=True,
+        )
+    )
+    consumer = WechatReplyConsumer(
+        store,
+        outage,
+        reader=None,
+        account=account,
+        max_task_attempts=3,
+        retry_delay=timedelta(minutes=5),
+        now_provider=lambda: clock["now"],
+    )
+
+    # Backoff follows the decision turn: 5m, 10m, then the 15m cap.
+    for turn, wait in enumerate((5, 10, 15)):
+        assert consumer.run_once(limit=1) == 1, turn
+        clock["now"] += timedelta(minutes=wait)
+        _assert_outage_wait(
+            store, available_at=clock["now"].strftime("%Y-%m-%d %H:%M:%S")
+        )
+        runs = store.list_agent_runs_for_task_generation(1, "initial")
+        assert [run.turn_attempt for run in runs] == list(range(turn + 1))
+        assert {run.status for run in runs} == {"failed"}
+        clock["now"] += timedelta(seconds=1)
+
+    consumer.runner = fake_codex
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.SEND_REPLY, reply_text="收到，我下午给你结论。",
+        reason="明确承诺", audit_summary="明确承诺",
+    )
+
+    assert consumer.run_once(limit=1) == 1
+
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "done"
+    assert task.attempts == 1
+    delivery = store.get_wechat_delivery_for_task(1)
+    assert delivery is not None
+    assert delivery.status == "ready_to_send"
+    runs = store.list_agent_runs_for_task_generation(1, "initial")
+    assert [(run.turn_attempt, run.status) for run in runs] == [
+        (0, "failed"), (1, "failed"), (2, "failed"), (3, "completed"),
+    ]
+
+
+def test_result_failure_stays_bounded(store, account):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    _enqueue_wechat_task(store)
+    consumer = WechatReplyConsumer(
+        store,
+        RaisingRunner(
+            RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "schema mismatch",
+                failure_class=RuntimeFailureClass.RESULT,
+                failure_code="runtime_result_validation_failed",
+            )
+        ),
+        reader=None,
+        account=account,
+        max_task_attempts=1,
+    )
+
     with pytest.raises(WechatTaskProcessingError):
         consumer.run_once(limit=1)
 
     task = store.get_reply_task(1)
     assert task is not None
-    assert task.status == "pending"
-    assert task.available_at == "2026-08-08 08:05:00"
-    assert task.locked_at is None
-    assert task.error == "codex_transport_disconnected"
-    [run] = store.list_agent_runs_for_task_generation(1, "initial")
-    assert run.status == "failed"
-    assert "unsafe provider detail" not in run.structured_error_json
+    assert task.status == "failed"
+    assert task.attempts == 1
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "runtime_result_validation_failed"
+    [problem] = store.list_current_unresolved_problem_attempts()
+    assert problem.id == attempt.id
 
 
 def test_external_dependency_failure_defers_wechat_task_for_retry(
@@ -257,11 +457,72 @@ def test_external_dependency_failure_defers_wechat_task_for_retry(
     assert attempt is not None
     assert attempt.send_status == "failed"
     assert attempt.send_error == "provider_unavailable"
-    assert store.claim_reply_tasks(
-        1,
-        now="2026-08-08 08:05:01",
-        channel="wechat",
-    )[0].id == task.id
+    runs = store.list_agent_runs_for_task_generation(task.id, "initial")
+    assert [(run.turn_attempt, run.status) for run in runs] == [(0, "completed")]
+
+    # The retry polls a fresh decision turn behind the completed run instead
+    # of colliding with it and requeueing forever.
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.SEND_REPLY, reply_text="收到，我下午给你结论。",
+        reason="明确承诺", audit_summary="明确承诺",
+    )
+
+    assert consumer.run_once(limit=1) == 1
+
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "done"
+    assert task.attempts == 2
+    assert len(fake_codex.prompts) == 2
+    delivery = store.get_wechat_delivery_for_task(1)
+    assert delivery is not None
+    assert delivery.status == "ready_to_send"
+    runs = store.list_agent_runs_for_task_generation(task.id, "initial")
+    assert [(run.turn_attempt, run.status) for run in runs] == [
+        (0, "completed"), (1, "completed"),
+    ]
+
+
+def test_stale_recovery_behind_completed_run_polls_next_turn(
+    fake_codex, consumer, store
+):
+    # The decision turn completed but the worker died before finalize; the
+    # DingTalk worker's stale recovery requeues the task with the run still
+    # completed.  The next poll must take turn 1, not spin on turn 0.
+    [claimed] = store.claim_reply_tasks(1, channel="wechat")
+    run = store.claim_agent_run(
+        claimed.id,
+        claimed.execution_generation,
+        role="consumer",
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="died-wechat-worker",
+    )
+    store.complete_agent_run(
+        run.run.id, {"action": "no_reply"}, owner="died-wechat-worker"
+    )
+    store.requeue_reply_task(
+        claimed.id,
+        "stale_agent_turn_recovery",
+        expected_execution_generation=claimed.execution_generation,
+    )
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.NO_REPLY, reason="不需要回复", audit_summary="不需要回复",
+    )
+
+    assert consumer.run_once(limit=1) == 1
+
+    task = store.get_reply_task(claimed.id)
+    assert task is not None
+    assert task.status == "done"
+    assert task.attempts == 2
+    assert len(fake_codex.prompts) == 1
+    runs = store.list_agent_runs_for_task_generation(claimed.id, "initial")
+    assert [(run.turn_attempt, run.status) for run in runs] == [
+        (0, "completed"), (1, "completed"),
+    ]
 
 
 def test_auth_failure_records_recoverable_login_state(fake_codex, consumer, store):
@@ -467,8 +728,12 @@ def test_duplicate_wechat_worker_does_not_leave_processing_task_or_emit_error(
 
 
 def test_terminal_duplicate_wechat_run_is_requeued_for_normal_processing(
-    fake_codex, consumer, store
+    fake_codex, consumer, store, monkeypatch
 ):
+    # Only a race can still collide with a terminal run: another worker
+    # completes the turn after this one numbered it.  Pin the numbering to
+    # reproduce that window.
+    monkeypatch.setattr(consumer, "_next_turn_attempt", lambda task: 0)
     [claimed] = store.claim_reply_tasks(1, channel="wechat")
     store.mark_wechat_read_only_decision_started(
         claimed.id, expected_execution_generation=claimed.execution_generation

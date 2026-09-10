@@ -777,6 +777,11 @@ run 才能被持久队列恢复。
   修正提示列出最后一个候选的字段错误（只含路径与描述，不回显模型的值）和最常违反的规则；会议对齐的解析失败
   以 `RoutedResultValidationError` 上报，因此同会话修正轮真正触发，修正提示折叠列表下标并附派生 schema（主提示同样
   内嵌，第三方 provider 不执行 `--output-schema`）；OKR 评审的 AgentEnvelope 修正提示同理由模型 schema 渲染。
+- **微信通道同样的两条规则**：微信/Codex 决策解析（`app/codex_decision.py`）用共享提取器解析围栏/散文包裹的
+  AgentEnvelope，形似 envelope 但不合 schema 的候选进入唯一一次同会话修正轮（修正提示列字段问题并渲染
+  `AgentEnvelope.model_json_schema()`），不再被宽松回退接受；微信消费者与钉钉 worker 共用供应商中断判定，
+  中断时以 `runtime_provider_unreachable` 退避延期、归还 attempt、不写 `reply_attempts`、不进 Attention；
+  决策轮次按本代已持久化的 Consumer run 推导（终态 run 推进轮次，running 保留），避免同一轮被无限重入。
 - **Provider 的通用过载包装**：Codex 会把上游 429/5xx（限流、MiniMax token plan 用尽、上游过载）
   统一包装成 "We're currently experiencing high demand"，流里不带 provider 原文；服务把它归为
   `codex_provider_overloaded`（容量类：同路由可重试、允许 failover、暂停路由），而不是传输断开。

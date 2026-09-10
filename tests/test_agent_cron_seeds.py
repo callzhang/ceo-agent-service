@@ -1047,7 +1047,12 @@ def test_seed_is_disabled_when_exact_repository_revision_is_not_loaded(
         {existing_skill.id: existing_revision.id}, expected_parent_id=None
     )
     import_repository_managed_skills(store)
-    bindings_before = store.list_runtime_skill_bindings(existing_config.id)
+    # Repository import supersedes the settings-only config by binding the
+    # email classifier; seeding must leave that post-import config untouched.
+    config_before = store.get_pending_or_active_runtime_skill_config()
+    assert config_before is not None
+    assert config_before.parent_id == existing_config.id
+    bindings_before = store.list_runtime_skill_bindings(config_before.id)
     options = ScheduledTaskOptionService(
         store=store,
         environment={
@@ -1077,8 +1082,8 @@ def test_seed_is_disabled_when_exact_repository_revision_is_not_loaded(
     assert task.enabled is False
     assert task.runtime_id == "codex_oauth"
     assert "managed_revision_not_loaded" in task.prompt
-    assert store.get_pending_or_active_runtime_skill_config() == existing_config
-    assert store.list_runtime_skill_bindings(existing_config.id) == bindings_before
+    assert store.get_pending_or_active_runtime_skill_config() == config_before
+    assert store.list_runtime_skill_bindings(config_before.id) == bindings_before
     ref = task.skill_refs[0]
     revision = store.get_managed_skill_revision(ref.managed_revision_id)
     assert revision is not None

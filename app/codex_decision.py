@@ -6,11 +6,14 @@ import re
 import shlex
 import time
 from collections.abc import Callable
+from itertools import zip_longest
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from app.agent_envelope import AgentEnvelope
+from app.agent_result import agent_message_json_objects
 from app.agent_runtime_config import load_runtime_config
 from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
@@ -37,14 +40,12 @@ DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX = (
 )
 TIMEOUT_SESSION_DECISION_GRACE_SECONDS = 90
 SESSION_DECISION_GRACE_SECONDS = 15
-REPLY_AGENT_ENVELOPE_SCHEMA_HINT = (
-    'JSON schema: {"kind":"reply|okr_review|no_action|error",'
-    '"user_response":{"mode":"send_reply|ask_clarifying_question|handoff_to_human|no_reply",'
-    '"text":"","sensitivity_kind":"general|internal_personnel|external_candidate"},'
-    '"system_actions":[{"type":"send_dingtalk_reply|dws_markdown_document_reply|dws_mail_reply|dws_message_reaction|queue_okr_review"}],'
-    '"domain_payload":{},'
-    '"audit":{"summary":"","documents":[{"title":"","url":"","relevance":""}],"confidence":0.8}}'
+# Rendered from the model so the correction prompt cannot drift from the
+# envelope contract (kinds, response modes, sensitivity kinds, action types).
+AGENT_ENVELOPE_PROMPT_SCHEMA = json.dumps(
+    AgentEnvelope.model_json_schema(), ensure_ascii=False, indent=2
 )
+AGENT_ENVELOPE_SCHEMA_PROBLEM_LIMIT = 8
 SECRET_PATTERNS = (
     re.compile(r"access_token=[^\s&]+", re.IGNORECASE),
     re.compile(r"appsecret=[^\s]+", re.IGNORECASE),
@@ -92,7 +93,7 @@ def error_agent_envelope_json(
 
 
 def codex_decision_from_envelope(envelope: Any) -> CodexDecision:
-    from app.agent_envelope import AgentEnvelope, AgentKind, UserResponseMode
+    from app.agent_envelope import AgentKind, UserResponseMode
 
     parsed = AgentEnvelope.model_validate(envelope)
     if parsed.kind == AgentKind.ERROR:
@@ -137,15 +138,22 @@ def codex_decision_from_envelope(envelope: Any) -> CodexDecision:
 
 
 def parse_codex_json(raw: str, *, allow_legacy: bool = True) -> CodexDecision:
-    stripped = raw.strip()
-    try:
-        payload = json.loads(stripped)
-    except json.JSONDecodeError:
-        return _parse_codex_jsonl(stripped, allow_legacy=allow_legacy)
+    """Return the decision in ``raw`` (one JSON object or Codex JSONL), last line first.
 
-    decision = _decision_from_payload(payload, allow_legacy=allow_legacy)
-    if decision is not None:
-        return decision
+    Raises the ``ValidationError`` of the first envelope-shaped candidate when no
+    candidate validates, and ``json.JSONDecodeError`` when none is envelope-shaped.
+    """
+    failure: ValidationError | None = None
+    for payload in reversed(_iter_json_payloads(raw)):
+        try:
+            decision = _decision_from_payload(payload, allow_legacy=allow_legacy)
+        except ValidationError as exc:
+            failure = failure or exc
+            continue
+        if decision is not None:
+            return decision
+    if failure is not None:
+        raise failure
     message = (
         "No AgentEnvelope JSON found"
         if not allow_legacy
@@ -174,19 +182,6 @@ def extract_codex_audit_events(raw: str, limit: int = 40) -> list[dict[str, str]
     return events
 
 
-def _parse_codex_jsonl(raw: str, *, allow_legacy: bool = True) -> CodexDecision:
-    for payload in reversed(list(_iter_json_payloads(raw))):
-        decision = _decision_from_payload(payload, allow_legacy=allow_legacy)
-        if decision is not None:
-            return decision
-    message = (
-        "No AgentEnvelope JSON found"
-        if not allow_legacy
-        else "No Codex decision JSON found"
-    )
-    raise json.JSONDecodeError(message, raw, 0)
-
-
 def _iter_json_payloads(raw: str) -> list[Any]:
     stripped = raw.strip()
     if not stripped:
@@ -211,45 +206,58 @@ def _decision_from_payload(
     *,
     allow_legacy: bool = True,
 ) -> CodexDecision | None:
-    if isinstance(payload, dict):
-        shorthand = _action_free_no_reply_decision(payload)
-        if shorthand is not None:
-            return shorthand
-        if _looks_like_agent_envelope(payload):
-            try:
-                return codex_decision_from_envelope(payload)
-            except Exception:
-                decision = _decision_from_agent_envelope_like(payload)
-                if decision is not None:
-                    return decision
-        if allow_legacy:
-            try:
-                return CodexDecision.model_validate(payload)
-            except ValidationError:
-                pass
-
-        for text in _decision_text_candidates(payload):
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            shorthand = _action_free_no_reply_decision(parsed)
-            if shorthand is not None:
-                return shorthand
-            if isinstance(parsed, dict) and _looks_like_agent_envelope(parsed):
-                try:
-                    return codex_decision_from_envelope(parsed)
-                except Exception:
-                    decision = _decision_from_agent_envelope_like(parsed)
-                    if decision is not None:
-                        return decision
-            if not allow_legacy:
-                continue
-            try:
-                return CodexDecision.model_validate(parsed)
-            except ValidationError:
-                continue
+    failure: ValidationError | None = None
+    for candidate in _decision_candidates(payload):
+        try:
+            decision = _decision_from_candidate(candidate, allow_legacy=allow_legacy)
+        except ValidationError as exc:
+            failure = failure or exc
+            continue
+        if decision is not None:
+            return decision
+    if failure is not None:
+        raise failure
     return None
+
+
+def _decision_candidates(payload: Any) -> list[Any]:
+    """The payload itself, then every JSON object in its agent-message texts.
+
+    Models wrap the envelope in Markdown fences or prose and sometimes emit a
+    draft before the final object, so each text yields its objects last first.
+    """
+    if not isinstance(payload, dict):
+        return []
+    candidates: list[Any] = [payload]
+    for text in _decision_text_candidates(payload):
+        candidates.extend(reversed(agent_message_json_objects(text)))
+    return candidates
+
+
+def _decision_from_candidate(
+    candidate: Any, *, allow_legacy: bool
+) -> CodexDecision | None:
+    """Decide from one JSON object; envelope-shaped objects must satisfy the schema."""
+    if not isinstance(candidate, dict):
+        return None
+    shorthand = _action_free_no_reply_decision(candidate)
+    if shorthand is not None:
+        return shorthand
+    if _looks_like_agent_envelope(candidate):
+        try:
+            return codex_decision_from_envelope(candidate)
+        except ValidationError:
+            if not allow_legacy:
+                raise
+            decision = _decision_from_agent_envelope_like(candidate)
+            if decision is not None:
+                return decision
+    if not allow_legacy:
+        return None
+    try:
+        return CodexDecision.model_validate(candidate)
+    except ValidationError:
+        return None
 
 
 def _action_free_no_reply_decision(payload: object) -> CodexDecision | None:
@@ -685,6 +693,83 @@ def _failed_dws_transient_read_command(
     return ""
 
 
+def _decision_envelope_repair_prompt(raw_output: str) -> str:
+    """Tell the model which schema rules its last envelope broke."""
+    problems = _decision_envelope_problems(raw_output)
+    detail = (
+        "\n".join(f"- {problem}" for problem in problems)
+        if problems
+        else (
+            "- the reply did not contain an AgentEnvelope JSON object "
+            "(do not return action/reason/mode/reply/text at the top level)"
+        )
+    )
+    return (
+        "Resume the same decision turn. Output one valid AgentEnvelope JSON object "
+        "only. Reply actions require non-empty user_response.text and all non-error "
+        "decisions require a non-empty audit summary. Use the exact fields and enum "
+        "values in the schema below; do not return mode/reply/text at the top "
+        "level.\n\n"
+        f"Problems in the previous output:\n{detail}\n\n"
+        "Do not call tools, do not send messages, do not take any external action.\n\n"
+        "AgentEnvelope Pydantic JSON schema:\n"
+        f"{AGENT_ENVELOPE_PROMPT_SCHEMA}"
+    )
+
+
+def _decision_envelope_problems(raw_output: str) -> list[str]:
+    """List why the parser rejected the last envelope-shaped candidate, by field path.
+
+    Only field paths and validator messages are rendered, never the model's values.
+    """
+    candidate = next(
+        (
+            candidate
+            for payload in reversed(_iter_json_payloads(raw_output))
+            for candidate in _decision_candidates(payload)
+            if isinstance(candidate, dict) and _looks_like_agent_envelope(candidate)
+        ),
+        None,
+    )
+    if candidate is None:
+        return []
+    try:
+        CodexDecisionRunner._validate_decision(codex_decision_from_envelope(candidate))
+    except ValidationError as exc:
+        # A made-up system action fails against every union member (one error
+        # per member field); taking problems field by field in turns keeps the
+        # other top-level fields inside the cap.
+        by_field: dict[str, list[str]] = {}
+        for error in exc.errors():
+            field_name = str(error["loc"][0]) if error["loc"] else ""
+            problem = _schema_problem(error["loc"], error["msg"])
+            if problem not in by_field.setdefault(field_name, []):
+                by_field[field_name].append(problem)
+        in_turns = [
+            problem
+            for round_ in zip_longest(*by_field.values())
+            for problem in round_
+            if problem is not None
+        ]
+        return in_turns[:AGENT_ENVELOPE_SCHEMA_PROBLEM_LIMIT]
+    except ValueError as exc:
+        return [str(exc)]
+    # The router builds this prompt after claiming the correction attempt, so
+    # a raw that parses here must degrade to the fixed line, never raise.
+    return []
+
+
+def _schema_problem(loc: tuple[int | str, ...], message: str) -> str:
+    path = ""
+    for part in loc:
+        if isinstance(part, int):
+            path += "[]"
+        else:
+            path = f"{path}.{part}" if path else str(part)
+    # Model-level validators report an empty location.
+    return f"{path}: {message}" if path else message
+
+
 class CodexDecisionRunner:
     def __init__(
         self,
@@ -785,15 +870,7 @@ class CodexDecisionRunner:
                 except ValueError:
                     pass
             retry_session_id = session_id or self.last_session_id
-            repair_prompt = (
-                "上一次输出不是合法 AgentEnvelope JSON，或需要回复但 user_response.text 为空。"
-                "只输出合法 JSON，不要解释。"
-                "send_reply 和 ask_clarifying_question 的 user_response.text 必须非空。"
-                "audit.summary 必须非空。"
-                "send_reply/ask_clarifying_question 如果 audit.documents 为空，"
-                "audit.summary 必须说明未找到可用文档证据或只需上下文判断。"
-                f"{REPLY_AGENT_ENVELOPE_SCHEMA_HINT}"
-            )
+            repair_prompt = _decision_envelope_repair_prompt(first_raw)
             second_raw = self.executor(
                 self._build_command(
                     repair_prompt,
@@ -856,7 +933,9 @@ class CodexDecisionRunner:
                 decision = parse_codex_json(raw, allow_legacy=False)
                 self._validate_decision(decision)
             except (json.JSONDecodeError, ValidationError, ValueError) as exc:
-                raise RoutedResultValidationError("invalid AgentEnvelope result") from exc
+                raise RoutedResultValidationError(
+                    "invalid AgentEnvelope result", raw_output=raw
+                ) from exc
             return decision.model_dump_json()
 
         try:
@@ -869,15 +948,7 @@ class CodexDecisionRunner:
                 result_codec=RoutedResultCodec.text(schema_id="codex_decision.v1"),
                 required_capabilities=DECISION_RUNTIME_CAPABILITIES,
                 result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
-                    correction_prompt=lambda _raw_output: (
-                        "Resume the same decision turn. Output one valid AgentEnvelope "
-                        "JSON object only. Reply actions require non-empty "
-                        "user_response.text and all non-error decisions require a "
-                        "non-empty audit summary. Use the exact fields and enum "
-                        "values in the schema below; do not return mode/reply/text "
-                        "at the top level. "
-                        f"{REPLY_AGENT_ENVELOPE_SCHEMA_HINT}"
-                    )
+                    correction_prompt=_decision_envelope_repair_prompt
                 ),
             )
         except RoutedCodexExecutionError:

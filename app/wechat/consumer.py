@@ -20,6 +20,14 @@ from app.dingtalk_models import CodexAction
 from app.store import AgentRole
 from app.wechat.models import WechatAccount, WechatMessage
 from app.wechat.prompt import build_wechat_turn_prompt
+from app.worker import (
+    REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
+    RUNTIME_OUTAGE_WAIT_ERRORS,
+    _is_runtime_outage_error,
+)
+
+# The single wait code the DingTalk worker shares for a provider outage.
+(RUNTIME_OUTAGE_WAIT_ERROR,) = RUNTIME_OUTAGE_WAIT_ERRORS
 
 
 class WechatTaskProcessingError(RuntimeError):
@@ -66,6 +74,39 @@ class WechatReplyConsumer:
         return (
             self.now_provider().astimezone(timezone.utc) + self.retry_delay
         ).strftime("%Y-%m-%d %H:%M:%S")
+
+    def _outage_available_at(self, turn_attempt: int) -> str:
+        """Back off per decision turn: an outage wait hands its attempt back,
+        so the task budget cannot drive the delay."""
+        delay = min(
+            self.retry_delay * (2 ** turn_attempt),
+            timedelta(seconds=REPLY_TASK_RETRY_MAX_DELAY_SECONDS),
+        )
+        return (
+            self.now_provider().astimezone(timezone.utc) + delay
+        ).strftime("%Y-%m-%d %H:%M:%S")
+
+    def _next_turn_attempt(self, task) -> int:
+        """Number the decision turn from the persisted Consumer runs of this
+        generation rather than the task budget: an outage wait keeps the
+        budget, so the next poll must not reuse the failed outage run's turn.
+        Any terminal run advances the turn (a retryable STOP_WITH_ERROR and
+        the worker's stale recovery both requeue behind a completed run);
+        only a running run keeps its turn so the duplicate-worker guard in
+        process() still collides with the live lease."""
+        consumer_runs = [
+            run
+            for run in self.store.list_agent_runs_for_task_generation(
+                task.id, task.execution_generation
+            )
+            if run.role is AgentRole.CONSUMER and run.proposal_revision == 0
+        ]
+        if not consumer_runs:
+            return 0
+        latest = max(consumer_runs, key=lambda run: (run.turn_attempt, run.id))
+        if latest.status == "running":
+            return latest.turn_attempt
+        return latest.turn_attempt + 1
 
     def run_once(self, limit: int = 50) -> int:
         recover_native_codex_auth_failures(self.store, channel="wechat")
@@ -130,7 +171,7 @@ class WechatReplyConsumer:
             task.id,
             expected_execution_generation=task.execution_generation,
         )
-        turn_attempt = max(task.attempts - 1, 0)
+        turn_attempt = self._next_turn_attempt(task)
         run_owner = (
             f"wechat-decision:{task.id}:{task.execution_generation}:{turn_attempt}"
         )
@@ -164,9 +205,10 @@ class WechatReplyConsumer:
         except Exception as exc:
             from app.agent_runtime_router import RoutedCodexExecutionError
 
+            runtime_outage = _is_runtime_outage_error(exc)
             if isinstance(exc, RoutedCodexExecutionError):
                 structured_error = {
-                    "code": exc.code,
+                    "code": RUNTIME_OUTAGE_WAIT_ERROR if runtime_outage else exc.code,
                     "failure_class": (
                         exc.failure_class.value if exc.failure_class is not None else ""
                     ),
@@ -182,6 +224,19 @@ class WechatReplyConsumer:
                 structured_error,
                 owner=run_owner,
             )
+            if runtime_outage:
+                # Same gate as the DingTalk worker: no route was entered, or
+                # the last live route failed on capacity/transport with every
+                # other route paused. That is a route-pause wait, never a
+                # failure of this task, so it hands the attempt back, writes
+                # no reply_attempts row and reaches nothing in Attention.
+                self.store.defer_reply_task(
+                    task.id,
+                    RUNTIME_OUTAGE_WAIT_ERROR,
+                    expected_execution_generation=task.execution_generation,
+                    available_at=self._outage_available_at(turn_attempt),
+                )
+                return
             if isinstance(exc, RoutedCodexExecutionError):
                 failure_code = exc.failure_code or exc.code
                 retryable = (

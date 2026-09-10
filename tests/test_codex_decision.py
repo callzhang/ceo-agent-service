@@ -3,10 +3,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 import app.codex_decision as codex_decision
 from app.codex_decision import (
     CodexDecisionRunner,
+    _decision_envelope_repair_prompt,
     append_signature,
     extract_codex_audit_events,
     extract_codex_session_id,
@@ -22,6 +24,11 @@ from app.dingtalk_models import (
 )
 from app.leak_check import contains_forbidden_leak
 from app.process_runner import ProcessRunResult
+
+
+def _option_value(command: list[str], flag: str) -> str:
+    """Return the value following ``flag`` in a codex command."""
+    return command[command.index(flag) + 1]
 
 
 class FakeExecutor:
@@ -111,13 +118,25 @@ def test_routed_decision_propagates_runtime_failure_instead_of_business_stop(
     assert raised.value.code == "runtime_execution_failed"
 
 
-def test_routed_decision_correction_prompt_accepts_raw_output_only(tmp_path: Path):
+def test_routed_decision_correction_prompt_names_rejected_fields(tmp_path: Path):
+    from app.agent_runtime_router import RoutedResultValidationError
+
     class Routed:
         def execute(self, **kwargs):
             correction_prompt = kwargs["result_validation_retry"].correction_prompt
             assert correction_prompt is not None
-            correction = correction_prompt("not valid AgentEnvelope")
+            rejected = _live_agent_message_raw(
+                _fenced(_agent_envelope_json(summary="消息已时过境迁。", confidence=None))
+            )
+            with pytest.raises(RoutedResultValidationError) as raised:
+                kwargs["parser"](rejected)
+            # The router hands the builder failure.raw_output, so the parser
+            # must attach the rejected output for the field problems to appear.
+            assert raised.value.raw_output == rejected
+            correction = correction_prompt(raised.value.raw_output)
             assert "valid AgentEnvelope" in correction
+            assert "- audit.confidence: Field required" in correction
+            assert "消息已时过境迁" not in correction
             assert '"user_response"' in correction
             assert '"kind"' in correction
             assert "mode/reply/text" in correction
@@ -152,12 +171,16 @@ def _agent_envelope_json(
     kind: str = "reply",
     documents: list[dict[str, str]] | None = None,
     domain_payload: dict | None = None,
+    confidence: float | None = 0.8,
 ) -> str:
     system_actions = (
         [{"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"}]
         if mode == "send_reply"
         else []
     )
+    audit: dict = {"summary": summary, "documents": documents or []}
+    if confidence is not None:
+        audit["confidence"] = confidence
     return json.dumps(
         {
             "kind": kind,
@@ -168,13 +191,29 @@ def _agent_envelope_json(
             },
             "system_actions": system_actions,
             "domain_payload": domain_payload or {},
-            "audit": {
-                "summary": summary,
-                "documents": documents or [],
-                "confidence": 0.8,
-            },
+            "audit": audit,
         },
         ensure_ascii=False,
+    )
+
+
+def _fenced(text: str) -> str:
+    return f"```json\n{text}\n```"
+
+
+def _live_agent_message_raw(text: str) -> str:
+    """The live `codex exec --json` shape: thread.started, then item.completed."""
+    return "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": text},
+                },
+                ensure_ascii=False,
+            ),
+        ]
     )
 
 
@@ -653,6 +692,98 @@ def test_parse_codex_json_accepts_live_item_completed_agent_message_text():
     assert decision.reason == "live final"
 
 
+def test_parse_codex_json_accepts_fenced_agent_envelope_in_live_agent_message():
+    raw = _live_agent_message_raw(
+        _fenced(_agent_envelope_json(summary="消息已时过境迁，无需回复。"))
+    )
+
+    decision = parse_codex_json(raw, allow_legacy=False)
+
+    assert decision.action == CodexAction.NO_REPLY
+    assert decision.audit_summary == "消息已时过境迁，无需回复。"
+
+
+def test_parse_codex_json_picks_last_valid_envelope_after_prose_and_draft():
+    raw = _live_agent_message_raw(
+        "Draft:\n"
+        + _fenced(_agent_envelope_json(kind="dingtalk_reply", summary="草稿。"))
+        + "\nFinal:\n"
+        + _fenced(_agent_envelope_json(summary="最终判断。"))
+    )
+
+    decision = parse_codex_json(raw, allow_legacy=False)
+
+    assert decision.action == CodexAction.NO_REPLY
+    assert decision.audit_summary == "最终判断。"
+
+
+def test_parse_codex_json_strict_raises_field_error_for_schema_invalid_envelope():
+    raw = _live_agent_message_raw(
+        _fenced(_agent_envelope_json(summary="空白图片消息。", confidence=None))
+    )
+
+    with pytest.raises(ValidationError) as raised:
+        parse_codex_json(raw, allow_legacy=False)
+
+    assert "audit.confidence" in str(raised.value)
+
+
+def test_parse_codex_json_strict_rejects_fenced_legacy_decision():
+    raw = _live_agent_message_raw(
+        _fenced(json.dumps({"action": "no_reply", "reason": "消息已过时。"}))
+    )
+
+    with pytest.raises(json.JSONDecodeError) as raised:
+        parse_codex_json(raw, allow_legacy=False)
+
+    assert "No AgentEnvelope JSON found" in str(raised.value)
+
+
+def test_decision_envelope_repair_prompt_lists_field_problems_from_schema():
+    raw = _live_agent_message_raw(
+        _fenced(
+            _agent_envelope_json(
+                kind="wechat_chat", summary="空白图片消息。", confidence=None
+            )
+        )
+    )
+
+    prompt = _decision_envelope_repair_prompt(raw)
+
+    assert "- audit.confidence: Field required" in prompt
+    assert "- kind: Input should be" in prompt
+    assert "空白图片消息" not in prompt
+    assert "wechat_chat" not in prompt
+    assert '"oa_approval"' in prompt
+    assert '"handoff_to_human"' in prompt
+    assert '"dws_oa_approval_action"' in prompt
+    assert "AgentEnvelope Pydantic JSON schema:" in prompt
+    assert (
+        "Do not call tools, do not send messages, do not take any external action."
+        in prompt
+    )
+
+
+def test_decision_envelope_repair_prompt_reports_decision_rule_violations():
+    # Schema-valid envelope (no reply system action) that the runner's own
+    # decision rules still reject: a clarifying question needs text.
+    raw = _live_agent_message_raw(
+        _agent_envelope_json(mode="ask_clarifying_question", text="")
+    )
+
+    prompt = _decision_envelope_repair_prompt(raw)
+
+    assert "- reply_text is required for reply actions" in prompt
+
+
+def test_decision_envelope_repair_prompt_without_envelope_uses_fixed_line():
+    for raw in ("", "not valid AgentEnvelope", _fenced('{"action": "no_reply"}')):
+        prompt = _decision_envelope_repair_prompt(raw)
+
+        assert "- the reply did not contain an AgentEnvelope JSON object" in prompt
+        assert "mode/reply/text" in prompt
+
+
 def test_parse_codex_json_accepts_nonstandard_envelope_with_user_response():
     raw = "\n".join(
         [
@@ -691,7 +822,11 @@ def test_parse_codex_json_accepts_nonstandard_envelope_with_user_response():
         ]
     )
 
-    decision = parse_codex_json(raw, allow_legacy=False)
+    with pytest.raises(ValidationError) as strict:
+        parse_codex_json(raw, allow_legacy=False)
+    assert "kind" in str(strict.value)
+
+    decision = parse_codex_json(raw, allow_legacy=True)
 
     assert decision.action == CodexAction.SEND_REPLY
     assert decision.reply_text == "可以，我先按这个日报每天看当天新增。"
@@ -725,7 +860,11 @@ def test_parse_nonstandard_envelope_preserves_domain_payload():
         ensure_ascii=False,
     )
 
-    decision = parse_codex_json(raw, allow_legacy=False)
+    with pytest.raises(ValidationError) as strict:
+        parse_codex_json(raw, allow_legacy=False)
+    assert "audit.confidence" in str(strict.value)
+
+    decision = parse_codex_json(raw, allow_legacy=True)
 
     assert decision.action == CodexAction.SEND_REPLY
     assert decision.reply_text == "这个会可以接。"
@@ -797,9 +936,10 @@ def test_invalid_json_retries_once(tmp_path: Path):
         "--json",
     ]
     assert executor.commands[1][-2] == "session-1"
-    assert "只输出合法 JSON" in executor.prompts[1]
-    assert '"kind":"reply|okr_review|no_action|error"' in executor.prompts[1]
-    assert '"mode":"send_reply|ask_clarifying_question|handoff_to_human|no_reply"' in executor.prompts[1]
+    assert "Problems in the previous output" in executor.prompts[1]
+    assert "did not contain an AgentEnvelope JSON object" in executor.prompts[1]
+    assert '"oa_approval"' in executor.prompts[1]
+    assert '"handoff_to_human"' in executor.prompts[1]
 
 
 def test_runner_reads_current_session_when_stdout_has_no_decision(tmp_path: Path):
@@ -980,7 +1120,7 @@ def test_empty_reply_for_reply_action_retries_once(tmp_path: Path):
     assert decision.action == CodexAction.SEND_REPLY
     assert decision.reply_text == "收到，我看一下"
     assert len(executor.commands) == 2
-    assert "user_response.text 必须非空" in executor.prompts[1]
+    assert "did not contain an AgentEnvelope JSON object" in executor.prompts[1]
 
 
 def test_decide_forwards_images_to_initial_and_repair_turns(tmp_path: Path):
@@ -1004,8 +1144,11 @@ def test_decide_forwards_images_to_initial_and_repair_turns(tmp_path: Path):
     )
 
     assert decision.reply_text == "这张图可以放官网。"
-    assert executor.commands[0][-4:] == ["--image", str(image), "session-1", "-"]
-    assert executor.commands[1][-4:] == ["--image", str(image), "session-1", "-"]
+    # The service MCP manifest is spliced in before the session id, so check
+    # the option pairs and the prompt marker rather than the command tail.
+    for command in executor.commands[:2]:
+        assert _option_value(command, "--image") == str(image)
+        assert command[-2:] == ["session-1", "-"]
 
 
 def test_first_turn_invalid_json_retries_with_extracted_session_id(tmp_path: Path):
@@ -1035,7 +1178,8 @@ def test_first_turn_invalid_json_retries_with_extracted_session_id(tmp_path: Pat
         "exec",
         "--json",
     ]
-    assert executor.commands[0][-3:] == ["--cd", str(tmp_path), "-"]
+    assert _option_value(executor.commands[0], "--cd") == str(tmp_path)
+    assert executor.commands[0][-1] == "-"
     assert 'approvals_reviewer="auto_review"' in executor.commands[0]
     assert executor.commands[1][:4] == [
         "codex",
@@ -1078,7 +1222,8 @@ def test_first_turn_invalid_json_retries_with_thread_started_id(tmp_path: Path):
         "exec",
         "--json",
     ]
-    assert executor.commands[0][-3:] == ["--cd", str(tmp_path), "-"]
+    assert _option_value(executor.commands[0], "--cd") == str(tmp_path)
+    assert executor.commands[0][-1] == "-"
     assert 'approvals_reviewer="auto_review"' in executor.commands[0]
     assert executor.commands[1][:4] == [
         "codex",
@@ -1228,7 +1373,7 @@ def test_missing_audit_summary_retries_once(tmp_path: Path):
     assert decision.action == CodexAction.NO_REPLY
     assert decision.audit_summary == "消息只是抄送，无需回复。"
     assert len(executor.commands) == 2
-    assert "audit.summary 必须非空" in executor.prompts[1]
+    assert "did not contain an AgentEnvelope JSON object" in executor.prompts[1]
 
 
 def test_reply_with_empty_audit_documents_accepts_nonempty_audit_summary(

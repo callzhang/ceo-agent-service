@@ -1,5 +1,44 @@
 # Changelog
 
+- 2026-09-10 (round 3, subagent-verified): the WeChat reply path and a test
+  regression.
+  - The WeChat/Codex decision parser (`app/codex_decision.py`, used by
+    `WechatDecisionRunner`) extracts the `AgentEnvelope` from fenced or
+    prose-wrapped agent messages through the shared
+    `agent_message_json_objects` extractor (last object first); a candidate
+    that looks like an envelope but violates the schema raises the
+    field-level `ValidationError` and gets the single same-session correction
+    turn instead of being accepted by the lenient envelope-like fallback
+    (now reachable only with `allow_legacy=True`). `_decide_routed` attaches
+    `raw_output` to `RoutedResultValidationError`, so the correction prompt
+    can list `- <field.path>: <msg>` problems (paths and validator messages
+    only, capped) and render the contract from
+    `AgentEnvelope.model_json_schema()` instead of a hand-copied hint that
+    had drifted (missing `oa_approval`, `reply_text_ref`, OA action types).
+    MiniMax's fenced but valid correction turns (agent runs 9576/9581) had
+    been rejected for the fence alone, and one envelope lacking
+    `audit.confidence` (9586) had been accepted.
+  - The WeChat consumer (`app/wechat/consumer.py`) shares the DingTalk
+    worker's outage gate (`app.worker._is_runtime_outage_error`): a decision
+    turn that could not enter a route, or whose last live route failed on
+    capacity/transport with every other route paused, defers as
+    `runtime_provider_unreachable` with a per-turn backoff, hands the attempt
+    back, writes no `reply_attempts` row and no Attention item.
+    Authentication, result, process and `STOP_WITH_ERROR` failures stay
+    bounded by `max_task_attempts`. Decision turns are numbered from the
+    persisted Consumer runs of the generation (any terminal run advances the
+    turn; only a running run keeps it), which also removes a silent requeue
+    loop where a retryable `STOP_WITH_ERROR` or a stale-claim recovery
+    re-derived the same turn forever.
+  - `tests/test_agent_cron_seeds.py::test_seed_is_disabled_when_exact_repository_revision_is_not_loaded`
+    had a stale baseline since merge 2d8f17cb (repository import now adds a
+    child config with the email-classifier binding); the test compares
+    against the post-import config. No runtime change.
+  - Three `tests/test_codex_decision.py` command-shape assertions assumed the
+    codex command ends with `--cd <dir> -` / `--image <img> <session> -`;
+    since the service MCP manifest is spliced into every routed command
+    (2026-09-09) they check the option pairs instead of the tail.
+
 - 2026-09-10 (round 2, subagent-verified): five more Attention root causes.
   - A provider outage discovered only after entering the last live route
     (that route fails on capacity/transport, e.g. `codex_provider_overloaded`
