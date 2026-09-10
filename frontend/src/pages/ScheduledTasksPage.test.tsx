@@ -399,12 +399,14 @@ describe("service command tasks", () => {
 
     expect(await screen.findByLabelText("服务命令")).toHaveValue("produce-once");
     expect(screen.getByLabelText("服务命令")).toHaveValue("produce-once");
+    expect(screen.getByText("每分钟执行 · Asia/Shanghai")).toBeInTheDocument();
     expect(screen.getByText("增量读取 DingTalk 未读消息，去重后写入 reply task。")).toBeInTheDocument();
     expect(screen.queryByLabelText("Runtime")).toBeNull();
     expect(screen.queryByLabelText("任务描述")).toBeNull();
     expect(screen.queryByText("Agent Skills")).toBeNull();
-    expect(screen.getAllByText("检查钉钉消息").length).toBeGreaterThanOrEqual(2);
-    expect(await screen.findByText("技术详情：produce-once")).toBeInTheDocument();
+    expect(screen.getAllByText("检查钉钉消息").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("技术详情")).toBeInTheDocument();
+    expect(screen.queryByText("技术详情：produce-once")).toBeNull();
     expect(screen.queryByText("service_command #produce-once")).toBeNull();
     expect(screen.getByRole("button", { name: "暂停任务" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "立即运行" })).toBeEnabled();

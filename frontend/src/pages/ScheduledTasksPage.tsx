@@ -182,7 +182,7 @@ function RunHistory({ runs, hasMore, loading, onMore, commandOptions }: { runs: 
       <small>{timeLabel(run.scheduled_for)}</small>
       {run.execution_kind === "service_command" && run.execution_id ? (() => {
         const command = commandOptions.find((option) => option.name === run.execution_id);
-        return <span>{command?.display_name || "服务命令"}<small>技术详情：{run.execution_id}</small></span>;
+        return <span>{command?.display_name || "服务命令"}<details><summary>技术详情</summary><small>{run.execution_id}</small></details></span>;
       })() : run.execution_kind && run.execution_id && <span>{run.execution_kind} #{run.execution_id}</span>}
       {run.skip_or_error_reason && <p>{run.skip_or_error_reason}</p>}
     </li>)}</ol>}
@@ -480,7 +480,7 @@ export function ScheduledTasksPage() {
           {error && <div className="scheduled-task-form-error" role="alert"><span>{error}</span>{conflict && <button type="button" className="secondary-button" onClick={() => void load()}>重新加载最新版本</button>}</div>}
           <form className="scheduled-task-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
             <label><span>任务名称</span><input aria-label="任务名称" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} /></label>
-            <div className="scheduled-task-form-row"><label><span>Cron（秒 分 时 日 月 周）</span><input aria-label="Cron 表达式" value={draft.cron_expression} onChange={(event) => updateDraft("cron_expression", event.target.value)} /></label><label><span>时区</span><input aria-label="时区" value={draft.timezone_name} onChange={(event) => updateDraft("timezone_name", event.target.value)} /></label></div>
+            <div className="scheduled-task-form-row"><label><span>Cron（秒 分 时 日 月 周）</span><input aria-label="Cron 表达式" value={draft.cron_expression} onChange={(event) => updateDraft("cron_expression", event.target.value)} />{selected && <small>当前计划：{selected.schedule_description}</small>}</label><label><span>时区</span><input aria-label="时区" value={draft.timezone_name} onChange={(event) => updateDraft("timezone_name", event.target.value)} /></label></div>
             <div className="scheduled-task-command-field"><label><span>执行类型</span><select aria-label="服务命令" value={draft.command} onChange={(event) => selectCommand(event.target.value)}><option value="">Agent 任务（使用下方提示词）</option>{options?.service_command_options.map((option) => <option key={option.name} value={option.name}>{option.display_name}</option>)}</select></label>{commandTask && <small>{commandOption?.description || "由服务进程直接执行的确定性命令，不经过 Agent、Runtime 或 Skill。"}</small>}</div>
             {commandTask ? <>
             <section className="scheduled-task-system-prompt" aria-labelledby="scheduled-task-system-prompt-title"><div className="scheduled-task-section-heading"><h3 id="scheduled-task-system-prompt-title">Consumer Agent 系统提示词</h3><span>系统管理 · 只读</span></div><pre>你正在处理由 Trigger 产生的真实业务任务。加载 $ceo-message-triage 与 $dingtalk-chat；只处理当前业务对象，遵守对应 Skill、Runtime 和审计协议；不得把 Trigger 检查动作当作用户请求，不得重复消费或重复发送。</pre><small>系统只从明确的 $Skill 标记确定性提取 Skill。</small></section>
