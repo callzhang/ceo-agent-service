@@ -105,3 +105,20 @@ def test_classification_enum_has_stable_string_values():
         "needs_human",
         "autonomous",
     ]
+
+
+@pytest.mark.parametrize(
+    "classification",
+    [DecisionQuality.AUTONOMOUS, DecisionQuality.NEEDS_HUMAN],
+)
+def test_result_rejects_classification_inconsistent_with_incomplete_information(
+    classification,
+):
+    with pytest.raises(ValueError):
+        DecisionQualityResult(
+            risk="low",
+            confidence=0.0,
+            rule_coverage=0.0,
+            information_completeness=0.0,
+            classification=classification,
+        )
