@@ -72,9 +72,12 @@
     sentence, the `memory_connector_runtime_unavailable` escape hatch, and
     `skip` when nothing changes).
 
-- 2026-09-10: keep domain-specific email unsubscribe policy rejections as
-  explicit failures instead of converting them to `needs_human`; only the
-  generic authorization boundary remains a human decision.
+- 2026-09-10: keep domain-specific email unsubscribe and other provider/policy
+  rejections as explicit failures instead of converting them to `needs_human`.
+  `needs_human` now remains reserved for the generic `authorization_required`
+  boundary after the common `risk`/`confidence` and actionable-options checks;
+  the architecture and runtime documents now state this rule for every task
+  type, not only email.
 
 - 2026-09-10 (round 4, owner decisions, subagent-verified): three contract
   decisions from Derek.

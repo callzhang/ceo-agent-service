@@ -603,6 +603,14 @@ Audit Rules 不能把 A 改成执行者。
 “先追问”之间选择。`needs_human` 只用于无法通过读取材料或向参与者提问解决、必须由
 Derek 作出的管理判断。
 
+`needs_human` 的通用判定不因业务领域而放宽：A 和 B 的结果都必须携带 `risk` 与
+`confidence`；只有 `risk=high`、`confidence < 0.5`、适用 Skill/规则确实无法替代该判断，
+且结果提供 2 至 4 个互斥且可执行的决策选项时，才能升级给 Derek。技术、依赖、读取、路由、
+schema、Audit 执行和重试失败必须保持 `failed`，即使错误对象为了说明拒绝原因带有
+`authorization_required=true`。例如邮件退订的登录失败、目标不匹配、授权证据不足或策略拒绝
+仍是领域失败；只有通用错误码 `authorization_required` 才表示不可替代的授权边界。这样不会把
+“Agent 已知如何安全地失败”误报成“需要 Derek 做业务选择”。
+
 ### Audit Agent B
 
 B 不是 Derek 的第二个写作分身，而是独立审计与执行者。B 会：
