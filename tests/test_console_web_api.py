@@ -9,7 +9,9 @@ from types import SimpleNamespace
 from contextlib import contextmanager
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import app.audit_web as audit_web_module
 import app.config as app_config_module
@@ -28,6 +30,7 @@ from app.setup_wizard_models import SetupWizardEvent
 from app.wechat.models import WechatReplyScope
 from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
+from app.web_api.status import ComponentStatus, DispatcherQueueStatus
 from app.web_api.common import (
     ApiItemEnvelope,
     ApiMeta,
@@ -67,6 +70,7 @@ def _client(
     spa_enabled: bool = False,
     asset: bytes = b"",
     email_learning_factory=None,
+    raise_server_exceptions: bool = True,
 ):
     assets = tmp_path / "assets"
     assets.mkdir()
@@ -84,6 +88,7 @@ def _client(
         ),
         client=("127.0.0.1", 50000),
         headers={"Host": "127.0.0.1:8765"},
+        raise_server_exceptions=raise_server_exceptions,
     ) as client:
         yield client
 
@@ -1095,7 +1100,33 @@ def test_console_feedback_pending_badge_is_global_when_filtered_to_resolved(
     assert response.json()["pending_count"] == 1
 
 
-def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_path: Path):
+def _running_launchd_service_status(label: str) -> dict[str, object]:
+    """Complete launchd probe result for a healthy service (see ServiceStatus)."""
+    return {
+        "label": label,
+        "target": f"gui/1/{label}",
+        "ok": True,
+        "state": "running",
+        "detail": "running",
+        "pid": "12345",
+        "runs": "1",
+        "initialized": "1",
+        "last_terminating_signal": "",
+        "returncode": 0,
+    }
+
+
+def _ready_wechat_status() -> dict[str, object]:
+    """Complete WeChat probe result with both helpers ready (see WechatStatus)."""
+    return {
+        "reader": {"enabled": True, "status": "ready", "error": ""},
+        "sender": {"enabled": True, "status": "ready", "error": ""},
+        "preflight": {"status": "on_send", "error": "checked only before a delivery"},
+        "account": {"ready": True, "account_id": "account"},
+    }
+
+
+def test_console_status_rejects_payload_outside_its_response_contract(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         audit_web_module,
         "build_worker_status_payload",
@@ -1106,12 +1137,97 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
         },
     )
 
+    with _client(tmp_path, raise_server_exceptions=False) as client:
+        response = client.get("/api/console/status")
+
+    assert response.status_code == 500
+
+
+def test_console_status_route_registers_a_response_model(tmp_path: Path):
+    with _client(tmp_path) as client:
+        route = next(
+            route for route in client.app.routes
+            if getattr(route, "path", "") == "/api/console/status"
+        )
+
+    assert route.response_model is not None
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    (
+        (
+            ComponentStatus,
+            {"name": "scheduler", "role": "cron", "cadence": "60s", "status": "running", "latest_tick_at": "now", "latest_error": ""},
+        ),
+        (
+            DispatcherQueueStatus,
+            {"name": "scheduled", "pending": "0", "due": 0, "oldest_available_at": None, "running": 0, "latest_error": ""},
+        ),
+        (
+            ComponentStatus,
+            {"name": "scheduler", "role": "cron", "cadence": "60s", "status": "running", "latest_tick_at": "now", "latest_error": "", "latest_error_at": "", "unexpected": True},
+        ),
+    ),
+)
+def test_console_status_nested_models_reject_missing_wrong_and_extra_fields(
+    model, payload
+):
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
+
+
+def test_console_status_contract_covers_unavailable_launchd_probe(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        audit_web_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("launchctl unavailable")),
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/status")
+
+    assert response.status_code == 200
+    assert response.json()["item"]["service"]["state"] == "unavailable"
+
+
+def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_path: Path):
+    database = tmp_path / "worker.sqlite3"
+    monkeypatch.setattr(
+        audit_web_module,
+        "build_worker_status_payload",
+        lambda store, **_kwargs: {
+            "service": {
+                **_running_launchd_service_status("com.ceo-agent-service.main"),
+                "state": "ok",
+            },
+            "components": [],
+            "connectors": {},
+            "email": {"status": "ready", "updated_at": "", "entries": []},
+            "queues": [],
+            "dispatcher_queues": [],
+            "attention_rows": [],
+            # A Path is not JSON-native; the endpoint must normalise it before
+            # the strict response contract validates the snapshot.
+            "database": {"path": database},
+            "summary": {
+                "queue_count": 0,
+                "pending": 0,
+                "processing": 0,
+                "failed": 0,
+                "retryable": 0,
+                "attention": 0,
+            },
+        },
+    )
+
     with _client(tmp_path) as client:
         response = client.get("/api/console/status")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["item"]["service"]["state"] == "ok"
+    assert payload["item"]["database"]["path"] == str(database)
     assert payload["meta"]["snapshot_at"]
     json.dumps(payload, ensure_ascii=False)
 
@@ -1434,22 +1550,14 @@ def test_console_status_worker_snapshot_is_not_blocked_by_wechat_probe(
     def blocked_wechat_probe(_store):
         probe_started.set()
         assert release_probe.wait(timeout=2)
-        return {"reader": {"status": "ready"}}
+        return _ready_wechat_status()
 
     monkeypatch.setattr(audit_web_module, "_wechat_status_snapshot", blocked_wechat_probe)
     monkeypatch.setattr(audit_web_module, "_connector_status_snapshots", lambda: {})
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",
-        lambda label: {
-            "label": label,
-            "ok": True,
-            "state": "running",
-            "detail": "running",
-            "pid": "12345",
-            "runs": "1",
-            "initialized": "1",
-        },
+        _running_launchd_service_status,
     )
     monkeypatch.setattr(
         audit_web_module,
@@ -1544,20 +1652,12 @@ def test_console_status_worker_snapshot_is_not_blocked_by_system_health_scan(
     monkeypatch.setattr(
         audit_web_module,
         "_wechat_status_snapshot",
-        lambda store: {"reader": {"status": "ready"}},
+        lambda store: _ready_wechat_status(),
     )
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",
-        lambda label: {
-            "label": label,
-            "ok": True,
-            "state": "running",
-            "detail": "running",
-            "pid": "12345",
-            "runs": "1",
-            "initialized": "1",
-        },
+        _running_launchd_service_status,
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     work_input_id = store.enqueue_work_summary_input(
@@ -2334,7 +2434,6 @@ def test_console_email_accounts_are_registered_and_keep_classifier_config_global
         "smtp_secret_reference": "CEO_EMAIL_CONSOLE_MAIL_SMTP_SECRET",
         "enabled": True,
         "scan_folders": ["INBOX"],
-        "scan_interval_seconds": 60,
     }
 
     with _client(tmp_path) as client:
@@ -2365,6 +2464,7 @@ def test_console_email_accounts_are_registered_and_keep_classifier_config_global
     assert listed.json()["items"][0]["account_id"] == "console_mail"
     assert "threshold" not in listed.json()["items"][0]
     assert "model_id" not in listed.json()["items"][0]
+    assert "scan_interval_seconds" not in listed.json()["items"][0]
 
 
 def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Path):
