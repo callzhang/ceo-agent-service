@@ -2294,7 +2294,13 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
         task_status, send_status = status_map[result.status]
     except KeyError as exc:
         raise ValueError("invalid email orchestration status") from exc
-    if result.error.authorization_required:
+    # Only the generic authorization boundary is a user decision. Domain
+    # failures may set the flag to explain why the operation was rejected,
+    # but they are still technical/policy failures and must remain failed.
+    if (
+        result.error.authorization_required
+        and result.error.code == "authorization_required"
+    ):
         task_status, send_status = "done", "needs_human"
     error = str(result.error.code or "")
     if task_status == "pending":

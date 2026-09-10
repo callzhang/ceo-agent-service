@@ -8039,6 +8039,51 @@ def test_authorization_required_result_is_closed_as_needs_human():
     assert captured["send_error"] == "authorization_required"
 
 
+def test_domain_authorization_rejection_remains_failed():
+    module = _module()
+    task = SimpleNamespace(
+        id=8,
+        execution_generation="generation-8",
+        conversation_id="conversation-8",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="trigger-8",
+        trigger_sender="sender@example.com",
+        trigger_text="unsubscribe",
+    )
+    run = SimpleNamespace(
+        id=80,
+        codex_session_id="",
+        transcript_start_line=0,
+        transcript_end_line=0,
+        tool_events=[],
+    )
+    captured = {}
+
+    class Store:
+        def get_agent_run(self, run_id):
+            assert run_id == 80
+            return run
+
+        def finalize_orchestrated_reply_task(self, **kwargs):
+            captured.update(kwargs)
+
+    result = SimpleNamespace(
+        status="failed_terminal",
+        final_run_id=80,
+        summary="email_unsubscribe_risk_rejected",
+        error=SimpleNamespace(
+            code="email_unsubscribe_risk_rejected",
+            authorization_required=True,
+        ),
+    )
+
+    module._finalize_email_task(Store(), task, result)
+
+    assert captured["task_status"] == "failed"
+    assert captured["send_status"] == "failed"
+    assert captured["send_error"] == "email_unsubscribe_risk_rejected"
+
+
 def test_training_failure_is_sanitized_isolated_and_heartbeated():
     module = _module()
     calls = 0
