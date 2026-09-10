@@ -11,9 +11,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 
 SERVICE_COMMAND_EXECUTION_KIND = "service_command"
+
+ServiceCommandChannel = Literal[
+    "dingtalk",
+    "wechat",
+    "meeting",
+    "work_summary",
+]
 
 
 @dataclass(frozen=True)
@@ -21,6 +29,8 @@ class ServiceCommandOption:
     name: str
     display_name: str
     description: str
+    channel: ServiceCommandChannel
+    """The reply-task channel the command produces; it decides which consumer runs."""
 
 
 SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
@@ -31,6 +41,7 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
             "增量读取 DingTalk 未读消息，去重后写入 reply task，"
             "由统一 Dispatcher 继续消费。"
         ),
+        channel="dingtalk",
     ),
     ServiceCommandOption(
         name="wechat-produce-once",
@@ -39,6 +50,43 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
             "读取已就绪微信账号的新消息，按已配置联系人和群@边界去重后写入 reply task；"
             "Reader 不可用时只记录健康状态。"
         ),
+        channel="wechat",
+    ),
+    ServiceCommandOption(
+        name="scan-meetings-once",
+        display_name="检查 DingTalk 会议",
+        description=(
+            "读取已结束且满足资料条件的 DingTalk 会议，去重后写入会议对齐队列；"
+            "由会议 Agent 处理真实会议。"
+        ),
+        channel="meeting",
+    ),
+    ServiceCommandOption(
+        name="scan-oa-approvals",
+        display_name="检查 DingTalk OA 审批",
+        description=(
+            "增量读取待处理的 DingTalk OA 审批，去重后写入审批回复队列；"
+            "由 DingTalk Consumer 处理真实审批。"
+        ),
+        channel="dingtalk",
+    ),
+    ServiceCommandOption(
+        name="scan-work-sources-once",
+        display_name="扫描工作来源",
+        description=(
+            "扫描已配置的本地工作目录，去重后写入工作摘要队列；"
+            "由 Work Summary Consumer 处理真实来源。"
+        ),
+        channel="work_summary",
+    ),
+    ServiceCommandOption(
+        name="recover-recent-messages",
+        display_name="恢复近期 DingTalk 消息",
+        description=(
+            "把 DingTalk 读取范围放宽到最近的单聊和被点名的会话，"
+            "找回快路径可能漏掉的消息，去重后写入 reply task。"
+        ),
+        channel="dingtalk",
     ),
 )
 

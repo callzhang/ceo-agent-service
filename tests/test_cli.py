@@ -1005,6 +1005,13 @@ def test_parser_supports_scan_oa_approvals():
     assert args.oa_pending_scan_lookback_days == 3
 
 
+def test_parser_supports_scan_work_sources_once():
+    args = build_parser().parse_args(["scan-work-sources-once", "--workspace", "/tmp/w"])
+
+    assert args.command == "scan-work-sources-once"
+    assert args.workspace == "/tmp/w"
+
+
 def test_parser_supports_read_oa_approval_detail():
     args = build_parser().parse_args(
         ["read-oa-approval-detail", "--instance-id", "proc-1"]
@@ -7788,6 +7795,13 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
         store, Worker(), SimpleNamespace(max_batches=7)
     )
 
+    assert set(registry._implementations) == {
+        "produce-once",
+        "wechat-produce-once",
+        "scan-meetings-once",
+        "scan-oa-approvals",
+        "scan-work-sources-once",
+    }
     assert registry.run("produce-once") == "produce-once queued=3"
     assert calls == [7]
     wechat = registry._implementations["wechat-produce-once"]

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 import hashlib
 
 from app.agent_cron.commands import (
     SERVICE_COMMAND_OPTIONS,
+    ServiceCommandChannel,
     ServiceCommandOption,
     service_command_option,
 )
@@ -20,6 +21,15 @@ from app.agent_runtime_contracts import (
     runtime_route_surface_capabilities,
 )
 from app.agent_runtime_router import AgentRuntimeRouter
+from app.audit_agent import AuditAgentRunner
+from app.business_skills import installed_business_skill_catalog
+from app.codex_decision import DECISION_RUNTIME_CAPABILITIES
+from app.consumer_agent import (
+    CONSUMER_BASE_RUNTIME_CAPABILITIES,
+    CONSUMER_ROLE_BOUNDARY,
+    ConsumerAgentRunner,
+)
+from app.meeting_alignment_agent import MEETING_RUNTIME_CAPABILITIES, MeetingAlignmentCodexRunner
 from app.managed_skills import ManagedSkillRevision, RuntimeSkillSnapshot
 from app.skill_files import (
     SkillDocument,
@@ -27,7 +37,10 @@ from app.skill_files import (
     SkillFileOwnershipError,
     SkillFileService,
 )
+from app.task_agent import TASK_RUNTIME_CAPABILITIES, TaskAgentRunner
 from app.store import AutoReplyStore
+from app.wechat.decision_runner import WechatDecisionRunner
+from app.wechat.prompt import WECHAT_TURN_INSTRUCTIONS
 
 
 class ScheduledTaskOptionUnavailableError(ValueError):
@@ -72,6 +85,46 @@ class OperationSkillOption:
     sha256: str
     available: bool
     unavailable_reason: str | None
+
+
+@dataclass(frozen=True)
+class DownstreamSkill:
+    """One Skill the reply consumer loads; revision fields are set only for managed revisions."""
+
+    name: str
+    revision_id: int | None
+    revision_number: int | None
+
+
+@dataclass(frozen=True)
+class DownstreamRuntimeRoute:
+    route_name: str
+    model: str
+    available: bool
+    unavailable_reason: str | None
+
+
+@dataclass(frozen=True)
+class ServiceCommandDownstream:
+    """What really consumes the business inputs one service command produces."""
+
+    channel: ServiceCommandChannel
+    consumer_runners: tuple[str, ...]
+    """Runner class names in execution order."""
+    instructions: str | None
+    """The consumer's own instruction constant, or None when it exposes none."""
+    required_capabilities: tuple[str, ...]
+    """The consumer's baseline runtime requirement that decides route availability."""
+    loads_skills: bool
+    skills: tuple[DownstreamSkill, ...]
+    skills_from_runtime_snapshot: bool
+    """True when the process RuntimeSkillSnapshot supplied ``skills``."""
+    runtime_routes: tuple[DownstreamRuntimeRoute, ...]
+
+
+@dataclass(frozen=True)
+class ServiceCommandListing(ServiceCommandOption):
+    downstream: ServiceCommandDownstream
 
 
 class ScheduledTaskOptionService:
@@ -217,8 +270,94 @@ class ScheduledTaskOptionService:
             )
         return revision
 
-    def list_service_command_options(self) -> tuple[ServiceCommandOption, ...]:
-        return SERVICE_COMMAND_OPTIONS
+    def list_service_command_options(self) -> tuple[ServiceCommandListing, ...]:
+        return tuple(
+            ServiceCommandListing(
+                **{field.name: getattr(option, field.name) for field in fields(option)},
+                downstream=self.describe_service_command_downstream(option),
+            )
+            for option in SERVICE_COMMAND_OPTIONS
+        )
+
+    def describe_service_command_downstream(
+        self, option: ServiceCommandOption
+    ) -> ServiceCommandDownstream:
+        """Describe the consumer path that handles the command's reply tasks.
+
+        Mirrors the dispatcher's channel split: DingTalk tasks run the Consumer
+        then the Audit runner with the Skill protocol; WeChat tasks run the
+        WeChat decision runner, which loads no Skill.  ``instructions`` only
+        ever repeats a constant the consumer itself exports, so a consumer that
+        builds its instructions inline reports None instead of invented prose.
+        """
+        if option.channel == "dingtalk":
+            consumer_runners = (ConsumerAgentRunner.__name__, AuditAgentRunner.__name__)
+            instructions = CONSUMER_ROLE_BOUNDARY
+            required_capabilities = CONSUMER_BASE_RUNTIME_CAPABILITIES
+            loads_skills = True
+            skills, skills_from_runtime_snapshot = self._dingtalk_consumer_skills()
+        elif option.channel == "wechat":
+            consumer_runners = (WechatDecisionRunner.__name__,)
+            instructions = WECHAT_TURN_INSTRUCTIONS
+            required_capabilities = DECISION_RUNTIME_CAPABILITIES
+            loads_skills = False
+            skills, skills_from_runtime_snapshot = (), False
+        elif option.channel == "meeting":
+            consumer_runners = (MeetingAlignmentCodexRunner.__name__,)
+            instructions = None
+            required_capabilities = MEETING_RUNTIME_CAPABILITIES
+            loads_skills = False
+            skills, skills_from_runtime_snapshot = (), False
+        elif option.channel == "work_summary":
+            consumer_runners = (TaskAgentRunner.__name__,)
+            instructions = None
+            required_capabilities = TASK_RUNTIME_CAPABILITIES
+            loads_skills = False
+            skills, skills_from_runtime_snapshot = (), False
+        else:
+            raise ValueError(f"unsupported service command channel: {option.channel}")
+        return ServiceCommandDownstream(
+            channel=option.channel,
+            consumer_runners=consumer_runners,
+            instructions=instructions,
+            required_capabilities=tuple(sorted(required_capabilities)),
+            loads_skills=loads_skills,
+            skills=skills,
+            skills_from_runtime_snapshot=skills_from_runtime_snapshot,
+            runtime_routes=tuple(
+                DownstreamRuntimeRoute(
+                    route_name=route.route_name,
+                    model=route.model,
+                    available=route.available,
+                    unavailable_reason=route.unavailable_reason,
+                )
+                for route in self.list_runtime_options(
+                    required_capabilities=frozenset(required_capabilities)
+                )
+            ),
+        )
+
+    def _dingtalk_consumer_skills(self) -> tuple[tuple[DownstreamSkill, ...], bool]:
+        snapshot = self._runtime_skill_snapshot
+        if snapshot is None:
+            return (
+                tuple(
+                    DownstreamSkill(name=entry.name, revision_id=None, revision_number=None)
+                    for entry in installed_business_skill_catalog()
+                ),
+                False,
+            )
+        return (
+            tuple(
+                DownstreamSkill(
+                    name=self._store.get_managed_skill(revision.skill_id).name,
+                    revision_id=revision.id,
+                    revision_number=revision.revision_number,
+                )
+                for revision in snapshot.revisions
+            ),
+            True,
+        )
 
     def resolve_service_command(self, name: str) -> ServiceCommandOption:
         try:

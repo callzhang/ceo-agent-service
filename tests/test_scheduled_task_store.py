@@ -1095,6 +1095,52 @@ def test_previous_scheduled_tasks_gain_empty_command(tmp_path: Path) -> None:
     assert migrated.get_scheduled_task_run(run.id).snapshot.prompt == task.prompt
 
 
+def test_current_schema_version_still_migrates_missing_command_column(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "current-version-missing-command.sqlite3"
+    previous = AutoReplyStore(db_path)
+    task = _create_task(previous)
+    with previous._connect() as db:
+        db.execute("alter table scheduled_tasks drop column command")
+        db.execute(
+            "update service_state set value=? where key=?",
+            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    migrated = AutoReplyStore(db_path)
+
+    assert migrated.get_scheduled_task(task.id).command == ""
+
+
+def test_current_schema_version_still_backfills_legacy_run_snapshot_fields(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "current-version-legacy-snapshot.sqlite3"
+    previous = AutoReplyStore(db_path)
+    task = _create_task(previous)
+    run = previous.create_scheduled_task_run(
+        task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
+    )
+    with previous._connect() as db:
+        snapshot = json.loads(run.snapshot.to_json())
+        snapshot.pop("command")
+        db.execute(
+            "update scheduled_task_runs set snapshot_json=? where id=?",
+            (json.dumps(snapshot), run.id),
+        )
+        db.execute(
+            "update service_state set value=? where key=?",
+            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    migrated = AutoReplyStore(db_path)
+
+    assert migrated.get_scheduled_task_run(run.id).snapshot.command == ""
+
+
 def test_adopting_a_service_command_moves_the_seed_in_place_once(
     tmp_path: Path,
 ) -> None:

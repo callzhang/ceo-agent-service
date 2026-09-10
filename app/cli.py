@@ -323,6 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
         "weekly-okr-report",
         "refresh-okr-archive",
         "scan-task-sources",
+        "scan-work-sources-once",
         "scan-meetings-once",
         "scan-oa-approvals",
         "read-oa-approval-detail",
@@ -901,6 +902,17 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
             ),
             "wechat-produce-once": WechatProduceOnceCommand(
                 store, restart_reader=_restart_wechat_reader_service
+            ),
+            "scan-meetings-once": lambda: (
+                f"scan-meetings-once queued={scan_meetings_once_command(settings)}"
+            ),
+            "scan-oa-approvals": lambda: (
+                "scan-oa-approvals "
+                f"queued={scan_oa_approvals_command(settings, max_new_items=settings.max_batches)}"
+            ),
+            "scan-work-sources-once": lambda: (
+                "scan-work-sources-once "
+                f"queued={scan_work_sources_once_command(settings, max_new_items=settings.max_batches)}"
             ),
         }
     )
@@ -1922,6 +1934,24 @@ def scan_task_sources_command(
         flush=True,
     )
     return total
+
+
+def scan_work_sources_once_command(
+    settings: WorkerSettings,
+    *,
+    max_new_items: int | None = None,
+) -> int:
+    """Scan only local workspace files for new work-summary inputs."""
+    from app.task_scanners import scan_local_workspace_files
+
+    store = AutoReplyStore(settings.db_path)
+    queued = scan_local_workspace_files(
+        store,
+        workspace=settings.workspace,
+        max_new_items=max_new_items,
+    )
+    print(f"scan-work-sources-once queued={queued}", flush=True)
+    return queued
 
 
 def scan_oa_approvals_command(
@@ -4021,6 +4051,8 @@ def main() -> None:
         )
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
+    elif args.command == "scan-work-sources-once":
+        scan_work_sources_once_command(settings)
     elif args.command == "scan-meetings-once":
         scan_meetings_once_command(settings)
     elif args.command == "scan-oa-approvals":

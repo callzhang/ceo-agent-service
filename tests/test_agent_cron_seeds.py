@@ -133,18 +133,17 @@ def _options(
     )
 
 
-LOCAL_PRODUCER_KEYS = frozenset(
+FIXED_DISCOVERY_KEYS = frozenset(
     {
         "dingtalk-meeting-check-v1",
         "dingtalk-oa-check-v1",
         "work-source-scan-daily-v1",
-        "weekly-okr-report-sunday-v1",
     }
 )
 
 
 @pytest.mark.parametrize("runtime_id", ("codex_oauth", "claude_api"))
-def test_local_producer_seeds_require_local_runtime_surface(
+def test_fixed_discovery_seeds_do_not_require_an_agent_runtime(
     tmp_path: Path, runtime_id: str
 ) -> None:
     store = AutoReplyStore(tmp_path / f"local-{runtime_id}.sqlite3")
@@ -167,20 +166,17 @@ def test_local_producer_seeds_require_local_runtime_surface(
         store=store, options=options, working_directory=tmp_path, now=NOW
     )
     producers = tuple(
-        task for task in tasks if task.migration_key in LOCAL_PRODUCER_KEYS
+        task for task in tasks if task.migration_key in FIXED_DISCOVERY_KEYS
     )
 
-    assert len(producers) == 4
+    assert len(producers) == 3
     assert all(task.enabled for task in producers)
-    assert {task.runtime_id for task in producers} == {runtime_id}
-    assert all(
-        frozenset(task.required_runtime_capabilities)
-        == LOCAL_SERVICE_RUNTIME_CAPABILITIES
-        for task in producers
-    )
+    assert all(task.command for task in producers)
+    assert all(task.runtime_id == "" for task in producers)
+    assert all(task.required_runtime_capabilities == () for task in producers)
 
 
-def test_friday_only_keeps_local_producer_seeds_visible_and_disabled(
+def test_friday_only_still_enables_fixed_discovery_seeds(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "friday-only.sqlite3")
@@ -203,16 +199,16 @@ def test_friday_only_keeps_local_producer_seeds_visible_and_disabled(
         store=store, options=options, working_directory=tmp_path, now=NOW
     )
     producers = tuple(
-        task for task in tasks if task.migration_key in LOCAL_PRODUCER_KEYS
+        task for task in tasks if task.migration_key in FIXED_DISCOVERY_KEYS
     )
 
-    assert len(producers) == 4
-    assert all(not task.enabled for task in producers)
-    assert {task.runtime_id for task in producers} == {"friday_runtime"}
-    assert all("missing_capabilities" in task.prompt for task in producers)
+    assert len(producers) == 3
+    assert all(task.enabled for task in producers)
+    assert all(task.command for task in producers)
+    assert all(task.runtime_id == "" for task in producers)
 
 
-def test_reseeding_preserves_edits_but_disables_existing_friday_producer(
+def test_reseeding_preserves_user_edits_when_adopting_a_legacy_fixed_check(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "friday-reseed.sqlite3")
@@ -231,21 +227,21 @@ def test_reseeding_preserves_edits_but_disables_existing_friday_producer(
         runtime_routes=("codex_oauth", "friday_runtime"),
         operation_skills=operation_skills,
     )
-    original = _task_by_key(
-        seed_scheduled_tasks(
-            store=store, options=options, working_directory=tmp_path, now=NOW
-        ),
-        "dingtalk-oa-check-v1",
-    )
-    edited = store.update_scheduled_task(
-        original.id,
-        expected_version=original.version,
+    original = store.create_scheduled_task(
+        migration_key="dingtalk-oa-check-v1",
         name="我的 OA producer",
-        prompt="保留我的精确执行描述 $dingtalk-oa-approval",
+        prompt="保留我的精确执行描述",
+        cron_expression="0 0 * * * *",
+        timezone_name="Asia/Shanghai",
         runtime_id="friday_runtime",
         runtime_options={"model": "default"},
         required_runtime_capabilities=(),
-        now=NOW + timedelta(minutes=1),
+        working_directory=str(tmp_path),
+        enabled=False,
+        now=NOW,
+    )
+    original = store.set_scheduled_task_enabled(
+        original.id, enabled=False, expected_version=original.version, now=NOW
     )
 
     repeated = _task_by_key(
@@ -258,17 +254,16 @@ def test_reseeding_preserves_edits_but_disables_existing_friday_producer(
         "dingtalk-oa-check-v1",
     )
 
-    assert repeated.name == edited.name
-    assert repeated.prompt == edited.prompt
-    assert repeated.runtime_id == "friday_runtime"
+    assert repeated.name == original.name
+    assert repeated.prompt == ""
+    assert repeated.runtime_id == ""
+    assert repeated.command == "scan-oa-approvals"
     assert repeated.enabled is False
-    assert repeated.version == edited.version + 1
-    assert frozenset(repeated.required_runtime_capabilities) == (
-        LOCAL_SERVICE_RUNTIME_CAPABILITIES
-    )
+    assert repeated.version == original.version + 1
+    assert repeated.required_runtime_capabilities == ()
 
 
-def test_startup_seed_leaves_deleted_legacy_producer_exactly_unchanged(
+def test_startup_seed_leaves_deleted_legacy_fixed_check_unchanged(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "deleted-legacy-producer.sqlite3")
@@ -278,30 +273,24 @@ def test_startup_seed_leaves_deleted_legacy_producer_exactly_unchanged(
         healthy_routes={"codex_oauth"},
         operation_skills=("dingtalk-oa-approval",),
     )
-    original = _task_by_key(
-        seed_scheduled_tasks(
-            store=store, options=options, working_directory=tmp_path, now=NOW
-        ),
-        "dingtalk-oa-check-v1",
-    )
-    legacy = store.update_scheduled_task(
-        original.id,
-        expected_version=original.version,
+    original = store.create_scheduled_task(
+        migration_key="dingtalk-oa-check-v1",
         name="用户删除的旧 OA 任务",
         prompt="保留用户修改后的旧 Prompt",
+        cron_expression="0 0 * * * *",
+        timezone_name="Asia/Shanghai",
         runtime_id="legacy-user-runtime",
         runtime_options={"model": "legacy-user-model"},
         required_runtime_capabilities=(),
-        skill_refs=original.skill_refs,
-        now=NOW + timedelta(minutes=1),
+        working_directory=str(tmp_path),
+        enabled=True,
+        now=NOW,
     )
     deleted = store.delete_scheduled_task(
-        legacy.id,
-        expected_version=legacy.version,
+        original.id,
+        expected_version=original.version,
         now=NOW + timedelta(minutes=2),
     )
-    before = store.list_scheduled_tasks(include_deleted=True)
-
     seeded = seed_scheduled_tasks(
         store=store,
         options=options,
@@ -311,15 +300,14 @@ def test_startup_seed_leaves_deleted_legacy_producer_exactly_unchanged(
 
     after = store.list_scheduled_tasks(include_deleted=True)
     preserved = _task_by_key(after, "dingtalk-oa-check-v1")
-    assert len(after) == len(before)
     assert preserved == deleted
     assert preserved.deleted_at == NOW + timedelta(minutes=2)
     assert preserved.required_runtime_capabilities == ()
-    assert preserved.name == legacy.name
-    assert preserved.prompt == legacy.prompt
-    assert preserved.runtime_id == legacy.runtime_id
-    assert preserved.runtime_options == legacy.runtime_options
-    assert preserved.skill_refs == legacy.skill_refs
+    assert preserved.name == original.name
+    assert preserved.prompt == original.prompt
+    assert preserved.runtime_id == original.runtime_id
+    assert preserved.runtime_options == original.runtime_options
+    assert preserved.skill_refs == original.skill_refs
     assert _task_by_key(seeded, "dingtalk-oa-check-v1") == deleted
     assert all(
         task.migration_key != "dingtalk-oa-check-v1"
@@ -327,7 +315,7 @@ def test_startup_seed_leaves_deleted_legacy_producer_exactly_unchanged(
     )
 
 
-def test_startup_seed_backfills_active_legacy_producer_capabilities(
+def test_startup_seed_adopts_active_legacy_fixed_check(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "active-legacy-producer.sqlite3")
@@ -337,18 +325,18 @@ def test_startup_seed_backfills_active_legacy_producer_capabilities(
         healthy_routes={"codex_oauth"},
         operation_skills=("dingtalk-oa-approval",),
     )
-    original = _task_by_key(
-        seed_scheduled_tasks(
-            store=store, options=options, working_directory=tmp_path, now=NOW
-        ),
-        "dingtalk-oa-check-v1",
-    )
-    legacy = store.update_scheduled_task(
-        original.id,
-        expected_version=original.version,
+    original = store.create_scheduled_task(
+        migration_key="dingtalk-oa-check-v1",
         name="用户保留的旧 OA 任务",
+        prompt="旧 Prompt",
+        cron_expression="0 0 * * * *",
+        timezone_name="Asia/Shanghai",
+        runtime_id="codex_oauth",
+        runtime_options={"model": "gpt-5.6-sol"},
         required_runtime_capabilities=(),
-        now=NOW + timedelta(minutes=1),
+        working_directory=str(tmp_path),
+        enabled=True,
+        now=NOW,
     )
 
     seeded = seed_scheduled_tasks(
@@ -359,13 +347,12 @@ def test_startup_seed_backfills_active_legacy_producer_capabilities(
     )
 
     updated = _task_by_key(seeded, "dingtalk-oa-check-v1")
-    assert updated.id == legacy.id
-    assert updated.version == legacy.version + 1
-    assert updated.name == legacy.name
+    assert updated.id == original.id
+    assert updated.version == original.version + 1
+    assert updated.name == original.name
     assert updated.deleted_at is None
-    assert frozenset(updated.required_runtime_capabilities) == (
-        LOCAL_SERVICE_RUNTIME_CAPABILITIES
-    )
+    assert updated.command == "scan-oa-approvals"
+    assert updated.required_runtime_capabilities == ()
 
 
 def test_seed_creates_dingtalk_message_check_every_minute(tmp_path: Path) -> None:
@@ -513,15 +500,65 @@ def test_seed_creates_meeting_check_with_fixed_ten_minute_eligibility(
 
     assert task.name == "检查 DingTalk 会议"
     assert task.cron_expression == "0 * * * * *"
-    assert [(ref.skill_source, ref.skill_name) for ref in task.skill_refs] == [
-        ("managed", "ceo-meeting-work"),
-        ("operation", "dingtalk-minutes"),
-        ("operation", "dingtalk-calendar"),
-    ]
-    assert "ended_at + 10 minutes" in task.prompt
-    assert f"`{_cli_command(store, tmp_path, 'scan-meetings-once')}`" in task.prompt
-    assert "不要直接分析或发送" in task.prompt
+    assert task.command == "scan-meetings-once"
+    assert task.prompt == ""
+    assert task.runtime_id == ""
+    assert task.runtime_options == {}
+    assert task.required_runtime_capabilities == ()
+    assert task.working_directory == ""
+    assert task.skill_refs == ()
     assert task.enabled is True
+
+
+def test_fixed_discovery_checks_use_service_commands_and_minutes_stays_agent(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "fixed-checks.sqlite3")
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes=set(),
+        operation_skills=("dingtalk-minutes", "dingtalk-calendar", "dingtalk-oa-approval"),
+    )
+
+    tasks = seed_scheduled_tasks(
+        store=store,
+        options=options,
+        working_directory=tmp_path,
+        now=NOW,
+    )
+
+    expected_commands = {
+        "dingtalk-message-check-v1": "produce-once",
+        "dingtalk-meeting-check-v1": "scan-meetings-once",
+        "wechat-message-check-v1": "wechat-produce-once",
+        "dingtalk-oa-check-v1": "scan-oa-approvals",
+        "work-source-scan-daily-v1": "scan-work-sources-once",
+    }
+    for migration_key, command in expected_commands.items():
+        task = _task_by_key(tasks, migration_key)
+        assert task.command == command
+        assert task.prompt == ""
+        assert task.runtime_id == ""
+        assert task.runtime_options == {}
+        assert task.required_runtime_capabilities == ()
+        assert task.working_directory == ""
+        assert task.skill_refs == ()
+        assert task.enabled is True
+
+    for migration_key in (
+        "weekly-okr-report-sunday-v1",
+        "ceo-minutes-sync-daily-v1",
+    ):
+        agent_task = _task_by_key(tasks, migration_key)
+        assert agent_task.command == ""
+        assert agent_task.prompt
+        assert agent_task.runtime_id == "claude_api"
+        assert agent_task.enabled is False
+    assert [
+        (ref.skill_source, ref.skill_name)
+        for ref in _task_by_key(tasks, "ceo-minutes-sync-daily-v1").skill_refs
+    ] == [("managed", "ceo-minutes-sync")]
 
 
 def test_seed_creates_wechat_existing_producer_every_fifteen_seconds(
@@ -600,12 +637,13 @@ def test_seed_creates_hourly_oa_check_with_real_operation_skill(
 
     assert task.name == "检查 DingTalk OA 审批"
     assert task.cron_expression == "0 0 * * * *"
-    assert [(ref.skill_source, ref.skill_name) for ref in task.skill_refs] == [
-        ("operation", "dingtalk-oa-approval")
-    ]
-    assert "$dingtalk-oa-approval" in task.prompt
-    assert f"`{_cli_command(store, tmp_path, 'scan-oa-approvals')}`" in task.prompt
-    assert "不要直接审批或发送" in task.prompt
+    assert task.command == "scan-oa-approvals"
+    assert task.prompt == ""
+    assert task.runtime_id == ""
+    assert task.runtime_options == {}
+    assert task.required_runtime_capabilities == ()
+    assert task.working_directory == ""
+    assert task.skill_refs == ()
     assert task.enabled is True
 
 
@@ -628,13 +666,13 @@ def test_seed_creates_daily_work_source_scan(tmp_path: Path) -> None:
 
     assert task.name == "每天扫描工作来源"
     assert task.cron_expression == "0 0 0 * * *"
-    assert [(ref.skill_source, ref.skill_name) for ref in task.skill_refs] == [
-        ("managed", "ceo-work-tracking"),
-        ("operation", "dingtalk-minutes"),
-    ]
-    assert f"`{_cli_command(store, tmp_path, 'scan-task-sources')}`" in task.prompt
-    assert "本地工作目录中的增量文件" in task.prompt
-    assert "不要直接修改工作对象" in task.prompt
+    assert task.command == "scan-work-sources-once"
+    assert task.prompt == ""
+    assert task.runtime_id == ""
+    assert task.runtime_options == {}
+    assert task.required_runtime_capabilities == ()
+    assert task.working_directory == ""
+    assert task.skill_refs == ()
     assert task.enabled is True
 
 
@@ -711,12 +749,16 @@ def test_non_wechat_seed_commands_are_registered_one_shot_cli_entries(
     expected = {
         "dingtalk-meeting-check-v1": "scan-meetings-once",
         "dingtalk-oa-check-v1": "scan-oa-approvals",
-        "work-source-scan-daily-v1": "scan-task-sources",
+        "work-source-scan-daily-v1": "scan-work-sources-once",
         "weekly-okr-report-sunday-v1": "weekly-okr-report",
     }
 
     for migration_key, command_name in expected.items():
-        prompt = _task_by_key(tasks, migration_key).prompt
+        task = _task_by_key(tasks, migration_key)
+        if task.command:
+            assert task.command == command_name
+            continue
+        prompt = task.prompt
         command = prompt.split("`", 2)[1]
         argv = shlex.split(command)
         assert "--dry-run" not in argv
@@ -793,6 +835,15 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
                 "wechat-produce-once": (
                     lambda: produced.append("wechat-produce-once") or "queued=0"
                 ),
+                "scan-meetings-once": (
+                    lambda: produced.append("scan-meetings-once") or "queued=0"
+                ),
+                "scan-oa-approvals": (
+                    lambda: produced.append("scan-oa-approvals") or "queued=0"
+                ),
+                "scan-work-sources-once": (
+                    lambda: produced.append("scan-work-sources-once") or "queued=0"
+                ),
             }
         ),
     )
@@ -808,7 +859,13 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
             adapter=adapter, envelope=envelope, owner="seed-dispatch"
         )
         consumer(envelope, guard)
-    assert sorted(produced) == ["produce-once", "wechat-produce-once"]
+    assert sorted(produced) == [
+        "produce-once",
+        "scan-meetings-once",
+        "scan-oa-approvals",
+        "scan-work-sources-once",
+        "wechat-produce-once",
+    ]
     for task in tasks:
         runs = store.list_scheduled_task_runs(task.id)
         assert len(runs) == 1
@@ -825,7 +882,7 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         assert reply.channel == "scheduled"
         assert reply.trigger_text == task.prompt
         assert task.name in reply.trigger_message_json
-    assert len(store.list_reply_tasks(channel="scheduled")) == len(tasks) - 2
+    assert len(store.list_reply_tasks(channel="scheduled")) == len(tasks) - 5
 
 
 def test_seed_creates_daily_minutes_task_with_healthy_runtime_and_exact_revision(
@@ -1024,11 +1081,13 @@ def test_all_proactive_seeds_stay_visible_and_disabled_without_healthy_runtime(
 
     assert len(tasks) == 7
     agent_tasks = [task for task in tasks if not task.command]
-    assert len(agent_tasks) == 5
+    assert {task.migration_key for task in agent_tasks} == {
+        "weekly-okr-report-sunday-v1",
+        "ceo-minutes-sync-daily-v1",
+    }
     assert all(not task.enabled for task in agent_tasks)
     assert all("没有健康且已配置的 Runtime" in task.prompt for task in agent_tasks)
-    assert _task_by_key(tasks, "dingtalk-message-check-v1").enabled is True
-    assert _task_by_key(tasks, "wechat-message-check-v1").enabled is True
+    assert all(task.enabled for task in tasks if task.command)
     assert all(store.list_scheduled_task_runs(task.id) == () for task in tasks)
 
 
@@ -1113,3 +1172,46 @@ def test_seed_binds_revision_matching_current_repository_sha_not_last_revision(
 
     assert task.skill_refs[0].managed_revision_id == current.id
     assert task.skill_refs[0].managed_revision_id != later_different.id
+
+
+def test_startup_seed_restores_a_minutes_task_converted_to_a_service_command(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "converted-minutes-command.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    converted = store.create_scheduled_task(
+        migration_key="ceo-minutes-sync-daily-v1",
+        name="我修改后的听记同步",
+        command="sync-minutes-once",
+        cron_expression="0 30 21 * * *",
+        timezone_name="Asia/Shanghai",
+        enabled=False,
+        now=NOW,
+    )
+
+    restored = _task_by_key(
+        seed_scheduled_tasks(
+            store=store,
+            options=options,
+            working_directory=tmp_path,
+            now=NOW + timedelta(minutes=1),
+        ),
+        "ceo-minutes-sync-daily-v1",
+    )
+
+    assert restored.id == converted.id
+    assert restored.version == converted.version + 1
+    assert restored.name == converted.name
+    assert restored.cron_expression == converted.cron_expression
+    assert restored.timezone_name == converted.timezone_name
+    assert restored.enabled is False
+    assert restored.command == ""
+    assert "$ceo-minutes-sync" in restored.prompt
+    assert restored.runtime_id == "codex_oauth"
+    assert restored.runtime_options == {"model": "gpt-5.6-sol"}
+    assert restored.working_directory == str(tmp_path.resolve())
+    ref = restored.skill_refs[0]
+    assert (ref.skill_source, ref.skill_name) == ("managed", "ceo-minutes-sync")
+    revision = store.get_managed_skill_revision(ref.managed_revision_id)
+    assert revision is not None
+    assert revision.source == REPOSITORY_IMPORT_SOURCE

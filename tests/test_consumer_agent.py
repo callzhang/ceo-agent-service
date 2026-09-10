@@ -21,6 +21,7 @@ from app.agent_turn_runner import RuntimeRouteUnavailableError
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.consumer_agent import (
+    CONSUMER_BASE_RUNTIME_CAPABILITIES,
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
     audit_developer_instructions,
@@ -2491,6 +2492,17 @@ def test_consumer_derives_concrete_turn_capabilities_for_images_and_channel(
         capability.startswith(("native_cli:", "mcp:", "reviewed_skill:"))
         for capability in required
     )
+
+
+def test_consumer_turn_capabilities_start_from_the_shared_baseline(store, context):
+    runner = ConsumerAgentRunner(store=store, workspace=Path("/workspace"))
+
+    assert runner._required_capabilities(
+        replace(context, image_paths=())
+    ) == CONSUMER_BASE_RUNTIME_CAPABILITIES
+    assert runner._required_capabilities(
+        replace(context, image_paths=("/tmp/evidence.png",))
+    ) == CONSUMER_BASE_RUNTIME_CAPABILITIES | {"image_input"}
 
 
 def test_api_retry_without_progress_clears_only_api_consumer_session(

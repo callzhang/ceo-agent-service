@@ -248,6 +248,11 @@ Treat rules stated in this contract as active service behavior; reject a candida
 """
 
 
+# Runtime capabilities every Consumer turn requires before per-turn additions
+# (a turn with images also needs image input).  The scheduled-task catalog
+# reads this to describe route availability with the Consumer's real baseline.
+CONSUMER_BASE_RUNTIME_CAPABILITIES: frozenset[str] = frozenset()
+
 
 class ConsumerAgentRunner:
     def __init__(
@@ -360,7 +365,7 @@ class ConsumerAgentRunner:
 
     @staticmethod
     def _required_capabilities(context: AgentTaskContext) -> frozenset[str]:
-        required = set()
+        required = set(CONSUMER_BASE_RUNTIME_CAPABILITIES)
         if context.image_paths:
             required.add("image_input")
         # Skill loading is part of the Agent execution environment.  The

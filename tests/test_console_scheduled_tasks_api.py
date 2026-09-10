@@ -16,10 +16,20 @@ from app.agent_runtime_contracts import (
     PROBE_VERIFIED_RUNTIME_CAPABILITIES,
     RuntimeCapabilitySnapshot,
 )
+from app.audit_agent import AuditAgentRunner
+from app.business_skills import installed_business_skill_catalog
+from app.codex_decision import DECISION_RUNTIME_CAPABILITIES
+from app.consumer_agent import (
+    CONSUMER_BASE_RUNTIME_CAPABILITIES,
+    CONSUMER_ROLE_BOUNDARY,
+    ConsumerAgentRunner,
+)
 from app.managed_skills import RuntimeSkillSnapshot
 from app.skill_files import SkillFileService
 from app.store import AutoReplyStore
 from app.web_api.registration import register_console_routes
+from app.wechat.decision_runner import WechatDecisionRunner
+from app.wechat.prompt import WECHAT_TURN_INSTRUCTIONS
 
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
@@ -701,6 +711,13 @@ def test_audit_app_mounts_cron_api_without_fabricating_process_snapshots(
     assert {
         revision["unavailable_reason"] for revision in revisions
     } == {"runtime_skill_snapshot_missing"}
+    dingtalk = response.json()["service_command_options"][0]["downstream"]
+    assert dingtalk["loads_skills"] is True
+    assert dingtalk["skills_from_runtime_snapshot"] is False
+    assert [skill["name"] for skill in dingtalk["skills"]] == [
+        entry.name for entry in installed_business_skill_catalog()
+    ]
+    assert dingtalk["runtime_routes"][0]["unavailable_reason"] == "snapshot_missing"
 
 
 def test_audit_app_reads_only_current_main_pid_runtime_and_skill_receipts(
@@ -819,8 +836,20 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
     assert run.json()["item"]["snapshot"]["command"] == "produce-once"
     assert detail.json()["item"]["recent_run"]["snapshot"]["command"] == "produce-once"
     catalog = options.json()["service_command_options"]
-    assert [entry["name"] for entry in catalog] == ["produce-once", "wechat-produce-once"]
-    assert [entry["display_name"] for entry in catalog] == ["检查钉钉消息", "检查微信消息"]
+    assert [entry["name"] for entry in catalog] == [
+        "produce-once",
+        "wechat-produce-once",
+        "scan-meetings-once",
+        "scan-oa-approvals",
+        "scan-work-sources-once",
+    ]
+    assert [entry["display_name"] for entry in catalog] == [
+        "检查钉钉消息",
+        "检查微信消息",
+        "检查 DingTalk 会议",
+        "检查 DingTalk OA 审批",
+        "扫描工作来源",
+    ]
     assert all(entry["description"].strip() for entry in catalog)
     assert store.get_scheduled_task(task_id).command == "produce-once"
 
@@ -832,7 +861,7 @@ def test_service_command_task_rejects_agent_fields_and_unknown_commands(
     mixed = {**_command_payload(), "prompt": "also an Agent prompt"}
     with_runtime = {**_command_payload(), "runtime_id": "codex_oauth"}
     with_refs = {**_command_payload(), "skill_refs": _create_payload(ids)["skill_refs"]}
-    unknown = {**_command_payload(), "command": "scan-oa-approvals"}
+    unknown = {**_command_payload(), "command": "unknown-service-command"}
     agent_without_runtime = {**_create_payload(ids), "runtime_id": ""}
 
     with client:
@@ -887,3 +916,75 @@ def test_repository_seeded_service_command_is_immutable_through_the_api(
     assert accepted.json()["item"]["command"] == "produce-once"
     assert rejected.status_code == 422
     assert "service command is immutable" in rejected.json()["message"]
+
+
+def test_service_command_catalog_exposes_the_live_downstream_consumer(
+    tmp_path: Path,
+) -> None:
+    client, _store, ids, _wakes = _client(tmp_path)
+
+    with client:
+        payload = client.get("/api/console/scheduled-task-options").json()
+
+    dingtalk, wechat, meeting, oa, work_sources = payload[
+        "service_command_options"
+    ]
+    routes = [
+        {
+            "route_name": option["route_name"],
+            "model": option["model"],
+            "available": option["available"],
+            "unavailable_reason": option["unavailable_reason"],
+        }
+        for option in payload["runtime_options"]
+    ]
+    assert routes == [
+        {
+            "route_name": "codex_oauth",
+            "model": "gpt-5.6-sol",
+            "available": True,
+            "unavailable_reason": None,
+        }
+    ]
+    assert (dingtalk["name"], dingtalk["channel"]) == ("produce-once", "dingtalk")
+    assert dingtalk["downstream"] == {
+        "channel": "dingtalk",
+        "consumer_runners": [ConsumerAgentRunner.__name__, AuditAgentRunner.__name__],
+        "instructions": CONSUMER_ROLE_BOUNDARY,
+        "required_capabilities": sorted(CONSUMER_BASE_RUNTIME_CAPABILITIES),
+        "loads_skills": True,
+        "skills": [
+            {"name": "ceo-test", "revision_id": ids["revision_id"], "revision_number": 1}
+        ],
+        "skills_from_runtime_snapshot": True,
+        "runtime_routes": routes,
+    }
+    assert (wechat["name"], wechat["channel"]) == ("wechat-produce-once", "wechat")
+    assert wechat["downstream"] == {
+        "channel": "wechat",
+        "consumer_runners": [WechatDecisionRunner.__name__],
+        "instructions": WECHAT_TURN_INSTRUCTIONS,
+        "required_capabilities": sorted(DECISION_RUNTIME_CAPABILITIES),
+        "loads_skills": False,
+        "skills": [],
+        "skills_from_runtime_snapshot": False,
+        "runtime_routes": routes,
+    }
+    assert (meeting["name"], meeting["channel"]) == ("scan-meetings-once", "meeting")
+    assert meeting["downstream"]["consumer_runners"] == ["MeetingAlignmentCodexRunner"]
+    assert meeting["downstream"]["loads_skills"] is False
+    assert meeting["downstream"]["skills"] == []
+    assert meeting["downstream"]["instructions"] is None
+    assert meeting["downstream"]["instructions"] is None
+    assert (oa["name"], oa["channel"]) == ("scan-oa-approvals", "dingtalk")
+    assert oa["downstream"]["consumer_runners"] == [
+        ConsumerAgentRunner.__name__,
+        AuditAgentRunner.__name__,
+    ]
+    assert (work_sources["name"], work_sources["channel"]) == (
+        "scan-work-sources-once",
+        "work_summary",
+    )
+    assert work_sources["downstream"]["consumer_runners"] == ["TaskAgentRunner"]
+    assert work_sources["downstream"]["loads_skills"] is False
+    assert work_sources["downstream"]["instructions"] is None

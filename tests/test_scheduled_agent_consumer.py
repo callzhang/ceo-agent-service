@@ -128,6 +128,9 @@ def commands(produce_once=lambda: "produce-once queued=0"):
     return ServiceCommandRegistry({
         "produce-once": produce_once,
         "wechat-produce-once": lambda: "wechat produce-once queued=0",
+        "scan-meetings-once": lambda: "scan-meetings-once queued=0",
+        "scan-oa-approvals": lambda: "scan-oa-approvals queued=0",
+        "scan-work-sources-once": lambda: "scan-work-sources-once queued=0",
     })
 
 
@@ -400,7 +403,7 @@ def test_command_registry_rejects_bindings_that_do_not_match_the_catalog():
             "extra": lambda: "",
         })
     with pytest.raises(ValueError, match="service_command_not_registered"):
-        commands().run("scan-oa-approvals")
+        commands().run("unknown-service-command")
 
 
 def test_preflight_loss_skips_before_source_or_agent_fact(tmp_path):

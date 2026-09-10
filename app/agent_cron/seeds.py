@@ -20,8 +20,16 @@ from app.store import AutoReplyStore
 MINUTES_SYNC_MIGRATION_KEY = "ceo-minutes-sync-daily-v1"
 DINGTALK_MESSAGE_MIGRATION_KEY = "dingtalk-message-check-v1"
 DINGTALK_MESSAGE_SERVICE_COMMAND = "produce-once"
+DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY = "dingtalk-message-recovery-v1"
+DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND = "recover-recent-messages"
 WECHAT_MESSAGE_MIGRATION_KEY = "wechat-message-check-v1"
 WECHAT_MESSAGE_SERVICE_COMMAND = "wechat-produce-once"
+DINGTALK_MEETING_MIGRATION_KEY = "dingtalk-meeting-check-v1"
+DINGTALK_MEETING_SERVICE_COMMAND = "scan-meetings-once"
+DINGTALK_OA_MIGRATION_KEY = "dingtalk-oa-check-v1"
+DINGTALK_OA_SERVICE_COMMAND = "scan-oa-approvals"
+WORK_SOURCE_MIGRATION_KEY = "work-source-scan-daily-v1"
+WORK_SOURCE_SERVICE_COMMAND = "scan-work-sources-once"
 PRODUCER_RUNTIME_CAPABILITIES = LOCAL_SERVICE_RUNTIME_CAPABILITIES
 
 
@@ -56,6 +64,12 @@ def seed_scheduled_tasks(
 ) -> tuple[ScheduledTask, ...]:
     """Create repository-owned scheduled task defaults without overwriting edits."""
     dingtalk_message = _seed_dingtalk_message_task(
+        store=store,
+        options=options,
+        working_directory=working_directory,
+        now=now,
+    )
+    dingtalk_message_recovery = _seed_dingtalk_message_recovery_task(
         store=store,
         options=options,
         working_directory=working_directory,
@@ -99,6 +113,7 @@ def seed_scheduled_tasks(
     )
     return (
         dingtalk_message,
+        dingtalk_message_recovery,
         dingtalk_meeting,
         wechat,
         oa,
@@ -142,6 +157,38 @@ def _seed_dingtalk_message_task(
     )
 
 
+def _seed_dingtalk_message_recovery_task(
+    *,
+    store: AutoReplyStore,
+    options: ScheduledTaskOptionService,
+    working_directory: Path,
+    now: datetime | None,
+) -> ScheduledTask:
+    """Seed the widened DingTalk read as its own hourly service command.
+
+    The recovery pass reads far more than the minute-by-minute check, so it
+    runs on its own Cron at :30 instead of inside the :00 checks.
+    """
+    del options, working_directory
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
+        command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
+        seed_enabled=True,
+        now=now,
+    )
+    if adopted is not None:
+        return adopted
+    return store.create_scheduled_task(
+        migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
+        name="恢复近期 DingTalk 消息",
+        command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
+        cron_expression="0 30 * * * *",
+        timezone_name="Asia/Shanghai",
+        enabled=True,
+        now=now,
+    )
+
+
 def _seed_dingtalk_meeting_task(
     *,
     store: AutoReplyStore,
@@ -149,63 +196,22 @@ def _seed_dingtalk_meeting_task(
     working_directory: Path,
     now: datetime | None,
 ) -> ScheduledTask:
-    migration_key = "dingtalk-meeting-check-v1"
-    existing = _existing_task(
-        store,
-        migration_key,
-        options=options,
-        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    del options, working_directory
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key=DINGTALK_MEETING_MIGRATION_KEY,
+        command=DINGTALK_MEETING_SERVICE_COMMAND,
+        seed_enabled=True,
         now=now,
     )
-    if existing is not None:
-        return existing
-    runtime, runtime_reason = _select_runtime(
-        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
-    )
-    managed_ref, managed_reason = _managed_ref(
-        store=store,
-        options=options,
-        name="ceo-meeting-work",
-        position=0,
-    )
-    minutes_ref, minutes_reason = _operation_ref(
-        options=options, name="dingtalk-minutes", position=1
-    )
-    calendar_ref, calendar_reason = _operation_ref(
-        options=options, name="dingtalk-calendar", position=2
-    )
-    command = _one_shot_command(store, working_directory, "scan-meetings-once")
-    prompt = (
-        "使用 $ceo-meeting-work、$dingtalk-minutes 与 $dingtalk-calendar 理解"
-        "会议发现边界。只执行一次确定性 producer 命令："
-        f"`{command}`。该命令仅为当前时间达到 ended_at + 10 minutes（10 分钟）"
-        "且资料可读取的会议去重创建 meeting alignment job，后续由统一 Dispatcher "
-        "消费；不要直接分析或发送会议结果。"
-    )
-    reasons = tuple(
-        reason
-        for reason in (
-            runtime_reason,
-            managed_reason,
-            minutes_reason,
-            calendar_reason,
-        )
-        if reason is not None
-    )
-    if reasons:
-        prompt += "\n\n未启用：" + "；".join(reasons) + "。"
+    if adopted is not None:
+        return adopted
     return store.create_scheduled_task(
-        migration_key=migration_key,
+        migration_key=DINGTALK_MEETING_MIGRATION_KEY,
         name="检查 DingTalk 会议",
-        prompt=prompt,
+        command=DINGTALK_MEETING_SERVICE_COMMAND,
         cron_expression="0 * * * * *",
         timezone_name="Asia/Shanghai",
-        runtime_id=runtime.route_name,
-        runtime_options={"model": runtime.model},
-        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
-        working_directory=str(working_directory.expanduser().resolve()),
-        skill_refs=(managed_ref, minutes_ref, calendar_ref),
-        enabled=not reasons,
+        enabled=True,
         now=now,
     )
 
@@ -252,48 +258,22 @@ def _seed_oa_task(
     working_directory: Path,
     now: datetime | None,
 ) -> ScheduledTask:
-    migration_key = "dingtalk-oa-check-v1"
-    existing = _existing_task(
-        store,
-        migration_key,
-        options=options,
-        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    del options, working_directory
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key=DINGTALK_OA_MIGRATION_KEY,
+        command=DINGTALK_OA_SERVICE_COMMAND,
+        seed_enabled=True,
         now=now,
     )
-    if existing is not None:
-        return existing
-    runtime, runtime_reason = _select_runtime(
-        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
-    )
-    operation_ref, operation_reason = _operation_ref(
-        options=options, name="dingtalk-oa-approval", position=0
-    )
-    command = _one_shot_command(store, working_directory, "scan-oa-approvals")
-    prompt = (
-        "使用 $dingtalk-oa-approval 理解现有 OA 扫描边界。"
-        f"只执行一次确定性 scanner 命令：`{command}`。"
-        "该命令负责按 revision 去重并写入既有业务输入；"
-        "不要直接审批或发送，后续处理交给统一 Dispatcher。"
-    )
-    reasons = tuple(
-        reason
-        for reason in (runtime_reason, operation_reason)
-        if reason is not None
-    )
-    if reasons:
-        prompt += "\n\n未启用：" + "；".join(reasons) + "。"
+    if adopted is not None:
+        return adopted
     return store.create_scheduled_task(
-        migration_key=migration_key,
+        migration_key=DINGTALK_OA_MIGRATION_KEY,
         name="检查 DingTalk OA 审批",
-        prompt=prompt,
+        command=DINGTALK_OA_SERVICE_COMMAND,
         cron_expression="0 0 * * * *",
         timezone_name="Asia/Shanghai",
-        runtime_id=runtime.route_name,
-        runtime_options={"model": runtime.model},
-        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
-        working_directory=str(working_directory.expanduser().resolve()),
-        skill_refs=(operation_ref,),
-        enabled=not reasons,
+        enabled=True,
         now=now,
     )
 
@@ -305,54 +285,22 @@ def _seed_work_source_task(
     working_directory: Path,
     now: datetime | None,
 ) -> ScheduledTask:
-    migration_key = "work-source-scan-daily-v1"
-    existing = _existing_task(
-        store,
-        migration_key,
-        options=options,
-        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    del options, working_directory
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key=WORK_SOURCE_MIGRATION_KEY,
+        command=WORK_SOURCE_SERVICE_COMMAND,
+        seed_enabled=True,
         now=now,
     )
-    if existing is not None:
-        return existing
-    runtime, runtime_reason = _select_runtime(
-        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
-    )
-    managed_ref, managed_reason = _managed_ref(
-        store=store,
-        options=options,
-        name="ceo-work-tracking",
-        position=0,
-    )
-    minutes_ref, minutes_reason = _operation_ref(
-        options=options, name="dingtalk-minutes", position=1
-    )
-    command = _one_shot_command(store, working_directory, "scan-task-sources")
-    prompt = (
-        "使用 $ceo-work-tracking 与 $dingtalk-minutes 理解现有工作来源边界。"
-        f"只执行一次确定性 scanner 命令：`{command}`。"
-        "该命令扫描本地工作目录中的增量文件和 AI 听记，并仅创建尚未入队的"
-        "工作摘要输入；不要直接修改工作对象，后续消费交给统一 Dispatcher。"
-    )
-    reasons = tuple(
-        reason
-        for reason in (runtime_reason, managed_reason, minutes_reason)
-        if reason is not None
-    )
-    if reasons:
-        prompt += "\n\n未启用：" + "；".join(reasons) + "。"
+    if adopted is not None:
+        return adopted
     return store.create_scheduled_task(
-        migration_key=migration_key,
+        migration_key=WORK_SOURCE_MIGRATION_KEY,
         name="每天扫描工作来源",
-        prompt=prompt,
+        command=WORK_SOURCE_SERVICE_COMMAND,
         cron_expression="0 0 0 * * *",
         timezone_name="Asia/Shanghai",
-        runtime_id=runtime.route_name,
-        runtime_options={"model": runtime.model},
-        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
-        working_directory=str(working_directory.expanduser().resolve()),
-        skill_refs=(managed_ref, minutes_ref),
-        enabled=not reasons,
+        enabled=True,
         now=now,
     )
 
@@ -422,15 +370,19 @@ def _seed_minutes_task(
     working_directory: Path,
     now: datetime | None,
 ) -> ScheduledTask:
-    existing = next(
-        (
-            task
-            for task in store.list_scheduled_tasks(include_deleted=True)
-            if task.migration_key == MINUTES_SYNC_MIGRATION_KEY
-        ),
-        None,
-    )
-    if existing is not None:
+    """Seed the AI minutes sync as an Agent task bound to $ceo-minutes-sync.
+
+    The sync is not a deterministic producer pass: the managed Skill pages the
+    minutes list, reads summaries and transcripts, requests access when a
+    minute is denied, archives content and persists a content cursor.  A task
+    an earlier build converted to a service command is restored to the Agent
+    form in place; the user's name, Cron, timezone and enabled state stay as
+    they are.
+    """
+    existing = _existing_task(store, MINUTES_SYNC_MIGRATION_KEY)
+    if existing is not None and (
+        existing.deleted_at is not None or not existing.command
+    ):
         return existing
 
     skill = store.get_managed_skill_by_name(MINUTES_SYNC_SKILL_NAME)
@@ -486,7 +438,26 @@ def _seed_minutes_task(
             + "。请先修复 Runtime 或加载精确 Skill revision，再编辑并启用此任务。"
         )
 
-    task = store.create_scheduled_task(
+    skill_ref = ScheduledTaskSkillRef(
+        skill_source="managed",
+        skill_name=skill.name,
+        managed_skill_id=skill.id,
+        managed_revision_id=revision.id,
+        position=0,
+    )
+    if existing is not None:
+        return store.update_scheduled_task(
+            existing.id,
+            expected_version=existing.version,
+            prompt=prompt,
+            command="",
+            runtime_id=selected.route_name,
+            runtime_options={"model": selected.model},
+            working_directory=str(working_directory.expanduser().resolve()),
+            skill_refs=(skill_ref,),
+            now=now,
+        )
+    return store.create_scheduled_task(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
         name="每天同步 AI 听记",
         prompt=prompt,
@@ -495,19 +466,10 @@ def _seed_minutes_task(
         runtime_id=selected.route_name,
         runtime_options={"model": selected.model},
         working_directory=str(working_directory.expanduser().resolve()),
-        skill_refs=(
-            ScheduledTaskSkillRef(
-                skill_source="managed",
-                skill_name=skill.name,
-                managed_skill_id=skill.id,
-                managed_revision_id=revision.id,
-                position=0,
-            ),
-        ),
+        skill_refs=(skill_ref,),
         enabled=enabled,
         now=now,
     )
-    return task
 
 
 def _existing_task(

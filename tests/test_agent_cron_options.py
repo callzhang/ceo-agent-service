@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
+import app.agent_cron.options as options_module
+from app.agent_cron.commands import ServiceCommandOption
 from app.agent_cron.options import (
+    DownstreamSkill,
     ScheduledTaskOptionService,
     ScheduledTaskOptionUnavailableError,
 )
@@ -16,9 +19,19 @@ from app.agent_runtime_contracts import (
     RuntimeFailure,
     RuntimeFailureClass,
 )
+from app.audit_agent import AuditAgentRunner
+from app.business_skills import installed_business_skill_catalog
+from app.codex_decision import DECISION_RUNTIME_CAPABILITIES
+from app.consumer_agent import (
+    CONSUMER_BASE_RUNTIME_CAPABILITIES,
+    CONSUMER_ROLE_BOUNDARY,
+    ConsumerAgentRunner,
+)
 from app.managed_skills import RuntimeSkillSnapshot
 from app.skill_files import SkillFileService
 from app.store import AutoReplyStore
+from app.wechat.decision_runner import WechatDecisionRunner
+from app.wechat.prompt import WECHAT_TURN_INSTRUCTIONS
 
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
@@ -582,3 +595,157 @@ def test_operation_skill_requires_typed_standard_frontmatter(
     assert option.name == "broken"
     assert option.available is False
     assert option.unavailable_reason == "operation_skill_invalid"
+
+
+def test_service_command_downstream_reports_real_channel_consumer_and_routes(
+    tmp_path: Path,
+) -> None:
+    service = _service(
+        tmp_path, snapshots={"codex_oauth": _snapshot("codex_oauth", healthy=True)}
+    )
+
+    dingtalk, wechat, meeting, oa, work_sources = (
+        service.list_service_command_options()
+    )
+
+    assert (dingtalk.name, dingtalk.channel) == ("produce-once", "dingtalk")
+    assert (wechat.name, wechat.channel) == ("wechat-produce-once", "wechat")
+    assert (meeting.name, meeting.channel) == ("scan-meetings-once", "meeting")
+    assert (oa.name, oa.channel) == ("scan-oa-approvals", "dingtalk")
+    assert (work_sources.name, work_sources.channel) == (
+        "scan-work-sources-once",
+        "work_summary",
+    )
+    assert dingtalk.downstream.channel == "dingtalk"
+    assert dingtalk.downstream.consumer_runners == (
+        ConsumerAgentRunner.__name__,
+        AuditAgentRunner.__name__,
+    )
+    assert dingtalk.downstream.instructions == CONSUMER_ROLE_BOUNDARY
+    assert dingtalk.downstream.required_capabilities == tuple(
+        sorted(CONSUMER_BASE_RUNTIME_CAPABILITIES)
+    )
+    assert dingtalk.downstream.loads_skills is True
+    assert wechat.downstream.channel == "wechat"
+    assert wechat.downstream.consumer_runners == (WechatDecisionRunner.__name__,)
+    assert wechat.downstream.instructions == WECHAT_TURN_INSTRUCTIONS
+    assert wechat.downstream.required_capabilities == tuple(
+        sorted(DECISION_RUNTIME_CAPABILITIES)
+    )
+    assert wechat.downstream.loads_skills is False
+    assert wechat.downstream.skills == ()
+    assert wechat.downstream.skills_from_runtime_snapshot is False
+    assert meeting.downstream.channel == "meeting"
+    assert meeting.downstream.consumer_runners == ("MeetingAlignmentCodexRunner",)
+    assert meeting.downstream.loads_skills is False
+    assert meeting.downstream.skills == ()
+    assert meeting.downstream.skills_from_runtime_snapshot is False
+    assert meeting.downstream.instructions is None
+    assert meeting.downstream.instructions is None
+    assert oa.downstream.channel == "dingtalk"
+    assert oa.downstream.consumer_runners == (
+        ConsumerAgentRunner.__name__,
+        AuditAgentRunner.__name__,
+    )
+    assert work_sources.downstream.channel == "work_summary"
+    assert work_sources.downstream.consumer_runners == ("TaskAgentRunner",)
+    assert work_sources.downstream.loads_skills is False
+    assert work_sources.downstream.skills == ()
+    assert work_sources.downstream.instructions is None
+    for listing, required in (
+        (dingtalk, CONSUMER_BASE_RUNTIME_CAPABILITIES),
+        (wechat, DECISION_RUNTIME_CAPABILITIES),
+        (meeting, frozenset({"structured_output", "local_schema_validation"})),
+        (oa, CONSUMER_BASE_RUNTIME_CAPABILITIES),
+        (work_sources, frozenset({"structured_output", "local_schema_validation"})),
+    ):
+        expected_routes = [
+            (option.route_name, option.model, option.available, option.unavailable_reason)
+            for option in service.list_runtime_options(required_capabilities=required)
+        ]
+        assert expected_routes == [
+            ("codex_oauth", "gpt-5.6-sol", True, None),
+            ("claude_api", "sonnet", False, "snapshot_missing"),
+        ]
+        assert [
+            (route.route_name, route.model, route.available, route.unavailable_reason)
+            for route in listing.downstream.runtime_routes
+        ] == expected_routes
+
+
+def test_service_command_downstream_routes_follow_the_consumer_requirement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        options_module,
+        "DECISION_RUNTIME_CAPABILITIES",
+        DECISION_RUNTIME_CAPABILITIES | {"image_input"},
+    )
+    service = _service(
+        tmp_path, snapshots={"codex_oauth": _snapshot("codex_oauth", healthy=True)}
+    )
+
+    dingtalk, wechat, *_rest = service.list_service_command_options()
+
+    assert wechat.downstream.required_capabilities == tuple(
+        sorted(DECISION_RUNTIME_CAPABILITIES | {"image_input"})
+    )
+    assert [
+        (route.route_name, route.available, route.unavailable_reason)
+        for route in wechat.downstream.runtime_routes
+    ] == [
+        ("codex_oauth", False, "missing_capabilities:image_input"),
+        ("claude_api", False, "snapshot_missing"),
+    ]
+    assert dingtalk.downstream.runtime_routes[0].available is True
+
+
+def test_service_command_downstream_rejects_an_unsupported_channel(
+    tmp_path: Path,
+) -> None:
+    option = ServiceCommandOption(
+        name="email-produce-once",
+        display_name="Email",
+        description="unsupported",
+        channel="email",  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ValueError, match="unsupported service command channel: email"):
+        _service(tmp_path).describe_service_command_downstream(option)
+
+
+def test_dingtalk_downstream_skills_follow_process_snapshot_then_installed_catalog(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "options.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "CEO Test")
+    revision = store.create_managed_skill_revision(
+        skill.id, MANAGED_V1, source="settings"
+    )
+    config = store.create_runtime_skill_config(
+        {skill.id: revision.id}, expected_parent_id=None
+    )
+
+    with_snapshot = _service(
+        tmp_path,
+        store=store,
+        runtime_skill_snapshot=RuntimeSkillSnapshot(config.id, (revision,)),
+    ).list_service_command_options()[0].downstream
+    without_snapshot = _service(tmp_path, store=store).list_service_command_options()[
+        0
+    ].downstream
+
+    assert with_snapshot.skills == (
+        DownstreamSkill(
+            name="ceo-test", revision_id=revision.id, revision_number=1
+        ),
+    )
+    assert with_snapshot.loads_skills is True
+    assert with_snapshot.skills_from_runtime_snapshot is True
+    assert without_snapshot.skills == tuple(
+        DownstreamSkill(name=entry.name, revision_id=None, revision_number=None)
+        for entry in installed_business_skill_catalog()
+    )
+    assert without_snapshot.skills
+    assert without_snapshot.loads_skills is True
+    assert without_snapshot.skills_from_runtime_snapshot is False

@@ -226,6 +226,7 @@ STORE_SCHEMA_REMOVED_TABLES = (
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "scheduled_tasks": (
         "migration_key",
+        "command",
         "runtime_options_json",
         "required_runtime_capabilities_json",
         "version",
@@ -1911,6 +1912,22 @@ class AutoReplyStore:
             )
             for table_name, required_columns in STORE_SCHEMA_REQUIRED_COLUMNS.items()
         )
+        scheduled_task_run_snapshots_current = True
+        if "scheduled_task_runs" in present_tables:
+            for row in db.execute(
+                "select snapshot_json from scheduled_task_runs"
+            ).fetchall():
+                try:
+                    snapshot = json.loads(str(row["snapshot_json"]))
+                except (TypeError, json.JSONDecodeError):
+                    scheduled_task_run_snapshots_current = False
+                    break
+                if not isinstance(snapshot, dict) or not {
+                    "command",
+                    "required_runtime_capabilities",
+                }.issubset(snapshot):
+                    scheduled_task_run_snapshots_current = False
+                    break
         return (
             set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
             and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
@@ -1918,6 +1935,7 @@ class AutoReplyStore:
             and required_trigger_definitions_present
             and feedback_processing_round_storage_valid
             and required_columns_present
+            and scheduled_task_run_snapshots_current
             and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
         )
 

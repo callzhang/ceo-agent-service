@@ -46,7 +46,26 @@ const options = {
     { name: "dingtalk-chat", source: "/skills/dingtalk-chat/SKILL.md", content_summary: "读取并处理钉钉消息", sha256: "chat", available: true, unavailable_reason: null },
     { name: "lark-im", source: "/skills/lark-im/SKILL.md", content_summary: "读取飞书消息", sha256: "lark", available: false, unavailable_reason: "operation_skill_name_conflict" },
   ],
-  service_command_options: [{ name: "produce-once", display_name: "检查钉钉消息", description: "增量读取 DingTalk 未读消息，去重后写入 reply task。" }],
+  service_command_options: [
+    { name: "produce-once", display_name: "检查钉钉消息", description: "增量读取 DingTalk 未读消息，去重后写入 reply task。", channel: "dingtalk" as const, downstream: {
+      channel: "dingtalk" as const, consumer_runners: ["ConsumerAgentRunner", "AuditAgentRunner"], instructions: "You are Consumer Agent A. Understand the supplied task.", required_capabilities: [],
+      loads_skills: true, skills: [{ name: "ceo-minutes-sync", revision_id: 23, revision_number: 2 }], skills_from_runtime_snapshot: true,
+      runtime_routes: [
+        { route_name: "codex_oauth", model: "gpt-5.6-sol", available: true as const, unavailable_reason: null },
+        { route_name: "claude_cloud", model: "claude", available: false as const, unavailable_reason: "snapshot_missing" },
+      ],
+    } },
+    { name: "wechat-produce-once", display_name: "检查微信消息", description: "读取已就绪微信账号的新消息。", channel: "wechat" as const, downstream: {
+      channel: "wechat" as const, consumer_runners: ["WechatDecisionRunner"], instructions: "- This is a selected personal WeChat conversation.", required_capabilities: ["structured_output"],
+      loads_skills: false, skills: [], skills_from_runtime_snapshot: false,
+      runtime_routes: [{ route_name: "codex_oauth", model: "gpt-5.6-sol", available: true as const, unavailable_reason: null }],
+    } },
+    { name: "scan-meetings-once", display_name: "检查 DingTalk 会议", description: "读取已结束的 DingTalk 会议。", channel: "meeting" as const, downstream: {
+      channel: "meeting" as const, consumer_runners: ["MeetingAlignmentCodexRunner"], instructions: null, required_capabilities: ["local_schema_validation", "structured_output"],
+      loads_skills: false, skills: [], skills_from_runtime_snapshot: false,
+      runtime_routes: [{ route_name: "codex_oauth", model: "gpt-5.6-sol", available: true as const, unavailable_reason: null }],
+    } },
+  ],
   meta: { snapshot_at: "2026-09-08T12:00:00Z" },
 };
 const commandRun: typeof run = { ...run, id: 13, scheduled_task_id: 9, execution_kind: "service_command", execution_id: "produce-once", snapshot: { ...run.snapshot, task_id: 9, name: "检查 DingTalk 消息", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {} as typeof run.snapshot.runtime_options, working_directory: "", skill_refs: [] } };
@@ -409,7 +428,23 @@ describe("service command tasks", () => {
     expect(screen.queryByLabelText("Consumer Agent 自定义描述")).toBeNull();
     expect(screen.queryByText("Consumer Agent 系统提示词")).toBeNull();
     expect(screen.queryByText("从提示词提取的 Skills")).toBeNull();
-    expect(screen.getByText("这个命令在服务进程内直接执行，不启动 Agent。它发现的消息交给统一 Dispatcher 的 reply consumer 处理；该 consumer 的提示词、Skills 和 Runtime 路由由服务统一维护（Settings → Agent Runtime / Skills），不在这个任务上配置。")).toBeInTheDocument();
+    const downstream = screen.getByRole("region", { name: "下游 consumer" });
+    expect(within(downstream).getByText("dingtalk")).toBeInTheDocument();
+    expect(within(downstream).getByText("ConsumerAgentRunner → AuditAgentRunner")).toBeInTheDocument();
+    expect(within(downstream).getByText("无额外要求")).toBeInTheDocument();
+    expect(within(downstream).getByText("角色边界（服务常量；运行时另拼接能力说明、Skill 协议与工作画像，并替换负责人称呼）")).toBeInTheDocument();
+    expect(within(downstream).queryByText(/完整|系统提示词/)).toBeNull();
+    expect(downstream.querySelector("details > pre")).toHaveTextContent("You are Consumer Agent A. Understand the supplied task.");
+    expect(within(downstream).getByText("ceo-minutes-sync")).toBeInTheDocument();
+    expect(within(downstream).getByText("revision 2")).toBeInTheDocument();
+    expect(within(downstream).getByText("来源：进程 Runtime Skill 快照（精确 revision）")).toBeInTheDocument();
+    expect(within(downstream).getByText("codex_oauth · gpt-5.6-sol")).toBeInTheDocument();
+    expect(within(downstream).getByText("claude_cloud · claude · 不可用：snapshot_missing")).toBeInTheDocument();
+    expect(within(downstream).getByText(/通过 Runtime 路由器.*按上方所需能力计算/)).toBeInTheDocument();
+    expect(within(downstream).queryAllByRole("textbox")).toHaveLength(0);
+    expect(within(downstream).queryAllByRole("combobox")).toHaveLength(0);
+    expect(within(downstream).queryAllByRole("button")).toHaveLength(0);
+    expect(downstream.querySelector("input, textarea, select, [contenteditable]")).toBeNull();
     expect(screen.getByLabelText("服务命令")).toBeDisabled();
     expect(screen.getByText("内置任务的执行类型由仓库维护，不能修改。")).toBeInTheDocument();
     expect(screen.getAllByText("检查钉钉消息").length).toBeGreaterThanOrEqual(1);
@@ -425,6 +460,48 @@ describe("service command tasks", () => {
     await user.click(screen.getByRole("button", { name: "保存更改" }));
 
     await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(9, expect.objectContaining({ command: "produce-once", cron_expression: "0 */2 * * * *", prompt: "", runtime_id: "", skill_refs: [], version: 3 })));
+  });
+
+  it("states that the WeChat command's decision runner loads no Skill", async () => {
+    setup([{ ...commandTask, id: 10, migration_key: null, name: "检查微信消息", command: "wechat-produce-once", recent_run: null }]);
+    renderPage("/scheduled-tasks?id=10");
+
+    expect(await screen.findByLabelText("服务命令")).toHaveValue("wechat-produce-once");
+    const downstream = screen.getByRole("region", { name: "下游 consumer" });
+    expect(within(downstream).getByText("wechat")).toBeInTheDocument();
+    expect(within(downstream).getByText("WechatDecisionRunner")).toBeInTheDocument();
+    expect(within(downstream).getByText("structured_output")).toBeInTheDocument();
+    expect(within(downstream).getByText("回合指令（服务常量；运行时另拼接处理时间、对话上下文与触发消息）")).toBeInTheDocument();
+    expect(downstream.querySelector("details > pre")).toHaveTextContent("This is a selected personal WeChat conversation.");
+    expect(within(downstream).getByText("不加载 Skill")).toBeInTheDocument();
+    expect(within(downstream).queryByText(/来源：/)).toBeNull();
+    expect(downstream.querySelector(".scheduled-task-skill-chips")).toBeNull();
+    expect(within(downstream).getByText("codex_oauth · gpt-5.6-sol")).toBeInTheDocument();
+  });
+
+  it("omits the instruction block for a consumer that exports no instruction constant", async () => {
+    setup([{ ...commandTask, id: 11, migration_key: null, name: "检查 DingTalk 会议", command: "scan-meetings-once", recent_run: null }]);
+    renderPage("/scheduled-tasks?id=11");
+
+    expect(await screen.findByLabelText("服务命令")).toHaveValue("scan-meetings-once");
+    const downstream = screen.getByRole("region", { name: "下游 consumer" });
+    expect(within(downstream).getByText("MeetingAlignmentCodexRunner")).toBeInTheDocument();
+    expect(within(downstream).getByText("local_schema_validation、structured_output")).toBeInTheDocument();
+    expect(downstream.querySelector("details")).toBeNull();
+    expect(within(downstream).queryByText(/服务常量/)).toBeNull();
+  });
+
+  it("names the installed business Skill catalog when the process has no runtime Skill snapshot", async () => {
+    const [dingtalk, wechat] = options.service_command_options;
+    setup([commandTask]);
+    api.getScheduledTaskOptions.mockResolvedValueOnce({ ...options, service_command_options: [{ ...dingtalk, downstream: { ...dingtalk.downstream, skills: [{ name: "ceo-minutes-sync", revision_id: null, revision_number: null }], skills_from_runtime_snapshot: false } }, wechat] });
+    renderPage("/scheduled-tasks?id=9");
+
+    expect(await screen.findByLabelText("服务命令")).toHaveValue("produce-once");
+    const downstream = screen.getByRole("region", { name: "下游 consumer" });
+    expect(within(downstream).getByText("ceo-minutes-sync")).toBeInTheDocument();
+    expect(within(downstream).queryByText(/revision/)).toBeNull();
+    expect(within(downstream).getByText("来源：已安装业务 Skill 目录（当前进程没有 Runtime Skill 快照）")).toBeInTheDocument();
   });
 
   it("keeps the execution type editable for a user-created command task", async () => {

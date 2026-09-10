@@ -112,10 +112,39 @@ interface OperationSkillOptionBase {
 
 export type OperationSkillOption = OperationSkillOptionBase & Availability;
 
+export type ServiceCommandChannel = "dingtalk" | "wechat" | "meeting" | "work_summary";
+
+export interface ServiceCommandDownstreamSkill {
+  name: string;
+  /** Set only when the process runtime Skill snapshot supplied the Skill. */
+  revision_id: number | null;
+  revision_number: number | null;
+}
+
+export type ServiceCommandDownstreamRoute = { route_name: string; model: string } & Availability;
+
+/** What the reply consumer really runs for tasks this command produces, read from live service state. */
+export interface ServiceCommandDownstream {
+  channel: ServiceCommandChannel;
+  /** Runner class names in execution order. */
+  consumer_runners: string[];
+  /** The consumer's own instruction constant, or null when that consumer exposes none. */
+  instructions: string | null;
+  /** The consumer's baseline runtime requirement that decided `runtime_routes` availability. */
+  required_capabilities: string[];
+  loads_skills: boolean;
+  skills: ServiceCommandDownstreamSkill[];
+  /** True when the process runtime Skill snapshot supplied `skills`, false when the installed business Skill catalog did. */
+  skills_from_runtime_snapshot: boolean;
+  runtime_routes: ServiceCommandDownstreamRoute[];
+}
+
 export interface ServiceCommandOption {
   name: string;
   display_name: string;
   description: string;
+  channel: ServiceCommandChannel;
+  downstream: ServiceCommandDownstream;
 }
 
 export interface ScheduledTaskOptions {
@@ -259,11 +288,48 @@ function validManagedSkill(value: unknown): value is ManagedSkillOption {
     && Array.isArray(item.revisions) && item.revisions.every(validRevision));
 }
 
+function validChannel(value: unknown): value is ServiceCommandChannel {
+  return value === "dingtalk"
+    || value === "wechat"
+    || value === "meeting"
+    || value === "work_summary";
+}
+
+function validDownstreamSkill(value: unknown, fromRuntimeSnapshot: boolean): value is ServiceCommandDownstreamSkill {
+  const item = record(value);
+  if (!item || typeof item.name !== "string" || !item.name.trim()) return false;
+  return fromRuntimeSnapshot
+    ? positiveInteger(item.revision_id) && positiveInteger(item.revision_number)
+    : item.revision_id === null && item.revision_number === null;
+}
+
+function validDownstreamRoute(value: unknown): value is ServiceCommandDownstreamRoute {
+  const item = record(value);
+  return Boolean(item && typeof item.route_name === "string" && Boolean(item.route_name.trim())
+    && typeof item.model === "string" && validAvailability(item));
+}
+
+function validDownstream(value: unknown, channel: ServiceCommandChannel): value is ServiceCommandDownstream {
+  const item = record(value);
+  const loadsSkills = item?.loads_skills;
+  const fromRuntimeSnapshot = item?.skills_from_runtime_snapshot;
+  if (!item || item.channel !== channel || typeof loadsSkills !== "boolean" || typeof fromRuntimeSnapshot !== "boolean") return false;
+  return Array.isArray(item.consumer_runners) && item.consumer_runners.length > 0
+    && item.consumer_runners.every((runner) => typeof runner === "string" && Boolean(runner.trim()))
+    && (item.instructions === null
+      || (typeof item.instructions === "string" && Boolean(item.instructions.trim())))
+    && validStringSet(item.required_capabilities)
+    && Array.isArray(item.skills) && item.skills.every((skill) => validDownstreamSkill(skill, fromRuntimeSnapshot))
+    && (loadsSkills || (item.skills.length === 0 && !fromRuntimeSnapshot))
+    && Array.isArray(item.runtime_routes) && item.runtime_routes.every(validDownstreamRoute);
+}
+
 function validServiceCommand(value: unknown): value is ServiceCommandOption {
   const item = record(value);
   return Boolean(item && typeof item.name === "string" && Boolean(item.name.trim())
     && typeof item.display_name === "string" && Boolean(item.display_name.trim())
-    && typeof item.description === "string" && Boolean(item.description.trim()));
+    && typeof item.description === "string" && Boolean(item.description.trim())
+    && validChannel(item.channel) && validDownstream(item.downstream, item.channel));
 }
 
 function validOperationSkill(value: unknown): value is OperationSkillOption {

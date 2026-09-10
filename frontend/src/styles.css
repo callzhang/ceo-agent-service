@@ -1505,6 +1505,15 @@ h1, h2, h3, p { margin-top: 0; }
 .scheduled-task-skill-chips span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scheduled-task-skill-chips small { color: var(--ink-soft); font-size: .65rem; }
 .scheduled-task-skill-chips b { color: var(--ink-soft); font-size: 1rem; font-weight: 400; }
+.scheduled-task-downstream dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: .8rem; }
+.scheduled-task-downstream dl > div { display: contents; }
+.scheduled-task-downstream dt { color: var(--ink-soft); }
+.scheduled-task-downstream dd, .scheduled-task-downstream ul { margin: 0; }
+.scheduled-task-downstream h4 { margin: 0 0 6px; font-size: .78rem; }
+.scheduled-task-downstream ul { padding-left: 18px; font-size: .8rem; }
+.scheduled-task-downstream small { color: var(--ink-soft); font-size: .72rem; }
+.scheduled-task-downstream pre { margin: 6px 0 0; padding: 10px; overflow: auto; border-radius: 8px; background: var(--surface); font-size: .72rem; line-height: 1.5; white-space: pre-wrap; }
+.scheduled-task-downstream .scheduled-task-skill-chips > span { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); }
 .scheduled-task-form-error, .scheduled-task-delete-confirm { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; padding: 11px 12px; border: 1px solid var(--error-line); border-radius: 9px; color: var(--danger); background: var(--error-surface); }
 .scheduled-task-form-error .secondary-button { flex: 0 0 auto; }
 .scheduled-task-delete-confirm p { margin: 0; }
