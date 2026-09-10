@@ -1920,9 +1920,15 @@ class AutoReplyStore:
                 try:
                     snapshot = json.loads(str(row["snapshot_json"]))
                 except (TypeError, json.JSONDecodeError):
-                    scheduled_task_run_snapshots_current = False
-                    break
-                if not isinstance(snapshot, dict) or not {
+                    # A snapshot that cannot be parsed is corrupt data, not an
+                    # out-of-date schema.  Migrating cannot repair it, so
+                    # reporting it as stale would ask for a migration that
+                    # leaves the row exactly as it is.  The row still fails
+                    # when it is read, which keeps the damage local.
+                    continue
+                if not isinstance(snapshot, dict):
+                    continue
+                if not {
                     "command",
                     "required_runtime_capabilities",
                 }.issubset(snapshot):
@@ -4416,7 +4422,16 @@ class AutoReplyStore:
             for snapshot_row in db.execute(
                 "select id, snapshot_json from scheduled_task_runs"
             ).fetchall():
-                snapshot_payload = json.loads(str(snapshot_row["snapshot_json"]))
+                try:
+                    snapshot_payload = json.loads(str(snapshot_row["snapshot_json"]))
+                except (TypeError, json.JSONDecodeError):
+                    # Leave corrupt rows untouched: backfilling defaults into
+                    # unparseable data would invent a snapshot.  The currency
+                    # check skips them for the same reason, so startup neither
+                    # crashes here nor loops asking for this migration.
+                    continue
+                if not isinstance(snapshot_payload, dict):
+                    continue
                 missing_snapshot_fields = {
                     "required_runtime_capabilities": [],
                     "command": "",

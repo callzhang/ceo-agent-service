@@ -1205,3 +1205,42 @@ def test_adopting_a_service_command_moves_the_seed_in_place_once(
     assert store.adopt_scheduled_task_service_command(
         migration_key="deleted-v1", command="produce-once", seed_enabled=True, now=NOW
     ) == deleted
+
+
+def test_corrupt_run_snapshot_neither_crashes_startup_nor_loops_migration(
+    tmp_path: Path,
+) -> None:
+    """A snapshot migration cannot repair must not be reported as stale.
+
+    The currency check once treated an unparseable snapshot_json as an
+    out-of-date schema while the migration parsed it without guarding, so a
+    single corrupt row asked for a migration that then raised on it and the
+    supervisor restarted the worker in a loop.
+    """
+    db_path = tmp_path / "corrupt-snapshot.sqlite3"
+    store = AutoReplyStore(db_path)
+    task = _create_task(store)
+    run = store.create_scheduled_task_run(
+        task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
+    )
+    with store._connect() as db:
+        db.execute(
+            "update scheduled_task_runs set snapshot_json=? where id=?",
+            ("{not valid json", run.id),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    # Reopening must not raise, and the corrupt row must be left exactly as it
+    # is rather than backfilled with invented defaults.
+    reopened = AutoReplyStore(db_path)
+
+    with reopened._connect() as db:
+        stored = db.execute(
+            "select snapshot_json from scheduled_task_runs where id=?", (run.id,)
+        ).fetchone()
+    assert stored["snapshot_json"] == "{not valid json"
+    # Healthy rows stay readable alongside the corrupt one.
+    healthy = reopened.create_scheduled_task_run(
+        task.id, trigger_kind="manual", scheduled_for=NOW + timedelta(minutes=1), now=NOW
+    )
+    assert reopened.get_scheduled_task_run(healthy.id).snapshot.command == ""
