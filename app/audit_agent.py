@@ -201,12 +201,19 @@ class AuditAgentRunner:
             )
         prompt += (
             "\n\n### Needs Human Display Contract\n"
-            "Return needs_human only for a reusable policy gap: existing rules "
-            "cannot determine how this class of cases should be handled. Describe "
-            "the rule key, recurring pattern, and mutually exclusive policy choices. "
-            "Set top-level risk and confidence for every result. needs_human is "
-            "valid only for high risk with confidence strictly below 0.5. "
-            "Do not turn a technical failure into needs_human."
+            "Every result for every task type and outcome must include risk "
+            "(low|medium|high), confidence (0..1), rule_coverage (0..1), and "
+            "information_completeness (0..1). If information_completeness < 0.5, "
+            "return a normal proposal with one ordinary question, do not return "
+            "needs_human, and do not add a persistent outcome; use the existing "
+            "proposal/Audit/send chain. Otherwise, needs_human applies only when "
+            "(risk == high and confidence < 0.5) or rule_coverage < 0.5; provide "
+            "2-4 mutually exclusive, executable rule/Skill options, with one-time "
+            "feedback and Skill update selectable together. Otherwise follow the "
+            "Skill autonomously. Technical/provider/read/route/schema/Audit/retry "
+            "failure is always failed. authorization_required is not generic "
+            "needs_human. Feedback reuses the same business object, attempt, and "
+            "compatible session while creating a new revision, not a new session."
         )
         if self.dry_run:
             prompt += (

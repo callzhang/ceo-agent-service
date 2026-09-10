@@ -129,6 +129,8 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
         "error_authorization_required": error["authorization_required"],
         "risk": "high" if result["outcome"] == "needs_human" else "low",
         "confidence": 0.1 if result["outcome"] == "needs_human" else 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
     }
 
 
@@ -742,6 +744,19 @@ def test_audit_uses_typed_result_without_application_receipt_validation(setup):
     assert result.result.outcome is AuditOutcome.EXECUTED
     assert persisted is not None and persisted.status == "completed"
     assert "execute_audited_email_unsubscribe" not in json.dumps(executor.commands)
+
+
+def test_audit_prompt_uses_quality_gate_priority(setup):
+    store, task, audit_context, parent = setup
+    executor = CapturingExecutor(_audit_jsonl("operation-1", session="quality"))
+    AuditAgentRunner(store=store, workspace=Path("/workspace"), executor=executor).run(
+        task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id
+    )
+    prompt = executor.prompts[0]
+    assert "rule_coverage (0..1)" in prompt
+    assert "information_completeness < 0.5" in prompt
+    assert "2-4 mutually exclusive" in prompt
+    assert "Technical/provider/read/route/schema/Audit/retry" in prompt
 
 
 def test_audit_runtime_environment_overrides_ambient_send_mode(
