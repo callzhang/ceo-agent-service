@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -51,6 +52,8 @@ ProcessExecutor = Callable[..., ProcessRunResult]
 _ROUTED_RESULT_CODEC_SEAL = object()
 _RESULT_VALIDATION_RETRY_SEAL = object()
 
+
+_LOGGER = logging.getLogger(__name__)
 
 class RoutedResultEnvelopeTooLarge(ValueError):
     """Raised when a durable result exceeds the reviewed byte budget."""
@@ -1319,6 +1322,16 @@ class RoutedCodexExecution:
                 try:
                     value = parser(process.stdout)
                 except RoutedResultValidationError as exc:
+                    # The attempt row keeps only the failure code; the reason
+                    # (never the raw output) goes to the service log.
+                    _LOGGER.warning(
+                        "result validation failed for %s/%s attempt %s on %s: %s",
+                        workload_kind,
+                        workload_key,
+                        active_attempt.id,
+                        route.name,
+                        exc,
+                    )
                     can_retry_validation = (
                         result_validation_retry is not None
                         and result_validation_retries_used == 0

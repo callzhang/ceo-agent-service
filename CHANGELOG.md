@@ -1,5 +1,21 @@
 # Changelog
 
+- 2026-09-10: the email consumer loop defers a task whose context load hit
+  a transient mailbox/network failure (IMAP TLS handshake timeout,
+  connection reset, imaplib transport errors) with backoff for up to five
+  attempts (`email_provider_transient:<type>`) instead of failing it
+  terminally as `email_consumer_runtime_error:TimeoutError`; a task
+  superseded mid-turn by a rerun or stale-claim recovery is left to its new
+  generation instead of being failed.
+
+- 2026-09-10: meeting alignment gets one same-session schema correction
+  turn (third-party providers ignore Codex's output schema); the correction
+  prompt lists the exact `MeetingAlignmentDecision` field errors of the last
+  candidate. The WeChat `AgentEnvelope` parser skips non-JSON lines around
+  the Codex JSONL stream instead of failing the whole result, and the router
+  logs the reason behind every `runtime_result_validation_failed` (never the
+  raw output).
+
 - 2026-09-10: an evidence-backed `executed` Audit result now takes its
   `external_result.operation_id` from the Audit run itself. The tool receipt
   bound to the run is the evidence; the opaque operation id is service-owned,

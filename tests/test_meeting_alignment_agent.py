@@ -768,3 +768,26 @@ def test_parser_finds_decision_embedded_in_prose_and_fences():
     assert parse_meeting_alignment_decision(text) == parse_meeting_alignment_decision(
         json.dumps(payload)
     )
+
+
+def test_meeting_repair_prompt_names_schema_errors_of_last_candidate():
+    from app.meeting_alignment_agent import _meeting_alignment_repair_prompt
+
+    bad = {"action": "send", "trigger_reasons": ["aligned_disagreement"], "topics": [{"type": "aligned"}]}
+    raw = json.dumps(
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "```json\n" + json.dumps(bad) + "\n```"}}
+    )
+
+    prompt = _meeting_alignment_repair_prompt(raw)
+
+    assert "MeetingAlignmentDecision" in prompt
+    assert "topics.0" in prompt
+    assert "上一次输出的问题" in prompt
+
+
+def test_meeting_repair_prompt_reports_missing_decision():
+    from app.meeting_alignment_agent import _meeting_alignment_repair_prompt
+
+    prompt = _meeting_alignment_repair_prompt("I could not decide.")
+
+    assert "did not contain a MeetingAlignmentDecision" in prompt

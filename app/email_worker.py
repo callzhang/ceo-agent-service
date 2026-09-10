@@ -31,6 +31,8 @@ EMAIL_TASK_CLAIM_BATCH = 5
 # a run is reclaimed once its lock exceeds the hard cap.
 STALE_EMAIL_TASK_SECONDS = 10 * 60
 MAX_EMAIL_TASK_PROCESSING_SECONDS = 60 * 60
+# Transient mailbox/network failures while loading a task are retried this often.
+EMAIL_TASK_TRANSIENT_RETRY_ATTEMPTS = 5
 DIRECT_ACTION_DRAIN_MAX_ACTIONS = 25
 DIRECT_ACTION_DRAIN_MAX_SECONDS = 2.0
 
@@ -1305,6 +1307,37 @@ def run_scan_and_direct_actions_loop(
             sleep(max(interval, 1))
 
 
+def _is_transient_email_provider_error(exc: BaseException) -> bool:
+    """Socket, TLS and IMAP transport failures are retried; logic errors are not."""
+    if isinstance(exc, (OSError, ConnectionError)):
+        return True
+    return type(exc).__module__.startswith("imaplib") or type(exc).__name__ in {
+        "IMAP4Error",
+        "IMAPClientError",
+    }
+
+
+def _is_superseded_task_error(exc: BaseException) -> bool:
+    from app.store import AgentRunLeaseLostError
+
+    return isinstance(exc, AgentRunLeaseLostError)
+
+
+def _email_task_retry_available_at(attempts: int) -> str:
+    from app.worker import (
+        REPLY_TASK_RETRY_BASE_DELAY_SECONDS,
+        REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
+    )
+
+    delay_seconds = min(
+        REPLY_TASK_RETRY_BASE_DELAY_SECONDS * (2 ** max(attempts - 1, 0)),
+        REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
+    )
+    return (datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+
 def _recover_stale_email_tasks(task_store: object) -> None:
     """Requeue email tasks whose claim outlived the process that took it.
 
@@ -1398,12 +1431,30 @@ def run_email_agent_task_loop(
                     exc,
                     exc_info=True,
                 )
+                if _is_superseded_task_error(exc):
+                    # A rerun or stale-claim recovery rotated the task while
+                    # this turn ran; the new generation owns it now.
+                    continue
                 try:
-                    task_store.fail_reply_task(
-                        task.id,
-                        f"email_consumer_runtime_error:{last_error_type}",
-                        expected_execution_generation=task.execution_generation,
-                    )
+                    if _is_transient_email_provider_error(exc) and (
+                        task.attempts < EMAIL_TASK_TRANSIENT_RETRY_ATTEMPTS
+                    ):
+                        # Mailbox/network hiccups (IMAP handshake timeouts,
+                        # connection resets) are retried with backoff, like a
+                        # deferred orchestration, not recorded as a terminal
+                        # task failure.
+                        task_store.defer_reply_task(
+                            task.id,
+                            f"email_provider_transient:{last_error_type}",
+                            expected_execution_generation=task.execution_generation,
+                            available_at=_email_task_retry_available_at(task.attempts),
+                        )
+                    else:
+                        task_store.fail_reply_task(
+                            task.id,
+                            f"email_consumer_runtime_error:{last_error_type}",
+                            expected_execution_generation=task.execution_generation,
+                        )
                 except Exception:  # noqa: BLE001 - heartbeat still reports failure
                     pass
         health: dict[str, object] = {

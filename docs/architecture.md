@@ -772,7 +772,12 @@ run 才能被持久队列恢复。
   `codex_provider_overloaded`（容量类：同路由可重试、允许 failover、暂停路由），而不是传输断开。
 - **模型把 JSON 包在说明文字或代码围栏里**：任务 Agent、微信 `AgentEnvelope`、会议对齐三个解析器共用
   `agent_message_json_objects`，在整段消息里逐个定位顶层 JSON 对象（穿过 ``` 围栏和说明文字），
-  取最后一个满足各自 schema 的对象；只有完全找不到 JSON 时才报“未找到”。
+  取最后一个满足各自 schema 的对象；只有完全找不到 JSON 时才报“未找到”。JSONL 流两侧的非 JSON 行
+  （Codex 警告、MCP 启动噪音）一律跳过。会议对齐与任务 Agent、微信一样，结果不合 schema 时在同一会话里
+  做一次修正轮，修正提示列出上一次输出的具体字段错误；路由层把每次结果校验失败的原因写入服务日志。
+- **Email 任务的瞬时故障**：加载任务上下文时遇到邮箱/网络瞬时故障（IMAP TLS 握手超时、连接重置、
+  imaplib 传输错误）按退避延期重试（最多 5 次，错误码 `email_provider_transient:<类型>`），不是终态失败；
+  轮次中被 rerun 或孤儿回收轮换掉的任务交给新的 generation 处理。
 - **Email 任务的孤儿回收**：Email Agent 消费循环每轮先回收本频道的过期认领（`processing` 超过 10 分钟
   且没有活着的 Agent run，或累计超过 60 分钟）并以 `stale_email_task_recovery` 重新入队，再一次只认领
   5 条；任务在该循环里串行执行，认领过多只会拉长尾部锁定时间，进程重启时会把未开始的任务永久留在

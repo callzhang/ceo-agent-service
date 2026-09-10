@@ -183,7 +183,18 @@ def _encode_structured_result(raw: str) -> str:
 
 
 def parse_agent_envelope(raw: str) -> AgentEnvelope:
-    payloads = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    # Codex may print non-JSON lines (warnings, MCP start-up noise) around the
+    # JSONL stream; only the JSON records carry the envelope.
+    payloads: list[object] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            payloads.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    if not payloads:
+        raise ValueError("no valid AgentEnvelope found")
     for payload in reversed(payloads):
         if isinstance(payload, dict):
             shorthand = _no_reply_shorthand_envelope(payload)

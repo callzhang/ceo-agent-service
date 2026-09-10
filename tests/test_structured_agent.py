@@ -729,3 +729,29 @@ def test_parse_agent_envelope_reports_schema_error_of_last_candidate():
     )
     with pytest.raises(ValueError):
         parse_agent_envelope(raw)
+
+
+def test_parse_agent_envelope_ignores_non_json_lines_around_the_stream():
+    envelope = {
+        "kind": "no_action",
+        "user_response": {"mode": "no_reply", "text": "", "sensitivity_kind": "general"},
+        "system_actions": [],
+        "domain_payload": {},
+        "audit": {"summary": "Nothing to do.", "documents": [], "confidence": 0.5},
+    }
+    raw = "\n".join(
+        [
+            "Reading prompt from stdin...",
+            json.dumps({"type": "thread.started", "thread_id": "s1"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": json.dumps(envelope)},
+                }
+            ),
+            "warning: mcp server 'x' exited",
+            json.dumps({"type": "turn.completed", "usage": {}}),
+        ]
+    )
+
+    assert parse_agent_envelope(raw) == AgentEnvelope.model_validate(envelope)

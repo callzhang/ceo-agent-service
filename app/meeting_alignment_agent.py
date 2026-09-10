@@ -11,6 +11,7 @@ from app.agent_runtime_router import (
     RoutedCodexExecution,
     RoutedCodexExecutionError,
     RoutedResultCodec,
+    RoutedResultValidationRetry,
 )
 from app.config import principal_display_name, work_profile_path
 from app.external_retry import ExternalDependencyError
@@ -125,6 +126,11 @@ class MeetingAlignmentCodexRunner:
                 result_codec=MEETING_RESULT_CODEC,
                 conversation_id=None,
                 required_capabilities=MEETING_RUNTIME_CAPABILITIES,
+                # Providers that ignore the output schema (third-party APIs)
+                # get one same-session correction naming the schema errors.
+                result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
+                    correction_prompt=_meeting_alignment_repair_prompt
+                ),
             )
         except RoutedCodexExecutionError as exc:
             if not exc.retryable_external_dependency:
@@ -174,6 +180,52 @@ def _encode_meeting_alignment_result(raw: str) -> str:
         ensure_ascii=False,
         separators=(",", ":"),
     )
+
+
+def _meeting_alignment_repair_prompt(raw: str) -> str:
+    """Tell the model which schema rules its last decision broke."""
+    problems: list[str] = []
+    for payload in reversed(_raw_message_json_objects(raw)):
+        try:
+            MeetingAlignmentDecision.model_validate(payload)
+        except ValidationError as exc:
+            problems = [
+                f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in exc.errors()[:12]
+            ]
+            break
+        except ValueError as exc:
+            problems = [str(exc)[:300]]
+            break
+    detail = (
+        "\n".join(f"- {problem}" for problem in problems)
+        if problems
+        else "- the reply did not contain a MeetingAlignmentDecision JSON object"
+    )
+    return (
+        "上一次输出不是合法的 MeetingAlignmentDecision JSON。请基于同一个上下文重新输出，"
+        "只输出一个满足 schema 的 JSON 对象，不要调用工具，不要发送消息。\n\n"
+        f"上一次输出的问题：\n{detail}"
+    )
+
+
+def _raw_message_json_objects(raw: str) -> list[object]:
+    """Collect decision candidates from raw text or a Codex JSONL stream."""
+    stripped = raw.strip()
+    candidates = agent_message_json_objects(stripped)
+    for line in stripped.splitlines():
+        try:
+            payload = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(payload, dict):
+            for text in _decision_text_candidates(payload):
+                candidates.extend(agent_message_json_objects(text))
+    return [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, dict) and "action" in candidate
+    ]
 
 
 def build_meeting_alignment_prompt(

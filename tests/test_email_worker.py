@@ -8143,3 +8143,110 @@ def test_email_agent_consumer_requeues_stale_claims_before_claiming():
         ("requeue", 7, "stale_email_task_recovery", "gen-7"),
         ("claim", module.EMAIL_TASK_CLAIM_BATCH, "email"),
     ]
+
+
+def test_email_agent_consumer_defers_transient_provider_failures_with_backoff():
+    module = _module()
+    task = SimpleNamespace(
+        id=51,
+        attempts=1,
+        execution_generation="generation-51",
+        trigger_message_json=json.dumps(
+            {"schema": "email_agent_action.v1", "action_type": "unsubscribe"}
+        ),
+    )
+    calls = []
+
+    class Store:
+        def claim_reply_tasks(self, limit, *, channel):
+            return [task]
+
+        def defer_reply_task(self, task_id, error, *, expected_execution_generation, available_at):
+            calls.append(("defer", task_id, error, expected_execution_generation, bool(available_at)))
+
+        def fail_reply_task(self, *args, **kwargs):
+            calls.append(("fail", args))
+
+    def load_task_context(_task):
+        raise TimeoutError("_ssl.c:993: The handshake operation timed out")
+
+    module.run_email_agent_task_loop(
+        Store(),
+        SimpleNamespace(process=lambda *_a, **_k: pytest.fail("no context")),
+        load_task_context=load_task_context,
+        finalize_task=lambda *_a: pytest.fail("no result"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert calls == [("defer", 51, "email_provider_transient:TimeoutError", "generation-51", True)]
+
+
+def test_email_agent_consumer_fails_transient_provider_error_after_retry_budget():
+    module = _module()
+    task = SimpleNamespace(
+        id=52,
+        attempts=module.EMAIL_TASK_TRANSIENT_RETRY_ATTEMPTS,
+        execution_generation="generation-52",
+        trigger_message_json=json.dumps(
+            {"schema": "email_agent_action.v1", "action_type": "unsubscribe"}
+        ),
+    )
+    calls = []
+
+    class Store:
+        def claim_reply_tasks(self, limit, *, channel):
+            return [task]
+
+        def defer_reply_task(self, *args, **kwargs):
+            calls.append(("defer", args))
+
+        def fail_reply_task(self, task_id, error, *, expected_execution_generation):
+            calls.append(("fail", task_id, error, expected_execution_generation))
+
+    module.run_email_agent_task_loop(
+        Store(),
+        SimpleNamespace(process=lambda *_a, **_k: pytest.fail("no context")),
+        load_task_context=lambda _task: (_ for _ in ()).throw(ConnectionResetError("reset")),
+        finalize_task=lambda *_a: pytest.fail("no result"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert calls == [("fail", 52, "email_consumer_runtime_error:ConnectionResetError", "generation-52")]
+
+
+def test_email_agent_consumer_leaves_superseded_task_to_its_new_generation():
+    module = _module()
+    from app.store import AgentRunLeaseLostError
+
+    task = SimpleNamespace(
+        id=53,
+        attempts=0,
+        execution_generation="generation-53",
+        trigger_message_json=json.dumps(
+            {"schema": "email_agent_action.v1", "action_type": "unsubscribe"}
+        ),
+    )
+    calls = []
+
+    class Store:
+        def claim_reply_tasks(self, limit, *, channel):
+            return [task]
+
+        def defer_reply_task(self, *args, **kwargs):
+            calls.append("defer")
+
+        def fail_reply_task(self, *args, **kwargs):
+            calls.append("fail")
+
+    module.run_email_agent_task_loop(
+        Store(),
+        SimpleNamespace(process=lambda *_a, **_k: pytest.fail("no context")),
+        load_task_context=lambda _task: (_ for _ in ()).throw(AgentRunLeaseLostError("reply task superseded: 53")),
+        finalize_task=lambda *_a: pytest.fail("no result"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert calls == []
