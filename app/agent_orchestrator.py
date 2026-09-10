@@ -376,6 +376,9 @@ class AgentOrchestrator:
                     "agent_run_unavailable",
                     "audit_consumer_parent_invalid",
                     "codex_session_locked",
+                    # The turn runner discarded its unstarted run because
+                    # every route is paused or unprobed; defer without a run.
+                    "runtime_provider_unreachable",
                 }:
                     return self._deferred_result(
                         _Deferred(

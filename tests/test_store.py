@@ -8957,3 +8957,44 @@ def test_current_schema_reopens_and_adds_agent_run_recovery_index(
 
     assert "idx_reply_attempts_agent_run_recovery" in index_names
     assert reopened._schema_is_current() is True
+
+
+def test_discard_unstarted_agent_run_removes_only_a_fresh_claim(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    task_id, generation = run.reply_task_id, run.execution_generation
+
+    # Another owner cannot discard someone else's claim.
+    assert store.discard_unstarted_agent_run(run.id, owner="someone-else") is False
+    assert store.get_agent_run(run.id) is not None
+
+    assert store.discard_unstarted_agent_run(run.id, owner="runtime-attempt") is True
+    assert store.get_agent_run(run.id) is None
+    assert store.list_agent_runs_for_task_generation(task_id, generation) == []
+    # The turn number is handed back: the next claim reuses attempt 0.
+    assert (
+        store.next_agent_run_turn_attempt(
+            task_id, generation, role=AgentRole.AUDIT, proposal_revision=0
+        )
+        == 0
+    )
+    with store._connect() as db:
+        assert (
+            db.execute(
+                "select count(*) from agent_run_state_events where agent_run_id=?",
+                (run.id,),
+            ).fetchone()[0]
+            == 0
+        )
+
+    # The freed attempt number is reused; a run that already reached a
+    # terminal state is never discarded.
+    terminal = _claim_audit_run(store, task_id, generation, owner="runtime-attempt").run
+    assert terminal.turn_attempt == 0
+    store.fail_agent_run(
+        terminal.id,
+        {"code": "codex_process_failed", "retryable": True, "authorization_required": False},
+        owner="runtime-attempt",
+    )
+    assert store.discard_unstarted_agent_run(terminal.id, owner="runtime-attempt") is False
+    assert store.get_agent_run(terminal.id) is not None

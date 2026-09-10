@@ -779,6 +779,12 @@ run 才能被持久队列恢复。
 - **任务 Agent 的修订轮次**：可修订规则最多修订 `TASK_DECISION_REPAIR_ROUNDS`（2）轮，修订后触发另一条可修订规则
   会继续修订而不是漏成工作项终态失败；耗尽时抛出类型化的 `TaskDecisionRepairExhausted`。修订提示说明
   `project.memory_context` 的契约（query、召回为空时的说明句、runtime 不可用出口、无变化返回 skip）。
+- **跨进程共享探针结果**：每个服务子进程启动时能力注册表为空；缺少某路由快照时先采用同机其他存活进程在
+  store 里刚写入的新鲜健康快照，而不是自己再探一次（`_shared_healthy_snapshot`）。此前 email-worker 自己的探针
+  在 provider 繁忙时反复失败，Consumer 选路一直是 `snapshot_missing/unhealthy`，整条邮件队列停滞。
+- **中断轮询不留失败 run**：选路时发现所有路由暂停/未探测，turn runner 丢弃刚认领、尚未进入 runtime 的 run
+  （`discard_unstarted_agent_run`，仅认领者可丢弃、且无 runtime attempt/工具事件/effect/回执），编排层直接延期。
+  此前每次轮询都持久化一个失败 Consumer run（单任务累计 458 个 turn_attempt）。
 - **可选字段的 null**：任务 Agent 决策模型（`StrictTaskModel`）把可选字段上的 JSON `null` 视为“未提供”（等同省略，
   下游仍看到声明的默认值），派生 schema 把这些字段标为可空；必填字段与动作所需的证据对象仍不可为 null。
 - **模型输出不兼容旧结构**：微信/钉钉决策与 OKR 评审的 `AgentEnvelope` 解析不再接受任何旧结构（旧 `CodexDecision`

@@ -2460,24 +2460,21 @@ def test_api_only_ineligible_route_is_typed_and_starts_no_process(
         proposal_revision=0,
         turn_attempt=0,
     )
-    assert run is not None and run.status == "failed"
-    error = json.loads(run.structured_error_json)
-    expected_code = {
-        "missing_capability": "runtime_capability_missing",
-        "paused": "runtime_provider_unreachable",
-        # No probe snapshot yet (service just started): the runtime is not
-        # ready rather than broken, so the turn is deferred.
-        "unprobed": "runtime_provider_unreachable",
-    }[eligibility]
-    assert error["code"] == expected_code
-    assert error["retryable"] is True
-    expected_reason = {
-        "unprobed": "snapshot_missing",
-        "paused": "paused",
-        "missing_capability": "missing_capabilities",
-    }[eligibility]
-    assert expected_reason in error["detail"]
-    assert store.list_agent_runtime_attempts(run.id) == []
+    if eligibility == "missing_capability":
+        assert run is not None and run.status == "failed"
+        error = json.loads(run.structured_error_json)
+        assert error["code"] == "runtime_capability_missing"
+        assert error["retryable"] is True
+        assert "missing_capabilities" in error["detail"]
+        assert store.list_agent_runtime_attempts(run.id) == []
+    else:
+        # A paused or unprobed runtime is a wait, not a turn: the claimed run
+        # is discarded so the poll leaves no failed run, no turn_attempt and
+        # no History row behind.
+        assert run is None
+        assert store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation
+        ) == []
     assert executor.commands == []
 
 

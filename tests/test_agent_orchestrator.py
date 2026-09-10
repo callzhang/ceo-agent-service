@@ -3142,3 +3142,53 @@ def test_concurrent_tasks_share_one_consumer_session_and_resume_serially(store):
     assert consumer.max_active == 1
     assert set(consumer.sessions) == {"shared-consumer-session"}
     assert store.get_codex_session_id("same-conversation") == "shared-consumer-session"
+
+
+def test_provider_outage_poll_leaves_no_run_behind(store):
+    """A turn that discards its unstarted run defers without persisting a failure."""
+
+    class OutageConsumer:
+        def __init__(self, store: AutoReplyStore) -> None:
+            self.store = store
+            self.owner = "outage-consumer"
+            self.calls = 0
+
+        def run(self, task, context, *, proposal_revision, parent_agent_run_id, feedback=None):
+            self.calls += 1
+            claim = self.store.claim_agent_run(
+                task.id,
+                task.execution_generation,
+                role=AgentRole.CONSUMER,
+                proposal_revision=proposal_revision,
+                turn_attempt=self.store.next_agent_run_turn_attempt(
+                    task.id,
+                    task.execution_generation,
+                    role=AgentRole.CONSUMER,
+                    proposal_revision=proposal_revision,
+                ),
+                parent_agent_run_id=parent_agent_run_id,
+                operation_id="",
+                owner=self.owner,
+            )
+            assert claim.claimed
+            # Mirrors AgentTurnProcess: every route paused/unprobed -> discard.
+            assert self.store.discard_unstarted_agent_run(claim.run.id, owner=self.owner)
+            raise RuntimeError("runtime_provider_unreachable")
+
+    task = _task(store)
+    consumer = OutageConsumer(store)
+    orchestrator = AgentOrchestrator(store=store, consumer=consumer, audit=ScriptedAudit(store))
+
+    result = _process(orchestrator, task)
+
+    assert result.status == "failed_retryable"
+    assert result.error.code == "runtime_provider_unreachable"
+    assert result.final_run_id == 0
+    assert consumer.calls == 1
+    assert store.list_agent_runs_for_task_generation(task.id, task.execution_generation) == []
+    assert (
+        store.next_agent_run_turn_attempt(
+            task.id, task.execution_generation, role=AgentRole.CONSUMER, proposal_revision=0
+        )
+        == 0
+    )

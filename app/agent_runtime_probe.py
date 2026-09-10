@@ -375,6 +375,17 @@ class RuntimeCapabilityRefresher:
                     )
                 ):
                     continue
+                shared = self._shared_healthy_snapshot(route_name, current, now)
+                if shared is not None:
+                    # A sibling process on this machine already proved the
+                    # route healthy moments ago: adopt its view instead of
+                    # probing again. Every service child starts with an empty
+                    # registry, and a fresh worker probing busy providers
+                    # kept failing its own probe while the same route served
+                    # the other children, leaving its queue in
+                    # snapshot_missing/unhealthy deferrals.
+                    snapshots[route_name] = shared
+                    continue
                 try:
                     snapshot = self._probe.run(route_name=route_name)
                 except Exception:  # noqa: BLE001 - isolate one route from all others
@@ -426,6 +437,34 @@ class RuntimeCapabilityRefresher:
                     )
             self._registry.refresh(snapshots)
             return {name: snapshots[name] for name in selected if name in snapshots}
+
+    def _shared_healthy_snapshot(
+        self,
+        route_name: str,
+        current: RuntimeCapabilitySnapshot | None,
+        now: datetime,
+    ) -> RuntimeCapabilitySnapshot | None:
+        """Return another live process's fresh healthy snapshot for the route."""
+        raw = self._store.get_service_state(
+            AutoReplyStore._runtime_capability_state_key(route_name)
+        )
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+            shared = RuntimeCapabilitySnapshot.model_validate(payload["snapshot"])
+            pid = int(payload["pid"])
+        except (ValueError, TypeError, KeyError):
+            return None
+        if pid == os.getpid() or shared.route_name != route_name:
+            return None
+        if not shared.healthy or shared.failure is not None:
+            return None
+        if not _snapshot_is_current(shared, now, renewal_window=PROBE_RENEWAL_WINDOW):
+            return None
+        if current is not None and current.checked_at >= shared.checked_at:
+            return None
+        return shared
 
 
 def _snapshot_is_current(

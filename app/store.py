@@ -10245,6 +10245,41 @@ class AutoReplyStore:
 
 
 
+    def discard_unstarted_agent_run(self, run_id: int, *, owner: str) -> bool:
+        """Delete a claimed run that never reached a runtime.
+
+        A provider outage discovered while selecting a route is a wait, not
+        a turn: keeping a failed run per poll inflated agent_runs (one task
+        reached turn_attempt 458) and the History failed projection. Only the
+        claiming owner may discard, and only while the run has no runtime
+        attempt, no tool event, no effect intent and no receipt.
+        """
+        owner = self._require_runtime_attempt_text(owner, field="owner")
+        with self._agent_run_write_transaction(None) as (db, _clock):
+            row = db.execute(
+                "select status, lease_owner from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None or row["status"] != "running" or row["lease_owner"] != owner:
+                return False
+            for table in (
+                "agent_runtime_attempts",
+                "agent_run_events",
+                "agent_effect_intents",
+                "agent_execution_receipts",
+            ):
+                if db.execute(
+                    f"select 1 from {table} where agent_run_id=? limit 1",
+                    (run_id,),
+                ).fetchone():
+                    return False
+            db.execute(
+                "delete from agent_run_state_events where agent_run_id=?",
+                (run_id,),
+            )
+            db.execute("delete from agent_runs where id=?", (run_id,))
+            return True
+
     def fail_expired_agent_run(
         self,
         run_id: int,

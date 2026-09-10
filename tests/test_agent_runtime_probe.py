@@ -676,3 +676,101 @@ def test_refresher_renews_a_healthy_snapshot_before_its_expiry(monkeypatch, tmp_
     assert datetime.fromisoformat(registry["codex_oauth"].expires_at) == (
         NOW + timedelta(minutes=9, seconds=31)
     )
+
+
+def _shared_snapshot_fixture(monkeypatch, tmp_path, *, healthy=True, expires_delta=timedelta(hours=1)):
+    """Persist a codex_api snapshot as if another live process had probed it."""
+    from app.agent_runtime_contracts import RuntimeCapabilitySnapshot, RuntimeFailure
+
+    config = _config(monkeypatch)
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    checked = NOW - timedelta(minutes=1)
+    shared = RuntimeCapabilitySnapshot(
+        route_name="codex_api",
+        healthy=healthy,
+        checked_at=checked.isoformat(),
+        expires_at=(checked + expires_delta).isoformat(),
+        failure=(
+            None
+            if healthy
+            else RuntimeFailure(
+                failure_class=RuntimeFailureClass.CAPABILITY,
+                code="runtime_probe_failed",
+                detail="sibling probe failed",
+            )
+        ),
+        capabilities=frozenset({"structured_output", "local_schema_validation"}),
+    )
+    store.record_runtime_capability_snapshot(shared, pid=999_999)
+    return config, store
+
+
+def _refresher_probing_only_oauth(config, store, tmp_path, probed):
+    def executor(command, **kwargs):
+        route = "codex_api" if "OPENAI_API_KEY" in kwargs["env"] else "codex_oauth"
+        probed.append(route)
+        return ProcessRunResult(0, _successful_probe_stream(), "")
+
+    return RuntimeCapabilityRefresher(
+        config=config,
+        store=store,
+        registry=RuntimeCapabilityRegistry(),
+        probe=AgentRuntimeProbe(
+            config=config, executor=executor, now=lambda: NOW, temporary_root=tmp_path
+        ),
+        now=lambda: NOW,
+    )
+
+
+def test_refresher_adopts_a_sibling_process_fresh_healthy_snapshot(monkeypatch, tmp_path):
+    config, store = _shared_snapshot_fixture(monkeypatch, tmp_path)
+    probed = []
+    refresher = _refresher_probing_only_oauth(config, store, tmp_path, probed)
+
+    snapshots = refresher.refresh_expired(force=True)
+
+    assert snapshots["codex_api"].healthy is True
+    assert snapshots["codex_api"].checked_at == (NOW - timedelta(minutes=1)).isoformat()
+    assert probed == ["codex_oauth"]  # codex_api was adopted, not probed
+
+
+@pytest.mark.parametrize("variant", ("unhealthy", "expired"))
+def test_refresher_probes_when_the_shared_snapshot_is_unusable(monkeypatch, tmp_path, variant):
+    config, store = _shared_snapshot_fixture(
+        monkeypatch,
+        tmp_path,
+        healthy=variant != "unhealthy",
+        expires_delta=timedelta(minutes=-5) if variant == "expired" else timedelta(hours=1),
+    )
+    probed = []
+    refresher = _refresher_probing_only_oauth(config, store, tmp_path, probed)
+
+    refresher.refresh_expired(force=True)
+
+    assert sorted(probed) == ["codex_api", "codex_oauth"]
+
+
+def test_refresher_does_not_adopt_its_own_persisted_snapshot(monkeypatch, tmp_path):
+    import os
+
+    from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+
+    config = _config(monkeypatch, routes="codex_api")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_runtime_capability_snapshot(
+        RuntimeCapabilitySnapshot(
+            route_name="codex_api",
+            healthy=True,
+            checked_at=(NOW - timedelta(minutes=1)).isoformat(),
+            expires_at=(NOW + timedelta(hours=1)).isoformat(),
+            failure=None,
+            capabilities=frozenset({"structured_output"}),
+        ),
+        pid=os.getpid(),
+    )
+    probed = []
+    refresher = _refresher_probing_only_oauth(config, store, tmp_path, probed)
+
+    refresher.refresh_expired(force=True)
+
+    assert probed == ["codex_api"]

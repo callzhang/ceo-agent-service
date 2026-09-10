@@ -1,5 +1,24 @@
 # Changelog
 
+- 2026-09-10 (email queue unblocked at the root):
+  - A process whose capability registry lacks a route (every service child
+    starts empty) now adopts a sibling process's fresh, healthy snapshot from
+    the shared store instead of probing the provider again
+    (`RuntimeCapabilityRefresher._shared_healthy_snapshot`). The email
+    worker had been failing its own probes while the same routes served the
+    service process, so its Consumer turns saw `codex_api=snapshot_missing`
+    / `snapshot_unhealthy` and the whole queue sat in deferrals; adoption
+    also removes the duplicate probe load on rate-limited providers.
+  - A turn that finds every route paused or unprobed no longer leaves a
+    failed Consumer/Audit run behind: `AgentTurnProcess` discards the
+    unstarted run (`AutoReplyStore.discard_unstarted_agent_run`, only for
+    the claiming owner and only while the run has no runtime attempt, tool
+    event, effect intent or receipt) and the orchestrator defers the task
+    without a run. One email task had accumulated 458 failed Consumer runs
+    (3,342 across 29 tasks in one hour) purely from outage polls; those
+    rows inflated `agent_runs`, `reply_attempts` and the History failed
+    projection and pushed `turn_attempt` into the hundreds.
+
 - 2026-09-10 (round 5 + email worker stability, subagent-verified):
   - `EmailStore._connect` is now a closing context manager (split into
     `_open_connection` + `_connect`, mirroring `AutoReplyStore`): the bare

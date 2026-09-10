@@ -926,6 +926,16 @@ class AgentTurnProcess(Generic[ResultT]):
                     decision.reason,
                     ineligible_routes=decision.ineligible_routes,
                 )
+                if (
+                    unavailable.code == "runtime_provider_unreachable"
+                    and self.store.discard_unstarted_agent_run(
+                        run.id, owner=self.owner
+                    )
+                ):
+                    # Every route is merely paused or unprobed: the poll
+                    # leaves no run behind, so the task waits without a
+                    # failed turn, a turn_attempt increment or a History row.
+                    raise unavailable
                 self._fail_running(run, unavailable.code, detail=decision.reason)
                 raise unavailable
             route_session_id = self._session_for_route(
@@ -974,6 +984,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         route=route,
                         session_id=route_session_id,
                         max_turns=1,
+                        reasoning_effort=self.reasoning_effort or None,
                     )
                     claude_normalizer = claude_adapter.new_event_normalizer(
                         expected_session_id=route_session_id,
