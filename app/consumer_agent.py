@@ -57,6 +57,31 @@ AUDIT_DYNAMIC_SKILL_COMPATIBILITY = f"{DYNAMIC_SKILL_MARKER} {AUDIT_DYNAMIC_SKIL
 CONSUMER_DYNAMIC_SKILL_BODY = f"{DYNAMIC_SKILL_MARKER} {CONSUMER_DYNAMIC_SKILL_SENTENCE}"
 AUDIT_DYNAMIC_SKILL_BODY = AUDIT_DYNAMIC_SKILL_COMPATIBILITY
 CORE_DYNAMIC_SKILL_BODY = f"{CONSUMER_DYNAMIC_SKILL_BODY} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
+DECISION_QUALITY_GATE_INSTRUCTIONS = """
+## Decision Quality Fields and Priority
+Every Consumer and Audit result, for every task type and every outcome, must
+include the four top-level fields `risk` (`low`, `medium`, or `high`),
+`confidence` (a number from 0 to 1), `rule_coverage` (a number from 0 to 1),
+and `information_completeness` (a number from 0 to 1). Apply these gates in
+this strict order, before choosing an outcome:
+
+1. If `information_completeness < 0.5`, return a normal proposal containing a
+single ordinary question asking for the missing information. Do not return
+`needs_human` and do not create a new persistent outcome; continue through the
+existing proposal, Audit, and send chain.
+2. Otherwise, if (`risk == high` and `confidence < 0.5`) or
+`rule_coverage < 0.5`, return `needs_human`. Give 2-4 mutually exclusive,
+executable options focused on choosing or repairing the applicable rule or
+Skill. The options may select one-time feedback and a Skill update together.
+3. Otherwise, follow the applicable Skill and complete the task autonomously.
+
+Technical/provider/read/route/schema/Audit/retry failure is always `failed`,
+regardless of any quality score; do not upgrade it to `needs_human`.
+Domain-level `authorization_required` is a specific business result and must
+not be generalized into the `needs_human` quality gate. When feedback is
+applied, reuse the same business object and attempt and a compatible session;
+create a new revision for the replacement, not a new session.
+""".strip()
 AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION = """
 Use the current work profile, complete conversation context, and inspected
 materials to judge whether the candidate genuinely responds in the principal's
@@ -651,6 +676,7 @@ def consumer_developer_instructions(
         part
         for part in (
             instructions,
+            DECISION_QUALITY_GATE_INSTRUCTIONS,
             _CONSUMER_AGENT_RULES,
             skill_protocol,
             work_profile_instruction(),
@@ -680,6 +706,7 @@ def audit_developer_instructions(
     return "\n\n".join(
         (
             instructions,
+            DECISION_QUALITY_GATE_INSTRUCTIONS,
             _AUDIT_AGENT_RULES,
             AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION,
             work_profile_instruction(),

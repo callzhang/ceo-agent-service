@@ -670,6 +670,27 @@ def test_consumer_instructions_require_reply_level_risk_controls_for_autonomous_
     assert "boundary" in instructions
 
 
+def test_consumer_prompt_declares_common_quality_fields_and_priority():
+    instructions = " ".join(
+        consumer_developer_instructions("Verify every supported fact.").split()
+    )
+
+    for field in ("risk", "confidence", "rule_coverage", "information_completeness"):
+        assert field in instructions
+    assert "information_completeness < 0.5" in instructions
+    assert "single ordinary question" in instructions
+    assert "risk == high" in instructions
+    assert "rule_coverage < 0.5" in instructions
+    assert "2-4" in instructions
+    assert "one-time feedback" in instructions
+    assert "Skill update" in instructions
+    assert "technical/provider/read/route/schema/audit/retry failure" in instructions.lower()
+    assert "authorization_required" in instructions
+    assert "same business object" in instructions
+    assert "new revision" in instructions
+    assert "compatible session" in instructions
+
+
 def test_consumer_instructions_leave_boundary_assessment_to_audit_model():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
@@ -741,6 +762,20 @@ def test_audit_instructions_reserve_human_for_unsupported_skill_only():
 
     assert "needs_human" in instructions
     assert "Skill" in instructions
+
+
+def test_audit_instructions_use_the_same_quality_gate_priority():
+    instructions = " ".join(
+        audit_developer_instructions("Verify every supported fact.").split()
+    )
+
+    assert "Every Consumer and Audit result" in instructions
+    assert "information_completeness < 0.5" in instructions
+    assert "single ordinary question" in instructions
+    assert "rule_coverage < 0.5" in instructions
+    assert "Technical/provider/read/route/schema/Audit/retry failure" in instructions
+    assert "same business object" in instructions
+    assert "new revision" in instructions
 
 
 def test_audit_instructions_do_not_create_reconciliation_prompt():
