@@ -2,7 +2,30 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.agent_cron.schedule import CronSchedule
+from app.agent_cron.schedule import CronSchedule, cron_human_description
+
+
+@pytest.mark.parametrize(
+    ("expression", "description"),
+    [
+        ("0 * * * * *", "每分钟执行"),
+        ("*/15 * * * * *", "每15分钟执行"),
+        ("0 0 * * * *", "每小时整点执行"),
+        ("0 0 9 * * *", "每天09:00执行"),
+        ("0 0 18 * * 0", "每周日18:00执行"),
+        ("5 10 9 * * 1", "按自定义计划执行"),
+    ],
+)
+def test_cron_human_description_translates_common_schedules(
+    expression: str, description: str
+) -> None:
+    assert cron_human_description(expression) == description
+
+
+def test_schedule_description_uses_human_description_and_timezone() -> None:
+    schedule = CronSchedule.parse("0 0 9 * * *", "Asia/Shanghai")
+
+    assert schedule.describe() == "每天09:00执行 · Asia/Shanghai"
 
 
 def test_six_field_schedule_supports_seconds_at_the_beginning() -> None:
@@ -99,7 +122,7 @@ def test_next_after_rejects_naive_datetime() -> None:
         schedule.next_after(datetime(2026, 9, 8, 12, 0, 0))
 
 
-def test_description_preserves_schedule_and_timezone() -> None:
+def test_description_uses_human_schedule_and_timezone() -> None:
     schedule = CronSchedule.parse("0 0 20 * * *", "Asia/Shanghai")
 
-    assert schedule.describe() == "0 0 20 * * * · Asia/Shanghai"
+    assert schedule.describe() == "每天20:00执行 · Asia/Shanghai"
