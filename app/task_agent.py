@@ -1681,8 +1681,32 @@ def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
             except (ValueError, ValidationError):
                 return None
 
+    def validate_embedded(candidate: str) -> TaskAgentDecision | None:
+        # Models regularly wrap the decision in prose ("Based on my search...
+        # {json}"). Try every top-level object in the text, last one first,
+        # so the final complete decision wins over an earlier draft.
+        decoder = json.JSONDecoder()
+        decisions: list[TaskAgentDecision] = []
+        index = candidate.find("{")
+        while index != -1:
+            try:
+                payload, end = decoder.raw_decode(candidate, index)
+            except json.JSONDecodeError:
+                index = candidate.find("{", index + 1)
+                continue
+            try:
+                decisions.append(TaskAgentDecision.model_validate(payload))
+            except (ValueError, ValidationError):
+                pass
+            index = candidate.find("{", end)
+        return decisions[-1] if decisions else None
+
     stripped = raw.strip()
     if decision := validate_candidate(stripped):
+        return decision
+    # A Codex JSONL stream has only event objects at the top level, so this
+    # only matches when the raw text itself is prose around the decision.
+    if decision := validate_embedded(stripped):
         return decision
 
     payloads: list[object] = []
@@ -1701,7 +1725,7 @@ def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
         except (ValueError, ValidationError):
             pass
         for text in _task_decision_text_candidates(payload):
-            if decision := validate_candidate(text):
+            if decision := validate_candidate(text) or validate_embedded(text):
                 return decision
     raise RoutedResultValidationError(
         "No TaskAgentDecision JSON found",

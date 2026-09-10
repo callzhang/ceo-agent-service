@@ -8,7 +8,13 @@ CODEX_PROCESS_FAILED = "codex_process_failed"
 
 # Codex reports `server_overloaded` when the selected model is temporarily at
 # capacity. The exec JSON stream only carries the human-readable message.
-_CODEX_PROVIDER_OVERLOADED_MARKERS = ("selected model is at capacity",)
+_CODEX_PROVIDER_OVERLOADED_MARKERS = (
+    "selected model is at capacity",
+    # Codex wraps a provider 429/5xx (rate limit, exhausted token plan,
+    # upstream overload) in this generic message; the stream never carries
+    # the provider body.
+    "experiencing high demand",
+)
 
 
 def is_codex_provider_overloaded(value: str) -> bool:

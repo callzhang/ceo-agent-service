@@ -1374,6 +1374,16 @@ def _process_claimed_work_summary_input(store, runner, work_input, *, dws=None) 
         return True
     except Exception as exc:
         error = _normalize_codex_stop_error_reason(str(exc))
+        if _is_runtime_unavailable_error(exc):
+            # Every runtime route is paused or unprobed, so no attempt ran.
+            # Wait for the routes without spending the item's retry budget or
+            # recording a per-item Service error; the route pause is the signal.
+            store.defer_work_summary_input_for_capacity(
+                work_input.id,
+                "runtime_provider_unreachable",
+                available_at=_work_summary_retry_available_at(work_input.attempts),
+            )
+            return False
         if capacity_recovery_active and error in RECOVERABLE_AGENT_RUNTIME_ERRORS:
             error = CODEX_PROVIDER_CAPACITY_EXHAUSTED
         capacity_exhausted = is_codex_capacity_exhausted(error)
@@ -1478,6 +1488,22 @@ def skip_stale_wechat_delivery_command(
             "record changed or is ineligible"
         ) from exc
     print(f"wechat-delivery skipped={delivery_id}", flush=True)
+
+
+def _is_runtime_unavailable_error(exc: BaseException) -> bool:
+    """Return whether the failure chain says no runtime route was entered."""
+    current: BaseException | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        if getattr(current, "runtime_unavailable", False):
+            return True
+        visited.add(id(current))
+        current = (
+            getattr(current, "original_error", None)
+            or current.__cause__
+            or current.__context__
+        )
+    return False
 
 
 def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> bool:

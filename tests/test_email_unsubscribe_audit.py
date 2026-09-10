@@ -576,12 +576,13 @@ def test_two_step_terminal_recovers_in_new_audit_run_without_callback(
 
 
 @pytest.mark.parametrize("mutation", ("prefix", "target", "operation"))
-def test_two_step_terminal_recovery_rejects_changed_accepted_action(
+def test_two_step_terminal_recovery_binds_drifted_copy_to_consumer_proposal(
     tmp_path: Path,
     mutation: str,
 ) -> None:
+    """A retyped copy cannot change what runs: the persisted proposal wins."""
     fixture = _make_fixture(tmp_path)
-    action, _first_audit, second_consumer, _second_audit, _terminal = (
+    action, _first_audit, second_consumer, _second_audit, terminal = (
         _complete_two_step_terminal(fixture)
     )
     recovery_audit = _claim_recovery_audit(
@@ -603,7 +604,7 @@ def test_two_step_terminal_recovery_rejects_changed_accepted_action(
             operation["kind"] = "click_confirmation"
 
     def forbidden_callback(*_args, **_kwargs):
-        raise AssertionError("changed terminal action must not reach the browser")
+        raise AssertionError("drifted terminal copy must not reach the browser")
 
     fixture.operation.execute_effect = forbidden_callback
     recovered = fixture.operation.execute(
@@ -613,7 +614,61 @@ def test_two_step_terminal_recovery_rejects_changed_accepted_action(
         accepted_action=action,
     )
 
-    assert recovered["status"] == "failed", recovered
+    assert recovered["status"] == "done", recovered
+    assert recovered["receipt_id"] == terminal["receipt_id"]
+
+
+@pytest.mark.parametrize(
+    "accepted_action",
+    (
+        {"action_identity": "email-action:" + "f" * 64},
+        {"actions": [{"action_identity": "email-action:" + "f" * 64}]},
+        {"description": "no identity at all"},
+    ),
+)
+def test_execute_rejects_action_identity_outside_consumer_proposal(
+    tmp_path: Path,
+    accepted_action: dict[str, object],
+) -> None:
+    fixture = _make_fixture(tmp_path)
+
+    def forbidden_callback(*_args, **_kwargs):
+        raise AssertionError("unbound action must not reach the browser")
+
+    fixture.operation.execute_effect = forbidden_callback
+    result = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action=accepted_action,
+    )
+
+    assert result["status"] == "failed", result
+    assert result["error"]["code"] == "unsubscribe_operation_rejected:ValueError"
+    assert "action_identity" in result["summary"]
+
+
+def test_execute_accepts_identity_only_and_runs_consumer_proposal(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    executed: list[object] = []
+
+    def execute_effect(effect, entries, **_kwargs):
+        executed.append(effect)
+        raise UnsubscribeBrowserError("unsubscribe page state is unknown")
+
+    fixture.operation.execute_effect = execute_effect
+    result = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action={"action_identity": ACTION_IDENTITY},
+    )
+
+    assert len(executed) == 1
+    assert executed[0].entry_reference == ENTRY.reference
+    assert result["status"] == "failed", result
 
 
 @pytest.mark.parametrize("tamper", ("consumer", "other_task_audit"))
@@ -1379,14 +1434,18 @@ def test_audit_fails_closed_when_parent_consumer_has_no_unique_proposal_action(
         "capability",
         "operation",
         "operation_reference",
-        "target_and_payload",
-        "identity",
+        "target_account",
+        "target_action_identity",
+        "target_message",
+        "target_thread",
+        "target_entry",
     ),
 )
-def test_audit_accepted_action_is_exactly_bound_to_parent_consumer_proposal(
+def test_audit_copy_drift_is_ignored_and_consumer_proposal_executes(
     tmp_path: Path,
     mutation: str,
 ) -> None:
+    """Only action_identity is read from the Audit; the persisted proposal runs."""
     fixture = _make_fixture(tmp_path)
     action = _accepted_action()
     if mutation == "description":
@@ -1399,36 +1458,17 @@ def test_audit_accepted_action_is_exactly_bound_to_parent_consumer_proposal(
         operations = action["payload"]["operations"]
         assert isinstance(operations, list)
         operations[0]["operation_reference"] = "unsubscribe-operation:replacement"
-    elif mutation == "target_and_payload":
-        payload = _payload()
-        entries = payload["unsubscribe_entries"]
-        assert isinstance(entries, list)
-        entries.append(
-            {
-                "source": "body_https",
-                "reference": SECONDARY_ENTRY.reference,
-                "priority": 20,
-            }
-        )
-        with sqlite3.connect(fixture.email_store.path) as db:
-            db.execute(
-                "update reply_tasks set trigger_message_json=? where id=?",
-                (json.dumps(payload, sort_keys=True), fixture.task.id),
-            )
-        target = action["target"]
-        operations = action["payload"]["operations"]
-        assert isinstance(target, dict)
-        assert isinstance(operations, list)
-        target["entry_reference"] = SECONDARY_ENTRY.reference
-        operations[0]["target_reference"] = SECONDARY_ENTRY.reference
-        fixture.operation.resolve_entries = lambda *_args, **_kwargs: (
-            ENTRY,
-            SECONDARY_ENTRY,
-        )
     else:
         target = action["target"]
         assert isinstance(target, dict)
-        target["account_id"] = "account-replacement"
+        field = {
+            "target_account": "account_id",
+            "target_action_identity": "action_identity",
+            "target_message": "stable_message_identity",
+            "target_thread": "thread_identity",
+            "target_entry": "entry_reference",
+        }[mutation]
+        target[field] = "drifted"
 
     result = fixture.operation.execute(
         fixture.task.id,
@@ -1437,10 +1477,11 @@ def test_audit_accepted_action_is_exactly_bound_to_parent_consumer_proposal(
         accepted_action=action,
     )
 
-    assert result["status"] == "failed", result
-    assert fixture.resolved == []
-    assert fixture.executed == []
-    assert fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY) is None
+    assert result["status"] == "done", result
+    assert len(fixture.executed) == 1
+    effect = fixture.executed[0][0]
+    assert effect.entry_reference == ENTRY.reference
+    assert effect.action_identity == ACTION_IDENTITY
 
 
 def test_canonical_action_binding_accepts_mapping_key_order_differences(
@@ -1598,18 +1639,7 @@ def test_audit_parent_must_be_the_current_completed_consumer(tmp_path: Path) -> 
     assert fixture.executed == []
 
 
-@pytest.mark.parametrize(
-    "mutation",
-    (
-        "task_action",
-        "action_identity",
-        "plan",
-        "account",
-        "message",
-        "thread",
-        "entry",
-    ),
-)
+@pytest.mark.parametrize("mutation", ("task_action", "action_identity", "plan"))
 def test_identity_tampering_is_rejected_before_browser_execution(
     tmp_path: Path,
     mutation: str,
@@ -1628,16 +1658,7 @@ def test_identity_tampering_is_rejected_before_browser_execution(
                 (json.dumps(payload, sort_keys=True), fixture.task.id),
             )
     else:
-        target = action["target"]
-        assert isinstance(target, dict)
-        field = {
-            "action_identity": "action_identity",
-            "account": "account_id",
-            "message": "stable_message_identity",
-            "thread": "thread_identity",
-            "entry": "entry_reference",
-        }[mutation]
-        target[field] = "tampered"
+        action["action_identity"] = "email-action:" + "0" * 64
 
     result = fixture.operation.execute(
         fixture.task.id,

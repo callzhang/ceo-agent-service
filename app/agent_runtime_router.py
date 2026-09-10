@@ -359,12 +359,17 @@ class RoutedCodexExecutionError(RuntimeError):
         failure_class: RuntimeFailureClass | None = None,
         failure_code: str = "",
         retryable_external_dependency: bool = False,
+        runtime_unavailable: bool = False,
     ) -> None:
         self.code = code
         self.reason = reason
         self.failure_class = failure_class
         self.failure_code = failure_code
         self.retryable_external_dependency = retryable_external_dependency
+        # True when no route was entered because every route is paused or
+        # unprobed: the workload never consumed a runtime attempt, so callers
+        # wait for the routes instead of spending their own retry budget.
+        self.runtime_unavailable = runtime_unavailable
         super().__init__(code)
 
 
@@ -1000,6 +1005,13 @@ class RoutedCodexExecution:
                 allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,
             )
         if decision.route is None:
+            # Every route is merely paused or unprobed: the runtime is not
+            # ready rather than broken, so callers defer the work.
+            runtime_unavailable = (
+                terminal_failure is None
+                and route_unavailable_code(decision.ineligible_routes)
+                == "runtime_provider_unreachable"
+            )
             raise RoutedCodexExecutionError(
                 "runtime_execution_failed",
                 decision.reason,
@@ -1010,11 +1022,9 @@ class RoutedCodexExecution:
                 retryable_external_dependency=(
                     _is_retryable_external_runtime_failure(terminal_failure)
                     if terminal_failure
-                    # Every route is merely paused or unprobed: the runtime is
-                    # not ready rather than broken, so callers defer the work.
-                    else route_unavailable_code(decision.ineligible_routes)
-                    == "runtime_provider_unreachable"
+                    else runtime_unavailable
                 ),
+                runtime_unavailable=runtime_unavailable,
             )
         route = decision.route
         if (

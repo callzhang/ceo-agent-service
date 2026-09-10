@@ -5081,3 +5081,29 @@ def test_task_agent_codex_runner_keeps_nonretryable_routed_failures_terminal(
     with pytest.raises(RoutedCodexExecutionError) as raised:
         runner.decide(prompt="decide", workload_key="1")
     assert raised.value.failure_code == failure_code
+
+
+def test_task_agent_parser_finds_decision_embedded_in_prose():
+    decision = {
+        "action": "skip",
+        "skip_reason": "No completion evidence was found; the TODO stays open.",
+        "memory_recall_used": True,
+        "confidence": 0.9,
+    }
+    message = (
+        "Based on my search within the allowed sources, I found:\n\n"
+        "1. **Memory**: background only {not a decision}.\n\n"
+        + json.dumps({"action": "skip", "skip_reason": "draft"})
+        + "\n\nFinal decision:\n\n"
+        + json.dumps(decision, indent=2)
+        + "\n"
+    )
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": message},
+        }
+    )
+
+    assert _parse_task_agent_decision(raw) == TaskAgentDecision.model_validate(decision)
+    assert _parse_task_agent_decision(message) == TaskAgentDecision.model_validate(decision)

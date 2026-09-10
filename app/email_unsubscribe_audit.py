@@ -183,7 +183,10 @@ class EmailUnsubscribeAuditOperation:
                 entries=entries,
             )
         except Exception as exc:  # noqa: BLE001 - public tool fails closed
-            return self._failed(f"unsubscribe_operation_rejected:{type(exc).__name__}")
+            return self._failed(
+                f"unsubscribe_operation_rejected:{type(exc).__name__}",
+                detail=str(exc),
+            )
 
     def _is_current_running_audit(
         self,
@@ -375,10 +378,14 @@ class EmailUnsubscribeAuditOperation:
         return result.model_dump(mode="json")
 
     @staticmethod
-    def _failed(code: str, *, retryable: bool = False) -> dict[str, object]:
+    def _failed(
+        code: str, *, retryable: bool = False, detail: str = ""
+    ) -> dict[str, object]:
         return {
             "status": "failed",
-            "summary": code,
+            # The Audit model reads the summary; tell it why so the next turn
+            # can correct the call instead of repeating it blind.
+            "summary": f"{code}: {detail}" if detail else code,
             "error": AgentError(
                 code=code,
                 retryable=retryable,
@@ -390,11 +397,18 @@ def _bound_parent_consumer_action(
     parent: AgentRun,
     accepted_action: Mapping[str, object],
 ) -> ProposedAction:
+    """Bind the Audit's acceptance to the Consumer's persisted proposal.
+
+    The Audit identifies the action it accepts by ``action_identity``; the
+    action that executes is always the Consumer's persisted proposal. The
+    model therefore never has to reproduce the proposal byte for byte, and a
+    drifted copy (missing field, truncated digest, whole proposal instead of
+    one action) cannot change what runs.
+    """
     try:
         parent_result = ConsumerAgentResult.model_validate_json(
             parent.final_result_json
         )
-        accepted = ProposedAction.model_validate(accepted_action)
     except (TypeError, ValueError) as exc:
         raise ValueError("unsubscribe Consumer proposal is invalid") from exc
     if (
@@ -404,26 +418,34 @@ def _bound_parent_consumer_action(
     ):
         raise ValueError("unsubscribe Consumer proposal must contain one action")
     proposed = parent_result.proposal.actions[0]
-    proposed_json = _canonical_action_json(proposed)
-    accepted_json = _canonical_action_json(accepted)
-    proposed_digest = hashlib.sha256(proposed_json.encode("utf-8")).digest()
-    accepted_digest = hashlib.sha256(accepted_json.encode("utf-8")).digest()
-    if proposed_json != accepted_json or not hmac.compare_digest(
-        proposed_digest,
-        accepted_digest,
+    accepted_identity = _accepted_action_identity(accepted_action)
+    if not hmac.compare_digest(
+        hashlib.sha256(proposed.action_identity.encode("utf-8")).digest(),
+        hashlib.sha256(accepted_identity.encode("utf-8")).digest(),
     ):
-        raise ValueError("accepted unsubscribe action changed from Consumer proposal")
-    return accepted
+        raise ValueError(
+            "accepted_action.action_identity does not match the Consumer "
+            f"proposal (expected {proposed.action_identity})"
+        )
+    return proposed
 
 
-def _canonical_action_json(action: ProposedAction) -> str:
-    return json.dumps(
-        action.model_dump(mode="json"),
-        allow_nan=False,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+def _accepted_action_identity(accepted_action: Mapping[str, object]) -> str:
+    candidate: object = accepted_action.get("action_identity")
+    if candidate is None:
+        # Tolerate the whole proposal being passed instead of its one action.
+        actions = accepted_action.get("actions")
+        if isinstance(actions, list) and len(actions) == 1 and isinstance(
+            actions[0], Mapping
+        ):
+            candidate = actions[0].get("action_identity")
+    if not isinstance(candidate, str) or not candidate.strip():
+        raise ValueError(
+            "accepted_action must carry the action_identity of the accepted "
+            "Consumer proposal action"
+        )
+    return candidate.strip()
+
 
 
 def _task_payload(task: ReplyTask) -> dict[str, object]:

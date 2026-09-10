@@ -2981,3 +2981,50 @@ def test_user_handoff_reconciliation_allows_the_live_page_to_reach_terminal_stat
         session,
         executed_prefix_length=1,
     )
+
+
+def test_visible_text_waits_for_script_rendered_body_before_failing() -> None:
+    waits: list[int] = []
+    texts = iter(["", "", "You have been unsubscribed"])
+
+    class Body:
+        def inner_text(self, **_kwargs):
+            return next(texts)
+
+    class Page:
+        def locator(self, selector):
+            assert selector == "body"
+            return Body()
+
+        def wait_for_timeout(self, timeout):
+            waits.append(timeout)
+
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser.page = Page()
+    browser.timeout_ms = 30_000
+
+    assert browser._visible_text() == "You have been unsubscribed"
+    assert len(waits) == 2
+
+
+def test_visible_text_reports_missing_state_after_bounded_wait() -> None:
+    waits: list[int] = []
+
+    class Body:
+        def inner_text(self, **_kwargs):
+            return "  "
+
+    class Page:
+        def locator(self, _selector):
+            return Body()
+
+        def wait_for_timeout(self, timeout):
+            waits.append(timeout)
+
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser.page = Page()
+    browser.timeout_ms = 1_000
+
+    with pytest.raises(UnsubscribeBrowserError, match="no visible state"):
+        browser._visible_text()
+    assert sum(waits) == 1_000

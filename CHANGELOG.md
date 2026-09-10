@@ -1,5 +1,31 @@
 # Changelog
 
+- 2026-09-10: five Attention root causes fixed after the ChatGPT/MiniMax
+  outage review.
+  - Work items no longer spend their bounded retry budget while every
+    runtime route is paused or unprobed: the router marks that state as
+    `runtime_unavailable`, and the work-item worker defers the item with
+    backoff (attempts untouched, no per-item Service error). Previously each
+    outage pass counted as a failed attempt, so items ended in
+    `runtime_execution_failed` after three passes.
+  - The task agent parser now finds a decision JSON object embedded in
+    prose ("Based on my search... {json}"), taking the last complete object;
+    MiniMax answers of that shape were reported as `No TaskAgentDecision
+    JSON found`.
+  - `execute_audited_email_unsubscribe` binds the Audit's acceptance by
+    `action_identity` and executes the Consumer's persisted proposal. The
+    model no longer has to retype the proposal byte for byte (missing
+    `description`, a truncated digest, or the whole proposal instead of one
+    action used to be `unsubscribe_operation_rejected:ValueError`), and a
+    rejection now carries its reason in the tool summary.
+  - The unsubscribe browser waits up to 5 s for script-rendered page text
+    before reporting `email_unsubscribe_page_state_missing`; navigation
+    returns at `domcontentloaded`, when such pages still have an empty body.
+  - Codex's generic "We're currently experiencing high demand" wrapper
+    (a provider 429/5xx, e.g. an exhausted MiniMax token plan) is classified
+    as `codex_provider_overloaded` (capacity, failover, route pause) instead
+    of `codex_transport_disconnected`.
+
 - 2026-09-09: when every runtime route is paused or unprobed at the start
   of a routed workload (task agent, meeting, classification, workbench), the
   router now reports the outage as a retryable external dependency, so the

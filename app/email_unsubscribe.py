@@ -319,6 +319,8 @@ _BROWSER_FAILURE_CODES = {
     "unsubscribe page state is unknown": "email_unsubscribe_page_state_unknown",
     "unsubscribe page has no visible state": "email_unsubscribe_page_state_missing",
 }
+_VISIBLE_TEXT_WAIT_MS = 5_000
+_VISIBLE_TEXT_POLL_MS = 250
 
 
 def _browser_failure_code(error: Exception) -> str:
@@ -1310,10 +1312,20 @@ class PlaywrightUnsubscribeBrowser:
         return value
 
     def _visible_text(self) -> str:
-        text = self.page.locator("body").inner_text(timeout=self.timeout_ms).strip()
-        if not text:
-            raise UnsubscribeBrowserError("unsubscribe page has no visible state")
-        return text
+        # Navigation returns at domcontentloaded; script-rendered unsubscribe
+        # pages still have an empty body then. Poll briefly for the first
+        # rendered text before declaring the page state missing.
+        wait = getattr(self.page, "wait_for_timeout", None)
+        budget_ms = min(self.timeout_ms, _VISIBLE_TEXT_WAIT_MS)
+        waited_ms = 0
+        while True:
+            text = self.page.locator("body").inner_text(timeout=self.timeout_ms).strip()
+            if text:
+                return text
+            if wait is None or waited_ms >= budget_ms:
+                raise UnsubscribeBrowserError("unsubscribe page has no visible state")
+            wait(_VISIBLE_TEXT_POLL_MS)
+            waited_ms += _VISIBLE_TEXT_POLL_MS
 
     def _assert_no_authentication_controls(self) -> None:
         """Reject auth UI using attributes/labels only, before reading form state."""

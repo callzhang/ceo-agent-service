@@ -495,6 +495,7 @@ def test_all_routes_paused_before_selection_is_deferred_only_for_transient_pause
         )
 
     assert info.value.retryable_external_dependency is deferrable
+    assert info.value.runtime_unavailable is deferrable
     assert store.list_agent_runtime_attempts(run_id) == []
 
 

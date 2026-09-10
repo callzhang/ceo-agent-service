@@ -7765,3 +7765,70 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
     assert registry.run("wechat-produce-once") == (
         "wechat produce-once skipped: no ready WeChat account"
     )
+
+
+def test_process_work_items_waits_for_paused_routes_without_spending_attempts(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    class NoRouteRunner:
+        last_session_id = ""
+        last_audit_tool_events = []
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
+            routed = RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "no_eligible_route:codex_oauth=paused:codex_provider_overloaded",
+                retryable_external_dependency=True,
+                runtime_unavailable=True,
+            )
+            raise ExternalDependencyError("codex task agent", routed, dependency="codex") from routed
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", NoRouteRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    input_id = store.enqueue_work_summary_input(
+        "reply_attempt",
+        "route-outage",
+        WorkItem.model_validate(
+            {
+                "source": {"type": "reply_attempt", "ref": "route-outage"},
+                "summary": "Every runtime route is paused.",
+                "project_name": "Route outage project",
+                "context": {
+                    "sender": "Mina",
+                    "participants": [],
+                    "source_conversation_kind": "group",
+                    "source_conversation_title": "Test group",
+                },
+            }
+        ).model_dump_json(),
+    )
+    with store._connect() as db:
+        db.execute("update work_summary_inputs set attempts=3 where id=?", (input_id,))
+
+    settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+    assert process_work_items_command(settings) == 0
+    capsys.readouterr()
+
+    with store._connect() as db:
+        row = db.execute(
+            "select status, attempts, error, available_at from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        error_rows = db.execute("select count(*) from errors").fetchone()[0]
+    assert (row["status"], row["attempts"], row["error"]) == (
+        "pending",
+        3,
+        "runtime_provider_unreachable",
+    )
+    assert row["available_at"]
+    assert error_rows == 0
