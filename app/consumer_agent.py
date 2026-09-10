@@ -28,7 +28,7 @@ from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
     parse_consumer_agent_wire_result,
 )
-from app.audit_rules import render_audit_rules, validate_audit_rules_text
+from app.audit_rules import validate_audit_rules_text
 from app.business_skills import (
     installed_business_skill_catalog,
     render_business_skill_protocol,
@@ -157,6 +157,8 @@ def consumer_wire_contract_hash(
         ),
         "work_profile_instruction": work_profile_instruction(),
         "wire_schema": ConsumerAgentWireResult.model_json_schema(),
+        "codex_multi_agent": False,
+        "codex_apps": False,
         "runtime_skill_snapshot": (
             runtime_skill_snapshot.protocol() if runtime_skill_snapshot is not None else ""
         ),
@@ -377,7 +379,6 @@ class ConsumerAgentRunner:
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
         if context.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
-        rendered_rules = render_audit_rules(AgentRole.CONSUMER)
         lock_owner = f"consumer-agent:{task.id}:{task.execution_generation}"
         try:
             with self.store.codex_session_lock(task.conversation_id, lock_owner):
@@ -387,7 +388,6 @@ class ConsumerAgentRunner:
                     lock_owner=lock_owner,
                     proposal_revision=proposal_revision,
                     parent_agent_run_id=parent_agent_run_id,
-                    rendered_rules=rendered_rules,
                     feedback=feedback,
                 )
         except RuntimeError as exc:
@@ -403,7 +403,6 @@ class ConsumerAgentRunner:
         lock_owner: str,
         proposal_revision: int,
         parent_agent_run_id: int | None,
-        rendered_rules: str,
         feedback: AuditFeedback | None,
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
         contract_hash = consumer_wire_contract_hash(
@@ -502,7 +501,6 @@ class ConsumerAgentRunner:
                 ) + continuation_prompt,
                 session_id=session_id,
                 developer_instructions=consumer_developer_instructions(
-                    rendered_rules,
                     skill_protocol="\n\n".join(
                         part for part in (
                             self.skill_protocol_override
@@ -627,12 +625,15 @@ def _structured_dingtalk_outgoing_text_key(action: ProposedAction) -> str | None
 
 
 def consumer_developer_instructions(
-    audit_rules: str,
+    audit_rules: str | None = None,
     *,
     skill_protocol: str = "",
 ) -> str:
+    # Retain the legacy argument for caller compatibility, but never expose
+    # Audit's independent review policy to the Consumer.
+    del audit_rules
     core = _developer_instructions(
-        audit_rules=audit_rules,
+        audit_rules=None,
         skill_instruction=CONSUMER_DYNAMIC_SKILL_BODY,
         wire_model=ConsumerAgentWireResult,
     )
@@ -683,14 +684,16 @@ def audit_developer_instructions(
 
 def _developer_instructions(
     *,
-    audit_rules: str,
+    audit_rules: str | None,
     skill_instruction: str,
     wire_model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult],
 ) -> str:
-    validate_audit_rules_text(audit_rules)
-    return "\n\n".join(
+    sections: list[str] = []
+    if audit_rules is not None:
+        validate_audit_rules_text(audit_rules)
+        sections.append(f"## Audit Rules\n{audit_rules}")
+    sections.extend(
         (
-            f"## Audit Rules\n{audit_rules}",
             "## Runtime Invariants\n"
             "1. [role_boundary] Consumer Agent A gathers facts and proposes a typed candidate; Audit Agent B applies the operation Skill and executes an accepted candidate.\n"
             "2. [output_contracts] Output Contracts: return the typed wire contract.\n"
@@ -704,6 +707,7 @@ def _developer_instructions(
             f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
         )
     )
+    return "\n\n".join(sections)
 
 
 def _schema_json(

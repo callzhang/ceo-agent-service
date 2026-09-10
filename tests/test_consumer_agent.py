@@ -293,14 +293,14 @@ def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative
     # The prompt is assembled from the current role/runtime contract.  The
     # shared prompt validator still encodes the retired read-only role prose,
     # so assert the live sections and schema payloads directly here.
-    assert "## Audit Rules" in instructions
+    assert "## Audit Rules" not in instructions
     assert "## Dynamic Skill" in instructions
     assert "## Pydantic Wire Contract" in instructions
     assert "## Pydantic Result Contract" not in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
     assert '"title":"ConsumerAgentWireResult"' in instructions
     assert '"title":"ConsumerAgentResult"' not in instructions
-    assert audit_rules in instructions
+    assert audit_rules not in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
     assert "OKR approval/review is a covered autonomous decision" in instructions
     assert "exactly two outcomes:" in instructions
@@ -614,17 +614,17 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
         "[ Dynamic-Skill ] injected",
     ),
 )
-def test_composed_agent_instructions_reject_structural_audit_rule_injection(
+def test_audit_instructions_reject_structural_audit_rule_injection(
     audit_rules: str,
 ):
     with pytest.raises(DeveloperPromptTemplateError, match="Audit Rules"):
-        consumer_developer_instructions(audit_rules)
+        audit_developer_instructions(audit_rules)
 
 
 def test_consumer_instructions_keep_writes_as_proposal_data():
     instructions = consumer_developer_instructions("AUDIT-RULE-SENTINEL")
 
-    assert "AUDIT-RULE-SENTINEL" in instructions
+    assert "AUDIT-RULE-SENTINEL" not in instructions
     assert '"proposal"' in instructions
     assert '"decision_options"' in instructions
 
@@ -1721,7 +1721,7 @@ def test_consumer_preserves_codex_cli_authentication_failure(store, task, contex
     assert error["retryable"] is False
 
 
-def test_consumer_reads_current_audit_rules_for_each_turn(
+def test_consumer_does_not_load_audit_rules_for_each_turn(
     store,
     task,
     context,
@@ -1767,12 +1767,12 @@ def test_consumer_reads_current_audit_rules_for_each_turn(
         parent_agent_run_id=None,
     )
 
-    assert any("First rule version." in item for item in first_executor.commands[0])
-    assert any("do not execute" in item for item in first_executor.commands[0])
-    assert any("Second rule version." in item for item in first_executor.commands[1])
+    assert all("First rule version." not in item for item in first_executor.commands[0])
+    assert any("Consumer Agent A" in item for item in first_executor.commands[0])
+    assert all("Second rule version." not in item for item in first_executor.commands[1])
 
 
-def test_consumer_validates_audit_rules_before_claiming_run(
+def test_consumer_does_not_load_audit_rules_before_claiming_run(
     store,
     task,
     context,
@@ -1781,14 +1781,13 @@ def test_consumer_validates_audit_rules_before_claiming_run(
     def fail_rules(_role):
         raise OSError("rules unavailable")
 
-    monkeypatch.setattr("app.consumer_agent.render_audit_rules", fail_rules)
+    monkeypatch.setattr("app.audit_rules.render_audit_rules", fail_rules)
 
-    with pytest.raises(OSError, match="rules unavailable"):
-        ConsumerAgentRunner(
-            store=store,
-            workspace=Path("/workspace"),
-            executor=CapturingExecutor(_result_jsonl()),
-        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(_result_jsonl()),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     assert store.get_agent_run_for_turn(
         task.id,
@@ -1796,7 +1795,7 @@ def test_consumer_validates_audit_rules_before_claiming_run(
         role=AgentRole.CONSUMER,
         proposal_revision=0,
         turn_attempt=0,
-    ) is None
+    ) is not None
 
 
 def test_consumer_renews_run_and_session_leases_for_every_jsonl_record(
