@@ -64,7 +64,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 35
+EMAIL_SCHEMA_VERSION = 36
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -2821,6 +2821,9 @@ class EmailStore:
                 latest_version = 34
             if latest_version == 34:
                 self._migrate_v34_to_v35(db, replace_version=is_prototype)
+                latest_version = 35
+            if latest_version == 35:
+                self._migrate_v35_to_v36(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -4559,6 +4562,56 @@ class EmailStore:
         else:
             db.execute(
                 "insert into email_schema_migrations(version, applied_at) values (35, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v35_to_v36(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Drop the policy keys from the immutable email task input copy.
+
+        v35 rewrote ``reply_tasks.trigger_message_json`` only. The Agent task
+        adapter re-derives the payload on every turn and compares it with
+        ``reply_task_inputs``; a stale copy there made every pre-v35 task fail
+        with ``ReplyTaskIdentityConflict`` as soon as it ran again.
+        """
+
+        for table in ("reply_task_inputs", "reply_tasks"):
+            if not db.execute(
+                "select 1 from sqlite_master where type='table' and name=?",
+                (table,),
+            ).fetchone():
+                continue
+            db.execute(
+                f"""
+                update {table}
+                set trigger_message_json=json_remove(
+                    trigger_message_json,
+                    '$.unsubscribe_network_policy_reference',
+                    '$.unsubscribe_network_policy_origin_references'
+                )
+                where channel='email'
+                  and json_valid(trigger_message_json)
+                  and (
+                      json_extract(
+                          trigger_message_json,
+                          '$.unsubscribe_network_policy_reference'
+                      ) is not null
+                      or json_extract(
+                          trigger_message_json,
+                          '$.unsubscribe_network_policy_origin_references'
+                      ) is not null
+                  )
+                """
+            )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=36, applied_at=? where version=35",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (36, ?)",
                 (self._now(),),
             )
 

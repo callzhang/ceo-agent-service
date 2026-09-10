@@ -5219,7 +5219,7 @@ def test_email_agent_consumer_claims_only_email_channel_without_dingtalk_adapter
         max_cycles=1,
     )
 
-    assert calls[0] == ("claim", 50, "email")
+    assert calls[0] == ("claim", module.EMAIL_TASK_CLAIM_BATCH, "email")
     assert calls[1] == ("context", task)
     assert calls[2] == ("process", task, context)
     assert calls[3] == ("context", task)
@@ -5243,7 +5243,7 @@ def test_email_agent_consumer_does_not_execute_legacy_auto_reply_task():
 
     class Store:
         def claim_reply_tasks(self, limit, *, channel):
-            assert (limit, channel) == (50, "email")
+            assert (limit, channel) == (module.EMAIL_TASK_CLAIM_BATCH, "email")
             return [task]
 
         def fail_reply_task(self, task_id, error, *, expected_execution_generation):
@@ -7913,7 +7913,7 @@ def test_consumer_task_failure_is_sanitized_isolated_and_heartbeated(monkeypatch
 
     class Store:
         def claim_reply_tasks(self, limit, *, channel):
-            assert (limit, channel) == (50, "email")
+            assert (limit, channel) == (module.EMAIL_TASK_CLAIM_BATCH, "email")
             return [first, second]
 
         def fail_reply_task(self, task_id, error, *, expected_execution_generation):
@@ -8108,4 +8108,38 @@ def test_training_observation_success_replaces_stale_failure_health() -> None:
             "error_type": "ConnectionError",
         },
         {"status": "ready", "failures": 0},
+    ]
+
+
+def test_email_agent_consumer_requeues_stale_claims_before_claiming():
+    module = _module()
+    stale_email = SimpleNamespace(id=7, channel="email", execution_generation="gen-7")
+    stale_dingtalk = SimpleNamespace(id=8, channel="dingtalk", execution_generation="gen-8")
+    calls = []
+
+    class Store:
+        def list_stale_processing_reply_tasks(self, max_age_seconds, *, max_processing_seconds):
+            calls.append(("stale", max_age_seconds, max_processing_seconds))
+            return [stale_email, stale_dingtalk]
+
+        def requeue_reply_task(self, task_id, error, *, expected_execution_generation):
+            calls.append(("requeue", task_id, error, expected_execution_generation))
+
+        def claim_reply_tasks(self, limit, *, channel):
+            calls.append(("claim", limit, channel))
+            return []
+
+    module.run_email_agent_task_loop(
+        Store(),
+        SimpleNamespace(process=lambda *_args, **_kwargs: pytest.fail("no task")),
+        load_task_context=lambda _task: pytest.fail("no task"),
+        finalize_task=lambda *_args: pytest.fail("no task"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert calls == [
+        ("stale", module.STALE_EMAIL_TASK_SECONDS, module.MAX_EMAIL_TASK_PROCESSING_SECONDS),
+        ("requeue", 7, "stale_email_task_recovery", "gen-7"),
+        ("claim", module.EMAIL_TASK_CLAIM_BATCH, "email"),
     ]

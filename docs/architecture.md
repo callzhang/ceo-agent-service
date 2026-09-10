@@ -770,8 +770,13 @@ run 才能被持久队列恢复。
 - **Provider 的通用过载包装**：Codex 会把上游 429/5xx（限流、MiniMax token plan 用尽、上游过载）
   统一包装成 "We're currently experiencing high demand"，流里不带 provider 原文；服务把它归为
   `codex_provider_overloaded`（容量类：同路由可重试、允许 failover、暂停路由），而不是传输断开。
-- **模型把 JSON 包在说明文字里**：任务 Agent 解析器会在整段文本里逐个定位顶层 JSON 对象，取最后一个
-  满足 `TaskAgentDecision` 的对象；只有完全找不到时才报 `No TaskAgentDecision JSON found`。
+- **模型把 JSON 包在说明文字或代码围栏里**：任务 Agent、微信 `AgentEnvelope`、会议对齐三个解析器共用
+  `agent_message_json_objects`，在整段消息里逐个定位顶层 JSON 对象（穿过 ``` 围栏和说明文字），
+  取最后一个满足各自 schema 的对象；只有完全找不到 JSON 时才报“未找到”。
+- **Email 任务的孤儿回收**：Email Agent 消费循环每轮先回收本频道的过期认领（`processing` 超过 10 分钟
+  且没有活着的 Agent run，或累计超过 60 分钟）并以 `stale_email_task_recovery` 重新入队，再一次只认领
+  5 条；任务在该循环里串行执行，认领过多只会拉长尾部锁定时间，进程重启时会把未开始的任务永久留在
+  `processing`（Attention 看不到它们）。
 - **Audit 只需指认、不必抄写**：`execute_audited_email_unsubscribe` 只读取 `accepted_action` 的
   `action_identity`，实际执行的永远是 Consumer 持久化的那条提案；模型漏字段、截断摘要或整段提案
   传入都不会改变执行内容，身份不匹配时工具结果的 summary 会说明原因。退订页面若在

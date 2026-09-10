@@ -1,5 +1,19 @@
 # Changelog
 
+- 2026-09-10: email schema v36 finishes the network-policy removal: v35
+  rewrote `reply_tasks.trigger_message_json` but left the immutable
+  `reply_task_inputs` copy untouched, so every pre-v35 unsubscribe task that
+  ran again failed with `email_consumer_runtime_error:EmailAgentTaskConflict`
+  (the adapter re-derives the payload and compares it with the input row).
+  The email consumer loop now logs the exception message and traceback for
+  every `email_consumer_runtime_error:*` (the task row keeps only the type).
+  The same loop now reclaims its own orphaned claims before each pass (an
+  email task left in `processing` for 10 minutes without a live Agent run,
+  or for 60 minutes in total, is requeued as `stale_email_task_recovery`) and
+  claims 5 tasks per pass instead of 50: tasks run one at a time there, so a
+  restart mid-batch used to strand the unstarted tail in `processing`
+  indefinitely, invisible to Attention (61 such tasks were found).
+
 - 2026-09-10: five Attention root causes fixed after the ChatGPT/MiniMax
   outage review.
   - Work items no longer spend their bounded retry budget while every
@@ -8,10 +22,13 @@
     backoff (attempts untouched, no per-item Service error). Previously each
     outage pass counted as a failed attempt, so items ended in
     `runtime_execution_failed` after three passes.
-  - The task agent parser now finds a decision JSON object embedded in
-    prose ("Based on my search... {json}"), taking the last complete object;
-    MiniMax answers of that shape were reported as `No TaskAgentDecision
-    JSON found`.
+  - The task-agent, WeChat (`AgentEnvelope`) and meeting-alignment parsers
+    share one extractor (`agent_message_json_objects`) that finds every
+    top-level JSON object inside an agent message, through Markdown fences
+    and prose, and validates the last complete one. MiniMax answers of that
+    shape were reported as `No TaskAgentDecision JSON found`,
+    `runtime_result_validation_failed` (WeChat) or `runtime_result_invalid`
+    (meetings) even when the JSON itself was valid.
   - `execute_audited_email_unsubscribe` binds the Audit's acceptance by
     `action_identity` and executes the Consumer's persisted proposal. The
     model no longer has to retype the proposal byte for byte (missing

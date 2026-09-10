@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import time
@@ -23,6 +24,13 @@ SCAN_INTERVAL_SECONDS = 60
 CONSUMER_POLL_INTERVAL_SECONDS = 10
 TRAINING_INTERVAL_SECONDS = 60
 MAX_HEALTH_TEXT_LENGTH = 160
+_LOGGER = logging.getLogger(__name__)
+# Email Agent tasks are processed one at a time; keep the claimed tail short.
+EMAIL_TASK_CLAIM_BATCH = 5
+# A claimed task without a live Agent run for this long is orphaned; one with
+# a run is reclaimed once its lock exceeds the hard cap.
+STALE_EMAIL_TASK_SECONDS = 10 * 60
+MAX_EMAIL_TASK_PROCESSING_SECONDS = 60 * 60
 DIRECT_ACTION_DRAIN_MAX_ACTIONS = 25
 DIRECT_ACTION_DRAIN_MAX_SECONDS = 2.0
 
@@ -1297,6 +1305,36 @@ def run_scan_and_direct_actions_loop(
             sleep(max(interval, 1))
 
 
+def _recover_stale_email_tasks(task_store: object) -> None:
+    """Requeue email tasks whose claim outlived the process that took it.
+
+    A restart in the middle of a claimed batch leaves the unstarted tasks in
+    ``processing`` forever: they hold no Agent run, so nothing else touches
+    them, and they never surface in Attention. The DingTalk worker performs
+    the same recovery for its own pass; the email loop owns its channel here.
+    """
+    list_stale = getattr(task_store, "list_stale_processing_reply_tasks", None)
+    requeue = getattr(task_store, "requeue_reply_task", None)
+    if list_stale is None or requeue is None:
+        return
+    for task in list_stale(
+        STALE_EMAIL_TASK_SECONDS,
+        max_processing_seconds=MAX_EMAIL_TASK_PROCESSING_SECONDS,
+    ):
+        if task.channel != "email":
+            continue
+        try:
+            requeue(
+                task.id,
+                "stale_email_task_recovery",
+                expected_execution_generation=task.execution_generation,
+            )
+        except Exception as exc:  # noqa: BLE001 - one task must not stop the pass
+            _LOGGER.warning(
+                "stale email task %s was not requeued: %s", task.id, exc
+            )
+
+
 def run_email_agent_task_loop(
     task_store: object,
     orchestrator: object,
@@ -1313,7 +1351,13 @@ def run_email_agent_task_loop(
         failures = 0
         last_error_type = ""
         try:
-            tasks = task_store.claim_reply_tasks(50, channel="email")
+            _recover_stale_email_tasks(task_store)
+            # Tasks run one at a time in this loop, so a large claim only
+            # lengthens how long the tail stays locked and how many tasks a
+            # restart orphans.
+            tasks = task_store.claim_reply_tasks(
+                EMAIL_TASK_CLAIM_BATCH, channel="email"
+            )
         except Exception as exc:  # noqa: BLE001 - keep the component alive
             tasks = ()
             failures += 1
@@ -1345,6 +1389,15 @@ def run_email_agent_task_loop(
             except Exception as exc:  # noqa: BLE001 - isolate one Email task
                 failures += 1
                 last_error_type = type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH]
+                # The task row keeps only the exception type; the message and
+                # traceback go to the service log so the cause stays findable.
+                _LOGGER.warning(
+                    "email task %s failed in the consumer loop: %s: %s",
+                    task.id,
+                    last_error_type,
+                    exc,
+                    exc_info=True,
+                )
                 try:
                     task_store.fail_reply_task(
                         task.id,

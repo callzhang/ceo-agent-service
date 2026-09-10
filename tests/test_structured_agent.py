@@ -688,3 +688,44 @@ def test_structured_runner_uses_explicit_output_schema_when_configured(tmp_path)
     runner.run(1, "cid-1", "Friday", True, "hello", owner="reply:msg-1")
 
     assert routed.calls[0]["command_factory"].output_schema_path == output_schema
+
+
+def test_parse_agent_envelope_accepts_fenced_and_prose_wrapped_agent_message():
+    envelope = {
+        "kind": "reply",
+        "user_response": {
+            "mode": "send_reply",
+            "text": "好的，马上回",
+            "sensitivity_kind": "general",
+        },
+        "system_actions": [],
+        "domain_payload": {},
+        "audit": {"summary": "Simple acknowledgement.", "documents": [], "confidence": 0.9},
+    }
+    draft = {"mode": "send_reply", "reply_text": "draft"}
+    text = (
+        "Here is my decision:\n\n```json\n"
+        + json.dumps(draft, ensure_ascii=False)
+        + "\n```\n\nFinal:\n\n```json\n"
+        + json.dumps(envelope, ensure_ascii=False, indent=2)
+        + "\n```\n"
+    )
+    raw = json.dumps(
+        {"type": "item.completed", "item": {"type": "agent_message", "text": text}}
+    )
+
+    assert parse_agent_envelope(raw) == AgentEnvelope.model_validate(envelope)
+
+
+def test_parse_agent_envelope_reports_schema_error_of_last_candidate():
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": "```json\n{\"mode\": \"send_reply\", \"reply_text\": \"x\"}\n```",
+            },
+        }
+    )
+    with pytest.raises(ValueError):
+        parse_agent_envelope(raw)

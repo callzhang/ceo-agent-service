@@ -2,6 +2,9 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pydantic import ValidationError
+
+from app.agent_result import agent_message_json_objects
 from app.agent_envelope import AgentEnvelope
 from app.agent_runtime_router import (
     CodexCommandFactory,
@@ -191,11 +194,26 @@ def parse_agent_envelope(raw: str) -> AgentEnvelope:
             item = payload.get("item")
             item_text = _agent_message_text(item)
             if item_text is not None:
-                return _parse_agent_envelope_payload(json.loads(item_text))
+                return _parse_agent_envelope_text(item_text)
             message = payload.get("message")
-            if isinstance(message, str) and message.strip().startswith("{"):
-                return _parse_agent_envelope_payload(json.loads(message))
+            if isinstance(message, str) and "{" in message:
+                return _parse_agent_envelope_text(message)
     raise ValueError("no valid AgentEnvelope found")
+
+
+def _parse_agent_envelope_text(text: str) -> AgentEnvelope:
+    """Parse the envelope out of one agent message, fences and prose included."""
+    candidates = agent_message_json_objects(text)
+    if not candidates:
+        raise ValueError("agent message does not contain a JSON object")
+    failure: Exception | None = None
+    for payload in reversed(candidates):
+        try:
+            return _parse_agent_envelope_payload(payload)
+        except (ValueError, ValidationError) as exc:
+            failure = failure or exc
+    assert failure is not None
+    raise failure
 
 
 def _agent_message_text(item: object) -> str | None:

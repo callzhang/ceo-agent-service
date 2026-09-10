@@ -1015,3 +1015,15 @@ def test_dingtalk_message_actions_require_canonical_target_fields():
         }
     )
     assert canonical.target["conversation_id"] == "cid-1"
+
+
+def test_agent_message_json_objects_scans_fences_and_prose():
+    from app.agent_result import agent_message_json_objects
+
+    text = (
+        "Draft {not json} first:\n```json\n{\"a\": 1}\n```\n"
+        "then the final object: {\"b\": {\"nested\": [1, 2]}} done."
+    )
+
+    assert agent_message_json_objects(text) == [{"a": 1}, {"b": {"nested": [1, 2]}}]
+    assert agent_message_json_objects("no objects here") == []

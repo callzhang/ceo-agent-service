@@ -4,6 +4,7 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
+from app.agent_result import agent_message_json_objects
 from app.agent_runtime_router import (
     CodexCommandFactory,
     BACKGROUND_AGENT_RUNTIME_BOUNDARY,
@@ -265,6 +266,8 @@ def parse_meeting_alignment_decision(raw: str) -> MeetingAlignmentDecision:
         return MeetingAlignmentDecision.model_validate_json(stripped)
     except (ValueError, ValidationError):
         pass
+    if decision := _embedded_decision(stripped):
+        return decision
 
     payloads: list[object] = []
     for line in stripped.splitlines():
@@ -280,11 +283,19 @@ def parse_meeting_alignment_decision(raw: str) -> MeetingAlignmentDecision:
         if not isinstance(payload, dict):
             continue
         for text in _decision_text_candidates(payload):
-            try:
-                return MeetingAlignmentDecision.model_validate_json(text)
-            except (ValueError, ValidationError):
-                continue
+            if decision := _embedded_decision(text):
+                return decision
     raise ValueError("No MeetingAlignmentDecision JSON found")
+
+
+def _embedded_decision(text: str) -> MeetingAlignmentDecision | None:
+    # Fenced or prose-wrapped output: the last complete decision wins.
+    for payload in reversed(agent_message_json_objects(text)):
+        try:
+            return MeetingAlignmentDecision.model_validate(payload)
+        except (ValueError, ValidationError):
+            continue
+    return None
 
 
 def _decision_text_candidates(payload: dict[str, object]) -> list[str]:

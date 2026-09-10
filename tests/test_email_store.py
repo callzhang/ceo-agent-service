@@ -206,8 +206,8 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     assert "email_training_snapshots" in tables
     assert "email_training_snapshot_observations" in tables
     assert preserved_model_text == "__subject__preserved migration row"
-    assert versions == list(range(22, 36))
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 35
+    assert versions == list(range(22, 37))
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 36
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select frozen from email_training_snapshots").fetchall() == []
@@ -248,7 +248,7 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == list(range(23, 36))
+        ] == list(range(23, 37))
 
 
 def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path):
@@ -305,7 +305,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == list(range(23, 36))
+    ] == list(range(23, 37))
 
 
 def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
@@ -3210,7 +3210,7 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
 
 
 def test_email_schema_version_is_35() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 35
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 36
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:
@@ -6822,7 +6822,7 @@ def test_v21_schema_migrates_to_allow_flag_important_actions(tmp_path: Path):
         )
         assert (
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 35
+            == email_store_module.EMAIL_SCHEMA_VERSION
         )
     assert (
         migrated.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
@@ -9039,7 +9039,7 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
 
     migrated = EmailStore(database)
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 35
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 36
     assert migrated.get_account("primary")["imap_move_mode"] == "copy_as_move"
     assert (
         migrated.list_account_folder_bindings("junk")[0]["provider_folder_id"]
@@ -9389,3 +9389,54 @@ def test_category_enablement_snapshot_refuses_concurrent_category_edit(tmp_path:
     assert store.get_category_config("work")["config_version"] == (
         "concurrent-work-edit-v1"
     )
+
+
+def test_v36_drops_policy_keys_from_immutable_email_task_inputs(tmp_path: Path) -> None:
+    from app.store import AutoReplyStore
+
+    database = tmp_path / "v36.sqlite3"
+    AutoReplyStore(database)
+    email_store_module.EmailStore(database)
+    stale = json.dumps(
+        {
+            "schema": "email-agent-task-v1",
+            "action_type": "unsubscribe",
+            "unsubscribe_network_policy_reference": "network-policy:old",
+            "unsubscribe_network_policy_origin_references": ["network-origin:old"],
+        }
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("update email_schema_migrations set version=35 where version=36")
+        db.execute(
+            """
+            insert into reply_task_inputs (
+                reply_task_id, channel, conversation_id, conversation_title,
+                single_chat, trigger_message_id, trigger_create_time,
+                trigger_sender, trigger_text, trigger_message_json, oa_url,
+                business_object_key
+            ) values (1, 'email', 'email-thread:1', 'Email unsubscribe', 0,
+                      'email-action:1', '2026-09-01 00:00:00', 'sender@example.com',
+                      'Immutable ActionPlan authorizes unsubscribe.', ?, '',
+                      'message:email:email-thread:1:email-action:1')
+            """,
+            (stale,),
+        )
+
+    email_store_module.EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        payload = json.loads(
+            db.execute(
+                "select trigger_message_json from reply_task_inputs where channel='email'"
+            ).fetchone()[0]
+        )
+        versions = [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ]
+    assert "unsubscribe_network_policy_reference" not in payload
+    assert "unsubscribe_network_policy_origin_references" not in payload
+    assert payload["action_type"] == "unsubscribe"
+    assert versions[-1] == 36

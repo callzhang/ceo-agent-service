@@ -256,6 +256,27 @@ def _remove_top_level_stray_array_close(text: str) -> str:
     return "".join(result)
 
 
+def agent_message_json_objects(text: str) -> list[object]:
+    """Return every top-level JSON object embedded in one agent message.
+
+    Models wrap a result in Markdown fences or prose ("Based on my search...
+    {json}") and sometimes emit a draft before the final object. Callers
+    validate each candidate against their own schema, last one first.
+    """
+    decoder = json.JSONDecoder()
+    objects: list[object] = []
+    index = text.find("{")
+    while index != -1:
+        try:
+            payload, end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            index = text.find("{", index + 1)
+            continue
+        objects.append(payload)
+        index = text.find("{", end)
+    return objects
+
+
 def _strip_json_fence(text: str) -> str:
     if not text.startswith("```"):
         return text

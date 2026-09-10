@@ -749,3 +749,22 @@ def test_semantic_fixtures_with_deterministic_executor(tmp_path: Path, case: dic
         assert forbidden_trigger not in decision.trigger_reasons, fixture_id
     if "expected_target" in case:
         assert decision.target == case["expected_target"], fixture_id
+
+
+def test_parser_finds_decision_embedded_in_prose_and_fences():
+    payload = summary_payload()
+    text = (
+        "I reviewed the transcript. {not json}\n\n```json\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+        + "\n```\nDone."
+    )
+    raw = json.dumps(
+        {"type": "item.completed", "item": {"type": "agent_message", "text": text}}
+    )
+
+    assert parse_meeting_alignment_decision(raw) == parse_meeting_alignment_decision(
+        json.dumps(payload)
+    )
+    assert parse_meeting_alignment_decision(text) == parse_meeting_alignment_decision(
+        json.dumps(payload)
+    )

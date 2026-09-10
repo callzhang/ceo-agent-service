@@ -18,6 +18,7 @@ from app.agent_runtime_router import (
 from app.codex_runner import memory_connector_config_issue
 from app.config import repo_root
 from app.external_retry import ExternalDependencyError
+from app.agent_result import agent_message_json_objects
 from app.routed_result_privacy import audit_references_from_full_events
 from app.store import AutoReplyStore, RecentFollowUpCandidate
 from app.structured_agent import load_skill_text
@@ -1682,24 +1683,14 @@ def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
                 return None
 
     def validate_embedded(candidate: str) -> TaskAgentDecision | None:
-        # Models regularly wrap the decision in prose ("Based on my search...
-        # {json}"). Try every top-level object in the text, last one first,
-        # so the final complete decision wins over an earlier draft.
-        decoder = json.JSONDecoder()
-        decisions: list[TaskAgentDecision] = []
-        index = candidate.find("{")
-        while index != -1:
+        # Models regularly wrap the decision in prose or fences. The last
+        # complete decision wins over an earlier draft.
+        for payload in reversed(agent_message_json_objects(candidate)):
             try:
-                payload, end = decoder.raw_decode(candidate, index)
-            except json.JSONDecodeError:
-                index = candidate.find("{", index + 1)
-                continue
-            try:
-                decisions.append(TaskAgentDecision.model_validate(payload))
+                return TaskAgentDecision.model_validate(payload)
             except (ValueError, ValidationError):
-                pass
-            index = candidate.find("{", end)
-        return decisions[-1] if decisions else None
+                continue
+        return None
 
     stripped = raw.strip()
     if decision := validate_candidate(stripped):
