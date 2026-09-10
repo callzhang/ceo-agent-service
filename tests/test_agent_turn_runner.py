@@ -1,5 +1,6 @@
 import inspect
 import json
+from types import SimpleNamespace
 
 import app.agent_turn_runner as agent_turn_runner
 from app.agent_contracts import ConsumerAgentResult
@@ -123,3 +124,40 @@ def test_provider_tool_event_does_not_create_application_delivery_receipt(tmp_pa
 
     assert event["item"] == payload["item"]
     assert store.get_sent_reply(task.conversation_id, task.trigger_message_id) is None
+
+
+def test_runtime_failure_persists_bounded_redacted_detail():
+    store_calls: list[tuple[int, dict[str, object]]] = []
+
+    class Store:
+        def get_agent_run(self, run_id: int):
+            assert run_id == 7
+            return SimpleNamespace(status="running")
+
+        def fail_agent_run(self, run_id: int, structured_error, *, owner: str):
+            store_calls.append((run_id, structured_error))
+            assert owner == "test-owner"
+
+    runner = object.__new__(AgentTurnProcess)
+    runner.store = Store()
+    runner.owner = "test-owner"
+
+    runner._fail_running(
+        SimpleNamespace(id=7),
+        "codex_process_failed",
+        detail=agent_turn_runner._runtime_failure_detail(
+            RuntimeError("database is locked while reading /tmp/private-output")
+        ),
+        stage="execution",
+        source="codex",
+        source_code="codex_process_failed",
+        session_continuable=True,
+    )
+
+    assert len(store_calls) == 1
+    payload = store_calls[0][1]
+    assert payload["code"] == "codex_process_failed"
+    assert payload["stage"] == "execution"
+    assert payload["source_code"] == "codex_process_failed"
+    assert "database is locked" in payload["detail"]
+    assert "/tmp/" not in payload["detail"]

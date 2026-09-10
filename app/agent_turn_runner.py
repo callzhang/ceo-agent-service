@@ -64,6 +64,7 @@ from app.leak_check import (
     contains_credential,
     contains_local_runtime_leak,
     is_sensitive_credential_name,
+    redact_credentials,
     redact_forbidden_leak_markers,
 )
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
@@ -419,6 +420,16 @@ def _agent_process_error_code(exc: Exception) -> str:
             return "codex_result_missing"
         return "codex_result_invalid"
     return "codex_process_failed"
+
+
+def _runtime_failure_detail(exc: Exception) -> str:
+    """Persist a bounded, redacted explanation alongside the failure code."""
+    detail = " ".join(str(exc).split())
+    if not detail:
+        return ""
+    detail = redact_credentials(detail)
+    detail = redact_forbidden_leak_markers(detail)
+    return detail[:1000]
 
 
 RESULT_INVALID_ERROR_CODE = "codex_result_invalid"
@@ -1249,8 +1260,10 @@ class AgentTurnProcess(Generic[ResultT]):
             self._fail_running(
                 run,
                 code,
+                detail=_runtime_failure_detail(exc),
                 stage="execution",
                 source="codex",
+                source_code=code,
                 session_continuable=True,
             )
             if provider_recovery in {
