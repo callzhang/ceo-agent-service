@@ -1,5 +1,20 @@
 # Changelog
 
+- 2026-09-10: scheduled-tasks page no longer shows fabricated configuration.
+  The service-command branch had a hardcoded "Consumer Agent 系统提示词",
+  an unsaved "Consumer Agent 自定义描述" textarea, hardcoded Skill chips and a
+  "Consumer Agent Runtime" select with literal `codex_api`/`codex_oauth`
+  options, and the Agent branch showed a system prompt the service does not
+  have. Command tasks now show one read-only note about downstream
+  consumption; Agent tasks keep the real 任务描述, Runtime and structured
+  Skills; the execution-type selector is disabled for repository-seeded
+  tasks, matching the API's immutable-command rule. Console status tests:
+  the four fakes left behind by the strict WorkerStatus contract are
+  complete again, the email-account fixture no longer sends the removed
+  `scan_interval_seconds`, and the four contract tests dropped by merge
+  2d8f17cb are restored. The Agent Cron spec is revised in place for the
+  service-command execution form and the paused-route Attention rule.
+
 - 2026-09-10 (round 3, subagent-verified): the WeChat reply path and a test
   regression.
   - The WeChat/Codex decision parser (`app/codex_decision.py`, used by

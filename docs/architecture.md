@@ -105,8 +105,10 @@ scheduled_tasks[command]
 调度层不补跑停机期间错过的时间点；上一轮仍未终态时，本轮 trigger 记为 `skipped`，不会并行
 创建第二个执行输入。手动运行会创建独立 trigger，但不移动正常计划。任务固定指定 Runtime route、
 model、thinking（仅受支持时）和工作目录，不允许失败后切换其他 Runtime；managed Skill 必须绑定
-精确、已加载且启用的 revision。派发前不可用时 trigger 为 `skipped` 并进入 Attention；派发后的
-执行可用性失败记录在 execution source，trigger 仍只表示已经派发。
+精确、已加载且启用的 revision。派发前不可用时 trigger 为 `skipped`：Runtime 未配置、缺少能力、
+认证暂停或 Skill revision 不可用属于配置性不可用，每次进入 Attention；provider 暂时不可用导致
+的路由暂停（过载、传输断连）只体现为 run 记录和路由暂停状态，不按每次触发写 Attention。
+派发后的执行可用性失败记录在 execution source，trigger 仍只表示已经派发。
 
 统一 Consumer Dispatcher 不建立第二套业务队列表。各 Queue Adapter 直接领取现有事实来源：
 scheduled trigger、scheduled execution、普通 reply、meeting、work summary、OKR review 和

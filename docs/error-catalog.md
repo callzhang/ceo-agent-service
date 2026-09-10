@@ -123,7 +123,7 @@ trigger 自身的跳过原因写在 `scheduled_task_runs.skip_or_error_reason`�
 | 错误码 | 解释 | 默认处理 |
 | --- | --- | --- |
 | `scheduled_task_previous_execution_active` | 上一轮 trigger 或其 execution 尚未终态，本轮跳过 | 不处理；不写 errors |
-| `scheduled_task_runtime_unavailable` | Agent 任务固定的 Runtime route 不健康或缺少能力 | 修复 Runtime 或改任务配置 |
+| `scheduled_task_runtime_unavailable` | Agent 任务固定的 Runtime route 不健康或缺少能力 | 修复 Runtime 或改任务配置；provider 暂时过载或断连造成的路由暂停只写 run 记录，不进入 Attention |
 | `scheduled_task_managed_skill_unavailable` | 绑定的精确 managed Skill revision 未加载或已禁用 | 加载该 revision 或重新绑定 |
 | `scheduled_task_operation_skill_unavailable` | 引用的 operation Skill 不可用 | 安装或修复该 Skill |
 | `scheduled_task_execution_unavailable` | 派发或执行前发现 Runtime、Skill 或工作目录已不可用 | 同上；execution 以 `skipped` 收口 |

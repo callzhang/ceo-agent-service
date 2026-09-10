@@ -1,5 +1,7 @@
 # Agent Cron 与托管听记 Skill 实施计划
 
+> 2026-09-09 更新：钉钉消息与微信消息检查已改为“服务命令任务”（不经过 Agent），本计划中相关的 Agent 形式描述已被 spec 的《修订记录》取代；见 `../specs/2026-09-08-agent-cron-and-managed-minutes-skill-design.md`。
+
 > **执行方式：** 使用 `subagent-driven-development`，严格按任务顺序执行。每项由新的实现子代理以 TDD 完成并提交，随后依次进行规格审查和代码质量审查；审查未通过不得进入下一项。
 
 **目标：** 将 CEO Agent Service 的主动周期性业务统一为顶部“定时任务”，实现 `Cron + Skills + Runtime` 配置、可靠触发与历史，并把每日 AI 听记迁为绑定精确 revision 的 `ceo-minutes-sync` 托管 Skill；Consumer 队列检查统一为内部 Dispatcher，不暴露成 Cron 配置。

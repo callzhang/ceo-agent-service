@@ -431,7 +431,9 @@ Agent Cron 保存任务定义及其结构化 Skill refs、固定 Runtime route/m
 标记 `dispatched`；`scheduled_execution` adapter 再领取该 execution source，按派发时冻结的
 prompt、Skill protocol、route、model、thinking 和 workdir 启动 Agent。managed Skill 使用精确
 revision；执行前若指定 Runtime、该 revision 或工作目录已经不可用，execution 以 `skipped`
-收口并产生 Attention，绝不 fallback，也不把业务结果写回 trigger。
+收口并产生 Attention，绝不 fallback，也不把业务结果写回 trigger。Scheduler 在派发前发现
+Runtime 不可用时同样记 `skipped`：配置性原因（未配置、缺能力、认证暂停）每次写 Attention，
+provider 暂时不可用造成的路由暂停只留下 run 记录和路由暂停状态，不逐次写 Attention。
 
 服务命令任务（`scheduled_tasks.command` 非空）只有第一阶段：`scheduled` adapter 领取 trigger
 后，在同一个 claim 内直接运行服务命令目录中的实现（`produce-once` 即 DingTalk 消息 producer

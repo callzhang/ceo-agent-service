@@ -1,16 +1,20 @@
 # Agent Cron 与托管听记 Skill 设计
 
 **日期：** 2026-09-08
-**状态：** 产品设计已确认，等待书面 Spec 审阅
-**修订：** 2026-09-09 增加“服务命令任务”执行形式，见文末《修订记录》。
+**状态：** 已实施并上线；2026-09-09 按实际实现修订（见文末《修订记录》）
 
 ## 目标
 
 在 CEO Agent Service 中增加一级导航“定时任务”，用统一的用户模型管理所有主动、周期性执行：
 
 ```text
-定时任务 = Cron + Agent 能力（Skills）+ 执行方式（Runtime）
+定时任务 = Cron + 执行形式
+  执行形式 = Agent 任务（Skills + Runtime + 任务描述）
+           | 服务命令任务（服务命令目录中的一个确定性命令，进程内执行，不经过 Agent）
 ```
+
+Agent 任务适合需要判断的检查；服务命令任务适合“只跑一条确定性 producer 命令”的检查，例如
+钉钉消息和微信消息的增量读取，这类检查放进 Agent 只会消耗模型调用并在历史里制造噪音。
 
 同时把已经停止更新的“每日 AI 听记同步”迁为 CEO Agent Service 管理的定时任务，并将其业务方法定义为 service-managed Skill `ceo-minutes-sync`。
 
@@ -20,9 +24,12 @@
 
 1. Cron 与 Skill 是两个模块。Cron 在顶部导航，Skill 继续在 Settings 管理。
 2. Connector 与 Cron 完全解耦。Connector 只提供认证、连接、权限和确定性读写能力，不保存扫描频率或业务计划。
-3. 用户可见的定时任务只有 Agent Cron，不增加“系统 Cron”类型。
+3. 用户可见的定时任务只有一个列表，不增加独立的“系统 Cron”类型；同一个列表里的任务有两种
+   执行形式（Agent 任务、服务命令任务），都有 Cron、时区、启停、手动运行和运行历史。
 4. Settings 不提供 Agent Cron 页面，managed Skill 定义也不增加 `trigger: cron`。
-5. 每个定时任务配置任务描述、Cron、时区、Skill 引用和 Runtime；Runtime 选项来自当前 Agent Runtime 配置，不写死 CEO Agent、Codex 或 Claude 枚举。
+5. Agent 任务配置任务描述、Cron、时区、Skill 引用和 Runtime；Runtime 选项来自当前 Agent Runtime
+   配置，不写死 CEO Agent、Codex 或 Claude 枚举。服务命令任务只配置名称、Cron、时区、启停和
+   命令；命令来自服务命令目录，页面不得为它显示假的 Runtime、提示词或 Skill 控件。
 6. DingTalk 消息、会议、WeChat 消息、OA、听记、Lark 等主动检查均通过 Agent Cron 表达；没有 Cron 的 Connector 不会主动发起业务检查。
 7. Consumer 队列检查是常驻内部逻辑。一个 Dispatcher 统一发现可执行输入，再按输入类型交给不同 Consumer；用户不配置 Consumer 轮询频率。
 8. 投递、外部效果确认、Consumer → Audit → feedback → revision 和任务恢复继续属于内部任务生命周期。
@@ -30,8 +37,13 @@
 10. 不补跑服务停机期间错过的 Cron。服务恢复后从下一个未来触发点继续。
 11. 同一个定时任务上一轮仍未结束时，当前触发记为 `skipped`，不并发重复执行。
 12. 手动运行不改变下一次 Cron 时间。
-13. Runtime 不可用时不静默切换到其他 Runtime；任务保留并进入 Attention。
+13. Runtime 不可用时不静默切换到其他 Runtime；任务保留，本轮记录 `skipped`。配置性不可用
+    （Runtime 未配置、缺少所需能力、认证暂停、Skill revision 不可用）每次进入 Attention；
+    provider 暂时不可用导致的路由暂停（过载、传输断连）只体现为运行记录和路由暂停状态，不按
+    每次触发写 Attention，以免一次外部故障在每个任务上刷出成串错误。
 14. 托管 Skill 绑定精确 revision，不自动升级到新 revision。
+15. 服务命令任务在 Dispatcher 领取 trigger 后直接在服务进程内执行，不创建 reply task、agent run
+    或 reply_attempt；命令必须幂等。仓库 seed 的服务命令任务不能通过 API 改成别的命令。
 
 ## 范围
 
@@ -94,15 +106,17 @@ Settings 删除或不新增以下内容：
 每个任务包含：
 
 - 名称；
-- 自然语言任务描述；
-- Cron 表达式；
+- Cron 表达式与可读的计划预览；
 - 时区；
 - 启用状态；
-- Runtime；
-- Runtime 支持的模型、thinking 和工作目录参数；
-- 一个或多个 Skill 引用；
+- 执行类型：Agent 任务，或服务命令目录中的一个命令（显示可读名称和说明）；
+- Agent 任务另有：自然语言任务描述、Runtime、Runtime 支持的模型和 thinking 参数、一个或多个
+  Skill 引用；工作目录使用服务工作区，不在任务里重复配置；
 - 可读的下一次运行时间；
-- 最近运行状态和运行历史。
+- 最近运行状态和运行历史；服务命令的运行记录显示命令的可读名称。
+
+服务命令任务的页面只显示命令及其说明，并说明它发现的消息由统一 Dispatcher 的 reply consumer
+处理、该 consumer 的提示词、Skill 和 Runtime 路由由服务维护；不显示无效的编辑控件。
 
 任务描述使用与 Agent Composer 一致的交互，支持通过 `$` 搜索和引用 Skill。页面同时以独立标签显示已解析的 Skill，避免只依赖正文中的字符串。
 
@@ -136,6 +150,14 @@ Runtime 决定由哪个 Agent 执行任务。可选项完全来自 Settings → 
 
 任务保存后，如果所选 Runtime 变为不可用，系统不自动 fallback。到期时不创建新的业务执行任务，而是记录跳过原因并在 Attention 中提示。
 
+### 服务命令
+
+服务命令是服务自身的一个确定性操作，与对应的 `app.cli` / `app.wechat.cli` 子命令做同一件事。
+命令目录是唯一的名字来源（当前：`produce-once` 钉钉消息增量读取、`wechat-produce-once`
+微信消息增量读取），服务启动时必须把目录里每个名字绑定到进程内实现。命令不拥有 Cron，也不
+经过 Runtime、Skill、Consumer 或 Audit。Reader 或账号不可用属于该通道的健康事实，由命令自己
+按原内部循环的语义报告（只记一次、成功后恢复），不是 trigger 失败。
+
 ### Cron
 
 Cron 只决定何时为一个已保存任务创建新的执行输入。首版使用带秒的六段表达式：
@@ -155,12 +177,12 @@ Cron 只决定何时为一个已保存任务创建新的执行输入。首版使
 - `id`
 - `migration_key`：可空；系统迁移任务使用稳定键防止重复创建
 - `name`
-- `prompt`
+- `prompt`：Agent 任务的任务描述；服务命令任务为空
+- `command`：服务命令任务的命令名；Agent 任务为空。一个任务只能是其中一种
 - `cron_expression`
 - `timezone`
-- `runtime_id`
-- `runtime_options_json`
-- `working_directory`
+- `runtime_id`、`runtime_options_json`、`required_runtime_capabilities_json`、`working_directory`：
+  仅 Agent 任务；服务命令任务为空
 - `enabled`
 - `version`：用于并发编辑检查
 - `created_at`
@@ -190,12 +212,13 @@ Cron 只决定何时为一个已保存任务创建新的执行输入。首版使
 - `dispatch_status`：`pending`、`dispatched`、`skipped` 或 `failed`
 - `skip_or_error_reason`
 - 任务描述、Cron、时区、Runtime 和 Skill 引用快照
-- `execution_kind`：被分发到的 Consumer 类型
-- `execution_id`：该 Consumer 事实来源中的任务或运行 ID
+- `execution_kind`：`reply_task`（Agent 任务，被分发到 Scheduled Agent Consumer）或
+  `service_command`（服务命令已在本进程内跑完）
+- `execution_id`：`reply_task` 时为该 Consumer 事实来源中的任务 ID；`service_command` 时为命令名
 - `created_at`
 - `dispatched_at`
 
-`scheduled_task_runs` 只记录触发与分发，不复制 Consumer/Audit 的业务状态。分发成功后的执行结果通过 `execution_kind + execution_id` 解析到对应 Consumer 的事实来源、Agent runs 和 History，避免两套状态漂移。
+快照同样包含 `command`。`scheduled_task_runs` 只记录触发与分发，不复制 Consumer/Audit 的业务状态。分发成功后的执行结果通过 `execution_kind + execution_id` 解析到对应 Consumer 的事实来源、Agent runs 和 History，避免两套状态漂移。
 
 同一任务的 `scheduled_for` 必须唯一；手动运行使用独立事件 ID。Scheduler 在同一事务内创建 run 并取得分发所有权，避免服务重启或多个 Scheduler 重复派发。
 
@@ -205,11 +228,15 @@ Cron 只决定何时为一个已保存任务创建新的执行输入。首版使
 
 1. Scheduler 读取启用任务及其下一未来触发点。
 2. 到期时原子创建 `scheduled_task_run`。
-3. 校验绑定的 Runtime 和 Skill revision 仍可用。
-4. 校验同一任务没有未结束的关联执行。
+3. 校验同一任务没有未结束的关联执行。
+4. Agent 任务校验绑定的 Runtime 和 Skill revision 仍可用；服务命令任务校验命令仍在目录中。
 5. `ScheduledTaskQueueAdapter` 将这条 `pending` run 暴露给内部 Dispatcher。
-6. Dispatcher 原子领取 run，交给 Scheduled Agent Consumer，并写入 `execution_kind + execution_id`。
-7. 下一次触发点只按 Cron 和时区计算。
+6. Dispatcher 原子领取 run。Agent 任务：创建唯一的 `channel=scheduled` 执行输入并写入
+   `execution_kind=reply_task + execution_id`，交给 Scheduled Agent Consumer。服务命令任务：在同一
+   claim 内直接运行命令，成功后写入 `execution_kind=service_command + 命令名` 并标记 `dispatched`；
+   命令抛错时 trigger 记 `failed`，原因 `scheduled_task_service_command_failed: <原因>` 进入 Attention。
+7. 下一次触发点只按 Cron 和时区计算。已完成的服务命令执行由构造保证终态；命令仍在运行时
+   trigger 保持 `pending`，同一任务不会并行跑第二次。
 
 ### 不补跑
 
@@ -228,8 +255,11 @@ Cron 只决定何时为一个已保存任务创建新的执行输入。首版使
 ### 配置或能力不可用
 
 - Cron 或时区无效：拒绝保存。
-- Runtime 不可用：任务保留；到期记录 `skipped`，进入 Attention，不 fallback。
+- Runtime 不可用：任务保留；到期记录 `skipped`，不 fallback。配置性不可用进入 Attention；
+  provider 暂时不可用导致的路由暂停不逐次写 Attention（见决定 13）。
 - 托管 Skill revision 不存在或不可用：任务保留；到期记录 `skipped`，进入 Attention。
+- 服务命令不在目录中：任务保留；到期记录 `skipped`，原因
+  `scheduled_task_service_command_unavailable`，进入 Attention。
 - Connector 在 Agent 执行期间不可用：由 Skill 和现有 Consumer/Audit 生命周期形成可见的失败或需要处理结果，不在 Scheduler 中伪造成功。
 
 ## 内部 Consumer Dispatcher
@@ -260,6 +290,7 @@ Dispatcher 使用一个内部唤醒入口：生产者或 Scheduler 写入后主�
 
 Dispatcher 领取任务后按输入类型送到对应 Consumer Worker Pool：
 
+- Scheduled trigger consumer：Agent 任务生成执行输入；服务命令任务直接在进程内执行命令；
 - 通用 Scheduled Agent Consumer；
 - DingTalk Consumer；
 - WeChat Consumer；
@@ -328,15 +359,19 @@ Skills：ceo-minutes-sync 的精确 revision
 
 首批迁移任务：
 
-| 任务 | 迁移默认计划 | 主要 Skill |
-| --- | --- | --- |
-| 检查 DingTalk 消息 | 每分钟 | `ceo-message-triage`、`dingtalk-chat` |
-| 检查新增会议 | 每分钟 | `ceo-meeting-work`、`dingtalk-minutes`、`dingtalk-calendar` |
-| 检查 WeChat 消息 | 每 15 秒；上一轮未结束时跳过本轮 | `ceo-wechat` |
-| 同步 AI 听记 | 北京时间每天 20:00 | `ceo-minutes-sync` |
-| 检查 DingTalk OA | 每小时 | 对应 DingTalk/OA Skills |
-| 扫描工作来源 | 每天 | `ceo-work-tracking` 及来源 Skills |
-| 每周 OKR 汇总 | 北京时间周日 18:00 | `ceo-weekly-okr-report`、`dingtang-okr-review` |
+| 任务 | 迁移默认计划 | 执行形式 | 主要 Skill |
+| --- | --- | --- | --- |
+| 检查 DingTalk 消息 | 每分钟 | 服务命令 `produce-once` | 无；发现的消息由 reply consumer 处理 |
+| 检查新增会议 | 每分钟 | Agent | `ceo-meeting-work`、`dingtalk-minutes`、`dingtalk-calendar` |
+| 检查 WeChat 消息 | 每 15 秒；上一轮未结束时跳过本轮 | 服务命令 `wechat-produce-once` | 无；发现的消息由 wechat reply consumer 处理 |
+| 同步 AI 听记 | 北京时间每天 20:00 | Agent | `ceo-minutes-sync` |
+| 检查 DingTalk OA | 每小时 | Agent | 对应 DingTalk/OA Skills |
+| 扫描工作来源 | 每天 | Agent | `ceo-work-tracking` 及来源 Skills |
+| 每周 OKR 汇总 | 北京时间周日 18:00 | Agent | `ceo-weekly-okr-report`、`dingtang-okr-review` |
+
+已经以 Agent 形式创建过的钉钉消息、微信消息 seed 在启动时原地转换为服务命令形式：保留名称、
+Cron、时区；从未编辑过的旧 seed 转换后启用（它原来的停用只反映 Agent 形式缺少 Skill 或
+Runtime），用户编辑过的保留用户的启用状态；已删除的不动。
 
 Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“定时任务”新建 Lark 检查，选择所需 Lark Skills 和 Runtime。
 
@@ -364,7 +399,10 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 - Scheduler 健康与业务运行结果分开显示。
 - `last_tick` 或进程存活不能替代最近成功内容时间。
 - 任务列表显示最近实际结果、下一触发点和 Attention 原因。
-- 每次 run 显示实际 Runtime、模型、Skill revision、计划时间、派发时间和关联任务。
+- 每次 run 显示实际 Runtime、模型、Skill revision、计划时间、派发时间和关联任务；服务命令的
+  run 显示命令可读名称，技术标识折叠显示。
+- 服务命令不产生 reply_attempt，因此消息历史里不出现定时检查记录；命令失败通过 trigger 的
+  `failed` 和 Attention 可见，通道级健康（例如微信 Reader）通过健康组件可见。
 - Dispatcher 暴露各 Queue Adapter 的待处理数量、最老等待时间、运行中数量和最近错误。
 - 空队列不创建用户可见运行记录。
 - 外部读取失败保留提供者返回的可诊断分类，但不泄露凭据。
@@ -374,7 +412,9 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 
 ### Scheduler 与存储
 
-- 六段 Cron、时区、夏令时、非法表达式和下一未来触发点。
+- 六段 Cron、时区、夏令时、非法表达式、下一未来触发点和可读计划描述。
+- 服务命令任务：不能同时携带 Agent 字段；快照包含命令；命令不在目录中时跳过并进入 Attention；
+  已完成的命令执行终态；seed 原地转换与启用规则；schema 版本升级补齐旧库的 `command` 列和快照。
 - 服务停机后不补跑。
 - 同一 `scheduled_for` 的原子去重。
 - 上一轮未结束时记录 `skipped`，且不创建第二个业务任务。
@@ -385,6 +425,8 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 
 ### Dispatcher
 
+- 服务命令在 trigger claim 内执行：成功链接 `service_command`，失败记 `failed` 并进入 Attention，
+  不创建 reply task、agent run 或 reply_attempt；微信命令的 Reader 健康语义（只记一次、成功后恢复）。
 - 多个 Queue Adapter 的公平领取和原子 claim。
 - 长任务不阻塞队列检查。
 - 同一任务不会被两个 Consumer 领取。
@@ -404,6 +446,8 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 ### API 与 UI
 
 - 顶部导航、任务列表、创建/编辑、启停、手动运行、删除和历史。
+- 执行类型选择：服务命令任务只显示命令和说明；seed 任务的命令不可改；`scheduled-task-options`
+  返回服务命令目录。
 - `$` Skill 选择与后端结构化引用一致。
 - Runtime 选项随 Settings 配置变化；不可用项显示原因。
 - 暗色模式正文、辅助文字、输入框、禁用状态和错误提示达到清晰可读的对比度。
@@ -417,7 +461,8 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 1. 新进程已经运行；
 2. 所有种子任务只创建一次，下一次运行时间正确；
 3. 手动运行 AI 听记同步能读取当前真实数据并更新内容游标；
-4. DingTalk、Meeting 和 WeChat 只由新 Agent Cron 触发，没有旧循环重复执行；
+4. DingTalk、Meeting 和 WeChat 只由新的定时任务触发，没有旧循环重复执行；钉钉和微信消息检查
+   以服务命令执行，运行记录链接 `service_command`，不产生 reply task、agent run 或 reply_attempt；
 5. Dispatcher 能将新输入交给正确 Consumer；
 6. Consumer → Audit → feedback → revision 和投递状态保持完整；
 7. 没有新增 unresolved `failed`、长期 `processing` 或未认领积压；
@@ -434,36 +479,8 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 
 ## 修订记录
 
-### 2026-09-09：服务命令任务
-
-原决定 3“用户可见的定时任务只有 Agent Cron”在实施后调整：钉钉消息检查和微信消息检查的
-prompt 只要求 Agent 执行一条确定性 producer 命令，Agent 在这里没有判断价值，却每次消耗 1 到
-2 次模型调用，并把每分钟一条执行记录写进消息历史。用户确认后，定时任务增加第二种执行形式：
-
-```text
-定时任务 = Cron + 执行形式
-  执行形式 = Agent（Skills + Runtime + prompt）
-           | 服务命令（服务命令目录中的一个名字）
-```
-
-- `scheduled_tasks.command` 非空即服务命令任务；它不携带 prompt、Runtime、Skill 引用和工作
-  目录，运行快照同样只记录命令名。目录当前有 `produce-once`（钉钉消息，每分钟）和
-  `wechat-produce-once`（微信消息，每 15 秒），实现分别与 `app.cli produce-once`、
-  `app.wechat.cli produce-once` 相同，且必须在服务启动时全部绑定。
-- 触发后由 Dispatcher 的 scheduled adapter 在同一 claim 内进程内执行；成功把
-  `execution_kind=service_command`、`execution_id=<命令名>` 链接到 trigger 并标记
-  `dispatched`，失败则 trigger 记 `failed` 并写入 `scheduled_task_service_command_failed`
-  进入 Attention。不创建 reply task、agent run 或 reply_attempt；命令幂等，claim 丢失后重跑。
-- Scheduler 对服务命令任务只校验重叠和命令是否在目录中（`scheduled_task_service_command_unavailable`），
-  不校验 Runtime 与 Skill；已链接的命令执行由构造保证终态。
-- 微信命令保留原内部循环的 Reader 健康语义：没有就绪账号或 reader 关闭时返回跳过摘要，Reader
-  IPC 连续失败 3 次只请求一次重启并只记一条错误，权限缺失只记一条，成功读取后自动恢复。
-- 种子迁移：以 Agent 形式创建过的同 migration key 任务在启动时原地转换，保留名称、Cron、
-  时区；从未编辑过的旧 seed 转换后启用，用户改过的保留其启用状态；已删除的不动。Console API
-  中 seed 任务的 `command` 不可修改；`GET /api/console/scheduled-task-options` 增加
-  `service_command_options`。
-- 页面对服务命令任务只显示命令，不显示 Runtime、prompt 和 Skill 编辑控件；运行记录显示
-  命令的可读名称。
-- 《业务任务迁移》表中“检查 DingTalk 消息”“检查 WeChat 消息”两行的“主要 Skill”不再适用；
-  其余五项保持 Agent 形式。旧的 `_run_wechat_loop` producer/consumer 角色随之删除，服务内只
-  保留 `wechat-sender` 循环。
+- 2026-09-09：增加“服务命令任务”执行形式（决定 3、5、15；服务命令小节；数据模型 `command`；
+  Scheduler 与 Dispatcher 语义；迁移表；测试与验收）。钉钉消息、微信消息检查改为服务命令，
+  旧的 `_run_wechat_loop` producer/consumer 角色删除，服务内只保留 `wechat-sender` 循环。
+- 2026-09-09：决定 13 细化：provider 暂时不可用导致的路由暂停只体现为运行记录和路由状态，
+  不按每次触发写 Attention；配置性不可用仍逐次进入 Attention。
