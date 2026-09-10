@@ -2,6 +2,7 @@
 
 **日期：** 2026-09-08
 **状态：** 产品设计已确认，等待书面 Spec 审阅
+**修订：** 2026-09-09 增加“服务命令任务”执行形式，见文末《修订记录》。
 
 ## 目标
 
@@ -430,3 +431,39 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 4. 新增 `ceo-minutes-sync` 托管 Skill 和听记种子任务，验证真实同步。
 5. 逐项迁移 DingTalk、Meeting、WeChat、OA、工作来源和每周 OKR；每项验证后删除旧计时入口。
 6. 完成回归测试、文档、服务重启、真实数据 readback 和浏览器验收。
+
+## 修订记录
+
+### 2026-09-09：服务命令任务
+
+原决定 3“用户可见的定时任务只有 Agent Cron”在实施后调整：钉钉消息检查和微信消息检查的
+prompt 只要求 Agent 执行一条确定性 producer 命令，Agent 在这里没有判断价值，却每次消耗 1 到
+2 次模型调用，并把每分钟一条执行记录写进消息历史。用户确认后，定时任务增加第二种执行形式：
+
+```text
+定时任务 = Cron + 执行形式
+  执行形式 = Agent（Skills + Runtime + prompt）
+           | 服务命令（服务命令目录中的一个名字）
+```
+
+- `scheduled_tasks.command` 非空即服务命令任务；它不携带 prompt、Runtime、Skill 引用和工作
+  目录，运行快照同样只记录命令名。目录当前有 `produce-once`（钉钉消息，每分钟）和
+  `wechat-produce-once`（微信消息，每 15 秒），实现分别与 `app.cli produce-once`、
+  `app.wechat.cli produce-once` 相同，且必须在服务启动时全部绑定。
+- 触发后由 Dispatcher 的 scheduled adapter 在同一 claim 内进程内执行；成功把
+  `execution_kind=service_command`、`execution_id=<命令名>` 链接到 trigger 并标记
+  `dispatched`，失败则 trigger 记 `failed` 并写入 `scheduled_task_service_command_failed`
+  进入 Attention。不创建 reply task、agent run 或 reply_attempt；命令幂等，claim 丢失后重跑。
+- Scheduler 对服务命令任务只校验重叠和命令是否在目录中（`scheduled_task_service_command_unavailable`），
+  不校验 Runtime 与 Skill；已链接的命令执行由构造保证终态。
+- 微信命令保留原内部循环的 Reader 健康语义：没有就绪账号或 reader 关闭时返回跳过摘要，Reader
+  IPC 连续失败 3 次只请求一次重启并只记一条错误，权限缺失只记一条，成功读取后自动恢复。
+- 种子迁移：以 Agent 形式创建过的同 migration key 任务在启动时原地转换，保留名称、Cron、
+  时区；从未编辑过的旧 seed 转换后启用，用户改过的保留其启用状态；已删除的不动。Console API
+  中 seed 任务的 `command` 不可修改；`GET /api/console/scheduled-task-options` 增加
+  `service_command_options`。
+- 页面对服务命令任务只显示命令，不显示 Runtime、prompt 和 Skill 编辑控件；运行记录显示
+  命令的可读名称。
+- 《业务任务迁移》表中“检查 DingTalk 消息”“检查 WeChat 消息”两行的“主要 Skill”不再适用；
+  其余五项保持 Agent 形式。旧的 `_run_wechat_loop` producer/consumer 角色随之删除，服务内只
+  保留 `wechat-sender` 循环。
