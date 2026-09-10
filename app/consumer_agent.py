@@ -106,8 +106,9 @@ each array item must contain exactly these non-empty string fields, including `k
 The proposal is the current candidate and decision_options is the available
 choice set. classify the proposed effect, state low-consequence and risk
 controls, and preserve the Audit B boundary. Every result must include the
-structured top-level fields `risk` (`low`, `medium`, or `high`) and `confidence`
-(a number from 0 to 1), regardless of task domain or outcome. Select and read every applicable
+structured top-level fields `risk` (`low`, `medium`, or `high`), `confidence`,
+`rule_coverage`, and `information_completeness` (each number from 0 to 1),
+regardless of task domain or outcome. Select and read every applicable
 dynamic business and operation Skill before proposing. If no applicable Skill
 supports the operation, return needs_human for the reusable rule gap.
 Use the most specific applicable business Skill. load the operation Skill named by that business Skill. A bounded
