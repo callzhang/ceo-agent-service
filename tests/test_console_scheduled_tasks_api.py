@@ -250,7 +250,7 @@ def test_scheduled_task_crud_returns_derived_schedule_and_exact_refs(
 
     assert created.status_code == 201
     item = created.json()["item"]
-    assert item["schedule_description"] == "0 * * * * * · Asia/Shanghai"
+    assert item["schedule_description"] == "每分钟执行 · Asia/Shanghai"
     assert item["next_run_at"] == "2026-09-08T12:01:00Z"
     assert item["runtime_options"] == {"thinking": "high"}
     assert item["recent_run"] is None

@@ -19,7 +19,7 @@ const task = {
   command: "",
   cron_expression: "0 * * * * *",
   timezone_name: "Asia/Shanghai",
-  schedule_description: "0 * * * * * · Asia/Shanghai",
+  schedule_description: "每分钟执行 · Asia/Shanghai",
   next_run_at: "2026-09-08T12:01:00Z",
   runtime_id: "codex_oauth",
   runtime_options: { thinking: "high" },

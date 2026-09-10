@@ -24,7 +24,7 @@ const run = {
 };
 const task = {
   id: 7, migration_key: null, name: "检查钉钉消息", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "",
-  cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", schedule_description: "每分钟 · Asia/Shanghai",
+  cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", schedule_description: "每分钟执行 · Asia/Shanghai",
   next_run_at: "2026-09-08T12:01:00Z", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const } as { thinking?: "low" | "medium" | "high" | "xhigh" },
   required_runtime_capabilities: [] as string[],
   working_directory: "/tmp/ceo-agent", enabled: true, version: 3, skill_refs: [operationRef], recent_run: run,
@@ -87,7 +87,7 @@ describe("ScheduledTasksPage", () => {
     expect(await screen.findByRole("heading", { name: "定时任务" })).toBeInTheDocument();
     const list = screen.getByRole("region", { name: "定时任务列表" });
     expect(within(list).getByText("检查钉钉消息")).toBeInTheDocument();
-    expect(within(list).getByText("每分钟 · Asia/Shanghai")).toBeInTheDocument();
+    expect(within(list).getByText("每分钟执行 · Asia/Shanghai")).toBeInTheDocument();
     expect(within(list).getByText(/下次.*2026/)).toBeInTheDocument();
     expect(within(list).getByText(/最近.*dispatched/)).toBeInTheDocument();
     expect(screen.getByLabelText("任务名称")).toHaveValue("检查钉钉消息");
