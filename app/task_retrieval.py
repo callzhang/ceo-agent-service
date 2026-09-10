@@ -75,6 +75,34 @@ def project_document(project: WorkProject) -> str:
     return "\n".join(str(field) for field in fields if field)
 
 
+def _structured_project_candidate(
+    store: AutoReplyStore,
+    summary: str,
+) -> WorkProject | None:
+    try:
+        payload = json.loads(summary)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    project_payload = payload.get("project")
+    if not isinstance(project_payload, dict):
+        return None
+    project_id = project_payload.get("id")
+    if (
+        isinstance(project_id, bool)
+        or not isinstance(project_id, int)
+        or project_id <= 0
+    ):
+        return None
+
+    project = store.get_work_project(project_id)
+    if project is None or project.status.value not in {"active", "waiting"}:
+        return None
+    return project
+
+
 def retrieve_project_candidates(
     store: AutoReplyStore,
     *,
@@ -131,6 +159,24 @@ def retrieve_project_candidates(
             )
 
     candidates.sort(key=lambda candidate: (-candidate.score, candidate.project.id))
+    structured_project = _structured_project_candidate(store, summary)
+    if structured_project is not None:
+        structured_score = max(
+            (candidate.score for candidate in candidates), default=0.0
+        ) + 1.0
+        candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.project.id != structured_project.id
+        ]
+        candidates.insert(
+            0,
+            ProjectCandidate(
+                project=structured_project,
+                score=structured_score,
+                document=project_document(structured_project),
+            ),
+        )
     return candidates[:limit]
 
 

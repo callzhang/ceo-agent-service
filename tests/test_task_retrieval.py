@@ -49,6 +49,44 @@ def test_retrieve_project_candidates_uses_summary_and_project_name(tmp_path):
     assert candidates[0].score > 0
 
 
+def test_retrieve_project_candidates_prioritizes_structured_project_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    authoritative_project_id = store.create_work_project(
+        title="实际项目",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        background="与文本检索词不相似。",
+    )
+    for index in range(5):
+        store.create_work_project(
+            title=f"项目闭环 {index}",
+            category="projects",
+            status="active",
+            priority="P2",
+            risk_level="low",
+            background="项目闭环相关的文本候选。",
+        )
+
+    summary = json.dumps(
+        {
+            "project": {"id": authoritative_project_id},
+            "todo": {"title": "推进项目闭环"},
+        },
+        ensure_ascii=False,
+    )
+
+    candidates = retrieve_project_candidates(
+        store,
+        summary=summary,
+        project_name="项目闭环",
+        limit=1,
+    )
+
+    assert candidates[0].project.id == authoritative_project_id
+
+
 def test_render_candidate_prompt_returns_project_context_json(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     store.create_work_project(
