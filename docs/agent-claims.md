@@ -52,7 +52,20 @@ reverts committed work they did not author.
   "minutes-access-request" app/` finds nothing, so the command form cannot do
   that. `docs/superpowers/specs/2026-09-08-agent-cron-and-managed-minutes-skill-design.md`
   states the sync must not treat a successful list request as synced content.
-  Two sessions verified this independently. It is deployed in command form
-  (live since 12:11:02 -0700), the managed Skill is now referenced by no task,
-  and the final call is Derek's — please leave it as it is until he rules,
-  rather than reverting in either direction.
+  Two sessions verified this independently. **Resolved 2026-09-10 by Derek:
+  it stays a service command.** Syncing minutes is deterministic work and the
+  `dws minutes` CLI already exposes every step it needs — `+list-all` /
+  `+list-shared` to enumerate, `+export-pack` to write the full artefacts to a
+  controlled directory with a manifest, `+detail` for summary and transcript,
+  and `+apply-permission` to request access automatically when a minute is
+  denied. No Agent judgement is involved, so the Agent form was the wrong
+  shape and the claim above is withdrawn.
+
+  The open work is that `sync-minutes-once` does not yet perform the sync: it
+  binds `scan_ai_minutes`, which only pages the list and enqueues work-summary
+  inputs. `grep -rn "export-pack\|apply-permission" app/ scripts/` finds
+  nothing, and `~/Documents/memory/AI听记` has had no new content since
+  2026-09-03, so local archiving has in fact stopped. Making the command do
+  the real sync (list → export-pack → archive → content cursor, with
+  apply-permission on denial) belongs to the Agent Cron owner. Do not convert
+  this task back to an Agent task.
