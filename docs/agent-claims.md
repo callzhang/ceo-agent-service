@@ -57,9 +57,24 @@ reverts committed work they did not author.
   `dws minutes` CLI already exposes every step it needs — `+list-all` /
   `+list-shared` to enumerate, `+export-pack` to write the full artefacts to a
   controlled directory with a manifest, `+detail` for summary and transcript,
-  and `+apply-permission` to request access automatically when a minute is
-  denied. No Agent judgement is involved, so the Agent form was the wrong
-  shape and the claim above is withdrawn.
+  and `+apply-permission` to request access when a minute is denied.
+
+  **Correction (same day, before implementing):** one premise of that ruling
+  was wrong and the scope is back with Derek. `+apply-permission` is *not*
+  automatic by design. `skills/ceo-minutes-sync/SKILL.md` marks it a
+  CONDITIONAL sub-skill, states that "restriction alone never authorizes a
+  request", and gates it on a relevance judgement over the visible title,
+  owner, participants and time: CEO-relevant and authorized may request;
+  clearly out of scope is `skipped` with audit metadata; relevance unknown
+  must not request and blocks the run as `permission_pending`/`needs_review`.
+  Everything else in the Skill (pagination completeness, fresh-read
+  verification, byte-exact archiving with sha256, manifest, content cursor,
+  and the `synced + skipped + permission_pending + failed = discovered`
+  ledger) is mechanical and portable to code. So the task is deterministic
+  except for that one decision, and whether it stays a pure command, returns
+  to an Agent task, or splits (command syncs; only restricted-and-unclear
+  items raise an Agent decision) is Derek's open call. Do not implement
+  automatic access requests for restricted minutes in the meantime.
 
   The open work is that `sync-minutes-once` does not yet perform the sync: it
   binds `scan_ai_minutes`, which only pages the list and enqueues work-summary
@@ -69,3 +84,4 @@ reverts committed work they did not author.
   the real sync (list → export-pack → archive → content cursor, with
   apply-permission on denial) belongs to the Agent Cron owner. Do not convert
   this task back to an Agent task.
+| Codex session `contract-quality` | `app/agent_contracts.py`, `app/agent_wire_contracts.py`, `app/schemas/consumer_agent_result.schema.json`, `app/schemas/audit_agent_result.schema.json`, `tests/test_agent_contracts.py` + related wire tests | decision quality fields and strict wire/schema contracts | 2026-09-10
