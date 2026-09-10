@@ -1,5 +1,36 @@
 # Changelog
 
+- 2026-09-10 (round 4, owner decisions, subagent-verified): three contract
+  decisions from Derek.
+  - `StrictTaskModel` (app/task_models.py) treats JSON `null` on any optional
+    field with a non-null default (`owner_evidence`, `blocker`,
+    `evidence_check`, `tags`, `memory_context`, `todo_changes`, ...) as the
+    field being omitted: a before-validator drops the key so downstream code
+    keeps seeing the declared default, and
+    `TaskAgentDecision.model_json_schema()` — embedded in every task prompt —
+    renders those fields as nullable (`anyOf` with `null`). Required fields
+    and the evidence objects an action needs stay non-nullable, and the
+    correction prompt no longer claims `null` is forbidden everywhere.
+    MiniMax's habitual `owner_evidence: null` had cost a correction turn and
+    then failed the run (47 failures since 2026-09-09).
+  - No legacy model-output compatibility left: `parse_codex_json` loses its
+    `allow_legacy` mode (pre-envelope `{action, reply_text}` objects, the
+    lenient envelope-like fallback that invented audit summaries, the legacy
+    `okr_review` + `request_id/result` conversion, the OKR audit normaliser
+    and the action-free `no_reply` shorthand are gone). A wrong shape gets
+    the single same-session correction naming the pydantic field paths;
+    otherwise the task fails and is rerun.
+  - After the one same-session correction turn, a capacity/transport failure
+    of that turn is waited out up to `CAPACITY_WAITS_BEFORE_FAILOVER` (3)
+    times before the workload leaves the route: each failure raises the
+    retryable `runtime_execution_failed` (`correction_capacity_wait:<n>`)
+    that the workers defer, a persisted correction with a capacity/transport
+    failure resumes on its own route while the wait budget lasts
+    (`persisted_correction_route_unavailable` while that route is paused),
+    and the 4th failure fails over to a successor route with a fresh session,
+    the original prompt and its own correction budget. Non-outage failures of
+    the correction turn stay terminal.
+
 - 2026-09-10: two `tests/test_agent_runtime_worker.py` baselines
   (`test_worker_stops_retryable_orchestration_at_attempt_limit`,
   `test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol`)

@@ -15,6 +15,7 @@ from app.agent_runtime_contracts import (
     RuntimeFailureClass,
 )
 from app.agent_runtime_router import (
+    CAPACITY_WAITS_BEFORE_FAILOVER,
     AgentRuntimeRouter,
     CodexCommandFactory,
     RoutedCodexExecution,
@@ -981,6 +982,362 @@ def test_expired_persisted_correction_attempt_never_starts_third_prompt_or_failo
     assert attempts[-1].failure_code == "runtime_lease_expired"
 
 
+
+
+CORRECTION_TURN_PROVIDER_FAILURES = [
+    RuntimeFailure(
+        failure_class=RuntimeFailureClass.CAPACITY,
+        code="codex_provider_overloaded",
+        detail="redacted",
+        retryable_on_same_route=True,
+        failover_permitted=True,
+        route_pause_required=True,
+    ),
+    RuntimeFailure(
+        failure_class=RuntimeFailureClass.TRANSPORT,
+        code="codex_transport_disconnected",
+        detail="redacted",
+        retryable_on_same_route=True,
+        failover_permitted=True,
+        route_pause_required=True,
+    ),
+]
+
+
+class CorrectionTurnFailureAdapter(FakeAdapter):
+    """Classify every process failure as the given provider failure."""
+
+    def __init__(self, failure: RuntimeFailure) -> None:
+        super().__init__()
+        self.failure = failure
+
+    def classify_failure(self, stdout, stderr, returncode, **kwargs):
+        return self.failure
+
+
+def _correction_turn_executor(prompts: list[str], values_by_call: dict[int, int]):
+    """Return an executor whose calls after the first fail unless listed.
+
+    Call 1 answers on ``session-1`` with an invalid value so the correction
+    turn starts; a call without a listed value exits 1 (a provider failure);
+    a listed call answers on ``api-session`` with that value.
+    """
+
+    def executor(command, **kwargs):
+        prompts.append(kwargs["prompt"])
+        call = len(prompts)
+        if call == 1:
+            session_id, value = "session-1", 0
+        elif call in values_by_call:
+            session_id, value = "api-session", values_by_call[call]
+        else:
+            return ProcessRunResult(1, "", "provider failed")
+        return ProcessRunResult(
+            0,
+            "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": session_id}),
+                    json.dumps({"type": "result", "value": value}),
+                ]
+            ),
+            "",
+        )
+
+    return executor
+
+
+def _parse_complete_value(raw):
+    value = json.loads(raw.splitlines()[-1])["value"]
+    if value != 42:
+        raise RoutedResultValidationError("expected complete KR coverage")
+    return value
+
+
+def _correction_wait_harness(store, config, failure, prompts, values_by_call):
+    """Return an execution and its movable clock for multi-pass correction waits.
+
+    Router and execution share the clock so a route pause opened by one pass
+    lifts for the next once the clock moves past ``config.retry_delay``; the
+    snapshots outlive every pass of a test.
+    """
+
+    clock = [NOW]
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=CAPABILITIES,
+            healthy=True,
+            checked_at="2026-08-20T09:59:00+00:00",
+            expires_at="2026-08-21T00:00:00+00:00",
+        )
+        for route in config.routes
+    }
+    adapter = CorrectionTurnFailureAdapter(failure)
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=AgentRuntimeRouter(
+            routes=config.routes,
+            store=store,
+            snapshots=snapshots,
+            now=lambda: clock[0],
+        ),
+        adapter=adapter,
+        executor=_correction_turn_executor(prompts, values_by_call),
+        session_line_counter=lambda _session_id: 2,
+        now=lambda: clock[0],
+    )
+    return routed, adapter, clock
+
+
+def _execute_with_correction_turn(routed, key, prompt="analyze all KRs"):
+    return routed.execute(
+        workload_kind="structured",
+        workload_key=key,
+        prompt=prompt,
+        command_factory=CodexCommandFactory.standard(
+            developer_instructions="reviewed reads only"
+        ),
+        parser=_parse_complete_value,
+        result_codec=INT_CODEC,
+        required_capabilities=CAPABILITIES,
+        result_validation_retry=RoutedResultValidationRetry.exactly_once(
+            correction_instructions="Return every KR and revalidate the full result."
+        ),
+    )
+
+
+def _expect_correction_deferral(routed, key, failure, reason):
+    """Run one pass that must defer on ``failure`` without a terminal outcome."""
+
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed") as raised:
+        _execute_with_correction_turn(routed, key)
+    assert raised.value.reason == reason
+    assert raised.value.failure_class is failure.failure_class
+    assert raised.value.failure_code == failure.code
+    assert raised.value.retryable_external_dependency is True
+    assert raised.value.runtime_unavailable is False
+
+
+def _wait_out_correction_failures(routed, key, failure, clock, config):
+    """Defer the first CAPACITY_WAITS_BEFORE_FAILOVER correction failures."""
+
+    for wait in range(1, CAPACITY_WAITS_BEFORE_FAILOVER + 1):
+        _expect_correction_deferral(
+            routed, key, failure, f"correction_capacity_wait:{wait}"
+        )
+        clock[0] += config.retry_delay + timedelta(minutes=1)
+
+
+@pytest.mark.parametrize(
+    "failure", CORRECTION_TURN_PROVIDER_FAILURES, ids=lambda failure: failure.code
+)
+def test_provider_failure_during_correction_waits_three_times_then_fails_over(
+    store, config, failure
+):
+    key = seed_structured_parent(store, 77)
+    prompts: list[str] = []
+    routed, adapter, clock = _correction_wait_harness(
+        store, config, failure, prompts, {6: 42}
+    )
+
+    _wait_out_correction_failures(routed, key, failure, clock, config)
+
+    # Pass 1 ran the prompt and the correction; passes 2 and 3 resumed the
+    # same correction session on the same route instead of leaving it.
+    assert adapter.commands == [
+        ("codex_oauth", None, "on-failure", False),
+        ("codex_oauth", "session-1", "on-failure", False),
+        ("codex_oauth", "session-1", "on-failure", False),
+        ("codex_oauth", "session-1", "on-failure", False),
+    ]
+    assert all("Return every KR" in prompt for prompt in prompts[1:])
+
+    result = _execute_with_correction_turn(routed, key)
+
+    assert result.value == 42
+    assert result.route_name == "codex_api"
+    assert adapter.commands[4:] == [
+        ("codex_oauth", "session-1", "on-failure", False),
+        ("codex_api", None, "on-failure", False),
+    ]
+    assert prompts[5] == "analyze all KRs"
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [attempt.status for attempt in attempts] == ["superseded"] * 5 + [
+        "completed"
+    ]
+    assert [attempt.route_name for attempt in attempts] == ["codex_oauth"] * 5 + [
+        "codex_api"
+    ]
+    assert [attempt.attempt_purpose for attempt in attempts] == [
+        "normal",
+        *["result_validation_correction"] * 4,
+        "normal",
+    ]
+    assert {attempt.failure_class for attempt in attempts[1:5]} == {
+        failure.failure_class.value
+    }
+    assert {attempt.failure_code for attempt in attempts[1:5]} == {failure.code}
+    assert store.active_runtime_route_pause("codex_oauth", now=clock[0]) == failure.code
+    assert store.active_runtime_route_pause("codex_api", now=clock[0]) is None
+
+
+@pytest.mark.parametrize(
+    "failure", CORRECTION_TURN_PROVIDER_FAILURES, ids=lambda failure: failure.code
+)
+def test_correction_wait_holds_while_its_route_is_paused_even_with_a_live_successor(
+    store, config, failure
+):
+    key = seed_structured_parent(store, 78)
+    prompts: list[str] = []
+    routed, adapter, clock = _correction_wait_harness(
+        store, config, failure, prompts, {}
+    )
+
+    _expect_correction_deferral(routed, key, failure, "correction_capacity_wait:1")
+    assert store.active_runtime_route_pause("codex_oauth", now=clock[0]) == failure.code
+    assert store.active_runtime_route_pause("codex_api", now=clock[0]) is None
+
+    # Re-entering before the pause lifts keeps waiting: no process, no
+    # successor, and the persisted correction attempt is untouched.
+    _expect_correction_deferral(
+        routed, key, failure, "persisted_correction_route_unavailable"
+    )
+    assert len(prompts) == 2
+    assert [command[0] for command in adapter.commands] == ["codex_oauth", "codex_oauth"]
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [attempt.status for attempt in attempts] == ["superseded", "failed"]
+
+    clock[0] += config.retry_delay + timedelta(minutes=1)
+    _expect_correction_deferral(routed, key, failure, "correction_capacity_wait:2")
+    assert adapter.commands[2] == ("codex_oauth", "session-1", "on-failure", False)
+    assert "Return every KR" in prompts[2]
+
+
+def test_successor_route_after_correction_waits_gets_its_own_correction_and_waits(
+    store, config
+):
+    failure = CORRECTION_TURN_PROVIDER_FAILURES[0]
+    key = seed_structured_parent(store, 79)
+    prompts: list[str] = []
+    routed, adapter, clock = _correction_wait_harness(
+        store, config, failure, prompts, {6: 0, 8: 42}
+    )
+
+    _wait_out_correction_failures(routed, key, failure, clock, config)
+
+    # The fourth failure fails over; the successor's own correction turn then
+    # hits capacity and starts a new wait budget (five capacity failures of
+    # this key so far, but only one in the successor's repair).
+    _expect_correction_deferral(routed, key, failure, "correction_capacity_wait:1")
+    assert adapter.commands[4:] == [
+        ("codex_oauth", "session-1", "on-failure", False),
+        ("codex_api", None, "on-failure", False),
+        ("codex_api", "api-session", "on-failure", False),
+    ]
+    assert prompts[5] == "analyze all KRs"
+    assert "Return every KR" in prompts[6]
+    assert store.active_runtime_route_pause("codex_api", now=clock[0]) == failure.code
+
+    clock[0] += config.retry_delay + timedelta(minutes=1)
+    result = _execute_with_correction_turn(routed, key)
+
+    assert result.value == 42
+    assert result.route_name == "codex_api"
+    assert adapter.commands[7] == ("codex_api", "api-session", "on-failure", False)
+    assert "Return every KR" in prompts[7]
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [attempt.status for attempt in attempts] == ["superseded"] * 7 + [
+        "completed"
+    ]
+    assert [attempt.attempt_purpose for attempt in attempts] == [
+        "normal",
+        *["result_validation_correction"] * 4,
+        "normal",
+        "result_validation_correction",
+        "result_validation_correction",
+    ]
+    assert [attempt.route_name for attempt in attempts] == ["codex_oauth"] * 5 + [
+        "codex_api"
+    ] * 3
+    assert attempts[5].failure_code == "runtime_result_validation_failed"
+
+
+def test_exhausted_correction_waits_defer_until_a_successor_route_is_live(
+    store, config
+):
+    failure = CORRECTION_TURN_PROVIDER_FAILURES[0]
+    key = seed_structured_parent(store, 80)
+    store.open_runtime_route_pause(
+        "codex_api", "codex_provider_overloaded", retry_at="2099-01-01T00:00:00+00:00"
+    )
+    prompts: list[str] = []
+    routed, adapter, clock = _correction_wait_harness(
+        store, config, failure, prompts, {6: 42}
+    )
+
+    _wait_out_correction_failures(routed, key, failure, clock, config)
+
+    # The fourth failure would fail over, but no other route is live.
+    _expect_correction_deferral(routed, key, failure, "no_eligible_route")
+    assert len(prompts) == 5
+    assert [command[0] for command in adapter.commands] == ["codex_oauth"] * 5
+
+    # A later pass with the wait budget spent never resumes the correction
+    # session: it waits for a successor without running a process.
+    clock[0] += config.retry_delay + timedelta(minutes=1)
+    _expect_correction_deferral(routed, key, failure, "no_eligible_route")
+    assert len(prompts) == 5
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [attempt.status for attempt in attempts] == ["superseded"] * 4 + ["failed"]
+
+    store.close_runtime_route_pause("codex_api")
+    result = _execute_with_correction_turn(routed, key)
+
+    assert result.value == 42
+    assert result.route_name == "codex_api"
+    assert adapter.commands[5] == ("codex_api", None, "on-failure", False)
+    assert prompts[5] == "analyze all KRs"
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [attempt.status for attempt in attempts] == ["superseded"] * 5 + [
+        "completed"
+    ]
+    assert attempts[-1].attempt_purpose == "normal"
+
+
+def test_auth_failure_during_correction_stays_terminal_without_failover(store, config):
+    key = seed_structured_parent(store, 81)
+    adapter = FakeAdapter()
+    prompts: list[str] = []
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=adapter,
+        executor=_correction_turn_executor(prompts, {}),
+        session_line_counter=lambda _session_id: 2,
+    )
+
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed") as raised:
+        _execute_with_correction_turn(routed, key)
+
+    assert raised.value.failure_class is RuntimeFailureClass.AUTHENTICATION
+    assert raised.value.failure_code == "codex_login_required"
+    assert raised.value.retryable_external_dependency is False
+    assert len(prompts) == 2
+    assert [command[0] for command in adapter.commands] == ["codex_oauth", "codex_oauth"]
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [attempt.status for attempt in attempts] == ["superseded", "failed"]
+    assert attempts[1].attempt_purpose == "result_validation_correction"
+    assert attempts[1].failure_code == "codex_login_required"
+    assert store.active_runtime_route_pause("codex_api", now=NOW) is None
+
+    # The consumed correction turn stays consumed on the next pass.
+    with pytest.raises(
+        RoutedCodexExecutionError, match="runtime_result_validation_retry_consumed"
+    ):
+        _execute_with_correction_turn(routed, key)
+    assert len(prompts) == 2
 
 
 def test_exhausted_transport_failure_exposes_structured_external_retry_metadata(

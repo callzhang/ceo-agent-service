@@ -466,6 +466,38 @@ def _is_retryable_external_runtime_failure(failure: RuntimeFailure) -> bool:
     }
 
 
+# A capacity/transport failure of the one same-session correction turn is
+# waited out this many times before the workload leaves the route: the caller
+# defers, and the next pass resumes the correction session on the same route
+# once it is live again. The fourth such failure fails over to a successor
+# route, which restarts from the original prompt with its own correction turn.
+CAPACITY_WAITS_BEFORE_FAILOVER = 3
+
+_CAPACITY_WAIT_FAILURE_CLASSES = frozenset(
+    {RuntimeFailureClass.CAPACITY.value, RuntimeFailureClass.TRANSPORT.value}
+)
+
+
+def _correction_capacity_waits(attempts: Sequence[AgentRuntimeAttempt]) -> int:
+    """Count the correction turns of the current repair lost to the provider.
+
+    The repair starts at the newest ``runtime_result_validation_failed``
+    attempt; correction turns before it belong to an earlier repair of the
+    same workload key (a successor route runs its own) and never count.
+    """
+
+    waits = 0
+    for attempt in reversed(attempts):
+        if attempt.failure_code == "runtime_result_validation_failed":
+            break
+        if (
+            attempt.attempt_purpose == "result_validation_correction"
+            and attempt.failure_class in _CAPACITY_WAIT_FAILURE_CLASSES
+        ):
+            waits += 1
+    return waits
+
+
 def _agent_run_workload_id(workload_kind: str, workload_key: str) -> int | None:
     if workload_kind != "agent_run":
         return None
@@ -922,12 +954,25 @@ class RoutedCodexExecution:
                 )
             if latest.status != "failed":
                 raise RoutedCodexExecutionError("runtime_attempt_state_invalid")
-            if latest.attempt_purpose == "result_validation_correction":
+            if (
+                latest.attempt_purpose == "result_validation_correction"
+                and latest.failure_class not in _CAPACITY_WAIT_FAILURE_CLASSES
+            ):
                 raise RoutedCodexExecutionError(
                     "runtime_result_validation_retry_consumed",
                     failure_class=RuntimeFailureClass.RESULT,
                     failure_code="runtime_result_validation_retry_consumed",
                 )
+            # A correction turn lost to capacity/transport is not consumed:
+            # the caller deferred, and this pass resumes it on its own route
+            # while the repair is within its wait budget.
+            can_resume_correction_wait = (
+                latest.attempt_purpose == "result_validation_correction"
+                and result_validation_retry is not None
+                and bool(latest.session_id)
+                and _correction_capacity_waits(existing_attempts)
+                <= CAPACITY_WAITS_BEFORE_FAILOVER
+            )
             validation_failures = sum(
                 attempt.failure_code == "runtime_result_validation_failed"
                 for attempt in existing_attempts
@@ -941,7 +986,42 @@ class RoutedCodexExecution:
                     or bool(latest.session_id)
                 )
             )
-            if can_resume_validation_retry:
+            if can_resume_correction_wait:
+                correction_route = self._router.first_route_decision(
+                    required_capabilities=required_capabilities,
+                    excluded_routes=frozenset(
+                        route.name
+                        for route in self._config.routes
+                        if route.name != latest.route_name
+                    ),
+                ).route
+                if correction_route is None:
+                    # The route is still paused or unprobed: the wait goes on
+                    # without spending a correction turn or a successor.
+                    raise RoutedCodexExecutionError(
+                        "runtime_execution_failed",
+                        "persisted_correction_route_unavailable",
+                        failure_class=RuntimeFailureClass(latest.failure_class),
+                        failure_code=latest.failure_code,
+                        retryable_external_dependency=True,
+                    )
+                decision = RuntimeRouteDecision(
+                    route=correction_route,
+                    fresh_session=False,
+                    reason="persisted_correction_capacity_wait",
+                )
+                forced_retry_session_id = latest.session_id
+                prompt = result_validation_retry.corrected_prompt(
+                    original_prompt,
+                    RoutedResultValidationError(
+                        "the prior persisted result did not satisfy validation"
+                    ),
+                )
+                result_validation_retries_used = 1
+                next_attempt_purpose = "result_validation_correction"
+                next_validation_retry_policy_id = result_validation_retry.policy_id
+                next_validation_result_schema_id = result_codec.schema_id
+            elif can_resume_validation_retry:
                 eligible = self._router.first_route_decision(
                     required_capabilities=required_capabilities
                 )
@@ -1485,14 +1565,31 @@ class RoutedCodexExecution:
                 ),
             )
             if result_validation_retries_used > 0:
-                raise RoutedCodexExecutionError(
-                    "runtime_execution_failed",
-                    failure_class=failure.failure_class,
-                    failure_code=failure.code,
-                    retryable_external_dependency=(
-                        _is_retryable_external_runtime_failure(failure)
-                    ),
+                if not _is_retryable_external_runtime_failure(failure):
+                    # The correction turn was this workload's one repair; any
+                    # failure of that turn other than a provider outage ends
+                    # the run instead of buying another route.
+                    raise RoutedCodexExecutionError(
+                        "runtime_execution_failed",
+                        failure_class=failure.failure_class,
+                        failure_code=failure.code,
+                        retryable_external_dependency=False,
+                    )
+                waits = _correction_capacity_waits(
+                    self._runtime_attempts(
+                        workload_kind, workload_key, agent_run_id=agent_run_id
+                    )
                 )
+                if waits <= CAPACITY_WAITS_BEFORE_FAILOVER:
+                    # The correction session lives on this provider: the
+                    # caller defers and the next pass resumes it here.
+                    raise RoutedCodexExecutionError(
+                        "runtime_execution_failed",
+                        f"correction_capacity_wait:{waits}",
+                        failure_class=failure.failure_class,
+                        failure_code=failure.code,
+                        retryable_external_dependency=True,
+                    )
 
             next_decision = self._next_route_after_failure(
                 workload_kind=workload_kind,
@@ -1513,6 +1610,12 @@ class RoutedCodexExecution:
                     ),
                 )
             route = next_decision.route
+            if result_validation_retries_used > 0:
+                # The wait budget is spent: the correction session stays on
+                # the failed provider, so the successor route restarts from
+                # the original prompt with its own correction turn.
+                prompt = original_prompt
+                result_validation_retries_used = 0
             route_session_id = (
                 None
                 if next_decision.fresh_session

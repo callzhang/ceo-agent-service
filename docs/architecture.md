@@ -769,6 +769,15 @@ run 才能被持久队列恢复。
   同样按可重试的外部依赖延期，而不是判为执行失败。这种“没有进入任何路由”的状态由路由层以
   `runtime_unavailable` 标记；工作项 worker 据此只延期、不消耗自身的有限重试次数，也不记录逐条
   Service error（路由暂停本身就是信号）。
+- **可选字段的 null**：任务 Agent 决策模型（`StrictTaskModel`）把可选字段上的 JSON `null` 视为“未提供”（等同省略，
+  下游仍看到声明的默认值），派生 schema 把这些字段标为可空；必填字段与动作所需的证据对象仍不可为 null。
+- **模型输出不兼容旧结构**：微信/钉钉决策与 OKR 评审的 `AgentEnvelope` 解析不再接受任何旧结构（旧 `CodexDecision`
+  对象、宽松 envelope 回退、`okr_review`+`request_id/result`、无动作的 `no_reply` 简写）；结构错误只做一次同会话修正，
+  仍失败则任务失败并重跑。
+- **修正轮遇到供应商故障**：唯一一次同会话修正轮以 capacity/transport 失败时，最多等待
+  `CAPACITY_WAITS_BEFORE_FAILOVER`（3）次再离开该路由：每次失败以可重试的 `runtime_execution_failed`
+  （`correction_capacity_wait:<n>`）交给调用方退避延期；等待期内该修正会话只在自己的路由上恢复；第 4 次失败换到
+  后继路由，用新会话、原始 prompt 和独立的修正预算。修正轮的非故障类失败仍为终态。
 - **同一 revision 的角色重试上限**：Consumer 或 Audit 在一次 worker pass 内对同一 proposal revision 最多 2 次
   turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的结果/进程/依赖/原生写入失败时编排结果进入
   `failed_terminal`，任务在本 pass 结束为 `failed` 并保留最后一个 run 的真实错误码，不再回到 `pending` 让下一个

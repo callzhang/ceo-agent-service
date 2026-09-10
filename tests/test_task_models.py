@@ -182,6 +182,149 @@ def test_task_agent_decision_accepts_project_todo_and_follow_up():
     assert decision.follow_up_drafts[0].status == FollowUpDraftStatus.DRAFT
 
 
+def test_task_agent_decision_treats_null_optional_fields_as_omitted():
+    # MiniMax sends null for optional fields it has nothing to say about.
+    payload = {
+        "action": "update_project",
+        "project": {
+            "id": 7,
+            "title": "售前知识库建设",
+            "memory_context": _memory_context(),
+        },
+        "todo_changes": [
+            {
+                "action": "update",
+                "todo_id": 2423,
+                "owner_evidence": None,
+                "blocker": None,
+                "deadline_at": None,
+                "completion_evidence": None,
+            }
+        ],
+        "follow_up_changes": [
+            {
+                "follow_up_id": 1423,
+                "action": "keep_open",
+                "next_due_at": None,
+                "evidence_check": None,
+                "owner_evidence": None,
+                "reason": None,
+            }
+        ],
+        "memory_recall_used": True,
+    }
+    omitted = {
+        **payload,
+        "todo_changes": [
+            {"action": "update", "todo_id": 2423, "completion_evidence": None}
+        ],
+        "follow_up_changes": [
+            {"follow_up_id": 1423, "action": "keep_open", "next_due_at": None}
+        ],
+    }
+
+    decision = TaskAgentDecision.model_validate(payload)
+
+    assert decision == TaskAgentDecision.model_validate(omitted)
+    todo_change = decision.todo_changes[0]
+    assert todo_change.owner_evidence == {}
+    assert todo_change.blocker == ""
+    assert todo_change.deadline_at == ""
+    assert todo_change.model_fields_set == {"action", "todo_id", "completion_evidence"}
+    assert todo_change.completion_evidence is None
+    follow_up_change = decision.follow_up_changes[0]
+    assert follow_up_change.owner_evidence == {}
+    assert follow_up_change.evidence_check == {}
+    assert follow_up_change.reason == ""
+    assert follow_up_change.next_due_at is None
+
+
+@pytest.mark.parametrize(
+    ("payload", "field"),
+    [
+        ({"action": None}, "action"),
+        (
+            {
+                "action": "update_project",
+                "follow_up_changes": [{"follow_up_id": None, "action": "keep_open"}],
+            },
+            "follow_up_changes.0.follow_up_id",
+        ),
+        (
+            {
+                "action": "create_project",
+                "follow_up_drafts": [
+                    {
+                        "title": None,
+                        "description": "x",
+                        "target_kind": "group",
+                        "question_text": "x",
+                    }
+                ],
+            },
+            "follow_up_drafts.0.title",
+        ),
+        (
+            {
+                "action": "create_project",
+                "project": {
+                    "title": "x",
+                    "facts": [{"description": "x", "source": None}],
+                },
+            },
+            "project.facts.0.source",
+        ),
+    ],
+)
+def test_task_agent_decision_keeps_required_fields_non_nullable(payload, field):
+    with pytest.raises(ValidationError) as raised:
+        TaskAgentDecision.model_validate(payload)
+
+    assert [
+        ".".join(str(part) for part in error["loc"]) for error in raised.value.errors()
+    ] == [field]
+
+
+def test_task_agent_decision_schema_marks_defaulted_fields_nullable():
+    schema = TaskAgentDecision.model_json_schema()
+    defs = schema["$defs"]
+
+    def nullable(property_schema):
+        return {"type": "null"} in property_schema.get("anyOf", [])
+
+    for property_schema in (
+        defs["TodoChange"]["properties"]["owner_evidence"],
+        defs["TodoChange"]["properties"]["blocker"],
+        defs["FollowUpDraftChange"]["properties"]["owner_evidence"],
+        defs["FollowUpDraftChange"]["properties"]["evidence_check"],
+        defs["TaskProjectPatch"]["properties"]["memory_context"],
+        defs["TaskProjectPatch"]["properties"]["tags"],
+        schema["properties"]["todo_changes"],
+    ):
+        assert nullable(property_schema)
+    assert defs["TodoChange"]["properties"]["blocker"] == {
+        "anyOf": [{"type": "string"}, {"type": "null"}],
+        "default": "",
+        "title": "Blocker",
+    }
+    assert defs["TodoChange"]["properties"]["owner_evidence"]["title"] == "Owner Evidence"
+
+    for property_schema in (
+        defs["TodoChange"]["properties"]["action"],
+        defs["FollowUpDraftChange"]["properties"]["follow_up_id"],
+        defs["FollowUpDraftDecision"]["properties"]["title"],
+        defs["ProjectFact"]["properties"]["source"],
+        schema["properties"]["action"],
+    ):
+        assert not nullable(property_schema)
+        assert "anyOf" not in property_schema
+    assert defs["TodoChange"]["properties"]["completion_evidence"] == {
+        "anyOf": [{"additionalProperties": True, "type": "object"}, {"type": "null"}],
+        "default": None,
+        "title": "Completion Evidence",
+    }
+
+
 def test_task_agent_decision_rejects_unknown_root_field():
     with pytest.raises(ValidationError, match="unexpected_root"):
         TaskAgentDecision.model_validate(

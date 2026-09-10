@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from app.agent_envelope import AgentEnvelope
 from app.agent_runtime_router import CodexCommandFactory
@@ -11,6 +12,7 @@ from app.structured_agent import (
     AgentSpec,
     SkillLoadError,
     StructuredCodexRunner,
+    _agent_envelope_schema_problems,
     load_skill_text,
     parse_agent_envelope,
 )
@@ -118,7 +120,7 @@ def test_structured_runner_routes_processing_request_with_standard_runtime(tmp_p
     assert result.codex_session_id == "structured-session"
 
 
-def test_parse_agent_envelope_accepts_legacy_okr_review_result():
+def test_parse_agent_envelope_rejects_legacy_okr_review_result():
     payload = {
         "kind": "okr_review",
         "request_id": 5,
@@ -157,56 +159,49 @@ def test_parse_agent_envelope_accepts_legacy_okr_review_result():
     }
     raw = json.dumps({"item": {"text": json.dumps(payload, ensure_ascii=False)}})
 
-    envelope = parse_agent_envelope(raw)
+    # The OKR prompt forbids the pre-envelope shape; it gets the correction turn.
+    with pytest.raises(ValidationError) as raised:
+        parse_agent_envelope(raw)
 
-    assert envelope.kind == "okr_review"
-    assert envelope.system_actions[0].type == "persist_okr_review"
-    assert envelope.system_actions[0].request_id == 5
-    assert envelope.domain_payload["person_name"] == "Claire"
+    assert "user_response" in str(raised.value)
+    assert "user_response: Field required" in _agent_envelope_schema_problems(raw)
 
 
-def test_parse_agent_envelope_accepts_no_reply_shorthand_without_actions():
-    envelope = parse_agent_envelope(
-        json.dumps(
-            {
-                "item": {
-                    "content": [
-                        {
-                            "type": "Text",
-                            "text": json.dumps(
-                                {
-                                    "mode": "no_reply",
-                                    "audit_summary": "The delayed response would be stale.",
-                                }
-                            ),
-                        }
-                    ]
-                }
+def test_parse_agent_envelope_rejects_no_reply_shorthand():
+    raw = json.dumps(
+        {
+            "item": {
+                "content": [
+                    {
+                        "type": "Text",
+                        "text": json.dumps(
+                            {
+                                "mode": "no_reply",
+                                "audit_summary": "The delayed response would be stale.",
+                            }
+                        ),
+                    }
+                ]
             }
-        )
+        }
     )
 
-    assert envelope.kind == "no_action"
-    assert envelope.user_response.mode == "no_reply"
-    assert envelope.user_response.text == ""
-    assert envelope.system_actions == []
-    assert envelope.domain_payload == {}
-    assert envelope.audit.summary == "The delayed response would be stale."
+    with pytest.raises(ValidationError) as raised:
+        parse_agent_envelope(raw)
+
+    assert "kind" in str(raised.value)
+    assert "user_response" in str(raised.value)
+    assert "kind: Field required" in _agent_envelope_schema_problems(raw)
+    # A bare top-level shorthand is not an envelope line and not an agent message.
+    for bare in (
+        {"mode": "no_reply", "audit_summary": "The delayed response would be stale."},
+        {"mode": "no_reply", "system_actions": []},
+    ):
+        with pytest.raises(ValueError, match="no valid AgentEnvelope"):
+            parse_agent_envelope(json.dumps(bare))
 
 
-def test_parse_agent_envelope_rejects_no_reply_shorthand_with_extra_fields():
-    with pytest.raises(ValueError, match="no valid AgentEnvelope"):
-        parse_agent_envelope(
-            json.dumps(
-                {
-                    "mode": "no_reply",
-                    "system_actions": [],
-                }
-            )
-        )
-
-
-def test_parse_agent_envelope_normalizes_okr_review_audit_object():
+def test_parse_agent_envelope_rejects_okr_review_audit_without_schema_fields():
     payload = {
         "kind": "okr_review",
         "user_response": {
@@ -254,11 +249,16 @@ def test_parse_agent_envelope_normalizes_okr_review_audit_object():
     }
     raw = json.dumps({"item": {"text": json.dumps(payload, ensure_ascii=False)}})
 
-    envelope = parse_agent_envelope(raw)
+    # The audit object is no longer patched into shape (summary from method,
+    # invented confidence); the model gets the field list instead.
+    with pytest.raises(ValidationError) as raised:
+        parse_agent_envelope(raw)
 
-    assert envelope.audit.summary == "逐 KR 审核。"
-    assert envelope.audit.documents == []
-    assert envelope.audit.confidence == 0.7
+    assert "audit.confidence" in str(raised.value)
+    problems = _agent_envelope_schema_problems(raw)
+    assert "audit.summary: Field required" in problems
+    assert "audit.documents: Field required" in problems
+    assert "audit.confidence: Field required" in problems
 
 
 def test_structured_runner_uses_conversation_session_lock_and_persists_session(

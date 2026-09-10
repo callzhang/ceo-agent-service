@@ -137,7 +137,7 @@ def codex_decision_from_envelope(envelope: Any) -> CodexDecision:
     )
 
 
-def parse_codex_json(raw: str, *, allow_legacy: bool = True) -> CodexDecision:
+def parse_codex_json(raw: str) -> CodexDecision:
     """Return the decision in ``raw`` (one JSON object or Codex JSONL), last line first.
 
     Raises the ``ValidationError`` of the first envelope-shaped candidate when no
@@ -146,7 +146,7 @@ def parse_codex_json(raw: str, *, allow_legacy: bool = True) -> CodexDecision:
     failure: ValidationError | None = None
     for payload in reversed(_iter_json_payloads(raw)):
         try:
-            decision = _decision_from_payload(payload, allow_legacy=allow_legacy)
+            decision = _decision_from_payload(payload)
         except ValidationError as exc:
             failure = failure or exc
             continue
@@ -154,12 +154,7 @@ def parse_codex_json(raw: str, *, allow_legacy: bool = True) -> CodexDecision:
             return decision
     if failure is not None:
         raise failure
-    message = (
-        "No AgentEnvelope JSON found"
-        if not allow_legacy
-        else "No Codex decision JSON found"
-    )
-    raise json.JSONDecodeError(message, raw, 0)
+    raise json.JSONDecodeError("No AgentEnvelope JSON found", raw, 0)
 
 
 def extract_codex_session_id(raw: str) -> str | None:
@@ -201,15 +196,11 @@ def _iter_json_payloads(raw: str) -> list[Any]:
         return payloads
 
 
-def _decision_from_payload(
-    payload: Any,
-    *,
-    allow_legacy: bool = True,
-) -> CodexDecision | None:
+def _decision_from_payload(payload: Any) -> CodexDecision | None:
     failure: ValidationError | None = None
     for candidate in _decision_candidates(payload):
         try:
-            decision = _decision_from_candidate(candidate, allow_legacy=allow_legacy)
+            decision = _decision_from_candidate(candidate)
         except ValidationError as exc:
             failure = failure or exc
             continue
@@ -234,135 +225,17 @@ def _decision_candidates(payload: Any) -> list[Any]:
     return candidates
 
 
-def _decision_from_candidate(
-    candidate: Any, *, allow_legacy: bool
-) -> CodexDecision | None:
+def _decision_from_candidate(candidate: Any) -> CodexDecision | None:
     """Decide from one JSON object; envelope-shaped objects must satisfy the schema."""
     if not isinstance(candidate, dict):
         return None
-    shorthand = _action_free_no_reply_decision(candidate)
-    if shorthand is not None:
-        return shorthand
     if _looks_like_agent_envelope(candidate):
-        try:
-            return codex_decision_from_envelope(candidate)
-        except ValidationError:
-            if not allow_legacy:
-                raise
-            decision = _decision_from_agent_envelope_like(candidate)
-            if decision is not None:
-                return decision
-    if not allow_legacy:
-        return None
-    try:
-        return CodexDecision.model_validate(candidate)
-    except ValidationError:
-        return None
-
-
-def _action_free_no_reply_decision(payload: object) -> CodexDecision | None:
-    """Accept only Codex's harmless no-reply shorthand in strict mode."""
-    if not isinstance(payload, dict):
-        return None
-    direct_shape = set(payload) <= {"mode", "audit_summary"} and payload.get(
-        "mode"
-    ) == CodexAction.NO_REPLY.value
-    wechat_shape = (
-        set(payload) <= {"user_mode", "reply", "audit_summary"}
-        and payload.get("user_mode") == CodexAction.NO_REPLY.value
-        and payload.get("reply") is None
-    )
-    if not (direct_shape or wechat_shape):
-        return None
-    summary = payload.get("audit_summary", "Agent selected no reply without a summary.")
-    if not isinstance(summary, str) or not summary.strip():
-        return None
-    return CodexDecision(
-        action=CodexAction.NO_REPLY,
-        reason=summary.strip(),
-        audit_summary=summary.strip(),
-    )
+        return codex_decision_from_envelope(candidate)
+    return None
 
 
 def _looks_like_agent_envelope(payload: dict[str, Any]) -> bool:
     return "kind" in payload and "user_response" in payload
-
-
-def _decision_from_agent_envelope_like(
-    payload: dict[str, Any],
-) -> CodexDecision | None:
-    user_response = payload.get("user_response")
-    if not isinstance(user_response, dict):
-        return None
-    try:
-        action = CodexAction(str(user_response.get("mode") or ""))
-    except ValueError:
-        return None
-    reply_text = _string_value(user_response, "text")
-    sensitivity_kind = _string_value(user_response, "sensitivity_kind") or "general"
-    audit = payload.get("audit")
-    audit_summary = ""
-    audit_documents: list[dict[str, str]] = []
-    if isinstance(audit, dict):
-        audit_summary = (
-            _string_value(audit, "summary")
-            or _string_value(audit, "evidence_summary")
-            or _string_value(audit, "reason")
-        )
-        audit_documents = _audit_documents_from_payload(audit.get("documents"))
-    if not audit_summary:
-        audit_summary = "Agent returned a non-standard envelope; extracted user_response."
-    system_actions = payload.get("system_actions")
-    domain_payload = payload.get("domain_payload")
-    if not isinstance(domain_payload, dict):
-        domain_payload = {}
-    candidate_department_ids = domain_payload.get("candidate_department_ids", [])
-    if not isinstance(candidate_department_ids, list):
-        candidate_department_ids = []
-    return CodexDecision(
-        action=action,
-        reply_text=reply_text,
-        reason=audit_summary,
-        sensitivity_kind=sensitivity_kind,
-        personnel_subject_user_id=domain_payload.get("personnel_subject_user_id"),
-        candidate_context_known=bool(
-            domain_payload.get("candidate_context_known", False)
-        ),
-        candidate_department_ids=[
-            str(department_id)
-            for department_id in candidate_department_ids
-            if str(department_id).strip()
-        ],
-        calendar_response_status=domain_payload.get("calendar_response_status", ""),
-        system_actions=system_actions if isinstance(system_actions, list) else [],
-        audit_documents=audit_documents,
-        audit_summary=audit_summary,
-    )
-
-
-def _audit_documents_from_payload(value: Any) -> list[dict[str, str]]:
-    if not isinstance(value, list):
-        return []
-    documents = []
-    for item in value:
-        if isinstance(item, str):
-            documents.append({"title": item, "url": "", "relevance": "mentioned"})
-            continue
-        if not isinstance(item, dict):
-            continue
-        documents.append(
-            {
-                "title": str(item.get("title") or item.get("name") or ""),
-                "url": str(item.get("url") or ""),
-                "relevance": str(
-                    item.get("relevance")
-                    or item.get("summary")
-                    or item.get("status")
-                    or "mentioned"
-                ),
-            }
-        )
-    return documents
 
 
 def _decision_text_candidates(payload: dict[str, Any]) -> list[str]:
@@ -850,7 +723,7 @@ class CodexDecisionRunner:
         raw_outputs.append(first_raw)
         self._remember_session_id(first_raw)
         try:
-            decision = parse_codex_json(first_raw, allow_legacy=False)
+            decision = parse_codex_json(first_raw)
             timeout_session_decision = self._timeout_session_decision(decision)
             if timeout_session_decision is not None:
                 return self._finalize_decision(timeout_session_decision, raw_outputs)
@@ -882,7 +755,7 @@ class CodexDecisionRunner:
             raw_outputs.append(second_raw)
             self._remember_session_id(second_raw)
             try:
-                decision = parse_codex_json(second_raw, allow_legacy=False)
+                decision = parse_codex_json(second_raw)
                 timeout_session_decision = self._timeout_session_decision(decision)
                 if timeout_session_decision is not None:
                     return self._finalize_decision(
@@ -930,7 +803,7 @@ class CodexDecisionRunner:
             nonlocal observed_raw
             observed_raw = raw
             try:
-                decision = parse_codex_json(raw, allow_legacy=False)
+                decision = parse_codex_json(raw)
                 self._validate_decision(decision)
             except (json.JSONDecodeError, ValidationError, ValueError) as exc:
                 raise RoutedResultValidationError(
@@ -1084,7 +957,7 @@ class CodexDecisionRunner:
         if not current_turn.strip():
             return None
         try:
-            return parse_codex_json(current_turn, allow_legacy=False)
+            return parse_codex_json(current_turn)
         except (json.JSONDecodeError, ValidationError):
             return None
 
@@ -1142,7 +1015,7 @@ class CodexDecisionRunner:
             stdout = completed.stdout.strip()
             if stdout:
                 try:
-                    parse_codex_json(stdout, allow_legacy=False)
+                    parse_codex_json(stdout)
                     return stdout
                 except (json.JSONDecodeError, ValidationError):
                     pass

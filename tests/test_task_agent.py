@@ -92,8 +92,10 @@ def _agent_message_jsonl(*messages: str) -> str:
 
 
 def _null_evidence_decision(**overrides) -> dict:
-    # The MiniMax shape behind task runs 7472/7475: null where the schema
-    # wants a dict / str, plus update_project without a project.
+    # The MiniMax shape behind task runs 7472/7475: null owner_evidence /
+    # blocker (accepted as "not provided") and update_project without a
+    # project (a business rule, not a schema error); the only schema defect
+    # is null on the required follow_up_id.
     decision = {
         "action": "update_project",
         "project": None,
@@ -104,6 +106,15 @@ def _null_evidence_decision(**overrides) -> dict:
                 "title": "Confirm the vendor quote with Zhang",
                 "owner_evidence": None,
                 "blocker": None,
+            }
+        ],
+        "follow_up_changes": [
+            {
+                "follow_up_id": None,
+                "action": "keep_open",
+                "next_due_at": "2026-07-16T09:00:00+08:00",
+                "reason": "Vendor quote still pending.",
+                "owner_evidence": None,
             }
         ],
         "update_summary": "Vendor quote still pending.",
@@ -119,14 +130,70 @@ def test_task_agent_parser_reports_field_errors_of_last_candidate():
 
     with pytest.raises(
         RoutedResultValidationError,
-        match=r"todo_changes\.0\.owner_evidence: Input should be a valid dictionary",
+        match=r"follow_up_changes\.0\.follow_up_id: Input should be a valid integer",
     ) as raised:
         _parse_task_agent_decision(raw)
 
     message = str(raised.value)
-    assert "todo_changes.0.blocker: Input should be a valid string" in message
+    assert "todo_changes.0.owner_evidence" not in message
+    assert "todo_changes.0.blocker" not in message
     assert "No TaskAgentDecision JSON found" not in message
     assert raised.value.raw_output == raw
+
+
+def test_task_agent_parser_accepts_minimax_null_optional_fields():
+    # Task runs 7472/7475/7491: null for owner_evidence / blocker /
+    # evidence_check where nothing is provided, alongside complete evidence.
+    completion_evidence = {
+        "source": "reply_attempt:1",
+        "reason": "Zhang confirmed the quote in the group.",
+        "description": "The vendor quote was accepted on 2026-07-15.",
+        "completed_at": "2026-07-15 18:00:00",
+    }
+    decision = {
+        "action": "update_project",
+        "project": {
+            "id": 3,
+            "title": "Vendor quote",
+            "memory_context": _memory_context(),
+        },
+        "todo_changes": [
+            {
+                "action": "close",
+                "todo_id": 12,
+                "status": "done",
+                "owner_evidence": None,
+                "completion_evidence": completion_evidence,
+                "blocker": None,
+            }
+        ],
+        "follow_up_changes": [
+            {
+                "follow_up_id": 5,
+                "action": "keep_open",
+                "next_due_at": "2026-07-16T09:00:00+08:00",
+                "reason": "Waiting for the signed copy.",
+                "evidence_check": None,
+                "owner_evidence": None,
+            }
+        ],
+        "update_summary": "Quote accepted, signed copy pending.",
+        "memory_recall_used": True,
+        "confidence": 0.8,
+    }
+    without_nulls = json.loads(json.dumps(decision))
+    for change in without_nulls["todo_changes"] + without_nulls["follow_up_changes"]:
+        for field in ("owner_evidence", "blocker", "evidence_check"):
+            if field in change and change[field] is None:
+                del change[field]
+
+    parsed = _parse_task_agent_decision(_agent_message_jsonl(json.dumps(decision)))
+
+    assert parsed == TaskAgentDecision.model_validate(without_nulls)
+    assert parsed.todo_changes[0].owner_evidence == {}
+    assert parsed.todo_changes[0].blocker == ""
+    assert parsed.todo_changes[0].completion_evidence == completion_evidence
+    assert parsed.follow_up_changes[0].evidence_check == {}
 
 
 def test_task_agent_parser_reports_misplaced_project_fields():
@@ -167,7 +234,7 @@ def test_task_agent_parser_ignores_event_objects_when_naming_failing_candidate()
         _parse_task_agent_decision(raw)
 
     message = str(raised.value)
-    assert "todo_changes.0.owner_evidence" in message
+    assert "follow_up_changes.0.follow_up_id" in message
     assert "type:" not in message
     assert "item:" not in message
     assert "usage:" not in message
@@ -196,12 +263,16 @@ def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
 
     prompt = _task_result_validation_repair_prompt(raw)
 
-    assert "- todo_changes.0.owner_evidence: Input should be a valid dictionary" in prompt
-    assert "- todo_changes.0.blocker: Input should be a valid string" in prompt
+    assert (
+        "- follow_up_changes.0.follow_up_id: Input should be a valid integer"
+    ) in prompt
+    assert "todo_changes.0" not in prompt
     assert 'return action="skip" with a skip_reason' in prompt
     assert "update_project requires project with the stable integer id" in prompt
     assert "project.memory_context" in prompt
-    assert "null is accepted only where the schema declares it" in prompt
+    assert "null on an optional field means the field is not provided" in prompt
+    assert "owner_evidence with source, reason, description" in prompt
+    assert "completion_evidence with source, reason, description and completed_at" in prompt
     assert "belongs inside the project object" in prompt
     assert (
         "A source path may appear only in an evidence field whose key is "
@@ -237,7 +308,7 @@ def test_task_result_validation_repair_prompt_after_runtime_path_leak():
 def test_task_result_validation_repair_prompt_caps_problem_list():
     decision = _null_evidence_decision(
         todo_changes=[
-            {"action": "update", "todo_id": index, "owner_evidence": None}
+            {"action": None, "todo_id": index, "owner_evidence": None}
             for index in range(15)
         ]
     )
@@ -246,8 +317,9 @@ def test_task_result_validation_repair_prompt_caps_problem_list():
 
     problem_section = prompt.split("Rules that must hold:")[0]
     assert problem_section.count("\n- ") == 12
-    assert "todo_changes.11.owner_evidence" in problem_section
-    assert "todo_changes.12.owner_evidence" not in problem_section
+    assert "todo_changes.11.action" in problem_section
+    assert "todo_changes.12.action" not in problem_section
+    assert "owner_evidence" not in problem_section
 
 
 class FakeCodex:
@@ -3014,6 +3086,63 @@ def test_todo_create_rejects_open_item_without_stable_owner_id(tmp_path):
 
     assert store.list_work_projects() == []
     assert store.list_work_todos() == []
+
+
+@pytest.mark.parametrize("owner_evidence", [None, {}])
+def test_todo_owner_update_treats_null_evidence_as_none_given(tmp_path, owner_evidence):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Owner validation")
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="Validate owner",
+        owner_user_id="uid-old",
+        owner_name="Display Old",
+        status="open",
+        priority="P1",
+    )
+
+    def decision(**change):
+        return TaskAgentDecision.model_validate(
+            {
+                "action": "update_project",
+                "project": {
+                    "id": project_id,
+                    "title": "Owner validation",
+                    "memory_context": _memory_context(),
+                },
+                "todo_changes": [
+                    {
+                        "action": "update",
+                        "todo_id": todo_id,
+                        "owner_evidence": owner_evidence,
+                        "blocker": None,
+                        **change,
+                    }
+                ],
+                "memory_recall_used": True,
+            }
+        )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(),
+        decision=decision(owner_user_id="uid-old", owner_name="Display Old"),
+    )
+    todo = store.get_work_todo(todo_id)
+    assert todo.owner_user_id == "uid-old"
+    assert todo.blocker == ""
+
+    with pytest.raises(
+        ValueError, match="todo_change.owner_evidence.source is required"
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision(owner_user_id="uid-new", owner_name="Display New"),
+        )
+    assert store.get_work_todo(todo_id).owner_user_id == "uid-old"
 
 
 def test_todo_owner_update_persists_coherent_evidence(tmp_path):

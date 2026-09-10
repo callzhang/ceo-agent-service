@@ -217,36 +217,22 @@ def _live_agent_message_raw(text: str) -> str:
     )
 
 
-def test_parse_codex_json_accepts_decision_object():
+def test_parse_codex_json_maps_permission_fields_from_agent_envelope():
     raw = json.dumps(
         {
-            "action": "send_reply",
-            "reply_text": "收到",
-            "reason": "direct ask",
-            "ding_self": False,
-            "macos_notify": True,
-        }
-    )
-
-    decision = parse_codex_json(raw)
-
-    assert decision == CodexDecision(
-        action=CodexAction.SEND_REPLY,
-        reply_text="收到",
-        reason="direct ask",
-        ding_self=False,
-        macos_notify=True,
-    )
-
-
-def test_parse_codex_json_accepts_permission_fields():
-    raw = json.dumps(
-        {
-            "action": "send_reply",
-            "reply_text": "先观察",
-            "sensitivity_kind": "internal_personnel",
-            "personnel_subject_user_id": "user-1",
-        }
+            "kind": "reply",
+            "user_response": {
+                "mode": "send_reply",
+                "text": "先观察",
+                "sensitivity_kind": "internal_personnel",
+            },
+            "system_actions": [
+                {"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"}
+            ],
+            "domain_payload": {"personnel_subject_user_id": "user-1"},
+            "audit": {"summary": "涉及内部人员，先观察。", "documents": [], "confidence": 0.8},
+        },
+        ensure_ascii=False,
     )
 
     decision = parse_codex_json(raw)
@@ -255,22 +241,7 @@ def test_parse_codex_json_accepts_permission_fields():
     assert decision.personnel_subject_user_id == "user-1"
 
 
-def test_parse_codex_json_accepts_calendar_response_status():
-    raw = json.dumps(
-        {
-            "action": "no_reply",
-            "calendar_response_status": "tentative",
-            "audit_summary": "已读取日程，标题足以判断先暂定。",
-        },
-        ensure_ascii=False,
-    )
-
-    decision = parse_codex_json(raw)
-
-    assert decision.calendar_response_status == "tentative"
-
-
-def test_parse_codex_json_strict_rejects_legacy_decision_object():
+def test_parse_codex_json_rejects_legacy_decision_object():
     raw = json.dumps(
         {
             "action": "send_reply",
@@ -280,44 +251,20 @@ def test_parse_codex_json_strict_rejects_legacy_decision_object():
         ensure_ascii=False,
     )
 
-    try:
-        parse_codex_json(raw, allow_legacy=False)
-    except json.JSONDecodeError as exc:
-        assert "AgentEnvelope" in exc.msg
-    else:
-        raise AssertionError("legacy CodexDecision JSON should be rejected")
+    with pytest.raises(json.JSONDecodeError) as raised:
+        parse_codex_json(raw)
+
+    assert "No AgentEnvelope JSON found" in raised.value.msg
 
 
-def test_parse_codex_json_strict_accepts_action_free_no_reply_shorthand():
-    raw = json.dumps(
-        {
-            "type": "item.completed",
-            "item": {
-                "type": "agent_message",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps(
-                            {
-                                "mode": "no_reply",
-                                "audit_summary": "The delayed message is stale.",
-                            }
-                        ),
-                    }
-                ],
-            },
-        }
-    )
-
-    decision = parse_codex_json(raw, allow_legacy=False)
-
-    assert decision.action == CodexAction.NO_REPLY
-    assert decision.audit_summary == "The delayed message is stale."
-    assert decision.system_actions == []
-
-
-def test_parse_codex_json_strict_accepts_wechat_action_free_no_reply_shape():
-    decision = parse_codex_json(
+@pytest.mark.parametrize(
+    "raw",
+    [
+        _live_agent_message_raw(
+            json.dumps(
+                {"mode": "no_reply", "audit_summary": "The delayed message is stale."}
+            )
+        ),
         json.dumps(
             {
                 "user_mode": "no_reply",
@@ -325,55 +272,26 @@ def test_parse_codex_json_strict_accepts_wechat_action_free_no_reply_shape():
                 "audit_summary": "The delayed message is stale.",
             }
         ),
-        allow_legacy=False,
-    )
+        json.dumps(
+            {
+                "user_mode": "no_reply",
+                "reply": "This must not be treated as action-free.",
+                "audit_summary": "Invalid no-reply shape.",
+            }
+        ),
+    ],
+    ids=["mode_shorthand", "user_mode_shorthand", "user_mode_with_reply"],
+)
+def test_parse_codex_json_rejects_action_free_no_reply_shorthand(raw: str):
+    # No prompt documents the shorthand; it costs the correction turn like any
+    # other non-envelope output.
+    with pytest.raises(json.JSONDecodeError) as raised:
+        parse_codex_json(raw)
 
-    assert decision.action == CodexAction.NO_REPLY
-    assert decision.audit_summary == "The delayed message is stale."
-    assert decision.system_actions == []
-
-
-def test_parse_codex_json_strict_rejects_wechat_no_reply_with_reply_text():
-    with pytest.raises(json.JSONDecodeError):
-        parse_codex_json(
-            json.dumps(
-                {
-                    "user_mode": "no_reply",
-                    "reply": "This must not be treated as action-free.",
-                    "audit_summary": "Invalid no-reply shape.",
-                }
-            ),
-            allow_legacy=False,
-        )
-
-
-def test_parse_codex_json_accepts_audit_fields():
-    raw = json.dumps(
-        {
-            "action": "send_reply",
-            "reply_text": "先看岗位画像",
-            "audit_documents": [
-                {
-                    "path": "面试/项目经理/岗位画像.md",
-                    "title": "项目经理岗位画像",
-                    "relevance": "用于判断候选人匹配度",
-                }
-            ],
-            "audit_summary": "根据岗位画像要求先判断项目闭环经验，再给推进建议。",
-        },
-        ensure_ascii=False,
-    )
-
-    decision = parse_codex_json(raw)
-
-    assert decision.audit_documents == [
-        {
-            "path": "面试/项目经理/岗位画像.md",
-            "title": "项目经理岗位画像",
-            "relevance": "用于判断候选人匹配度",
-        }
-    ]
-    assert "项目闭环" in decision.audit_summary
+    assert "No AgentEnvelope JSON found" in raised.value.msg
+    prompt = _decision_envelope_repair_prompt(raw)
+    assert "did not contain an AgentEnvelope JSON object" in prompt
+    assert "mode/reply/text" in prompt
 
 
 def test_parse_codex_json_accepts_agent_envelope_object():
@@ -437,7 +355,7 @@ def test_parse_codex_json_maps_calendar_response_from_agent_envelope_domain_payl
         ensure_ascii=False,
     )
 
-    decision = parse_codex_json(raw, allow_legacy=False)
+    decision = parse_codex_json(raw)
 
     assert decision.action == CodexAction.SEND_REPLY
     assert decision.calendar_response_status == "accepted"
@@ -599,7 +517,7 @@ def test_parse_codex_json_accepts_jsonl_direct_decision_line():
     raw = "\n".join(
         [
             json.dumps({"type": "session", "id": "session-1"}),
-            json.dumps({"action": "no_reply", "reason": "cc only"}),
+            _agent_envelope_json(kind="no_action", summary="cc only"),
         ]
     )
 
@@ -616,7 +534,7 @@ def test_parse_codex_json_accepts_jsonl_agent_message_decision():
             json.dumps(
                 {
                     "type": "agent_message",
-                    "message": json.dumps({"action": "no_reply", "reason": "cc only"}),
+                    "message": _agent_envelope_json(kind="no_action", summary="cc only"),
                 }
             ),
         ]
@@ -635,8 +553,8 @@ def test_parse_codex_json_accepts_jsonl_message_content_decision():
             json.dumps(
                 {
                     "type": "message",
-                    "content": json.dumps(
-                        {"action": "send_reply", "reply_text": "收到", "reason": "direct ask"}
+                    "content": _agent_envelope_json(
+                        mode="send_reply", text="收到", summary="direct ask"
                     ),
                 }
             ),
@@ -657,7 +575,10 @@ def test_parse_codex_json_accepts_jsonl_message_content_text_decision():
                 {
                     "type": "message",
                     "content": [
-                        {"type": "text", "text": json.dumps({"action": "no_reply", "reason": "done"})}
+                        {
+                            "type": "text",
+                            "text": _agent_envelope_json(kind="no_action", summary="done"),
+                        }
                     ],
                 }
             ),
@@ -679,7 +600,9 @@ def test_parse_codex_json_accepts_live_item_completed_agent_message_text():
                     "type": "item.completed",
                     "item": {
                         "type": "agent_message",
-                        "text": json.dumps({"action": "no_reply", "reason": "live final"}),
+                        "text": _agent_envelope_json(
+                            kind="no_action", summary="live final"
+                        ),
                     },
                 }
             ),
@@ -697,7 +620,7 @@ def test_parse_codex_json_accepts_fenced_agent_envelope_in_live_agent_message():
         _fenced(_agent_envelope_json(summary="消息已时过境迁，无需回复。"))
     )
 
-    decision = parse_codex_json(raw, allow_legacy=False)
+    decision = parse_codex_json(raw)
 
     assert decision.action == CodexAction.NO_REPLY
     assert decision.audit_summary == "消息已时过境迁，无需回复。"
@@ -711,30 +634,30 @@ def test_parse_codex_json_picks_last_valid_envelope_after_prose_and_draft():
         + _fenced(_agent_envelope_json(summary="最终判断。"))
     )
 
-    decision = parse_codex_json(raw, allow_legacy=False)
+    decision = parse_codex_json(raw)
 
     assert decision.action == CodexAction.NO_REPLY
     assert decision.audit_summary == "最终判断。"
 
 
-def test_parse_codex_json_strict_raises_field_error_for_schema_invalid_envelope():
+def test_parse_codex_json_raises_field_error_for_schema_invalid_envelope():
     raw = _live_agent_message_raw(
         _fenced(_agent_envelope_json(summary="空白图片消息。", confidence=None))
     )
 
     with pytest.raises(ValidationError) as raised:
-        parse_codex_json(raw, allow_legacy=False)
+        parse_codex_json(raw)
 
     assert "audit.confidence" in str(raised.value)
 
 
-def test_parse_codex_json_strict_rejects_fenced_legacy_decision():
+def test_parse_codex_json_rejects_fenced_legacy_decision():
     raw = _live_agent_message_raw(
         _fenced(json.dumps({"action": "no_reply", "reason": "消息已过时。"}))
     )
 
     with pytest.raises(json.JSONDecodeError) as raised:
-        parse_codex_json(raw, allow_legacy=False)
+        parse_codex_json(raw)
 
     assert "No AgentEnvelope JSON found" in str(raised.value)
 
@@ -784,7 +707,7 @@ def test_decision_envelope_repair_prompt_without_envelope_uses_fixed_line():
         assert "mode/reply/text" in prompt
 
 
-def test_parse_codex_json_accepts_nonstandard_envelope_with_user_response():
+def test_parse_codex_json_rejects_nonstandard_envelope_with_user_response():
     raw = "\n".join(
         [
             json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
@@ -822,21 +745,18 @@ def test_parse_codex_json_accepts_nonstandard_envelope_with_user_response():
         ]
     )
 
-    with pytest.raises(ValidationError) as strict:
-        parse_codex_json(raw, allow_legacy=False)
-    assert "kind" in str(strict.value)
+    with pytest.raises(ValidationError) as raised:
+        parse_codex_json(raw)
 
-    decision = parse_codex_json(raw, allow_legacy=True)
-
-    assert decision.action == CodexAction.SEND_REPLY
-    assert decision.reply_text == "可以，我先按这个日报每天看当天新增。"
-    assert decision.sensitivity_kind == "internal_personnel"
-    assert decision.audit_summary == "已读取日报并判断风险。"
-    assert decision.system_actions[0]["type"] == "persist_daily_doc_review_watch"
+    assert "kind" in str(raised.value)
+    prompt = _decision_envelope_repair_prompt(raw)
+    assert "- kind: Input should be" in prompt
+    assert "- audit.summary: Field required" in prompt
+    assert "已读取日报并判断风险" not in prompt
 
 
-def test_parse_nonstandard_envelope_preserves_domain_payload():
-    raw = json.dumps(
+def _candidate_meeting_envelope(audit: dict) -> str:
+    return json.dumps(
         {
             "kind": "reply",
             "user_response": {
@@ -852,19 +772,27 @@ def test_parse_nonstandard_envelope_preserves_domain_payload():
                 "candidate_department_ids": ["dept-ai"],
                 "calendar_response_status": "accepted",
             },
-            "audit": {
-                "summary": "已结合岗位信息判断。",
-                "documents": [],
-            },
+            "audit": audit,
         },
         ensure_ascii=False,
     )
 
-    with pytest.raises(ValidationError) as strict:
-        parse_codex_json(raw, allow_legacy=False)
-    assert "audit.confidence" in str(strict.value)
 
-    decision = parse_codex_json(raw, allow_legacy=True)
+def test_parse_codex_json_rejects_envelope_without_audit_confidence():
+    raw = _candidate_meeting_envelope({"summary": "已结合岗位信息判断。", "documents": []})
+
+    with pytest.raises(ValidationError) as raised:
+        parse_codex_json(raw)
+
+    assert "audit.confidence" in str(raised.value)
+
+
+def test_parse_codex_json_maps_domain_payload_from_agent_envelope():
+    raw = _candidate_meeting_envelope(
+        {"summary": "已结合岗位信息判断。", "documents": [], "confidence": 0.8}
+    )
+
+    decision = parse_codex_json(raw)
 
     assert decision.action == CodexAction.SEND_REPLY
     assert decision.reply_text == "这个会可以接。"
@@ -883,14 +811,7 @@ def test_parse_codex_json_accepts_event_msg_agent_message_payload():
                     "type": "event_msg",
                     "payload": {
                         "type": "agent_message",
-                        "message": json.dumps(
-                            {
-                                "action": "send_reply",
-                                "reply_text": "收到",
-                                "audit_summary": "只需上下文判断。",
-                            },
-                            ensure_ascii=False,
-                        ),
+                        "message": _agent_envelope_json(mode="send_reply", text="收到"),
                     },
                 },
                 ensure_ascii=False,
@@ -1248,15 +1169,10 @@ def test_parse_codex_json_accepts_item_completed_message_output_text():
                         "content": [
                             {
                                 "type": "output_text",
-                                "text": json.dumps(
-                                    {
-                                        "action": "send_reply",
-                                        "reply_text": "按这个口径推进。",
-                                        "reason": "direct business follow-up",
-                                        "audit_documents": [],
-                                        "audit_summary": "只需上下文判断，当前消息足够确认回复。",
-                                    },
-                                    ensure_ascii=False,
+                                "text": _agent_envelope_json(
+                                    mode="send_reply",
+                                    text="按这个口径推进。",
+                                    summary="只需上下文判断，当前消息足够确认回复。",
                                 ),
                             }
                         ],
@@ -1283,13 +1199,8 @@ def test_parse_codex_json_accepts_task_complete_last_agent_message():
                     "type": "event_msg",
                     "payload": {
                         "type": "task_complete",
-                        "last_agent_message": json.dumps(
-                            {
-                                "action": "no_reply",
-                                "reason": "ack only",
-                                "audit_summary": "对方只是确认收到，无需回复。",
-                            },
-                            ensure_ascii=False,
+                        "last_agent_message": _agent_envelope_json(
+                            kind="no_action", summary="对方只是确认收到，无需回复。"
                         ),
                     },
                 },

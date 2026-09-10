@@ -1,11 +1,62 @@
 from enum import StrEnum
 from typing import Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic.fields import FieldInfo
+
+
+def _null_means_omitted(field: FieldInfo) -> bool:
+    """Optional fields with a non-null default: the model may send null for them."""
+    return not field.is_required() and field.default is not None
+
+
+def _mark_optional_fields_nullable(
+    schema: dict[str, Any], model: type[BaseModel]
+) -> None:
+    """Show the fields that accept null as nullable in the schema handed to the model."""
+    properties = schema.get("properties", {})
+    for name, field in model.model_fields.items():
+        property_schema = properties.get(name)
+        if property_schema is None or not _null_means_omitted(field):
+            continue
+        if any(
+            option.get("type") == "null"
+            for option in property_schema.get("anyOf", [])
+        ):
+            continue
+        header = {
+            key: property_schema.pop(key)
+            for key in ("title", "default")
+            if key in property_schema
+        }
+        properties[name] = {
+            "anyOf": [property_schema, {"type": "null"}],
+            **header,
+        }
 
 
 class StrictTaskModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid", json_schema_extra=_mark_optional_fields_nullable
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_null_optional_fields(cls, data: object) -> object:
+        # null from the model means "not provided", the same as omitting the
+        # key; the declared default applies and the key stays out of
+        # model_fields_set.
+        if not isinstance(data, dict):
+            return data
+        return {
+            key: value
+            for key, value in data.items()
+            if not (
+                value is None
+                and key in cls.model_fields
+                and _null_means_omitted(cls.model_fields[key])
+            )
+        }
 
 
 OWNER_IDENTITY_FIELD_ALIASES = {
