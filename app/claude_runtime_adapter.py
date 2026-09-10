@@ -12,7 +12,10 @@ from pathlib import Path
 from threading import RLock
 from typing import TypeVar
 
-from app.agent_runtime_config import AgentRuntimeConfig
+from app.agent_runtime_config import (
+    AgentRuntimeConfig,
+    SUPPORTED_RUNTIME_REASONING_EFFORTS,
+)
 from app.agent_runtime_contracts import (
     CredentialMode,
     RuntimeEventType,
@@ -124,8 +127,12 @@ class ClaudeRuntimeAdapter:
         session_id: str | None,
         max_turns: int,
         policy: ClaudeCommandPolicy | None = None,
+        reasoning_effort: str | None = None,
     ) -> list[str]:
         configured = self._configured_route(route)
+        effort = reasoning_effort or self.config.claude_reasoning_effort
+        if effort not in SUPPORTED_RUNTIME_REASONING_EFFORTS:
+            raise ValueError("Claude reasoning effort is unsupported")
         selected_policy = policy or ClaudeCommandPolicy.normal()
         if not isinstance(selected_policy, ClaudeCommandPolicy):
             raise ValueError("Claude command policy is invalid")  # noqa: TRY004
@@ -138,29 +145,37 @@ class ClaudeRuntimeAdapter:
         if session_id is not None:
             require_claude_session_id(session_id)
         settings_path, mcp_path = self._write_invocation_boundary(selected_policy)
-        command = [
-            self.claude_bin,
-            "-p",
-            "--bare",
-            "--setting-sources",
-            "",
-            "--settings",
-            str(settings_path),
-            "--strict-mcp-config",
-            "--mcp-config",
-            str(mcp_path),
-            "--input-format",
-            "text",
-            "--output-format",
-            "stream-json",
-            "--model",
-            configured.model,
-            "--max-turns",
-            str(max_turns),
-            "--verbose",
-            "--permission-mode",
-            "default",
-        ]
+        command = [self.claude_bin, "-p"]
+        if configured.credential_mode is CredentialMode.SERVICE_API:
+            # --bare reads Anthropic auth strictly from ANTHROPIC_API_KEY.  The
+            # local-OAuth route must reach the keychain credential instead, so
+            # it relies on --setting-sources/--strict-mcp-config alone to keep
+            # the caller's CLAUDE.md, skills, plugins, and hooks out of the run.
+            command.append("--bare")
+        command.extend(
+            [
+                "--setting-sources",
+                "",
+                "--settings",
+                str(settings_path),
+                "--strict-mcp-config",
+                "--mcp-config",
+                str(mcp_path),
+                "--input-format",
+                "text",
+                "--output-format",
+                "stream-json",
+                "--model",
+                configured.model,
+                "--effort",
+                effort,
+                "--max-turns",
+                str(max_turns),
+                "--verbose",
+                "--permission-mode",
+                "default",
+            ]
+        )
         if not selected_policy.tools_enabled:
             command.extend(["--tools", ""])
         if session_id is not None:
@@ -171,14 +186,15 @@ class ClaudeRuntimeAdapter:
         self, route: RuntimeRoute, *, command: list[str] | None = None
     ) -> dict[str, str]:
         configured = self._configured_route(route)
-        secret = self.config.secret_for(configured.name)
-        if secret is None or not secret.get_secret_value():
-            raise ValueError("claude_api credential is missing")
         env = _safe_child_environment(dict(os.environ))
-        env["ANTHROPIC_API_KEY"] = secret.get_secret_value()
-        # Prevent Claude from consulting the caller's ~/.claude state.  Each
-        # invocation receives only the service-owned settings and MCP config.
-        env["CLAUDE_CONFIG_DIR"] = self._runtime_root.name
+        if configured.credential_mode is CredentialMode.SERVICE_API:
+            secret = self.config.secret_for(configured.name)
+            if secret is None or not secret.get_secret_value():
+                raise ValueError("claude_api credential is missing")
+            env["ANTHROPIC_API_KEY"] = secret.get_secret_value()
+            # Prevent Claude from consulting the caller's ~/.claude state.  Each
+            # invocation receives only the service-owned settings and MCP config.
+            env["CLAUDE_CONFIG_DIR"] = self._runtime_root.name
         if command is not None:
             try:
                 mcp_path = str(
@@ -438,11 +454,15 @@ class ClaudeRuntimeAdapter:
             for server in configured
         }
 
+    _CREDENTIAL_MODES = {
+        "claude_oauth": CredentialMode.LOCAL_OAUTH,
+        "claude_api": CredentialMode.SERVICE_API,
+    }
+
     def _configured_route(self, route: RuntimeRoute) -> RuntimeRoute:
         if (
-            route.name != "claude_api"
-            or route.runtime_kind is not RuntimeKind.CLAUDE_CLI
-            or route.credential_mode is not CredentialMode.SERVICE_API
+            route.runtime_kind is not RuntimeKind.CLAUDE_CLI
+            or self._CREDENTIAL_MODES.get(route.name) is not route.credential_mode
         ):
             raise ValueError("unsupported runtime route")
         configured = next(
@@ -552,6 +572,11 @@ class ClaudeEventNormalizer:
                 {"type": RuntimeEventType.TURN_STARTED.value, "session_id": session_id},
             )
         self._require_active_session(session_id)
+        if event_type == "rate_limit_event":
+            # A subscription transport reports its quota windows between turn
+            # items.  The event carries no turn item, and the terminal result
+            # still decides success or failure, so it maps to no runtime event.
+            return ()
         if event_type in {"assistant", "user"}:
             message = event.get("message")
             if (

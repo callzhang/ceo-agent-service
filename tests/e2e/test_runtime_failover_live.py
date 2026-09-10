@@ -13,7 +13,10 @@ from pathlib import Path
 import pytest
 
 from app.agent_runtime_config import load_runtime_config
-from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+from app.agent_runtime_contracts import (
+    LOCAL_SERVICE_RUNTIME_CAPABILITIES as _LOCAL_SERVICE_CAPABILITIES,
+    RuntimeCapabilitySnapshot,
+)
 from app.config import read_env_file, repo_root
 from app.agent_runtime_probe import AgentRuntimeProbe
 from app.agent_runtime_router import (
@@ -78,6 +81,38 @@ def test_runtime_failover_contract_runs_by_default(tmp_path):
         "codex_api",
         "claude_api",
     ]
+
+
+def test_claude_oauth_takes_over_when_the_codex_routes_are_unhealthy(tmp_path):
+    """The local Claude subscription route is a selectable fallback."""
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,claude_oauth",
+            "CEO_CODEX_API_KEY": "synthetic-codex-secret",
+            "CEO_CODEX_MODEL": "gpt-5.6-sol",
+            "CEO_CODEX_API_MODEL": "gpt-5.6-terra",
+        }
+    )
+    store = AutoReplyStore(tmp_path / "claude-oauth-contract.sqlite3")
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=_REQUIRED_CAPABILITIES | _LOCAL_SERVICE_CAPABILITIES,
+            healthy=route.name == "claude_oauth",
+            checked_at="2026-09-10T00:00:00+00:00",
+            expires_at="2099-09-10T00:00:00+00:00",
+        )
+        for route in config.routes
+    }
+    router = AgentRuntimeRouter(routes=config.routes, store=store, snapshots=snapshots)
+
+    selected = router.first_eligible_route(
+        required_capabilities=_REQUIRED_CAPABILITIES | _LOCAL_SERVICE_CAPABILITIES
+    )
+
+    assert selected.name == "claude_oauth"
+    assert selected.model == "sonnet"
+    assert config.secret_for("claude_oauth") is None
 
 
 class _RecordingExecutor:

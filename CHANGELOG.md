@@ -1,5 +1,24 @@
 # Changelog
 
+- 2026-09-10: `claude_oauth` joins `codex_oauth`, `codex_api`, `claude_api` and
+  `friday_runtime` as an Agent Runtime route. It runs the host's `claude` CLI
+  against the machine's existing login, so it needs no Anthropic API key, and
+  defaults to model `sonnet` with `--effort medium`
+  (`CEO_CLAUDE_MODEL` / `CEO_CLAUDE_MODEL_REASONING_EFFORT`, shared with
+  `claude_api`); a scheduled task's thinking option overrides the effort per
+  run, as it already did for Codex. Two facts of the CLI shaped the command:
+  `--bare` resolves Anthropic auth strictly from `ANTHROPIC_API_KEY`, so the
+  subscription route drops it, and `--safe-mode` would also drop the service's
+  own `--mcp-config` servers, so neither route uses it. Isolation still comes
+  from `--setting-sources ""`, `--settings` and
+  `--strict-mcp-config --mcp-config`, which keep the caller's CLAUDE.md,
+  skills, plugins and hooks out of a service run. Two defects that only a live
+  Claude route could surface are fixed with it: the stdio MCP proxy buffered a
+  whole 64 KB `read()` before forwarding, so every service stdio MCP server
+  (`agent_cli`) failed its handshake while the client held stdin open, and the
+  event normalizer rejected the subscription transport's `rate_limit_event` as
+  an unrecognized event, which failed the route's health probe.
+
 - 2026-09-10: a work item whose bounded decision repair rounds are exhausted
   (`TaskDecisionRepairExhausted`) is retried on a later pass within the
   work-item attempt budget instead of being terminalized on the structural

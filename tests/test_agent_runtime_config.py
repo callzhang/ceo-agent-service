@@ -120,6 +120,38 @@ def test_claude_route_uses_independent_model_and_secret():
     assert "anthropic-secret" not in repr(config)
 
 
+def test_claude_oauth_route_uses_the_local_login_without_a_secret():
+    config = load_runtime_config(
+        {"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,claude_oauth"}
+    )
+
+    route = config.routes[1]
+    assert route.name == "claude_oauth"
+    assert route.runtime_kind is RuntimeKind.CLAUDE_CLI
+    assert route.credential_mode is CredentialMode.LOCAL_OAUTH
+    assert route.model == "sonnet"
+    assert config.secret_for("claude_oauth") is None
+    assert config.claude_reasoning_effort == "medium"
+
+
+def test_claude_reasoning_effort_must_be_supported():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_oauth",
+            "CEO_CLAUDE_MODEL_REASONING_EFFORT": "high",
+        }
+    )
+    assert config.claude_reasoning_effort == "high"
+
+    with pytest.raises(ValueError, match="CEO_CLAUDE_MODEL_REASONING_EFFORT"):
+        load_runtime_config(
+            {
+                "CEO_AGENT_RUNTIME_ROUTES": "claude_oauth",
+                "CEO_CLAUDE_MODEL_REASONING_EFFORT": "ludicrous",
+            }
+        )
+
+
 def test_load_runtime_config_accepts_friday_runtime():
     config = load_runtime_config(
         {

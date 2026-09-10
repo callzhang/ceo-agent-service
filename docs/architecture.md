@@ -687,9 +687,31 @@ allowlist。安装用户配置中的 MCP 可能同时公开读写工具；servic
 Agent 不执行 `auth login`、`reset` 或 `logout`。某个 MCP 实际返回未授权时，
 任务如实记录该依赖不可用，不把认证失败伪装成材料缺失。
 
+### Claude Runtime 路由
+
+Claude CLI 有两条并列路由，共用 `CEO_CLAUDE_MODEL`（默认 `sonnet`）和
+`CEO_CLAUDE_MODEL_REASONING_EFFORT`（默认 `medium`，取值 `low`/`medium`/`high`/`xhigh`，
+作为 `--effort` 传给 CLI）。调度任务上的 thinking 选项会按次覆盖该默认值，与 Codex 的
+`reasoning_effort` 使用同一套取值。
+
+| 路由 | 凭据 | 命令差异 |
+| --- | --- | --- |
+| `claude_oauth` | 本机 `claude` CLI 的登录态（订阅） | 不使用 `--bare`，不设置 `ANTHROPIC_API_KEY` 和 `CLAUDE_CONFIG_DIR` |
+| `claude_api` | `CEO_CLAUDE_API_KEY` | 使用 `--bare`，凭据只进子进程环境，配置目录指向服务自有临时目录 |
+
+`--bare` 规定 Anthropic 认证只能来自 `ANTHROPIC_API_KEY`，因此订阅路由必须去掉它，改由
+CLI 自己解析本机登录态；`CLAUDE_CODE_SIMPLE=1` 与 `--bare` 等价，同样不可用于该路由。
+`--safe-mode` 虽然能屏蔽个人配置，但会连同 `--mcp-config` 显式传入的服务 MCP 一起停用，
+所以两条路由都不使用它。两条路由的隔离都由 `--setting-sources ""`、`--settings` 和
+`--strict-mcp-config --mcp-config` 保证：调用方的 CLAUDE.md、skills、plugins 和 hooks 都
+不会进入服务运行。`claude_oauth` 复用本机登录态的代价是会话文件写入调用方的
+`~/.claude/projects/<cwd>`，与本人交互式会话共享订阅额度。
+
+未登录时 `claude_oauth` 的健康探测失败，Router 直接跳过该路由，不影响其余路由。
+
 ### Friday Runtime 路由
 
-`friday_runtime` 是与 `codex_oauth`、`codex_api` 和 `claude_api` 并列的 Agent
+`friday_runtime` 是与 `codex_oauth`、`codex_api`、`claude_oauth` 和 `claude_api` 并列的 Agent
 Runtime 路由。它通过 Friday Runtime 的 HTTP 接口创建一个 Thread、提交一个 turn、等待
 operation 完成，再读取该 Thread 的最终 Artifact；CEO Agent 不直接调用 MiniMax 或其他
 provider 的 API，也不把 Friday CLI 当作 Codex CLI 执行。Friday 项目负责 provider、模型、
@@ -704,7 +726,7 @@ Friday Runtime HTTP 的 RuntimeTicket/session token 仍是独立的服务认证�
 路由顺序由 `CEO_AGENT_RUNTIME_ROUTES` 按配置顺序决定，例如：
 
 ```text
-codex_oauth,codex_api,friday_runtime,claude_api
+codex_oauth,codex_api,claude_oauth,friday_runtime
 ```
 
 启用 `friday_runtime` 必须同时提供 `CEO_FRIDAY_RUNTIME_PROJECT_ID`，并选择一种认证方式：

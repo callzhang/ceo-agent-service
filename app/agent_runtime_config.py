@@ -15,6 +15,9 @@ DEFAULT_FRIDAY_RUNTIME_BASE_URL = "http://127.0.0.1:8080"
 SUPPORTED_CODEX_RUNTIME_MODELS = frozenset(
     {"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
 )
+SUPPORTED_RUNTIME_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
+DEFAULT_CEO_CLAUDE_MODEL = "sonnet"
+DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT = "medium"
 SUPPORTED_OPENAI_COMPATIBLE_MODELS = frozenset(
     {
         *SUPPORTED_CODEX_RUNTIME_MODELS,
@@ -44,6 +47,7 @@ class AgentRuntimeConfig(BaseModel):
     retry_delay: timedelta
     friday_runtime_base_url: str
     friday_runtime_project_id: str
+    claude_reasoning_effort: str
     friday_runtime_model: str
     friday_runtime_auth_disabled: bool
     friday_runtime_auth_mode: str
@@ -84,7 +88,13 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     )
     if not names or len(names) != len(set(names)):
         raise ValueError("CEO_AGENT_RUNTIME_ROUTES must contain unique routes")
-    supported = {"codex_oauth", "codex_api", "claude_api", "friday_runtime"}
+    supported = {
+        "codex_oauth",
+        "codex_api",
+        "claude_oauth",
+        "claude_api",
+        "friday_runtime",
+    }
     unknown = set(names) - supported
     if unknown:
         raise ValueError(f"unsupported runtime routes: {sorted(unknown)}")
@@ -110,7 +120,15 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     )
     friday_provider_model = env.get("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", "").strip()
     friday_provider_key = env.get("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", "").strip()
-    claude_model = env.get("CEO_CLAUDE_MODEL", "sonnet").strip()
+    claude_model = env.get("CEO_CLAUDE_MODEL", DEFAULT_CEO_CLAUDE_MODEL).strip()
+    claude_reasoning_effort = env.get(
+        "CEO_CLAUDE_MODEL_REASONING_EFFORT",
+        DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT,
+    ).strip()
+    if claude_reasoning_effort not in SUPPORTED_RUNTIME_REASONING_EFFORTS:
+        raise ValueError(
+            "CEO_CLAUDE_MODEL_REASONING_EFFORT must select a supported effort level"
+        )
     routes = []
     secrets: dict[str, SecretStr] = {}
     friday_auth_mode = "disabled" if friday_auth_disabled else ""
@@ -137,6 +155,15 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
                 )
             )
             secrets[name] = SecretStr(raw_secret)
+        elif name == "claude_oauth":
+            routes.append(
+                RuntimeRoute(
+                    name=name,
+                    runtime_kind=RuntimeKind.CLAUDE_CLI,
+                    credential_mode=CredentialMode.LOCAL_OAUTH,
+                    model=claude_model,
+                )
+            )
         elif name == "claude_api":
             raw_secret = env.get("CEO_CLAUDE_API_KEY", "").strip()
             if not raw_secret:
@@ -195,6 +222,7 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
             env.get("CEO_RUNTIME_ROUTE_RETRY_DELAY"),
             timedelta(minutes=30),
         ),
+        claude_reasoning_effort=claude_reasoning_effort,
         friday_runtime_base_url=friday_runtime_base_url,
         friday_runtime_project_id=friday_runtime_project_id,
         friday_runtime_model=friday_runtime_model,

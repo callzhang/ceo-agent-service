@@ -40,10 +40,13 @@ from app.agent_contracts import (
     DecisionOption,
 )
 from app.agent_runtime_config import (
+    DEFAULT_CEO_CLAUDE_MODEL,
+    DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT,
     DEFAULT_CODEX_API_BASE_URL,
     DEFAULT_FRIDAY_RUNTIME_BASE_URL,
     SUPPORTED_OPENAI_COMPATIBLE_MODELS,
     SUPPORTED_CODEX_RUNTIME_MODELS,
+    SUPPORTED_RUNTIME_REASONING_EFFORTS,
     normalize_codex_api_base_url,
     normalize_friday_runtime_base_url,
     normalize_optional_provider_base_url,
@@ -4371,7 +4374,7 @@ _AGENT_RUNTIME_MODELS = (
 )
 _AGENT_RUNTIME_MODEL_VALUES = SUPPORTED_CODEX_RUNTIME_MODELS
 _AGENT_RUNTIME_COMPATIBLE_MODEL_VALUES = SUPPORTED_OPENAI_COMPATIBLE_MODELS
-_AGENT_RUNTIME_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
+_AGENT_RUNTIME_REASONING_EFFORTS = SUPPORTED_RUNTIME_REASONING_EFFORTS
 
 
 def _agent_runtime_config_value(name: str, default: str = "") -> str:
@@ -4444,6 +4447,14 @@ def _render_agent_runtime_config() -> str:
     }
     api_enabled = "codex_api" in routes
     token_configured = bool(_agent_runtime_config_value("CEO_CODEX_API_KEY"))
+    claude_enabled = "claude_oauth" in routes
+    claude_model = _agent_runtime_config_value(
+        "CEO_CLAUDE_MODEL", DEFAULT_CEO_CLAUDE_MODEL
+    )
+    claude_reasoning_effort = _agent_runtime_config_value(
+        "CEO_CLAUDE_MODEL_REASONING_EFFORT",
+        DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT,
+    )
     friday_enabled = "friday_runtime" in routes
     friday_base_url = _agent_runtime_config_value(
         "CEO_FRIDAY_RUNTIME_BASE_URL", DEFAULT_FRIDAY_RUNTIME_BASE_URL
@@ -4483,6 +4494,8 @@ def _render_agent_runtime_config() -> str:
         f'<span class="runtime-overview-value">{escape(oauth_model)}</span></div>'
         '<div class="runtime-overview-item"><span class="runtime-overview-label">API fallback</span>'
         f'<span class="runtime-overview-value">{active_badge if api_enabled else inactive_badge}</span></div>'
+        '<div class="runtime-overview-item"><span class="runtime-overview-label">Claude OAuth</span>'
+        f'<span class="runtime-overview-value">{active_badge if claude_enabled else inactive_badge}</span></div>'
         '<div class="runtime-overview-item"><span class="runtime-overview-label">Friday Runtime</span>'
         f'<span class="runtime-overview-value">{active_badge if friday_enabled else inactive_badge}</span></div>'
         '</section>'
@@ -4513,6 +4526,23 @@ def _render_agent_runtime_config() -> str:
         '<select id="codex-api-model" name="codex_api_model">'
         f'{_agent_runtime_model_option_html(api_model)}</select><p class="runtime-helper">API fallback 使用的模型。</p></div>'
         f'{_runtime_password_field(input_id="codex-api-token", name="codex_api_token", label="API Token", configured=token_configured, helper="留空保存会保留已配置的 Token。")}'
+        '</div></section>'
+        '<section class="runtime-card">'
+        '<div class="runtime-card-head"><div><h3>Claude OAuth</h3><p>复用本机 Claude Code 订阅的 fallback 路由</p></div>'
+        f'{active_badge if claude_enabled else inactive_badge}</div><div class="runtime-fields">'
+        '<div class="runtime-field full"><label for="claude-oauth-enabled">'
+        '<input id="claude-oauth-enabled" type="checkbox" name="claude_oauth_enabled" value="1"'
+        f'{" checked" if claude_enabled else ""}>启用 Claude OAuth fallback</label>'
+        '<p class="runtime-helper">使用本机 <code>claude</code> CLI 的登录凭据，不需要 API Key；'
+        '未登录时该路由探测失败并被跳过。</p></div>'
+        '<div class="runtime-field"><label for="claude-model">Model</label>'
+        '<input id="claude-model" class="runtime-input" type="text" name="claude_model" required '
+        f'value="{escape(claude_model, quote=True)}">'
+        '<p class="runtime-helper">模型别名（sonnet/opus/haiku）或完整模型名。</p></div>'
+        '<div class="runtime-field"><label for="claude-reasoning-effort">Thinking strength</label>'
+        '<select id="claude-reasoning-effort" name="claude_reasoning_effort">'
+        f'{_agent_runtime_option_html(_AGENT_RUNTIME_REASONING_EFFORTS, claude_reasoning_effort)}</select>'
+        '<p class="runtime-helper">传给 Claude CLI 的 --effort。</p></div>'
         '</div></section>'
         '<section class="runtime-card wide">'
         '<div class="runtime-card-head"><div><h3>Friday Runtime</h3><p>本机 Friday Runtime 服务和 provider 凭据</p></div>'
@@ -9071,6 +9101,20 @@ def handle_agent_runtime_config_post(
     api_enabled = parsed.get("codex_api_enabled", [""])[0] == "1"
     api_model = parsed.get("codex_api_model", [""])[0].strip()
     api_token = parsed.get("codex_api_token", [""])[0].strip()
+    claude_enabled = parsed.get("claude_oauth_enabled", [""])[0] == "1"
+    claude_model = parsed.get(
+        "claude_model",
+        [_agent_runtime_config_value("CEO_CLAUDE_MODEL", DEFAULT_CEO_CLAUDE_MODEL)],
+    )[0].strip()
+    claude_reasoning_effort = parsed.get(
+        "claude_reasoning_effort",
+        [
+            _agent_runtime_config_value(
+                "CEO_CLAUDE_MODEL_REASONING_EFFORT",
+                DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT,
+            )
+        ],
+    )[0].strip()
     persisted_env = read_env_file()
     current_routes = {
         value.strip()
@@ -9134,6 +9178,12 @@ def handle_agent_runtime_config_post(
         return _invalid_agent_runtime_config(
             "Fallback model must be selected from this page."
         )
+    if not claude_model:
+        return _invalid_agent_runtime_config("Claude model is required.")
+    if claude_reasoning_effort not in _AGENT_RUNTIME_REASONING_EFFORTS:
+        return _invalid_agent_runtime_config(
+            "Claude thinking strength must be selected from this page."
+        )
     try:
         api_base_url = normalize_codex_api_base_url(
             parsed.get("codex_api_base_url", [""])[0]
@@ -9195,12 +9245,15 @@ def handle_agent_runtime_config_post(
     updates = {
         "CEO_CODEX_MODEL": model,
         "CEO_CODEX_MODEL_REASONING_EFFORT": reasoning_effort,
+        "CEO_CLAUDE_MODEL": claude_model,
+        "CEO_CLAUDE_MODEL_REASONING_EFFORT": claude_reasoning_effort,
         "CEO_AGENT_RUNTIME_ROUTES": (
             ",".join(
                 route
                 for route, enabled in (
                     ("codex_oauth", True),
                     ("codex_api", api_enabled),
+                    ("claude_oauth", claude_enabled),
                     ("friday_runtime", friday_enabled),
                 )
                 if enabled

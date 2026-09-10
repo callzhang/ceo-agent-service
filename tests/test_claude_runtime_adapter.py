@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -1003,3 +1004,109 @@ def test_terminal_event_failure_closes_proxy_and_unlinks_artifacts(
 
     assert adapter.active_proxy_process_count == 0
     assert not any(path.exists() for path in (settings_path, mcp_path))
+
+
+@pytest.fixture
+def oauth_config():
+    return load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "claude_oauth"})
+
+
+@pytest.fixture
+def oauth_adapter(tmp_path, oauth_config):
+    runtime_adapter = ClaudeRuntimeAdapter(
+        workspace=tmp_path,
+        config=oauth_config,
+        claude_bin="claude-test",
+    )
+    yield runtime_adapter
+    runtime_adapter._mcp_proxy.close()
+
+
+def test_claude_oauth_command_defaults_to_sonnet_medium_without_bare(
+    oauth_adapter, oauth_config
+):
+    route = oauth_config.routes[0]
+
+    command = oauth_adapter.build_command(route=route, session_id=None, max_turns=1)
+
+    assert command[command.index("--model") + 1] == "sonnet"
+    assert command[command.index("--effort") + 1] == "medium"
+    # --bare reads Anthropic auth strictly from ANTHROPIC_API_KEY, so the local
+    # subscription route must not use it.
+    assert "--bare" not in command
+    # The remaining isolation flags still keep the caller's CLAUDE.md, skills,
+    # plugins, and hooks out of a service run.
+    assert command[command.index("--setting-sources") + 1] == ""
+    assert "--strict-mcp-config" in command
+
+
+def test_claude_oauth_env_carries_no_api_key_and_no_config_dir_override(
+    oauth_adapter, oauth_config, monkeypatch
+):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ambient-anthropic-secret")
+    monkeypatch.setenv("CEO_CLAUDE_API_KEY", "ambient-ceo-secret")
+
+    env = oauth_adapter.build_env(oauth_config.routes[0])
+
+    # The CLI resolves the local login from the caller's HOME, so neither an
+    # ambient API key nor a redirected config dir may reach the child.
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "CEO_CLAUDE_API_KEY" not in env
+    assert "CLAUDE_CONFIG_DIR" not in env
+    assert env["HOME"] == os.environ["HOME"]
+
+
+def test_claude_api_command_keeps_bare_and_configured_effort(adapter, route):
+    command = adapter.build_command(route=route, session_id=None, max_turns=1)
+
+    assert "--bare" in command
+    assert command[command.index("--effort") + 1] == "medium"
+
+
+def test_claude_command_uses_the_requested_reasoning_effort(adapter, route):
+    command = adapter.build_command(
+        route=route,
+        session_id=None,
+        max_turns=1,
+        reasoning_effort="high",
+    )
+
+    assert command[command.index("--effort") + 1] == "high"
+
+    with pytest.raises(ValueError, match="reasoning effort"):
+        adapter.build_command(
+            route=route,
+            session_id=None,
+            max_turns=1,
+            reasoning_effort="ludicrous",
+        )
+
+
+def test_subscription_rate_limit_event_produces_no_runtime_event(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+
+    assert (
+        normalizer.normalize_events(
+            {
+                "type": "rate_limit_event",
+                "session_id": "claude-session-1",
+                "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour"},
+            }
+        )
+        == ()
+    )
+    assert normalizer.normalize_events(ASSISTANT_TEXT) == (
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": '{"ok":true}'},
+        },
+    )
+
+
+def test_rate_limit_event_still_requires_the_active_session(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+
+    with pytest.raises(ClaudeEventPolicyError, match="claude_session_mismatch"):
+        normalizer.normalize_events(
+            {"type": "rate_limit_event", "session_id": "other-session"}
+        )

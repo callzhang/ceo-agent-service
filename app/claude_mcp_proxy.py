@@ -277,7 +277,11 @@ def _serve_stdio(command: Sequence[str]) -> int:
 
 
 def _copy_stream(source, destination) -> None:
-    while chunk := source.read(64 * 1024):
+    # read1 returns as soon as any bytes are available.  A buffered read()
+    # blocks until the full size or EOF, which would hold one JSON-RPC message
+    # inside the proxy until the client closed the stream and stall every
+    # stdio MCP handshake.
+    while chunk := source.read1(64 * 1024):
         destination.write(chunk)
         destination.flush()
 

@@ -1,5 +1,7 @@
 import io
 import json
+import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -7,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from app.config import repo_root
 from app.claude_mcp_proxy import (
     ClaudeMcpCredentialProxyManager,
     _spawn_proxy_process,
@@ -232,3 +235,48 @@ def test_proxy_startup_error_terminates_waits_and_closes_pipes(monkeypatch):
     assert process.waited is True
     assert process.stdin.closed is True
     assert process.stdout.closed is True
+
+
+def test_stdio_wrapper_forwards_one_message_before_the_client_closes_stdin():
+    """A live MCP client holds stdin open, so a single line must not be buffered."""
+    echo_server = (
+        "import sys\n"
+        "for line in sys.stdin:\n"
+        "    sys.stdout.write(line)\n"
+        "    sys.stdout.flush()\n"
+    )
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "app.claude_mcp_proxy",
+            "--exec",
+            sys.executable,
+            "-c",
+            echo_server,
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=repo_root(),
+    )
+    try:
+        request = b'{"jsonrpc":"2.0","id":1,"method":"initialize"}\n'
+        process.stdin.write(request)
+        process.stdin.flush()
+        # stdin deliberately stays open, exactly as an MCP client keeps it.
+        reply = _read_line_within(process.stdout, timeout_seconds=15)
+        assert reply == request
+    finally:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def _read_line_within(stream, *, timeout_seconds: float) -> bytes:
+    result: list[bytes] = []
+    reader = threading.Thread(target=lambda: result.append(stream.readline()))
+    reader.daemon = True
+    reader.start()
+    reader.join(timeout_seconds)
+    assert result, "the proxy did not forward the request before stdin was closed"
+    return result[0]

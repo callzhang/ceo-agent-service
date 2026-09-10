@@ -4962,6 +4962,63 @@ def test_handle_agent_runtime_config_post_saves_enabled_api_fallback(
     assert "CEO_CODEX_API_KEY=new-token" in env_text
 
 
+def test_handle_agent_runtime_config_post_saves_enabled_claude_oauth_fallback(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_CODEX_API_KEY=existing-token\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, headers, html = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5"
+            "&codex_reasoning_effort=medium"
+            "&codex_api_enabled=1"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+            "&claude_oauth_enabled=1"
+            "&claude_model=sonnet"
+            "&claude_reasoning_effort=medium"
+        ).encode()
+    )
+
+    assert status == 303
+    assert headers["Location"] == "/config?tab=agent-runtime&saved=1"
+    assert html == ""
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api,claude_oauth" in env_text
+    assert "CEO_CLAUDE_MODEL=sonnet" in env_text
+    assert "CEO_CLAUDE_MODEL_REASONING_EFFORT=medium" in env_text
+    # The local login is the credential, so no Anthropic API key is written.
+    assert "CEO_CLAUDE_API_KEY" not in env_text
+
+
+def test_handle_agent_runtime_config_post_rejects_unsupported_claude_effort(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, _, html = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5"
+            "&codex_reasoning_effort=medium"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+            "&claude_oauth_enabled=1"
+            "&claude_model=sonnet"
+            "&claude_reasoning_effort=ludicrous"
+        ).encode()
+    )
+
+    assert status == 400
+    assert "Claude thinking strength" in html
+    assert "claude_oauth" not in env_path.read_text(encoding="utf-8")
+
+
 def test_handle_agent_runtime_config_post_accepts_explicit_gpt_5_6_family_models(
     tmp_path: Path,
     monkeypatch,
