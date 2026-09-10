@@ -3277,7 +3277,7 @@ def test_task10_schema_migrations_replay_full_chain_from_each_version(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == list(range(starting_version, 36))
+        ] == list(range(starting_version, email_store_module.EMAIL_SCHEMA_VERSION + 1))
         tables_after = {
             row[0]
             for row in db.execute("select name from sqlite_master where type='table'")
@@ -3984,6 +3984,7 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             33,
             34,
             35,
+            36,
         ]
         assert {
             row[1]
@@ -4243,6 +4244,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
         33,
         34,
         35,
+        36,
     ]
 
     EmailStore(database)
@@ -4328,6 +4330,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
         33,
         34,
         35,
+        36,
     ]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
@@ -4752,6 +4755,7 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
         33,
         34,
         35,
+        36,
     ]
 
 
