@@ -28,6 +28,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| Claude session `ceo-agent-service-f6` (Agent Cron) | `app/agent_cron/*`, `app/cli.py` (scheduled-task subcommands and `_service_command_registry`), `app/web_api/scheduled_tasks.py`, `frontend/src/api/scheduledTasks.ts`, `frontend/src/pages/ScheduledTasksPage.tsx` + their tests | scheduled-task execution forms (Agent task vs service command), the downstream-consumer descriptor, and the hourly recovery split | 2026-09-10 19:45Z |
 | Claude session `ceo-agent-service-76` (failed-item repair) | `app/email_unsubscribe.py`, `app/email_unsubscribe_audit.py`, `app/audit_agent.py`, `app/email_worker.py`, `app/email_task_adapter.py`, `app/meeting_alignment_agent.py`, `app/meeting_alignment_models.py` + their tests | closing the live `failed` reply tasks (skip outcomes projected as failures, unsubscribe browser page state, meeting schema guidance) | 2026-09-10 19:00Z |
 
 ## Recent overlaps worth knowing
@@ -39,4 +40,19 @@ reverts committed work they did not author.
   Both landed and are complementary, but neither knew about the other.
 - 2026-09-10: the scheduled "sync AI minutes" task was converted to a
   deterministic service command by one agent and restored to an Agent task
-  bound to `ceo-minutes-sync` by another, four times in eight minutes.
+  bound to `ceo-minutes-sync` by another. The live task's `version` is 6, so
+  it flipped six times. **Open disagreement, do not flip it again** (rule 3):
+  the owner of `app/agent_cron/*` holds that it must stay an Agent task,
+  because `sync-minutes-once` binds `scan_ai_minutes` (`app/task_scanners.py`),
+  which only pages the minutes list, enqueues the raw list row as the summary
+  and keeps a `seen_ids` list cursor. The `ceo-minutes-sync` managed Skill it
+  replaced also reads summaries and full transcripts, requests access through
+  `dingtalk-minutes-access-request` when a minute is denied, archives content
+  to the work directory and persists a *content* cursor; `grep -rn
+  "minutes-access-request" app/` finds nothing, so the command form cannot do
+  that. `docs/superpowers/specs/2026-09-08-agent-cron-and-managed-minutes-skill-design.md`
+  states the sync must not treat a successful list request as synced content.
+  Two sessions verified this independently. It is deployed in command form
+  (live since 12:11:02 -0700), the managed Skill is now referenced by no task,
+  and the final call is Derek's — please leave it as it is until he rules,
+  rather than reverting in either direction.
