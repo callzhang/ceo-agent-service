@@ -9102,19 +9102,17 @@ def handle_agent_runtime_config_post(
     api_model = parsed.get("codex_api_model", [""])[0].strip()
     api_token = parsed.get("codex_api_token", [""])[0].strip()
     claude_enabled = parsed.get("claude_oauth_enabled", [""])[0] == "1"
-    claude_model = parsed.get(
-        "claude_model",
-        [_agent_runtime_config_value("CEO_CLAUDE_MODEL", DEFAULT_CEO_CLAUDE_MODEL)],
-    )[0].strip()
-    claude_reasoning_effort = parsed.get(
-        "claude_reasoning_effort",
-        [
-            _agent_runtime_config_value(
-                "CEO_CLAUDE_MODEL_REASONING_EFFORT",
-                DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT,
-            )
-        ],
-    )[0].strip()
+    # An omitted or blank field keeps the configured value, so a caller that
+    # does not own these controls cannot blank them out.
+    claude_model = parsed.get("claude_model", [""])[0].strip() or (
+        _agent_runtime_config_value("CEO_CLAUDE_MODEL", DEFAULT_CEO_CLAUDE_MODEL)
+    )
+    claude_reasoning_effort = parsed.get("claude_reasoning_effort", [""])[
+        0
+    ].strip() or _agent_runtime_config_value(
+        "CEO_CLAUDE_MODEL_REASONING_EFFORT",
+        DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT,
+    )
     persisted_env = read_env_file()
     current_routes = {
         value.strip()
@@ -9178,8 +9176,6 @@ def handle_agent_runtime_config_post(
         return _invalid_agent_runtime_config(
             "Fallback model must be selected from this page."
         )
-    if not claude_model:
-        return _invalid_agent_runtime_config("Claude model is required.")
     if claude_reasoning_effort not in _AGENT_RUNTIME_REASONING_EFFORTS:
         return _invalid_agent_runtime_config(
             "Claude thinking strength must be selected from this page."

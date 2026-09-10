@@ -1,5 +1,14 @@
 # Changelog
 
+- 2026-09-10: the console's Agent Runtime panel carries the Claude route. The
+  SPA settings bridge (`/api/console/settings/agent-runtime`) whitelists the
+  fields it forwards to the legacy save handler, so a save from the console
+  would have dropped `claude_oauth` from `CEO_AGENT_RUNTIME_ROUTES`; it now
+  derives the route from the stored value the same way `codex_api` already did
+  and carries `CEO_CLAUDE_MODEL` / `CEO_CLAUDE_MODEL_REASONING_EFFORT` in both
+  directions. A blank or omitted Claude field keeps the configured value
+  instead of failing the save.
+
 - 2026-09-10: `claude_oauth` joins `codex_oauth`, `codex_api`, `claude_api` and
   `friday_runtime` as an Agent Runtime route. It runs the host's `claude` CLI
   against the machine's existing login, so it needs no Anthropic API key, and

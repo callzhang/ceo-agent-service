@@ -1646,6 +1646,7 @@ def register_console_routes(
                     "CEO_CODEX_MODEL", "CEO_CODEX_MODEL_REASONING_EFFORT",
                     "CEO_AGENT_RUNTIME_ROUTES", "CEO_CODEX_API_BASE_URL",
                     "CEO_CODEX_API_MODEL", "CEO_CODEX_API_KEY",
+                    "CEO_CLAUDE_MODEL", "CEO_CLAUDE_MODEL_REASONING_EFFORT",
                     "CEO_FRIDAY_RUNTIME_BASE_URL", "CEO_FRIDAY_RUNTIME_PROJECT_ID",
                     "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL",
                     "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL",
@@ -1918,6 +1919,9 @@ def register_console_routes(
             codex_api_enabled = fields.get("codex_api_enabled")
             if codex_api_enabled is None:
                 codex_api_enabled = "1" if "codex_api" in routes else "0"
+            claude_oauth_enabled = fields.get("claude_oauth_enabled")
+            if claude_oauth_enabled is None:
+                claude_oauth_enabled = "1" if "claude_oauth" in routes else "0"
             friday_auth_disabled = fields.get("friday_runtime_auth_disabled")
             if friday_auth_disabled is None:
                 friday_auth_disabled = fields.get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED")
@@ -1930,6 +1934,9 @@ def register_console_routes(
                 "codex_api_model": str(fields.get("codex_api_model") or fields.get("CEO_CODEX_API_MODEL") or ""),
                 "codex_api_base_url": str(fields.get("codex_api_base_url") or fields.get("CEO_CODEX_API_BASE_URL") or ""),
                 "codex_api_token": str(fields.get("codex_api_token") or fields.get("CEO_CODEX_API_KEY") or ""),
+                "claude_oauth_enabled": "1" if str(claude_oauth_enabled).lower() in {"1", "true", "yes", "on"} else "0",
+                "claude_model": str(fields.get("claude_model") or fields.get("CEO_CLAUDE_MODEL") or app_config.read_env_file().get("CEO_CLAUDE_MODEL", "")),
+                "claude_reasoning_effort": str(fields.get("claude_reasoning_effort") or fields.get("CEO_CLAUDE_MODEL_REASONING_EFFORT") or app_config.read_env_file().get("CEO_CLAUDE_MODEL_REASONING_EFFORT", "")),
                 "friday_runtime_settings_present": "1",
                 "friday_runtime_enabled": "1" if "friday_runtime" in str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or "").split(",") else "0",
                 "friday_runtime_base_url": str(fields.get("friday_runtime_base_url") or fields.get("CEO_FRIDAY_RUNTIME_BASE_URL") or ""),
