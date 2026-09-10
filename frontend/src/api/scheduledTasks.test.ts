@@ -43,7 +43,7 @@ const validOptions = {
   runtime_options: [{ route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt", available: true, unavailable_reason: null, supported_thinking: ["low", "medium", "high", "xhigh"], capabilities: ["local_process_execution"] }],
   managed_skill_options: [{ skill_id: 2, name: "managed", display_name: "Managed", revisions: [{ revision_id: 3, revision_number: 1, sha256: "abc", source: "settings", available: true, unavailable_reason: null }] }],
   operation_skill_options: [{ name: "operation", source: "/skills/operation/SKILL.md", content_summary: "Operation", sha256: "def", available: true, unavailable_reason: null }],
-  service_command_options: [{ name: "produce-once", description: "增量读取 DingTalk 未读消息" }],
+  service_command_options: [{ name: "produce-once", display_name: "检查钉钉消息", description: "增量读取 DingTalk 未读消息" }],
   meta: { snapshot_at: "now" },
 } as const;
 const commandTask = {

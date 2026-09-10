@@ -114,6 +114,7 @@ export type OperationSkillOption = OperationSkillOptionBase & Availability;
 
 export interface ServiceCommandOption {
   name: string;
+  display_name: string;
   description: string;
 }
 
@@ -261,6 +262,7 @@ function validManagedSkill(value: unknown): value is ManagedSkillOption {
 function validServiceCommand(value: unknown): value is ServiceCommandOption {
   const item = record(value);
   return Boolean(item && typeof item.name === "string" && Boolean(item.name.trim())
+    && typeof item.display_name === "string" && Boolean(item.display_name.trim())
     && typeof item.description === "string" && Boolean(item.description.trim()));
 }
 

@@ -19,12 +19,14 @@ SERVICE_COMMAND_EXECUTION_KIND = "service_command"
 @dataclass(frozen=True)
 class ServiceCommandOption:
     name: str
+    display_name: str
     description: str
 
 
 SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
     ServiceCommandOption(
         name="produce-once",
+        display_name="检查钉钉消息",
         description=(
             "增量读取 DingTalk 未读消息，去重后写入 reply task，"
             "由统一 Dispatcher 继续消费。"
@@ -32,6 +34,7 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
     ),
     ServiceCommandOption(
         name="wechat-produce-once",
+        display_name="检查微信消息",
         description=(
             "读取已就绪微信账号的新消息，按已配置联系人和群@边界去重后写入 reply task；"
             "Reader 不可用时只记录健康状态。"

@@ -820,6 +820,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
     assert detail.json()["item"]["recent_run"]["snapshot"]["command"] == "produce-once"
     catalog = options.json()["service_command_options"]
     assert [entry["name"] for entry in catalog] == ["produce-once", "wechat-produce-once"]
+    assert [entry["display_name"] for entry in catalog] == ["检查钉钉消息", "检查微信消息"]
     assert all(entry["description"].strip() for entry in catalog)
     assert store.get_scheduled_task(task_id).command == "produce-once"
 

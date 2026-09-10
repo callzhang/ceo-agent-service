@@ -46,7 +46,7 @@ const options = {
     { name: "dingtalk-chat", source: "/skills/dingtalk-chat/SKILL.md", content_summary: "读取并处理钉钉消息", sha256: "chat", available: true, unavailable_reason: null },
     { name: "lark-im", source: "/skills/lark-im/SKILL.md", content_summary: "读取飞书消息", sha256: "lark", available: false, unavailable_reason: "operation_skill_name_conflict" },
   ],
-  service_command_options: [{ name: "produce-once", description: "增量读取 DingTalk 未读消息，去重后写入 reply task。" }],
+  service_command_options: [{ name: "produce-once", display_name: "检查钉钉消息", description: "增量读取 DingTalk 未读消息，去重后写入 reply task。" }],
   meta: { snapshot_at: "2026-09-08T12:00:00Z" },
 };
 const commandRun: typeof run = { ...run, id: 13, scheduled_task_id: 9, execution_kind: "service_command", execution_id: "produce-once", snapshot: { ...run.snapshot, task_id: 9, name: "检查 DingTalk 消息", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {} as typeof run.snapshot.runtime_options, working_directory: "", skill_refs: [] } };
@@ -390,7 +390,7 @@ describe("ScheduledTasksPage", () => {
 });
 
 describe("service command tasks", () => {
-  it("edits only name, Cron, and timezone for a service command task and shows its command execution", async () => {
+  it("edits only name, Cron, and timezone for a service command task and shows its readable name", async () => {
     setup([commandTask]);
     api.listScheduledTaskRuns.mockResolvedValue({ scheduled_task: commandTask, items: [commandRun], meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false } });
     api.updateScheduledTask.mockImplementation(async (_id, draft) => ({ item: { ...commandTask, ...draft, version: 4 }, meta: { snapshot_at: "now" } }));
@@ -403,7 +403,9 @@ describe("service command tasks", () => {
     expect(screen.queryByLabelText("Runtime")).toBeNull();
     expect(screen.queryByLabelText("任务描述")).toBeNull();
     expect(screen.queryByText("Agent Skills")).toBeNull();
-    expect(screen.getByText("service_command #produce-once")).toBeInTheDocument();
+    expect(screen.getAllByText("检查钉钉消息").length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText("技术详情：produce-once")).toBeInTheDocument();
+    expect(screen.queryByText("service_command #produce-once")).toBeNull();
     expect(screen.getByRole("button", { name: "暂停任务" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "立即运行" })).toBeEnabled();
 

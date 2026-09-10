@@ -174,13 +174,16 @@ function TaskListItem({ task, selected, onSelect }: { task: ScheduledTask; selec
   </button>;
 }
 
-function RunHistory({ runs, hasMore, loading, onMore }: { runs: ScheduledTaskRun[]; hasMore: boolean; loading: boolean; onMore: () => void }) {
+function RunHistory({ runs, hasMore, loading, onMore, commandOptions }: { runs: ScheduledTaskRun[]; hasMore: boolean; loading: boolean; onMore: () => void; commandOptions: ScheduledTaskOptions["service_command_options"] }) {
   return <section className="scheduled-task-history" aria-labelledby="scheduled-task-history-title">
     <div className="scheduled-task-section-heading"><h3 id="scheduled-task-history-title">运行记录</h3><span>{runs.length} 条</span></div>
     {runs.length === 0 ? <p className="scheduled-task-empty-copy">尚无运行记录。</p> : <ol>{runs.map((run) => <li key={run.id}>
       <div><strong>{run.trigger_kind === "manual" ? "手动运行" : "定时触发"}</strong><span>{run.dispatch_status}</span></div>
       <small>{timeLabel(run.scheduled_for)}</small>
-      {run.execution_kind && run.execution_id && <span>{run.execution_kind} #{run.execution_id}</span>}
+      {run.execution_kind === "service_command" && run.execution_id ? (() => {
+        const command = commandOptions.find((option) => option.name === run.execution_id);
+        return <span>{command?.display_name || "服务命令"}<small>技术详情：{run.execution_id}</small></span>;
+      })() : run.execution_kind && run.execution_id && <span>{run.execution_kind} #{run.execution_id}</span>}
       {run.skip_or_error_reason && <p>{run.skip_or_error_reason}</p>}
     </li>)}</ol>}
     {hasMore && <button type="button" className="secondary-button" disabled={loading} onClick={onMore}>{loading ? "加载中…" : "加载更多运行记录"}</button>}
@@ -478,7 +481,7 @@ export function ScheduledTasksPage() {
           <form className="scheduled-task-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
             <label><span>任务名称</span><input aria-label="任务名称" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} /></label>
             <div className="scheduled-task-form-row"><label><span>Cron（秒 分 时 日 月 周）</span><input aria-label="Cron 表达式" value={draft.cron_expression} onChange={(event) => updateDraft("cron_expression", event.target.value)} /></label><label><span>时区</span><input aria-label="时区" value={draft.timezone_name} onChange={(event) => updateDraft("timezone_name", event.target.value)} /></label></div>
-            <div className="scheduled-task-command-field"><label><span>执行类型</span><select aria-label="服务命令" value={draft.command} onChange={(event) => selectCommand(event.target.value)}><option value="">Agent 任务（使用下方提示词）</option>{options?.service_command_options.map((option) => <option key={option.name} value={option.name}>{option.name}</option>)}</select></label>{commandTask && <small>{commandOption?.description || "由服务进程直接执行的确定性命令，不经过 Agent、Runtime 或 Skill。"}</small>}</div>
+            <div className="scheduled-task-command-field"><label><span>执行类型</span><select aria-label="服务命令" value={draft.command} onChange={(event) => selectCommand(event.target.value)}><option value="">Agent 任务（使用下方提示词）</option>{options?.service_command_options.map((option) => <option key={option.name} value={option.name}>{option.display_name}</option>)}</select></label>{commandTask && <small>{commandOption?.description || "由服务进程直接执行的确定性命令，不经过 Agent、Runtime 或 Skill。"}</small>}</div>
             {commandTask ? <>
             <section className="scheduled-task-system-prompt" aria-labelledby="scheduled-task-system-prompt-title"><div className="scheduled-task-section-heading"><h3 id="scheduled-task-system-prompt-title">Consumer Agent 系统提示词</h3><span>系统管理 · 只读</span></div><pre>你正在处理由 Trigger 产生的真实业务任务。加载 $ceo-message-triage 与 $dingtalk-chat；只处理当前业务对象，遵守对应 Skill、Runtime 和审计协议；不得把 Trigger 检查动作当作用户请求，不得重复消费或重复发送。</pre><small>系统只从明确的 $Skill 标记确定性提取 Skill。</small></section>
             <div className="scheduled-task-prompt-field"><label htmlFor="scheduled-task-consumer-custom-prompt">Consumer Agent 自定义描述</label><textarea id="scheduled-task-consumer-custom-prompt" aria-label="Consumer Agent 自定义描述" rows={5} defaultValue="重点关注需要 Derek 决策、确认、承诺或跟进的消息；普通通知和已完成事项优先 no_action。" placeholder="补充业务重点；如需 Skill，请写 $skill-name" /></div>
@@ -495,7 +498,7 @@ export function ScheduledTasksPage() {
             </>}
             <button type="submit" className="primary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)}>{mutationState === "saving" ? "保存中…" : creating ? "创建任务" : "保存更改"}</button>
           </form>
-          {!creating && <RunHistory runs={runs} hasMore={historyHasMore} loading={historyLoading} onMore={() => void loadMoreRuns()} />}
+          {!creating && <RunHistory runs={runs} hasMore={historyHasMore} loading={historyLoading} onMore={() => void loadMoreRuns()} commandOptions={options?.service_command_options || []} />}
         </> : <div className="scheduled-task-empty"><strong>选择或新建一个任务</strong><p>右侧会显示 Cron、Skills、Runtime 与运行记录。</p></div>}
       </section>
     </div>
