@@ -1,5 +1,16 @@
 # Changelog
 
+- 2026-09-10: `AutoReplyStore.complete_superseded_failed_weekly_okr_analysis_jobs`
+  extends the documented supersede recovery to analysis jobs that ended with
+  a technical failure (`runtime_route_unavailable`, `runtime_lease_expired`):
+  when the same manager has a completed analysis for a later week, or a
+  completed analysis started after the failed one (the rerun that shipped
+  that report), the job is closed as `superseded_by_later_completed_week`.
+  The existing recovery only handled still-`running` jobs, so 12 outage-era
+  jobs from late August and 3 lease-expired jobs from 2026-09-08 (whose
+  managers' 2026-09-06 analyses completed the same morning) stayed in the
+  failed set indefinitely; all 15 were closed with it.
+
 - 2026-09-10 (email queue unblocked at the root):
   - A process whose capability registry lacks a route (every service child
     starts empty) now adopts a sibling process's fresh, healthy snapshot from

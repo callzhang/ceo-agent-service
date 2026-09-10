@@ -8998,3 +8998,77 @@ def test_discard_unstarted_agent_run_removes_only_a_fresh_claim(tmp_path: Path):
     )
     assert store.discard_unstarted_agent_run(terminal.id, owner="runtime-attempt") is False
     assert store.get_agent_run(terminal.id) is not None
+
+
+@pytest.mark.parametrize("failure", ("runtime_lease_expired", "runtime_route_unavailable"))
+def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: str):
+    store = AutoReplyStore(tmp_path / "superseded-failed-weekly-okr.sqlite3")
+    stale = store.begin_weekly_okr_analysis_job(
+        week_end="2026-09-08",
+        manager_user_id="manager-1",
+        source_digest="a" * 64,
+        owner="stale-owner",
+        lease_seconds=60,
+        now="2026-09-08 04:25:00",
+    )
+    store.finish_weekly_okr_analysis_job(
+        stale.job_id, status="failed", error=failure, owner="stale-owner",
+        now="2026-09-08 04:25:30",
+    )
+    # A job whose failure is not a technical outage stays failed.
+    business = store.begin_weekly_okr_analysis_job(
+        week_end="2026-09-08",
+        manager_user_id="manager-2",
+        source_digest="c" * 64,
+        owner="stale-owner",
+        lease_seconds=60,
+        now="2026-09-08 04:25:00",
+    )
+    store.finish_weekly_okr_analysis_job(
+        business.job_id, status="failed", error="analysis_rejected", owner="stale-owner",
+        now="2026-09-08 04:25:30",
+    )
+    # The rerun that shipped the report: an EARLIER week_end but started later.
+    for manager in ("manager-1", "manager-2"):
+        shipped = store.begin_weekly_okr_analysis_job(
+            week_end="2026-09-06",
+            manager_user_id=manager,
+            source_digest="b" * 64,
+            owner="current-owner",
+            lease_seconds=60,
+            now="2026-09-08 05:12:00",
+        )
+        store.finish_weekly_okr_analysis_job(
+            shipped.job_id, status="completed", owner="current-owner",
+            now="2026-09-08 05:12:30",
+        )
+
+    # begin_weekly_okr_analysis_job stamps created_at with the wall clock;
+    # pin the order the live rows had (the rerun started after the failure).
+    with store._connect() as db:
+        db.execute(
+            "update weekly_okr_analysis_jobs set created_at='2026-09-08 04:25:00' "
+            "where id in (?, ?)",
+            (stale.job_id, business.job_id),
+        )
+        db.execute(
+            "update weekly_okr_analysis_jobs set created_at='2026-09-08 05:12:00' "
+            "where status='completed'",
+        )
+
+    assert store.complete_superseded_failed_weekly_okr_analysis_jobs(
+        now="2026-09-10 00:00:00"
+    ) == 1
+    with store._connect() as db:
+        rows = {
+            row[0]: tuple(row[1:])
+            for row in db.execute(
+                "select id, status, error, lease_owner, lease_expires_at "
+                "from weekly_okr_analysis_jobs where id in (?, ?)",
+                (stale.job_id, business.job_id),
+            ).fetchall()
+        }
+    assert rows[stale.job_id] == ("completed", "superseded_by_later_completed_week", "", "")
+    assert rows[business.job_id] == ("failed", "analysis_rejected", "", "")
+    # Idempotent: a second pass changes nothing.
+    assert store.complete_superseded_failed_weekly_okr_analysis_jobs() == 0
