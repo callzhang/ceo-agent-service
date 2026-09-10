@@ -5948,6 +5948,7 @@ def test_runtime_provider_unreachable_is_deferred_after_retry_budget(
     worker.produce_once()
     task = worker.store.claim_reply_tasks(limit=1)[0]
     worker.max_task_attempts = task.attempts
+    errors_before = worker.store.count_errors()
 
     completed = worker._apply_orchestration_result(
         task,
@@ -5963,9 +5964,152 @@ def test_runtime_provider_unreachable_is_deferred_after_retry_budget(
 
     persisted = worker.store.get_reply_task(task.id)
     assert not completed
-    assert persisted is not None and persisted.status == "failed"
+    assert persisted is not None and persisted.status == "pending"
     assert persisted.error == "runtime_provider_unreachable"
-    assert persisted.available_at == ""
+    assert persisted.available_at
+    # The outage is not one of the task's attempts: the claim's increment is
+    # handed back so the budget is untouched, and the route pause is the only
+    # signal (no per-task Service error).
+    assert persisted.attempts == task.attempts - 1
+    assert worker.store.count_errors() == errors_before
+
+
+def test_runtime_provider_unreachable_run_is_deferred_after_retry_budget(
+    tmp_path: Path,
+    monkeypatch,
+):
+    browser_notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    monkeypatch.setattr(
+        "app.worker.send_browser_notification",
+        lambda **kwargs: browser_notifications.append(kwargs) or True,
+    )
+    worker.produce_once()
+    task = worker.store.claim_reply_tasks(limit=1)[0]
+    worker.max_task_attempts = task.attempts
+    errors_before = worker.store.count_errors()
+    run = _claim_audit_run(
+        worker.store,
+        task.id,
+        task.execution_generation,
+        owner="outage-run",
+    ).run
+    worker.store.fail_agent_run(
+        run.id,
+        {"code": "runtime_provider_unreachable", "retryable": True},
+        owner="outage-run",
+    )
+
+    completed = worker._apply_orchestration_result(
+        task,
+        OrchestrationResult(
+            status="failed_retryable",
+            final_run_id=run.id,
+            final_role=AgentRole.AUDIT,
+            summary="no eligible route until the next health probe",
+            error=AgentError(code="runtime_provider_unreachable", retryable=True),
+            feedback_cycles=0,
+        ),
+    )
+
+    persisted = worker.store.get_reply_task(task.id)
+    assert not completed
+    assert persisted is not None and persisted.status == "pending"
+    assert persisted.error == "runtime_provider_unreachable"
+    assert persisted.available_at
+    assert persisted.attempts == task.attempts - 1
+    assert worker.store.count_errors() == errors_before
+    assert browser_notifications == []
+
+
+def test_invalid_result_run_stays_bounded_after_retry_budget(
+    tmp_path: Path,
+    monkeypatch,
+):
+    browser_notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    monkeypatch.setattr(
+        "app.worker.send_browser_notification",
+        lambda **kwargs: browser_notifications.append(kwargs) or True,
+    )
+    worker.produce_once()
+    task = worker.store.claim_reply_tasks(limit=1)[0]
+    worker.max_task_attempts = task.attempts
+    run = _claim_audit_run(
+        worker.store,
+        task.id,
+        task.execution_generation,
+        owner="invalid-run",
+    ).run
+    worker.store.fail_agent_run(
+        run.id,
+        {"code": "codex_result_invalid", "retryable": True},
+        owner="invalid-run",
+    )
+
+    completed = worker._apply_orchestration_result(
+        task,
+        OrchestrationResult(
+            status="failed_retryable",
+            final_run_id=run.id,
+            final_role=AgentRole.AUDIT,
+            summary="result did not match the wire schema",
+            error=AgentError(code="codex_result_invalid", retryable=True),
+            feedback_cycles=0,
+        ),
+    )
+
+    persisted = worker.store.get_reply_task(task.id)
+    assert not completed
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.error == "codex_result_invalid"
+    assert persisted.attempts == task.attempts
+    assert len(browser_notifications) == 1
+
+
+def test_is_runtime_outage_error_classifies_provider_outages():
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+    from app.external_retry import ExternalDependencyError
+    from app.worker import _is_runtime_outage_error
+
+    def routed(failure_class, *, retryable: bool = True, **kwargs):
+        return RoutedCodexExecutionError(
+            "runtime_execution_failed",
+            "no_eligible_route",
+            failure_class=failure_class,
+            retryable_external_dependency=retryable,
+            **kwargs,
+        )
+
+    assert _is_runtime_outage_error(routed(None, retryable=True, runtime_unavailable=True))
+    assert _is_runtime_outage_error(routed(RuntimeFailureClass.CAPACITY))
+    assert _is_runtime_outage_error(routed(RuntimeFailureClass.TRANSPORT))
+    assert _is_runtime_outage_error(
+        ExternalDependencyError(
+            "codex task agent",
+            routed(RuntimeFailureClass.CAPACITY),
+            dependency="codex",
+        )
+    )
+    assert not _is_runtime_outage_error(routed(RuntimeFailureClass.AUTHENTICATION))
+    assert not _is_runtime_outage_error(
+        routed(RuntimeFailureClass.PROCESS, failure_code="friday_runtime_unavailable")
+    )
+    assert not _is_runtime_outage_error(routed(RuntimeFailureClass.RESULT, retryable=False))
+    assert not _is_runtime_outage_error(RuntimeError("runtime_execution_failed"))
 
 
 def test_consume_once_completes_generation_mismatch_after_terminal_at_max_attempts(

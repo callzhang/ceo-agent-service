@@ -15,7 +15,9 @@ from app.task_agent import (
     process_work_item,
     _parse_task_agent_decision,
     _normalize_follow_up_time,
+    _task_result_validation_repair_prompt,
 )
+from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.task_models import TaskAgentDecision, WorkItem
 
 
@@ -80,6 +82,172 @@ def test_task_agent_parser_marks_missing_decision_as_validation_failure():
         _parse_task_agent_decision("not a decision")
 
     assert raised.value.raw_output == "not a decision"
+
+
+def _agent_message_jsonl(*messages: str) -> str:
+    return "\n".join(
+        json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": message}})
+        for message in messages
+    )
+
+
+def _null_evidence_decision(**overrides) -> dict:
+    # The MiniMax shape behind task runs 7472/7475: null where the schema
+    # wants a dict / str, plus update_project without a project.
+    decision = {
+        "action": "update_project",
+        "project": None,
+        "todo_changes": [
+            {
+                "action": "update",
+                "todo_id": 12,
+                "title": "Confirm the vendor quote with Zhang",
+                "owner_evidence": None,
+                "blocker": None,
+            }
+        ],
+        "update_summary": "Vendor quote still pending.",
+        "memory_recall_used": True,
+        "confidence": 0.7,
+    }
+    decision.update(overrides)
+    return decision
+
+
+def test_task_agent_parser_reports_field_errors_of_last_candidate():
+    raw = _agent_message_jsonl(json.dumps(_null_evidence_decision()))
+
+    with pytest.raises(
+        RoutedResultValidationError,
+        match=r"todo_changes\.0\.owner_evidence: Input should be a valid dictionary",
+    ) as raised:
+        _parse_task_agent_decision(raw)
+
+    message = str(raised.value)
+    assert "todo_changes.0.blocker: Input should be a valid string" in message
+    assert "No TaskAgentDecision JSON found" not in message
+    assert raised.value.raw_output == raw
+
+
+def test_task_agent_parser_reports_misplaced_project_fields():
+    # Task run 7460: the model closed `project` early and put its remaining
+    # fields at the decision top level.
+    decision = {
+        "action": "update_project",
+        "project": {"id": 3, "title": "Office move"},
+        "facts": [],
+        "tags": ["ops"],
+        "memory_recall_used": True,
+    }
+
+    with pytest.raises(RoutedResultValidationError) as raised:
+        _parse_task_agent_decision(_agent_message_jsonl(json.dumps(decision)))
+
+    message = str(raised.value)
+    assert "facts: Extra inputs are not permitted" in message
+    assert "tags: Extra inputs are not permitted" in message
+
+
+def test_task_agent_parser_ignores_event_objects_when_naming_failing_candidate():
+    raw = "\n".join(
+        [
+            json.dumps({"type": "turn.started"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "mcp_tool_call", "status": "failed"},
+                }
+            ),
+            _agent_message_jsonl(json.dumps(_null_evidence_decision())),
+            json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1}}),
+        ]
+    )
+
+    with pytest.raises(RoutedResultValidationError) as raised:
+        _parse_task_agent_decision(raw)
+
+    message = str(raised.value)
+    assert "todo_changes.0.owner_evidence" in message
+    assert "type:" not in message
+    assert "item:" not in message
+    assert "usage:" not in message
+    assert "action: Field required" not in message
+
+
+def test_task_agent_parser_message_never_echoes_field_values():
+    decision = _null_evidence_decision(
+        update_summary="Read /tmp/ceo-agent-service/notes.md with sk-proj-abcdefghijklmnop"
+    )
+    raw = json.dumps(decision)
+    assert contains_local_runtime_leak(raw)
+    assert contains_credential(raw)
+
+    with pytest.raises(RoutedResultValidationError) as raised:
+        _parse_task_agent_decision(raw)
+
+    message = str(raised.value)
+    assert not contains_local_runtime_leak(message)
+    assert not contains_credential(message)
+    assert "Confirm the vendor quote" not in message
+
+
+def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
+    raw = _agent_message_jsonl(json.dumps(_null_evidence_decision()))
+
+    prompt = _task_result_validation_repair_prompt(raw)
+
+    assert "- todo_changes.0.owner_evidence: Input should be a valid dictionary" in prompt
+    assert "- todo_changes.0.blocker: Input should be a valid string" in prompt
+    assert 'return action="skip" with a skip_reason' in prompt
+    assert "update_project requires project with the stable integer id" in prompt
+    assert "project.memory_context" in prompt
+    assert "null is accepted only where the schema declares it" in prompt
+    assert "belongs inside the project object" in prompt
+    assert (
+        "A source path may appear only in an evidence field whose key is "
+        "exactly source or source_ref"
+    ) in prompt
+    assert "Confirm the vendor quote" not in prompt
+    assert "Vendor quote still pending" not in prompt
+
+
+def test_task_result_validation_repair_prompt_for_prose_only_output():
+    prompt = _task_result_validation_repair_prompt("I could not find any durable work here.")
+
+    assert "did not contain a TaskAgentDecision JSON object" in prompt
+    assert "without prose or code fences" in prompt
+    assert "Do not include local filesystem paths" in prompt
+
+
+def test_task_result_validation_repair_prompt_after_runtime_path_leak():
+    decision = {
+        "action": "skip",
+        "skip_reason": "Nothing to change.",
+        "update_summary": "Could not read /tmp/ceo-agent-service/todo.md",
+        "memory_recall_used": True,
+    }
+
+    prompt = _task_result_validation_repair_prompt(_agent_message_jsonl(json.dumps(decision)))
+
+    assert "satisfied the schema but a business field contained a runtime path" in prompt
+    assert "Do not include local filesystem paths" in prompt
+    assert not contains_local_runtime_leak(prompt)
+
+
+def test_task_result_validation_repair_prompt_caps_problem_list():
+    decision = _null_evidence_decision(
+        todo_changes=[
+            {"action": "update", "todo_id": index, "owner_evidence": None}
+            for index in range(15)
+        ]
+    )
+
+    prompt = _task_result_validation_repair_prompt(json.dumps(decision))
+
+    problem_section = prompt.split("Rules that must hold:")[0]
+    assert problem_section.count("\n- ") == 12
+    assert "todo_changes.11.owner_evidence" in problem_section
+    assert "todo_changes.12.owner_evidence" not in problem_section
 
 
 class FakeCodex:

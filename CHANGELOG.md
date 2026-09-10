@@ -1,5 +1,47 @@
 # Changelog
 
+- 2026-09-10 (round 2, subagent-verified): five more Attention root causes.
+  - A provider outage discovered only after entering the last live route
+    (that route fails on capacity/transport, e.g. `codex_provider_overloaded`
+    on `codex_oauth` while `codex_api` is paused) is now treated exactly like
+    `runtime_unavailable`: work items and DingTalk reply tasks defer with
+    backoff under `runtime_provider_unreachable`, attempts are handed back
+    and no per-item Service error is recorded. The classification lives in
+    `app.worker._is_runtime_outage_error` and is shared by `app/cli.py` and
+    `app/worker.py`; authentication, result, process and capability failures
+    stay bounded. Previously 54 `task_agent` Attention rows and reply tasks
+    383510-383512 ended failed this way.
+  - The task-agent parser distinguishes "no `TaskAgentDecision` JSON" from
+    "decision object found but schema-invalid" and reports the pydantic
+    field errors of the last candidate (path + message only, never the
+    model's values). The correction prompt lists those problems plus the
+    rules MiniMax breaks most (`null` for string/object fields, project
+    fields outside `project`, `skip` when nothing changes, `update_project`
+    needs a stable id and `project.memory_context`). Runs 7460/7472/7475/7491
+    had returned complete decisions with `owner_evidence: null` and were
+    reported as "no JSON found", so the correction turn resent the same
+    object.
+  - Meeting alignment's schema correction turn now actually fires:
+    `parse_meeting_alignment_decision` raises the typed
+    `RoutedResultValidationError` instead of a plain `ValueError` (which the
+    router recorded as terminal `runtime_result_invalid`; 15 MiniMax runs,
+    zero correction attempts). The repair prompt collapses per-index topic
+    errors and de-duplicates before its cap, and both prompts embed the
+    `MeetingAlignmentDecision` JSON schema derived from the model, because
+    third-party providers ignore `--output-schema`.
+  - The OKR-review (`structured`) `AgentEnvelope` correction prompt names the
+    concrete field problems of the last JSON candidate and restates the
+    contract from `AgentEnvelope.model_json_schema()` instead of quoting a
+    4000-character excerpt. (The WeChat reply path parses in
+    `app/codex_decision.py`, not here — fixed separately.)
+  - The scheduled-task scheduler no longer records a `Service error` when an
+    event is skipped because the task's runtime route is merely paused or
+    unprobed (typed per-route reason classified with the router's
+    `route_unavailable_code`); the `skipped` run row stays and a warning is
+    logged. Missing capabilities, authentication pauses and an unconfigured
+    runtime id still enter Attention. Task 4 had produced one row per hour
+    during the outage.
+
 - 2026-09-10: the email consumer loop defers a task whose context load hit
   a transient mailbox/network failure (IMAP TLS handshake timeout,
   connection reset, imaplib transport errors) with backoff for up to five

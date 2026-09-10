@@ -43,6 +43,8 @@ from app.todo_sync import (
 )
 
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
+# Field errors quoted back to the model in one correction turn.
+TASK_DECISION_PROBLEM_LIMIT = 12
 TASK_AGENT_MAX_TIMEOUT_SECONDS = 900
 # A required live DWS read can legitimately take several minutes without
 # producing Codex JSONL output. Keep a finite bound while matching launchd's
@@ -252,14 +254,46 @@ def _encode_task_agent_result(raw: str) -> str:
     return encoded
 
 
-def _task_result_validation_repair_prompt(_raw_output: str) -> str:
+def _task_result_validation_repair_prompt(raw_output: str) -> str:
+    """Tell the model which schema rules its last decision broke."""
+    decision, problems = _validate_task_decision_candidates(raw_output)
+    if decision is not None:
+        # The schema held, so the rejection came from the codec leak check in
+        # _encode_task_agent_result.
+        detail = (
+            "- the decision satisfied the schema but a business field "
+            "contained a runtime path"
+        )
+    elif problems:
+        detail = "\n".join(f"- {problem}" for problem in problems)
+    else:
+        detail = (
+            "- the reply did not contain a TaskAgentDecision JSON object; "
+            "return only the JSON object without prose or code fences"
+        )
     return (
-        "Resume the same task decision and return exactly one valid "
-        "TaskAgentDecision JSON object. Do not include local filesystem paths, "
-        "session paths, lock paths, credentials, or runtime diagnostics in any "
-        "business field. A source path may appear only in an evidence field "
-        "whose key is exactly source or source_ref; summarize read failures "
-        "without copying the runtime path."
+        "The previous output was not accepted as a TaskAgentDecision. Resume "
+        "the same task decision and return exactly one valid TaskAgentDecision "
+        "JSON object.\n\n"
+        f"Problems in the previous output:\n{detail}\n\n"
+        "Rules that must hold:\n"
+        "- null is accepted only where the schema declares it (for example "
+        "completion_evidence, project); other string, object and list fields "
+        "such as owner_evidence and blocker are omitted or set to \"\", {} "
+        "or [].\n"
+        "- Every project field (facts, blocker, tags, source_conversations, "
+        "current_state, next_step, memory_context) belongs inside the project "
+        "object.\n"
+        "- When there is nothing to change, return action=\"skip\" with a "
+        "skip_reason.\n"
+        "- update_project requires project with the stable integer id from the "
+        "current context and project.memory_context (query plus summary or "
+        "memories); create_project requires project.memory_context too.\n\n"
+        "Do not include local filesystem paths, session paths, lock paths, "
+        "credentials, or runtime diagnostics in any business field. A source "
+        "path may appear only in an evidence field whose key is exactly source "
+        "or source_ref; summarize read failures without copying the runtime "
+        "path."
     )
 
 
@@ -1665,60 +1699,67 @@ def _task_decision_text_candidates(payload: object) -> list[str]:
     return candidates
 
 
-def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
-    def validate_candidate(candidate: str) -> TaskAgentDecision | None:
-        try:
-            return TaskAgentDecision.model_validate_json(candidate)
-        except (ValueError, ValidationError):
-            # Some Codex JSONL adapters concatenate a complete object with a
-            # repeated continuation. Recover only the first complete object;
-            # Pydantic still enforces the full decision schema below.
-            try:
-                payload, _ = json.JSONDecoder().raw_decode(candidate.lstrip())
-            except json.JSONDecodeError:
-                return None
-            try:
-                return TaskAgentDecision.model_validate(payload)
-            except (ValueError, ValidationError):
-                return None
-
-    def validate_embedded(candidate: str) -> TaskAgentDecision | None:
-        # Models regularly wrap the decision in prose or fences. The last
-        # complete decision wins over an earlier draft.
-        for payload in reversed(agent_message_json_objects(candidate)):
-            try:
-                return TaskAgentDecision.model_validate(payload)
-            except (ValueError, ValidationError):
-                continue
-        return None
-
+def _task_decision_candidates(raw: str) -> list[object]:
+    """Collect decision-shaped JSON objects from raw text or a Codex JSONL stream."""
     stripped = raw.strip()
-    if decision := validate_candidate(stripped):
-        return decision
-    # A Codex JSONL stream has only event objects at the top level, so this
-    # only matches when the raw text itself is prose around the decision.
-    if decision := validate_embedded(stripped):
-        return decision
-
-    payloads: list[object] = []
+    candidates: list[object] = []
+    # A Codex JSONL stream carries the decision inside an event's text field.
     for line in stripped.splitlines():
-        line = line.strip()
-        if not line:
-            continue
         try:
-            payloads.append(json.loads(line))
+            payload = json.loads(line)
         except json.JSONDecodeError:
             continue
-
-    for payload in reversed(payloads):
-        try:
-            return TaskAgentDecision.model_validate(payload)
-        except (ValueError, ValidationError):
-            pass
+        candidates.append(payload)
         for text in _task_decision_text_candidates(payload):
-            if decision := validate_candidate(text) or validate_embedded(text):
-                return decision
+            candidates.extend(agent_message_json_objects(text))
+    # Models regularly wrap the decision in prose or fences, and some Codex
+    # JSONL adapters concatenate a complete object with a repeated
+    # continuation; the extractor recovers every complete object either way.
+    # The whole message goes last so its final object outranks an earlier
+    # draft that also happens to sit alone on one line.
+    candidates.extend(agent_message_json_objects(stripped))
+    # Codex event objects ({"type": "item.completed", ...}) surround the
+    # decision but never are one, so they must not be reported as the
+    # failing candidate.
+    return [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, dict) and "action" in candidate
+    ]
+
+
+def _validate_task_decision_candidates(
+    raw: str,
+) -> tuple[TaskAgentDecision | None, list[str]]:
+    """Return the last schema-valid candidate, else the field errors of the last one."""
+    problems: list[str] = []
+    # The last complete decision wins over an earlier draft.
+    for candidate in reversed(_task_decision_candidates(raw)):
+        try:
+            return TaskAgentDecision.model_validate(candidate), []
+        except ValidationError as exc:
+            if not problems:
+                # Field path and message only: error["input"] echoes the
+                # model's values, which can carry runtime paths or credentials
+                # into the correction prompt and the service log.
+                problems = [
+                    f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                    for error in exc.errors()[:TASK_DECISION_PROBLEM_LIMIT]
+                ]
+    return None, problems
+
+
+def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
+    decision, problems = _validate_task_decision_candidates(raw)
+    if decision is not None:
+        return decision
+    if not problems:
+        raise RoutedResultValidationError(
+            "No TaskAgentDecision JSON found",
+            raw_output=raw,
+        )
     raise RoutedResultValidationError(
-        "No TaskAgentDecision JSON found",
+        "TaskAgentDecision JSON does not satisfy the schema: "
+        + "; ".join(problems),
         raw_output=raw,
     )

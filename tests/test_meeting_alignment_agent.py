@@ -471,7 +471,9 @@ def test_agent_rejects_null_target_for_multi_party_meeting():
 def test_parser_rejects_extra_fields():
     payload = summary_payload()
     payload["unexpected"] = True
-    with pytest.raises(ValueError, match="No MeetingAlignmentDecision"):
+    with pytest.raises(
+        ValueError, match="unexpected: Extra inputs are not permitted"
+    ):
         parse_meeting_alignment_decision(json.dumps(payload))
 
 
@@ -480,7 +482,7 @@ def test_parser_rejects_no_action_without_required_audience_scope():
     payload["action"] = "no_action"
     del payload["audience_scope"]
 
-    with pytest.raises(ValueError, match="No MeetingAlignmentDecision"):
+    with pytest.raises(ValueError, match="audience_scope: Field required"):
         parse_meeting_alignment_decision(json.dumps(payload))
 
 
@@ -781,7 +783,7 @@ def test_meeting_repair_prompt_names_schema_errors_of_last_candidate():
     prompt = _meeting_alignment_repair_prompt(raw)
 
     assert "MeetingAlignmentDecision" in prompt
-    assert "topics.0" in prompt
+    assert "topics[].title: Field required" in prompt
     assert "上一次输出的问题" in prompt
 
 
@@ -791,3 +793,188 @@ def test_meeting_repair_prompt_reports_missing_decision():
     prompt = _meeting_alignment_repair_prompt("I could not decide.")
 
     assert "did not contain a MeetingAlignmentDecision" in prompt
+
+
+def invalid_shape_payload() -> dict:
+    # The shape MiniMax produced on the failing runs: topic and target
+    # objects invented by the model, top-level fields missing.
+    return {
+        "action": "send",
+        "audience_scope": "business",
+        "trigger_reasons": ["aligned_disagreement"],
+        "topics": [{"topic": "发布范围"}, {"topic": "排期"}],
+        "key_questions": [],
+        "mention_names": [],
+        "target": {
+            "kind": "group",
+            "conversation_id": "cid-1",
+            "direct_user_id": "",
+            "title": "上线项目群",
+        },
+        "final_message": "会议总结",
+    }
+
+
+def agent_message_jsonl(payload: dict) -> str:
+    return json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": json.dumps(payload, ensure_ascii=False),
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_parser_marks_missing_decision_as_validation_failure():
+    from app.agent_runtime_router import RoutedResultValidationError
+
+    raw = agent_message_jsonl(invalid_shape_payload())
+
+    with pytest.raises(RoutedResultValidationError) as raised:
+        parse_meeting_alignment_decision(raw)
+
+    assert raised.value.raw_output == raw
+    assert "topics[].title: Field required" in str(raised.value)
+    assert "上线项目群" not in str(raised.value)
+
+    with pytest.raises(RoutedResultValidationError) as raised:
+        parse_meeting_alignment_decision("I could not decide.")
+
+    assert raised.value.raw_output == "I could not decide."
+    assert str(raised.value) == "No MeetingAlignmentDecision JSON found"
+
+
+def test_meeting_repair_prompt_collapses_topic_indices_and_keeps_top_level_errors():
+    from app.meeting_alignment_agent import _meeting_alignment_repair_prompt
+
+    prompt = _meeting_alignment_repair_prompt(
+        agent_message_jsonl(invalid_shape_payload())
+    )
+    problems = prompt.split("上一次输出的问题：\n", 1)[1].split("\n\n", 1)[0]
+
+    assert "- topics[].title: Field required" in problems
+    assert "topics.0" not in problems and "topics.1" not in problems
+    assert "- derek_viewpoint: Field required" in problems
+    assert "- target.candidates: Field required" in problems
+    assert "- audit_summary: Field required" in problems
+    assert "- confidence: Field required" in problems
+
+
+def test_meeting_repair_prompt_includes_derived_schema():
+    from app.meeting_alignment_agent import _meeting_alignment_repair_prompt
+    from app.meeting_alignment_models import MeetingAlignmentDecision
+
+    prompt = _meeting_alignment_repair_prompt("I could not decide.")
+    prompt_schema = json.loads(
+        prompt.split("MeetingAlignmentDecision Pydantic JSON schema:\n", 1)[1]
+    )
+
+    assert prompt_schema == MeetingAlignmentDecision.model_json_schema()
+
+
+def test_prompt_embeds_decision_schema():
+    from app.meeting_alignment_models import MeetingAlignmentDecision
+
+    prompt = build_meeting_alignment_prompt(
+        source(),
+        work_profile="重视端到端结果",
+        work_profile_source="/configured/work_profile.md",
+    )
+    prompt_schema, _ = json.JSONDecoder().raw_decode(
+        prompt.split("MeetingAlignmentDecision Pydantic JSON schema:\n", 1)[1]
+    )
+
+    assert prompt_schema == MeetingAlignmentDecision.model_json_schema()
+    assert "严格遵守下方 schema" in prompt
+
+
+def test_runner_correction_turn_uses_repair_prompt_with_field_errors(tmp_path):
+    from app.agent_runtime_config import load_runtime_config
+    from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+    from app.agent_runtime_router import RoutedCodexExecution
+    from app.meeting_alignment_agent import MEETING_RUNTIME_CAPABILITIES
+    from app.process_runner import ProcessRunResult
+    from app.store import AutoReplyStore
+    from tests.test_routed_codex_execution import NOW, FakeAdapter, make_router
+
+    store = AutoReplyStore(tmp_path / "meeting-correction.sqlite3")
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
+            "CEO_CODEX_API_KEY": "configured-secret",
+        }
+    )
+    store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1",
+        title="上线范围评审",
+        source_json="{}",
+        participants_json="[]",
+        ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(),
+        status="pending",
+    )
+    [job] = store.claim_meeting_alignment_jobs(limit=1, now=NOW.isoformat())
+    run_id = store.begin_meeting_alignment_run(job.id)
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=MEETING_RUNTIME_CAPABILITIES,
+            healthy=True,
+            checked_at="2026-08-20T09:59:00+00:00",
+            expires_at="2026-08-20T10:05:00+00:00",
+        )
+        for route in config.routes
+    }
+    prompts = []
+
+    def executor(command, **kwargs):
+        prompts.append(kwargs["prompt"])
+        payload = invalid_shape_payload() if len(prompts) == 1 else summary_payload()
+        return ProcessRunResult(
+            0,
+            "\n".join(
+                [
+                    json.dumps(
+                        {"type": "thread.started", "thread_id": "meeting-session-1"}
+                    ),
+                    agent_message_jsonl(payload),
+                ]
+            ),
+            "",
+        )
+
+    adapter = FakeAdapter()
+    runner = MeetingAlignmentCodexRunner(
+        routed_execution=RoutedCodexExecution(
+            store=store,
+            config=config,
+            router=make_router(store, config, snapshots=snapshots),
+            adapter=adapter,
+            executor=executor,
+            session_line_counter=lambda _session_id: 2,
+        )
+    )
+
+    decision = runner.decide(prompt="decide", run_id=run_id)
+
+    assert decision.action == "send"
+    assert runner.last_session_id == "meeting-session-1"
+    assert prompts[0] == "decide"
+    assert "topics[].title: Field required" in prompts[1]
+    assert "derek_viewpoint: Field required" in prompts[1]
+    assert "MeetingAlignmentDecision Pydantic JSON schema:" in prompts[1]
+    assert adapter.commands == [
+        ("codex_oauth", None, "on-failure", False),
+        ("codex_oauth", "meeting-session-1", "on-failure", False),
+    ]
+    attempts = store.list_runtime_operation_attempts("meeting", str(run_id))
+    assert [attempt.attempt_purpose for attempt in attempts] == [
+        "normal",
+        "result_validation_correction",
+    ]
+    assert [attempt.status for attempt in attempts] == ["superseded", "completed"]
+    assert attempts[0].failure_code == "runtime_result_validation_failed"
+    assert [attempt.session_mode for attempt in attempts] == ["fresh", "resume"]

@@ -767,6 +767,16 @@ run 才能被持久队列恢复。
   同样按可重试的外部依赖延期，而不是判为执行失败。这种“没有进入任何路由”的状态由路由层以
   `runtime_unavailable` 标记；工作项 worker 据此只延期、不消耗自身的有限重试次数，也不记录逐条
   Service error（路由暂停本身就是信号）。
+- **进入最后一条可用路由后才发现的故障**：该路由以 capacity/transport 失败且其余路由均已暂停时，与
+  `runtime_unavailable` 同等处理：工作项和钉钉回复任务以 `runtime_provider_unreachable` 退避延期、attempts 归还、
+  不写 per-item Service error（判定由 `app.worker._is_runtime_outage_error` 统一提供）；认证、结果、进程类失败仍有界。
+- **定时任务的路由暂不可用**：调度器发现任务保存的路由仅是暂停/未探测（用路由层同一个分类器判为
+  `runtime_provider_unreachable`）时只写 `skipped` 运行行并记 warning 日志，不再逐条写 Attention；缺能力、认证类
+  暂停或运行时未配置仍进入 Attention。
+- **结果不合契约时修正提示要说清楚**：任务 Agent 区分“完全没有决策 JSON”与“有对象但不合 schema”，失败原因与
+  修正提示列出最后一个候选的字段错误（只含路径与描述，不回显模型的值）和最常违反的规则；会议对齐的解析失败
+  以 `RoutedResultValidationError` 上报，因此同会话修正轮真正触发，修正提示折叠列表下标并附派生 schema（主提示同样
+  内嵌，第三方 provider 不执行 `--output-schema`）；OKR 评审的 AgentEnvelope 修正提示同理由模型 schema 渲染。
 - **Provider 的通用过载包装**：Codex 会把上游 429/5xx（限流、MiniMax token plan 用尽、上游过载）
   统一包装成 "We're currently experiencing high demand"，流里不带 provider 原文；服务把它归为
   `codex_provider_overloaded`（容量类：同路由可重试、允许 failover、暂停路由），而不是传输断开。

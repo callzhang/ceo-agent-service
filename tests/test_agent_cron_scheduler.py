@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import threading
@@ -23,7 +24,17 @@ from app.store import AutoReplyStore
 NOW = datetime(2026, 9, 8, 12, 0, 0, tzinfo=UTC)
 
 
+@dataclass(frozen=True)
+class _RuntimeOption:
+    route_name: str
+    available: bool
+    unavailable_reason: str | None
+
+
 class AvailableOptions:
+    def list_runtime_options(self, **_kwargs: object) -> tuple[_RuntimeOption, ...]:
+        return ()
+
     def resolve_runtime_route(self, route_name: str, **_kwargs: object) -> object:
         assert route_name == "codex_oauth"
         return object()
@@ -48,6 +59,19 @@ class MissingServiceCommand(AvailableOptions):
 class MissingRuntime(AvailableOptions):
     def resolve_runtime_route(self, route_name: str, **_kwargs: object) -> object:
         raise ValueError(f"{route_name} is not healthy")
+
+
+class UnavailableRuntimeRoute(AvailableOptions):
+    """The saved route exists but the router reports a typed per-route reason."""
+
+    def __init__(self, unavailable_reason: str) -> None:
+        self._unavailable_reason = unavailable_reason
+
+    def list_runtime_options(self, **_kwargs: object) -> tuple[_RuntimeOption, ...]:
+        return (_RuntimeOption("codex_oauth", False, self._unavailable_reason),)
+
+    def resolve_runtime_route(self, route_name: str, **_kwargs: object) -> object:
+        raise ValueError(f"runtime route {route_name}: {self._unavailable_reason}")
 
 
 class MissingOperationSkill(AvailableOptions):
@@ -425,6 +449,66 @@ def test_unavailable_runtime_is_skipped_and_recorded_in_existing_attention(
     assert error.kind == RUNTIME_UNAVAILABLE
     assert error.conversation_id == f"scheduled-task:{task.id}"
     assert error.message_id == run.event_id
+
+
+@pytest.mark.parametrize(
+    "unavailable_reason",
+    ["paused:codex_provider_overloaded", "snapshot_missing"],
+)
+def test_paused_or_unprobed_runtime_route_is_skipped_without_attention_error(
+    tmp_path: Path,
+    caplog,
+    unavailable_reason: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _task(store)
+    scheduler = _scheduler(store, options=UnavailableRuntimeRoute(unavailable_reason))
+    scheduler.start(NOW)
+
+    scheduler.tick(NOW + timedelta(minutes=1))
+
+    (run,) = store.list_scheduled_task_runs(task.id)
+    assert run.dispatch_status == "skipped"
+    assert run.skip_or_error_reason == RUNTIME_UNAVAILABLE
+    assert store.list_errors() == []
+    [record] = [
+        record
+        for record in caplog.records
+        if record.message == "agent_cron_scheduler_runtime_unavailable"
+    ]
+    assert record.levelname == "WARNING"
+    assert record.scheduled_task_id == task.id
+    assert record.scheduled_task_event_id == run.event_id
+    assert unavailable_reason in record.scheduled_task_skip_detail
+
+
+@pytest.mark.parametrize(
+    "unavailable_reason",
+    [
+        "missing_capabilities:local_schema_validation",
+        "paused:codex_login_required",
+        "runtime_not_configured",
+    ],
+)
+def test_runtime_route_defect_is_skipped_into_attention(
+    tmp_path: Path,
+    unavailable_reason: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _task(store)
+    scheduler = _scheduler(store, options=UnavailableRuntimeRoute(unavailable_reason))
+    scheduler.start(NOW)
+
+    scheduler.tick(NOW + timedelta(minutes=1))
+
+    (run,) = store.list_scheduled_task_runs(task.id)
+    assert run.dispatch_status == "skipped"
+    assert run.skip_or_error_reason == RUNTIME_UNAVAILABLE
+    (error,) = store.list_errors()
+    assert error.kind == RUNTIME_UNAVAILABLE
+    assert error.conversation_id == f"scheduled-task:{task.id}"
+    assert error.message_id == run.event_id
+    assert unavailable_reason in error.detail
 
 
 def test_unavailable_exact_skill_is_skipped_without_runtime_fallback(

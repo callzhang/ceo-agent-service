@@ -425,7 +425,8 @@ def test_structured_runner_resumes_session_to_repair_invalid_json(tmp_path):
             assert repair_prompt.startswith(
                 "上一次输出不是合法 AgentEnvelope JSON。请基于同一个上下文"
             )
-            assert invalid in repair_prompt
+            assert "不要调用工具，不要发送消息" in repair_prompt
+            assert "- no valid AgentEnvelope found" in repair_prompt
             value = kwargs["parser"](valid)
             return SimpleNamespace(
                 value=value,
@@ -755,3 +756,110 @@ def test_parse_agent_envelope_ignores_non_json_lines_around_the_stream():
     )
 
     assert parse_agent_envelope(raw) == AgentEnvelope.model_validate(envelope)
+
+
+def test_agent_envelope_repair_prompt_names_schema_problems_of_last_candidate():
+    from typing import get_args
+
+    from app.agent_envelope import (
+        AgentKind,
+        AgentSensitivityKind,
+        SystemAction,
+        UserResponseMode,
+    )
+    from app.structured_agent import (
+        AGENT_ENVELOPE_SCHEMA_PROBLEM_LIMIT,
+        _agent_envelope_repair_prompt,
+    )
+
+    # The MiniMax shape from agent_run 9581: a fenced envelope whose enum values
+    # and system action are made up and whose audit lacks confidence.
+    envelope = {
+        "kind": "reply",
+        "user_response": {
+            "mode": "reply_now",
+            "text": "",
+            "sensitivity_kind": "general",
+        },
+        "system_actions": [{"type": "send_wechat_reply"}],
+        "domain_payload": {},
+        "audit": {"summary": "对话在19:03后已自然结束", "documents": []},
+    }
+    raw = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "s1"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": "Draft: "
+                        + json.dumps({"mode": "send_reply", "reply_text": "draft"})
+                        + "\n\nFinal:\n```json\n"
+                        + json.dumps(envelope, ensure_ascii=False, indent=2)
+                        + "\n```",
+                    },
+                }
+            ),
+        ]
+    )
+
+    prompt = _agent_envelope_repair_prompt(raw)
+
+    assert "不要调用工具，不要发送消息，不要执行任何外部动作" in prompt
+    assert "- user_response.mode: Input should be" in prompt
+    assert "- system_actions[].SendDingTalkReplyAction.type: Input should be" in prompt
+    # One bad system action fails against every union member; the cap must
+    # still leave room for the problems of the other top-level fields.
+    assert "- audit.confidence: Field required" in prompt
+    assert prompt.count("\n- ") <= AGENT_ENVELOPE_SCHEMA_PROBLEM_LIMIT
+    # The problems describe the final envelope, not the draft before it.
+    assert "- kind: Field required" not in prompt
+    assert "对话在19:03后已自然结束" not in prompt
+    for enum in (AgentKind, UserResponseMode, AgentSensitivityKind):
+        for value in enum:
+            assert f'"{value.value}"' in prompt
+    for action in get_args(SystemAction):
+        (action_type,) = get_args(action.model_fields["type"].annotation)
+        assert f'"{action_type}"' in prompt
+
+
+def test_agent_envelope_repair_prompt_degrades_for_a_valid_envelope():
+    from app.structured_agent import _agent_envelope_repair_prompt
+
+    raw = json.dumps(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "send_reply",
+                "text": "ok",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [],
+            "domain_payload": {},
+            "audit": {"summary": "valid", "documents": [], "confidence": 0.8},
+        }
+    )
+
+    # The router calls this after claiming the correction attempt; it must
+    # never raise, even for a raw the parser accepts.
+    prompt = _agent_envelope_repair_prompt(raw)
+
+    assert "- the reply did not contain a valid AgentEnvelope JSON object" in prompt
+    assert "AgentEnvelope Pydantic JSON schema:" in prompt
+
+
+def test_agent_envelope_repair_prompt_reports_missing_json_object():
+    from app.structured_agent import _agent_envelope_repair_prompt
+
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": "I could not decide."},
+        }
+    )
+
+    prompt = _agent_envelope_repair_prompt(raw)
+
+    assert "- agent message does not contain a JSON object" in prompt
+    assert "I could not decide." not in prompt

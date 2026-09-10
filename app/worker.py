@@ -24,6 +24,7 @@ from app.agent_context import (
 )
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, DecisionOption
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
+from app.agent_runtime_contracts import RuntimeFailureClass
 from app.audit_agent import AuditAgentRunner
 from app.channel_gate import (
     ChannelGate,
@@ -187,6 +188,12 @@ RECOVERABLE_AGENT_RUNTIME_ERRORS = frozenset(
         "codex_stream_invalid",
     }
 )
+# The provider-outage code shared by both workers: the turn runner stores it
+# when no route was entered (route_unavailable_code), and app/cli.py stores it
+# when the last live route failed on capacity/transport with every other route
+# paused. Either way it is a route-pause wait, not a per-item failure, so it
+# never spends the budget.
+RUNTIME_OUTAGE_WAIT_ERRORS = frozenset({"runtime_provider_unreachable"})
 
 
 def _continues_codex_capacity_wait(task: ReplyTask, error: str) -> bool:
@@ -361,6 +368,32 @@ def _normalize_codex_stop_error_reason(reason: str) -> str:
 
 def _is_codex_provider_recovery_wait_reason(reason: str) -> bool:
     return is_codex_provider_recovery_code(reason)
+
+
+def _is_runtime_outage_error(exc: BaseException) -> bool:
+    """Return whether the failure chain says the runtime provider is out.
+
+    Either no route was entered (`runtime_unavailable`), or the only route
+    that ran failed on capacity/transport and every other route is paused:
+    both are the same wait for the route pause to lift, not a failure of the
+    item itself. Authentication, result and process failures stay bounded.
+    """
+    current: BaseException | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        if getattr(current, "runtime_unavailable", False):
+            return True
+        if getattr(current, "retryable_external_dependency", False) and getattr(
+            current, "failure_class", None
+        ) in {RuntimeFailureClass.CAPACITY, RuntimeFailureClass.TRANSPORT}:
+            return True
+        visited.add(id(current))
+        current = (
+            getattr(current, "original_error", None)
+            or current.__cause__
+            or current.__context__
+        )
+    return False
 
 
 def _is_terminal_codex_auth_failure(reason: str) -> bool:
@@ -2276,6 +2309,7 @@ class DingTalkAutoReplyWorker:
         if _continues_codex_capacity_wait(task, error_code):
             error_code = CODEX_PROVIDER_CAPACITY_EXHAUSTED
         provider_recovery = _is_codex_provider_recovery_wait_reason(error_code)
+        runtime_outage_wait = error_code in RUNTIME_OUTAGE_WAIT_ERRORS
         capacity_exhausted = is_codex_capacity_exhausted(error_code)
         authorization_wait = result.error.authorization_required
         active_recovery_wait = result.error.code in {
@@ -2287,6 +2321,7 @@ class DingTalkAutoReplyWorker:
             error = error_code or "agent_orchestration_deferred"
             if (
                 provider_recovery
+                or runtime_outage_wait
                 or authorization_wait
                 or active_recovery_wait
                 or task.attempts < self.max_task_attempts
@@ -2368,6 +2403,7 @@ class DingTalkAutoReplyWorker:
             mapped_status == "failed_retryable"
             and task.attempts >= self.max_task_attempts
             and not provider_recovery
+            and not runtime_outage_wait
             and not authorization_wait
             and not active_recovery_wait
         ):
@@ -2497,7 +2533,10 @@ class DingTalkAutoReplyWorker:
             send_error=send_error,
             channel=task.channel,
             preserve_attempt_budget=(
-                provider_recovery or authorization_wait or active_recovery_wait
+                provider_recovery
+                or runtime_outage_wait
+                or authorization_wait
+                or active_recovery_wait
             )
             and task_status == "pending",
             **self._orchestration_oa_metadata(task, result),

@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass, field
+from itertools import zip_longest
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -29,6 +30,12 @@ STRUCTURED_RUNTIME_CAPABILITIES = frozenset(
 STRUCTURED_RESULT_CODEC = RoutedResultCodec.text(
     schema_id="structured_agent.result.v1"
 )
+# Rendered from the model so the correction prompt cannot drift from the
+# envelope contract (kinds, response modes, sensitivity kinds, action types).
+AGENT_ENVELOPE_PROMPT_SCHEMA = json.dumps(
+    AgentEnvelope.model_json_schema(), ensure_ascii=False, indent=2
+)
+AGENT_ENVELOPE_SCHEMA_PROBLEM_LIMIT = 8
 
 
 class SkillLoadError(RuntimeError):
@@ -345,12 +352,56 @@ def _is_codex_session_refresh_error(message: str) -> bool:
 
 
 def _agent_envelope_repair_prompt(raw: str) -> str:
-    excerpt = raw.strip()
-    if len(excerpt) > 4000:
-        excerpt = excerpt[:4000] + "\n...[truncated]"
+    """Tell the model which schema rules its last envelope broke."""
+    problems = _agent_envelope_schema_problems(raw)
+    detail = (
+        "\n".join(f"- {problem}" for problem in problems)
+        if problems
+        else "- the reply did not contain a valid AgentEnvelope JSON object"
+    )
     return (
         "上一次输出不是合法 AgentEnvelope JSON。请基于同一个上下文重新输出合法 "
         "AgentEnvelope JSON，只输出 JSON，不要调用工具，不要发送消息，不要执行任何外部动作。\n\n"
-        "上一次输出摘录：\n"
-        f"{excerpt}"
+        f"上一次输出的问题：\n{detail}\n\n"
+        "AgentEnvelope Pydantic JSON schema:\n"
+        f"{AGENT_ENVELOPE_PROMPT_SCHEMA}"
     )
+
+
+def _agent_envelope_schema_problems(raw: str) -> list[str]:
+    """List why the parser rejected the last candidate, by field path, never its text."""
+    try:
+        parse_agent_envelope(raw)
+    except ValidationError as exc:
+        # A made-up system action fails against every union member (one error
+        # per member field); taking problems field by field in turns keeps the
+        # other top-level fields inside the cap.
+        by_field: dict[str, list[str]] = {}
+        for error in exc.errors():
+            field_name = str(error["loc"][0]) if error["loc"] else ""
+            problem = _schema_problem(error["loc"], error["msg"])
+            if problem not in by_field.setdefault(field_name, []):
+                by_field[field_name].append(problem)
+        in_turns = [
+            problem
+            for round_ in zip_longest(*by_field.values())
+            for problem in round_
+            if problem is not None
+        ]
+        return in_turns[:AGENT_ENVELOPE_SCHEMA_PROBLEM_LIMIT]
+    except ValueError as exc:
+        return [str(exc)]
+    # The router builds this prompt after claiming the correction attempt, so
+    # a raw that parses here must degrade to the fixed line, never raise.
+    return []
+
+
+def _schema_problem(loc: tuple[int | str, ...], message: str) -> str:
+    path = ""
+    for part in loc:
+        if isinstance(part, int):
+            path += "[]"
+        else:
+            path = f"{path}.{part}" if path else str(part)
+    # Model-level validators report an empty location.
+    return f"{path}: {message}" if path else message

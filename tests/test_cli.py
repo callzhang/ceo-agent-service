@@ -7832,3 +7832,137 @@ def test_process_work_items_waits_for_paused_routes_without_spending_attempts(
     )
     assert row["available_at"]
     assert error_rows == 0
+
+
+def _route_outage_work_input(store) -> int:
+    return store.enqueue_work_summary_input(
+        "reply_attempt",
+        "route-outage",
+        WorkItem.model_validate(
+            {
+                "source": {"type": "reply_attempt", "ref": "route-outage"},
+                "summary": "The last live route failed on the provider.",
+                "project_name": "Route outage project",
+                "context": {
+                    "sender": "Mina",
+                    "participants": [],
+                    "source_conversation_kind": "group",
+                    "source_conversation_title": "Test group",
+                },
+            }
+        ).model_dump_json(),
+    )
+
+
+@pytest.mark.parametrize("failure_class_name", ("CAPACITY", "TRANSPORT"))
+def test_process_work_items_waits_for_provider_outage_after_failed_attempt_without_spending_attempts(
+    tmp_path,
+    monkeypatch,
+    capsys,
+    failure_class_name,
+):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    class LastRouteFailedRunner:
+        last_session_id = ""
+        last_audit_tool_events = []
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
+            # The codex_oauth attempt ran and hit provider capacity while
+            # codex_api was already paused: the router has no next route, so
+            # runtime_unavailable stays False even though the provider is out.
+            routed = RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "no_eligible_route:codex_api=paused:codex_provider_overloaded",
+                failure_class=RuntimeFailureClass[failure_class_name],
+                failure_code="codex_provider_overloaded",
+                retryable_external_dependency=True,
+            )
+            raise ExternalDependencyError("codex task agent", routed, dependency="codex") from routed
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", LastRouteFailedRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    input_id = _route_outage_work_input(store)
+    with store._connect() as db:
+        db.execute("update work_summary_inputs set attempts=3 where id=?", (input_id,))
+
+    settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+    assert process_work_items_command(settings) == 0
+    capsys.readouterr()
+
+    with store._connect() as db:
+        row = db.execute(
+            "select status, attempts, error, available_at from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        error_rows = db.execute("select count(*) from errors").fetchone()[0]
+    assert (row["status"], row["attempts"], row["error"]) == (
+        "pending",
+        3,
+        "runtime_provider_unreachable",
+    )
+    assert row["available_at"]
+    assert error_rows == 0
+
+
+def test_process_work_items_keeps_execution_failures_bounded(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    class InvalidResultRunner:
+        last_session_id = ""
+        last_audit_tool_events = []
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
+            # A result failure is not an outage: task_agent re-raises it as is.
+            raise RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "no_eligible_route:codex_api=paused:codex_provider_overloaded",
+                failure_class=RuntimeFailureClass.RESULT,
+                failure_code="codex_result_invalid",
+                retryable_external_dependency=False,
+            )
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", InvalidResultRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    input_id = _route_outage_work_input(store)
+    with store._connect() as db:
+        db.execute("update work_summary_inputs set attempts=3 where id=?", (input_id,))
+
+    settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+    assert process_work_items_command(settings) == 0
+    capsys.readouterr()
+
+    with store._connect() as db:
+        row = db.execute(
+            "select status, attempts, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        error_rows = db.execute("select kind, detail from errors").fetchall()
+    # Unlike an outage, a genuine failure keeps the claim's attempt increment
+    # and surfaces in Attention.
+    assert (row["status"], row["attempts"], row["error"]) == (
+        "failed",
+        4,
+        "runtime_execution_failed",
+    )
+    assert [(row["kind"], row["detail"]) for row in error_rows] == [
+        ("task_agent", "runtime_execution_failed")
+    ]

@@ -11,6 +11,7 @@ from app.agent_runtime_router import (
     RoutedCodexExecution,
     RoutedCodexExecutionError,
     RoutedResultCodec,
+    RoutedResultValidationError,
     RoutedResultValidationRetry,
 )
 from app.config import principal_display_name, work_profile_path
@@ -38,6 +39,12 @@ MEETING_RUNTIME_CAPABILITIES = frozenset(
 MEETING_RESULT_CODEC = RoutedResultCodec.text(
     schema_id="meeting_alignment.decision.v1"
 )
+# Third-party providers ignore Codex's --output-schema, so the prompt text is
+# the only place the model sees the AlignmentTopic / DeliveryTarget shapes.
+MEETING_ALIGNMENT_DECISION_PROMPT_SCHEMA = json.dumps(
+    MeetingAlignmentDecision.model_json_schema(), ensure_ascii=False, indent=2
+)
+MEETING_ALIGNMENT_SCHEMA_PROBLEM_LIMIT = 12
 
 
 class MeetingAlignmentTargetError(ValueError):
@@ -184,19 +191,7 @@ def _encode_meeting_alignment_result(raw: str) -> str:
 
 def _meeting_alignment_repair_prompt(raw: str) -> str:
     """Tell the model which schema rules its last decision broke."""
-    problems: list[str] = []
-    for payload in reversed(_raw_message_json_objects(raw)):
-        try:
-            MeetingAlignmentDecision.model_validate(payload)
-        except ValidationError as exc:
-            problems = [
-                f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
-                for error in exc.errors()[:12]
-            ]
-            break
-        except ValueError as exc:
-            problems = [str(exc)[:300]]
-            break
+    problems = _meeting_alignment_schema_problems(raw)
     detail = (
         "\n".join(f"- {problem}" for problem in problems)
         if problems
@@ -205,8 +200,41 @@ def _meeting_alignment_repair_prompt(raw: str) -> str:
     return (
         "上一次输出不是合法的 MeetingAlignmentDecision JSON。请基于同一个上下文重新输出，"
         "只输出一个满足 schema 的 JSON 对象，不要调用工具，不要发送消息。\n\n"
-        f"上一次输出的问题：\n{detail}"
+        f"上一次输出的问题：\n{detail}\n\n"
+        "MeetingAlignmentDecision Pydantic JSON schema:\n"
+        f"{MEETING_ALIGNMENT_DECISION_PROMPT_SCHEMA}"
     )
+
+
+def _meeting_alignment_schema_problems(raw: str) -> list[str]:
+    """List the schema errors of the last decision candidate, one per field path."""
+    for payload in reversed(_raw_message_json_objects(raw)):
+        try:
+            MeetingAlignmentDecision.model_validate(payload)
+        except ValidationError as exc:
+            # A wrong topic shape repeats the same errors for every topic;
+            # collapsing list indices keeps top-level errors within the cap.
+            problems = list(
+                dict.fromkeys(
+                    _schema_problem(error["loc"], error["msg"])
+                    for error in exc.errors()
+                )
+            )
+            return problems[:MEETING_ALIGNMENT_SCHEMA_PROBLEM_LIMIT]
+        except ValueError as exc:
+            return [str(exc)[:300]]
+    return []
+
+
+def _schema_problem(loc: tuple[int | str, ...], message: str) -> str:
+    path = ""
+    for part in loc:
+        if isinstance(part, int):
+            path += "[]"
+        else:
+            path = f"{path}.{part}" if path else str(part)
+    # Model-level validators report an empty location.
+    return f"{path}: {message}" if path else message
 
 
 def _raw_message_json_objects(raw: str) -> list[object]:
@@ -276,9 +304,12 @@ def build_meeting_alignment_prompt(
 {target_contract}
 
 输出合同：
-- 只输出 MeetingAlignmentDecision JSON，严格遵守 schema，不添加字段。
+- 只输出 MeetingAlignmentDecision JSON，严格遵守下方 schema，不添加字段。
 - action 固定为 send；final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同。
 - 没有人员敏感内容时 sensitive_private_message 必须为 null；存在混合内容时同时生成脱敏后的 final_message 和独立 sensitive_private_message。
+
+MeetingAlignmentDecision Pydantic JSON schema:
+{MEETING_ALIGNMENT_DECISION_PROMPT_SCHEMA}
 
 服务端注入的工作人格（仅作解释辅助，不能创造会议立场）：
 {work_profile or "（无可用工作人格）"}
@@ -337,7 +368,18 @@ def parse_meeting_alignment_decision(raw: str) -> MeetingAlignmentDecision:
         for text in _decision_text_candidates(payload):
             if decision := _embedded_decision(text):
                 return decision
-    raise ValueError("No MeetingAlignmentDecision JSON found")
+    # Typed so the router runs the same-session correction turn instead of
+    # terminalizing the attempt as runtime_result_invalid. The message is
+    # logged by the router, so it carries field paths, never the raw output.
+    problems = _meeting_alignment_schema_problems(stripped)
+    raise RoutedResultValidationError(
+        (
+            "MeetingAlignmentDecision schema mismatch: " + "; ".join(problems)
+            if problems
+            else "No MeetingAlignmentDecision JSON found"
+        ),
+        raw_output=raw,
+    )
 
 
 def _embedded_decision(text: str) -> MeetingAlignmentDecision | None:
