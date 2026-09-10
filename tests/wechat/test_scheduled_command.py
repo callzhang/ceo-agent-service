@@ -15,6 +15,11 @@ from app.wechat.scheduled_command import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reader_enabled(monkeypatch):
+    monkeypatch.setattr(scheduled_command, "wechat_reader_enabled", lambda: True)
+
+
 def _store(tmp_path, *, ready: bool = True) -> AutoReplyStore:
     store = AutoReplyStore(tmp_path / "wechat-command.sqlite3")
     if ready:
@@ -47,6 +52,15 @@ def _command(store, *, produce, restarts=None, readers=None):
         restart_reader=lambda: restarts.append("restart"),
         reader_factory=factory,
     )
+
+
+def test_disabled_reader_is_a_summary_and_never_touches_the_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(scheduled_command, "wechat_reader_enabled", lambda: False)
+    monkeypatch.setattr(scheduled_command, "ready_account_state", lambda _store: pytest.fail("must not read"))
+
+    result = _command(object(), produce=None, restarts=[], readers=[])()
+
+    assert result == "wechat produce-once skipped: reader disabled"
 
 
 def test_missing_ready_account_is_a_summary_and_never_builds_a_reader(tmp_path, monkeypatch):

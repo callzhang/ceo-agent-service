@@ -24,7 +24,8 @@ Accessibility send (verified live to 文件传输助手, including background qu
 | `sender_ipc.py` / `sender_helper.py` | Owner-only IPC client/server and dedicated signed Sender app entrypoint |
 | `memory_import.py` / `memory_writer.py` | Bounded extraction + deterministic cleanup; claimed, approved-only Memory writer (`memory.py` keeps public imports) |
 | `setup.py` / `audit_web.py` | Tutorial connect service + visible contact/group picker |
-| `service.py` / `cli.py` | Composable steps/loops + diagnostic CLI |
+| `service.py` / `cli.py` | Composable steps + diagnostic CLI; `app/cli.py` keeps only the `wechat-sender` loop |
+| `scheduled_command.py` | `wechat-produce-once`: the producer pass as an in-process scheduled service command (no Agent), with reader-health reporting |
 | `scripts/wechat_key_probe.py` | Fingerprint-only key/schema gate |
 
 Store isolation: `reply_tasks`/`reply_attempts`/`sent_replies` gain a `channel`
@@ -129,11 +130,17 @@ disconnects, `BrokenPipeError` in the helper, and repeated
 `wechat-producer stopped unexpectedly` notifications. Runtime handling now
 distinguishes the two cases:
 
-- a transient socket refusal or timeout records `wechat_reader_unavailable`,
-  waits for the normal polling interval, and retries automatically;
-- an explicit `permission_required` response records
-  `wechat_data_permission_required` and pauses that loop until service restart,
-  preventing repeated macOS permission prompts and background load.
+- a transient socket refusal or timeout is retried on the next scheduled
+  pass; after three consecutive failures the producer command requests one
+  Reader restart, marks the `wechat.reader` health component `degraded`, and
+  records a single `wechat_reader_unavailable`. The next successful pass marks
+  the component `healthy` and resolves that error. The `wechat-sender` loop
+  keeps the same debounce for failures it meets while sending;
+- an explicit `permission_required` response (or `EACCES`/`EPERM` from macOS)
+  records `wechat_data_permission_required` once. The producer command keeps
+  returning a "paused: data permission required" summary on every pass without
+  recording again until a read succeeds; the sender loop pauses until service
+  restart. Neither re-triggers macOS permission prompts or background load.
 
 Do not treat every IPC timeout as revoked App Data permission. Confirm helper
 health, the structured IPC error code, and a bounded real read before changing
@@ -338,15 +345,22 @@ least 15 minutes.
    - `ceo-agent wechat <status|read-recent|produce-once|consume-once>` passes
      through (argparse REMAINDER) to `app.wechat.cli`. `wechat status`
      auto-detects+persists `self_user_id` and reports `ready`.
-   - `run_service()` starts `wechat-producer`/`wechat-consumer` threads only when
-     `CEO_WECHAT_READER_ENABLED` **and** a single account is persisted `ready`
-     with a non-empty self-wxid
-     (`_wechat_service_components`); disabled by default (no effect on the DingTalk
-     service). Auto-send stays gated — the loops enqueue tasks and produce
-     `ready_to_send` deliveries but do not send.
-   - If macOS denies access to another app's data (`EACCES`/`EPERM`), the WeChat
-     loop records one `wechat_data_permission_required` error and stops until
-     service restart instead of retrying every poll interval.
+   - `run_service()` starts no producer or consumer thread. Production is the
+     `检查微信消息` scheduled task (`wechat-message-check-v1`, service command
+     `wechat-produce-once`, every 15 s, seeded enabled): the Dispatcher runs the
+     producer pass in-process inside the trigger claim, and the trigger links
+     `service_command` without creating a reply task or Agent run. The pass
+     returns a skipped summary while `CEO_WECHAT_READER_ENABLED` is off or no
+     single account is persisted `ready` with a non-empty self-wxid. Reply
+     tasks it enqueues are consumed by the unified Dispatcher's `wechat` reply
+     consumer. Only the `wechat-sender` loop starts, and only when
+     `CEO_WECHAT_SENDER_ENABLED=1` and the reader gate above holds
+     (`_wechat_service_components`). Auto-send stays gated — the consumer produces
+     `ready_to_send` deliveries but does not send.
+   - If macOS denies access to another app's data (`EACCES`/`EPERM`), the
+     producer command records one `wechat_data_permission_required` error and
+     keeps returning a paused summary; the sender loop records one and stops
+     until service restart. Neither retries every interval.
 
 ## History review
 
@@ -430,8 +444,10 @@ pending.
 
 ## Disable / rollback
 
-- `CEO_WECHAT_READER_ENABLED=0`, `CEO_WECHAT_SENDER_ENABLED=0` (defaults) — loops
-  never start.
+- `CEO_WECHAT_READER_ENABLED=0`, `CEO_WECHAT_SENDER_ENABLED=0` (defaults) — the
+  sender loop never starts and the scheduled `wechat-produce-once` pass returns
+  a skipped summary without touching the Reader. Pause the `检查微信消息` task on
+  the Agent Cron page to stop the 15-second trigger itself.
 - Purge the decrypted mirror (`CEO_WECHAT_MIRROR_DIR`, default
   `~/.cache/wx_read/plain`) and the passphrase file to remove all plaintext.
 - The real `/Applications/WeChat.app` is never modified by this channel.
@@ -465,8 +481,9 @@ pending.
 - **Direction**: real outbound/inbound needs the self-wxid; defaults inbound
   until `self_username` is populated. The diagnostic CLI now requires a resolved
   self-wxid before reading, so it cannot silently label every row inbound.
-  Automatic producer, consumer, and sender loops do not start without it, and
-  one-shot produce/consume commands build their reader with that persisted id.
+  The scheduled producer pass returns a skipped summary and the sender loop does
+  not start without it, and one-shot produce/consume commands build their
+  reader with that persisted id.
 - **Activation watermark**: each selected scope starts at its activation time;
   historical messages are never fed into auto-reply. The producer advances that
   scope only after the entire normalized batch has been handled. Producer pages

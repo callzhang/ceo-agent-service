@@ -115,6 +115,29 @@ python scripts/migrate_error_projections.py --db <database> --apply
 脚本默认只读；`--apply` 只更新会议任务的 current projection，不更新
 `meeting_alignment_runs` 历史错误字段。
 
+## 定时任务与服务命令
+
+trigger 自身的跳过原因写在 `scheduled_task_runs.skip_or_error_reason`；带 `scheduled-task:<id>`
+来源写入 `errors` 的条目进入 Attention。
+
+| 错误码 | 解释 | 默认处理 |
+| --- | --- | --- |
+| `scheduled_task_previous_execution_active` | 上一轮 trigger 或其 execution 尚未终态，本轮跳过 | 不处理；不写 errors |
+| `scheduled_task_runtime_unavailable` | Agent 任务固定的 Runtime route 不健康或缺少能力 | 修复 Runtime 或改任务配置 |
+| `scheduled_task_managed_skill_unavailable` | 绑定的精确 managed Skill revision 未加载或已禁用 | 加载该 revision 或重新绑定 |
+| `scheduled_task_operation_skill_unavailable` | 引用的 operation Skill 不可用 | 安装或修复该 Skill |
+| `scheduled_task_execution_unavailable` | 派发或执行前发现 Runtime、Skill 或工作目录已不可用 | 同上；execution 以 `skipped` 收口 |
+| `scheduled_task_service_command_unavailable` | 服务命令任务引用的命令不在目录中 | 检查任务的 `command` 与 `service_command_options` |
+| `scheduled_task_service_command_failed` | 服务命令抛出异常，trigger 记 `failed` | 查看 detail 中的原因；命令幂等，下一次 trigger 会重跑 |
+
+## 微信通道
+
+| 错误码 | 解释 | 默认处理 |
+| --- | --- | --- |
+| `wechat_data_permission_required` | macOS 拒绝访问微信数据，或 Reader 回报 `permission_required`；只记录一次 | 授予 CEO WeChat Reader 的 App Data 权限；producer 下一次成功读取后自动恢复，sender 循环需重启服务 |
+| `wechat_reader_unavailable` | Reader IPC 连续失败 3 次，已请求一次 Reader 重启；只记录一次 | 观察 `wechat.reader` 健康；producer 下一次成功读取后自动 resolve |
+| `wechat_sender_loop_error` | sender 循环中未分类的异常，或持续的 sqlite 锁 | 查看 detail |
+
 ## 历史错误码
 
 历史数据库可能包含已经废弃的 `unknown`、`reconciled`、旧恢复状态或早期命令审核错误。
@@ -123,7 +146,8 @@ schema 升级会删除这些旧投影字段，把旧 `unknown` run 的当前状�
 provider 结果保持不变；当前业务投影归入 `failed`、`done` 或 `needs_human` 的现行语义。
 
 `runtime_effect_policy_violation`、`agoal_live_read_unreviewed`、`audit_recovery_ambiguous`、
-`audit_reconciliation_result_invalid` 和 `audit_reconciliation_evidence_mismatch` 只允许作为历史
+`audit_reconciliation_result_invalid`、`audit_reconciliation_evidence_mismatch`、
+`wechat_producer_loop_error` 和 `wechat_consumer_loop_error` 只允许作为历史
 错误文本保留。当前代码不得生成这些错误，也不得将它们纳入 Attention、Workers 当前失败或
 自动恢复条件。
 

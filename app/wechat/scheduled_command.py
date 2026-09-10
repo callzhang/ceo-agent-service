@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import errno
 
+from app.config import wechat_reader_enabled
 from app.wechat.reader_ipc import ReaderIpcError
 from app.wechat.service import (
     account_from_state,
@@ -24,7 +25,7 @@ class WechatProduceOnceCommand:
     """Run the WeChat producer once, the same pass as ``app.wechat.cli produce-once``.
 
     Reader availability is a reader health fact, not a trigger failure: a
-    missing account or an unreachable Reader app returns a summary, reports
+    disabled reader, a missing account, or an unreachable Reader app returns a summary, reports
     itself once through the ``wechat.reader`` health component and the error
     log, and requests one Reader restart after repeated IPC failures. The
     next successful pass clears that report. Any other exception is a real
@@ -46,6 +47,8 @@ class WechatProduceOnceCommand:
         self._reported = False
 
     def __call__(self) -> str:
+        if not wechat_reader_enabled():
+            return "wechat produce-once skipped: reader disabled"
         state = ready_account_state(self._store)
         if state is None:
             return "wechat produce-once skipped: no ready WeChat account"

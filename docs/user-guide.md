@@ -313,6 +313,7 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 | `/attempts/{id}` | 单次 trigger、回复、证据、工具事件和回执；从此处打开 Consumer/Audit 执行记录，不显示内部会话标识 |
 | `/oa-approvals/{process_instance_id}` | OA 详情、评论和历史处理结果 |
 | `/tasks` | 项目、TODO 和 follow-up |
+| `/scheduled-tasks` | Agent Cron 定时任务：Cron、启用状态、立即运行和运行记录。Agent 任务显示 prompt、Skills 和 Runtime；服务命令任务只显示命令名，由服务进程直接执行，不进入 `/history` |
 | `/workers` | 后台投递和作业 worker 的运行状态；不显示工作台执行器或 lease |
 | `/settings` | 统一左侧导航；系统参数、路由、Channel gate、队列和运行记录 |
 | `/errors` | 需要处理的系统错误 |
@@ -329,6 +330,8 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 | `failed` | Agent、工具、数据或发送失败 | 先查根因，再决定是否重跑 |
 | `processing` | 正在执行 | 超过正常时长才排查 |
 | `quarantined` | 历史数据中的旧投影标签 | 仅查看历史，不由新任务写入 |
+
+定时任务的运行记录另有一套状态：`pending` 等待派发，`dispatched` 已派发（Agent 任务链接到一次执行，服务命令任务表示命令已在本进程内跑完），`skipped` 带原因跳过（最常见的是 `scheduled_task_previous_execution_active`，即上一轮还没结束），`failed` 是服务命令抛错，原因和 Attention 中的 `scheduled_task_service_command_failed` 对应。
 
 ### 重跑原则
 

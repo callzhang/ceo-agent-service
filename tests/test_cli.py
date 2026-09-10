@@ -7740,10 +7740,11 @@ def test_wechat_sender_loop_pauses_after_reader_reports_app_data_denial(
 
 
 def test_service_command_registry_binds_the_catalog_to_service_operations(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
     from app.wechat.scheduled_command import WechatProduceOnceCommand
 
+    monkeypatch.setenv("CEO_WECHAT_READER_ENABLED", "1")
     calls: list[object] = []
 
     class Worker:

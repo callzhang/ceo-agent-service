@@ -54,7 +54,11 @@
   fail the trigger. The seeded `wechat-message-check-v1` task is converted in
   place; an untouched legacy seed (version 1) becomes enabled because its
   disabled state only reflected the Agent form's missing Skill revision,
-  while an edited task keeps the user's enabled state.
+  while an edited task keeps the user's enabled state. The command returns a
+  skipped summary without touching the Reader while
+  `CEO_WECHAT_READER_ENABLED` is off. README, the WeChat operations guide,
+  the user guide, and the error catalog now describe service command tasks
+  and the surviving sender-only loop.
 
 - 2026-09-09: run the DingTalk message check as a service command instead of an
   Agent task. A scheduled task now has a `command` field (schema adds
