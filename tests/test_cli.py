@@ -796,6 +796,37 @@ def test_parser_supports_recent_meeting_replay():
     assert args.offset == 1
 
 
+def test_replay_recent_meetings_command_prints_structured_failure(
+    monkeypatch, tmp_path, capsys
+):
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        workspace=tmp_path / "memory",
+    )
+    error = DwsError("minutes page unavailable", code="SYSTEM_ERROR")
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: object())
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: object())
+    monkeypatch.setattr(
+        cli,
+        "queue_recent_meeting_alignment_replay",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+
+    result = cli.replay_recent_meetings_command(settings, limit=3)
+
+    assert result == [
+        {
+            "meeting_id": "",
+            "title": "",
+            "duration_seconds": None,
+            "outcome": "failed",
+            "job_id": None,
+            "error": "minutes page unavailable",
+        }
+    ]
+    assert json.loads(capsys.readouterr().out) == result
+
+
 def test_parser_supports_process_work_items():
     args = build_parser().parse_args(["process-work-items", "--max-batches", "3"])
 

@@ -3092,13 +3092,25 @@ def replay_recent_meetings_command(
     limit: int,
     offset: int = 0,
 ) -> list[dict[str, object]]:
-    results = queue_recent_meeting_alignment_replay(
-        AutoReplyStore(settings.db_path),
-        _create_meeting_dws(settings),
-        now=datetime.now().astimezone(),
-        limit=limit,
-        offset=offset,
-    )
+    try:
+        results = queue_recent_meeting_alignment_replay(
+            AutoReplyStore(settings.db_path),
+            _create_meeting_dws(settings),
+            now=datetime.now().astimezone(),
+            limit=limit,
+            offset=offset,
+        )
+    except DwsError as exc:
+        results = [
+            {
+                "meeting_id": "",
+                "title": "",
+                "duration_seconds": None,
+                "outcome": "failed",
+                "job_id": None,
+                "error": str(exc),
+            }
+        ]
     print(json.dumps(results, ensure_ascii=False), flush=True)
     return results
 
