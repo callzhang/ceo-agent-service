@@ -161,3 +161,16 @@ def test_runtime_failure_persists_bounded_redacted_detail():
     assert payload["source_code"] == "codex_process_failed"
     assert "database is locked" in payload["detail"]
     assert "/tmp/" not in payload["detail"]
+
+
+def test_runtime_failure_detail_keeps_wrapped_validation_reason():
+    try:
+        try:
+            raise ValueError("invalid AgentEnvelope: missing user_response")
+        except ValueError as cause:
+            raise RuntimeError("runtime_result_validation_failed") from cause
+    except RuntimeError as exc:
+        detail = agent_turn_runner._runtime_failure_detail(exc)
+
+    assert "invalid AgentEnvelope: missing user_response" in detail
+    assert "runtime_result_validation_failed" in detail

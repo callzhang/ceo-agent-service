@@ -423,8 +423,30 @@ def _agent_process_error_code(exc: Exception) -> str:
 
 
 def _runtime_failure_detail(exc: Exception) -> str:
-    """Persist a bounded, redacted explanation alongside the failure code."""
-    detail = " ".join(str(exc).split())
+    """Persist a bounded, redacted explanation alongside the failure code.
+
+    Routed execution errors may wrap the concrete parser/validation exception
+    as ``__cause__`` and expose a more useful ``reason`` attribute. Preserve
+    those details so the run record is actionable instead of only repeating
+    its top-level error code.
+    """
+    parts: list[str] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(parts) < 8:
+        seen.add(id(current))
+        for attribute in ("reason", "detail"):
+            value = getattr(current, attribute, "")
+            if isinstance(value, str):
+                value = " ".join(value.split())
+                if value and value not in parts:
+                    parts.append(value)
+        value = " ".join(str(current).split())
+        if value and value not in parts:
+            parts.append(value)
+        current = current.__cause__ or current.__context__
+
+    detail = " | ".join(parts)
     if not detail:
         return ""
     detail = redact_credentials(detail)
