@@ -9,7 +9,7 @@ from app.agent_cron.schedule import CronSchedule, cron_human_description
     ("expression", "description"),
     [
         ("0 * * * * *", "每分钟执行"),
-        ("*/15 * * * * *", "每15分钟执行"),
+        ("*/15 * * * * *", "每15秒执行"),
         ("0 0 * * * *", "每小时整点执行"),
         ("0 0 9 * * *", "每天09:00执行"),
         ("0 0 18 * * 0", "每周日18:00执行"),
