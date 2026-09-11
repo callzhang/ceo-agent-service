@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -736,9 +737,10 @@ def test_audit_app_reads_only_current_main_pid_runtime_and_skill_receipts(
         {skill.id: revision.id},
         expected_parent_id=None,
     )
+    current_pid = os.getpid()
     store.record_runtime_skill_load(
         config.id,
-        pid=701,
+        pid=current_pid,
         loaded={skill.id: revision.sha256},
     )
     store.record_runtime_capability_snapshot(
@@ -749,9 +751,9 @@ def test_audit_app_reads_only_current_main_pid_runtime_and_skill_receipts(
             checked_at=NOW.isoformat(),
             expires_at=(NOW + timedelta(minutes=5)).isoformat(),
         ),
-        pid=701,
+        pid=current_pid,
     )
-    main_pid = 701
+    main_pid = current_pid
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",
