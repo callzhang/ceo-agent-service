@@ -76,7 +76,8 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 路由严格按以下顺序执行：`information_completeness < 0.5` 时形成普通 proposal 或一个具体
 问题的 ask-back，沿现有 Audit/send 链路处理，不新增 ask-back 持久化 outcome；否则，
 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 才进入 `needs_human`，并提供 2--4 个
-互斥、可执行的规则/Skill 选项；其余由适用 Skill 自主完成。ask-back 不计入 needs_human。
+互斥、可执行的规则/Skill 选项；每项必须包含唯一稳定的 `key`、显示用 `label`、可执行的
+`instruction` 和 `consequence`/影响；其余由适用 Skill 自主完成。ask-back 不计入 needs_human。
 反馈可同时选择 one-time 与 Skill update；二者复用同一业务对象和同一 attempt，在兼容 session
 中生成新 revision，不新建 session。技术、provider、读取、路由、schema、Audit 或 retry failure
 永远是 `failed`；领域 `authorization_required` 也不泛化为 `needs_human`，不能用低分绕过失败。

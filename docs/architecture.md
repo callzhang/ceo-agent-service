@@ -607,7 +607,8 @@ A 和 B 的结果统一携带 `risk`、`confidence`、`rule_coverage`、`informa
 后三者严格为 0--1。先看信息完整度：低于 `0.5` 只产生普通 proposal 或一个具体问题的
 ask-back，继续现有 Audit/send 链路；ask-back 不落新的 outcome，也不计 `needs_human`。否则，
 仅当 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 时进入 `needs_human`，并给出 2--4
-个互斥可执行的规则/Skill 选项；其余由 Skill 自主完成。one-time 与 Skill update 可同时作为
+个互斥可执行的规则/Skill 选项；每个选项必须包含唯一稳定的 `key`、显示用 `label`、可执行的
+`instruction` 和 `consequence`/影响；其余由 Skill 自主完成。one-time 与 Skill update 可同时作为
 反馈选择，复用同一业务对象、attempt 和兼容 session，产生新 revision，不新建 session。
 技术、provider、读取、路由、schema、Audit、retry failure 永远为 `failed`；领域
 `authorization_required` 不泛化为人工升级，低分也不能绕过失败。
@@ -923,7 +924,7 @@ session 指针读取 JSONL，并只向普通用户展示业务结果；内部角
 | `executed` | B 已执行，并返回 provider 结果或稳定外部动作标识。 |
 | `no_action` | A 确认当前触发无需外部动作。 |
 | `feedback_provided` | B 给出结构化反馈，等待 A 在原兼容 session 中生成下一 revision。 |
-| `needs_human` | 仅在信息完整且 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 时使用；必须提供 2 至 4 个互斥、可执行的规则/Skill 选项。普通材料不足走 ask-back，不计入此状态。 |
+| `needs_human` | 仅在信息完整且 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 时使用；必须提供 2 至 4 个互斥、可执行的规则/Skill 选项，每项包含唯一稳定 `key`、显示 `label`、可执行 `instruction` 和 `consequence`/影响。普通材料不足走 ask-back，不计入此状态。 |
 | `failed` | 当前 run 失败；错误说明是否可重试。 |
 | `quarantined` | 历史数据中的旧投影标签，仅用于历史展示；新执行不得写入。 |
 
