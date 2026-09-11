@@ -62,9 +62,11 @@ class PaginatedFakeDws(FakeDws):
     def __init__(self, pages):
         super().__init__([])
         self.pages = pages
+        self.calls: list[str] = []
 
     def list_minutes_page(self, *, cursor="", **kwargs):
         del kwargs
+        self.calls.append(cursor)
         page = self.pages.get(cursor)
         if isinstance(page, Exception):
             raise page
@@ -293,3 +295,30 @@ def test_incomplete_minutes_pagination_does_not_claim_success(tmp_path: Path) ->
     assert cursor["pagination_deferred"] is True
     assert cursor["pagination_error"] == "temporary page failure"
     assert cursor["archived_ids"] == ["u1"]
+
+
+def test_incremental_sync_stops_after_an_already_archived_page(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    dws = PaginatedFakeDws(
+        {
+            "": {
+                "items": [{"taskUuid": "u1"}],
+                "has_more": True,
+                "next_token": "page-2",
+            },
+            "page-2": RuntimeError("older page must not be fetched"),
+        }
+    )
+    store.set_daily_scan_state(
+        MINUTES_SYNC_SCANNER,
+        last_success_at="2026-09-10T00:00:00+00:00",
+        cursor_json=json.dumps({"archived_ids": ["u1"]}),
+    )
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.discovered == 0
+    assert dws.calls == [""]
+    state = store.get_daily_scan_state(MINUTES_SYNC_SCANNER) or {}
+    assert state["last_error"] == ""
+    assert json.loads(state["cursor_json"])["archived_ids"] == ["u1"]

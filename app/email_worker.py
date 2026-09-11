@@ -2396,6 +2396,41 @@ def _load_email_task_context(
     return route.context
 
 
+def _decision_options_json(result: object) -> str:
+    """Persist only a structured decision returned by Consumer or Audit."""
+    for candidate in (
+        getattr(result, "audit_result", None),
+        getattr(result, "consumer_result", None),
+        result,
+    ):
+        options = getattr(candidate, "decision_options", None)
+        if not options:
+            continue
+        serialized: list[dict[str, str]] = []
+        for option in options:
+            if hasattr(option, "model_dump"):
+                payload = option.model_dump(mode="json")
+            elif isinstance(option, Mapping):
+                payload = dict(option)
+            else:
+                continue
+            if not all(
+                isinstance(payload.get(field), str) and payload[field].strip()
+                for field in ("key", "label", "instruction", "consequence")
+            ):
+                serialized = []
+                break
+            serialized.append(
+                {
+                    field: str(payload[field])
+                    for field in ("key", "label", "instruction", "consequence")
+                }
+            )
+        if 2 <= len(serialized) <= 4:
+            return json.dumps(serialized, ensure_ascii=False, sort_keys=True)
+    return "[]"
+
+
 def _finalize_email_task(store: object, task: object, result: object) -> None:
     from app.email_unsubscribe_audit import (
         AuditedUnsubscribeTerminalState,
@@ -2416,14 +2451,18 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
         task_status, send_status = status_map[result.status]
     except KeyError as exc:
         raise ValueError("invalid email orchestration status") from exc
-    # Only the generic authorization boundary is a user decision. Domain
-    # failures may set the flag to explain why the operation was rejected,
-    # but they are still technical/policy failures and must remain failed.
+    human_decision_options_json = _decision_options_json(result)
+    # Authorization is a human decision only when the result carries the
+    # structured options required by the shared result contract. A bare flag
+    # from a failed runtime turn is a technical failure, not a decision.
     if (
         result.error.authorization_required
         and result.error.code == "authorization_required"
     ):
-        task_status, send_status = "done", "needs_human"
+        if human_decision_options_json != "[]":
+            task_status, send_status = "done", "needs_human"
+        else:
+            task_status, send_status = "failed", "failed"
     error = str(result.error.code or "")
     run = store.get_agent_run(result.final_run_id) if result.final_run_id else None
     # A terminal unsubscribe skip is a lifecycle outcome, not a technical
@@ -2475,7 +2514,7 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
                 task_status, send_status = status_map["failed_retryable"]
                 error = f"{ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:{refusals}"
             else:
-                task_status, send_status = status_map["needs_human"]
+                task_status, send_status = status_map["failed_terminal"]
                 error = ROUTE_REFUSED_UNSUBSCRIBE_ERROR
     if task_status == "pending":
         # A deferred orchestration (runtime not ready, provider recovery, lease
@@ -2520,6 +2559,7 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
         codex_transcript_end_line=run.transcript_end_line,
         audit_tool_events_json=json.dumps(run.tool_events, ensure_ascii=False),
         audit_summary=result.summary,
+        human_decision_options_json=human_decision_options_json,
         send_status=send_status,
         send_error=error,
         channel="email",

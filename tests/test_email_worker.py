@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.agent_context import AgentTaskContext
-from app.agent_contracts import ProposedAction
+from app.agent_contracts import DecisionOption, ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -8111,7 +8111,7 @@ def test_deferred_orchestration_result_requeues_the_email_task():
     assert captured["available_at"]
 
 
-def test_authorization_required_result_is_closed_as_needs_human():
+def test_bare_authorization_required_result_is_failed():
     module = _module()
     task = SimpleNamespace(
         id=7,
@@ -8148,9 +8148,67 @@ def test_authorization_required_result_is_closed_as_needs_human():
 
     module._finalize_email_task(Store(), task, result)
 
+    assert captured["task_status"] == "failed"
+    assert captured["send_status"] == "failed"
+    assert captured["send_error"] == "authorization_required"
+
+
+def test_structured_authorization_result_keeps_needs_human_options():
+    module = _module()
+    task = SimpleNamespace(
+        id=7,
+        execution_generation="generation-7",
+        conversation_id="conversation-7",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="trigger-7",
+        trigger_sender="sender@example.com",
+        trigger_text="unsubscribe",
+    )
+    run = SimpleNamespace(
+        id=70,
+        codex_session_id="",
+        transcript_start_line=0,
+        transcript_end_line=0,
+        tool_events=[],
+    )
+    captured = {}
+
+    class Store:
+        def get_agent_run(self, run_id):
+            return run
+
+        def finalize_orchestrated_reply_task(self, **kwargs):
+            captured.update(kwargs)
+
+    options = (
+        DecisionOption(
+            key="authorize",
+            label="授权",
+            instruction="允许继续处理。",
+            consequence="服务继续执行当前操作。",
+        ),
+        DecisionOption(
+            key="stop",
+            label="停止",
+            instruction="停止当前操作。",
+            consequence="不再继续处理。",
+        ),
+    )
+    result = SimpleNamespace(
+        status="needs_human",
+        final_run_id=70,
+        summary="authorization_required",
+        audit_result=SimpleNamespace(decision_options=options),
+        error=SimpleNamespace(code="authorization_required", authorization_required=True),
+    )
+
+    module._finalize_email_task(Store(), task, result)
+
     assert captured["task_status"] == "done"
     assert captured["send_status"] == "needs_human"
-    assert captured["send_error"] == "authorization_required"
+    assert json.loads(captured["human_decision_options_json"]) == [
+        option.model_dump(mode="json") for option in options
+    ]
 
 
 def test_domain_authorization_rejection_remains_failed():
@@ -8297,8 +8355,8 @@ def test_route_refusing_the_call_is_retried_not_closed_as_a_decision():
     assert "task_status" not in captured
 
 
-def test_every_route_refusing_the_call_reaches_a_person():
-    """Once the retries are spent this is a capability the service lacks."""
+def test_every_route_refusing_the_call_remains_a_technical_failure():
+    """Once retries are spent, the route failure is still not a decision."""
     module, captured = _route_refusal_case(
         error=(
             f"{_module().ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:"
@@ -8306,8 +8364,8 @@ def test_every_route_refusing_the_call_reaches_a_person():
         )
     )
 
-    assert captured["task_status"] == "done"
-    assert captured["send_status"] == "needs_human"
+    assert captured["task_status"] == "failed"
+    assert captured["send_status"] == "failed"
     assert captured["send_error"] == module.ROUTE_REFUSED_UNSUBSCRIBE_ERROR
 
 
@@ -8332,7 +8390,7 @@ def test_repeated_route_refusals_actually_reach_a_person():
         seen.append(("finalized", captured.get("send_status")))
         break
 
-    assert seen[-1] == ("finalized", "needs_human"), seen
+    assert seen[-1] == ("finalized", "failed"), seen
     assert len(seen) == module.ROUTE_REFUSED_UNSUBSCRIBE_RETRIES, seen
 
 
@@ -8512,7 +8570,7 @@ def test_audited_unsubscribe_skip_never_overrides_a_management_decision():
     assert captured["send_error"] == "email_unsubscribe_target_sensitive"
 
 
-def test_audited_unsubscribe_skip_never_overrides_the_authorization_boundary():
+def test_audited_unsubscribe_skip_closes_a_bare_authorization_failure():
     module = _module()
     result = SimpleNamespace(
         status="failed_terminal",
@@ -8531,8 +8589,8 @@ def test_audited_unsubscribe_skip_never_overrides_the_authorization_boundary():
     )
 
     assert captured["task_status"] == "done"
-    assert captured["send_status"] == "needs_human"
-    assert captured["send_error"] == "authorization_required"
+    assert captured["send_status"] == "skipped"
+    assert captured["send_error"] == ""
 
 
 def test_audited_unsubscribe_browser_failure_remains_failed():

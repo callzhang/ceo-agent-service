@@ -185,7 +185,12 @@ def _is_restricted_minute_error(error: DwsError) -> bool:
     return False
 
 
-def _list_all_minutes(dws) -> tuple[list[dict[str, Any]], str]:
+def _list_all_minutes(
+    dws,
+    *,
+    archived_ids: set[str],
+    permission_pending_ids: set[str],
+) -> tuple[list[dict[str, Any]], str]:
     """Read the complete minutes listing, returning a deferred error if partial."""
     list_page = getattr(dws, "list_minutes_page", None)
     if list_page is None:
@@ -204,7 +209,19 @@ def _list_all_minutes(dws) -> tuple[list[dict[str, Any]], str]:
         page_items = page.get("items")
         if not isinstance(page_items, list):
             return items, "invalid minutes list page items"
-        items.extend(item for item in page_items if isinstance(item, dict))
+        typed_items = [item for item in page_items if isinstance(item, dict)]
+        items.extend(typed_items)
+        page_ids = {
+            str(item.get("taskUuid") or item.get("minutesId") or "").strip()
+            for item in typed_items
+        }
+        page_ids.discard("")
+        # The provider orders this listing newest-first. Once a non-empty page
+        # contains only items already accounted for, older pages cannot add
+        # work. This keeps the daily sync incremental and avoids a 100-page
+        # walk that can never finish on a large archive.
+        if page_ids and page_ids.issubset(archived_ids | permission_pending_ids):
+            return items, ""
         has_more = page.get("has_more")
         next_token = str(page.get("next_token") or "")
         if has_more is False:
@@ -235,7 +252,11 @@ def sync_minutes_once(
     archived = {str(value) for value in (cursor.get("archived_ids") or [])}
     pending = {str(value) for value in (cursor.get("permission_pending_ids") or [])}
 
-    listed, pagination_error = _list_all_minutes(dws)
+    listed, pagination_error = _list_all_minutes(
+        dws,
+        archived_ids=archived,
+        permission_pending_ids=pending,
+    )
 
     candidates: list[str] = []
     for item in listed:
