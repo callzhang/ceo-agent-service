@@ -1342,6 +1342,23 @@ def _unresolved_selection_rechecks(task_error: str) -> int:
         return 0
 
 
+def _route_refusal_count(task_error: str) -> int:
+    """How many times a route has already refused to place this task's call.
+
+    Same reason as _unresolved_selection_rechecks: the count rides in the
+    task's own error because the attempt budget is deliberately returned on a
+    deferral and therefore cannot bound anything.
+    """
+    prefix = f"{ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:"
+    if not task_error.startswith(prefix):
+        return 0
+    count, _, _ = task_error[len(prefix) :].partition(":")
+    try:
+        return max(int(count), 0)
+    except ValueError:
+        return 0
+
+
 def _handle_unresolvable_unsubscribe_selection(
     task_store: object,
     task: object,
@@ -2448,11 +2465,18 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
                 task.id,
                 refusal,
             )
-            if task.attempts < ROUTE_REFUSED_UNSUBSCRIBE_RETRIES:
+            # Counted in the task's own error, not in task.attempts: a
+            # deferral hands the attempt budget back by design, so claim's +1
+            # and defer_reply_task's -1 cancel and attempts never advances.
+            # Keying the ladder on it left every refused task looping forever
+            # instead of ever reaching a person.
+            refusals = _route_refusal_count(str(getattr(task, "error", "") or "")) + 1
+            if refusals < ROUTE_REFUSED_UNSUBSCRIBE_RETRIES:
                 task_status, send_status = status_map["failed_retryable"]
+                error = f"{ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:{refusals}"
             else:
                 task_status, send_status = status_map["needs_human"]
-            error = ROUTE_REFUSED_UNSUBSCRIBE_ERROR
+                error = ROUTE_REFUSED_UNSUBSCRIBE_ERROR
     if task_status == "pending":
         # A deferred orchestration (runtime not ready, provider recovery, lease
         # race) keeps the task and retries it later, exactly like the DingTalk

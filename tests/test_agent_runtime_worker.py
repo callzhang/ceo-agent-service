@@ -107,6 +107,10 @@ class NoActionOrchestrator:
         result = ConsumerAgentResult.model_validate(
             {
                 "outcome": "no_action",
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
                 "summary": "No external action is required.",
                 "proposal": None,
                 "error": {
@@ -630,6 +634,8 @@ class ScriptedTaskOrchestrator:
                 },
                 "risk": "high" if consumer_outcome == "needs_human" else "low",
                 "confidence": 0.1 if consumer_outcome == "needs_human" else 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
             }
         )
         if consumer_outcome == "failed":
@@ -711,6 +717,10 @@ class ScriptedTaskOrchestrator:
         audit_result = AuditAgentResult.model_validate(
             {
                 "outcome": "executed",
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
                 "summary": direct_result.summary,
                 "proposal_revision": 0,
                 "feedback": None,
@@ -765,6 +775,8 @@ def _agent_result_event(result) -> dict[str, object]:
             ],
             "risk": result.risk.value,
             "confidence": result.confidence,
+            "rule_coverage": result.rule_coverage,
+            "information_completeness": result.information_completeness,
             "error_code": error.code,
             "error_retryable": error.retryable,
             "error_authorization_required": error.authorization_required,
@@ -790,6 +802,8 @@ def _agent_result_event(result) -> dict[str, object]:
             ],
             "risk": result.risk.value,
             "confidence": result.confidence,
+            "rule_coverage": result.rule_coverage,
+            "information_completeness": result.information_completeness,
             "error_code": error.code,
             "error_retryable": error.retryable,
             "error_authorization_required": error.authorization_required,
@@ -840,6 +854,11 @@ def _consumer_protocol_result(
             },
             "risk": "high" if outcome == "needs_human" else "low",
             "confidence": 0.1 if outcome == "needs_human" else 1.0,
+            # A needs_human outcome must classify as NEEDS_HUMAN, which the
+            # high-risk/low-confidence gate gives. Information completeness
+            # below 0.5 would classify it ASK_BACK instead.
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 
@@ -896,6 +915,8 @@ def _audit_protocol_result(
             },
             "risk": "high" if outcome == "needs_human" else "low",
             "confidence": 0.1 if outcome == "needs_human" else 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 

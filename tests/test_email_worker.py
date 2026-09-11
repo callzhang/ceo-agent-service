@@ -8236,11 +8236,12 @@ def _route_refused_tool_event(message="This action was rejected due to unaccepta
     }
 
 
-def _route_refusal_case(attempts: int):
+def _route_refusal_case(error: str = ""):
     module = _module()
     task = SimpleNamespace(
         id=9,
-        attempts=attempts,
+        attempts=1,
+        error=error,
         execution_generation="generation-9",
         conversation_id="conversation-9",
         conversation_title="Email unsubscribe",
@@ -8287,21 +8288,52 @@ def test_route_refusing_the_call_is_retried_not_closed_as_a_decision():
     like a refusal of the unsubscribe. The same call goes through on a route
     whose provider places it, so the task is retried rather than closed.
     """
-    module, captured = _route_refusal_case(attempts=1)
+    module, captured = _route_refusal_case()
 
-    assert captured["deferred"] == (9, module.ROUTE_REFUSED_UNSUBSCRIBE_ERROR)
+    assert captured["deferred"] == (
+        9,
+        f"{module.ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:1",
+    )
     assert "task_status" not in captured
 
 
 def test_every_route_refusing_the_call_reaches_a_person():
     """Once the retries are spent this is a capability the service lacks."""
     module, captured = _route_refusal_case(
-        attempts=_module().ROUTE_REFUSED_UNSUBSCRIBE_RETRIES
+        error=(
+            f"{_module().ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:"
+            f"{_module().ROUTE_REFUSED_UNSUBSCRIBE_RETRIES - 1}"
+        )
     )
 
     assert captured["task_status"] == "done"
     assert captured["send_status"] == "needs_human"
     assert captured["send_error"] == module.ROUTE_REFUSED_UNSUBSCRIBE_ERROR
+
+
+def test_repeated_route_refusals_actually_reach_a_person():
+    """The ladder has to advance, which a task.attempts counter cannot do.
+
+    A deferral returns the attempt budget on purpose: claim adds one and
+    defer_reply_task takes it away, so task.attempts is pinned across
+    deferrals. A ladder keyed on it never escalates, and the task loops
+    instead, which is how three route-refused tasks sat pending forever with
+    458 and 105 agent runs in a single generation.
+    """
+    module = _module()
+    error = ""
+    seen = []
+    for _ in range(module.ROUTE_REFUSED_UNSUBSCRIBE_RETRIES + 2):
+        _module_again, captured = _route_refusal_case(error=error)
+        if "deferred" in captured:
+            error = captured["deferred"][1]
+            seen.append(("deferred", error))
+            continue
+        seen.append(("finalized", captured.get("send_status")))
+        break
+
+    assert seen[-1] == ("finalized", "needs_human"), seen
+    assert len(seen) == module.ROUTE_REFUSED_UNSUBSCRIBE_RETRIES, seen
 
 
 def test_a_call_the_route_did_place_keeps_the_audited_outcome():
