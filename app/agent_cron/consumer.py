@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 import logging
 from typing import Protocol
@@ -23,6 +23,11 @@ from app.store import AutoReplyStore, ReplyTask
 
 
 SERVICE_COMMAND_FAILED = "scheduled_task_service_command_failed"
+# How long a dependency has to stay unreachable before the outage is an
+# incident rather than a blip.  Below it the trigger record is the only fact;
+# at it, one Attention entry is written for the whole outage, and the next
+# success resolves it.
+TRANSIENT_DEPENDENCY_ESCALATION = timedelta(minutes=15)
 logger = logging.getLogger(__name__)
 
 
@@ -72,33 +77,60 @@ class ScheduledTaskTriggerConsumer:
         )
         guard.accept_atomic_source_completion()
 
+    def _transient_outage_is_an_incident(
+        self, run: ScheduledTaskRun, failed_at: datetime
+    ) -> bool:
+        """True once this dependency has been failing long enough to report.
+
+        The current failure is not persisted yet, so the streak is measured
+        from the earlier consecutive failures.  One entry is written per
+        outage: while it is still unresolved, later failures add nothing.
+        """
+        started_at = self._store.scheduled_task_failure_streak_started_at(
+            run.scheduled_task_id
+        )
+        if (
+            started_at is None
+            or failed_at - started_at < TRANSIENT_DEPENDENCY_ESCALATION
+        ):
+            return False
+        return not self._store.has_unresolved_error(
+            f"scheduled-task:{run.scheduled_task_id}", SERVICE_COMMAND_FAILED
+        )
+
     def _run_service_command(self, run: ScheduledTaskRun, guard: ClaimGuard) -> None:
         """Run the command inside the trigger claim; the trigger is the only fact.
 
         The command is idempotent, so a claim lost mid-run simply reruns it on
         the next claim.  Success links the command as the trigger's execution;
-        failure ends the trigger as ``failed`` and raises Attention.
+        failure ends the trigger as ``failed``, and raises Attention unless it
+        is a dependency that has not yet been unreachable long enough to count
+        as an outage.
         """
         command = run.snapshot.command
         try:
             summary = self._commands.run(command)
         except Exception as exc:  # noqa: BLE001 - the trigger records this failure fact
             reason = f"{SERVICE_COMMAND_FAILED}: {exc}"
+            failed_at = self._now().astimezone(UTC)
             # A dependency that is briefly unreachable is one external event,
-            # not one incident per trigger.  The per-minute commands would
+            # not one incident per trigger: a per-minute command would
             # otherwise write an Attention entry every minute of a DNS outage
-            # (31 of them on 2026-09-11), which is what the run record already
-            # says.  Every other failure still raises Attention each time.
-            if not is_transient_dependency_error(exc):
+            # (31 of them on 2026-09-11).  Staying silent through a long outage
+            # is the opposite failure, so once the dependency has been failing
+            # for TRANSIENT_DEPENDENCY_ESCALATION the outage is reported once.
+            # Every other failure raises Attention on every trigger.
+            if (
+                not is_transient_dependency_error(exc)
+                or self._transient_outage_is_an_incident(run, failed_at)
+            ):
                 self._store.record_error(
                     f"scheduled-task:{run.scheduled_task_id}", run.event_id,
                     SERVICE_COMMAND_FAILED,
                     f"Scheduled task {run.snapshot.task_id} ({run.snapshot.name}) "
                     f"command {command} failed for event {run.event_id}: {exc}",
                 )
-            guard.finish_source(
-                self._now().astimezone(UTC), status="failed", reason=reason,
-            )
+            guard.finish_source(failed_at, status="failed", reason=reason)
             return
         now = self._now().astimezone(UTC)
         self._store.link_scheduled_task_run_execution(

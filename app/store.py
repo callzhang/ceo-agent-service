@@ -24099,6 +24099,60 @@ class AutoReplyStore:
             ).fetchone()
             return None if row is None else dict(row)
 
+    def has_unresolved_error(self, conversation_id: str, kind: str) -> bool:
+        """Whether an incident of this kind is already open for this source."""
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select 1 from errors
+                where conversation_id=? and kind=? and coalesce(resolved_at, '')=''
+                limit 1
+                """,
+                (conversation_id, kind),
+            ).fetchone()
+        return row is not None
+
+    def scheduled_task_failure_streak_started_at(
+        self, task_id: int
+    ) -> datetime | None:
+        """When this task's current unbroken run of failed attempts began.
+
+        Only attempts count.  A trigger that was skipped never reached the
+        command, so it neither starts nor ends a streak.  Returns None when the
+        most recent attempt did not fail.
+        """
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select dispatch_status, created_at
+                from scheduled_task_runs
+                where scheduled_task_id=?
+                  and dispatch_status in ('failed', 'dispatched')
+                order by id desc
+                limit 500
+                """,
+                (task_id,),
+            ).fetchall()
+        started_at: datetime | None = None
+        for row in rows:
+            if row["dispatch_status"] != "failed":
+                break
+            parsed = self._parse_stored_timestamp(row["created_at"])
+            if parsed is not None:
+                started_at = parsed
+        return started_at
+
+    @staticmethod
+    def _parse_stored_timestamp(value: object) -> datetime | None:
+        """Read either stored shape: SQLite's "Y-m-d H:M:S" or an ISO-T string."""
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
     def record_error(
         self,
         conversation_id: str | None,

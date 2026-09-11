@@ -407,7 +407,7 @@ Consumer 修订版可以原样复用上一 revision 中已持久化的服务反�
 退订浏览器仅把固定的内部失败类别投影到错误码；已识别的导航超时和页面状态缺失必须与兜底 `email_unsubscribe_browser_failed` 区分，同时不得写入 URL、页面文本或凭证。退订浏览器不再对页面发出的网络请求做 origin 白名单、跳转或资源家族限制。
 Google Workspace 邮件使用的 `c.gle` 短入口只允许桥接到 `google.com` provider family；该精确映射不能作为通用短链放行规则。
 Google 退订页面只允许从 `google.com` 和 `gstatic.com` provider dependency family 加载 HTTPS 公网资源；页面中的普通跨站链接不进入许可集合，仍在请求发出前拒绝。
-Consumer 或 Audit 在同一 proposal revision 内耗尽统一重试 ceiling 后，编排结果必须进入 `failed_terminal`，保留最后一个 run 的真实根因但将其标记为不可继续重试；不得返回 `failed_retryable` 让外层重新进入同一 generation 并无限增加 `turn_attempt`。
+Consumer 或 Audit 在同一 proposal revision 内耗尽统一重试 ceiling 后，编排结果不得返回 `failed_retryable` 让外层重新进入同一 generation 并无限增加 `turn_attempt`。普通执行/依赖失败进入 `failed_terminal` 并保留最后一个 run 的真实根因；如果 Audit 的内容反馈轮次耗尽且最后一次 Audit 保留了具体修改意见，编排结果进入 `needs_human`，提供“按审计意见修订”或“停止不执行”两个明确选择，避免把可继续处理的审计修订误投影为 opaque failed。
 
 ## 进程、租约和恢复
 
@@ -454,8 +454,10 @@ producer 的一次增量读取，与 `app.cli produce-once` 相同），成功�
 对应的 reply、meeting 或 work-summary Consumer 才会处理业务队列。上一轮仍未终态时，下一次
 触发记为 `skipped`（`scheduled_task_previous_execution_active`），不并行执行，也不补跑。命令抛错时 trigger 以 `failed` 和
 `scheduled_task_service_command_failed: <原因>` 收口；除依赖短暂不可达（DNS、网关繁忙、超时）
-以外的原因同时写入 Attention，依赖短暂不可达只留在 trigger 记录里，一次外部故障不会在每分钟的
-命令上刷出成串同样的条目。命令幂等，claim 丢失后的
+以外的原因每次写入 Attention。依赖不可达按持续时间判断：同一任务连续失败不足 15 分钟时只留在
+trigger 记录里，一次外部抖动不会在每分钟的命令上刷出成串同样的条目；连续失败超过 15 分钟则写
+一条 Attention（该条未解决期间不再重复写），下一次成功自动标记为已恢复。因此一次两小时的 DNS
+中断是一条记录，而不是零条或一百二十条。命令幂等，claim 丢失后的
 重领会直接重跑。命令名不在目录中时 Scheduler 在派发前以
 `scheduled_task_service_command_unavailable` 跳过。服务命令任务不经过 Runtime、Skill、
 Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。

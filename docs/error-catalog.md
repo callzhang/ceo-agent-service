@@ -128,7 +128,7 @@ trigger 自身的跳过原因写在 `scheduled_task_runs.skip_or_error_reason`�
 | `scheduled_task_operation_skill_unavailable` | 引用的 operation Skill 不可用 | 安装或修复该 Skill |
 | `scheduled_task_execution_unavailable` | 派发或执行前发现 Runtime、Skill 或工作目录已不可用 | 同上；execution 以 `skipped` 收口 |
 | `scheduled_task_service_command_unavailable` | 服务命令任务引用的命令不在目录中 | 检查任务的 `command` 与 `service_command_options` |
-| `scheduled_task_service_command_failed` | 服务命令抛出异常，trigger 记 `failed`；依赖短暂不可达时只记 trigger，不写本条 | 查看 detail 中的原因；命令幂等，下一次 trigger 会重跑，成功后自动标记为已恢复 |
+| `scheduled_task_service_command_failed` | 服务命令抛出异常，trigger 记 `failed`；依赖不可达时只有连续失败超过 15 分钟才写本条，且一次中断只写一条 | 查看 detail 中的原因；命令幂等，下一次 trigger 会重跑，成功后自动标记为已恢复 |
 
 ## 微信通道
 

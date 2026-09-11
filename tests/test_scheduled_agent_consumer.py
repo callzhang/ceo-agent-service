@@ -117,9 +117,9 @@ def fixture(
     return store, run, Options(revision, operation, kind)
 
 
-def claim(adapter, source_id, owner):
+def claim(adapter, source_id, owner, *, now=NOW):
     envelope = adapter.claim(
-        NOW, owner=owner, owner_pid=42, lease=timedelta(minutes=5)
+        now, owner=owner, owner_pid=42, lease=timedelta(minutes=5)
     )
     assert envelope and envelope.source_id == str(source_id)
     return envelope, ClaimGuard(adapter=adapter, envelope=envelope, owner=owner)
@@ -137,12 +137,12 @@ def commands(produce_once=lambda: "produce-once queued=0"):
     })
 
 
-def dispatch(store, run, options, *, registry=None):
+def dispatch(store, run, options, *, registry=None, now=NOW):
     adapter = ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: False)
-    envelope, guard = claim(adapter, run.id, "trigger")
+    envelope, guard = claim(adapter, run.id, "trigger", now=now)
     ScheduledTaskTriggerConsumer(
         store=store, option_service=options, commands=registry or commands(),
-        now=lambda: NOW,
+        now=lambda: now,
     )(envelope, guard)
     return store.get_scheduled_task_run(run.id)
 
@@ -422,6 +422,46 @@ def test_a_briefly_unreachable_dependency_does_not_raise_attention(tmp_path):
     assert persisted.dispatch_status == "failed"
     assert persisted.skip_or_error_reason.startswith(SERVICE_COMMAND_FAILED)
     assert error_rows(store) == []
+
+
+def test_a_provider_outage_that_does_not_recover_is_reported_once(tmp_path):
+    store = AutoReplyStore(tmp_path / "command-outage.sqlite3")
+    first = command_task_run(store)
+    task_id = first.scheduled_task_id
+
+    def unreachable():
+        raise DwsError(
+            "dws command failed with exit code 1; code=NETWORK_ERROR; "
+            "stderr=DNS resolution failed"
+        )
+
+    registry = commands(unreachable)
+    # The first failure may still be a blip, so only the trigger records it.
+    dispatch(store, first, None, registry=registry)
+    assert error_rows(store) == []
+
+    def attempt(minutes):
+        moment = NOW + timedelta(minutes=minutes)
+        run = store.create_scheduled_task_run(
+            task_id, trigger_kind="manual", scheduled_for=moment, now=moment
+        )
+        return dispatch(store, run, None, registry=registry, now=moment)
+
+    # Still inside the window: one external event, no Attention yet.
+    attempt(5)
+    assert error_rows(store) == []
+
+    # The dependency has now been unreachable for longer than the window, so
+    # the outage is reported instead of staying silent.
+    persisted = attempt(20)
+    assert persisted.dispatch_status == "failed"
+    rows = error_rows(store)
+    assert [row["kind"] for row in rows] == [SERVICE_COMMAND_FAILED]
+
+    # The same outage continuing adds nothing: one entry, not one per trigger.
+    attempt(25)
+    attempt(30)
+    assert len(error_rows(store)) == 1
 
 
 def test_command_registry_rejects_bindings_that_do_not_match_the_catalog():

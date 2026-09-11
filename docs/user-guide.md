@@ -331,7 +331,7 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 | `processing` | 正在执行 | 超过正常时长才排查 |
 | `quarantined` | 历史数据中的旧投影标签 | 仅查看历史，不由新任务写入 |
 
-定时任务的运行记录另有一套状态：`pending` 等待派发，`dispatched` 已派发（Agent 任务链接到一次执行，服务命令任务表示命令已在本进程内跑完），`skipped` 带原因跳过（最常见的是 `scheduled_task_previous_execution_active`，即上一轮还没结束），`failed` 是服务命令抛错；除依赖短暂不可达之外的原因会同时出现在 Attention 的 `scheduled_task_service_command_failed` 中，网络或网关短暂不可达只留在运行记录里。
+定时任务的运行记录另有一套状态：`pending` 等待派发，`dispatched` 已派发（Agent 任务链接到一次执行，服务命令任务表示命令已在本进程内跑完），`skipped` 带原因跳过（最常见的是 `scheduled_task_previous_execution_active`，即上一轮还没结束），`failed` 是服务命令抛错；除依赖不可达之外的原因会同时出现在 Attention 的 `scheduled_task_service_command_failed` 中，网络或网关不可达只在连续失败超过 15 分钟时写一条，短暂抖动只留在运行记录里。
 
 ### 重跑原则
 
