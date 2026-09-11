@@ -530,7 +530,7 @@ def _structured_needs_human_classification(raw: object) -> str:
     if information_completeness < 0.5:
         return "ask_back"
     if result.get("outcome") != "needs_human":
-        return "autonomous"
+        return "invalid"
     options = result.get("decision_options")
     if not isinstance(options, list) or not 2 <= len(options) <= 4:
         return "invalid"

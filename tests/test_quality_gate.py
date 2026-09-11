@@ -659,6 +659,32 @@ def test_quality_gate_does_not_report_low_risk_or_confident_needs_human_projecti
         assert not any(item.code == "needs_human" for item in report.attention)
 
 
+def test_quality_gate_low_risk_low_rule_coverage_still_requires_human(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    _insert_needs_human_projection(
+        store,
+        result=_structured_needs_human_result(risk="low", rule_coverage=0.4),
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert ("reply_attempts", "needs_human", 1) in {
+        (item.source, item.code, item.count) for item in report.attention
+    }
+
+
+def test_quality_gate_rejects_needs_human_projection_with_inconsistent_outcome(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    result = _structured_needs_human_result()
+    result.pop("outcome")
+    _insert_needs_human_projection(store, result=result)
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(item.code == "needs_human" for item in report.attention)
+    assert any(item.code == "invalid_needs_human_result" for item in report.violations)
+
+
 def test_quality_gate_reports_low_rule_coverage_but_incomplete_information_is_ask_back(tmp_path):
     complete = AutoReplyStore(tmp_path / "complete.sqlite3")
     _insert_needs_human_projection(
