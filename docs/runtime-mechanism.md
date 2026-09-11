@@ -453,7 +453,9 @@ producer 的一次增量读取，与 `app.cli produce-once` 相同），成功�
 服务命令本身不经过 Runtime、Skill 或 synthetic scheduled Agent；只有命令发现真实对象后，
 对应的 reply、meeting 或 work-summary Consumer 才会处理业务队列。上一轮仍未终态时，下一次
 触发记为 `skipped`（`scheduled_task_previous_execution_active`），不并行执行，也不补跑。命令抛错时 trigger 以 `failed` 和
-`scheduled_task_service_command_failed: <原因>` 收口并写入 Attention；命令幂等，claim 丢失后的
+`scheduled_task_service_command_failed: <原因>` 收口；除依赖短暂不可达（DNS、网关繁忙、超时）
+以外的原因同时写入 Attention，依赖短暂不可达只留在 trigger 记录里，一次外部故障不会在每分钟的
+命令上刷出成串同样的条目。命令幂等，claim 丢失后的
 重领会直接重跑。命令名不在目录中时 Scheduler 在派发前以
 `scheduled_task_service_command_unavailable` 跳过。服务命令任务不经过 Runtime、Skill、
 Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
