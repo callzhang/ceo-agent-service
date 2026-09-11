@@ -510,7 +510,7 @@ def test_seed_creates_meeting_check_with_fixed_ten_minute_eligibility(
     assert task.enabled is True
 
 
-def test_fixed_discovery_checks_use_service_commands_and_minutes_stays_agent(
+def test_every_fixed_discovery_check_is_a_service_command(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "fixed-checks.sqlite3")
@@ -530,6 +530,7 @@ def test_fixed_discovery_checks_use_service_commands_and_minutes_stays_agent(
 
     expected_commands = {
         "dingtalk-message-check-v1": "produce-once",
+        "dingtalk-message-recovery-v1": "recover-recent-messages",
         "dingtalk-meeting-check-v1": "scan-meetings-once",
         "wechat-message-check-v1": "wechat-produce-once",
         "dingtalk-oa-check-v1": "scan-oa-approvals",
@@ -676,6 +677,34 @@ def test_seed_creates_daily_work_source_scan(tmp_path: Path) -> None:
     assert task.enabled is True
 
 
+def test_seed_creates_hourly_recent_message_recovery_at_half_past(
+    tmp_path: Path,
+) -> None:
+    """The recovery runs on its own hourly schedule, offset from the OA check.
+
+    The whole point of splitting it out of the every-minute produce-once pass
+    is that it runs on a schedule of its own; nothing else pins that schedule,
+    so a change to the cron would otherwise go unnoticed.
+    """
+    store = AutoReplyStore(tmp_path / "recovery.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+
+    task = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "dingtalk-message-recovery-v1",
+    )
+
+    assert task.name == "恢复近期 DingTalk 消息"
+    assert task.command == "recover-recent-messages"
+    assert task.cron_expression == "0 30 * * * *"
+    assert task.timezone_name == "Asia/Shanghai"
+    assert task.enabled is True
+    # A service command task carries no Agent configuration.
+    assert task.prompt == "" and task.runtime_id == "" and task.skill_refs == ()
+
+
 def test_seed_creates_sunday_evening_weekly_okr_task(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "weekly.sqlite3")
     options = _options(
@@ -747,6 +776,7 @@ def test_non_wechat_seed_commands_are_registered_one_shot_cli_entries(
         ["produce-once", "--db", str(store.path), "--workspace", str(tmp_path)]
     ).command == "produce-once"
     expected = {
+        "dingtalk-message-recovery-v1": "recover-recent-messages",
         "dingtalk-meeting-check-v1": "scan-meetings-once",
         "dingtalk-oa-check-v1": "scan-oa-approvals",
         "work-source-scan-daily-v1": "scan-work-sources-once",
@@ -832,6 +862,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         commands=ServiceCommandRegistry(
             {
                 "produce-once": lambda: produced.append("produce-once") or "queued=0",
+                "recover-recent-messages": (
+                    lambda: produced.append("recover-recent-messages") or "queued=0"
+                ),
                 "wechat-produce-once": (
                     lambda: produced.append("wechat-produce-once") or "queued=0"
                 ),
@@ -843,6 +876,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
                 ),
                 "scan-work-sources-once": (
                     lambda: produced.append("scan-work-sources-once") or "queued=0"
+                ),
+                "sync-minutes-once": (
+                    lambda: produced.append("sync-minutes-once") or "queued=0"
                 ),
             }
         ),
@@ -861,9 +897,11 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         consumer(envelope, guard)
     assert sorted(produced) == [
         "produce-once",
+        "recover-recent-messages",
         "scan-meetings-once",
         "scan-oa-approvals",
         "scan-work-sources-once",
+        "sync-minutes-once",
         "wechat-produce-once",
     ]
     for task in tasks:
@@ -882,40 +920,7 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         assert reply.channel == "scheduled"
         assert reply.trigger_text == task.prompt
         assert task.name in reply.trigger_message_json
-    assert len(store.list_reply_tasks(channel="scheduled")) == len(tasks) - 5
-
-
-def test_seed_creates_daily_minutes_task_with_healthy_runtime_and_exact_revision(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "seed.sqlite3")
-    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
-
-    seeded = seed_scheduled_tasks(
-        store=store,
-        options=options,
-        working_directory=tmp_path,
-        now=NOW,
-    )
-
-    assert seeded == store.list_scheduled_tasks()
-    assert len(seeded) == 7
-    task = _task_by_key(seeded, "ceo-minutes-sync-daily-v1")
-    assert task.migration_key == "ceo-minutes-sync-daily-v1"
-    assert task.name == "每天同步 AI 听记"
-    assert task.cron_expression == "0 0 20 * * *"
-    assert task.timezone_name == "Asia/Shanghai"
-    assert task.runtime_id == "codex_oauth"
-    assert task.runtime_options == {"model": "gpt-5.6-sol"}
-    assert task.working_directory == str(tmp_path.resolve())
-    assert task.enabled is True
-    assert len(task.skill_refs) == 1
-    ref = task.skill_refs[0]
-    assert ref.skill_source == "managed"
-    assert ref.skill_name == "ceo-minutes-sync"
-    revision = store.get_managed_skill_revision(ref.managed_revision_id)
-    assert revision is not None
-    assert revision.source == REPOSITORY_IMPORT_SOURCE
+    assert len(store.list_reply_tasks(channel="scheduled")) == len(tasks) - 7
 
 
 def test_seed_is_idempotent_and_preserves_user_edits(tmp_path: Path) -> None:
@@ -946,103 +951,6 @@ def test_seed_is_idempotent_and_preserves_user_edits(tmp_path: Path) -> None:
     assert _task_by_key(
         store.list_scheduled_tasks(), "ceo-minutes-sync-daily-v1"
     ) == edited
-
-
-def test_existing_migration_task_is_not_rebound_after_repository_revision_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    store = AutoReplyStore(tmp_path / "existing-migration-revision.sqlite3")
-    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
-    original = _task_by_key(
-        seed_scheduled_tasks(
-            store=store, options=options, working_directory=tmp_path, now=NOW
-        ),
-        "ceo-minutes-sync-daily-v1",
-    )
-    original_ref = original.skill_refs[0]
-    original_config = store.get_pending_or_active_runtime_skill_config()
-    assert original_config is not None
-    bindings_before = store.list_runtime_skill_bindings(original_config.id)
-    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
-    assert skill is not None
-    store.create_managed_skill_revision(
-        skill.id,
-        "---\nname: ceo-minutes-sync\ndescription: Use when testing settings.\n"
-        "metadata:\n  managed_by: ceo-agent-service\n---\n\n# Settings\n",
-        source="settings",
-    )
-    original_repository = managed_skills_module._repository_managed_skills
-    changed_content = managed_skills_module.repository_managed_skill_content(
-        "ceo-minutes-sync"
-    ).replace("# CEO Minutes Sync", "# CEO Minutes Sync\n\nNew repository bytes", 1)
-    monkeypatch.setattr(
-        managed_skills_module,
-        "_repository_managed_skills",
-        lambda: tuple(
-            (name, changed_content if name == "ceo-minutes-sync" else content)
-            for name, content in original_repository()
-        ),
-    )
-    import_repository_managed_skills(store)
-
-    repeated = seed_scheduled_tasks(
-        store=store,
-        options=options,
-        working_directory=tmp_path / "different",
-        now=NOW + timedelta(minutes=1),
-    )
-
-    repeated_minutes = _task_by_key(repeated, "ceo-minutes-sync-daily-v1")
-    assert repeated_minutes == original
-    assert repeated_minutes.skill_refs == (original_ref,)
-    assert store.get_pending_or_active_runtime_skill_config() == original_config
-    assert store.list_runtime_skill_bindings(original_config.id) == bindings_before
-
-
-def test_new_seed_binds_changed_repository_sha_after_settings_revision(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    store = AutoReplyStore(tmp_path / "new-seed-current-repository.sqlite3")
-    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
-    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
-    assert skill is not None
-    store.create_managed_skill_revision(
-        skill.id,
-        "---\nname: ceo-minutes-sync\ndescription: Use when testing settings.\n"
-        "metadata:\n  managed_by: ceo-agent-service\n---\n\n# Settings\n",
-        source="settings",
-    )
-    original_repository = managed_skills_module._repository_managed_skills
-    changed_content = managed_skills_module.repository_managed_skill_content(
-        "ceo-minutes-sync"
-    ).replace("# CEO Minutes Sync", "# CEO Minutes Sync\n\nCurrent repository bytes", 1)
-    changed_sha = hashlib.sha256(changed_content.encode("utf-8")).hexdigest()
-    monkeypatch.setattr(
-        managed_skills_module,
-        "_repository_managed_skills",
-        lambda: tuple(
-            (name, changed_content if name == "ceo-minutes-sync" else content)
-            for name, content in original_repository()
-        ),
-    )
-    import_repository_managed_skills(store)
-
-    task = _task_by_key(
-        seed_scheduled_tasks(
-            store=store, options=options, working_directory=tmp_path, now=NOW
-        ),
-        "ceo-minutes-sync-daily-v1",
-    )
-
-    revision = store.get_managed_skill_revision(
-        task.skill_refs[0].managed_revision_id
-    )
-    assert revision is not None
-    assert revision.sha256 == changed_sha
-    assert revision.content == changed_content
-    assert revision.source == REPOSITORY_IMPORT_SOURCE
-    assert task.enabled is False
-    assert "managed_revision_not_loaded" in task.prompt
 
 
 def test_seed_without_healthy_runtime_is_disabled_with_visible_reason(
@@ -1079,7 +987,7 @@ def test_all_proactive_seeds_stay_visible_and_disabled_without_healthy_runtime(
         store=store, options=options, working_directory=tmp_path, now=NOW
     )
 
-    assert len(tasks) == 7
+    assert len(tasks) == 8
     agent_tasks = [task for task in tasks if not task.command]
     assert {task.migration_key for task in agent_tasks} == {
         "weekly-okr-report-sunday-v1",
@@ -1089,64 +997,6 @@ def test_all_proactive_seeds_stay_visible_and_disabled_without_healthy_runtime(
     assert all("没有健康且已配置的 Runtime" in task.prompt for task in agent_tasks)
     assert all(task.enabled for task in tasks if task.command)
     assert all(store.list_scheduled_task_runs(task.id) == () for task in tasks)
-
-
-def test_seed_is_disabled_when_exact_repository_revision_is_not_loaded(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "revision-not-loaded.sqlite3")
-    existing_skill = store.create_managed_skill("ceo-existing", "Existing Skill")
-    existing_revision = store.create_managed_skill_revision(
-        existing_skill.id,
-        "---\nname: ceo-existing\ndescription: Existing\n"
-        "metadata:\n  managed_by: ceo-agent-service\n---\n\n# Existing\n",
-        source="settings",
-    )
-    existing_config = store.create_runtime_skill_config(
-        {existing_skill.id: existing_revision.id}, expected_parent_id=None
-    )
-    import_repository_managed_skills(store)
-    # Repository import supersedes the settings-only config by binding the
-    # email classifier; seeding must leave that post-import config untouched.
-    config_before = store.get_pending_or_active_runtime_skill_config()
-    assert config_before is not None
-    assert config_before.parent_id == existing_config.id
-    bindings_before = store.list_runtime_skill_bindings(config_before.id)
-    options = ScheduledTaskOptionService(
-        store=store,
-        environment={
-            "CEO_AGENT_RUNTIME_ROUTES": "claude_api,codex_oauth",
-            "CEO_CLAUDE_API_KEY": "test-secret",
-            "CEO_CLAUDE_MODEL": "sonnet",
-            "CEO_CODEX_MODEL": "gpt-5.6-sol",
-        },
-        runtime_snapshots={
-            route: _snapshot(route, healthy=route == "codex_oauth")
-            for route in ("claude_api", "codex_oauth")
-        },
-        operation_skill_files=SkillFileService(tmp_path / "operation-skills"),
-        runtime_skill_snapshot=RuntimeSkillSnapshot(
-            existing_config.id, (existing_revision,)
-        ),
-        now=lambda: NOW,
-    )
-
-    task = _task_by_key(
-        seed_scheduled_tasks(
-            store=store, options=options, working_directory=tmp_path, now=NOW
-        ),
-        "ceo-minutes-sync-daily-v1",
-    )
-
-    assert task.enabled is False
-    assert task.runtime_id == "codex_oauth"
-    assert "managed_revision_not_loaded" in task.prompt
-    assert store.get_pending_or_active_runtime_skill_config() == config_before
-    assert store.list_runtime_skill_bindings(config_before.id) == bindings_before
-    ref = task.skill_refs[0]
-    revision = store.get_managed_skill_revision(ref.managed_revision_id)
-    assert revision is not None
-    assert revision.source == REPOSITORY_IMPORT_SOURCE
 
 
 def test_seed_binds_revision_matching_current_repository_sha_not_last_revision(
@@ -1173,45 +1023,3 @@ def test_seed_binds_revision_matching_current_repository_sha_not_last_revision(
     assert task.skill_refs[0].managed_revision_id == current.id
     assert task.skill_refs[0].managed_revision_id != later_different.id
 
-
-def test_startup_seed_restores_a_minutes_task_converted_to_a_service_command(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "converted-minutes-command.sqlite3")
-    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
-    converted = store.create_scheduled_task(
-        migration_key="ceo-minutes-sync-daily-v1",
-        name="我修改后的听记同步",
-        command="sync-minutes-once",
-        cron_expression="0 30 21 * * *",
-        timezone_name="Asia/Shanghai",
-        enabled=False,
-        now=NOW,
-    )
-
-    restored = _task_by_key(
-        seed_scheduled_tasks(
-            store=store,
-            options=options,
-            working_directory=tmp_path,
-            now=NOW + timedelta(minutes=1),
-        ),
-        "ceo-minutes-sync-daily-v1",
-    )
-
-    assert restored.id == converted.id
-    assert restored.version == converted.version + 1
-    assert restored.name == converted.name
-    assert restored.cron_expression == converted.cron_expression
-    assert restored.timezone_name == converted.timezone_name
-    assert restored.enabled is False
-    assert restored.command == ""
-    assert "$ceo-minutes-sync" in restored.prompt
-    assert restored.runtime_id == "codex_oauth"
-    assert restored.runtime_options == {"model": "gpt-5.6-sol"}
-    assert restored.working_directory == str(tmp_path.resolve())
-    ref = restored.skill_refs[0]
-    assert (ref.skill_source, ref.skill_name) == ("managed", "ceo-minutes-sync")
-    revision = store.get_managed_skill_revision(ref.managed_revision_id)
-    assert revision is not None
-    assert revision.source == REPOSITORY_IMPORT_SOURCE

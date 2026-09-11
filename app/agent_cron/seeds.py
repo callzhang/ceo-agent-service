@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-import hashlib
 from pathlib import Path
 import shlex
 import sys
@@ -9,11 +8,6 @@ import sys
 from app.agent_cron.models import ScheduledTask, ScheduledTaskSkillRef
 from app.agent_cron.options import RuntimeOption, ScheduledTaskOptionService
 from app.agent_runtime_contracts import LOCAL_SERVICE_RUNTIME_CAPABILITIES
-from app.managed_skills import (
-    MINUTES_SYNC_SKILL_NAME,
-    REPOSITORY_IMPORT_SOURCE,
-    repository_managed_skill_content,
-)
 from app.store import AutoReplyStore
 
 
@@ -436,59 +430,6 @@ def _select_runtime(
         "没有健康且已配置的 Runtime（"
         + _runtime_unavailable_summary(runtime_options)
         + "）",
-    )
-
-
-def _managed_ref(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    name: str,
-    position: int,
-) -> tuple[ScheduledTaskSkillRef, str | None]:
-    skill = store.get_managed_skill_by_name(name)
-    if skill is None:
-        raise ValueError(f"{name} repository managed Skill is missing")
-    repository_content = repository_managed_skill_content(name)
-    repository_sha256 = hashlib.sha256(repository_content.encode("utf-8")).hexdigest()
-    revision = next(
-        (
-            revision
-            for revision in reversed(store.list_managed_skill_revisions(skill.id))
-            if revision.source == REPOSITORY_IMPORT_SOURCE
-            and revision.sha256 == repository_sha256
-            and revision.content == repository_content
-        ),
-        None,
-    )
-    if revision is None:
-        raise ValueError(f"{name} repository revision is missing")
-    managed_option = next(
-        option
-        for option in options.list_managed_skill_options()
-        if option.skill_id == skill.id
-    )
-    revision_option = next(
-        option
-        for option in managed_option.revisions
-        if option.revision_id == revision.id
-    )
-    reason = None
-    if not revision_option.available:
-        reason = (
-            f"精确 repository Skill revision {name} 当前不可用（"
-            + (revision_option.unavailable_reason or "unavailable")
-            + "）"
-        )
-    return (
-        ScheduledTaskSkillRef(
-            skill_source="managed",
-            skill_name=name,
-            managed_skill_id=skill.id,
-            managed_revision_id=revision.id,
-            position=position,
-        ),
-        reason,
     )
 
 

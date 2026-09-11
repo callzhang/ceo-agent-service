@@ -1376,6 +1376,7 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         print("process-work-items processed=0", flush=True)
         return 0
     store.recover_orphaned_task_agent_runs()
+    store.recover_orphaned_agent_runs_for_terminal_reply_tasks()
     store.recover_expired_terminal_task_runtime_attempts()
     store.reset_stale_processing_work_summary_inputs(
         _work_summary_processing_stale_seconds(settings)
@@ -1993,8 +1994,12 @@ def sync_minutes_once_command(
     *,
     max_new_items: int | None = None,
 ) -> int:
-    """Synchronize DingTalk AI minutes as a deterministic service operation."""
-    from app.task_scanners import scan_ai_minutes
+    """Mirror new DingTalk AI minutes into the local archive.
+
+    Deterministic throughout: the only decision, whether to ask the owner for
+    access to a restricted minute, is settled by a duration threshold.
+    """
+    from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY, sync_minutes_once
 
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
@@ -2002,9 +2007,14 @@ def sync_minutes_once_command(
         ding_robot_name=settings.ding_robot_name,
         ding_receiver_user_id=settings.ding_receiver_user_id,
     )
-    queued = scan_ai_minutes(store, dws, max_new_items=max_new_items)
-    print(f"sync-minutes-once queued={queued}", flush=True)
-    return queued
+    result = sync_minutes_once(
+        store,
+        dws,
+        archive_dir=settings.workspace / MINUTES_ARCHIVE_DIRECTORY,
+        max_new_items=max_new_items,
+    )
+    print(f"sync-minutes-once {result.summary()}", flush=True)
+    return result.synced
 
 
 def scan_oa_approvals_command(
@@ -3690,12 +3700,15 @@ def _resolve_recovered_errors_on_service_start(settings: WorkerSettings) -> int:
 
 def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
+    recovered_orphaned_agent_runs = (
+        store.recover_orphaned_agent_runs_for_terminal_reply_tasks()
+    )
     recovered_tasks = (
         store.recover_orphaned_processing_reply_tasks()
         + store.recover_interrupted_agent_runs_after_service_restart()
         + store.resume_completed_agent_turns_after_service_restart()
     )
-    return len(recovered_tasks)
+    return len(recovered_tasks) + recovered_orphaned_agent_runs
 
 
 def _recover_okr_review_requests_on_service_start(settings: WorkerSettings) -> int:
