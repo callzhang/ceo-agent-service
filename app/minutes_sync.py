@@ -84,28 +84,154 @@ class MinutesSummaryShapeUnknown(ValueError):
 
 
 def summary_markdown(summary: object) -> str:
-    """Return the provider's summary markdown for the archive body.
+    """Return the provider's summary as the markdown this archive is written in.
 
-    The provider returns ``{"fullSummary": "<markdown>"}``.  Serialising that
-    object instead of reading it writes a JSON blob with escaped newlines into
-    the archive -- a file that looks synced and is unreadable.  An empty
-    payload is a minute whose summary is not generated yet, which is a real and
-    harmless state; any other shape is a provider contract change and must fail
-    the item so it stays visible and gets retried.
+    ``fullSummary`` carries one of two things: the markdown itself, or a JSON
+    insight report (``meta_info``/``overview``/``menu``/``details``).  Writing
+    the report verbatim puts a JSON document under "# AI Summary" -- a file
+    that looks synced and cannot be read -- so it is rendered into the same
+    markdown the rest of the archive uses.  An empty payload is a minute whose
+    summary the provider has not generated, which is a real state; any other
+    shape is a contract change and must fail the item so it stays visible.
     """
     if isinstance(summary, str):
-        return summary
+        return _rendered_summary_document(summary)
     if not summary:
         return ""
     if isinstance(summary, dict):
         text = summary.get("fullSummary")
         if isinstance(text, str):
-            return text
+            return _rendered_summary_document(text)
     raise MinutesSummaryShapeUnknown(
         f"unreadable minutes summary payload: {sorted(summary)}"
         if isinstance(summary, dict)
         else f"unreadable minutes summary payload of type {type(summary).__name__}"
     )
+
+
+def _rendered_summary_document(text: str) -> str:
+    """Render an insight-report document; leave plain markdown untouched."""
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        return text
+    try:
+        document = json.loads(stripped)
+    except json.JSONDecodeError:
+        return text
+    if not isinstance(document, dict):
+        return text
+    if "meta_info" not in document:
+        # A JSON summary in a shape no rule here reads would otherwise be
+        # written verbatim, which is the unreadable archive this function
+        # exists to prevent.
+        raise MinutesSummaryShapeUnknown(
+            f"unreadable minutes summary document: {sorted(document)[:6]}"
+        )
+    meta = document.get("meta_info")
+    meta = meta if isinstance(meta, dict) else {}
+    lines: list[str] = []
+    title = str(meta.get("title") or "").strip()
+    subtitle = str(meta.get("subtitle") or "").strip()
+    if title:
+        lines.append(f"> **主题**: {title}")
+    if subtitle and subtitle != title:
+        lines.append(f"> **议题**: {subtitle}")
+    started = _summary_start_time(meta.get("minutes_start_time"))
+    if started:
+        lines.append(f"> **时间**: {started}")
+    tags = meta.get("tags")
+    if isinstance(tags, list):
+        joined = ", ".join(str(tag).strip() for tag in tags if str(tag).strip())
+        if joined:
+            lines.append(f"> **标签**: {joined}")
+    overview = str(document.get("overview") or meta.get("overview") or "").strip()
+    if overview:
+        lines.extend(["", overview])
+    for section in _summary_sections(document):
+        lines.extend(["", *section])
+    return "\n".join(lines).strip()
+
+
+def _summary_start_time(value: object) -> str:
+    try:
+        moment = datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return ""
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _summary_sections(document: dict[str, Any]) -> list[list[str]]:
+    """One section per slice, in the order the provider returned them."""
+    details = {
+        str(entry.get("slice_id") or ""): entry.get("detail_json")
+        for entry in document.get("details") or []
+        if isinstance(entry, dict)
+    }
+    sections: list[list[str]] = []
+    menu = document.get("menu")
+    entries = menu if isinstance(menu, list) else []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        heading = str(entry.get("title") or "").strip()
+        body: list[str] = []
+        if heading:
+            body.append(f"## {heading}")
+        summary_line = str(entry.get("summary") or "").strip()
+        if summary_line:
+            body.extend(["", summary_line])
+        detail = details.get(str(entry.get("slice_id") or ""))
+        if isinstance(detail, dict):
+            rendered = _summary_blocks(detail.get("blocks"), depth=0)
+            if rendered:
+                body.extend(["", *rendered])
+        if body:
+            sections.append(body)
+    return sections
+
+
+def _summary_blocks(blocks: object, *, depth: int) -> list[str]:
+    """Render the provider's block tree, keeping text no rule anticipated."""
+    lines: list[str] = []
+    if isinstance(blocks, str):
+        text = blocks.strip()
+        return [text] if text else []
+    if isinstance(blocks, list):
+        for block in blocks:
+            lines.extend(_summary_blocks(block, depth=depth))
+        return lines
+    if not isinstance(blocks, dict):
+        return lines
+    title = str(blocks.get("title") or "").strip()
+    kind = str(blocks.get("type") or "")
+    if kind == "module" and title:
+        lines.append(f"{'#' * min(depth + 3, 6)} {title}")
+        lines.append("")
+    elif title:
+        lines.append(f"- **{title}**")
+    for item in _summary_text_items(blocks.get("content")):
+        lines.append(f"    - {item}" if title and kind != "module" else item)
+        if not (title and kind != "module"):
+            lines.append("")
+    for key in ("children", "items", "blocks"):
+        nested = blocks.get(key)
+        if nested is not None:
+            lines.extend(
+                _summary_blocks(nested, depth=depth + (1 if kind == "module" else 0))
+            )
+    return [line for index, line in enumerate(lines) if line or index]
+
+
+def _summary_text_items(content: object) -> list[str]:
+    if isinstance(content, str):
+        text = content.strip()
+        return [text] if text else []
+    if isinstance(content, list):
+        items: list[str] = []
+        for entry in content:
+            items.extend(_summary_text_items(entry))
+        return items
+    return []
 
 
 def render_archive(

@@ -9,9 +9,11 @@ import pytest
 from app.dws_client import DwsError
 from app.minutes_sync import (
     MINUTES_SYNC_SCANNER,
+    MinutesSummaryShapeUnknown,
     MinutesSyncResult,
     render_archive,
     should_request_access,
+    summary_markdown,
     sync_minutes_once,
 )
 from app.store import AutoReplyStore
@@ -260,7 +262,7 @@ def test_an_unreadable_summary_shape_fails_the_item_instead_of_archiving_it(
         [{"taskUuid": "u1"}],
         basic={"u1": {"title": "会", "startTime": 1_700_000_000_000}},
         summary={"u1": {"sections": ["未知结构"]}},
-        paragraphs={"u1": {"paragraphs": [{"startTime": 0, "paragraph": "在"}]}},
+        paragraphs={"u1": [{"startTime": 0, "nickName": "磊哥", "paragraph": "在"}]},
     )
 
     result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
@@ -327,3 +329,89 @@ def test_incremental_sync_stops_at_first_already_accounted_page(
     state = store.get_daily_scan_state(MINUTES_SYNC_SCANNER) or {}
     assert state["last_error"] == ""
     assert json.loads(state["cursor_json"])["archived_ids"] == ["u1", "u2"]
+
+
+INSIGHT_REPORT = {
+    "meta_info": {
+        "title": "Friday日会纪要",
+        "subtitle": "会议音频调试与人员确认",
+        "tags": ["设备调试", "人员确认"],
+        "minutes_start_time": 1787567736000,
+    },
+    "overview": "本次会议主要进行了会前的音频设备调试。",
+    "menu": [
+        {"slice_id": "s1", "title": "音频设备调试", "summary": "协调开启麦克风测试。"}
+    ],
+    "details": [
+        {
+            "slice_id": "s1",
+            "detail_json": {
+                "blocks": [
+                    {"type": "callout", "content": ["尚未进入**实质性**议题。"]},
+                    {
+                        "type": "module",
+                        "title": "会前设备调试",
+                        "children": [
+                            {
+                                "type": "content-list",
+                                "items": [
+                                    {
+                                        "title": "语音连接确认",
+                                        "content": ["确认麦克风是否开启。", "测试连通性。"],
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                ]
+            },
+        }
+    ],
+}
+
+
+def test_a_structured_insight_report_becomes_the_archive_markdown() -> None:
+    text = summary_markdown({"fullSummary": json.dumps(INSIGHT_REPORT, ensure_ascii=False)})
+
+    # The provider returns this shape for a large share of minutes; writing it
+    # verbatim put a JSON document under "# AI Summary".
+    assert "meta_info" not in text and '{"' not in text
+    assert text.startswith("> **主题**: Friday日会纪要")
+    assert "> **议题**: 会议音频调试与人员确认" in text
+    assert "> **标签**: 设备调试, 人员确认" in text
+    assert "本次会议主要进行了会前的音频设备调试。" in text
+    assert "## 音频设备调试" in text
+    assert "协调开启麦克风测试。" in text
+    assert "尚未进入**实质性**议题。" in text
+    assert "### 会前设备调试" in text
+    assert "- **语音连接确认**" in text
+    assert "    - 确认麦克风是否开启。" in text
+    assert "    - 测试连通性。" in text
+
+
+def test_markdown_summaries_are_still_passed_through_untouched() -> None:
+    markdown = "> **主题**: 讨论\n\n## 背景\n\n- 一点"
+    assert summary_markdown({"fullSummary": markdown}) == markdown
+
+
+def test_a_json_summary_in_an_unknown_shape_fails_instead_of_being_written() -> None:
+    with pytest.raises(MinutesSummaryShapeUnknown):
+        summary_markdown({"fullSummary": json.dumps({"sections": ["未知结构"]})})
+
+
+def test_a_structured_report_reaches_the_archive_file(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    dws = FakeDws(
+        [{"taskUuid": "u1"}],
+        basic={"u1": {"title": "会", "startTime": 1_700_000_000_000}},
+        summary={"u1": {"fullSummary": json.dumps(INSIGHT_REPORT, ensure_ascii=False)}},
+        paragraphs={"u1": [{"startTime": 0, "nickName": "磊哥", "paragraph": "在"}]},
+    )
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.synced == 1
+    [written] = list((tmp_path / "AI听记").rglob("*.md"))
+    text = written.read_text(encoding="utf-8")
+    assert "# AI Summary\n\n> **主题**: Friday日会纪要" in text
+    assert "meta_info" not in text
