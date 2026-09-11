@@ -1598,6 +1598,33 @@ def test_empty_dispatch_does_not_create_user_visible_runs(tmp_path: Path):
     executor.shutdown()
 
 
+def test_dispatcher_tick_observer_runs_for_each_dispatch_round():
+    adapter = _FakeAdapter("scheduled", 1)
+    executor = _RecordingExecutor()
+    stop = Event()
+    ticks: list[datetime] = []
+
+    def observe(tick_at: datetime) -> None:
+        ticks.append(tick_at)
+        if len(ticks) == 2:
+            stop.set()
+
+    dispatcher = ConsumerDispatcher(
+        adapters=(adapter,),
+        consumers={"scheduled": lambda _item, _guard: None},
+        executors={"scheduled": executor},
+        max_in_flight={"scheduled": 1},
+        owner="dispatcher-a",
+        lease=timedelta(minutes=5),
+        tick_observer=observe,
+    )
+
+    dispatcher.run(stop_event=stop)
+
+    assert len(ticks) == 2
+    assert all(tick.tzinfo is UTC for tick in ticks)
+
+
 def test_dispatcher_claims_scheduled_source_only_when_worker_capacity_is_available(
     tmp_path: Path,
 ):

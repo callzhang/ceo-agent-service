@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+import logging
 import os
 from threading import Event, Lock
 from time import monotonic
@@ -11,6 +12,7 @@ from app.dispatcher.models import ClaimGuard, DispatchEnvelope, QueueAdapter
 
 
 DEFAULT_DISPATCHER_DRAIN_GRACE_SECONDS = 21 * 60
+LOGGER = logging.getLogger(__name__)
 
 
 class DispatcherDrainTimeout(RuntimeError):
@@ -64,6 +66,7 @@ class ConsumerDispatcher:
         lease: timedelta,
         wake_event: Event | None = None,
         fallback_wait_seconds: float = 5.0,
+        tick_observer: Callable[[datetime], None] | None = None,
     ) -> None:
         if not owner.strip():
             raise ValueError("dispatcher owner must not be empty")
@@ -122,6 +125,7 @@ class ConsumerDispatcher:
         self.lease = lease
         self.wake_event = wake_event or Event()
         self.fallback_wait_seconds = fallback_wait_seconds
+        self.tick_observer = tick_observer
         self._next_adapter = 0
 
     def dispatch_available(self, now: datetime, *, limit: int) -> int:
@@ -337,6 +341,12 @@ class ConsumerDispatcher:
     def run(self, *, stop_event: Event, dispatch_limit: int = 100) -> None:
         while not stop_event.is_set():
             self.wake_event.clear()
+            if self.tick_observer is not None:
+                tick_at = datetime.now(UTC)
+                try:
+                    self.tick_observer(tick_at)
+                except Exception:  # noqa: BLE001 - health reporting must not stop dispatch
+                    LOGGER.exception("dispatcher_tick_observer_failed")
             submitted = self.dispatch_available(datetime.now(UTC), limit=dispatch_limit)
             if submitted:
                 continue
