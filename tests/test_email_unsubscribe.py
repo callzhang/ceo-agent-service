@@ -3086,6 +3086,14 @@ def _discovery_browser(
                 return structures.pop(0) if len(structures) > 1 else structures[0]
             if "connectedRecipient" in script:
                 return {"present": False}
+            if "readyState" in script:
+                return {
+                    "readyState": "complete",
+                    "host": "news.example.com",
+                    "titleLength": 0,
+                    "frameCount": 1,
+                    "bodyHtmlLength": 4096,
+                }
             return (
                 control_snapshots.pop(0)
                 if len(control_snapshots) > 1
@@ -3220,6 +3228,18 @@ def test_settled_page_without_text_or_controls_reports_missing_state() -> None:
     assert _browser_failure_code(failure.value) == (
         "email_unsubscribe_page_state_missing"
     )
+    # A failure that records only its own category cannot be diagnosed later,
+    # and this one could not be: 65 live tasks ended here and three reviewers
+    # reading the same rows could not say whether the browser had reached a
+    # real page. The page's own state travels with the failure now.
+    observation = failure.value.observation
+    assert "readyState='complete'" in observation
+    assert "frameCount=1" in observation
+    assert "bodyHtmlLength=4096" in observation
+    # The entry URL never enters a durable record: its path and query carry the
+    # subscription token. The host says which side answered; that is all.
+    assert "host='news.example.com'" in observation
+    assert "/unsubscribe" not in observation
 
 
 def test_settled_page_whose_controls_are_not_modelled_reports_unknown_state() -> None:

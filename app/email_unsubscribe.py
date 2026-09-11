@@ -353,11 +353,17 @@ class UnsubscribeBrowserError(RuntimeError):
         self,
         category: UnsubscribeBrowserFailure,
         message: str = "",
+        *,
+        observation: str = "",
     ) -> None:
         if not isinstance(category, UnsubscribeBrowserFailure):
             raise TypeError("category must be UnsubscribeBrowserFailure")
         super().__init__(message or category.value)
         self.category = category
+        # What the page looked like when the read gave up. Empty for failures
+        # that never reached a page; the task-level error code is unchanged
+        # either way, because this is evidence, not classification.
+        self.observation = observation
 
 
 class UnsubscribeAuthenticationControlsError(UnsubscribeBrowserError):
@@ -386,6 +392,12 @@ _BROWSER_FAILURE_CODES = {
 }
 _VISIBLE_TEXT_WAIT_MS = 5_000
 _VISIBLE_TEXT_POLL_MS = 250
+
+
+def _browser_failure_observation(error: Exception) -> str:
+    """The page state an unreadable-page failure recorded, or "" if none."""
+    observation = getattr(error, "observation", "")
+    return observation if isinstance(observation, str) else ""
 
 
 def _browser_failure_code(error: Exception) -> str:
@@ -1511,6 +1523,40 @@ class PlaywrightUnsubscribeBrowser:
             "control_count": int(value["controlCount"]),
         }
 
+    def _unreadable_page_observation(self) -> str:
+        """Describe a page the read could not classify, without naming the URL.
+
+        A page-state failure used to record nothing at all, so the only thing
+        anyone could say afterwards was the category name. Three reviewers read
+        the same 65 live failures and none could tell whether the browser had
+        landed on a real page, and that is a property of the record, not of the
+        failure: the success path persists the page's own text, while the
+        failure path persisted the fact that there was a failure.
+
+        The entry URL stays out of it. Its path and query carry the
+        subscription token, which is exactly what the opaque-reference design
+        keeps out of durable storage; the host alone says which side answered.
+        """
+        try:
+            value = self._trusted_world.evaluate(
+                "function() {"
+                " return {"
+                "  readyState: String(document.readyState || ''),"
+                "  host: String(location.host || ''),"
+                "  titleLength: String(document.title || '').trim().length,"
+                "  frameCount: window.frames.length,"
+                "  bodyHtmlLength: document.body"
+                "   ? String(document.body.innerHTML || '').length : 0"
+                " };"
+                "}"
+            )
+        except Exception:  # noqa: BLE001 - an observation must never mask the failure
+            return ""
+        if not isinstance(value, Mapping):
+            return ""
+        fields = ("readyState", "host", "titleLength", "frameCount", "bodyHtmlLength")
+        return " ".join(f"{name}={value.get(name)!r}" for name in fields)
+
     def _visible_text(self) -> str:
         return self.page.locator("body").inner_text(timeout=self.timeout_ms).strip()
 
@@ -2249,6 +2295,7 @@ class PlaywrightUnsubscribeBrowser:
             raise UnsubscribeBrowserError(
                 UnsubscribeBrowserFailure.PAGE_STATE_MISSING,
                 "unsubscribe page has no visible state",
+                observation=self._unreadable_page_observation(),
             )
         authentication_controls = tuple(
             item for item in controls if item.continuation_kind is not None
@@ -2299,6 +2346,7 @@ class PlaywrightUnsubscribeBrowser:
                     if structure["control_count"]
                     else UnsubscribeBrowserFailure.PAGE_STATE_UNKNOWN,
                     "unsubscribe page state is unknown",
+                    observation=self._unreadable_page_observation(),
                 )
         state_reference = (
             "state:"
@@ -3850,6 +3898,10 @@ class UnsubscribeExecutor:
                     else _browser_failure_code(exc)
                 ),
                 error_category=_browser_failure_category(exc),
+                # The same field a success uses for the page it read. A failure
+                # that records nothing cannot be diagnosed later, and this one
+                # could not be: see _unreadable_page_observation.
+                result_text=_browser_failure_observation(exc),
             )
         if receipt is not None:
             if (
@@ -3945,6 +3997,10 @@ class UnsubscribeExecutor:
                     else _browser_failure_code(exc)
                 ),
                 error_category=_browser_failure_category(exc),
+                # The same field a success uses for the page it read. A failure
+                # that records nothing cannot be diagnosed later, and this one
+                # could not be: see _unreadable_page_observation.
+                result_text=_browser_failure_observation(exc),
             )
         reconcile_step = (
             None
