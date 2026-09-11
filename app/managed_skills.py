@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -580,8 +581,20 @@ def runtime_skill_snapshot_for_process(
 ) -> RuntimeSkillSnapshot | None:
     """Rebuild only the exact managed revisions proven loaded by one process."""
 
-    receipt = store.latest_runtime_skill_load_receipt_for_pid(pid)
-    if receipt is None or receipt.error:
+    if type(pid) is not int or pid <= 0:
+        raise ValueError("runtime Skill snapshot pid must be positive")
+    active = store.get_active_runtime_skill_config()
+    if active is None:
+        return None
+    receipts = tuple(
+        receipt
+        for receipt in reversed(store.list_runtime_skill_load_receipts(active.id))
+        if not receipt.error
+        and _process_is_alive(receipt.pid)
+        and _process_descends_from(receipt.pid, pid)
+    )
+    receipt = receipts[0] if receipts else None
+    if receipt is None:
         return None
     try:
         loaded = json.loads(receipt.loaded_json)
@@ -605,6 +618,54 @@ def runtime_skill_snapshot_for_process(
         config_id=receipt.config_id,
         revisions=tuple(revisions),
     )
+
+
+def _process_is_alive(pid: int) -> bool:
+    """Return true only for a currently live, non-zombie process."""
+    if type(pid) is not int or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        return False
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return True
+    return not result.stdout.strip().startswith("Z")
+
+
+def _process_descends_from(pid: int, ancestor_pid: int) -> bool:
+    """Check whether pid is the supervisor itself or one of its children."""
+    if pid == ancestor_pid:
+        return True
+    if type(ancestor_pid) is not int or ancestor_pid <= 0:
+        return False
+    current = pid
+    seen: set[int] = set()
+    for _ in range(32):
+        if current in seen or current <= 1:
+            return False
+        seen.add(current)
+        try:
+            result = subprocess.run(
+                ["ps", "-o", "ppid=", "-p", str(current)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            parent = int(result.stdout.strip())
+        except (OSError, ValueError):
+            return False
+        if parent == ancestor_pid:
+            return True
+        current = parent
+    return False
 
 
 def validate_managed_skill_content(name: str, content: str) -> str:

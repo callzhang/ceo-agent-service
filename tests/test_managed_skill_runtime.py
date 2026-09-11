@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 
 import app.store as store_module
-from app.managed_skills import resolve_pending_runtime_skills
+from app.managed_skills import (
+    resolve_pending_runtime_skills,
+    runtime_skill_snapshot_for_process,
+)
 from app.store import AutoReplyStore
 from app.consumer_agent import ConsumerAgentRunner, consumer_wire_contract_hash
 
@@ -43,6 +46,35 @@ def test_pending_config_becomes_active_only_after_matching_load_receipt(tmp_path
     )
     assert receipt.config_id == pending.id
     assert store.get_active_runtime_skill_config().id == pending.id
+
+
+def test_supervisor_snapshot_uses_only_a_live_child_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, revision = configured_store(tmp_path)
+    config = store.create_runtime_skill_config(
+        {revision.skill_id: revision.id}, expected_parent_id=None
+    )
+    store.record_runtime_skill_load(
+        config.id, pid=200, loaded={revision.skill_id: revision.sha256}
+    )
+    store.record_runtime_skill_load(
+        config.id, pid=300, loaded={revision.skill_id: revision.sha256}
+    )
+    monkeypatch.setattr(
+        "app.managed_skills._process_is_alive",
+        lambda process_pid: process_pid == 200,
+    )
+    monkeypatch.setattr(
+        "app.managed_skills._process_descends_from",
+        lambda process_pid, supervisor_pid: (process_pid, supervisor_pid) == (200, 100),
+    )
+
+    snapshot = runtime_skill_snapshot_for_process(store, pid=100)
+
+    assert snapshot is not None
+    assert snapshot.config_id == config.id
+    assert snapshot.revisions == (revision,)
 
 
 def test_failed_load_keeps_previous_active_config(tmp_path: Path) -> None:
