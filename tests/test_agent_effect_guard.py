@@ -91,3 +91,22 @@ def test_the_consumer_records_an_unreviewed_effect_it_actually_produced(tmp_path
     runner._report_unreviewed_provider_effects(task, SimpleNamespace(run_id=14018))
     with store._connect() as db:
         assert db.execute("select count(*) from errors").fetchone()[0] == 1
+
+
+def test_the_consumer_boundary_forbids_causing_external_effects() -> None:
+    """The prompt is the primary control; the guard only catches what slips past.
+
+    The boundary used to read "The application does not impose a command or
+    read-only policy", which a model can fairly read as permission to send.
+    Consumer run 14017 did exactly that.
+    """
+    from app.consumer_agent import CONSUMER_ROLE_BOUNDARY as boundary
+
+    assert "does not impose a command or read-only policy" not in boundary
+    # It still must not invite refusing work on invented policy grounds.
+    assert "never refuse work by citing a policy" in boundary
+    # It must forbid causing an effect, and say where the action belongs.
+    assert "Do not\nrun a command that produces an external effect" in boundary
+    assert "let the next stage perform it" in boundary
+    # The reason is stated so the rule generalises past the one command.
+    assert "postfix" in boundary and "retry send it a second time" in boundary

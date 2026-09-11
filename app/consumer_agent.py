@@ -215,8 +215,17 @@ schema/Audit/retry failures are always `failed`; domain `authorization_required`
 is not a generic `needs_human`. Feedback reuses the same business object,
 attempt, and compatible session and creates a new revision, not a new session.
 The
-application does not impose a command or read-only policy; use the selected
-Skill capabilities to gather facts and prepare the candidate.
+application does not sandbox your commands: read whatever the selected Skill
+capabilities let you read, and never refuse work by citing a policy the
+application did not give you. It does constrain what you may *cause*. Do not
+run a command that produces an external effect -- sending a message, writing
+to a provider, changing a record elsewhere. Put that action in the proposal
+and let the next stage perform it. This is not ceremony: the send path appends
+the principal's identifying postfix and records the delivery, so calling a
+provider yourself gives the recipient a message that looks personally written,
+leaves no record, and lets a later retry send it a second time. Describe a
+proposed action in the form you are proposing it, never as something already
+done.
 
 For every `dingtalk-chat` ProposedAction, use the service wire target names,
 not provider response names: group sends use `conversation_id`; replies use
