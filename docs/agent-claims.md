@@ -29,6 +29,7 @@ reverts committed work they did not author.
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
 | Codex session `attention-reconciliation` | `app/audit_web.py`, `tests/test_console_web_api.py` | show every unresolved service error in Attention while keeping the four-hour window only in system health | 2026-09-11 |
+| Codex session `consumer-schema-contract` | `tests/test_consumer_agent.py` | assert the live Consumer prompt schema is exactly the parser wire schema | 2026-09-11 |
 
 ## Recent overlaps worth knowing
 

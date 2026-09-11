@@ -14,6 +14,10 @@ from app.agent_context import (
 )
 from app.agent_contracts import ConsumerProposal
 from app.agent_result import ResultParseError
+from app.agent_wire_contracts import (
+    ConsumerAgentWireResult,
+    parse_consumer_agent_wire_result,
+)
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
@@ -608,6 +612,18 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert "pass that stable user id to" in instructions
     assert "originatorOpenDingTalkId" in instructions
     assert "display-name search" in instructions
+
+
+def test_consumer_prompt_schema_is_the_parser_schema():
+    instructions = consumer_developer_instructions("Verify every supported fact.")
+    schema_text = instructions.split("## Pydantic Wire Contract\n", 1)[1]
+    prompt_schema = json.loads(schema_text.split("\n\n", 1)[0])
+
+    assert prompt_schema == ConsumerAgentWireResult.model_json_schema()
+    assert (
+        consumer_agent.parse_consumer_agent_wire_result
+        is parse_consumer_agent_wire_result
+    )
 
 
 @pytest.mark.parametrize(
