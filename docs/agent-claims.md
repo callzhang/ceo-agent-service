@@ -85,3 +85,4 @@ reverts committed work they did not author.
   apply-permission on denial) belongs to the Agent Cron owner. Do not convert
   this task back to an Agent task.
 | Codex session `contract-quality` | `app/agent_contracts.py`, `app/agent_wire_contracts.py`, `app/schemas/consumer_agent_result.schema.json`, `app/schemas/audit_agent_result.schema.json`, `tests/test_agent_contracts.py` + related wire tests | decision quality fields and strict wire/schema contracts | 2026-09-10
+| Codex root (takeover after handoff request) | `app/cli.py` (Dispatcher startup health only), `tests/test_agent_cron_dispatcher_health.py` | clear stale agent-cron-dispatcher failure after successful startup | 2026-09-10

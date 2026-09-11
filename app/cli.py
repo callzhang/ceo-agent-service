@@ -1208,6 +1208,15 @@ def run_agent_cron_dispatcher_loop(
             owner=f"scheduled-dispatcher:{os.getpid()}", lease=timedelta(minutes=5),
             wake_event=wake_event,
         )
+        store.set_service_health_component(
+            "agent-cron-dispatcher",
+            state="healthy",
+            status="running",
+            detail="",
+            latest_tick_at=datetime.now(timezone.utc).isoformat(),
+            latest_error="",
+            latest_error_at="",
+        )
         dispatcher.run(stop_event=stop_event or threading.Event())
         dispatcher.drain()
     except BaseException:
