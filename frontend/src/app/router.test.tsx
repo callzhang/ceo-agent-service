@@ -29,7 +29,7 @@ describe("console router", () => {
       vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         const payload = url.endsWith("/scheduled-task-options")
-          ? { runtime_options: [], managed_skill_options: [], operation_skill_options: [], meta: { snapshot_at: "" } }
+          ? { runtime_options: [], managed_skill_options: [], operation_skill_options: [], service_command_options: [], meta: { snapshot_at: "" } }
           : { items: [], meta: { total: 0, snapshot_at: "" } };
         return new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
       }));
