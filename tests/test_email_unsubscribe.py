@@ -72,6 +72,8 @@ from app.email_unsubscribe import (
     _BROWSER_FAILURE_CODES,
     _browser_failure_category,
     _browser_failure_code,
+    _browser_failure_observation_fields,
+    _result,
     _terminal_result,
     _validated_restored_audit_session,
 )
@@ -3319,7 +3321,13 @@ def test_every_browser_failure_result_records_what_the_page_looked_like() -> Non
         # that pass a literal code describe a condition with no page behind it.
         if "_browser_failure_category" not in called:
             continue
-        if "result_text" not in names:
+        splatted = any(
+            isinstance(kw.value, _ast.Call)
+            and getattr(kw.value.func, "id", "") == "_browser_failure_observation_fields"
+            for kw in node.keywords
+            if kw.arg is None
+        )
+        if "result_text" not in names and not splatted:
             missing.append(node.lineno)
 
     assert not missing, (
@@ -3327,3 +3335,42 @@ def test_every_browser_failure_result_records_what_the_page_looked_like() -> Non
         f"{missing} build a browser-failure result without result_text, so the "
         "page state that produced it is not recorded anywhere"
     )
+
+
+def test_a_recorded_observation_carries_its_own_integrity_metadata() -> None:
+    """result_text is not a free text slot; supplying it bare rejects the result.
+
+    UnsubscribeExecutionResult requires result_text to come with a matching
+    sha256 and consistent truncation metadata. Passing the observation without
+    them turned every instrumented browser failure into
+    unsubscribe_operation_rejected:ValueError at construction -- a worse
+    failure than the one being recorded, and it reached production.
+    """
+    from hashlib import sha256 as _sha256
+
+    error = UnsubscribeBrowserError(
+        UnsubscribeBrowserFailure.PAGE_STATE_MISSING,
+        "unsubscribe page has no visible state",
+        observation="host='news.example.com' text_length=0 control_count=0",
+    )
+
+    fields = _browser_failure_observation_fields(error)
+    result = _result(UnsubscribeOutcome.FAILED_BROWSER, [], **fields)
+
+    assert result.result_text == error.observation
+    assert result.result_text_digest == _sha256(
+        error.observation.encode("utf-8")
+    ).hexdigest()
+    assert result.result_text_truncated is False
+
+
+def test_a_failure_with_no_observation_records_no_integrity_metadata() -> None:
+    """Empty result text must carry no digest at all, or the result is rejected."""
+    error = UnsubscribeBrowserError(UnsubscribeBrowserFailure.OPERATION_TIMEOUT)
+
+    fields = _browser_failure_observation_fields(error)
+    result = _result(UnsubscribeOutcome.FAILED_BROWSER, [], **fields)
+
+    assert fields == {}
+    assert result.result_text == ""
+    assert result.result_text_digest == ""

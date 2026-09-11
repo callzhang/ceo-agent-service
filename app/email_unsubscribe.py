@@ -394,10 +394,27 @@ _VISIBLE_TEXT_WAIT_MS = 5_000
 _VISIBLE_TEXT_POLL_MS = 250
 
 
-def _browser_failure_observation(error: Exception) -> str:
-    """The page state an unreadable-page failure recorded, or "" if none."""
+def _browser_failure_observation_fields(error: Exception) -> dict[str, object]:
+    """The page state a failure recorded, with the integrity metadata it owes.
+
+    result_text is not a free text slot: UnsubscribeExecutionResult requires a
+    matching sha256 and consistent truncation metadata, and rejects the whole
+    result otherwise. Supplying the text alone turned every instrumented
+    browser failure into `unsubscribe_operation_rejected:ValueError` at
+    construction -- a worse failure than the one it was recording.
+    """
     observation = getattr(error, "observation", "")
-    return observation if isinstance(observation, str) else ""
+    if not isinstance(observation, str) or not observation:
+        return {}
+    digest = sha256(observation.encode("utf-8")).hexdigest()
+    return {
+        "result_text": observation,
+        "result_text_digest": digest,
+        # Nothing was dropped, so the observed digest is the recorded digest;
+        # that equality is exactly what "not truncated" means here.
+        "observation_digest": digest,
+        "result_text_truncated": False,
+    }
 
 
 def _browser_failure_code(error: Exception) -> str:
@@ -3908,7 +3925,7 @@ class UnsubscribeExecutor:
                 # The same field a success uses for the page it read. A failure
                 # that records nothing cannot be diagnosed later, and this one
                 # could not be: see _unreadable_page_observation.
-                result_text=_browser_failure_observation(exc),
+                **_browser_failure_observation_fields(exc),
             )
         if receipt is not None:
             if (
@@ -4007,7 +4024,7 @@ class UnsubscribeExecutor:
                 # The same field a success uses for the page it read. A failure
                 # that records nothing cannot be diagnosed later, and this one
                 # could not be: see _unreadable_page_observation.
-                result_text=_browser_failure_observation(exc),
+                **_browser_failure_observation_fields(exc),
             )
         reconcile_step = (
             None
@@ -4104,7 +4121,7 @@ class UnsubscribeExecutor:
                     journal,
                     error_code=_browser_failure_code(exc),
                     error_category=_browser_failure_category(exc),
-                    result_text=_browser_failure_observation(exc),
+                    **_browser_failure_observation_fields(exc),
                 )
             operation_step = RedactedUnsubscribeStep(
                 operation=operation.kind.value,
