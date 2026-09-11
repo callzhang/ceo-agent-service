@@ -1914,26 +1914,36 @@ class AutoReplyStore:
         )
         scheduled_task_run_snapshots_current = True
         if "scheduled_task_runs" in present_tables:
-            for row in db.execute(
-                "select snapshot_json from scheduled_task_runs"
-            ).fetchall():
-                try:
-                    snapshot = json.loads(str(row["snapshot_json"]))
-                except (TypeError, json.JSONDecodeError):
-                    # A snapshot that cannot be parsed is corrupt data, not an
-                    # out-of-date schema.  Migrating cannot repair it, so
-                    # reporting it as stale would ask for a migration that
-                    # leaves the row exactly as it is.  The row still fails
-                    # when it is read, which keeps the damage local.
-                    continue
-                if not isinstance(snapshot, dict):
-                    continue
-                if not {
-                    "command",
-                    "required_runtime_capabilities",
-                }.issubset(snapshot):
-                    scheduled_task_run_snapshots_current = False
-                    break
+            # The question is only whether ANY snapshot predates the command
+            # columns, so ask SQLite for the first offending row instead of
+            # materialising the table. This check runs on every store
+            # construction, in every CLI subprocess: a full scan of a table
+            # that grows with every scheduled run made one damaged page fatal
+            # at startup for the whole service, which is the opposite of
+            # keeping the damage local.
+            #
+            # A snapshot that cannot be parsed is corrupt data, not an
+            # out-of-date schema: migrating cannot repair it, so json_valid
+            # excludes it here and the row still fails where it is read.
+            # json_type() distinguishes an absent key (NULL) from a key whose
+            # value is JSON null, which is what the presence test needs.
+            scheduled_task_run_snapshots_current = (
+                db.execute(
+                    """
+                    select 1 from scheduled_task_runs
+                    where json_valid(snapshot_json)
+                      and json_type(snapshot_json) = 'object'
+                      and (
+                        json_type(snapshot_json, '$.command') is null
+                        or json_type(
+                            snapshot_json, '$.required_runtime_capabilities'
+                        ) is null
+                      )
+                    limit 1
+                    """
+                ).fetchone()
+                is None
+            )
         return (
             set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
             and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)

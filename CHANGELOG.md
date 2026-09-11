@@ -1,5 +1,15 @@
 # Changelog
 
+- 2026-09-11: the schema-currency check no longer scans `scheduled_task_runs`
+  in full on every `AutoReplyStore()` construction. It asks SQLite for the
+  first snapshot that predates the command columns and stops there
+  (`json_valid` skips corrupt rows, `json_type` distinguishes an absent key
+  from a JSON null value, so the semantics are unchanged). The table grows
+  with every scheduled run (7,618 rows), and every CLI subprocess ran the
+  scan at startup, which is why one damaged page in that single table took
+  down `agent-cron-dispatcher` with `database disk image is malformed`
+  instead of keeping the damage local to the row that reads it.
+
 - 2026-09-10: documented the decision-quality contract and projection gate: Consumer/Audit
   results now share required `risk`, `confidence`, `rule_coverage`, and
   `information_completeness` fields; information-incomplete results use the existing

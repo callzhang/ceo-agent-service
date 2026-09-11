@@ -9198,3 +9198,48 @@ def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: 
     assert rows[business.job_id] == ("failed", "analysis_rejected", "", "")
     # Idempotent: a second pass changes nothing.
     assert store.complete_superseded_failed_weekly_okr_analysis_jobs() == 0
+
+
+def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_path: Path):
+    """The check runs in every subprocess; it must not scan the whole table."""
+    store = AutoReplyStore(tmp_path / "snapshots.sqlite3")
+    task = store.create_scheduled_task(
+        name="消息检查",
+        command="produce-once",
+        cron_expression="0 * * * * *",
+        timezone_name="Asia/Shanghai",
+    )
+    current = json.dumps(
+        {"command": "produce-once", "required_runtime_capabilities": [], "task_id": 1}
+    )
+    stale = json.dumps({"task_id": 2})
+    with store._connect() as db:
+        assert store._schema_manifest_is_current_in_connection(db) is True
+        cols = {row["name"] for row in db.execute("pragma table_info(scheduled_task_runs)")}
+        assert "snapshot_json" in cols
+        # A JSON null value for command is a present key, not an absent one.
+        for index, payload in enumerate(
+            (current, json.dumps({"command": None, "required_runtime_capabilities": None}))
+        ):
+            db.execute(
+                "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
+                " scheduled_for, dispatch_status, snapshot_json) values (?, ?, 'scheduled', ?, 'pending', ?)",
+                (f"evt-{index}", task.id, f"2026-09-11T0{index}:00:00+00:00", payload),
+            )
+        assert store._schema_manifest_is_current_in_connection(db) is True
+
+        # Unparseable JSON is corrupt data, not a stale schema.
+        db.execute(
+            "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
+            " scheduled_for, dispatch_status, snapshot_json) values ('evt-bad', ?, 'scheduled', ?, 'pending', ?)",
+            (task.id, "2026-09-11T05:00:00+00:00", "{not json"),
+        )
+        assert store._schema_manifest_is_current_in_connection(db) is True
+
+        # A snapshot missing the command keys is what the check must catch.
+        db.execute(
+            "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
+            " scheduled_for, dispatch_status, snapshot_json) values ('evt-stale', ?, 'scheduled', ?, 'pending', ?)",
+            (task.id, "2026-09-11T06:00:00+00:00", stale),
+        )
+        assert store._schema_manifest_is_current_in_connection(db) is False
