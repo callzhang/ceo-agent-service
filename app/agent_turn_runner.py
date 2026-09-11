@@ -204,6 +204,10 @@ def _project_runtime_domain_result(
         return {
             "outcome": result.outcome.value,
             "summary": summary,
+            "risk": result.risk.value,
+            "confidence": result.confidence,
+            "rule_coverage": result.rule_coverage,
+            "information_completeness": result.information_completeness,
             "proposal": proposal,
             "decision_options": [
                 option.model_dump(mode="json") for option in result.decision_options
@@ -225,6 +229,10 @@ def _project_runtime_domain_result(
     return {
         "outcome": result.outcome.value,
         "summary": summary,
+        "risk": result.risk.value,
+        "confidence": result.confidence,
+        "rule_coverage": result.rule_coverage,
+        "information_completeness": result.information_completeness,
         "proposal_revision": result.proposal_revision,
         "feedback": (
             result.feedback.model_dump(mode="json")

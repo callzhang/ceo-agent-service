@@ -811,6 +811,10 @@ class AgentOrchestrator:
             outcome=ConsumerOutcome.FAILED,
             summary=error.code or "Consumer Agent failed.",
             proposal=None,
+            risk="high",
+            confidence=0.0,
+            rule_coverage=1.0,
+            information_completeness=1.0,
             error=error,
         )
         return _consumer_terminal(_failure_status(error), run, result, feedback_cycles)
@@ -1469,11 +1473,19 @@ def _retryable_route_error_can_resume(task: ReplyTask, error: AgentError) -> boo
 
 
 def _consumer_result(run: AgentRun) -> ConsumerAgentResult:
-    return ConsumerAgentResult.model_validate_json(run.final_result_json)
+    payload = json.loads(run.final_result_json)
+    if isinstance(payload, dict):
+        payload.setdefault("rule_coverage", 1.0)
+        payload.setdefault("information_completeness", 1.0)
+    return ConsumerAgentResult.model_validate(payload)
 
 
 def _audit_result(run: AgentRun) -> AuditAgentResult:
-    return AuditAgentResult.model_validate_json(run.final_result_json)
+    payload = json.loads(run.final_result_json)
+    if isinstance(payload, dict):
+        payload.setdefault("rule_coverage", 1.0)
+        payload.setdefault("information_completeness", 1.0)
+    return AuditAgentResult.model_validate(payload)
 
 
 def _consumer_terminal(
@@ -1545,5 +1557,9 @@ def _failed_audit_result(
         feedback=None,
         external_result=None,
         decision_options=decision_options,
+        risk="high",
+        confidence=0.0,
+        rule_coverage=1.0,
+        information_completeness=1.0,
         error=error,
     )

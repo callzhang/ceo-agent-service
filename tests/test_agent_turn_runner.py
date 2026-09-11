@@ -107,6 +107,8 @@ def test_runner_wire_contract_has_no_application_recovery_evidence_fields():
             },
             "risk": "low",
             "confidence": 1.0,
+            "rule_coverage": 0.75,
+            "information_completeness": 0.8,
         }
     )
     encoded = _encode_runtime_domain_result(
@@ -115,12 +117,53 @@ def test_runner_wire_contract_has_no_application_recovery_evidence_fields():
         result=result,
     )
     assert set(json.loads(encoded)) == {"schema_id", "version", "role", "result"}
+    assert {
+        "risk",
+        "confidence",
+        "rule_coverage",
+        "information_completeness",
+    } <= set(json.loads(encoded)["result"])
     decoded = _decode_runtime_domain_result(
         encoded,
         schema_id="schema-v1",
         role=AgentRole.CONSUMER,
     )
     assert decoded.result == result
+
+
+def test_runtime_projection_round_trip_preserves_all_decision_quality_fields():
+    result = ConsumerAgentResult.model_validate(
+        {
+            "outcome": "no_action",
+            "summary": "无需处理",
+            "proposal": None,
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+            "risk": "medium",
+            "confidence": 0.61,
+            "rule_coverage": 0.42,
+            "information_completeness": 0.37,
+        }
+    )
+    encoded = _encode_runtime_domain_result(
+        schema_id="schema-v1", role=AgentRole.CONSUMER, result=result
+    )
+    projected = json.loads(encoded)["result"]
+    assert {key: projected[key] for key in (
+        "risk", "confidence", "rule_coverage", "information_completeness"
+    )} == {
+        "risk": "medium",
+        "confidence": 0.61,
+        "rule_coverage": 0.42,
+        "information_completeness": 0.37,
+    }
+    assert _decode_runtime_domain_result(
+        encoded, schema_id="schema-v1", role=AgentRole.CONSUMER
+    ).result == result
 
 
 def test_provider_tool_event_does_not_create_application_delivery_receipt(tmp_path):

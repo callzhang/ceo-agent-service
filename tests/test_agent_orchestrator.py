@@ -175,6 +175,43 @@ def _audit_result(
     )
 
 
+def test_legacy_stored_results_are_hydrated_with_explicit_quality_defaults():
+    legacy_consumer = type("Run", (), {
+        "final_result_json": json.dumps({
+            "outcome": "no_action",
+            "summary": "legacy",
+            "proposal": None,
+            "decision_options": [],
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+            "risk": "medium",
+            "confidence": 0.4,
+        })
+    })()
+    from app.agent_orchestrator import _consumer_result
+
+    result = _consumer_result(legacy_consumer)
+    assert result.risk.value == "medium"
+    assert result.confidence == 0.4
+    assert result.rule_coverage == 1.0
+    assert result.information_completeness == 1.0
+
+
+def test_synthetic_audit_failure_has_quality_fields_without_needs_human_options():
+    from app.agent_orchestrator import _failed_audit_result
+
+    result = _failed_audit_result(
+        type("Run", (), {"proposal_revision": 0})(),
+        AuditOutcome.FAILED,
+        AgentError(code="provider_read_failed", retryable=True),
+    )
+    assert result.outcome is AuditOutcome.FAILED
+    assert result.decision_options == ()
+    assert result.risk.value == "high"
+    assert result.confidence == 0.0
+    assert result.rule_coverage == 1.0
+    assert result.information_completeness == 1.0
+
+
 class ScriptedConsumer:
     def __init__(self, store: AutoReplyStore, *results: ConsumerAgentResult) -> None:
         self.store = store
