@@ -351,7 +351,7 @@ def test_prompt_allows_personal_direct_only_for_complete_calendar_one_to_one():
     assert "target.kind=direct" in prompt
 
 
-def test_agent_rejects_business_direct_target_for_calendar_one_to_one():
+def test_agent_accepts_business_direct_fallback_to_calendar_organizer():
     target = {
         "kind": "direct",
         "conversation_id": "",
@@ -359,10 +359,24 @@ def test_agent_rejects_business_direct_target_for_calendar_one_to_one():
         "title": "Alex",
         "candidates": [],
     }
-    agent = MeetingAlignmentAgent(
+    decision = MeetingAlignmentAgent(
         FakeMeetingCodex(send_payload_with_target(target))
-    )
-    with pytest.raises(MeetingAlignmentTargetError, match="business.*group"):
+    ).decide(source())
+    assert decision.target is not None
+    assert decision.target.kind == "direct"
+    assert decision.target.direct_user_id == "alex"
+
+
+def test_agent_rejects_business_direct_fallback_without_calendar_organizer():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "alex",
+        "title": "Alex",
+        "candidates": [],
+    }
+    agent = MeetingAlignmentAgent(FakeMeetingCodex(send_payload_with_target(target)))
+    with pytest.raises(MeetingAlignmentTargetError, match="calendar organizer"):
         agent.decide(source(participant_count=2))
 
 

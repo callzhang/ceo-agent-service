@@ -116,8 +116,10 @@ def deliver_meeting_alignment(
     if target is None:
         raise MeetingDeliveryError("meeting delivery requires an explicit target")
     if decision.audience_scope == "business":
-        if target.kind != "group":
-            raise MeetingDeliveryError("business delivery requires a group target")
+        if target.kind not in {"group", "direct"}:
+            raise MeetingDeliveryError(
+                "business delivery requires a group target or meeting organizer fallback"
+            )
     else:
         if target.kind != "direct":
             raise MeetingDeliveryError("personal delivery requires a direct target")
@@ -159,27 +161,34 @@ def deliver_meeting_alignment(
             target_id = target.conversation_id
             target_title = target.title
     else:
-        counterpart = _direct_target_participant(source, target)
-        if counterpart.user_id:
-            if target.direct_user_id != counterpart.user_id:
-                raise MeetingDeliveryError(
-                    "direct target must use the participant user id"
-                )
-            direct_user_id = counterpart.user_id
+        if decision.audience_scope == "business":
+            direct_user_id, direct_open_dingtalk_id, target_title = (
+                _direct_target_organizer(source, target)
+            )
+            target_kind = "direct"
+            target_id = direct_user_id or direct_open_dingtalk_id
         else:
-            if target.direct_user_id:
-                raise MeetingDeliveryError(
-                    "unresolved 1:1 target cannot supply a guessed user id"
-                )
-            if counterpart.open_dingtalk_id.strip():
-                direct_open_dingtalk_id = counterpart.open_dingtalk_id.strip()
+            counterpart = _direct_target_participant(source, target)
+            if counterpart.user_id:
+                if target.direct_user_id != counterpart.user_id:
+                    raise MeetingDeliveryError(
+                        "direct target must use the participant user id"
+                    )
+                direct_user_id = counterpart.user_id
             else:
-                profile = _resolve_profile(counterpart.name, counterpart, dws, [])
-                if profile is None or not profile.user_id.strip():
-                    raise MeetingDeliveryRetry("1:1 target identity is unresolved")
-                direct_user_id = profile.user_id.strip()
-        target_kind = "direct"
-        target_id = direct_user_id or direct_open_dingtalk_id
+                if target.direct_user_id:
+                    raise MeetingDeliveryError(
+                        "unresolved 1:1 target cannot supply a guessed user id"
+                    )
+                if counterpart.open_dingtalk_id.strip():
+                    direct_open_dingtalk_id = counterpart.open_dingtalk_id.strip()
+                else:
+                    profile = _resolve_profile(counterpart.name, counterpart, dws, [])
+                    if profile is None or not profile.user_id.strip():
+                        raise MeetingDeliveryRetry("1:1 target identity is unresolved")
+                    direct_user_id = profile.user_id.strip()
+            target_kind = "direct"
+            target_id = direct_user_id or direct_open_dingtalk_id
 
     resolved_mentions, unresolved_names = _resolve_mentions(
         decision.mention_names,
@@ -330,6 +339,30 @@ def _stable_organizer_identity(source: MeetingSource) -> tuple[str, str, str]:
     if organizer.open_dingtalk_id.strip():
         return "", organizer.open_dingtalk_id.strip(), organizer.name.strip()
     raise MeetingDeliveryRetry("meeting organizer identity is unresolved")
+
+
+def _direct_target_organizer(
+    source: MeetingSource,
+    target: DeliveryTarget,
+) -> tuple[str, str, str]:
+    direct_user_id, direct_open_dingtalk_id, organizer_name = (
+        _stable_organizer_identity(source)
+    )
+    if _canonical(target.title) != _canonical(organizer_name):
+        raise MeetingDeliveryError(
+            "business direct fallback must target the meeting organizer"
+        )
+    if direct_user_id:
+        if target.direct_user_id != direct_user_id:
+            raise MeetingDeliveryError(
+                "business direct fallback must use the meeting organizer user id"
+            )
+        return direct_user_id, "", organizer_name
+    if target.direct_user_id:
+        raise MeetingDeliveryError(
+            "business direct fallback with organizer open id cannot supply a guessed user id"
+        )
+    return "", direct_open_dingtalk_id, organizer_name
 
 
 def _direct_target_participant(

@@ -17,6 +17,7 @@ from app.agent_runtime_router import (
 from app.config import principal_display_name, work_profile_path
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
+    DeliveryTarget,
     MeetingAlignmentDecision,
     MeetingSource,
     meeting_alignment_rule_for_message,
@@ -551,9 +552,11 @@ def _validate_source_aware_target(
     if target is None:
         raise MeetingAlignmentTargetError("send requires an explicit delivery target")
     if decision.audience_scope == "business":
-        if target.kind != "group":
+        if target.kind == "direct":
+            _validate_business_direct_fallback(source, target)
+        elif target.kind != "group":
             raise MeetingAlignmentTargetError(
-                "business send requires a group target"
+                "business send requires a group target or calendar organizer fallback"
             )
         private_message = decision.sensitive_private_message
         if private_message is not None:
@@ -610,6 +613,35 @@ def _validate_source_aware_target(
                 f"participant: expected {counterpart.name!r}, "
                 f"got {target.title!r}"
             )
+
+
+def _validate_business_direct_fallback(
+    source: MeetingSource,
+    target: DeliveryTarget,
+) -> None:
+    organizer = source.creator
+    if organizer is None or not organizer.name.strip():
+        raise MeetingAlignmentTargetError(
+            "business direct fallback requires a calendar organizer"
+        )
+    if _canonical_person_name(target.title) != _canonical_person_name(organizer.name):
+        raise MeetingAlignmentTargetError(
+            "business direct fallback must target the calendar organizer"
+        )
+    if organizer.user_id.strip():
+        if target.direct_user_id != organizer.user_id.strip():
+            raise MeetingAlignmentTargetError(
+                "business direct fallback must use the calendar organizer user_id"
+            )
+        return
+    if target.direct_user_id:
+        raise MeetingAlignmentTargetError(
+            "business direct fallback cannot supply a guessed user_id"
+        )
+    if not organizer.open_dingtalk_id.strip():
+        raise MeetingAlignmentTargetError(
+            "business direct fallback requires a stable calendar organizer identity"
+        )
 
 
 def _canonical_person_name(value: str) -> str:

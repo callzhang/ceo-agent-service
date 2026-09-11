@@ -445,19 +445,40 @@ def test_multi_person_direct_delivery_is_rejected_without_sending():
         )
 
 
-def test_business_direct_delivery_is_rejected_without_sending():
+def test_business_direct_delivery_rejects_non_organizer_without_sending():
     payload = send_decision(target="direct", mention_names=[]).model_dump()
     payload["audience_scope"] = "business"
+    payload["target"].update(direct_user_id="u-b", title="B")
     dws = FakeDws()
 
-    with pytest.raises(MeetingDeliveryError, match="business delivery requires a group"):
+    with pytest.raises(MeetingDeliveryError, match="meeting organizer"):
         deliver_meeting_alignment(
             MeetingAlignmentDecision.model_validate(payload),
-            meeting_source(one_to_one=True),
+            meeting_source(),
             dws,
         )
 
     assert dws.sent == []
+
+
+def test_business_direct_delivery_sends_to_stable_meeting_organizer():
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    dws = FakeDws()
+
+    result = deliver_meeting_alignment(
+        MeetingAlignmentDecision.model_validate(payload),
+        meeting_source(),
+        dws,
+    )
+
+    assert result.status == "sent"
+    assert result.target_kind == "direct"
+    assert result.target_id == "u-a"
+    assert result.target_title == "A"
+    assert dws.sent[0]["conversation_id"] is None
+    assert dws.sent[0]["user_id"] == "u-a"
+    assert dws.search_queries == []
 
 
 def test_personal_direct_delivery_rejects_incomplete_transcript_roster():
