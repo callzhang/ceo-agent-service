@@ -30,9 +30,49 @@ reverts committed work they did not author.
 | --- | --- | --- | --- |
 | Claude session `ceo-agent-service-f6` (Agent Cron) | `app/agent_cron/*`, `app/cli.py` (scheduled-task subcommands and `_service_command_registry`), `app/web_api/scheduled_tasks.py`, `frontend/src/api/scheduledTasks.ts`, `frontend/src/pages/ScheduledTasksPage.tsx` + their tests | scheduled-task execution forms (Agent task vs service command), the downstream-consumer descriptor, and the hourly recovery split | 2026-09-10 19:45Z |
 | Claude session `ceo-agent-service-f6` (execution boundary) | `app/agent_effect_guard.py`, `app/consumer_agent.py` + `tests/test_agent_effect_guard.py` | detecting provider effects produced by a Consumer proposal turn (task 383537) | 2026-09-11 01:40Z |
-| Claude session `ceo-agent-service-76` (failed-item repair) | `app/email_unsubscribe.py`, `app/email_unsubscribe_audit.py`, `app/audit_agent.py`, `app/email_worker.py`, `app/email_task_adapter.py`, `app/meeting_alignment_agent.py`, `app/meeting_alignment_models.py` + their tests | closing the live `failed` reply tasks (skip outcomes projected as failures, unsubscribe browser page state, meeting schema guidance) | 2026-09-10 19:00Z |
 
 ## Recent overlaps worth knowing
+
+- 2026-09-11: three findings left open by the failed-item repair round, each
+  needing an owner. They are recorded here because the evidence is perishable.
+
+  **A model can still author a terminal error code.** `AgentError.code` is free
+  text, so a turn that cannot finish reports a code it invents and the
+  orchestrator reads it as a considered decision. Codes seen live that exist
+  nowhere in this repository: `task_already_completed`,
+  `email_unsubscribe_risk_rejected`, `email_unsubscribe_execution_rejected`,
+  `unsubscribe_target_mismatch`, `AUDITED_UNSUBSCRIBE_CAPABILITY_UNAVAILABLE`.
+  Each one closed a live task. `app/email_worker.py` now overrides two specific
+  cases from the turn's own events (a terminal receipt, a route refusal), but
+  that is a patch per case; the contract itself is still open, and Derek has
+  approved making these codes a service-owned type.
+
+  **A terminal unsubscribe receipt cannot be reused across generations.**
+  `get_email_unsubscribe_terminal_snapshot` checks the durable claim's Audit
+  lineage against the task's current `execution_generation`
+  (`app/email_store.py:9946-9971`), so rerunning a task in a new generation
+  cannot see a receipt its earlier generation already earned and raises
+  `EmailPersistenceCorruption` instead. A receipt records what a provider did,
+  which no rerun changes. The generation check is right for a claim still
+  `awaiting_audit`; for one that is `done`/`terminal` it turns an idempotency
+  record into an error. Tasks 383232 and 383234 hit this with real
+  `skipped_login_required` receipts.
+
+  **Persisted Consumer results predating `310234e8` no longer parse.** That
+  commit made `risk`, `confidence`, `rule_coverage` and
+  `information_completeness` required on `ConsumerAgentResult`, so
+  `model_validate_json` rejects every result written before it: 5 of 6 sampled
+  completed email Consumer runs fail. This breaks
+  `_bound_parent_consumer_action` (`app/email_unsubscribe_audit.py:641`), and
+  `_repair_completed_message_delivery_projections`
+  (`app/worker.py:1899`) silently skips those rows because it catches
+  `ValidationError` and continues. 33 tests in
+  `tests/test_email_unsubscribe_audit.py`, 5 in `tests/test_worker.py`, 2 in
+  `tests/test_email_worker.py` and the collection of
+  `tests/test_approval_history.py` fail for this reason. The contract belongs
+  to the Codex `contract-quality` claim; per Derek's rule the answer is to
+  rerun rather than hydrate legacy shapes, but the reconciliation sweeps cannot
+  rerun anything and need a decision.
 
 - 2026-09-10: two agents independently fixed runtime capability snapshots not
   reaching every service child — one bridged them through the store and the
