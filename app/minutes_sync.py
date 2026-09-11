@@ -79,6 +79,35 @@ def _speaker(paragraph: dict[str, Any]) -> str:
     return ""
 
 
+class MinutesSummaryShapeUnknown(ValueError):
+    """The summary payload carried content in a shape this archive cannot read."""
+
+
+def summary_markdown(summary: object) -> str:
+    """Return the provider's summary markdown for the archive body.
+
+    The provider returns ``{"fullSummary": "<markdown>"}``.  Serialising that
+    object instead of reading it writes a JSON blob with escaped newlines into
+    the archive -- a file that looks synced and is unreadable.  An empty
+    payload is a minute whose summary is not generated yet, which is a real and
+    harmless state; any other shape is a provider contract change and must fail
+    the item so it stays visible and gets retried.
+    """
+    if isinstance(summary, str):
+        return summary
+    if not summary:
+        return ""
+    if isinstance(summary, dict):
+        text = summary.get("fullSummary")
+        if isinstance(text, str):
+            return text
+    raise MinutesSummaryShapeUnknown(
+        f"unreadable minutes summary payload: {sorted(summary)}"
+        if isinstance(summary, dict)
+        else f"unreadable minutes summary payload of type {type(summary).__name__}"
+    )
+
+
 def render_archive(
     *,
     task_uuid: str,
@@ -92,7 +121,7 @@ def render_archive(
         "",
         "# AI Summary",
         "",
-        summary if isinstance(summary, str) else json.dumps(summary, ensure_ascii=False),
+        summary_markdown(summary),
         "",
         "# Transcript",
         "",
@@ -255,13 +284,15 @@ def sync_minutes_once(
             title=str(basic.get("title") or task_uuid),
             started_at=_started_at(basic),
         )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            render_archive(
+        try:
+            body = render_archive(
                 task_uuid=task_uuid, summary=summary, paragraphs=paragraphs
-            ),
-            encoding="utf-8",
-        )
+            )
+        except MinutesSummaryShapeUnknown:
+            failed += 1
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
         archived.add(task_uuid)
         pending.discard(task_uuid)
         synced += 1

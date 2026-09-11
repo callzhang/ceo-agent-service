@@ -107,6 +107,7 @@ def test_archive_matches_the_existing_local_layout(tmp_path: Path) -> None:
     assert text.startswith("<!-- row_key: u1 -->\n")
     assert "<!-- source_url: https://shanji.dingtalk.com/app/transcribes/u1 -->" in text
     assert "# AI Summary" in text and "# Transcript" in text
+    assert "\n要点\n" in text
     assert "[00:02] 张静: 开始了" in text
     assert "[21:13] Mina: 收到" in text
     # An empty paragraph contributes no line.
@@ -231,9 +232,40 @@ def test_every_discovered_minute_lands_in_exactly_one_outcome() -> None:
         MinutesSyncResult(discovered=2, synced=1)
 
 
-def test_render_archive_serializes_a_structured_summary() -> None:
-    text = render_archive(task_uuid="u", summary={"a": "值"}, paragraphs=[])
-    assert '{"a": "值"}' in text
+def test_render_archive_writes_the_provider_summary_markdown() -> None:
+    text = render_archive(
+        task_uuid="u",
+        summary={"fullSummary": "> **主题**: 讨论\n\n## 背景\n\n- 一点"},
+        paragraphs=[],
+    )
+    assert "> **主题**: 讨论\n\n## 背景\n\n- 一点" in text
+    # Serialising the payload instead of reading it wrote escaped JSON into the
+    # archive, which looks synced and is unreadable.
+    assert "fullSummary" not in text
+    assert "\\n" not in text
+
+
+def test_render_archive_accepts_a_minute_without_a_summary_yet() -> None:
+    text = render_archive(task_uuid="u", summary={}, paragraphs=[])
+    assert "# AI Summary\n\n\n\n# Transcript" in text
+
+
+def test_an_unreadable_summary_shape_fails_the_item_instead_of_archiving_it(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    dws = FakeDws(
+        [{"taskUuid": "u1"}],
+        basic={"u1": {"title": "会", "startTime": 1_700_000_000_000}},
+        summary={"u1": {"sections": ["未知结构"]}},
+        paragraphs={"u1": {"paragraphs": [{"startTime": 0, "paragraph": "在"}]}},
+    )
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.failed == 1 and result.synced == 0
+    assert list((tmp_path / "AI听记").rglob("*.md")) == []
+    assert _cursor(store)["archived_ids"] == []
 
 
 def test_incomplete_minutes_pagination_does_not_claim_success(tmp_path: Path) -> None:
