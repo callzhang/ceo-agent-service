@@ -2147,6 +2147,29 @@ def test_console_error_detail_returns_error_record(tmp_path: Path):
     assert payload["item"]["error"] == "database is locked"
 
 
+def test_queue_attention_rows_includes_unresolved_service_errors_older_than_health_window(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error(
+        "old-conversation",
+        "old-message",
+        "producer_loop_error",
+        "database is locked",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update errors set created_at='2020-01-01 00:00:00' "
+            "where conversation_id='old-conversation'"
+        )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    service_error = next(row for row in rows if row["category"] == "Service error")
+    assert service_error["summary"] == "database is locked"
+    assert service_error["detail_url"].startswith("/history/errors/")
+
+
 def test_console_sent_todos_endpoint_returns_structured_rows_before_project_route(tmp_path: Path, monkeypatch):
     record = SimpleNamespace(
         kind="dingtalk_todo",
