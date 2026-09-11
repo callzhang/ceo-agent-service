@@ -853,6 +853,45 @@ def _analyze_meeting_job(
             run_id=run_id,
         )
     except MeetingAlignmentTargetError as exc:
+        if (
+            str(exc)
+            == "business direct fallback requires a stable calendar organizer identity"
+            and exc.decision is not None
+        ):
+            decision_json = exc.decision.model_dump_json()
+            target = exc.decision.target
+            target_id = (
+                target.conversation_id
+                if target is not None and target.kind == "group"
+                else target.direct_user_id
+                if target is not None
+                else ""
+            )
+            error = _error_json("meeting_identity", str(exc))
+            _record_agent_run(
+                store,
+                runner,
+                run_id,
+                job_id=job.id,
+                decision=exc.decision,
+                status="ready_to_send",
+                error=error,
+            )
+            store.update_meeting_alignment_job(
+                job.id,
+                status="needs_human",
+                decision_json=decision_json,
+                target_kind=target.kind if target is not None else "",
+                target_id=target_id,
+                target_title=target.title if target is not None else "",
+                mentions_json=json.dumps(
+                    exc.decision.mention_names,
+                    ensure_ascii=False,
+                ),
+                final_message=exc.decision.final_message,
+                error=error,
+            )
+            return
         error = _error_json("meeting_target", str(exc))
         _record_agent_run(
             store,

@@ -1930,6 +1930,11 @@ def test_missing_calendar_organizer_identity_becomes_needs_human_without_send(
         "kind": "meeting_identity",
         "message": "meeting organizer identity is unresolved",
     }
+    assert json.loads(job.decision_json)["action"] == "send"
+    assert json.loads(job.decision_json)["target"]["kind"] == "group"
+    [run] = store.list_meeting_alignment_runs(job_id)
+    assert run.status == "ready_to_send"
+    assert json.loads(run.decision_json)["action"] == "send"
     assert dws.send_calls == []
 
 

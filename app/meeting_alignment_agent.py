@@ -63,6 +63,15 @@ MEETING_ALIGNMENT_SCHEMA_PROBLEM_LIMIT = 12
 class MeetingAlignmentTargetError(ValueError):
     """A decision target contradicts the authoritative meeting roster."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        decision: MeetingAlignmentDecision | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.decision = decision
+
 
 class MeetingAlignmentCodex(Protocol):
     last_session_id: str | None
@@ -97,7 +106,13 @@ class MeetingAlignmentAgent:
             if run_id is not None
             else self.codex.decide(prompt=prompt)
         )
-        _validate_source_aware_target(source, decision)
+        try:
+            _validate_source_aware_target(source, decision)
+        except MeetingAlignmentTargetError as exc:
+            raise MeetingAlignmentTargetError(
+                str(exc),
+                decision=decision,
+            ) from exc
         return decision
 
 

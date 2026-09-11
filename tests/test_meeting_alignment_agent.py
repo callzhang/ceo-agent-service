@@ -367,6 +367,25 @@ def test_agent_accepts_business_direct_fallback_to_calendar_organizer():
     assert decision.target.direct_user_id == "alex"
 
 
+def test_target_error_preserves_the_generated_decision():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "alex",
+        "title": "Alex",
+        "candidates": [],
+    }
+    agent = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(target))
+    )
+
+    with pytest.raises(MeetingAlignmentTargetError) as raised:
+        agent.decide(source(participant_count=2))
+
+    assert raised.value.decision is not None
+    assert raised.value.decision.action == "send"
+
+
 def test_agent_rejects_business_direct_fallback_without_calendar_organizer():
     target = {
         "kind": "direct",
