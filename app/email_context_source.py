@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+import imaplib
 import json
 from typing import Any
 
@@ -149,14 +150,20 @@ class EmailContextSource:
     ) -> Mapping[str, object] | None:
         if self.source_factory is None:
             return None
-        account = self.store.get_account(account_id)
-        if not isinstance(account, Mapping):
-            raise ValueError("email task account is unavailable")
-        source = self.source_factory(account)
+        try:
+            account = self.store.get_account(account_id)
+            if not isinstance(account, Mapping):
+                return None
+            source = self.source_factory(account)
+            folder = str(classification.get("folder") or "")
+            if not folder:
+                return None
+        except _PROVIDER_CONTEXT_UNAVAILABLE:
+            return None
         try:
             uid = _required_int(classification, "uid")
             batch = source.fetch_uid_batch(
-                str(classification["folder"]),
+                folder,
                 cursor_uidvalidity=_required_int(classification, "uidvalidity"),
                 last_seen_uid=max(0, uid - 1),
                 limit=2,
@@ -169,10 +176,21 @@ class EmailContextSource:
                 ):
                     return message
             raise ValueError("email task source message is unavailable")
+        except _PROVIDER_CONTEXT_UNAVAILABLE:
+            return None
         finally:
             close = getattr(source, "logout", None)
             if callable(close):
                 close()
+
+
+_PROVIDER_CONTEXT_UNAVAILABLE = (
+    ConnectionError,
+    OSError,
+    TimeoutError,
+    imaplib.IMAP4.error,
+    ValueError,
+)
 
 
 def _task_payload(task: object) -> dict[str, object]:

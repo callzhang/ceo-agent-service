@@ -257,3 +257,117 @@ def test_context_source_reloads_ephemeral_html_and_immutable_unsubscribe_binding
         dkim_covers_list_unsubscribe_post=True,
         evidence_reference="dkim-evidence:current-message",
     )
+
+
+def test_context_source_uses_durable_context_when_provider_read_is_unavailable():
+    stable_identity = "account-1:message-id:<current@example.com>"
+
+    class Store:
+        def get_classification(self, _classification_id):
+            return {
+                "account_id": "account-1",
+                "stable_message_identity": stable_identity,
+                "thread_id": "provider-thread-1",
+                "current_action_plan_id": "email-plan:17:v3",
+                "folder": "INBOX",
+                "uidvalidity": 42,
+                "uid": 17,
+                "action_plan": {
+                    "action_plan_id": "email-plan:17:v3",
+                    "action_plan_version": 3,
+                    "model_id": "email-model:2026-08-30:sha256:abc",
+                    "config_version": "email-config:v7",
+                },
+            }
+
+        def list_email_context_thread(self, **_kwargs):
+            return [
+                {
+                    "stable_message_identity": stable_identity,
+                    "thread_identity": "provider-thread-1",
+                    "sender": "sender@example.com",
+                    "subject": "Persisted subject",
+                    "normalized_text": "Persisted body",
+                    "attachment_metadata": [],
+                    "received_at": "2026-08-30T08:00:00+00:00",
+                }
+            ]
+
+        def list_email_context_receipts(self, **_kwargs):
+            return []
+
+        def get_account(self, _account_id):
+            return {"account_id": "account-1"}
+
+    def unavailable_source_factory(_account):
+        raise OSError("provider DNS unavailable")
+
+    task_input = EmailContextSource(
+        Store(),
+        source_factory=unavailable_source_factory,
+    ).load_task_input(
+        SimpleNamespace(trigger_message_json=json.dumps(_payload(stable_identity)))
+    )
+
+    assert task_input.subject == "Persisted subject"
+    assert task_input.body_text == "Persisted body"
+    assert task_input.body_html == ""
+
+
+def test_context_source_uses_durable_context_when_current_provider_message_moved():
+    stable_identity = "account-1:message-id:<current@example.com>"
+
+    class Store:
+        def get_classification(self, _classification_id):
+            return {
+                "account_id": "account-1",
+                "stable_message_identity": stable_identity,
+                "thread_id": "provider-thread-1",
+                "current_action_plan_id": "email-plan:17:v3",
+                "folder": "INBOX",
+                "uidvalidity": 42,
+                "uid": 17,
+                "action_plan": {
+                    "action_plan_id": "email-plan:17:v3",
+                    "action_plan_version": 3,
+                    "model_id": "email-model:2026-08-30:sha256:abc",
+                    "config_version": "email-config:v7",
+                },
+            }
+
+        def list_email_context_thread(self, **_kwargs):
+            return [
+                {
+                    "stable_message_identity": stable_identity,
+                    "thread_identity": "provider-thread-1",
+                    "sender": "sender@example.com",
+                    "subject": "Moved message",
+                    "normalized_text": "Persisted moved body",
+                    "attachment_metadata": [],
+                    "received_at": "2026-08-30T08:00:00+00:00",
+                }
+            ]
+
+        def list_email_context_receipts(self, **_kwargs):
+            return []
+
+        def get_account(self, _account_id):
+            return {"account_id": "account-1"}
+
+    class Source:
+        def fetch_uid_batch(self, *_args, **_kwargs):
+            return SimpleNamespace(uidvalidity=42, messages=())
+
+        def logout(self):
+            return None
+
+    task_input = EmailContextSource(
+        Store(),
+        source_factory=lambda _account: Source(),
+    ).load_task_input(
+        SimpleNamespace(trigger_message_json=json.dumps(_payload(stable_identity)))
+    )
+
+    assert task_input.subject == "Moved message"
+    assert task_input.body_text == "Persisted moved body"
+    assert task_input.body_html == ""
