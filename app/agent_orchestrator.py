@@ -733,7 +733,7 @@ class AgentOrchestrator:
         if run.status == "failed" and _is_runtime_confirmation_required(error):
             result = _runtime_confirmation_consumer_result(error)
             return _consumer_terminal(
-                "needs_human",
+                "failed_terminal",
                 run,
                 result,
                 feedback_cycles,
@@ -847,7 +847,7 @@ class AgentOrchestrator:
         if run.status == "failed" and _is_runtime_confirmation_required(error):
             result = _runtime_confirmation_audit_result(run, error)
             return _audit_terminal(
-                "needs_human",
+                "failed_terminal",
                 run,
                 result,
                 feedback_cycles,
@@ -1520,30 +1520,16 @@ def _terminal_confirmation_error(error: AgentError) -> AgentError:
     )
 
 
-def _runtime_confirmation_options() -> tuple[DecisionOption, DecisionOption]:
-    return (
-        DecisionOption(
-            key="authorize_and_retry",
-            label="授权后重跑",
-            instruction="确认允许当前任务继续执行，然后重新运行当前步骤。",
-            consequence="服务会从同一任务继续处理，并再次经过审计。",
-        ),
-        DecisionOption(
-            key="stop_without_action",
-            label="停止不执行",
-            instruction="停止当前任务，不发送消息也不执行外部动作。",
-            consequence="任务结束为需要人工判断，不会自动重放。",
-        ),
-    )
-
-
 def _runtime_confirmation_consumer_result(error: AgentError) -> ConsumerAgentResult:
     terminal_error = _terminal_confirmation_error(error)
     return ConsumerAgentResult(
-        outcome=ConsumerOutcome.NEEDS_HUMAN,
+        # Runtime confirmation is an execution/authorization boundary, not a
+        # business decision.  It has no typed proposal for the user to choose
+        # from, so it must remain a technical failure instead of polluting the
+        # reusable needs_human queue.
+        outcome=ConsumerOutcome.FAILED,
         summary=terminal_error.code,
         proposal=None,
-        decision_options=_runtime_confirmation_options(),
         error=terminal_error,
         risk="high",
         confidence=0.0,
@@ -1558,12 +1544,13 @@ def _runtime_confirmation_audit_result(
 ) -> AuditAgentResult:
     terminal_error = _terminal_confirmation_error(error)
     return AuditAgentResult(
-        outcome=AuditOutcome.NEEDS_HUMAN,
+        # See the Consumer result above: provider/runtime confirmation cannot
+        # be resolved by a management choice and therefore is not needs_human.
+        outcome=AuditOutcome.FAILED,
         summary=terminal_error.code,
         proposal_revision=run.proposal_revision,
         feedback=None,
         external_result=None,
-        decision_options=_runtime_confirmation_options(),
         risk="high",
         confidence=0.0,
         rule_coverage=1.0,

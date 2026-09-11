@@ -2132,6 +2132,34 @@ def test_queue_attention_rows_routes_service_errors_to_history_detail(tmp_path: 
     assert service_error["detail_url"] == f"/history/errors/{error_id}"
 
 
+def test_queue_attention_rows_includes_current_needs_human_attempts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="needs-human-conversation",
+        conversation_title="Needs human conversation",
+        trigger_message_id="needs-human-message",
+        trigger_sender="Mina",
+        trigger_text="Choose the applicable travel policy.",
+        action="send_reply",
+        sensitivity_kind="general",
+        channel="dingtalk",
+        send_status="needs_human",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="needs_human",
+        send_error="high risk decision requires review",
+        human_decision_options_json='[{"key":"one_time"},{"key":"skill_update"}]',
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    needs_human = next(row for row in rows if row["id"] == str(attempt_id))
+    assert needs_human["category"] == "Reply"
+    assert needs_human["status"] == "needs_human"
+    assert needs_human["error"] == "high risk decision requires review"
+
+
 def test_console_error_detail_returns_error_record(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("", "", "producer_loop_error", "database is locked")

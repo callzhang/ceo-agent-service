@@ -3158,14 +3158,15 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
     for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
-        if str(attempt["send_status"] or "").casefold() != "failed":
+        send_status = str(attempt["send_status"] or "").casefold()
+        if send_status not in {"failed", "needs_human"}:
             continue
         trigger_key = (
             attempt["channel"],
             attempt["conversation_id"],
             attempt["trigger_message_id"],
         )
-        if trigger_key in active_reply_task_triggers:
+        if send_status == "failed" and trigger_key in active_reply_task_triggers:
             continue
         rows.append(
             {

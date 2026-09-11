@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-11: runtime/provider `confirmation_required` failures are now kept as
+  explicit technical failures instead of being misclassified as `needs_human`;
+  current unresolved `needs_human` reply attempts are also included in the
+  Attention projection so the UI and API cannot hide genuine management
+  decisions.
+
 - 2026-09-11: calendar-backed meeting summaries now keep the calendar creator as
   the stable organizer identity when the Minutes list item only supplies a weak
   creator name. A later producer pass could pass the weak Minutes creator into
