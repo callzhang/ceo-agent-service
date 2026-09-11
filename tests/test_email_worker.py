@@ -8193,6 +8193,105 @@ def test_domain_authorization_rejection_remains_failed():
     assert captured["send_error"] == "email_unsubscribe_risk_rejected"
 
 
+def _route_refused_tool_event(message="This action was rejected due to unacceptable risk."):
+    """The runtime declined to place the call, so there is no result at all."""
+    return {
+        "type": "item.completed",
+        "item": {
+            "type": "mcp_tool_call",
+            "tool": "execute_audited_email_unsubscribe",
+            "arguments": {"accepted_action": {"action_identity": "email-action:1"}},
+            "error": {"message": message},
+        },
+    }
+
+
+def _route_refusal_case(attempts: int):
+    module = _module()
+    task = SimpleNamespace(
+        id=9,
+        attempts=attempts,
+        execution_generation="generation-9",
+        conversation_id="conversation-9",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="trigger-9",
+        trigger_sender="sender@example.com",
+        trigger_text="unsubscribe",
+    )
+    run = SimpleNamespace(
+        id=90,
+        codex_session_id="",
+        transcript_start_line=0,
+        transcript_end_line=0,
+        tool_events=[_route_refused_tool_event()],
+    )
+    captured = {}
+
+    class Store:
+        def get_agent_run(self, run_id):
+            return run
+
+        def finalize_orchestrated_reply_task(self, **kwargs):
+            captured.update(kwargs)
+
+        def defer_reply_task(self, task_id, error, **kwargs):
+            captured["deferred"] = (task_id, error)
+
+    result = SimpleNamespace(
+        status="failed_terminal",
+        final_run_id=90,
+        summary="email_unsubscribe_risk_rejected",
+        error=SimpleNamespace(
+            code="email_unsubscribe_risk_rejected",
+            authorization_required=True,
+        ),
+    )
+    module._finalize_email_task(Store(), task, result)
+    return module, captured
+
+
+def test_route_refusing_the_call_is_retried_not_closed_as_a_decision():
+    """Nothing decided anything: the audited tool never ran.
+
+    The Audit model still has to report something, and what it reports reads
+    like a refusal of the unsubscribe. The same call goes through on a route
+    whose provider places it, so the task is retried rather than closed.
+    """
+    module, captured = _route_refusal_case(attempts=1)
+
+    assert captured["deferred"] == (9, module.ROUTE_REFUSED_UNSUBSCRIBE_ERROR)
+    assert "task_status" not in captured
+
+
+def test_every_route_refusing_the_call_reaches_a_person():
+    """Once the retries are spent this is a capability the service lacks."""
+    module, captured = _route_refusal_case(
+        attempts=_module().ROUTE_REFUSED_UNSUBSCRIBE_RETRIES
+    )
+
+    assert captured["task_status"] == "done"
+    assert captured["send_status"] == "needs_human"
+    assert captured["send_error"] == module.ROUTE_REFUSED_UNSUBSCRIBE_ERROR
+
+
+def test_a_call_the_route_did_place_keeps_the_audited_outcome():
+    """A refusal followed by a real result is not a refusal."""
+    from app.email_unsubscribe_audit import audited_unsubscribe_route_refusal
+
+    placed = {
+        "type": "item.completed",
+        "item": {
+            "type": "mcp_tool_call",
+            "tool": "execute_audited_email_unsubscribe",
+            "arguments": {"accepted_action": {"action_identity": "email-action:1"}},
+            "result": {"structured_content": {"status": "done", "outcome": "done"}},
+        },
+    }
+    run = SimpleNamespace(tool_events=[_route_refused_tool_event(), placed])
+
+    assert audited_unsubscribe_route_refusal(run) == ""
+
+
 def _audited_unsubscribe_tool_event(outcome, *, status="done"):
     return {
         "type": "item.completed",

@@ -124,6 +124,45 @@ def audited_unsubscribe_skip_receipt(
     return None
 
 
+def audited_unsubscribe_route_refusal(run: object) -> str:
+    """Return why the route refused to place the call, or "" if it did place it.
+
+    A runtime can decline to issue an MCP call at all: the provider's own
+    safety review reads the planned call and rejects it, so the turn records
+    the invocation with an error and no result. The service's audited tool
+    never runs, nothing is attempted against the mail provider, and no receipt
+    exists.
+
+    The Audit model then has to report something, and what it reports is an
+    error code of its own invention with `retryable` false, which reads exactly
+    like a business decision to refuse the unsubscribe. It is not one. The
+    same call on the same task succeeds on a route whose provider does place
+    it, so this is a property of the route, not of the task, and closing the
+    task on it throws away work no one declined to do.
+
+    A later successful call on the same turn wins: the refusal was not final.
+    """
+    for event in reversed(list(getattr(run, "tool_events", None) or ())):
+        if not isinstance(event, Mapping):
+            continue
+        item = event.get("item")
+        if (
+            not isinstance(item, Mapping)
+            or item.get("tool") != AUDITED_UNSUBSCRIBE_TOOL
+        ):
+            continue
+        if _tool_structured_content(item.get("result")) is not None:
+            return ""
+        error = item.get("error")
+        if isinstance(error, Mapping):
+            message = error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+    return ""
+
+
 def _tool_action_identity(arguments: object) -> str:
     """Name the action one recorded call targeted, or "" when unreadable."""
 

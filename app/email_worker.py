@@ -37,6 +37,10 @@ EMAIL_TASK_TRANSIENT_RETRY_ATTEMPTS = 5
 # in this many fresh reads before it is believed to be gone for good.
 UNRESOLVED_UNSUBSCRIBE_RECHECKS = 5
 UNRESOLVED_UNSUBSCRIBE_SELECTION_ERROR = "email_unsubscribe_candidate_unresolved"
+# A route that declines to place the audited unsubscribe call is retried this
+# many times before the refusal is treated as a capability the service lacks.
+ROUTE_REFUSED_UNSUBSCRIBE_RETRIES = 5
+ROUTE_REFUSED_UNSUBSCRIBE_ERROR = "email_unsubscribe_route_refused"
 DIRECT_ACTION_DRAIN_MAX_ACTIONS = 25
 DIRECT_ACTION_DRAIN_MAX_SECONDS = 2.0
 
@@ -2363,6 +2367,7 @@ def _load_email_task_context(
 def _finalize_email_task(store: object, task: object, result: object) -> None:
     from app.email_unsubscribe_audit import (
         AuditedUnsubscribeTerminalState,
+        audited_unsubscribe_route_refusal,
         audited_unsubscribe_skip_receipt,
     )
 
@@ -2411,6 +2416,28 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
         else:
             task_status, send_status = status_map["no_action"]
             error = ""
+    elif run is not None and send_status != "needs_human":
+        # The same reasoning one step earlier. When the route refused to place
+        # the call at all, the audited tool never ran, so there is no receipt
+        # to read and the Audit model's invented error code is all that is
+        # left - and it reads like a decision to refuse the unsubscribe when
+        # nothing decided anything. Retry instead, because the call goes
+        # through on a route whose provider places it. Only once the retries
+        # are spent is this a real boundary, and then it belongs to a person:
+        # every route declining our own audited tool is a capability the
+        # service does not currently have.
+        refusal = audited_unsubscribe_route_refusal(run)
+        if refusal:
+            _LOGGER.info(
+                "email task %s: route refused the audited unsubscribe call: %s",
+                task.id,
+                refusal,
+            )
+            if task.attempts < ROUTE_REFUSED_UNSUBSCRIBE_RETRIES:
+                task_status, send_status = status_map["failed_retryable"]
+            else:
+                task_status, send_status = status_map["needs_human"]
+            error = ROUTE_REFUSED_UNSUBSCRIBE_ERROR
     if task_status == "pending":
         # A deferred orchestration (runtime not ready, provider recovery, lease
         # race) keeps the task and retries it later, exactly like the DingTalk
