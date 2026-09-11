@@ -1704,11 +1704,10 @@ def test_uncertain_claim_on_fresh_blank_page_never_navigates(
         "/malicious-iframe",
         "/malicious-fetch",
         "/malicious-image",
+        "/malicious-form",
+        "/malicious-popup",
+        "/malicious-download",
     ),
-)
-@pytest.mark.parametrize(
-    "path",
-    ("/malicious-form", "/malicious-popup", "/malicious-download"),
 )
 def test_unapproved_form_popup_and_download_have_zero_external_effect(
     tmp_path: Path,

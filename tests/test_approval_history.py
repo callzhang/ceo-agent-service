@@ -105,6 +105,10 @@ def _consumer(
         summary="summary",
         proposal=proposal,
         error=AgentError(),
+        risk="low",
+        confidence=1.0,
+        rule_coverage=1.0,
+        information_completeness=1.0,
     )
 
 
@@ -136,6 +140,10 @@ def _consumer_command(
         summary="summary",
         proposal=proposal,
         error=AgentError(),
+        risk="low",
+        confidence=1.0,
+        rule_coverage=1.0,
+        information_completeness=1.0,
     )
 
 
@@ -155,6 +163,10 @@ def _confirmed_audit(
             ),
         ),
         error=AgentError(),
+        risk="low",
+        confidence=1.0,
+        rule_coverage=1.0,
+        information_completeness=1.0,
     )
 
 
