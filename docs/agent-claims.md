@@ -30,7 +30,6 @@ reverts committed work they did not author.
 | --- | --- | --- | --- |
 | Codex session `attention-reconciliation` | `app/audit_web.py`, `tests/test_console_web_api.py` | show every unresolved service error in Attention while keeping the four-hour window only in system health | 2026-09-11 |
 | Codex session `consumer-email-minutes-repair` | `app/email_worker.py`, `tests/test_email_worker.py`, `app/task_scanners.py`, `tests/test_task_scanners.py`, `app/minutes_sync.py`, `tests/test_minutes_sync.py`, `app/quality_gate.py`, `tests/test_quality_gate.py` | repair technical needs_human projection, runtime confirmation quality projection, and avoidable minute scanner pagination failures | 2026-09-11 |
-| Codex session `email-uncertain-claim-repair` | `app/email_worker.py`, `tests/test_email_worker.py`, `CHANGELOG.md` | take over stale email finalization claim: durable browser steps without receipts must become an explicit human decision, not failed/retryable; no live owner was found for `consumer-email-minutes-repair` | 2026-09-11 |
 | Codex session `meeting-target-repair` | `app/meeting_alignment_agent.py`, `app/meeting_alignment_delivery.py`, `app/meeting_alignment_source.py`, `tests/test_meeting_alignment_agent.py`, `tests/test_meeting_alignment_delivery.py`, `tests/test_meeting_alignment_source.py` | retry source-aware meeting target validation failures and resolve organizer fallback before marking meeting jobs failed | 2026-09-11 |
 
 ## Recent overlaps worth knowing
