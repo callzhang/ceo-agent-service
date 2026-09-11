@@ -362,10 +362,12 @@ class ClaudeRuntimeAdapter:
         ):
             return RuntimeFailure(
                 failure_class=RuntimeFailureClass.AUTHENTICATION,
-                code="claude_login_required",
+                code="claude_credentials_unavailable",
                 detail=(
-                    "The Claude CLI login has expired; run `claude /login` to "
-                    "restore this route."
+                    "The local Claude credential is unusable. The quota guard "
+                    "refills an access token from the auth pool every 15 "
+                    "minutes; more than four consecutive failures (about an "
+                    "hour) needs the account owner to sign in again."
                 ),
                 failover_permitted=True,
                 route_pause_required=True,
@@ -773,7 +775,7 @@ def _validated_success_result(event: dict[str, object]) -> str:
 def _trusted_error_result_text(stdout: str) -> str:
     """The provider's own message when it marked its terminal result an error.
 
-    An expired CLI login arrives this way rather than on stderr: the result
+    An unusable credential arrives this way rather than on stderr: the result
     event carries `is_error: true` while its subtype is still `success`, so
     neither the stderr scan nor `_trusted_error_subtypes` sees it, and an
     actionable configuration failure was filed as unclassified.

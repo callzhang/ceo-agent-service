@@ -1167,7 +1167,7 @@ def test_unknown_system_subtype_is_still_a_grammar_violation(normalizer):
         )
 
 
-def test_expired_cli_login_is_an_actionable_authentication_failure(adapter):
+def test_unusable_credential_is_an_actionable_authentication_failure(adapter):
     """The provider reports it in the terminal result, not on stderr.
 
     Filing it as unclassified left the route unpaused, so every probe cycle
@@ -1187,8 +1187,12 @@ def test_expired_cli_login_is_an_actionable_authentication_failure(adapter):
     failure = adapter.classify_failure(stdout, "", 1)
 
     assert failure.failure_class is RuntimeFailureClass.AUTHENTICATION
-    assert failure.code == "claude_login_required"
-    assert "claude /login" in failure.detail
+    assert failure.code == "claude_credentials_unavailable"
+    # The detail names the recovery path without asserting a cause the
+    # consumer cannot verify: the guard refills the token, and only repeated
+    # failure means the owner must sign in.
+    assert "quota guard" in failure.detail
+    assert "sign in again" in failure.detail
     assert failure.route_pause_required is True
     assert failure.failover_permitted is True
 
@@ -1203,7 +1207,10 @@ def test_not_logged_in_result_is_classified_the_same_way(adapter):
         }
     )
 
-    assert adapter.classify_failure(stdout, "", 1).code == "claude_login_required"
+    assert (
+        adapter.classify_failure(stdout, "", 1).code
+        == "claude_credentials_unavailable"
+    )
 
 
 def test_a_successful_result_is_never_read_for_failure_markers(adapter):
