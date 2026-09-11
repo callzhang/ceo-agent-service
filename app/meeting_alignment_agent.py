@@ -58,6 +58,7 @@ def _meeting_alignment_prompt_schema() -> str:
 
 MEETING_ALIGNMENT_DECISION_PROMPT_SCHEMA = _meeting_alignment_prompt_schema()
 MEETING_ALIGNMENT_SCHEMA_PROBLEM_LIMIT = 12
+MEETING_SOURCE_TARGET_REPAIR_LIMIT = 1
 
 
 class MeetingAlignmentTargetError(ValueError):
@@ -105,19 +106,28 @@ class MeetingAlignmentAgent:
             work_profile_source=str(work_profile_path()),
             similar_sessions=similar_sessions or [],
         )
-        decision = (
-            self.codex.decide(prompt=prompt, run_id=run_id)
-            if run_id is not None
-            else self.codex.decide(prompt=prompt)
-        )
-        try:
-            _validate_source_aware_target(source, decision)
-        except MeetingAlignmentTargetError as exc:
-            raise type(exc)(
-                str(exc),
-                decision=decision,
-            ) from exc
-        return decision
+        for repair_attempt in range(MEETING_SOURCE_TARGET_REPAIR_LIMIT + 1):
+            decision = (
+                self.codex.decide(prompt=prompt, run_id=run_id)
+                if run_id is not None
+                else self.codex.decide(prompt=prompt)
+            )
+            try:
+                _validate_source_aware_target(source, decision)
+            except MeetingAlignmentTargetError as exc:
+                if repair_attempt >= MEETING_SOURCE_TARGET_REPAIR_LIMIT:
+                    raise type(exc)(
+                        str(exc),
+                        decision=decision,
+                    ) from exc
+                prompt = _meeting_alignment_target_repair_prompt(
+                    original_prompt=prompt,
+                    decision=decision,
+                    problem=str(exc),
+                )
+                continue
+            return decision
+        raise RuntimeError("meeting alignment target repair did not return a decision")
 
 
 class MeetingAlignmentCodexRunner:
@@ -239,6 +249,24 @@ def _meeting_alignment_repair_prompt(raw: str) -> str:
         f"{render_meeting_alignment_cross_field_rules()}\n\n"
         "MeetingAlignmentDecision Pydantic JSON schema:\n"
         f"{MEETING_ALIGNMENT_DECISION_PROMPT_SCHEMA}"
+    )
+
+
+def _meeting_alignment_target_repair_prompt(
+    *,
+    original_prompt: str,
+    decision: MeetingAlignmentDecision,
+    problem: str,
+) -> str:
+    return (
+        "上一次目标选择没有通过实时会议来源校验。请基于同一个会议来源重新输出，"
+        "只输出一个满足 schema 且目标可执行的 MeetingAlignmentDecision JSON 对象，"
+        "不要调用工具，不要发送消息。\n\n"
+        f"上一次目标错误：{problem}\n\n"
+        "上一次输出：\n"
+        f"{decision.model_dump_json()}\n\n"
+        "原始任务与完整会议来源如下：\n"
+        f"{original_prompt}"
     )
 
 

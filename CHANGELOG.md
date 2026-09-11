@@ -1,5 +1,17 @@
 # Changelog
 
+- 2026-09-11: meeting alignment now gives source-aware target failures one
+  structured correction turn before failing the meeting job. The existing
+  output-schema retry only covered malformed JSON and cross-field schema
+  errors; once the model returned a syntactically valid decision, roster-aware
+  checks such as "business direct fallback requires a stable calendar
+  organizer identity" and "sensitive private target must identify one meeting
+  participant" failed after parsing with no feedback loop. The retry prompt
+  now includes the exact target error, the previous decision, and the original
+  meeting source so the next decision can switch to a valid business group,
+  stable organizer fallback, or valid private-recipient target without sending
+  anything during the repair turn.
+
 - 2026-09-11: an unusable Claude credential is classified as
   `claude_credentials_unavailable` instead of `claude_runtime_unclassified`. The provider
   reports it in its terminal result (`is_error: true` while the subtype is still

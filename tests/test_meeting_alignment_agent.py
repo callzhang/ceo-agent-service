@@ -259,6 +259,23 @@ class FakeMeetingCodex:
         return MeetingAlignmentDecision.model_validate(self.payload)
 
 
+class SequencedMeetingCodex:
+    last_session_id = "meeting-session"
+    last_transcript_start_line = 0
+    last_transcript_end_line = 10
+    last_audit_tool_events = []
+
+    def __init__(self, payloads: list[dict]):
+        self.payloads = list(payloads)
+        self.prompts: list[str] = []
+
+    def decide(self, *, prompt: str):
+        from app.meeting_alignment_models import MeetingAlignmentDecision
+
+        self.prompts.append(prompt)
+        return MeetingAlignmentDecision.model_validate(self.payloads.pop(0))
+
+
 def send_payload_with_target(target) -> dict:
     payload = derek_view_payload(historical_sources=[])
     payload["target"] = target
@@ -414,6 +431,43 @@ def test_target_error_preserves_the_generated_decision():
 
     assert raised.value.decision is not None
     assert raised.value.decision.action == "send"
+
+
+def test_agent_retries_source_aware_target_error_before_failing():
+    invalid_direct = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "alex",
+        "title": "Alex",
+        "candidates": [],
+    }
+    valid_group = {
+        "kind": "group",
+        "conversation_id": "cid-project",
+        "direct_user_id": "",
+        "title": "项目群",
+        "candidates": [
+            {
+                "conversation_id": "cid-project",
+                "title": "项目群",
+                "evidence": ["会议内容明确是业务总结"],
+            }
+        ],
+    }
+    codex = SequencedMeetingCodex(
+        [
+            send_payload_with_target(invalid_direct),
+            send_payload_with_target(valid_group),
+        ]
+    )
+
+    decision = MeetingAlignmentAgent(codex).decide(source(participant_count=2))
+
+    assert decision.target is not None
+    assert decision.target.kind == "group"
+    assert len(codex.prompts) == 2
+    assert "上一次目标选择没有通过实时会议来源校验" in codex.prompts[1]
+    assert "business direct fallback requires a calendar organizer" in codex.prompts[1]
 
 
 def test_agent_rejects_business_direct_fallback_without_calendar_organizer():
