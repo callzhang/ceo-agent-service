@@ -28,8 +28,6 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| Claude session `ceo-agent-service-f6` (Agent Cron) | `app/agent_cron/*`, `app/cli.py` (scheduled-task subcommands and `_service_command_registry`), `app/web_api/scheduled_tasks.py`, `frontend/src/api/scheduledTasks.ts`, `frontend/src/pages/ScheduledTasksPage.tsx` + their tests | scheduled-task execution forms (Agent task vs service command), the downstream-consumer descriptor, and the hourly recovery split | 2026-09-10 19:45Z |
-| Claude session `ceo-agent-service-f6` (execution boundary) | `app/agent_effect_guard.py`, `app/consumer_agent.py` + `tests/test_agent_effect_guard.py` | detecting provider effects produced by a Consumer proposal turn (task 383537) | 2026-09-11 01:40Z |
 | Codex session `attention-reconciliation` | `app/audit_web.py`, `tests/test_console_web_api.py` | show every unresolved service error in Attention while keeping the four-hour window only in system health | 2026-09-11 |
 
 ## Recent overlaps worth knowing
@@ -126,11 +124,25 @@ reverts committed work they did not author.
   items raise an Agent decision) is Derek's open call. Do not implement
   automatic access requests for restricted minutes in the meantime.
 
-  The open work is that `sync-minutes-once` does not yet perform the sync: it
-  binds `scan_ai_minutes`, which only pages the list and enqueues work-summary
-  inputs. `grep -rn "export-pack\|apply-permission" app/ scripts/` finds
-  nothing, and `~/Documents/memory/AI听记` has had no new content since
-  2026-09-03, so local archiving has in fact stopped. Making the command do
-  the real sync (list → export-pack → archive → content cursor, with
-  apply-permission on denial) belongs to the Agent Cron owner. Do not convert
-  this task back to an Agent task.
+  **Closed 2026-09-11.** `sync-minutes-once` now performs the real sync in
+  `app/minutes_sync.py`: list → info/summary/transcript → archive file in the
+  existing `AI听记` layout → content cursor. Derek settled the one judgement
+  call by rule — a meeting shorter than five minutes is skipped — and the
+  service requests no minute access at all, because DingTalk's denial codes
+  (`PAT_HIGH_RISK_NO_PERMISSION`, `PAT_MEDIUM_RISK_NO_PERMISSION`,
+  `AGENT_CODE_NOT_EXISTS`) are credential-level failures that would otherwise
+  mail a request to the owner of every minute in the list. The task stays a
+  service command. Verified in production on 2026-09-11: three minutes
+  archived, cursor written, zero access requests.
+
+- 2026-09-11: **`sync-minutes-once` never finishes its listing, and nobody owns
+  the decision.** `dws minutes list` returns 20 items per page whatever limit
+  it is asked for, and the sync walks a 100-page cap, so a run costs ~100
+  provider calls (~4 minutes), still ends with
+  `pagination_error: "minutes list pagination exceeded 100 pages"`, and
+  therefore never stamps `last_success_at` — freshness reporting for this
+  scanner is dead. New minutes are found (they sort newest-first), so the daily
+  sync works; the history behind page 100 is unreachable. Making it incremental
+  (stop at the first fully-archived page, or bound the listing by `start`) is
+  cheap but changes how far back the sync backfills, which is Derek's call.
+  Evidence: the cursor row for scanner `ai_minutes_sync` in `daily_scan_state`.
