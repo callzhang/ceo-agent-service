@@ -1020,6 +1020,11 @@ def run_agent_cron_dispatcher_loop(
         store=store, workspace=settings.workspace,
         refresh_runtime_capabilities=(runtime_refresher.refresh_expired if runtime_refresher else None),
     )
+    # refresh_runtime_capabilities is required, not optional: the capability
+    # registry is per-process, so a runtime built without it never obtains a
+    # route snapshot, judges every route unreachable and defers forever.  That
+    # failure raises nothing -- the process simply stops doing work (see the
+    # email worker, fixed in cee22bf4).
     options = _scheduled_task_option_service(settings, runtime_skill_snapshot)
     reply_worker = _create_service_worker(
         settings, runtime_refresher, runtime_skill_snapshot
