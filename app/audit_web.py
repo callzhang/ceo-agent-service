@@ -1441,7 +1441,7 @@ def _tutorial_steps() -> list[_TutorialStep]:
             "title": "收集交互参数",
             "description": "先确认本机路径和身份参数，再改配置；不知道的值先检查机器，只有授权、扫码、策略选择才打断用户。",
             "checks": [
-                "Repository path: ~/Documents/Projects/ceo-agent-service",
+                "Repository path: ~/Projects/ceo-agent-service",
                 "Workspace path: ~/Documents/memory",
                 "Principal display name, mention aliases, signature, handoff acknowledgement",
                 "Memory Connector MCP URL and DingTalk KB workspace are optional",

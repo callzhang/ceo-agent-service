@@ -125,9 +125,7 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert "HTTPS_PROXY" not in env
     assert "ALL_PROXY" not in env
     assert "dingokr.dingteam.com" in env["NO_PROXY"]
-    assert env["CEO_SERVICE_ROOT"] == (
-        "/Users/derek/Documents/Projects/ceo-agent-service"
-    )
+    assert env["CEO_SERVICE_ROOT"] == "/Users/derek/Projects/ceo-agent-service"
     assert env["CEO_OKR_BROWSER_STORAGE_STATE"] == (
         "/Users/derek/Documents/memory/AI听记/.storage_state.json"
     )
