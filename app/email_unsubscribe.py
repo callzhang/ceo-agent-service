@@ -4104,6 +4104,7 @@ class UnsubscribeExecutor:
                     journal,
                     error_code=_browser_failure_code(exc),
                     error_category=_browser_failure_category(exc),
+                    result_text=_browser_failure_observation(exc),
                 )
             operation_step = RedactedUnsubscribeStep(
                 operation=operation.kind.value,

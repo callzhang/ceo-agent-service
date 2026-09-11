@@ -3287,3 +3287,43 @@ def test_browser_failure_codes_stay_a_coarse_cross_module_contract() -> None:
 
     release_path = Path("app/email_store.py").read_text(encoding="utf-8")
     assert f'!= "{generic}"' in release_path
+
+
+def test_every_browser_failure_result_records_what_the_page_looked_like() -> None:
+    """A new failure site must not be able to drop the evidence again.
+
+    Three handlers turn a browser exception into a FAILED_BROWSER result, and I
+    instrumented two of them. The third was the one production actually took,
+    so the record stayed empty through two deploys and two rounds of live
+    re-runs while I read the wrong code. Anyone adding a fourth gets this
+    failure instead of a silent gap.
+    """
+    import ast as _ast
+    from pathlib import Path as _Path
+
+    source = _Path(__file__).resolve().parent.parent / "app" / "email_unsubscribe.py"
+    tree = _ast.parse(source.read_text(encoding="utf-8"))
+    missing = []
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        if getattr(node.func, "id", "") != "_result":
+            continue
+        names = {kw.arg for kw in node.keywords}
+        called = {
+            getattr(kw.value.func, "id", "")
+            for kw in node.keywords
+            if isinstance(kw.value, _ast.Call)
+        }
+        # Only the sites that classify a caught browser exception; the ones
+        # that pass a literal code describe a condition with no page behind it.
+        if "_browser_failure_category" not in called:
+            continue
+        if "result_text" not in names:
+            missing.append(node.lineno)
+
+    assert not missing, (
+        "app/email_unsubscribe.py lines "
+        f"{missing} build a browser-failure result without result_text, so the "
+        "page state that produced it is not recorded anywhere"
+    )
