@@ -1388,7 +1388,11 @@ def _recover_orphaned_unsubscribe_claims(email_store: object, task_store: object
                 # The run that owns the claim has already reached a terminal
                 # status; that is the termination this fence needs proven.
                 termination_verifier=lambda _owner: True,
-                recovered_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                # The store requires a timezone-aware ISO-8601 stamp, not the
+                # naive "%Y-%m-%d %H:%M:%S" the reply tables use.
+                recovered_at=datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                ),
             )
         except Exception:  # noqa: BLE001 - isolate one claim from the rest
             _LOGGER.warning(

@@ -8867,7 +8867,14 @@ def test_recovery_releases_a_claim_whose_audit_run_died():
     # The run that owns the claim is already terminal; that is the termination
     # this fence needs proven, and it is read from the run, not a lease clock.
     assert terminated is True
-    assert recovered_at
+    # The store requires a timezone-aware ISO-8601 stamp and rejects the naive
+    # "%Y-%m-%d %H:%M:%S" the reply tables use. Getting that wrong made every
+    # recovery raise, which the sweep then logged and swallowed, so the claims
+    # stayed stuck and the queue looked unchanged.
+    from datetime import datetime as _datetime
+
+    parsed = _datetime.fromisoformat(recovered_at)
+    assert parsed.tzinfo is not None and parsed.utcoffset() is not None
 
 
 def test_claim_recovery_never_takes_the_consumer_loop_down():
