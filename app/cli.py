@@ -1996,8 +1996,9 @@ def sync_minutes_once_command(
 ) -> int:
     """Mirror new DingTalk AI minutes into the local archive.
 
-    Deterministic throughout: the only decision, whether to ask the owner for
-    access to a restricted minute, is settled by a duration threshold.
+    Deterministic throughout, and it sends nothing outward: restricted minutes
+    are recorded, never asked about, because the provider's per-minute denial
+    code is not yet known (see app.minutes_sync).
     """
     from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY, sync_minutes_once
 
