@@ -4557,6 +4557,45 @@ def test_main_dispatches_email_worker_with_shared_settings(monkeypatch, tmp_path
     assert calls[0].corpus_dir == tmp_path / "corpus"
 
 
+@pytest.mark.parametrize(
+    ("command", "function_name"),
+    [
+        ("scan-work-sources-once", "scan_work_sources_once_command"),
+        ("sync-minutes-once", "sync_minutes_once_command"),
+        ("scan-oa-approvals", "scan_oa_approvals_command"),
+    ],
+)
+def test_main_passes_max_batches_to_bounded_scan_commands(
+    command,
+    function_name,
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+
+    def fake_command(settings, *, max_new_items=None):
+        calls.append((settings.db_path, max_new_items))
+        return 0
+
+    monkeypatch.setattr(cli, function_name, fake_command)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ceo-agent",
+            command,
+            "--db",
+            str(tmp_path / "worker.sqlite3"),
+            "--max-batches",
+            "3",
+        ],
+    )
+
+    cli.main()
+
+    assert calls == [(tmp_path / "worker.sqlite3", 3)]
+
+
 def test_cli_does_not_import_audit_web_until_command_needs_it():
     assert cli.run_audit_web is None
 

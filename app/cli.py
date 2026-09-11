@@ -4125,13 +4125,13 @@ def main() -> None:
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
     elif args.command == "scan-work-sources-once":
-        scan_work_sources_once_command(settings)
+        scan_work_sources_once_command(settings, max_new_items=settings.max_batches)
     elif args.command == "sync-minutes-once":
-        sync_minutes_once_command(settings)
+        sync_minutes_once_command(settings, max_new_items=settings.max_batches)
     elif args.command == "scan-meetings-once":
         scan_meetings_once_command(settings)
     elif args.command == "scan-oa-approvals":
-        scan_oa_approvals_command(settings)
+        scan_oa_approvals_command(settings, max_new_items=settings.max_batches)
     elif args.command == "read-oa-approval-detail":
         read_oa_approval_detail_command(settings, process_instance_id=args.instance_id)
     elif args.command == "read-dingteam-okr":
