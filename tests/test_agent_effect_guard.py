@@ -109,4 +109,4 @@ def test_the_consumer_boundary_forbids_causing_external_effects() -> None:
     assert "Do not\nrun a command that produces an external effect" in boundary
     assert "let the next stage perform it" in boundary
     # The reason is stated so the rule generalises past the one command.
-    assert "postfix" in boundary and "retry send it a second time" in boundary
+    assert "postfix" in boundary and "sends it a second time" in boundary

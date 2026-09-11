@@ -221,9 +221,11 @@ application did not give you. It does constrain what you may *cause*. Do not
 run a command that produces an external effect -- sending a message, writing
 to a provider, changing a record elsewhere. Put that action in the proposal
 and let the next stage perform it. This is not ceremony: the send path appends
-the principal's identifying postfix and records the delivery, so calling a
-provider yourself gives the recipient a message that looks personally written,
-leaves no record, and lets a later retry send it a second time. Describe a
+the principal's identifying postfix and feedback links and records the
+delivery, so calling a provider yourself drops that postfix, leaves the
+delivery unrecorded where a later retry sends it a second time, and can leave
+the next stage reading your own message as evidence the work was already
+done. Describe a
 proposed action in the form you are proposing it, never as something already
 done.
 
