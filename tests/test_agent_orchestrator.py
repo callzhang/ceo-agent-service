@@ -2693,6 +2693,67 @@ def test_authorization_wait_defers_without_consuming_feedback_cycle(store):
     assert len(audit.calls) == 1
 
 
+def test_runtime_confirmation_required_closes_audit_as_needs_human(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
+    audit = ScriptedAudit(
+        store,
+        _audit_result(
+            "failed",
+            0,
+            code="confirmation_required",
+            retryable=True,
+            authorization_required=True,
+        ),
+    )
+
+    result = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
+    )
+
+    assert result.status == "needs_human"
+    assert result.error.code == "confirmation_required"
+    assert result.error.retryable is False
+    assert result.audit_result is not None
+    assert result.audit_result.outcome is AuditOutcome.NEEDS_HUMAN
+    assert [option.key for option in result.audit_result.decision_options] == [
+        "authorize_and_retry",
+        "stop_without_action",
+    ]
+    assert len(audit.calls) == 1
+
+
+def test_runtime_confirmation_required_closes_consumer_as_needs_human(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(
+        store,
+        _consumer_result("failed", "confirmation_required").model_copy(
+            update={
+                "error": AgentError(
+                    code="confirmation_required",
+                    retryable=True,
+                    authorization_required=True,
+                )
+            }
+        ),
+    )
+
+    result = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=ScriptedAudit(store)),
+        task,
+    )
+
+    assert result.status == "needs_human"
+    assert result.error.code == "confirmation_required"
+    assert result.error.retryable is False
+    assert result.consumer_result is not None
+    assert result.consumer_result.outcome is ConsumerOutcome.NEEDS_HUMAN
+    assert [option.key for option in result.consumer_result.decision_options] == [
+        "authorize_and_retry",
+        "stop_without_action",
+    ]
+
+
 def test_authorization_recovery_retries_audit_with_next_turn_attempt(store):
     task = _task(store)
     consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))

@@ -730,6 +730,14 @@ class AgentOrchestrator:
                     self._retry_feedback(run, runs_by_id=runs_by_id),
                 )
         error = _run_error(run)
+        if run.status == "failed" and _is_runtime_confirmation_required(error):
+            result = _runtime_confirmation_consumer_result(error)
+            return _consumer_terminal(
+                "needs_human",
+                run,
+                result,
+                feedback_cycles,
+            )
         if run.status == "failed" and error.authorization_required:
             if task.error == error.code:
                 feedback = self._retry_feedback(run, runs_by_id=runs_by_id)
@@ -836,6 +844,14 @@ class AgentOrchestrator:
                     None,
                 )
         error = _run_error(run)
+        if run.status == "failed" and _is_runtime_confirmation_required(error):
+            result = _runtime_confirmation_audit_result(run, error)
+            return _audit_terminal(
+                "needs_human",
+                run,
+                result,
+                feedback_cycles,
+            )
         if run.status == "failed" and error.authorization_required:
             if task.error == error.code:
                 return _NextAudit(
@@ -1488,6 +1504,72 @@ def _operation_id(task: ReplyTask, revision: int) -> str:
 
 def _failure_status(error: AgentError) -> str:
     return "failed_retryable" if error.retryable else "failed_terminal"
+
+
+def _is_runtime_confirmation_required(error: AgentError) -> bool:
+    return error.authorization_required and error.code == "confirmation_required"
+
+
+def _terminal_confirmation_error(error: AgentError) -> AgentError:
+    return error.model_copy(
+        update={
+            "code": "confirmation_required",
+            "retryable": False,
+            "authorization_required": True,
+        }
+    )
+
+
+def _runtime_confirmation_options() -> tuple[DecisionOption, DecisionOption]:
+    return (
+        DecisionOption(
+            key="authorize_and_retry",
+            label="授权后重跑",
+            instruction="确认允许当前任务继续执行，然后重新运行当前步骤。",
+            consequence="服务会从同一任务继续处理，并再次经过审计。",
+        ),
+        DecisionOption(
+            key="stop_without_action",
+            label="停止不执行",
+            instruction="停止当前任务，不发送消息也不执行外部动作。",
+            consequence="任务结束为需要人工判断，不会自动重放。",
+        ),
+    )
+
+
+def _runtime_confirmation_consumer_result(error: AgentError) -> ConsumerAgentResult:
+    terminal_error = _terminal_confirmation_error(error)
+    return ConsumerAgentResult(
+        outcome=ConsumerOutcome.NEEDS_HUMAN,
+        summary=terminal_error.code,
+        proposal=None,
+        decision_options=_runtime_confirmation_options(),
+        error=terminal_error,
+        risk="high",
+        confidence=0.0,
+        rule_coverage=1.0,
+        information_completeness=1.0,
+    )
+
+
+def _runtime_confirmation_audit_result(
+    run: AgentRun,
+    error: AgentError,
+) -> AuditAgentResult:
+    terminal_error = _terminal_confirmation_error(error)
+    return AuditAgentResult(
+        outcome=AuditOutcome.NEEDS_HUMAN,
+        summary=terminal_error.code,
+        proposal_revision=run.proposal_revision,
+        feedback=None,
+        external_result=None,
+        decision_options=_runtime_confirmation_options(),
+        risk="high",
+        confidence=0.0,
+        rule_coverage=1.0,
+        information_completeness=1.0,
+        error=terminal_error,
+    )
 
 
 def _run_error(run: AgentRun) -> AgentError:
