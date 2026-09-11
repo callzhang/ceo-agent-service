@@ -7142,6 +7142,19 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "okr_review",
     }
     assert captured["shared_max_in_flight"] == 2
+    assert callable(captured["tick_observer"])
+    tick_at = datetime(2026, 9, 8, 12, 0)
+    captured["tick_observer"](tick_at)
+    [health] = AutoReplyStore(
+        tmp_path / "worker.sqlite3"
+    ).list_service_health_components()
+    assert health["component"] == "agent-cron-dispatcher"
+    assert health["state"] == "healthy"
+    assert health["status"] == "running"
+    assert health["detail"] == ""
+    assert health["latest_tick_at"] == tick_at.isoformat()
+    assert health["latest_error"] == ""
+    assert health["latest_error_at"] == ""
 
 
 def test_agent_cron_dispatcher_dry_run_leaves_todo_outbox_unclaimed(

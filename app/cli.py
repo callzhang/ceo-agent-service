@@ -1212,6 +1212,15 @@ def run_agent_cron_dispatcher_loop(
             shared_max_in_flight=agent_capacity,
             owner=f"scheduled-dispatcher:{os.getpid()}", lease=timedelta(minutes=5),
             wake_event=wake_event,
+            tick_observer=lambda tick_at: store.set_service_health_component(
+                "agent-cron-dispatcher",
+                state="healthy",
+                status="running",
+                detail="",
+                latest_tick_at=tick_at.isoformat(),
+                latest_error="",
+                latest_error_at="",
+            ),
         )
         store.set_service_health_component(
             "agent-cron-dispatcher",
