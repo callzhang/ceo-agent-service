@@ -1,5 +1,20 @@
 # Changelog
 
+- 2026-09-11: the service checkout moves to `/Users/derek/Projects/ceo-agent-service`.
+  `~/Documents` and `~/Desktop` are synced by iCloud Drive, which races with Git's
+  rewrites of `.git/index` and `.git/refs`: it produced `name 2` conflict copies
+  throughout the tree, twice replaced a branch ref (`main`, `codex/agent-cron`)
+  with an unusable copy, and evicted Git objects to the cloud as `.icloud`
+  placeholders in a neighbouring repository. Deleting the copies is not enough -
+  `.git/index 2` reappeared within the hour - so the checkout leaves the synced
+  scope instead. `launchd/com.ceo-agent-service.main.plist` carried the old path
+  twice, in the `service_root` default inside the CDATA block and in
+  `WorkingDirectory`; both are updated here so a later
+  `scripts/install-auto-reply-agents.sh` cannot reinstate it. The database
+  (`~/Library/Application Support/ceo-agent-service`) and the workspace
+  (`~/Documents/memory`) are unaffected, and `CEO_CORPUS_DIR` derives from the
+  service root.
+
 - 2026-09-11: unsubscribe discovery now gives an explicit already-unsubscribed
   terminal page precedence over a coexisting sign-in prompt. Some providers
   render both strings for an account that is already unsubscribed; classifying
