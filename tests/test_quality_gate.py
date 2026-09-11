@@ -685,6 +685,20 @@ def test_quality_gate_rejects_needs_human_projection_with_inconsistent_outcome(t
     assert any(item.code == "invalid_needs_human_result" for item in report.violations)
 
 
+def test_quality_gate_rejects_autonomous_outcome_even_when_information_is_incomplete(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    result = _structured_needs_human_result(information_completeness=0.4)
+    result["outcome"] = "autonomous"
+    _insert_needs_human_projection(store, result=result)
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(item.code == "needs_human" for item in report.attention)
+    assert any(item.code == "invalid_needs_human_result" for item in report.violations)
+
+
 def test_quality_gate_reports_low_rule_coverage_but_incomplete_information_is_ask_back(tmp_path):
     complete = AutoReplyStore(tmp_path / "complete.sqlite3")
     _insert_needs_human_projection(

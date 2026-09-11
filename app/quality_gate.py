@@ -527,10 +527,10 @@ def _structured_needs_human_classification(raw: object) -> str:
             return "invalid"
         scores.append(score)
     confidence, rule_coverage, information_completeness = scores
-    if information_completeness < 0.5:
-        return "ask_back"
     if result.get("outcome") != "needs_human":
         return "invalid"
+    if information_completeness < 0.5:
+        return "ask_back"
     options = result.get("decision_options")
     if not isinstance(options, list) or not 2 <= len(options) <= 4:
         return "invalid"
