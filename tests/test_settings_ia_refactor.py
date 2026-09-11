@@ -245,8 +245,13 @@ def test_active_consumer_boundary_uses_configured_principal(monkeypatch):
     monkeypatch.setenv("USER_ALIAS", "Alex")
     instructions = consumer_developer_instructions("Check the candidate.")
 
-    assert "ask Alex how to finish" in instructions
-    assert "ask Derek how to finish" not in instructions
+    # The prose is wrapped, so the phrase can straddle a line break. What this
+    # pins is that the boundary names the configured principal, not how the
+    # paragraph happens to be filled.
+    flowed = " ".join(instructions.split())
+
+    assert "ask Alex how to finish" in flowed
+    assert "ask Derek how to finish" not in flowed
 
 
 def test_configuration_post_persists_system_and_prompt_values_to_same_env_file(
