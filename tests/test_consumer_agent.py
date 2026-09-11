@@ -1920,23 +1920,38 @@ def test_consumer_reports_session_lock_release_failure(
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
 
-def test_consumer_rejects_schema_artifact_drift(
+def test_stale_schema_snapshot_on_disk_does_not_stop_a_consumer_turn(
     store,
     task,
     context,
-    tmp_path,
-    monkeypatch,
 ):
-    schema_path = tmp_path / "consumer.schema.json"
-    schema_path.write_text('{"type":"object"}', encoding="utf-8")
-    monkeypatch.setattr("app.consumer_agent.SCHEMA_PATH", schema_path)
+    """A snapshot the running code has outgrown must not fail live tasks.
 
-    with pytest.raises(ValueError, match="schema does not match"):
-        ConsumerAgentRunner(
+    The snapshot is a data file, live the moment it is saved; the model is
+    code, live only after a restart. Comparing them at run time meant that
+    correctly editing both in one commit took every Consumer turn down until
+    someone restarted the service, and each turn taken down burned a task. The
+    snapshot is pinned to the model at commit time instead, by
+    tests/test_schema_snapshots.py.
+    """
+    snapshot = (
+        Path(consumer_agent.__file__).resolve().parent
+        / "schemas"
+        / "consumer_agent_result.schema.json"
+    )
+    original = snapshot.read_text(encoding="utf-8")
+    executor = CapturingExecutor(_result_jsonl())
+    try:
+        snapshot.write_text('{"type": "object"}', encoding="utf-8")
+        result = ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
-            executor=CapturingExecutor(_result_jsonl()),
+            executor=executor,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    finally:
+        snapshot.write_text(original, encoding="utf-8")
+
+    assert result.result is not None
 
 
 def test_consumer_rejects_malformed_nested_output_locally(

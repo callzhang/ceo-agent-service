@@ -46,7 +46,14 @@ from app.store import AgentRole, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import make_consumer_agent_command
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
-SCHEMA_PATH = SERVICE_ROOT / "app" / "schemas" / "consumer_agent_result.schema.json"
+# The Consumer's output schema is generated from ConsumerAgentResult at prompt
+# time (_schema_json), so the running model is always what the agent is asked
+# for and what the parser accepts.  app/schemas/consumer_agent_result.schema.json
+# is the reviewable snapshot of that shape; tests/test_schema_snapshots.py and
+# tests/test_agent_contracts.py keep it equal to the model at commit time.  It
+# is deliberately not read here: a file is live the moment it is saved and code
+# is live only after a restart, so comparing them at run time can only turn an
+# editor's intermediate state into an outage.
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 CONSUMER_UNREVIEWED_EFFECT = "consumer_unreviewed_provider_effect"
 
@@ -478,10 +485,6 @@ class ConsumerAgentRunner:
                 )
                 route_sessions.pop(route_name)
         conversation_session_id = next(iter(route_sessions.values()), None)
-        if json.loads(SCHEMA_PATH.read_text(encoding="utf-8")) != (
-            ConsumerAgentResult.model_json_schema()
-        ):
-            raise ValueError("consumer result schema does not match Pydantic model")
         claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
