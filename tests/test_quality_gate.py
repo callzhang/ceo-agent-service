@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 from app.quality_gate import (
@@ -11,6 +12,54 @@ from app.store import AutoReplyStore
 
 
 NOW = datetime(2026, 8, 7, 1, 0, tzinfo=timezone.utc)
+
+
+def _structured_needs_human_result(
+    *, risk="high", confidence=0.2, rule_coverage=1.0,
+    information_completeness=1.0, options=None,
+):
+    return {
+        "outcome": "needs_human",
+        "summary": "decision required",
+        "proposal_revision": 0,
+        "feedback": None,
+        "external_result": None,
+        "decision_options": options or [
+            {"key": "approve", "label": "Approve", "instruction": "approve", "consequence": "run"},
+            {"key": "reject", "label": "Reject", "instruction": "reject", "consequence": "stop"},
+        ],
+        "error": {"code": "", "message": "", "retryable": False, "authorization_required": False},
+        "risk": risk,
+        "confidence": confidence,
+        "rule_coverage": rule_coverage,
+        "information_completeness": information_completeness,
+    }
+
+
+def _insert_needs_human_projection(store, *, result, status="needs_human"):
+    store.enqueue_reply_task(
+        conversation_id="conversation", conversation_title="group", single_chat=False,
+        trigger_message_id="message", trigger_create_time="2026-08-07 00:00:00",
+        trigger_sender="sender", trigger_text="trigger", execution_generation="generation",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="conversation", conversation_title="group",
+        trigger_message_id="message", trigger_sender="sender", trigger_text="trigger",
+        action="agent_run", sensitivity_kind="general", send_status=status,
+    )
+    with store._connect() as db:
+        task_id = db.execute(
+            "select id from reply_tasks where conversation_id='conversation' and trigger_message_id='message'"
+        ).fetchone()[0]
+        db.execute("update reply_tasks set status='done' where id=?", (task_id,))
+        run = db.execute(
+            """insert into agent_runs (
+                reply_task_id, execution_generation, role, status, final_result_json
+            ) values (?, 'generation', 'audit', 'completed', ?)""",
+            (task_id, json.dumps(result)),
+        )
+        db.execute("update reply_attempts set agent_run_id=? where id=?", (run.lastrowid, attempt_id))
+    return attempt_id
 
 
 def _insert_reply_task(store, *, status="pending", updated_at="2026-08-07 00:59:00"):
@@ -549,10 +598,8 @@ def test_quality_gate_reports_only_current_needs_human_attempts_as_attention(tmp
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert report.ok
-    assert ("reply_attempts", "needs_human", 1) in {
-        (item.source, item.code, item.count) for item in report.attention
-    }
+    assert not any(item.code == "needs_human" for item in report.attention)
+    assert any(item.code == "invalid_needs_human_result" for item in report.violations)
 
 
 def test_quality_gate_excludes_reviewed_needs_human_attempt(tmp_path):
@@ -580,31 +627,7 @@ def test_quality_gate_excludes_reviewed_needs_human_attempt(tmp_path):
 
 def test_quality_gate_reports_needs_human_projection_when_queue_task_is_done(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="conversation",
-        conversation_title="group",
-        single_chat=False,
-        trigger_message_id="message",
-        trigger_create_time="2026-08-07 00:00:00",
-        trigger_sender="sender",
-        trigger_text="trigger",
-        execution_generation="generation",
-    )
-    with store._connect() as db:
-        db.execute(
-            "update reply_tasks set status='done' "
-            "where conversation_id='conversation' and trigger_message_id='message'"
-        )
-    store.record_reply_attempt(
-        conversation_id="conversation",
-        conversation_title="group",
-        trigger_message_id="message",
-        trigger_sender="sender",
-        trigger_text="trigger",
-        action="agent_run",
-        sensitivity_kind="general",
-        send_status="needs_human",
-    )
+    _insert_needs_human_projection(store, result=_structured_needs_human_result())
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -612,6 +635,75 @@ def test_quality_gate_reports_needs_human_projection_when_queue_task_is_done(tmp
         (item.source, item.code, item.count) for item in report.attention
     }
     assert store.count_current_unresolved_problem_attempts() == 1
+
+
+def test_quality_gate_requires_structured_high_risk_low_confidence_options(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    _insert_needs_human_projection(store, result=_structured_needs_human_result())
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert ("reply_attempts", "needs_human", 1) in {
+        (item.source, item.code, item.count) for item in report.attention
+    }
+
+
+def test_quality_gate_does_not_report_low_risk_or_confident_needs_human_projection(tmp_path):
+    for name, result in {
+        "low-risk": _structured_needs_human_result(risk="low"),
+        "confident": _structured_needs_human_result(confidence=0.5),
+    }.items():
+        store = AutoReplyStore(tmp_path / f"{name}.sqlite3")
+        _insert_needs_human_projection(store, result=result)
+        report = scan_hourly_quality(store.path, now=NOW)
+        assert not any(item.code == "needs_human" for item in report.attention)
+
+
+def test_quality_gate_reports_low_rule_coverage_but_incomplete_information_is_ask_back(tmp_path):
+    complete = AutoReplyStore(tmp_path / "complete.sqlite3")
+    _insert_needs_human_projection(
+        complete,
+        result=_structured_needs_human_result(rule_coverage=0.4),
+    )
+    assert any(
+        item.code == "needs_human"
+        for item in scan_hourly_quality(complete.path, now=NOW).attention
+    )
+
+    incomplete = AutoReplyStore(tmp_path / "incomplete.sqlite3")
+    _insert_needs_human_projection(
+        incomplete,
+        result=_structured_needs_human_result(
+            rule_coverage=0.1, information_completeness=0.4
+        ),
+    )
+    assert not any(
+        item.code == "needs_human"
+        for item in scan_hourly_quality(incomplete.path, now=NOW).attention
+    )
+
+
+def test_quality_gate_marks_missing_structured_needs_human_result_invalid(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    _insert_needs_human_projection(store, result={"outcome": "needs_human"})
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(item.code == "needs_human" for item in report.attention)
+    assert any(item.code == "invalid_needs_human_result" for item in report.violations)
+
+
+def test_quality_gate_does_not_count_failed_projection_as_needs_human(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    _insert_needs_human_projection(
+        store,
+        result=_structured_needs_human_result(confidence=0.1),
+        status="failed",
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(item.code == "needs_human" for item in report.attention)
 
 
 def test_quality_gate_excludes_needs_human_from_historical_business_object_task(

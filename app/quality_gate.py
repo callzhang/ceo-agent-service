@@ -10,6 +10,7 @@ table as a failed check rather than silently dropping a queue from coverage.
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -428,44 +429,124 @@ def _check_reply_attempts(
     )
     _add(attention, source="reply_attempts", code="recovery_in_progress", count=recovering,
          severity="info", detail="a newer task is recovering the latest failed attempt")
+    _check_structured_needs_human(db, latest, violations, attention)
+
+
+def _check_structured_needs_human(
+    db: sqlite3.Connection,
+    latest: str,
+    violations: list[QualityIssue],
+    attention: list[QualityIssue],
+) -> None:
+    """Gate Attention on the latest business projection's structured result.
+
+    A status string is only a projection. The quality fields and executable
+    options must come from the run referenced by that current projection; old
+    attempts and failed/technical projections must not become human work.
+    """
+    rows = db.execute(
+        latest
+        + """
+            select a.send_status, a.reviewed_at, a.agent_run_id,
+                   r.final_result_json
+            from latest a
+            left join agent_runs r on r.id=a.agent_run_id
+            where a.ordinal=1 and lower(a.send_status)='needs_human'
+              and a.reviewed_at is null
+              and not exists (
+                  select 1
+                  from reply_tasks as historical_task
+                  join business_object_tasks as current_business_object
+                    on current_business_object.business_object_key=
+                       historical_task.business_object_key
+                  where historical_task.channel=a.channel
+                    and historical_task.conversation_id=a.conversation_id
+                    and historical_task.trigger_message_id=a.trigger_message_id
+                    and current_business_object.reply_task_id<>historical_task.id
+              )
+              and not exists (
+                  select 1 from reply_tasks t
+                  where t.channel=a.channel
+                    and t.conversation_id=a.conversation_id
+                    and t.trigger_message_id=a.trigger_message_id
+                    and lower(t.status) in ('pending', 'processing')
+              )
+        """
+    ).fetchall()
+    actionable = 0
+    invalid = 0
+    for row in rows:
+        classification = _structured_needs_human_classification(
+            row["final_result_json"]
+        )
+        if classification == "needs_human":
+            actionable += 1
+        elif classification == "invalid":
+            invalid += 1
     _add(
         attention,
         source="reply_attempts",
         code="needs_human",
-        count=_count(
-            db,
-            latest + """
-                select count(*) from latest
-                where ordinal=1 and lower(send_status)='needs_human'
-                  and reviewed_at is null
-                  and not exists (
-                      select 1
-                      from reply_tasks as historical_task
-                      join business_object_tasks as current_business_object
-                        on current_business_object.business_object_key=
-                           historical_task.business_object_key
-                      where historical_task.channel=latest.channel
-                        and historical_task.conversation_id=latest.conversation_id
-                        and historical_task.trigger_message_id=
-                            latest.trigger_message_id
-                        and current_business_object.reply_task_id<>
-                            historical_task.id
-                  )
-                  and not exists (
-                      select 1 from reply_tasks t
-                      where t.channel=latest.channel
-                        and t.conversation_id=latest.conversation_id
-                        and t.trigger_message_id=latest.trigger_message_id
-                        and lower(t.status) in ('pending', 'processing')
-                  )
-            """,
-        ),
+        count=actionable,
         severity="info",
         detail=(
-            "latest trigger requires a concrete Derek decision or explicit "
-            "authorization; inspect the persisted proposal and reason"
+            "latest trigger requires a concrete Derek decision supported by "
+            "structured risk, confidence, coverage, and executable options"
         ),
     )
+    _add(
+        violations,
+        source="reply_attempts",
+        code="invalid_needs_human_result",
+        count=invalid,
+        severity="error",
+        detail="needs_human projection has no valid structured decision result",
+    )
+
+
+def _structured_needs_human_classification(raw: object) -> str:
+    """Return needs_human, ask_back, autonomous, or invalid for stored JSON."""
+    if not isinstance(raw, str) or not raw.strip():
+        return "invalid"
+    try:
+        result = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return "invalid"
+    if not isinstance(result, dict):
+        return "invalid"
+    risk = result.get("risk")
+    if risk not in {"low", "medium", "high"}:
+        return "invalid"
+    scores: list[float] = []
+    for field in ("confidence", "rule_coverage", "information_completeness"):
+        value = result.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return "invalid"
+        score = float(value)
+        if not math.isfinite(score) or not 0 <= score <= 1:
+            return "invalid"
+        scores.append(score)
+    confidence, rule_coverage, information_completeness = scores
+    if information_completeness < 0.5:
+        return "ask_back"
+    if result.get("outcome") != "needs_human":
+        return "autonomous"
+    options = result.get("decision_options")
+    if not isinstance(options, list) or not 2 <= len(options) <= 4:
+        return "invalid"
+    keys: set[str] = set()
+    for option in options:
+        if not isinstance(option, dict):
+            return "invalid"
+        if any(not isinstance(option.get(field), str) or not option[field].strip()
+               for field in ("key", "label", "instruction", "consequence")):
+            return "invalid"
+        if option["key"] in keys:
+            return "invalid"
+        keys.add(option["key"])
+    if (risk == "high" and confidence < 0.5) or rule_coverage < 0.5:
+        return "needs_human"
+    return "invalid"
 
 
 def _check_agent_runs(
