@@ -275,6 +275,10 @@ class _E2EConsumerRunner:
         result = ConsumerAgentResult.model_validate(
             {
                 "outcome": "proposal",
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
                 "summary": "Propose the authorized unsubscribe operation.",
                 "proposal": {
                     "objective": "Unsubscribe the classified junk source.",
@@ -327,6 +331,10 @@ class _E2EAuditRunner:
         result = AuditAgentResult.model_validate(
             {
                 "outcome": "executed",
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
                 "summary": "Audited unsubscribe completed.",
                 "proposal_revision": context.proposal_revision,
                 "feedback": None,

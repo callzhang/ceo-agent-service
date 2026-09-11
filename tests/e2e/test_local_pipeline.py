@@ -258,6 +258,10 @@ class LocalPipelineOrchestrator:
         consumer = ConsumerAgentResult.model_validate(
             {
                 "outcome": "no_action" if self.no_action else "proposal",
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
                 "summary": "No action required."
                 if self.no_action
                 else "Send the reply.",
@@ -321,6 +325,10 @@ class LocalPipelineOrchestrator:
         audit = AuditAgentResult.model_validate(
             {
                 "outcome": "executed",
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
                 "summary": "Reply sent and verified.",
                 "proposal_revision": 0,
                 "feedback": None,

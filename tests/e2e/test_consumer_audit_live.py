@@ -175,6 +175,10 @@ def _reviewed_records(
 def _consumer_result_record(proposal: dict[str, object]) -> dict[str, object]:
     wire = {
         "outcome": "proposal",
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
         "summary": "Prepared one source-group clarification.",
         "proposal": proposal,
         "decision_options": [],
@@ -200,6 +204,10 @@ def _audit_result_record(operation_id: str) -> dict[str, object]:
     }
     wire = {
         "outcome": "executed",
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
         "summary": "The source-group clarification was sent and verified.",
         "proposal_revision": 0,
         "feedback": None,

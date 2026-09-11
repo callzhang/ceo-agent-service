@@ -94,14 +94,18 @@ class _UnsubscribeHandler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def do_GET(self) -> None:  # noqa: N802
-        type(self).requests.append(
-            {
-                "method": "GET",
-                "path": self.path,
-                "body": "",
-                "cookie": self.headers.get("Cookie", ""),
-            }
-        )
+        # A browser fetches /favicon.ico on its own; it is the browser's
+        # behaviour, not the service's, and recording it makes this assertion
+        # depend on the Chromium build rather than on what the unsubscribe did.
+        if self.path != "/favicon.ico":
+            type(self).requests.append(
+                {
+                    "method": "GET",
+                    "path": self.path,
+                    "body": "",
+                    "cookie": self.headers.get("Cookie", ""),
+                }
+            )
         self._write(
             """
             <!doctype html>
@@ -316,6 +320,10 @@ class _AuditedTurnExecutor:
         self.consumer_proposals.append(action)
         return {
             "outcome": "proposal",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "Prepared one bounded unsubscribe operation.",
             "proposal": {
                 "objective": "Stop this confirmed newsletter subscription.",
@@ -390,6 +398,10 @@ class _AuditedTurnExecutor:
             raise AssertionError(json.dumps(result, sort_keys=True))
         return {
             "outcome": "executed",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": str(result["summary"]),
             "proposal_revision": int(candidate["proposal_revision"]),
             "feedback": None,
