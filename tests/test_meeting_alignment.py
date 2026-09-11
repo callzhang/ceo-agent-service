@@ -1902,6 +1902,37 @@ def test_source_read_failure_never_degrades_to_creator_direct(tmp_path):
     assert dws.send_calls == []
 
 
+def test_missing_calendar_organizer_identity_becomes_needs_human_without_send(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.calendar_pages[""]["events"][0].organizer = "Unresolved organizer"
+    dws.get_conversation_info = lambda _conversation_id: {
+        "openConversationId": "cid-first",
+        "title": "项目群",
+        "singleChat": True,
+        "memberCount": 3,
+    }
+    job_id = seed_consumer_job(store, dws)
+
+    consume_meeting_alignment_jobs(
+        store,
+        dws,
+        FakeMeetingRunner(consumer_send_decision()),
+        now=NOW,
+        limit=1,
+    )
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "needs_human"
+    assert json.loads(job.error) == {
+        "kind": "meeting_identity",
+        "message": "meeting organizer identity is unresolved",
+    }
+    assert dws.send_calls == []
+
+
 def test_consumer_quarantines_corrupt_persisted_send_evidence(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()

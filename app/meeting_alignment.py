@@ -1175,6 +1175,16 @@ def _deliver_meeting_job(
         values: dict[str, object] = {}
         if exc.result is not None:
             values["send_result_json"] = exc.result.model_dump_json()
+        if str(exc) == "meeting organizer identity is unresolved":
+            store.update_meeting_alignment_job(
+                job.id,
+                status="needs_human",
+                locked_at=None,
+                available_at="",
+                error=_error_json("meeting_identity", str(exc)),
+                **values,
+            )
+            return
         _retry_or_fail(
             store,
             job,
