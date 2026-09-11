@@ -15406,11 +15406,21 @@ class AutoReplyStore:
             feedback_context.feedback_token if feedback_context is not None else ""
         )
         with self._immediate_write_transaction() as db:
+            # Audit is the only role allowed to execute a delivery, and the
+            # normal path always arrives here with an Audit run.  A Consumer
+            # turn with plain shell access can still reach a provider and be
+            # accepted, though, and that effect is just as real: leaving it out
+            # of the ledger is precisely what lets the next attempt send the
+            # same message a second time.  This ledger records what a provider
+            # did, so it accepts whichever completed run on the task produced
+            # the receipt.  Who is allowed to deliver is enforced before the
+            # call, not by declining to remember a delivery that happened.
             run = db.execute(
                 "select agent_runs.reply_task_id, reply_tasks.business_object_key "
                 "from agent_runs join reply_tasks "
                 "on reply_tasks.id=agent_runs.reply_task_id "
-                "where agent_runs.id=? and agent_runs.role='audit' "
+                "where agent_runs.id=? "
+                "and agent_runs.role in ('audit', 'consumer') "
                 "and agent_runs.status='completed'",
                 (agent_run_id,),
             ).fetchone()
@@ -15468,6 +15478,56 @@ class AutoReplyStore:
                 (sent["id"], agent_run_id, run["reply_task_id"]),
             )
             return SentReply.model_validate(dict(sent))
+
+    def resolve_reconciled_failed_reply_task(
+        self,
+        task_id: int,
+        *,
+        external_action_key: str,
+    ) -> bool:
+        """Close a failed task whose delivery has since been recorded.
+
+        A task can fail after its message was already delivered: the effect
+        escaped the ledger, so nothing downstream knew to stop, and the run
+        that produced it ended in an error anyway.  Once that delivery is
+        recorded, rerunning the task would send the message a second time, so
+        ``done`` is the only terminal state that matches what the recipient
+        actually received.  The row only moves when the ledger really holds
+        that delivery for this task's business object, which is what keeps this
+        from becoming a way to close a task nobody ever answered.
+        """
+        key = external_action_key.strip()
+        if not key:
+            raise ValueError("external_action_key must be non-empty")
+        with self._immediate_write_transaction() as db:
+            task = db.execute(
+                "select business_object_key from reply_tasks "
+                "where id=? and status='failed'",
+                (task_id,),
+            ).fetchone()
+            if task is None:
+                return False
+            business_object_key = str(task["business_object_key"] or "").strip()
+            if not business_object_key:
+                raise ValueError("reconciled task has no business object key")
+            recorded = db.execute(
+                "select 1 from external_action_results "
+                "where external_action_key=? and business_object_key=?",
+                (key, business_object_key),
+            ).fetchone()
+            projected = db.execute(
+                "select 1 from sent_replies where external_action_key=?",
+                (key,),
+            ).fetchone()
+            if recorded is None or projected is None:
+                raise ValueError("reconciled delivery is not recorded for this task")
+            cursor = db.execute(
+                "update reply_tasks set status='done', error='', available_at='', "
+                "locked_at=null, updated_at=current_timestamp "
+                "where id=? and status='failed'",
+                (task_id,),
+            )
+            return cursor.rowcount == 1
 
     def list_completed_audit_runs_missing_delivery_projection(
         self,
