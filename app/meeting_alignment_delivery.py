@@ -145,7 +145,7 @@ def deliver_meeting_alignment(
         group_state = _group_delivery_state(info, target.conversation_id)
         if group_state != "sendable":
             direct_user_id, direct_open_dingtalk_id, target_title = (
-                _stable_organizer_identity(source)
+                _stable_organizer_identity(source, dws)
             )
             target_kind = "direct"
             target_id = direct_user_id or direct_open_dingtalk_id
@@ -163,7 +163,7 @@ def deliver_meeting_alignment(
     else:
         if decision.audience_scope == "business":
             direct_user_id, direct_open_dingtalk_id, target_title = (
-                _direct_target_organizer(source, target)
+                _direct_target_organizer(source, target, dws)
             )
             target_kind = "direct"
             target_id = direct_user_id or direct_open_dingtalk_id
@@ -330,7 +330,10 @@ def _group_delivery_state(
     return "incomplete"
 
 
-def _stable_organizer_identity(source: MeetingSource) -> tuple[str, str, str]:
+def _stable_organizer_identity(
+    source: MeetingSource,
+    dws: MeetingDeliveryDws,
+) -> tuple[str, str, str]:
     organizer = source.creator
     if organizer is None or not organizer.name.strip():
         raise MeetingDeliveryRetry("meeting organizer identity is unresolved")
@@ -338,15 +341,22 @@ def _stable_organizer_identity(source: MeetingSource) -> tuple[str, str, str]:
         return organizer.user_id.strip(), "", organizer.name.strip()
     if organizer.open_dingtalk_id.strip():
         return "", organizer.open_dingtalk_id.strip(), organizer.name.strip()
+    profile = _resolve_profile(organizer.name, organizer, dws, [])
+    if profile is not None:
+        if profile.user_id.strip():
+            return profile.user_id.strip(), "", organizer.name.strip()
+        if profile.open_dingtalk_id.strip():
+            return "", profile.open_dingtalk_id.strip(), organizer.name.strip()
     raise MeetingDeliveryRetry("meeting organizer identity is unresolved")
 
 
 def _direct_target_organizer(
     source: MeetingSource,
     target: DeliveryTarget,
+    dws: MeetingDeliveryDws,
 ) -> tuple[str, str, str]:
     direct_user_id, direct_open_dingtalk_id, organizer_name = (
-        _stable_organizer_identity(source)
+        _stable_organizer_identity(source, dws)
     )
     if _canonical(target.title) != _canonical(organizer_name):
         raise MeetingDeliveryError(

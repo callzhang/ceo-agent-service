@@ -10,7 +10,9 @@
   now includes the exact target error, the previous decision, and the original
   meeting source so the next decision can switch to a valid business group,
   stable organizer fallback, or valid private-recipient target without sending
-  anything during the repair turn.
+  anything during the repair turn. If DingTalk's calendar row names an organizer
+  but omits stable ids, delivery now performs the same exact-profile resolution
+  used for participant mentions before treating the organizer as unresolved.
 
 - 2026-09-11: an unusable Claude credential is classified as
   `claude_credentials_unavailable` instead of `claude_runtime_unclassified`. The provider

@@ -414,6 +414,32 @@ def test_business_direct_identity_error_is_typed_and_preserves_decision():
     assert raised.value.decision.target.direct_user_id == "guessed-user"
 
 
+def test_business_direct_fallback_can_leave_calendar_organizer_id_for_delivery():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "",
+        "title": "Alex",
+        "candidates": [],
+    }
+    source_without_identity = source().model_copy(
+        update={
+            "creator": MeetingParticipant(
+                name="Alex",
+                user_id="",
+                open_dingtalk_id="",
+            ),
+        }
+    )
+
+    decision = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(target))
+    ).decide(source_without_identity)
+
+    assert decision.target is not None
+    assert decision.target.direct_user_id == ""
+
+
 def test_target_error_preserves_the_generated_decision():
     target = {
         "kind": "direct",

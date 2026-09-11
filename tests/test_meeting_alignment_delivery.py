@@ -549,21 +549,26 @@ def test_unsendable_group_uses_organizer_open_id_without_name_lookup():
     assert dws.search_queries == []
 
 
-def test_unsendable_group_without_stable_organizer_id_retries_without_lookup():
+def test_unsendable_group_resolves_calendar_organizer_by_exact_profile():
     dws = FakeDws()
     dws.conversation_info["singleChat"] = True
+    dws.profiles["A"] = [
+        DwsUserProfile(user_id="u-a", name="A", open_dingtalk_id="open-a")
+    ]
     source_payload = meeting_source().model_dump(mode="json")
     source_payload["creator"].update(user_id="", open_dingtalk_id="")
 
-    with pytest.raises(MeetingDeliveryRetry, match="organizer identity is unresolved"):
-        deliver_meeting_alignment(
-            send_decision(mention_names=[]),
-            MeetingSource.model_validate(source_payload),
-            dws,
-        )
+    result = deliver_meeting_alignment(
+        send_decision(mention_names=[]),
+        MeetingSource.model_validate(source_payload),
+        dws,
+    )
 
-    assert dws.sent == []
-    assert dws.search_queries == []
+    assert result.status == "sent"
+    assert result.target_kind == "direct"
+    assert result.target_id == "u-a"
+    assert dws.sent[0]["user_id"] == "u-a"
+    assert dws.search_queries == ["A"]
 
 
 def test_unresolved_decision_can_reach_agent_selected_business_group():

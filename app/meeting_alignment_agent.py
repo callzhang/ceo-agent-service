@@ -685,10 +685,6 @@ def _validate_business_direct_fallback(
         raise MeetingOrganizerIdentityError(
             "business direct fallback cannot supply a guessed user_id"
         )
-    if not organizer.open_dingtalk_id.strip():
-        raise MeetingOrganizerIdentityError(
-            "business direct fallback requires a stable calendar organizer identity"
-        )
 
 
 def _canonical_person_name(value: str) -> str:
