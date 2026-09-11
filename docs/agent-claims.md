@@ -63,10 +63,18 @@ reverts committed work they did not author.
   `information_completeness` required on `ConsumerAgentResult`, so
   `model_validate_json` rejects every result written before it: 5 of 6 sampled
   completed email Consumer runs fail. This breaks
-  `_bound_parent_consumer_action` (`app/email_unsubscribe_audit.py:641`), and
-  `_repair_completed_message_delivery_projections`
-  (`app/worker.py:1899`) silently skips those rows because it catches
-  `ValidationError` and continues. 33 tests in
+  `_bound_parent_consumer_action` (`app/email_unsubscribe_audit.py:641`).
+
+  **Correction, same day.** This entry first said the delivery-projection
+  repair sweep had stopped working on historical rows. That was measured
+  against the wrong population. The sweep's input is
+  `list_completed_audit_runs_missing_delivery_projection()`, which returns only
+  completed Audit runs that executed a delivery and have no projection yet, not
+  all stored results: 2 rows, against 1457 completed Audit runs with a stored
+  result. One of the two (8514) was repaired by `0b51e852`; the other (8460)
+  also carries pre-contract fields and reviving it would mean writing
+  legacy-shape compatibility, which AGENTS.md forbids. The parse failure is
+  real, but its reach through that sweep is two rows. 33 tests in
   `tests/test_email_unsubscribe_audit.py`, 5 in `tests/test_worker.py`, 2 in
   `tests/test_email_worker.py` and the collection of
   `tests/test_approval_history.py` fail for this reason. The contract belongs
