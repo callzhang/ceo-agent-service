@@ -344,6 +344,24 @@ def test_read_meeting_source_combines_metadata_summary_transcript_and_current_us
     ]
 
 
+def test_read_meeting_source_keeps_calendar_creator_over_weak_minutes_creator():
+    source = read_meeting_source(
+        FakeDws(),
+        "minutes-1",
+        calendar_evidence=calendar_evidence(),
+        creator=meeting_alignment_source.MeetingParticipant(
+            name="A",
+            user_id="",
+            open_dingtalk_id="",
+        ),
+    )
+
+    assert source.creator is not None
+    assert source.creator.name == "A"
+    assert source.creator.user_id == "u-a"
+    assert source.creator.open_dingtalk_id == "open-a"
+
+
 def test_read_meeting_source_marks_calendar_roster_complete():
     source = read_meeting_source(
         FakeDws(),

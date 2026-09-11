@@ -1,5 +1,15 @@
 # Changelog
 
+- 2026-09-11: calendar-backed meeting summaries now keep the calendar creator as
+  the stable organizer identity when the Minutes list item only supplies a weak
+  creator name. A later producer pass could pass the weak Minutes creator into
+  `read_meeting_source`, which replaced the calendar creator's stable user id
+  and made the Consumer/Audit loop fail again with the same target schema
+  mismatch even after the delivery-side organizer lookup was fixed. Calendar
+  evidence is now the source of truth for organizer identity whenever the
+  meeting is calendar-backed; transcript-only sources keep the previous Minutes
+  creator fallback.
+
 - 2026-09-11: meeting alignment now gives source-aware target failures one
   structured correction turn before failing the meeting job. The existing
   output-schema retry only covered malformed JSON and cross-field schema

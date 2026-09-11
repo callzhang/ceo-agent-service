@@ -138,10 +138,19 @@ def read_meeting_source(
         current_user_id=current_user_id,
         summary=summary,
         meeting_id=meeting_id,
-        creator=creator or calendar_evidence.creator,
+        creator=_select_meeting_creator(calendar_evidence, creator),
         attendee_evidence=calendar_evidence.source,
         attendee_roster_complete=(calendar_evidence.source == "calendar"),
     )
+
+
+def _select_meeting_creator(
+    calendar_evidence: CalendarMeetingEvidence,
+    minutes_creator: MeetingParticipant | None,
+) -> MeetingParticipant | None:
+    if calendar_evidence.source == "calendar" and calendar_evidence.creator is not None:
+        return calendar_evidence.creator
+    return minutes_creator or calendar_evidence.creator
 
 
 def normalize_meeting_source(
