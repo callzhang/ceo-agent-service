@@ -2055,7 +2055,10 @@ def _build_agent_orchestrator(
     runtime_skill_snapshot=None,
 ):
     from app.agent_orchestrator import AgentOrchestrator
-    from app.agent_runtime_production import build_production_agent_runtime
+    from app.agent_runtime_production import (
+        build_production_agent_runtime,
+        build_production_runtime_refresher,
+    )
     from app.audit_agent import AuditAgentRunner
     from app.consumer_agent import ConsumerAgentRunner
     from app.email_store import EmailStore
@@ -2064,7 +2067,19 @@ def _build_agent_orchestrator(
     )
 
     workspace = Path(settings.workspace)
-    runtime = build_production_agent_runtime(store=store, workspace=workspace)
+    # The capability registry is per process and every service child starts
+    # empty, so a worker that never refreshes has no snapshot for any route and
+    # reports runtime_provider_unreachable on every poll for as long as it
+    # lives. The reply worker has always passed a refresher here; this one did
+    # not, so after each restart the whole email queue waited on routes that
+    # were healthy the entire time.
+    runtime = build_production_agent_runtime(
+        store=store,
+        workspace=workspace,
+        refresh_runtime_capabilities=build_production_runtime_refresher(
+            store=store
+        ).refresh_expired,
+    )
     shared = {
         "store": store,
         "workspace": workspace,

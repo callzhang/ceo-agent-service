@@ -8193,6 +8193,31 @@ def test_domain_authorization_rejection_remains_failed():
     assert captured["send_error"] == "email_unsubscribe_risk_rejected"
 
 
+def test_email_orchestrator_can_refresh_runtime_capabilities(tmp_path):
+    """Without this the worker has no snapshot for any route, ever.
+
+    The capability registry is per process and a fresh child starts empty, so a
+    worker that cannot refresh reports runtime_provider_unreachable on every
+    poll for its whole life. Each email task then waits on routes that are
+    healthy, and because that code is a route-pause wait rather than a failure
+    it never surfaces as one.
+    """
+    from app.store import AutoReplyStore
+
+    module = _module()
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    settings = SimpleNamespace(
+        workspace=str(tmp_path),
+        db_path=str(tmp_path / "worker.sqlite3"),
+        dry_run=False,
+    )
+
+    orchestrator = module._build_agent_orchestrator(settings, store)
+
+    for runner in (orchestrator.consumer, orchestrator.audit):
+        assert callable(runner.refresh_runtime_capabilities)
+
+
 def _route_refused_tool_event(message="This action was rejected due to unacceptable risk."):
     """The runtime declined to place the call, so there is no result at all."""
     return {
