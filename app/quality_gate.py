@@ -517,6 +517,12 @@ def _structured_needs_human_classification(raw: object) -> str:
     risk = result.get("risk")
     if risk not in {"low", "medium", "high"}:
         return "invalid"
+    # Results written before the structured quality contract only lacked the
+    # two new coverage/completeness fields. Keep this compatibility confined to
+    # the stored-result hydration boundary; risk and confidence remain
+    # mandatory so an old opaque human escalation cannot become actionable.
+    result.setdefault("rule_coverage", 1.0)
+    result.setdefault("information_completeness", 1.0)
     scores: list[float] = []
     for field in ("confidence", "rule_coverage", "information_completeness"):
         value = result.get(field)

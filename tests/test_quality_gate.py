@@ -648,6 +648,21 @@ def test_quality_gate_requires_structured_high_risk_low_confidence_options(tmp_p
     }
 
 
+def test_quality_gate_hydrates_legacy_missing_coverage_fields(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    result = _structured_needs_human_result()
+    result.pop("rule_coverage")
+    result.pop("information_completeness")
+    _insert_needs_human_projection(store, result=result)
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert ("reply_attempts", "needs_human", 1) in {
+        (item.source, item.code, item.count) for item in report.attention
+    }
+    assert not any(item.code == "invalid_needs_human_result" for item in report.violations)
+
+
 def test_quality_gate_does_not_report_low_risk_or_confident_needs_human_projection(tmp_path):
     for name, result in {
         "low-risk": _structured_needs_human_result(risk="low"),
