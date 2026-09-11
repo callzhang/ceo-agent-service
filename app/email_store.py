@@ -10444,7 +10444,7 @@ class EmailStore:
                 from email_unsubscribe_claims as claims
                 join agent_runs as runs
                   on runs.id=claims.audit_agent_run_id
-                where claims.status='dispatching'
+                where claims.status in ('dispatching', 'uncertain')
                   and runs.status in ('failed', 'completed')
                 order by claims.action_identity
                 """
@@ -10461,6 +10461,64 @@ class EmailStore:
             }
             for row in rows
         ]
+
+    def release_orphaned_email_unsubscribe_claim(self, action_identity: str) -> bool:
+        """Delete a claim stranded by a dead Audit run that wrote nothing.
+
+        release_email_unsubscribe_failed_operation does this on the normal
+        path, keyed on the live owner fence. A run that dies never reaches it,
+        and no later run can present that fence, so the claim blocks its action
+        for good. This is the same release keyed on the orphan condition
+        instead: the owning run has reached a terminal status, so no one is
+        going to come back for it.
+
+        The safety test is unchanged and is the one that matters -- no steps,
+        no receipts, no continuation. With none of those the browser
+        demonstrably persisted nothing, so there is no completed action to
+        lose. A claim that did leave durable state is left alone for a person
+        to judge; returning False says so.
+        """
+        with self._connect() as db:
+            db.execute("begin immediate")
+            claim = db.execute(
+                """
+                select claims.effect_digest, runs.status as run_status
+                from email_unsubscribe_claims as claims
+                join agent_runs as runs
+                  on runs.id=claims.audit_agent_run_id
+                where claims.action_identity=?
+                  and claims.status in ('dispatching', 'uncertain')
+                """,
+                (action_identity,),
+            ).fetchone()
+            if claim is None or claim["run_status"] not in {"failed", "completed"}:
+                return False
+            related = db.execute(
+                """
+                select
+                    (select count(*) from email_unsubscribe_steps
+                     where action_identity=?) as steps,
+                    (select count(*) from email_unsubscribe_receipts
+                     where action_identity=?) as receipts,
+                    (select count(*) from email_unsubscribe_continuations
+                     where action_identity=?) as continuations
+                """,
+                (action_identity, action_identity, action_identity),
+            ).fetchone()
+            if related is None or any(int(related[name]) for name in related.keys()):
+                return False
+            db.execute(
+                "delete from email_unsubscribe_effects "
+                "where action_identity=? and effect_digest=?",
+                (action_identity, claim["effect_digest"]),
+            )
+            return (
+                db.execute(
+                    "delete from email_unsubscribe_claims where action_identity=?",
+                    (action_identity,),
+                ).rowcount
+                == 1
+            )
 
     def recover_terminated_email_unsubscribe_claims(
         self,

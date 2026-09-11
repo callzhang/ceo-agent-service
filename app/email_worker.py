@@ -1383,6 +1383,23 @@ def _recover_orphaned_unsubscribe_claims(email_store: object, task_store: object
     for orphan in orphans:
         owner = orphan["owner"]
         try:
+            # Nothing durable was written, so the claim can simply go and the
+            # action becomes retryable. This is the release the normal path
+            # performs; only its owner fence is unreachable here.
+            if email_store.release_orphaned_email_unsubscribe_claim(
+                orphan["action_identity"]
+            ):
+                recovered += 1
+                continue
+        except Exception:  # noqa: BLE001 - fall back to marking it uncertain
+            _LOGGER.warning(
+                "could not release orphaned unsubscribe claim %s",
+                orphan["action_identity"],
+                exc_info=True,
+            )
+        try:
+            # It did leave durable browser state, so whether to repeat that
+            # write is a person's call. `uncertain` is the state that says so.
             recovered += email_store.recover_terminated_email_unsubscribe_claims(
                 owner=owner,
                 # The run that owns the claim has already reached a terminal

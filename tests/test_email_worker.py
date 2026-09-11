@@ -8852,6 +8852,10 @@ def test_recovery_releases_a_claim_whose_audit_run_died():
                 }
             ]
 
+        def release_orphaned_email_unsubscribe_claim(self, action_identity):
+            # Durable browser state exists for this one, so it is not released.
+            return False
+
         def recover_terminated_email_unsubscribe_claims(
             self, *, owner, termination_verifier, recovered_at
         ):
@@ -8886,3 +8890,45 @@ def test_claim_recovery_never_takes_the_consumer_loop_down():
             raise RuntimeError("store unavailable")
 
     assert module._recover_orphaned_unsubscribe_claims(Broken(), object()) == 0
+
+
+def test_a_claim_that_wrote_nothing_is_released_outright():
+    """`uncertain` has exactly one consumer and it cannot accept these.
+
+    Moving an orphan to `uncertain` only looks like progress: the reviewed
+    retry requires phase effect_uncertain and a specific error code, so 19
+    claims recovered that way were still unreachable. When the browser
+    persisted no step, receipt or continuation there is no completed action to
+    protect, and the claim can simply go -- which is what the normal path does
+    with the owner fence it can no longer present.
+    """
+    module = _module()
+    released, recovered_calls = [], []
+
+    class EmailStore:
+        def list_orphaned_email_unsubscribe_claim_owners(self):
+            return [
+                {
+                    "action_identity": "email-action:clean",
+                    "effect_digest": "d" * 64,
+                    "owner": {
+                        "owner_id": "email-unsubscribe-audit:1",
+                        "generation": 1,
+                        "lease_token": "unsubscribe-audit-lease:t",
+                    },
+                }
+            ]
+
+        def release_orphaned_email_unsubscribe_claim(self, action_identity):
+            released.append(action_identity)
+            return True
+
+        def recover_terminated_email_unsubscribe_claims(self, **kwargs):
+            recovered_calls.append(kwargs)
+            return 1
+
+    recovered = module._recover_orphaned_unsubscribe_claims(EmailStore(), object())
+
+    assert recovered == 1
+    assert released == ["email-action:clean"]
+    assert recovered_calls == [], "a released claim must not also be marked uncertain"
