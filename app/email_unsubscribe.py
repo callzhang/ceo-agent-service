@@ -2261,6 +2261,11 @@ class PlaywrightUnsubscribeBrowser:
     @staticmethod
     def _state_from_text(text: str) -> UnsubscribePageState | None:
         normalized = " ".join(text.casefold().split())
+        # Providers write the confirmation with a typographic apostrophe, so a
+        # marker spelled with the ASCII one never matches. LinkedIn's page says
+        # "You’ve unsubscribed" and was read as an unmodellable page, which
+        # failed a task whose unsubscribe had already succeeded.
+        normalized = normalized.replace("\u2019", "'").replace("\u02bc", "'")
         if any(marker in normalized for marker in ("captcha", "验证码")):
             return UnsubscribePageState.CAPTCHA
         if any(
@@ -2284,6 +2289,9 @@ class PlaywrightUnsubscribeBrowser:
                 "successfully unsubscribed",
                 "you are unsubscribed",
                 "you have been unsubscribed",
+                # The confirmation LinkedIn and others actually print.
+                "you've unsubscribed",
+                "you have unsubscribed",
                 "unsubscribe complete",
                 "unsubscribe confirmation complete",
                 "subscription cancelled",

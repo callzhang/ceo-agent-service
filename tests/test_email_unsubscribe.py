@@ -3378,3 +3378,38 @@ def test_a_failure_with_no_observation_records_no_integrity_metadata() -> None:
     assert fields == {}
     assert result.result_text == ""
     assert result.result_text_digest == ""
+
+
+def test_a_typographic_apostrophe_does_not_hide_a_confirmed_unsubscribe() -> None:
+    """LinkedIn's own confirmation page was being filed as a failure.
+
+    The live observation read: "You’ve unsubscribed  You'll no longer receive
+    emails from LinkedIn with your Network Conversations". The unsubscribe had
+    already succeeded; the page said so with a typographic apostrophe, no
+    marker matched, none of its ten controls modelled, and the task ended
+    email_unsubscribe_page_state_unknown. A success recorded as a failure is
+    worse than a failure: a rerun repeats a browser write that already worked.
+    """
+    state_from_text = PlaywrightUnsubscribeBrowser._state_from_text
+
+    assert (
+        state_from_text(
+            "0 notifications total LinkedIn You’ve unsubscribed "
+            "You'll no longer receive emails from LinkedIn"
+        )
+        is UnsubscribePageState.DONE
+    )
+    assert (
+        state_from_text("You have unsubscribed from this list")
+        is UnsubscribePageState.DONE
+    )
+    # The apostrophe normalization must not turn an unrelated page terminal.
+    assert state_from_text("Email Preferences 管理您的订阅") is None
+    assert (
+        state_from_text("You’re already unsubscribed")
+        is UnsubscribePageState.ALREADY_UNSUBSCRIBED
+    )
+    assert (
+        state_from_text("Sign in to manage your preferences")
+        is UnsubscribePageState.LOGIN_REQUIRED
+    )
