@@ -963,6 +963,20 @@ def validate_unsubscribe_entry_operation_semantics(
         raise ValueError("one-click unsubscribe is not authenticated")
 
 
+# Which operation kinds a discovered control legally admits. One copy, read by
+# the continuation validator and by the prescription handed to the Consumer, so
+# the shape the model is told to return cannot drift from the shape accepted.
+_CONTINUATION_CONTROL_KINDS: Mapping[str, frozenset[str]] = {
+    "form": frozenset({"submit_form"}),
+    "link": frozenset({"click_confirmation"}),
+    "button": frozenset({"click_confirmation"}),
+    "confirmation_email": frozenset({"confirm_email"}),
+    "email_otp": frozenset({"submit_form"}),
+    "captcha_handoff": frozenset({"click_confirmation", "reconcile_handoff"}),
+    "credential_handoff": frozenset({"reconcile_handoff"}),
+}
+
+
 def initial_email_unsubscribe_proposal_action(
     metadata: Mapping[str, object],
 ) -> dict[str, object]:
@@ -1017,6 +1031,52 @@ def initial_email_unsubscribe_proposal_action(
             ]
         },
     }
+
+
+def continuation_email_unsubscribe_proposal_action(
+    metadata: Mapping[str, object],
+    continuation: "EmailUnsubscribeContinuation",
+) -> dict[str, object]:
+    """Return the exact continuation ProposedAction, when only one is legal.
+
+    The initial turn is handed the action it must propose; the continuation
+    turn was handed prose describing a receipt, so the Consumer had to invent
+    the payload shape, the operation kind and the append-only prefix, and the
+    strict validators rejected whatever it guessed. That is the whole of
+    `unsubscribe_operation_rejected:ValueError`.
+
+    Returns {} when the page offers a choice: with several controls, or one
+    control admitting several kinds, the next operation is a judgement and
+    prescribing one would make it for the model. Those turns keep the prose.
+    """
+    base = initial_email_unsubscribe_proposal_action(metadata)
+    controls = tuple(continuation.controls)
+    if len(controls) != 1:
+        return {}
+    control = controls[0]
+    kinds = _CONTINUATION_CONTROL_KINDS.get(control.kind, frozenset())
+    if len(kinds) != 1:
+        return {}
+    kind = next(iter(kinds))
+    base["description"] = "Continue the audited unsubscribe on the offered control."
+    base["payload"] = {
+        "operations": [
+            *(
+                {
+                    "operation_reference": item.operation_reference,
+                    "kind": item.kind.value,
+                    "target_reference": item.target_reference,
+                }
+                for item in continuation.executed_operations
+            ),
+            {
+                "operation_reference": f"unsubscribe-operation:{kind}",
+                "kind": kind,
+                "target_reference": control.reference,
+            },
+        ]
+    }
+    return base
 
 
 def accepted_email_unsubscribe_effect(
@@ -1148,15 +1208,7 @@ def accepted_email_unsubscribe_effect(
                 ),
                 None,
             )
-            allowed = {
-                "form": {"submit_form"},
-                "link": {"click_confirmation"},
-                "button": {"click_confirmation"},
-                "confirmation_email": {"confirm_email"},
-                "email_otp": {"submit_form"},
-                "captcha_handoff": {"click_confirmation", "reconcile_handoff"},
-                "credential_handoff": {"reconcile_handoff"},
-            }
+            allowed = _CONTINUATION_CONTROL_KINDS
             prior_operations = continuation.executed_operations
             if (
                 control is None
@@ -1629,6 +1681,15 @@ class EmailAgentTaskAdapter:
                     for receipt in prior_receipts
                     if receipt.operation != "unsubscribe_continuation"
                 ) + (continuation_receipt,)
+                # The continuation turn gets the same prescription the initial
+                # turn gets, whenever exactly one operation is legal. Left as
+                # prose it made the Consumer invent the payload shape, and the
+                # strict validators rejected the guess.
+                required_proposal_action = (
+                    continuation_email_unsubscribe_proposal_action(
+                        payload, continuation
+                    )
+                )
             else:
                 required_proposal_action = (
                     initial_email_unsubscribe_proposal_action(payload)

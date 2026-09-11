@@ -1809,6 +1809,42 @@ def test_refreshed_email_context_contains_one_opaque_continuation_receipt(
     assert "private-token" not in continuation_receipts[0].summary
     assert "https://" not in continuation_receipts[0].summary
     assert "/Users/" not in continuation_receipts[0].summary
+    # The continuation turn is told the action to propose, exactly as the
+    # initial turn is. Left as prose the Consumer had to invent the payload
+    # shape, the operation kind and the append-only prefix, and the strict
+    # validators rejected the guess -- that is the whole of
+    # unsubscribe_operation_rejected:ValueError.
+    prescribed = refreshed.required_proposal_action
+    assert prescribed["capability"] == "email_browser"
+    assert prescribed["operation"] == "unsubscribe"
+    assert prescribed["payload"]["operations"] == [
+        *operations,
+        {
+            "operation_reference": "unsubscribe-operation:click_confirmation",
+            "kind": "click_confirmation",
+            "target_reference": control_reference,
+        },
+    ]
+
+
+def test_a_continuation_offering_a_choice_is_not_prescribed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A control admitting several kinds is a judgement, not a transcription.
+
+    Prescribing one of them would make the decision for the model instead of
+    removing a shape it cannot guess, so those turns keep the prose receipt.
+    """
+    from app.email_task_adapter import (
+        _CONTINUATION_CONTROL_KINDS,
+        continuation_email_unsubscribe_proposal_action,
+    )
+
+    ambiguous = [
+        kind for kind, kinds in _CONTINUATION_CONTROL_KINDS.items() if len(kinds) > 1
+    ]
+    assert ambiguous, "expected at least one control kind with a choice"
 
 
 def test_refreshed_email_context_rejects_private_continuation_evidence(
