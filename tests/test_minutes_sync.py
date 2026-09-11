@@ -58,6 +58,19 @@ class FakeDws:
         return {"ok": True}
 
 
+class PaginatedFakeDws(FakeDws):
+    def __init__(self, pages):
+        super().__init__([])
+        self.pages = pages
+
+    def list_minutes_page(self, *, cursor="", **kwargs):
+        del kwargs
+        page = self.pages.get(cursor)
+        if isinstance(page, Exception):
+            raise page
+        return page
+
+
 def _denied() -> DwsError:
     return DwsError("no permission", "PAT_HIGH_RISK_NO_PERMISSION")
 
@@ -221,3 +234,30 @@ def test_every_discovered_minute_lands_in_exactly_one_outcome() -> None:
 def test_render_archive_serializes_a_structured_summary() -> None:
     text = render_archive(task_uuid="u", summary={"a": "值"}, paragraphs=[])
     assert '{"a": "值"}' in text
+
+
+def test_incomplete_minutes_pagination_does_not_claim_success(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    dws = PaginatedFakeDws(
+        {
+            "": {
+                "items": [{"taskUuid": "u1"}],
+                "has_more": True,
+                "next_token": "page-2",
+            },
+            "page-2": DwsError("temporary page failure", "NETWORK_ERROR"),
+        }
+    )
+    dws._basic = {"u1": {"title": "周会", "startTime": 1789025858000}}
+    dws._paragraphs = {"u1": [{"startTime": 0, "paragraph": "内容"}]}
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.synced == 1 and result.discovered == 1
+    state = store.get_daily_scan_state(MINUTES_SYNC_SCANNER) or {}
+    assert state["last_success_at"] == ""
+    assert "temporary page failure" in state["last_error"]
+    cursor = json.loads(state["cursor_json"])
+    assert cursor["pagination_deferred"] is True
+    assert cursor["pagination_error"] == "temporary page failure"
+    assert cursor["archived_ids"] == ["u1"]

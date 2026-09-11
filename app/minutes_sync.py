@@ -29,6 +29,7 @@ MINUTES_ARCHIVE_DIRECTORY = "AI听记"
 RESTRICTED_MINUTE_MINIMUM_DURATION = timedelta(minutes=5)
 
 _SOURCE_URL_PREFIX = "https://shanji.dingtalk.com/app/transcribes/"
+_MINUTES_LIST_MAX_PAGES = 100
 
 
 @dataclass(frozen=True)
@@ -155,6 +156,39 @@ def _is_restricted_minute_error(error: DwsError) -> bool:
     return False
 
 
+def _list_all_minutes(dws) -> tuple[list[dict[str, Any]], str]:
+    """Read the complete minutes listing, returning a deferred error if partial."""
+    list_page = getattr(dws, "list_minutes_page", None)
+    if list_page is None:
+        return dws.parse_minutes_list(dws.list_minutes()), ""
+
+    items: list[dict[str, Any]] = []
+    cursor = ""
+    seen_cursors: set[str] = set()
+    for _ in range(_MINUTES_LIST_MAX_PAGES):
+        try:
+            page = list_page(cursor=cursor)
+        except Exception as exc:
+            return items, str(exc)
+        if not isinstance(page, dict):
+            return items, "invalid minutes list page"
+        page_items = page.get("items")
+        if not isinstance(page_items, list):
+            return items, "invalid minutes list page items"
+        items.extend(item for item in page_items if isinstance(item, dict))
+        has_more = page.get("has_more")
+        next_token = str(page.get("next_token") or "")
+        if has_more is False:
+            return items, ""
+        if not next_token:
+            return items, "minutes list pagination missing next token"
+        if next_token in seen_cursors or next_token == cursor:
+            return items, "minutes list pagination repeated next token"
+        seen_cursors.add(next_token)
+        cursor = next_token
+    return items, f"minutes list pagination exceeded {_MINUTES_LIST_MAX_PAGES} pages"
+
+
 def sync_minutes_once(
     store,
     dws,
@@ -172,16 +206,7 @@ def sync_minutes_once(
     archived = {str(value) for value in (cursor.get("archived_ids") or [])}
     pending = {str(value) for value in (cursor.get("permission_pending_ids") or [])}
 
-    try:
-        listed = dws.parse_minutes_list(dws.list_minutes())
-    except DwsError as exc:
-        store.set_daily_scan_state(
-            MINUTES_SYNC_SCANNER,
-            last_success_at=state.get("last_success_at") or "",
-            cursor_json=json.dumps(cursor, sort_keys=True),
-            last_error=str(exc),
-        )
-        return MinutesSyncResult()
+    listed, pagination_error = _list_all_minutes(dws)
 
     candidates: list[str] = []
     for item in listed:
@@ -243,17 +268,27 @@ def sync_minutes_once(
 
     store.set_daily_scan_state(
         MINUTES_SYNC_SCANNER,
-        last_success_at=(now or datetime.now(timezone.utc)).astimezone(
-            timezone.utc
-        ).isoformat(),
+        last_success_at=(
+            (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+            if not pagination_error
+            else state.get("last_success_at") or ""
+        ),
         cursor_json=json.dumps(
             {
                 "archived_ids": sorted(archived),
                 "permission_pending_ids": sorted(pending),
+                **(
+                    {
+                        "pagination_deferred": True,
+                        "pagination_error": pagination_error,
+                    }
+                    if pagination_error
+                    else {}
+                ),
             },
             sort_keys=True,
         ),
-        last_error="",
+        last_error=pagination_error,
     )
     return MinutesSyncResult(
         discovered=len(candidates),
