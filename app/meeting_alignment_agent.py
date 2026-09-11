@@ -73,6 +73,10 @@ class MeetingAlignmentTargetError(ValueError):
         self.decision = decision
 
 
+class MeetingOrganizerIdentityError(MeetingAlignmentTargetError):
+    """The calendar organizer cannot be addressed from stable source data."""
+
+
 class MeetingAlignmentCodex(Protocol):
     last_session_id: str | None
     last_transcript_start_line: int
@@ -109,7 +113,7 @@ class MeetingAlignmentAgent:
         try:
             _validate_source_aware_target(source, decision)
         except MeetingAlignmentTargetError as exc:
-            raise MeetingAlignmentTargetError(
+            raise type(exc)(
                 str(exc),
                 decision=decision,
             ) from exc
@@ -650,11 +654,11 @@ def _validate_business_direct_fallback(
             )
         return
     if target.direct_user_id:
-        raise MeetingAlignmentTargetError(
+        raise MeetingOrganizerIdentityError(
             "business direct fallback cannot supply a guessed user_id"
         )
     if not organizer.open_dingtalk_id.strip():
-        raise MeetingAlignmentTargetError(
+        raise MeetingOrganizerIdentityError(
             "business direct fallback requires a stable calendar organizer identity"
         )
 

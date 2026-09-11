@@ -9,11 +9,13 @@ from app.meeting_alignment_agent import (
     MeetingAlignmentAgent,
     MeetingAlignmentCodexRunner,
     MeetingAlignmentTargetError,
+    MeetingOrganizerIdentityError,
     build_meeting_alignment_prompt,
     parse_meeting_alignment_decision,
 )
 from app.meeting_alignment_models import (
     MEETING_ALIGNMENT_CROSS_FIELD_RULES,
+    MeetingParticipant,
     MeetingSource,
 )
 from tests.test_meeting_alignment_models import (
@@ -365,6 +367,34 @@ def test_agent_accepts_business_direct_fallback_to_calendar_organizer():
     assert decision.target is not None
     assert decision.target.kind == "direct"
     assert decision.target.direct_user_id == "alex"
+
+
+def test_business_direct_identity_error_is_typed_and_preserves_decision():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "guessed-user",
+        "title": "Alex",
+        "candidates": [],
+    }
+    source_without_identity = source().model_copy(
+        update={
+            "creator": MeetingParticipant(
+                name="Alex",
+                user_id="",
+                open_dingtalk_id="",
+            ),
+        }
+    )
+
+    with pytest.raises(MeetingOrganizerIdentityError) as raised:
+        MeetingAlignmentAgent(
+            FakeMeetingCodex(send_payload_with_target(target))
+        ).decide(source_without_identity)
+
+    assert raised.value.decision is not None
+    assert raised.value.decision.target is not None
+    assert raised.value.decision.target.direct_user_id == "guessed-user"
 
 
 def test_target_error_preserves_the_generated_decision():

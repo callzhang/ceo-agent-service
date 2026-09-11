@@ -19,6 +19,7 @@ from app.external_retry import is_external_dependency_error
 from app.meeting_alignment_agent import (
     MeetingAlignmentAgent,
     MeetingAlignmentTargetError,
+    MeetingOrganizerIdentityError,
 )
 from app.meeting_alignment_delivery import (
     MeetingDeliveryError,
@@ -852,12 +853,8 @@ def _analyze_meeting_job(
             similar_sessions=similar_sessions,
             run_id=run_id,
         )
-    except MeetingAlignmentTargetError as exc:
-        if (
-            str(exc)
-            == "business direct fallback requires a stable calendar organizer identity"
-            and exc.decision is not None
-        ):
+    except MeetingOrganizerIdentityError as exc:
+        if exc.decision is not None:
             decision_json = exc.decision.model_dump_json()
             target = exc.decision.target
             target_id = (
@@ -892,6 +889,21 @@ def _analyze_meeting_job(
                 error=error,
             )
             return
+        error = _error_json("meeting_target", str(exc))
+        _record_agent_run(
+            store,
+            runner,
+            run_id,
+            job_id=job.id,
+            decision=None,
+            status="failed",
+            error=error,
+        )
+        store.update_meeting_alignment_job(
+            job.id, status="failed", error=error
+        )
+        return
+    except MeetingAlignmentTargetError as exc:
         error = _error_json("meeting_target", str(exc))
         _record_agent_run(
             store,
