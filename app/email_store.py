@@ -2123,7 +2123,11 @@ def _audited_unsubscribe_lineage(
         return None
     task_id = int(lineage["task_id"])
     audit_run_id = int(lineage["audit_agent_run_id"])
-    task_generation = str(lineage["task_execution_generation"])
+    # The generation the Audit run that earned this receipt ran in, which is
+    # what the chain has to be rebuilt against. The task's own generation moves
+    # every time anything reruns it, and a receipt does not become someone
+    # else's because the task was rerun.
+    lineage_generation = str(lineage["audit_execution_generation"])
     if (
         receipt["action_identity"] != expected_action_identity
         or lineage["effect_action_identity"] != receipt["action_identity"]
@@ -2131,8 +2135,7 @@ def _audited_unsubscribe_lineage(
         or lineage["audit_run_id"] != audit_run_id
         or lineage["audit_role"] != "audit"
         or lineage["reply_task_id"] != task_id
-        or lineage["audit_execution_generation"] != task_generation
-        or not task_generation
+        or not lineage_generation
         or lineage["task_channel"] != "email"
         or lineage["task_conversation_id"] != expected_conversation_id
         or lineage["trigger_message_id"] != receipt["action_identity"]
@@ -2152,7 +2155,7 @@ def _audited_unsubscribe_lineage(
     run_chain = _audited_unsubscribe_run_chain(
         db,
         task_id=task_id,
-        execution_generation=task_generation,
+        execution_generation=lineage_generation,
         final_audit_run_id=audit_run_id,
     )
     if run_chain is None:
@@ -9868,6 +9871,10 @@ class EmailStore:
         previous_revision: int | None = None
         lineage_task_id: int | None = None
         lineage_generation: str | None = None
+        # The task's generation as it is right now, read from the same joined
+        # row. The caller must be the task's current generation; the receipt
+        # need not have been earned in it.
+        lineage_live_task_generation: str | None = None
         for depth, effect in enumerate(chain, start=1):
             audit_agent_run_id = effect.get("audit_agent_run_id")
             if (
@@ -9954,7 +9961,16 @@ class EmailStore:
                 or row["consumer_generation"] != row["execution_generation"]
                 or row["task_channel"] != "email"
                 or row["trigger_message_id"] != claim["action_identity"]
-                or row["task_generation"] != row["execution_generation"]
+                # Deliberately NOT compared to row["task_generation"]: that is
+                # the task's generation right now, and a rerun rotates it while
+                # the Audit run and its effect rows keep the generation they
+                # were written in. Requiring them equal made a finished receipt
+                # unreadable the moment anything reran the task, which is the
+                # one situation the receipt exists to answer. Consistency
+                # inside the lineage is still enforced, by consumer_generation
+                # against execution_generation above and by the chain rebuild
+                # below; that the caller is the task's current generation is
+                # checked separately, against the live value.
                 or not isinstance(task_payload, dict)
                 or any(
                     task_payload.get(field) != expected
@@ -9985,9 +10001,11 @@ class EmailStore:
                     )
             current_task_id = int(row["reply_task_id"])
             current_generation = str(row["execution_generation"])
+            live_task_generation = str(row["task_generation"])
             if lineage_task_id is None:
                 lineage_task_id = current_task_id
                 lineage_generation = current_generation
+                lineage_live_task_generation = live_task_generation
             elif (
                 current_task_id != lineage_task_id
                 or current_generation != lineage_generation
@@ -10008,7 +10026,7 @@ class EmailStore:
             or (task_id is not None and lineage_task_id != task_id)
             or (
                 task_execution_generation is not None
-                and lineage_generation != task_execution_generation
+                and lineage_live_task_generation != task_execution_generation
             )
         ):
             raise EmailPersistenceCorruption(

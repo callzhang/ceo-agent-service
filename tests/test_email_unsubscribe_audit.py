@@ -185,6 +185,13 @@ def _consumer_proposal_result(
         },
         "risk": "low",
         "confidence": 1.0,
+        # Required on ConsumerAgentResult since 310234e8. The Audit binding
+        # re-reads the Consumer's persisted result, so a fixture missing these
+        # does not merely skip an assertion: it makes the whole proposal
+        # unreadable and every test in this file fails as
+        # "unsubscribe Consumer proposal is invalid".
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
     }
 
 
@@ -874,6 +881,59 @@ def test_two_step_terminal_snapshot_accepts_complete_audited_lineage(
 
     assert snapshot is not None
     assert snapshot["receipt"]["receipt_id"] == terminal["receipt_id"]
+
+
+def test_terminal_snapshot_survives_a_rerun_of_the_task(tmp_path: Path) -> None:
+    """A finished receipt is the one thing a rerun must still be able to read.
+
+    Rerunning a task rotates reply_tasks.execution_generation, while the Audit
+    run that earned the receipt and its effect rows keep the generation they
+    were written in. Requiring those equal made the delivery ledger unreadable
+    exactly when it was needed, and the audit reported EmailPersistenceCorruption
+    on its own idempotency record. Tasks 383232 and 383234 stranded this way with
+    real skipped_login_required receipts.
+    """
+    fixture = _make_fixture(tmp_path)
+    _action, _first_audit, _second_consumer, _second_audit, terminal = (
+        _complete_two_step_terminal(fixture)
+    )
+    claim = fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)
+    assert claim is not None
+    rotated = fixture.task_store.rotate_reply_task_execution_generation(
+        fixture.task.id
+    )
+
+    snapshot = fixture.email_store.get_email_unsubscribe_terminal_snapshot(
+        ACTION_IDENTITY,
+        claim["effect_digest"],
+        task_id=fixture.task.id,
+        task_execution_generation=rotated,
+    )
+
+    assert snapshot is not None
+    assert snapshot["receipt"]["receipt_id"] == terminal["receipt_id"]
+
+
+def test_terminal_snapshot_still_refuses_a_caller_from_a_stale_generation(
+    tmp_path: Path,
+) -> None:
+    """The caller must be the task's current generation; the receipt need not be."""
+    fixture = _make_fixture(tmp_path)
+    _action, _first_audit, _second_consumer, _second_audit, _terminal = (
+        _complete_two_step_terminal(fixture)
+    )
+    claim = fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)
+    assert claim is not None
+    superseded = fixture.task.execution_generation
+    fixture.task_store.rotate_reply_task_execution_generation(fixture.task.id)
+
+    with pytest.raises(EmailPersistenceCorruption):
+        fixture.email_store.get_email_unsubscribe_terminal_snapshot(
+            ACTION_IDENTITY,
+            claim["effect_digest"],
+            task_id=fixture.task.id,
+            task_execution_generation=superseded,
+        )
 
 
 def test_first_audit_call_reconciles_executor_persisted_long_terminal_result(
@@ -1828,7 +1888,7 @@ def test_the_camel_case_result_spelling_projects_the_same_state():
 
     assert audited_unsubscribe_skip_receipt(SimpleNamespace(tool_events=[event])) == (
         UnsubscribeOutcome.SKIPPED_CAPTCHA,
-        AuditedUnsubscribeTerminalState.HANDOFF,
+        AuditedUnsubscribeTerminalState.NO_ACTION,
     )
 
 
