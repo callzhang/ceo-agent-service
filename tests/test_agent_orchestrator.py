@@ -84,6 +84,10 @@ def _consumer_result(outcome: str, label: str = "candidate") -> ConsumerAgentRes
                 "retryable": False,
                 "authorization_required": False,
             },
+            "risk": "high" if outcome == "needs_human" else "low",
+            "confidence": 0.1 if outcome == "needs_human" else 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 
@@ -110,6 +114,8 @@ def _bounded_needs_human_result() -> ConsumerAgentResult:
             ],
             "risk": "high",
             "confidence": 0.1,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "error": {
                 "code": "management_decision_required",
                 "retryable": False,
@@ -171,22 +177,36 @@ def _audit_result(
                 "retryable": retryable,
                 "authorization_required": authorization_required,
             },
+            "risk": "high" if outcome == "needs_human" else "low",
+            "confidence": 0.1 if outcome == "needs_human" else 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 
 
 def test_legacy_stored_results_are_hydrated_with_explicit_quality_defaults():
-    legacy_consumer = type("Run", (), {
-        "final_result_json": json.dumps({
-            "outcome": "no_action",
-            "summary": "legacy",
-            "proposal": None,
-            "decision_options": [],
-            "error": {"code": "", "retryable": False, "authorization_required": False},
-            "risk": "medium",
-            "confidence": 0.4,
-        })
-    })()
+    legacy_consumer = type(
+        "Run",
+        (),
+        {
+            "final_result_json": json.dumps(
+                {
+                    "outcome": "no_action",
+                    "summary": "legacy",
+                    "proposal": None,
+                    "decision_options": [],
+                    "error": {
+                        "code": "",
+                        "retryable": False,
+                        "authorization_required": False,
+                    },
+                    "risk": "medium",
+                    "confidence": 0.4,
+                }
+            )
+        },
+    )()
     from app.agent_orchestrator import _consumer_result
 
     result = _consumer_result(legacy_consumer)
@@ -1004,6 +1024,10 @@ def test_provider_capacity_failure_defers_without_in_process_retries(store):
                 "outcome": "failed",
                 "summary": "Codex provider capacity is temporarily unavailable.",
                 "proposal": None,
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
                 "error": {
                     "code": "codex_provider_unavailable",
                     "retryable": True,
@@ -1037,6 +1061,10 @@ def test_provider_capacity_failure_retries_on_later_task_attempt(store):
                 "outcome": "failed",
                 "summary": "Codex provider capacity is temporarily unavailable.",
                 "proposal": None,
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
                 "error": {
                     "code": "codex_provider_unavailable",
                     "retryable": True,
@@ -1122,9 +1150,7 @@ def test_audit_provider_capacity_failure_retries_on_later_task_attempt(store):
     assert second.status == "executed"
     assert len(audit.calls) == 2
     assert audit.calls[0]["run_id"] != audit.calls[1]["run_id"]
-    runs = store.list_agent_runs_for_task_generation(
-        task.id, task.execution_generation
-    )
+    runs = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
     audit_runs = [run for run in runs if run.role is AgentRole.AUDIT]
     assert [run.turn_attempt for run in audit_runs] == [0, 1]
     assert [run.status for run in audit_runs] == ["failed", "completed"]
@@ -1245,7 +1271,9 @@ def test_canonical_audit_feedback_provided_regenerates_consumer_reply(store):
         _audit_result("executed", 1),
     )
 
-    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
+    result = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
+    )
 
     assert result.status == "executed"
     assert [call["revision"] for call in consumer.calls] == [0, 1]
@@ -1697,7 +1725,7 @@ def test_domain_continuations_do_not_consume_content_feedback_cycles(store):
     ]
 
 
-def test_real_feedback_exhaustion_fails_after_domain_continuation(store):
+def test_real_feedback_exhaustion_surfaces_human_choice_after_domain_continuation(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -1727,10 +1755,10 @@ def test_real_feedback_exhaustion_fails_after_domain_continuation(store):
         refresh_context=lambda: _domain_context(task),
     )
 
-    assert result.status == "failed_terminal"
+    assert result.status == "needs_human"
     assert result.feedback_cycles == 3
     assert result.error.code == "audit_revision_exhausted"
-    assert result.feedback is None
+    assert result.feedback is not None
     assert orchestrator._feedback_cycles(task) == 4
 
 
@@ -1772,8 +1800,9 @@ def test_restart_rejects_consumer_materialized_after_feedback_quota_exhaustion(s
     recovered = orchestrator._derive_state(task)
 
     assert isinstance(recovered, OrchestrationResult)
-    assert recovered.status == "failed_terminal"
+    assert recovered.status == "needs_human"
     assert recovered.error.code == "audit_revision_exhausted"
+    assert recovered.feedback is not None
 
 
 def test_restart_rejects_orphan_consumer_when_continuation_disappears(store):
@@ -2168,7 +2197,7 @@ def _three_step_email_chain(store, *, terminal: bool = False):
                     f"unsubscribe-step-{revision}",
                 ).proposal,
                 audit_rules="",
-                ),
+            ),
             turn_attempt=0,
             parent_agent_run_id=consumer.calls[revision]["run_id"],
         )
@@ -2227,7 +2256,7 @@ def _many_step_email_chain(store, revisions: int):
                     f"unsubscribe-step-{revision}",
                 ).proposal,
                 audit_rules="",
-                ),
+            ),
             turn_attempt=0,
             parent_agent_run_id=consumer.calls[revision]["run_id"],
         )
@@ -2332,9 +2361,7 @@ def test_three_step_history_proves_consumed_parents_after_current_fence_advances
     ),
 )
 def test_historical_consumption_rejects_broken_effect_lineage(store, mutation):
-    task, email_state, orchestrator, _audit, digests = _three_step_email_chain(
-        store
-    )
+    task, email_state, orchestrator, _audit, digests = _three_step_email_chain(store)
     if mutation == "missing_historical_effect":
         del email_state.effects[digests[1]]
     elif mutation == "missing_parent_effect":
@@ -2374,9 +2401,7 @@ def test_historical_consumption_rejects_broken_effect_lineage(store, mutation):
 
 
 def test_historical_effect_store_error_is_retryable(store):
-    task, email_state, orchestrator, _audit, digests = _three_step_email_chain(
-        store
-    )
+    task, email_state, orchestrator, _audit, digests = _three_step_email_chain(store)
     email_state.unavailable_effect_digest = digests[1]
 
     recovered = orchestrator._derive_state(task)
@@ -2596,7 +2621,7 @@ def test_newer_context_stale_candidate_is_revised_without_write(store):
     assert audit_run is not None and audit_run.status == "completed"
 
 
-def test_fourth_revision_request_is_failed_without_a_valid_human_decision(store):
+def test_fourth_revision_request_surfaces_last_feedback_as_human_choice(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -2617,12 +2642,20 @@ def test_fourth_revision_request_is_failed_without_a_valid_human_decision(store)
         AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
     )
 
-    assert result.status == "failed_terminal"
+    assert result.status == "needs_human"
     assert result.feedback_cycles == 3
     assert result.error.code == "audit_revision_exhausted"
     assert result.audit_result is not None
-    assert result.audit_result.outcome is AuditOutcome.FAILED
-    assert result.feedback is None
+    assert result.audit_result.outcome is AuditOutcome.NEEDS_HUMAN
+    assert result.feedback is not None
+    assert (
+        result.feedback.requested_revision
+        == "Return a complete replacement proposal."
+    )
+    assert [option.key for option in result.audit_result.decision_options] == [
+        "apply_audit_revision",
+        "stop_without_action",
+    ]
     latest_audit = max(
         (
             run
@@ -2860,6 +2893,10 @@ def test_retryable_consumer_exhaustion_terminalizes_latest_run(store):
             "outcome": "failed",
             "summary": "Consumer dependency unavailable.",
             "proposal": None,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "error": {
                 "code": "consumer_unavailable",
                 "retryable": True,
@@ -2894,6 +2931,10 @@ def test_retryable_consumer_exhaustion_preserves_live_okr_read_error(store):
             "outcome": "failed",
             "summary": "Live OKR source unavailable.",
             "proposal": None,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "error": {
                 "code": "live_okr_and_supporting_evidence_unavailable",
                 "retryable": True,
@@ -2926,6 +2967,10 @@ def test_recovered_failed_consumer_task_reclaims_same_run(store):
             "outcome": "failed",
             "summary": "Consumer runtime failed.",
             "proposal": None,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "error": {
                 "code": "codex_process_failed",
                 "retryable": True,
@@ -3190,7 +3235,15 @@ def test_provider_outage_poll_leaves_no_run_behind(store):
             self.owner = "outage-consumer"
             self.calls = 0
 
-        def run(self, task, context, *, proposal_revision, parent_agent_run_id, feedback=None):
+        def run(
+            self,
+            task,
+            context,
+            *,
+            proposal_revision,
+            parent_agent_run_id,
+            feedback=None,
+        ):
             self.calls += 1
             claim = self.store.claim_agent_run(
                 task.id,
@@ -3209,12 +3262,16 @@ def test_provider_outage_poll_leaves_no_run_behind(store):
             )
             assert claim.claimed
             # Mirrors AgentTurnProcess: every route paused/unprobed -> discard.
-            assert self.store.discard_unstarted_agent_run(claim.run.id, owner=self.owner)
+            assert self.store.discard_unstarted_agent_run(
+                claim.run.id, owner=self.owner
+            )
             raise RuntimeError("runtime_provider_unreachable")
 
     task = _task(store)
     consumer = OutageConsumer(store)
-    orchestrator = AgentOrchestrator(store=store, consumer=consumer, audit=ScriptedAudit(store))
+    orchestrator = AgentOrchestrator(
+        store=store, consumer=consumer, audit=ScriptedAudit(store)
+    )
 
     result = _process(orchestrator, task)
 
@@ -3222,10 +3279,16 @@ def test_provider_outage_poll_leaves_no_run_behind(store):
     assert result.error.code == "runtime_provider_unreachable"
     assert result.final_run_id == 0
     assert consumer.calls == 1
-    assert store.list_agent_runs_for_task_generation(task.id, task.execution_generation) == []
+    assert (
+        store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+        == []
+    )
     assert (
         store.next_agent_run_turn_attempt(
-            task.id, task.execution_generation, role=AgentRole.CONSUMER, proposal_revision=0
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
         )
         == 0
     )

@@ -849,7 +849,8 @@ run 才能被持久队列恢复。
   turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的结果/进程/依赖/原生写入失败时编排结果进入
   `failed_terminal`，任务在本 pass 结束为 `failed` 并保留最后一个 run 的真实错误码，不再回到 `pending` 让下一个
   pass 重进同一 generation（否则定时任务消费者和 active-recovery 路径会无限增加 `turn_attempt`）。
-  中断/授权/延期类错误码不计入该上限，按退避延期。
+  内容反馈轮次耗尽但最后一次 Audit 仍有具体修改意见时，编排结果进入 `needs_human` 并提供“按审计意见修订”或
+  “停止不执行”，不能丢掉这条意见后投影为 opaque failed。中断/授权/延期类错误码不计入该上限，按退避延期。
 - **进入最后一条可用路由后才发现的故障**：该路由以 capacity/transport 失败且其余路由均已暂停时，与
   `runtime_unavailable` 同等处理：工作项和钉钉回复任务以 `runtime_provider_unreachable` 退避延期、attempts 归还、
   不写 per-item Service error（判定由 `app.worker._is_runtime_outage_error` 统一提供）；认证、结果、进程类失败仍有界。

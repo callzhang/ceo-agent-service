@@ -1280,6 +1280,53 @@ class AgentOrchestrator:
         )
 
     def _feedback_exhausted(self, run: AgentRun) -> OrchestrationResult:
+        feedback = None
+        try:
+            feedback = _audit_result(run).feedback
+        except (ResultParseError, ValueError):
+            pass
+        if feedback is not None:
+            error = AgentError(
+                code="audit_revision_exhausted",
+                retryable=False,
+                authorization_required=True,
+            )
+            exhausted = AuditAgentResult(
+                outcome=AuditOutcome.NEEDS_HUMAN,
+                summary=error.code,
+                proposal_revision=run.proposal_revision,
+                feedback=None,
+                external_result=None,
+                decision_options=(
+                    DecisionOption(
+                        key="apply_audit_revision",
+                        label="按审计意见修订",
+                        instruction=feedback.requested_revision,
+                        consequence="重新生成回复并再次审计。",
+                    ),
+                    DecisionOption(
+                        key="stop_without_action",
+                        label="停止不执行",
+                        instruction="停止当前任务，不发送消息也不执行外部动作。",
+                        consequence="保留审计反馈，任务结束为需要人工判断。",
+                    ),
+                ),
+                risk="high",
+                confidence=0.0,
+                rule_coverage=1.0,
+                information_completeness=1.0,
+                error=error,
+            )
+            return OrchestrationResult(
+                status="needs_human",
+                final_run_id=run.id,
+                final_role=AgentRole.AUDIT,
+                summary=exhausted.summary,
+                error=exhausted.error,
+                feedback_cycles=MAX_CONTENT_FEEDBACK_CYCLES,
+                feedback=feedback,
+                audit_result=exhausted,
+            )
         exhausted = _failed_audit_result(
             run,
             AuditOutcome.FAILED,
