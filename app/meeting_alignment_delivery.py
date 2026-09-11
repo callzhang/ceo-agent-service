@@ -363,7 +363,7 @@ def _direct_target_organizer(
             "business direct fallback must target the meeting organizer"
         )
     if direct_user_id:
-        if target.direct_user_id != direct_user_id:
+        if target.direct_user_id and target.direct_user_id != direct_user_id:
             raise MeetingDeliveryError(
                 "business direct fallback must use the meeting organizer user id"
             )

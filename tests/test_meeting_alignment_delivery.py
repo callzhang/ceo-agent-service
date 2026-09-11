@@ -481,6 +481,31 @@ def test_business_direct_delivery_sends_to_stable_meeting_organizer():
     assert dws.search_queries == []
 
 
+def test_business_direct_delivery_resolves_empty_organizer_id_by_exact_profile():
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    payload["target"]["direct_user_id"] = ""
+    dws = FakeDws()
+    dws.profiles["A"] = [
+        DwsUserProfile(user_id="u-a", name="A", open_dingtalk_id="open-a")
+    ]
+    source_payload = meeting_source().model_dump(mode="json")
+    source_payload["creator"].update(user_id="", open_dingtalk_id="")
+
+    result = deliver_meeting_alignment(
+        MeetingAlignmentDecision.model_validate(payload),
+        MeetingSource.model_validate(source_payload),
+        dws,
+    )
+
+    assert result.status == "sent"
+    assert result.target_kind == "direct"
+    assert result.target_id == "u-a"
+    assert result.target_title == "A"
+    assert dws.sent[0]["user_id"] == "u-a"
+    assert dws.search_queries == ["A"]
+
+
 def test_personal_direct_delivery_rejects_incomplete_transcript_roster():
     source_payload = meeting_source(one_to_one=True).model_dump()
     source_payload["attendee_evidence"] = "transcript"
