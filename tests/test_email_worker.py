@@ -4601,6 +4601,11 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
             },
             "risk": "low",
             "confidence": 1.0,
+            # Required on ConsumerAgentResult since 310234e8; the Audit binding
+            # re-reads this persisted result, so omitting them makes the whole
+            # proposal unreadable rather than just skipping an assertion.
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         },
         owner="consumer-owner",
     )

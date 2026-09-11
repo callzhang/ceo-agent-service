@@ -186,6 +186,10 @@ def _audit_result(outcome: str = "executed") -> AuditAgentResult:
             "feedback": None,
             "external_result": external_result,
             "error": {"code": error_code, "retryable": False},
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 

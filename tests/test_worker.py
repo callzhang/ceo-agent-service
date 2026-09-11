@@ -343,6 +343,10 @@ class FakeAgentOrchestrator:
             audit_result = AuditAgentResult.model_validate(
                 {
                     "outcome": "executed",
+                    "risk": "low",
+                    "confidence": 1.0,
+                    "rule_coverage": 1.0,
+                    "information_completeness": 1.0,
                     "summary": result.summary,
                     "proposal_revision": 0,
                     "feedback": None,
@@ -392,6 +396,10 @@ def test_sent_reply_projection_accepts_flat_send_receipt_and_proposal_text():
     audit_result = AuditAgentResult.model_validate(
         {
             "outcome": "executed",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "sent",
             "proposal_revision": 0,
             "feedback": None,
@@ -415,6 +423,10 @@ def test_sent_reply_projection_accepts_flat_send_receipt_and_proposal_text():
     consumer_result = ConsumerAgentResult.model_validate(
         {
             "outcome": "proposal",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "send",
             "proposal": {
                 "objective": "send",
@@ -464,6 +476,10 @@ def test_sent_reply_projection_accepts_stable_message_id_without_send_status():
     audit_result = AuditAgentResult.model_validate(
         {
             "outcome": "executed",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "sent",
             "proposal_revision": 0,
             "feedback": None,
@@ -487,6 +503,10 @@ def test_sent_reply_projection_accepts_stable_message_id_without_send_status():
     consumer_result = ConsumerAgentResult.model_validate(
         {
             "outcome": "proposal",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "send",
             "proposal": {
                 "objective": "send",
@@ -535,6 +555,10 @@ def test_sent_reply_projection_accepts_reply_action_text():
     audit_result = AuditAgentResult.model_validate(
         {
             "outcome": "executed", "summary": "sent", "proposal_revision": 0,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "feedback": None,
             "external_result": {"operation_id": "op-1",
                 "live_result_reference": {
@@ -549,6 +573,10 @@ def test_sent_reply_projection_accepts_reply_action_text():
     consumer_result = ConsumerAgentResult.model_validate(
         {
             "outcome": "proposal", "summary": "reply",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
                 "proposal": {"objective": "reply", "actions": [{
                     "description": "reply", "capability": "dingtalk-chat",
                     "action_identity": "reply-to-message",
@@ -592,6 +620,10 @@ def test_completed_message_delivery_projection_repair_is_idempotent(tmp_path: Pa
     consumer_result = ConsumerAgentResult.model_validate(
         {
             "outcome": "proposal", "summary": "send",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "proposal": {
                 "objective": "send", "actions": [{
                     "description": "send", "action_identity": "send-result",
@@ -621,6 +653,10 @@ def test_completed_message_delivery_projection_repair_is_idempotent(tmp_path: Pa
     audit_result = AuditAgentResult.model_validate(
         {
             "outcome": "executed", "summary": "sent", "proposal_revision": 0,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "feedback": None,
             "external_result": {
                 "operation_id": "provider-1",

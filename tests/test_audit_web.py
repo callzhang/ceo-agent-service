@@ -169,7 +169,14 @@ def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
         )
         terminal_run = store.complete_agent_run(
             audit.id,
-            {"outcome": "executed", "summary": f"audit {revision}"},
+            {
+                "outcome": "executed",
+                "summary": f"audit {revision}",
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
+            },
             owner=f"audit-{revision}",
         )
         parent_id = terminal_run.id
@@ -323,6 +330,10 @@ def _seed_confirmed_approval_attempt(
         consumer.id,
         {
             "outcome": "proposal",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "Approve the confirmed budget.",
             "proposal": {
                 "objective": "Approve the confirmed budget.",
@@ -374,6 +385,10 @@ def _seed_confirmed_approval_attempt(
         audit.id,
         {
             "outcome": "executed",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "Approval execution was confirmed.",
             "proposal_revision": 0,
             "feedback": None,
@@ -881,6 +896,10 @@ def test_history_neutral_approval_results_use_steel_text_contrast(tmp_path: Path
         consumer.id,
         {
             "outcome": "no_action",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "The approval was already complete.",
             "proposal": None,
             "decision_options": [],
@@ -6316,6 +6335,10 @@ def test_pending_reconciliation_names_objective_and_actions():
         final_result_json=json.dumps(
             {
                 "outcome": "proposal",
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
                 "summary": "准备处理审批",
                 "proposal": {
                     "objective": "处理招聘需求审批",
@@ -6975,6 +6998,10 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
         claimed.run.id,
         {
             "outcome": "needs_human",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "A management choice is required.",
             "proposal": None,
             "decision_options": [
@@ -9708,6 +9735,10 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
             "final_result_json": json.dumps(
                 {
                     "outcome": "needs_human",
+                    "risk": "low",
+                    "confidence": 1.0,
+                    "rule_coverage": 1.0,
+                    "information_completeness": 1.0,
                     "summary": "需要管理判断。",
                     "proposal": None,
                     "decision_options": [
@@ -9827,6 +9858,10 @@ def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
             "final_result_json": json.dumps(
                 {
                     "outcome": "needs_human",
+                    "risk": "low",
+                    "confidence": 1.0,
+                    "rule_coverage": 1.0,
+                    "information_completeness": 1.0,
                     "summary": "实时状态与此前回执冲突，需要管理判断。",
                     "proposal_revision": 0,
                     "feedback": None,
