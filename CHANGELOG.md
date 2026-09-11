@@ -1,5 +1,15 @@
 # Changelog
 
+- 2026-09-11: an expired Claude CLI login is classified as
+  `claude_login_required` instead of `claude_runtime_unclassified`. The provider
+  reports it in its terminal result (`is_error: true` while the subtype is still
+  `success`) rather than on stderr, so neither the stderr scan nor
+  `_trusted_error_subtypes` saw it. The route therefore stayed unpaused and spent
+  another CLI invocation every probe cycle on a credential the service cannot
+  repair, and the stored snapshot kept no trace of the one remedy that works.
+  Only a result the provider itself marked an error is read, and the detail names
+  the remedy rather than echoing provider text.
+
 - 2026-09-11: the service checkout moves to `/Users/derek/Projects/ceo-agent-service`.
   `~/Documents` and `~/Desktop` are synced by iCloud Drive, which races with Git's
   rewrites of `.git/index` and `.git/refs`: it produced `name 2` conflict copies

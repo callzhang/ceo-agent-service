@@ -347,7 +347,29 @@ class ClaudeRuntimeAdapter:
             )
             return _transport_failure(code)
         structured_subtypes = _trusted_error_subtypes(stdout)
-        failure_text = stderr[:16384].casefold()
+        # The provider reports an expired login in its terminal result rather
+        # than on stderr, so both surfaces are scanned.
+        failure_text = (
+            stderr[:16384] + "\n" + _trusted_error_result_text(stdout)[:4096]
+        ).casefold()
+        if any(
+            marker in failure_text
+            for marker in (
+                "oauth session expired",
+                "not logged in",
+                "please run /login",
+            )
+        ):
+            return RuntimeFailure(
+                failure_class=RuntimeFailureClass.AUTHENTICATION,
+                code="claude_login_required",
+                detail=(
+                    "The Claude CLI login has expired; run `claude /login` to "
+                    "restore this route."
+                ),
+                failover_permitted=True,
+                route_pause_required=True,
+            )
         if any(
             marker in failure_text
             for marker in (
@@ -746,6 +768,29 @@ def _validated_success_result(event: dict[str, object]) -> str:
     ):
         raise ClaudeRuntimeResultError(_result_failure("claude_result_incomplete"))
     return event["result"]
+
+
+def _trusted_error_result_text(stdout: str) -> str:
+    """The provider's own message when it marked its terminal result an error.
+
+    An expired CLI login arrives this way rather than on stderr: the result
+    event carries `is_error: true` while its subtype is still `success`, so
+    neither the stderr scan nor `_trusted_error_subtypes` sees it, and an
+    actionable configuration failure was filed as unclassified.
+    """
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, ValueError, RecursionError):
+            continue
+        if (
+            isinstance(event, dict)
+            and event.get("type") == "result"
+            and event.get("is_error") is True
+            and isinstance(event.get("result"), str)
+        ):
+            return str(event["result"])
+    return ""
 
 
 def _trusted_error_subtypes(stdout: str) -> frozenset[str]:

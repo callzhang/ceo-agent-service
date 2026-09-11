@@ -1165,3 +1165,58 @@ def test_unknown_system_subtype_is_still_a_grammar_violation(normalizer):
                 "session_id": "claude-session-1",
             }
         )
+
+
+def test_expired_cli_login_is_an_actionable_authentication_failure(adapter):
+    """The provider reports it in the terminal result, not on stderr.
+
+    Filing it as unclassified left the route unpaused, so every probe cycle
+    spent another CLI invocation on a credential the service cannot repair,
+    and the snapshot kept no trace of the one remedy that works.
+    """
+    stdout = json.dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "result": "Failed to authenticate: OAuth session expired and could not be refreshed",
+            "session_id": "claude-session-1",
+        }
+    )
+
+    failure = adapter.classify_failure(stdout, "", 1)
+
+    assert failure.failure_class is RuntimeFailureClass.AUTHENTICATION
+    assert failure.code == "claude_login_required"
+    assert "claude /login" in failure.detail
+    assert failure.route_pause_required is True
+    assert failure.failover_permitted is True
+
+
+def test_not_logged_in_result_is_classified_the_same_way(adapter):
+    stdout = json.dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "result": "Not logged in · Please run /login",
+        }
+    )
+
+    assert adapter.classify_failure(stdout, "", 1).code == "claude_login_required"
+
+
+def test_a_successful_result_is_never_read_for_failure_markers(adapter):
+    """Only a result the provider itself marked an error may be scanned."""
+    stdout = json.dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "the user asked about being not logged in",
+        }
+    )
+
+    failure = adapter.classify_failure(stdout, "", 1)
+
+    assert failure.code == "claude_runtime_unclassified"
