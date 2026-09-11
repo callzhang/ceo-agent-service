@@ -1359,6 +1359,48 @@ def _route_refusal_count(task_error: str) -> int:
         return 0
 
 
+def _recover_orphaned_unsubscribe_claims(email_store: object, task_store: object) -> int:
+    """Move browser claims off a dead Audit run so the action can be retried.
+
+    A claim is taken by one Audit run and released by that same run's owner
+    fence. If the run dies first, nothing releases it: a later run fails the
+    fence and every attempt on that action conflicts forever. The store has
+    had recover_terminated_email_unsubscribe_claims for exactly this and
+    nothing called it, so eighteen claims sat stuck on 2026-09-11, each owned
+    by an Audit run that had already failed.
+
+    The claim becomes `uncertain` rather than disappearing, because the browser
+    may have acted before the run died. That is the state a reviewed retry
+    reads, and it keeps the decision about repeating a browser write with a
+    person instead of making it here.
+    """
+    recovered = 0
+    try:
+        orphans = email_store.list_orphaned_email_unsubscribe_claim_owners()
+    except Exception:  # noqa: BLE001 - recovery must not take the loop down
+        _LOGGER.warning("could not list orphaned unsubscribe claims", exc_info=True)
+        return 0
+    for orphan in orphans:
+        owner = orphan["owner"]
+        try:
+            recovered += email_store.recover_terminated_email_unsubscribe_claims(
+                owner=owner,
+                # The run that owns the claim has already reached a terminal
+                # status; that is the termination this fence needs proven.
+                termination_verifier=lambda _owner: True,
+                recovered_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            )
+        except Exception:  # noqa: BLE001 - isolate one claim from the rest
+            _LOGGER.warning(
+                "could not recover unsubscribe claim owned by %s",
+                owner.get("owner_id"),
+                exc_info=True,
+            )
+    if recovered:
+        _LOGGER.info("recovered %s orphaned unsubscribe claims", recovered)
+    return recovered
+
+
 def _handle_unresolvable_unsubscribe_selection(
     task_store: object,
     task: object,
@@ -1466,6 +1508,7 @@ def run_email_agent_task_loop(
     component_ready: Callable[[str], object] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     max_cycles: int | None = None,
+    email_store: object | None = None,
 ) -> None:
     from app.email_unsubscribe import UnsubscribeSelectionUnresolvable
 
@@ -1475,6 +1518,8 @@ def run_email_agent_task_loop(
         last_error_type = ""
         try:
             _recover_stale_email_tasks(task_store)
+            if email_store is not None:
+                _recover_orphaned_unsubscribe_claims(email_store, task_store)
             # Tasks run one at a time in this loop, so a large claim only
             # lengthens how long the tail stays locked and how many tasks a
             # restart orphans.
@@ -1828,6 +1873,10 @@ def email_worker_components(
                 finalize_task=dependencies.finalize_task,
                 record_health=dependencies.record_health,
                 component_ready=component_ready,
+                # Lets the recovery pass release browser claims whose owning
+                # Audit run died; without it those claims block their action
+                # for good.
+                email_store=getattr(dependencies, "email_store", None),
             ),
         ),
         (

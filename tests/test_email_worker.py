@@ -8824,3 +8824,58 @@ def test_email_agent_consumer_leaves_superseded_task_to_its_new_generation():
     )
 
     assert calls == []
+
+
+def test_recovery_releases_a_claim_whose_audit_run_died():
+    """Nothing released these, so the action was blocked for good.
+
+    A browser claim is taken by one Audit run and released by that same run's
+    owner fence. When the run dies first, a later run fails the fence and every
+    attempt on that action conflicts. The store has had the recovery method for
+    exactly this and nothing called it: 18 claims sat stuck on 2026-09-11, each
+    owned by an Audit run that had already failed.
+    """
+    module = _module()
+    calls = []
+
+    class EmailStore:
+        def list_orphaned_email_unsubscribe_claim_owners(self):
+            return [
+                {
+                    "action_identity": "email-action:abc",
+                    "effect_digest": "d" * 64,
+                    "owner": {
+                        "owner_id": "email-unsubscribe-audit:18736",
+                        "generation": 1,
+                        "lease_token": "unsubscribe-audit-lease:t",
+                    },
+                }
+            ]
+
+        def recover_terminated_email_unsubscribe_claims(
+            self, *, owner, termination_verifier, recovered_at
+        ):
+            calls.append((owner, termination_verifier(owner), recovered_at))
+            return 1
+
+    recovered = module._recover_orphaned_unsubscribe_claims(EmailStore(), object())
+
+    assert recovered == 1
+    assert len(calls) == 1
+    owner, terminated, recovered_at = calls[0]
+    assert owner["owner_id"] == "email-unsubscribe-audit:18736"
+    # The run that owns the claim is already terminal; that is the termination
+    # this fence needs proven, and it is read from the run, not a lease clock.
+    assert terminated is True
+    assert recovered_at
+
+
+def test_claim_recovery_never_takes_the_consumer_loop_down():
+    """Recovery runs beside the queue; a store that errors must not stop it."""
+    module = _module()
+
+    class Broken:
+        def list_orphaned_email_unsubscribe_claim_owners(self):
+            raise RuntimeError("store unavailable")
+
+    assert module._recover_orphaned_unsubscribe_claims(Broken(), object()) == 0

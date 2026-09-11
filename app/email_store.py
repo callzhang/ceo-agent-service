@@ -10420,6 +10420,48 @@ class EmailStore:
             "created_at": row["created_at"],
         }
 
+    def list_orphaned_email_unsubscribe_claim_owners(
+        self,
+    ) -> list[dict[str, object]]:
+        """Owners of dispatching claims whose Audit run is no longer alive.
+
+        A browser claim is taken by one Audit run and released by that same
+        run's owner fence. When the run dies before releasing it, nothing can:
+        a later run fails the fence, and the identity conflicts forever, so the
+        task can never be retried. Eighteen claims sat in this state on
+        2026-09-11, every one owned by an Audit run that had already failed.
+
+        Liveness is read from the run itself rather than from a lease clock,
+        because the claim's owner id names the run and the run's terminal
+        status is the fact that matters.
+        """
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select claims.action_identity, claims.effect_digest,
+                       claims.owner_id, claims.owner_generation,
+                       claims.lease_token, runs.status as run_status
+                from email_unsubscribe_claims as claims
+                join agent_runs as runs
+                  on runs.id=claims.audit_agent_run_id
+                where claims.status='dispatching'
+                  and runs.status in ('failed', 'completed')
+                order by claims.action_identity
+                """
+            ).fetchall()
+        return [
+            {
+                "action_identity": row["action_identity"],
+                "effect_digest": row["effect_digest"],
+                "owner": {
+                    "owner_id": row["owner_id"],
+                    "generation": row["owner_generation"],
+                    "lease_token": row["lease_token"],
+                },
+            }
+            for row in rows
+        ]
+
     def recover_terminated_email_unsubscribe_claims(
         self,
         *,
