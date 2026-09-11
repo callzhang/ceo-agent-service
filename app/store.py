@@ -15616,6 +15616,54 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def close_failed_reply_task_already_settled(
+        self,
+        task_id: int,
+        *,
+        settled_evidence: str,
+    ) -> bool:
+        """Close a failed task whose business object already reached its end state.
+
+        A task can fail because the work it proposed had already been done, by
+        the principal directly or by an earlier run. The turn reads live state,
+        finds nothing left to do, and still has to report something; with no
+        way to say "already settled" it reports a failure. Rerunning cannot
+        help and, on an approval, risks repeating a decision nobody asked to
+        repeat.
+
+        This is the one closure not derived from anything the service itself
+        did, so the live evidence that settles it is required and is written
+        beside the task rather than left in an operator's console.
+        """
+        evidence = settled_evidence.strip()
+        if not evidence:
+            raise ValueError("settled evidence must be non-empty")
+        with self._immediate_write_transaction() as db:
+            task = db.execute(
+                "select conversation_id, trigger_message_id from reply_tasks "
+                "where id=? and status='failed'",
+                (task_id,),
+            ).fetchone()
+            if task is None:
+                return False
+            db.execute(
+                "insert into errors (conversation_id, message_id, kind, detail) "
+                "values (?, ?, ?, ?)",
+                (
+                    task["conversation_id"],
+                    task["trigger_message_id"],
+                    "reply_task_already_settled",
+                    evidence,
+                ),
+            )
+            cursor = db.execute(
+                "update reply_tasks set status='done', error='', available_at='', "
+                "locked_at=null, updated_at=current_timestamp "
+                "where id=? and status='failed'",
+                (task_id,),
+            )
+            return cursor.rowcount == 1
+
     def list_completed_audit_runs_missing_delivery_projection(
         self,
         *,

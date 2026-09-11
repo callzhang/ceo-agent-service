@@ -257,6 +257,39 @@ def test_failed_task_closes_once_its_delivery_is_in_the_ledger(tmp_path: Path) -
     assert reloaded.error == ""
 
 
+def test_already_settled_task_closes_and_keeps_the_evidence(tmp_path: Path) -> None:
+    """Nothing is left to do, and rerunning would repeat someone's decision."""
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task, _ = _failed_task_with_completed_consumer(store)
+
+    assert store.close_failed_reply_task_already_settled(
+        task.id,
+        settled_evidence="dws oa approval detail: taskStatus COMPLETED, result AGREE",
+    )
+
+    reloaded = store.get_reply_task(task.id)
+    assert reloaded is not None
+    assert reloaded.status == "done"
+    with store._connect() as db:
+        row = db.execute(
+            "select kind, detail from errors where kind='reply_task_already_settled'"
+        ).fetchone()
+    assert row is not None
+    assert "taskStatus COMPLETED" in row["detail"]
+
+
+def test_already_settled_close_requires_the_evidence(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task, _ = _failed_task_with_completed_consumer(store)
+
+    with pytest.raises(ValueError, match="settled evidence"):
+        store.close_failed_reply_task_already_settled(task.id, settled_evidence="  ")
+
+    reloaded = store.get_reply_task(task.id)
+    assert reloaded is not None
+    assert reloaded.status == "failed"
+
+
 def test_failed_task_stays_failed_when_no_delivery_was_recorded(tmp_path: Path) -> None:
     """The close is only ever a consequence of the ledger, never a shortcut."""
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
