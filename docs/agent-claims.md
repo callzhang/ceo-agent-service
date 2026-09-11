@@ -29,6 +29,7 @@ reverts committed work they did not author.
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
 | Codex session `attention-reconciliation` | `app/audit_web.py`, `tests/test_console_web_api.py` | show every unresolved service error in Attention while keeping the four-hour window only in system health | 2026-09-11 |
+| Codex session `consumer-email-minutes-repair` | `app/email_worker.py`, `tests/test_email_worker.py`, `app/task_scanners.py`, `tests/test_task_scanners.py`, `app/minutes_sync.py`, `tests/test_minutes_sync.py` | repair technical needs_human projection and stop minute scanners from reporting avoidable pagination failures | 2026-09-11 |
 
 ## Recent overlaps worth knowing
 
