@@ -369,6 +369,27 @@ def _is_codex_provider_recovery_wait_reason(reason: str) -> bool:
     return is_codex_provider_recovery_code(reason)
 
 
+def _delivery_reconstruction_payload(payload: object) -> object:
+    """Fill the coverage fields a delivery rebuild never reads.
+
+    A delivery projection is a fact about what the provider did;
+    `_sent_reply_projection_from_result` reads only `external_result` and the
+    proposal's actions. Requiring the decision-quality judgement in order to
+    rebuild the fact let a contract change silently drop stored results from
+    the repair scan.
+
+    This mirrors the hydration policy in app/quality_gate.py: only the two
+    coverage fields are defaulted, and risk and confidence stay mandatory so an
+    old opaque result cannot acquire a fabricated judgement.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    hydrated = dict(payload)
+    hydrated.setdefault("rule_coverage", 1.0)
+    hydrated.setdefault("information_completeness", 1.0)
+    return hydrated
+
+
 def _is_runtime_outage_error(exc: BaseException) -> bool:
     """Return whether the failure chain says the runtime provider is out.
 
@@ -1904,8 +1925,10 @@ class DingTalkAutoReplyWorker:
             if task is None or consumer_run is None:
                 continue
             try:
-                audit_result = AuditAgentResult.model_validate_json(
-                    audit_run.final_result_json
+                audit_result = AuditAgentResult.model_validate(
+                    _delivery_reconstruction_payload(
+                        json.loads(audit_run.final_result_json)
+                    )
                 )
                 consumer_payload = json.loads(consumer_run.final_result_json)
                 proposal = consumer_payload.get("proposal")
@@ -1921,7 +1944,9 @@ class DingTalkAutoReplyWorker:
                         if "reply_to_message_id" in target:
                             target["message_id"] = target.pop("reply_to_message_id")
                         action["target"] = target
-                consumer_result = ConsumerAgentResult.model_validate(consumer_payload)
+                consumer_result = ConsumerAgentResult.model_validate(
+                    _delivery_reconstruction_payload(consumer_payload)
+                )
             except (ValidationError, json.JSONDecodeError):
                 continue
             result = OrchestrationResult(

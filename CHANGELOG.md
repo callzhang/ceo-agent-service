@@ -1,5 +1,25 @@
 # Changelog
 
+- 2026-09-11: the delivery-projection repair scan no longer requires the
+  decision-quality judgement in order to rebuild a delivery fact.
+  `_repair_completed_message_delivery_projections` validated each stored result
+  against the *current* `AuditAgentResult` / `ConsumerAgentResult` and swallowed
+  the failure with `except ValidationError: continue`, so every contract change
+  silently removed more stored results from the scan - even though
+  `_sent_reply_projection_from_result` reads only `external_result` and the
+  proposal's actions. The two coverage fields are now defaulted at that read
+  boundary, matching the policy already used in `app/quality_gate.py`; risk and
+  confidence stay mandatory so an old opaque result cannot acquire a fabricated
+  judgement.
+
+  Scope, measured rather than assumed: the scan's input is
+  `list_completed_audit_runs_missing_delivery_projection()`, which currently
+  holds **2 rows**, not the 1454 stored audit results. One of the two is
+  repaired by this change; the other additionally carries pre-contract extra
+  fields (`external_result.verification_summary`,
+  `proposal.actions[].expected_verification`) and would need legacy-shape
+  compatibility code, which this repository forbids.
+
 - 2026-09-11: SQLite failures out of the store now name their extended result
   code. `disk I/O error` is the primary code SQLITE_IOERR and says nothing about
   which operation failed; the extended name separates a failing read

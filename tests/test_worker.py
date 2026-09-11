@@ -16193,3 +16193,36 @@ def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monke
         ).id
         == run.id
     )
+
+
+def test_delivery_reconstruction_fills_only_the_coverage_fields():
+    """A delivery rebuild must not acquire a fabricated judgement.
+
+    `_sent_reply_projection_from_result` reads only `external_result` and the
+    proposal's actions, so a stored result that predates the coverage fields
+    should still rebuild. risk and confidence stay mandatory, matching the
+    hydration policy in app/quality_gate.py.
+    """
+    legacy = {"outcome": "executed", "summary": "s", "risk": "low", "confidence": 0.9}
+
+    hydrated = worker_module._delivery_reconstruction_payload(legacy)
+
+    assert hydrated["rule_coverage"] == 1.0
+    assert hydrated["information_completeness"] == 1.0
+    assert hydrated["risk"] == "low" and hydrated["confidence"] == 0.9
+    assert legacy == {
+        "outcome": "executed", "summary": "s", "risk": "low", "confidence": 0.9
+    }, "the stored payload must not be mutated in place"
+
+
+def test_delivery_reconstruction_invents_no_risk_or_confidence():
+    """Defaulting those would let an old opaque result look judged."""
+    hydrated = worker_module._delivery_reconstruction_payload({"outcome": "executed"})
+
+    assert "risk" not in hydrated
+    assert "confidence" not in hydrated
+
+
+def test_delivery_reconstruction_passes_non_objects_through():
+    assert worker_module._delivery_reconstruction_payload("[]") == "[]"
+    assert worker_module._delivery_reconstruction_payload(None) is None
