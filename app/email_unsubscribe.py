@@ -1523,39 +1523,42 @@ class PlaywrightUnsubscribeBrowser:
             "control_count": int(value["controlCount"]),
         }
 
-    def _unreadable_page_observation(self) -> str:
-        """Describe a page the read could not classify, without naming the URL.
+    def _unreadable_page_observation(
+        self,
+        structure: Mapping[str, int] | None,
+        text: str,
+        controls: tuple[object, ...],
+    ) -> str:
+        """Describe a page the read could not classify, from what was measured.
 
-        A page-state failure used to record nothing at all, so the only thing
-        anyone could say afterwards was the category name. Three reviewers read
-        the same 65 live failures and none could tell whether the browser had
-        landed on a real page, and that is a property of the record, not of the
-        failure: the success path persists the page's own text, while the
-        failure path persisted the fact that there was a failure.
+        Deliberately built from values already in hand rather than a fresh
+        browser probe. The first version asked the isolated world for more
+        detail and swallowed its failure, so when the probe did not answer the
+        record was empty again -- the same "a failure that records nothing"
+        shape this exists to remove. Everything here was already read on the
+        path to the failure and cannot fail separately.
 
-        The entry URL stays out of it. Its path and query carry the
-        subscription token, which is exactly what the opaque-reference design
-        keeps out of durable storage; the host alone says which side answered.
+        The entry URL stays out of durable storage: its path and query carry
+        the subscription token. The host alone says which side answered.
         """
-        try:
-            value = self._trusted_world.evaluate(
-                "function() {"
-                " return {"
-                "  readyState: String(document.readyState || ''),"
-                "  host: String(location.host || ''),"
-                "  titleLength: String(document.title || '').trim().length,"
-                "  frameCount: window.frames.length,"
-                "  bodyHtmlLength: document.body"
-                "   ? String(document.body.innerHTML || '').length : 0"
-                " };"
-                "}"
-            )
-        except Exception:  # noqa: BLE001 - an observation must never mask the failure
-            return ""
-        if not isinstance(value, Mapping):
-            return ""
-        fields = ("readyState", "host", "titleLength", "frameCount", "bodyHtmlLength")
-        return " ".join(f"{name}={value.get(name)!r}" for name in fields)
+        host = ""
+        if self._document_url:
+            try:
+                host = urlsplit(self._document_url).netloc
+            except ValueError:
+                host = ""
+        fields = {
+            "host": host,
+            "text_length": (
+                structure["text_length"] if structure is not None else len(text)
+            ),
+            "control_count": (
+                structure["control_count"] if structure is not None else len(controls)
+            ),
+            "modelled_controls": len(controls),
+            "read_text_length": len(text),
+        }
+        return " ".join(f"{name}={value!r}" for name, value in fields.items())
 
     def _visible_text(self) -> str:
         return self.page.locator("body").inner_text(timeout=self.timeout_ms).strip()
@@ -2295,7 +2298,9 @@ class PlaywrightUnsubscribeBrowser:
             raise UnsubscribeBrowserError(
                 UnsubscribeBrowserFailure.PAGE_STATE_MISSING,
                 "unsubscribe page has no visible state",
-                observation=self._unreadable_page_observation(),
+                observation=self._unreadable_page_observation(
+                    structure, text, controls
+                ),
             )
         authentication_controls = tuple(
             item for item in controls if item.continuation_kind is not None
@@ -2346,7 +2351,9 @@ class PlaywrightUnsubscribeBrowser:
                     if structure["control_count"]
                     else UnsubscribeBrowserFailure.PAGE_STATE_UNKNOWN,
                     "unsubscribe page state is unknown",
-                    observation=self._unreadable_page_observation(),
+                    observation=self._unreadable_page_observation(
+                        structure, text, controls
+                    ),
                 )
         state_reference = (
             "state:"

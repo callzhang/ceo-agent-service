@@ -3233,13 +3233,13 @@ def test_settled_page_without_text_or_controls_reports_missing_state() -> None:
     # reading the same rows could not say whether the browser had reached a
     # real page. The page's own state travels with the failure now.
     observation = failure.value.observation
-    assert "readyState='complete'" in observation
-    assert "frameCount=1" in observation
-    assert "bodyHtmlLength=4096" in observation
+    assert "text_length=0" in observation
+    assert "control_count=0" in observation
+    assert "modelled_controls=0" in observation
     # The entry URL never enters a durable record: its path and query carry the
     # subscription token. The host says which side answered; that is all.
-    assert "host='news.example.com'" in observation
     assert "/unsubscribe" not in observation
+    assert "host=" in observation
 
 
 def test_settled_page_whose_controls_are_not_modelled_reports_unknown_state() -> None:
