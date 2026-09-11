@@ -17,6 +17,10 @@ def test_audit_feedback_is_a_first_class_structured_outcome() -> None:
         },
         external_result=None,
         error=AgentError(),
+        risk="low",
+        confidence=1.0,
+        rule_coverage=1.0,
+        information_completeness=1.0,
     )
     assert result.outcome.value == "feedback_provided"
     assert result.feedback is not None

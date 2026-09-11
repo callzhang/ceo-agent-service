@@ -257,6 +257,10 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     raw_result = json.dumps(
         {
             "outcome": "no_action",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "Nothing to do.",
             "proposal": None,
             "decision_options": [],
@@ -403,6 +407,10 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     proposal_result = json.dumps(
         {
             "outcome": "proposal",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "Prepared the reviewed proposal.",
             "proposal": {
                 "objective": "Send the reviewed update.",
@@ -485,6 +493,10 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
     result_json = json.dumps(
         {
             "outcome": "no_action",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "Claude completed the read-only turn.",
             "proposal": None,
             "decision_options": [],
@@ -634,6 +646,10 @@ def test_friday_runtime_fallback_completes_consumer_run(tmp_path):
     result_json = json.dumps(
         {
             "outcome": "no_action",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "Friday completed the turn.",
             "proposal": None,
             "decision_options": [],
@@ -801,6 +817,10 @@ def test_runtime_domain_result_codec_rejects_private_values(
                     "text": json.dumps(
                         {
                             "outcome": "no_action",
+                            "risk": "low",
+                            "confidence": 1.0,
+                            "rule_coverage": 1.0,
+                            "information_completeness": 1.0,
                             "summary": unsafe_summary,
                             "proposal": None,
                             "decision_options": [],
@@ -840,6 +860,10 @@ def test_runtime_domain_result_codec_rejects_corrupt_shape(mutation):
         "role": "consumer",
         "result": {
             "outcome": "no_action",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "Nothing to do.",
             "proposal": None,
             "decision_options": [],
@@ -886,6 +910,10 @@ def test_runtime_domain_result_codec_rejects_business_document_reference(tmp_pat
             },
         ),
         error=AgentError(),
+        risk="low",
+        confidence=1.0,
+        rule_coverage=1.0,
+        information_completeness=1.0,
     )
 
     with pytest.raises(ValueError, match="runtime_result_envelope_document_field_invalid"):
@@ -918,6 +946,10 @@ def test_runtime_domain_result_codec_preserves_message_readback_for_ledger_proje
             },
         ),
         error=AgentError(),
+        risk="low",
+        confidence=1.0,
+        rule_coverage=1.0,
+        information_completeness=1.0,
     )
 
     encoded = _encode_runtime_domain_result(
@@ -938,6 +970,10 @@ def test_runtime_domain_result_codec_preserves_consumer_action_identity():
     result = ConsumerAgentResult.model_validate(
         {
             "outcome": "proposal",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "Send the result.",
             "proposal": {
                 "objective": "Send one result.",
@@ -982,6 +1018,10 @@ def test_runtime_domain_result_codec_rejects_consumer_document_payload():
                     "text": json.dumps(
                         {
                             "outcome": "proposal",
+                            "risk": "low",
+                            "confidence": 1.0,
+                            "rule_coverage": 1.0,
+                            "information_completeness": 1.0,
                             "summary": "Prepared a proposal.",
                             "proposal": {
                                 "objective": "Send the reviewed update.",
@@ -1046,6 +1086,10 @@ def test_runtime_attempt_completion_does_not_treat_provider_events_as_result_evi
                     "text": json.dumps(
                         {
                             "outcome": "no_action",
+                            "risk": "low",
+                            "confidence": 1.0,
+                            "rule_coverage": 1.0,
+                            "information_completeness": 1.0,
                             "summary": "Nothing to do.",
                             "proposal": None,
                             "decision_options": [],
@@ -1157,6 +1201,8 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
                             "decision_options": options,
                             "risk": "high" if outcome == "needs_human" else "low",
                             "confidence": 0.0 if outcome == "needs_human" else 1.0,
+                            "rule_coverage": 1.0,
+                            "information_completeness": 1.0,
                             "error_code": (
                                 "decision_required" if outcome == "needs_human" else ""
                             ),
@@ -1460,6 +1506,10 @@ def test_consumer_turn_can_complete_typed_result_without_side_effect_state(tmp_p
         run.id,
         {
             "outcome": "no_action",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "summary": "No external action is required.",
             "proposal": None,
             "decision_options": [],

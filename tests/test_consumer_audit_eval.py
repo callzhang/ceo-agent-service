@@ -84,6 +84,11 @@ def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
             "error": {"code": "", "retryable": False, "authorization_required": False},
             "risk": "high" if case.consumer_outcome == "needs_human" else "low",
             "confidence": 0.1 if case.consumer_outcome == "needs_human" else 1.0,
+            # A needs_human outcome must classify as NEEDS_HUMAN, which the
+            # high-risk/low-confidence gate already gives. Dropping information
+            # completeness below 0.5 would classify it ASK_BACK instead.
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 
@@ -96,6 +101,10 @@ def _audit_result(case: EvalCase, operation_id: str) -> AuditAgentResult:
         "feedback": None,
         "external_result": None,
         "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "high" if case.audit_outcome == "needs_human" else "low",
+        "confidence": 0.1 if case.audit_outcome == "needs_human" else 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
     }
     if case.audit_outcome == "executed":
         payload.update(
