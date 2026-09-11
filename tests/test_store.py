@@ -4402,15 +4402,16 @@ def test_agent_run_events_use_append_only_rows_in_sequence(tmp_path: Path):
             "where agent_run_id=? order by sequence",
             (run.id,),
         ).fetchall()
-        compact = db.execute(
-            "select tool_events_json from agent_runs where id=?",
-            (run.id,),
-        ).fetchone()[0]
+        second_copy = [
+            row[1]
+            for row in db.execute("pragma table_info(agent_runs)")
+            if row[1] == "tool_events_json"
+        ]
     assert [(row[0], json.loads(row[1])) for row in rows] == [
         (1, first),
         (2, second),
     ]
-    assert compact == "[]"
+    assert second_copy == []
     assert store.get_agent_run(run.id).tool_events == [first, second]
 
 
@@ -4457,6 +4458,10 @@ def test_agent_run_event_migration_backfills_legacy_json_once(tmp_path: Path):
     with sqlite3.connect(db_path) as db:
         db.execute("drop table agent_run_events")
         db.execute(
+            "alter table agent_runs add column tool_events_json "
+            "text not null default '[]'"
+        )
+        db.execute(
             "update agent_runs set tool_events_json=? where id=?",
             (json.dumps(legacy_events), run.id),
         )
@@ -4474,10 +4479,12 @@ def test_agent_run_event_migration_backfills_legacy_json_once(tmp_path: Path):
             "select count(*) from agent_run_events where agent_run_id=?",
             (run.id,),
         ).fetchone()[0] == 2
-        assert db.execute(
-            "select tool_events_json from agent_runs where id=?",
-            (run.id,),
-        ).fetchone()[0] == "[]"
+        # The legacy column is drained and then removed, so agent_run_events is
+        # the only place the trajectory lives afterwards.
+        assert not any(
+            row[1] == "tool_events_json"
+            for row in db.execute("pragma table_info(agent_runs)")
+        )
 
 
 
@@ -8750,6 +8757,71 @@ def test_terminal_work_summary_input_resolves_its_own_error(tmp_path: Path):
     assert row["resolved_at"]
 
 
+def test_reopening_drops_the_second_copy_of_a_run_trajectory(tmp_path: Path):
+    """agent_run_events is the only place a run's trajectory is kept.
+
+    The column held the same events as one JSON array. Two stores of one truth
+    is how they come to disagree, and nothing tells a reader which copy is
+    stale, so the column goes once its contents are in the table.
+    """
+    db_path = tmp_path / "legacy-tool-events-column.sqlite3"
+    store = AutoReplyStore(db_path)
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
+    with store._connect() as db:
+        db.execute(
+            "alter table agent_runs add column tool_events_json "
+            "text not null default '[]'"
+        )
+        db.execute(
+            "update agent_runs set tool_events_json=? where id=?",
+            (
+                json.dumps([{"type": "item.completed", "call_id": "legacy-1"}]),
+                run.id,
+            ),
+        )
+        db.execute(
+            "update service_state set value='2026-08-20.1' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    reopened = AutoReplyStore(db_path)
+
+    with reopened._connect() as db:
+        columns = {row["name"] for row in db.execute("pragma table_info(agent_runs)")}
+    assert "tool_events_json" not in columns
+    loaded = reopened.get_agent_run(run.id)
+    assert loaded is not None
+    assert [event["call_id"] for event in loaded.tool_events] == ["legacy-1"]
+
+
+def test_dropping_the_trajectory_column_refuses_to_discard_unmigrated_events(
+    tmp_path: Path,
+):
+    """Dropping unread trajectory would be data loss, not a migration."""
+    store = AutoReplyStore(tmp_path / "undrained-tool-events.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
+    with store._connect() as db:
+        db.execute(
+            "alter table agent_runs add column tool_events_json "
+            "text not null default '[]'"
+        )
+        db.execute(
+            "update agent_runs set tool_events_json=? where id=?",
+            (json.dumps([{"type": "item.completed", "call_id": "kept"}]), run.id),
+        )
+
+        with pytest.raises(ValueError, match="not migrated"):
+            store._drop_agent_run_tool_events_column(db)
+
+        assert any(
+            row["name"] == "tool_events_json"
+            for row in db.execute("pragma table_info(agent_runs)")
+        )
+
+
 def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
     tmp_path: Path,
 ):
@@ -8786,7 +8858,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-11.1"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-11.2"
     assert {
         "lease_owner",
         "lease_expires_at",

@@ -129,7 +129,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-11.1"
+STORE_SCHEMA_VERSION = "2026-09-11.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -2660,7 +2660,9 @@ class AutoReplyStore:
                     transcript_end_line integer not null default 0,
                     final_result_json text not null default '',
                     structured_error_json text not null default '',
-                    tool_events_json text not null default '[]',
+                    -- A run's trajectory lives in agent_run_events, one row per
+                    -- event, which is what AgentRun.tool_events is read from.
+                    -- There is deliberately no second copy of it here.
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
                     started_at text not null default '',
@@ -4527,6 +4529,7 @@ class AutoReplyStore:
                 )
             self._migrate_removed_runtime(db)
             self._migrate_agent_run_events(db)
+            self._drop_agent_run_tool_events_column(db)
             runtime_session_columns = {
                 row["name"]
                 for row in db.execute(
@@ -7476,7 +7479,16 @@ class AutoReplyStore:
         return False
 
     @staticmethod
+    def _agent_runs_has_tool_events_column(db: sqlite3.Connection) -> bool:
+        return any(
+            row["name"] == "tool_events_json"
+            for row in db.execute("pragma table_info(agent_runs)").fetchall()
+        )
+
+    @staticmethod
     def _migrate_agent_run_events(db: sqlite3.Connection) -> None:
+        if not AutoReplyStore._agent_runs_has_tool_events_column(db):
+            return
         rows = db.execute(
             "select id, tool_events_json from agent_runs "
             "where tool_events_json <> '[]'"
@@ -7523,6 +7535,30 @@ class AutoReplyStore:
                 "update agent_runs set tool_events_json='[]' where id=?",
                 (row["id"],),
             )
+
+    @staticmethod
+    def _drop_agent_run_tool_events_column(db: sqlite3.Connection) -> None:
+        """Remove the second copy of a run's trajectory.
+
+        agent_run_events holds one row per event and is what AgentRun.tool_events
+        is built from; the column was the older whole-array copy of the same
+        facts. Two stores of one truth is how they end up disagreeing, and a
+        reader has no way to tell which one is stale. _migrate_agent_run_events
+        has already moved every event into the table and blanked the column, so
+        this drops what is left. It refuses if anything is still there, because
+        dropping unread trajectory is not a migration, it is data loss.
+        """
+        if not AutoReplyStore._agent_runs_has_tool_events_column(db):
+            return
+        undrained = db.execute(
+            "select id from agent_runs where tool_events_json <> '[]' limit 1"
+        ).fetchone()
+        if undrained is not None:
+            raise ValueError(
+                "agent run tool events were not migrated into agent_run_events; "
+                f"run {undrained['id']} still carries its own copy"
+            )
+        db.execute("alter table agent_runs drop column tool_events_json")
 
     @staticmethod
     def _migrate_reply_task_channel_identity(db: sqlite3.Connection) -> None:
