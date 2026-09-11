@@ -280,6 +280,77 @@ def test_restart_recovery_requeues_interrupted_run_without_classifying_effects(
     assert runtime is not None and runtime.status == "failed"
 
 
+def test_recover_orphaned_agent_run_for_failed_reply_task(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-orphaned-agent-run",
+        conversation_title="Email unsubscribe",
+        single_chat=False,
+        trigger_message_id="msg-orphaned-agent-run",
+        trigger_create_time="2026-09-10 11:00:00",
+        trigger_sender="sender@example.com",
+        trigger_text="Handle this",
+        trigger_message_json="{}",
+    )
+    task = store.get_reply_task_for_message(
+        "cid-orphaned-agent-run",
+        "msg-orphaned-agent-run",
+    )
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            """
+            update reply_tasks
+            set status='processing', locked_at=current_timestamp
+            where id=?
+            """,
+            (task.id,),
+        )
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="orphaned-owner",
+    )
+    runtime_attempt = store.claim_agent_runtime_attempt(
+        claim.run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+    )
+    store.mark_agent_runtime_attempt_running_once(runtime_attempt.id)
+    with store._connect() as db:
+        db.execute(
+            """
+            update reply_tasks
+            set status='failed', locked_at=null, error='consumer_failed'
+            where id=?
+            """,
+            (task.id,),
+        )
+
+    recovered = store.recover_orphaned_agent_runs_for_terminal_reply_tasks()
+
+    assert recovered == 1
+    updated_task = store.get_reply_task(task.id)
+    assert updated_task is not None
+    assert updated_task.status == "failed"
+    assert updated_task.error == "consumer_failed"
+    run = store.get_agent_run(claim.run.id)
+    assert run is not None
+    assert run.status == "failed"
+    assert "orphaned_agent_run_parent_not_processing" in run.structured_error_json
+    runtime = store.get_agent_runtime_attempt(runtime_attempt.id)
+    assert runtime is not None
+    assert runtime.status == "failed"
+    assert runtime.failure_code == "orphaned_agent_run_parent_not_processing"
+
+
 def _enqueue_manual_rerun_in_process(
     db_path: str,
     attempt_id: int,
@@ -7432,6 +7503,61 @@ def test_resolve_errors_recovered_by_wechat_reader_keeps_unrelated_errors_open(
     unrelated = next(error for error in errors if error.kind == "reply_task")
     assert recovered.resolved_at
     assert recovered.resolution == "recovered by successful WeChat reader cycle"
+    assert unrelated.resolved_at == ""
+
+
+def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = store.create_scheduled_task(
+        name="Check DingTalk meetings",
+        command="scan-meetings-once",
+        cron_expression="* * * * *",
+        timezone_name="UTC",
+    )
+    store.record_error(
+        f"scheduled-task:{task.id}",
+        "event-failed",
+        "scheduled_task_service_command_failed",
+        "scan-meetings-once failed",
+    )
+    store.record_error(
+        "scheduled-task:3",
+        "event-other",
+        "scheduled_task_service_command_failed",
+        "other task still failing",
+    )
+    with store._connect() as db:
+        db.execute(
+            """
+            update errors
+            set created_at='2026-09-10 12:00:00'
+            where message_id='event-failed'
+            """
+        )
+        db.execute(
+            """
+            insert into scheduled_task_runs (
+                event_id, scheduled_task_id, trigger_kind, scheduled_for,
+                dispatch_status, snapshot_json, execution_kind, execution_id,
+                dispatched_at
+            ) values (
+                    'event-success', ?, 'scheduled', '2026-09-10T12:01:00+00:00',
+                    'dispatched', '{}', 'service_command', 'scan-meetings-once',
+                    '2026-09-10 12:01:00'
+                )
+            """,
+            (task.id,),
+        )
+
+    assert store.resolve_errors_recovered_by_scheduled_service_command() == 1
+
+    errors = store.list_errors()
+    recovered = next(error for error in errors if error.message_id == "event-failed")
+    unrelated = next(error for error in errors if error.message_id == "event-other")
+    assert recovered.resolved_at
+    assert recovered.resolution == (
+        "recovered by later successful scheduled service command"
+    )
     assert unrelated.resolved_at == ""
 
 

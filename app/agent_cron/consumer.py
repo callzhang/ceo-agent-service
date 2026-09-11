@@ -100,6 +100,7 @@ class ScheduledTaskTriggerConsumer:
             now=now,
         )
         guard.finish_source(now, status="dispatched")
+        self._store.resolve_errors_recovered_by_scheduled_service_command()
         logger.info(
             "scheduled_task_service_command_completed",
             extra={

@@ -10769,6 +10769,69 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
+    def recover_orphaned_agent_runs_for_terminal_reply_tasks(
+        self,
+        *,
+        limit: int = 100,
+    ) -> int:
+        """Close running Agent runs whose parent reply task is no longer active."""
+        if limit <= 0:
+            return 0
+        error = {
+            "code": "orphaned_agent_run_parent_not_processing",
+            "retryable": False,
+            "session_continuable": False,
+            "stage": "execution",
+            "source": "service",
+        }
+        error_json = json.dumps(error, separators=(",", ":"))
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                """
+                select runs.id
+                from agent_runs as runs
+                join reply_tasks as tasks on tasks.id=runs.reply_task_id
+                where runs.status='running'
+                  and tasks.status<>'processing'
+                order by runs.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            if not rows:
+                return 0
+            run_ids = [int(row["id"]) for row in rows]
+            placeholders = ",".join("?" for _ in run_ids)
+            db.execute(
+                f"""
+                update agent_runs
+                set status='failed', structured_error_json=?,
+                    lease_owner='', lease_expires_at='',
+                    completed_at=current_timestamp, updated_at=current_timestamp
+                where status='running' and id in ({placeholders})
+                """,
+                [error_json, *run_ids],
+            )
+            db.executemany(
+                "insert into agent_run_state_events "
+                "(agent_run_id, phase, structured_error_json) "
+                "values (?, 'terminal_failure', ?)",
+                ((run_id, error_json) for run_id in run_ids),
+            )
+            db.execute(
+                f"""
+                update agent_runtime_attempts
+                set status='failed', failure_class='process',
+                    failure_code='orphaned_agent_run_parent_not_processing',
+                    failover_permitted=0, lease_owner='', lease_expires_at='',
+                    finished_at=current_timestamp, updated_at=current_timestamp
+                where agent_run_id in ({placeholders})
+                  and status in ('starting', 'running')
+                """,
+                run_ids,
+            )
+            return len(run_ids)
+
     def skip_unstarted_service_tasks(
         self,
         task_ids: list[int] | tuple[int, ...],
@@ -23948,6 +24011,31 @@ class AutoReplyStore:
                 where coalesce(resolved_at, '')=''
                   and conversation_id='wechat'
                   and kind='wechat_reader_unavailable'
+                """
+            )
+            return cursor.rowcount
+
+    def resolve_errors_recovered_by_scheduled_service_command(self) -> int:
+        """Close scheduled command incidents after the same task succeeds later."""
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update errors as error_event
+                set resolved_at=current_timestamp,
+                    resolution='recovered by later successful scheduled service command'
+                where coalesce(error_event.resolved_at, '')=''
+                  and error_event.kind='scheduled_task_service_command_failed'
+                  and coalesce(error_event.conversation_id, '') like 'scheduled-task:%'
+                  and exists (
+                      select 1
+                      from scheduled_task_runs as run
+                      where error_event.conversation_id =
+                            'scheduled-task:' || cast(run.scheduled_task_id as text)
+                        and run.dispatch_status='dispatched'
+                        and run.execution_kind='service_command'
+                        and coalesce(run.dispatched_at, '')<>''
+                        and datetime(run.dispatched_at) >= datetime(error_event.created_at)
+                  )
                 """
             )
             return cursor.rowcount

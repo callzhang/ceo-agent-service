@@ -271,25 +271,21 @@
       "$ref": "#/$defs/AgentError"
     },
     "risk": {
-      "$ref": "#/$defs/RiskLevel",
-      "default": "low"
+      "$ref": "#/$defs/RiskLevel"
     },
     "confidence": {
-      "default": 1.0,
       "maximum": 1.0,
       "minimum": 0.0,
       "title": "Confidence",
       "type": "number"
     },
     "rule_coverage": {
-      "default": 1.0,
       "maximum": 1.0,
       "minimum": 0.0,
       "title": "Rule Coverage",
       "type": "number"
     },
     "information_completeness": {
-      "default": 1.0,
       "maximum": 1.0,
       "minimum": 0.0,
       "title": "Information Completeness",
