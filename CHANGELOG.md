@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-11: email unsubscribe tasks with durable browser steps but no
+  terminal receipt now stop at an explicit `needs_human` decision instead of
+  remaining failed or being replayed. The choices are bounded to read-only
+  reconciliation or stopping without another browser write.
+
 - 2026-09-11: runtime/provider `confirmation_required` failures are now kept as
   explicit technical failures instead of being misclassified as `needs_human`;
   current unresolved `needs_human` reply attempts are also included in the

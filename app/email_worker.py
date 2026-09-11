@@ -14,6 +14,7 @@ from functools import partial
 from hashlib import sha256
 from pathlib import Path
 from threading import Event, Lock, Thread
+from types import SimpleNamespace
 from typing import Any, TextIO
 
 from app.email_category_config import VerifiedEmailFolderBinding
@@ -173,8 +174,6 @@ def persist_model_primary_classification(
     """Persist an accepted model result through the existing immutable action path."""
 
     from hashlib import sha256
-    from types import SimpleNamespace
-
     from app.email_classifier_contracts import (
         EmailAttachmentMetadata,
         EmailClassification,
@@ -2501,6 +2500,66 @@ def _decision_options_json(result: object) -> str:
     return "[]"
 
 
+def _uncertain_unsubscribe_decision_options_json() -> str:
+    """Return bounded choices for a browser effect whose outcome is unknown."""
+
+    return json.dumps(
+        [
+            {
+                "key": "reconcile_current_provider_state",
+                "label": "先核验当前状态",
+                "instruction": (
+                    "只读取当前邮箱和退订页面状态，核对已发生的浏览器步骤；"
+                    "在证据完整前不要再次提交退订操作。"
+                ),
+                "consequence": "补齐状态证据后再决定是否需要一次新的明确授权。",
+            },
+            {
+                "key": "stop_without_action",
+                "label": "停止不再操作",
+                "instruction": "保留当前不确定状态，不执行新的外部浏览器操作。",
+                "consequence": "不会重放可能已经发生过的退订动作。",
+            },
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def _has_uncertain_unsubscribe_effect(store: object, task: object) -> bool:
+    """Detect durable browser progress without a terminal provider receipt."""
+
+    if getattr(task, "channel", "email") != "email":
+        return False
+    action_identity = str(getattr(task, "trigger_message_id", "") or "").strip()
+    get_claim = getattr(store, "get_email_unsubscribe_claim", None)
+    list_steps = getattr(store, "list_email_unsubscribe_steps", None)
+    get_receipt = getattr(store, "get_email_unsubscribe_receipt", None)
+    if not action_identity or not callable(get_claim) or not callable(list_steps):
+        return False
+    try:
+        claim = get_claim(action_identity)
+        if not isinstance(claim, Mapping) or claim.get("status") not in {
+            "uncertain",
+            "navigating",
+            "dispatching",
+            "awaiting_audit",
+        }:
+            return False
+        steps = list_steps(action_identity)
+        if not steps:
+            return False
+        receipt = get_receipt(action_identity) if callable(get_receipt) else None
+        return receipt is None
+    except Exception:  # noqa: BLE001 - fail closed to ordinary task handling
+        _LOGGER.warning(
+            "could not inspect uncertain unsubscribe effect for %s",
+            action_identity,
+            exc_info=True,
+        )
+        return False
+
+
 def _finalize_email_task(store: object, task: object, result: object) -> None:
     from app.email_unsubscribe_audit import (
         AuditedUnsubscribeTerminalState,
@@ -2534,6 +2593,14 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
         else:
             task_status, send_status = "failed", "failed"
     error = str(result.error.code or "")
+    if send_status != "needs_human" and _has_uncertain_unsubscribe_effect(store, task):
+        # A browser step is durable evidence that an external effect may have
+        # happened. Without a terminal receipt, retrying the same operation is
+        # unsafe; expose a bounded management choice instead of auto-replaying
+        # or leaving the task as a misleading technical failure.
+        task_status, send_status = "done", "needs_human"
+        error = "email_unsubscribe_effect_uncertain"
+        human_decision_options_json = _uncertain_unsubscribe_decision_options_json()
     run = store.get_agent_run(result.final_run_id) if result.final_run_id else None
     # A terminal unsubscribe skip is a lifecycle outcome, not a technical
     # failure: the receipt the audited tool persisted decides where the task
@@ -3424,8 +3491,8 @@ def _build_email_source_factory(settings: object):
     return source_factory
 
 
-def build_audited_email_unsubscribe_operation(settings: object) -> object:
-    """Build the only executable Email unsubscribe operation."""
+def _build_email_unsubscribe_context(settings: object) -> SimpleNamespace:
+    """Build the stores, profile and live entry reader every path shares."""
 
     from app.email_browser_profile import (
         EmailBrowserProfile,
@@ -3434,13 +3501,10 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
     from app.email_classifier_contracts import EmailProviderLocator
     from app.email_store import EmailStore
     from app.email_unsubscribe import (
-        EmailUnsubscribeEffect,
         UnsubscribeAuthenticationEvidence,
         browser_unsubscribe_entries,
-        execute_unsubscribe_in_dedicated_profile,
         extract_unsubscribe_entries,
     )
-    from app.email_unsubscribe_audit import EmailUnsubscribeAuditOperation
     from app.email_imap_readonly import ephemeral_body_html
     from app.store import AutoReplyStore
 
@@ -3504,6 +3568,33 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
         finally:
             _close_email_source(source)
 
+    return SimpleNamespace(
+        email_store=email_store,
+        task_store=task_store,
+        source_factory=source_factory,
+        browser_profile=browser_profile,
+        browser_session_manager=browser_session_manager,
+        resolve_entries=resolve_entries,
+    )
+
+
+def build_audited_email_unsubscribe_operation(settings: object) -> object:
+    """Build the legacy audited Email unsubscribe operation."""
+
+    from app.email_unsubscribe import (
+        EmailUnsubscribeEffect,
+        execute_unsubscribe_in_dedicated_profile,
+    )
+    from app.email_unsubscribe_audit import EmailUnsubscribeAuditOperation
+
+    context = _build_email_unsubscribe_context(settings)
+    email_store = context.email_store
+    task_store = context.task_store
+    source_factory = context.source_factory
+    browser_profile = context.browser_profile
+    browser_session_manager = context.browser_session_manager
+    resolve_entries = context.resolve_entries
+
     def execute_effect(
         effect: EmailUnsubscribeEffect,
         entries: tuple[object, ...],
@@ -3560,8 +3651,6 @@ def run_audited_email_unsubscribe(
 ) -> dict[str, object]:
     """Execute one accepted unsubscribe action through its bound Audit run."""
 
-    from types import SimpleNamespace
-
     operation = build_audited_email_unsubscribe_operation(
         SimpleNamespace(
             db_path=Path(db_path),
@@ -3574,6 +3663,63 @@ def run_audited_email_unsubscribe(
         audit_agent_run_id=audit_agent_run_id,
         accepted_action=accepted_action,
     )
+
+
+def build_direct_email_unsubscribe_operation(settings: object) -> object:
+    """Build the one-call Email unsubscribe operation."""
+
+    from app.email_unsubscribe import EmailUnsubscribeEffect, UnsubscribeEntry
+    from app.email_unsubscribe_direct import (
+        DirectEmailUnsubscribeOperation,
+        run_unsubscribe_in_dedicated_profile,
+    )
+
+    context = _build_email_unsubscribe_context(settings)
+    email_store = context.email_store
+
+    def run_effect(
+        effect: EmailUnsubscribeEffect,
+        entry: UnsubscribeEntry,
+        *,
+        one_click_verified: bool,
+    ):
+        account = email_store.get_account(effect.account_id)
+        if not isinstance(account, Mapping):
+            raise ValueError("email unsubscribe account is unavailable")
+        connected_recipient = str(account.get("email_address") or "").strip()
+        if not connected_recipient:
+            raise ValueError("email unsubscribe recipient is unavailable")
+        return run_unsubscribe_in_dedicated_profile(
+            effect,
+            entry,
+            profile=context.browser_profile,
+            one_click_verified=one_click_verified,
+            connected_recipient=connected_recipient,
+            email_otp_resolver=_build_connected_mailbox_otp_resolver(
+                account,
+                context.source_factory,
+            ),
+            session_manager=context.browser_session_manager,
+        )
+
+    return DirectEmailUnsubscribeOperation(
+        task_store=context.task_store,
+        email_store=email_store,
+        resolve_entries=context.resolve_entries,
+        run_effect=run_effect,
+    )
+
+
+def run_email_unsubscribe(db_path: str | Path, task_id: int) -> dict[str, object]:
+    """Unsubscribe one email task and return the page's own evidence."""
+
+    operation = build_direct_email_unsubscribe_operation(
+        SimpleNamespace(
+            db_path=Path(db_path),
+            workspace=Path(db_path).parent,
+        )
+    )
+    return operation.execute(task_id)
 
 
 def _validate_email_worker_dependencies(dependencies: object) -> None:

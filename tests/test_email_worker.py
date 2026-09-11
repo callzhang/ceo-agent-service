@@ -8153,6 +8153,65 @@ def test_bare_authorization_required_result_is_failed():
     assert captured["send_error"] == "authorization_required"
 
 
+def test_uncertain_unsubscribe_with_durable_step_becomes_needs_human():
+    module = _module()
+    task = SimpleNamespace(
+        id=71,
+        execution_generation="generation-71",
+        channel="email",
+        trigger_message_id="email-action:uncertain-71",
+        conversation_id="email-thread:71",
+        conversation_title="Email unsubscribe",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    run = SimpleNamespace(
+        id=710,
+        codex_session_id="",
+        transcript_start_line=0,
+        transcript_end_line=0,
+        tool_events=[],
+    )
+    captured = {}
+
+    class Store:
+        def get_email_unsubscribe_claim(self, action_identity):
+            assert action_identity == task.trigger_message_id
+            return {"status": "uncertain", "phase": "effect_uncertain"}
+
+        def list_email_unsubscribe_steps(self, action_identity):
+            assert action_identity == task.trigger_message_id
+            return [{"sequence": 1, "operation": "open_entry", "state": "completed"}]
+
+        def get_email_unsubscribe_receipt(self, action_identity):
+            assert action_identity == task.trigger_message_id
+            return None
+
+        def get_agent_run(self, run_id):
+            assert run_id == run.id
+            return run
+
+        def finalize_orchestrated_reply_task(self, **kwargs):
+            captured.update(kwargs)
+
+    result = SimpleNamespace(
+        status="failed_terminal",
+        final_run_id=run.id,
+        summary="unsubscribe_operation_rejected:EmailUnsubscribeClaimConflict",
+        error=SimpleNamespace(
+            code="unsubscribe_operation_rejected:EmailUnsubscribeClaimConflict",
+            authorization_required=False,
+        ),
+    )
+
+    module._finalize_email_task(Store(), task, result)
+
+    assert captured["task_status"] == "done"
+    assert captured["send_status"] == "needs_human"
+    assert captured["send_error"] == "email_unsubscribe_effect_uncertain"
+    assert len(json.loads(captured["human_decision_options_json"])) == 2
+
+
 def test_structured_authorization_result_keeps_needs_human_options():
     module = _module()
     task = SimpleNamespace(
