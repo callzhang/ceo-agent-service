@@ -185,7 +185,7 @@ def _audit_result(
     )
 
 
-def test_legacy_stored_results_are_hydrated_with_explicit_quality_defaults():
+def test_legacy_stored_results_are_rejected_without_quality_fields():
     legacy_consumer = type(
         "Run",
         (),
@@ -209,11 +209,8 @@ def test_legacy_stored_results_are_hydrated_with_explicit_quality_defaults():
     )()
     from app.agent_orchestrator import _consumer_result
 
-    result = _consumer_result(legacy_consumer)
-    assert result.risk.value == "medium"
-    assert result.confidence == 0.4
-    assert result.rule_coverage == 1.0
-    assert result.information_completeness == 1.0
+    with pytest.raises(ValueError):
+        _consumer_result(legacy_consumer)
 
 
 def test_synthetic_audit_failure_has_quality_fields_without_needs_human_options():

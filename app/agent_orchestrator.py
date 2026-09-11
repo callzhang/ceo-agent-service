@@ -1590,17 +1590,11 @@ def _retryable_route_error_can_resume(task: ReplyTask, error: AgentError) -> boo
 
 def _consumer_result(run: AgentRun) -> ConsumerAgentResult:
     payload = json.loads(run.final_result_json)
-    if isinstance(payload, dict):
-        payload.setdefault("rule_coverage", 1.0)
-        payload.setdefault("information_completeness", 1.0)
     return ConsumerAgentResult.model_validate(payload)
 
 
 def _audit_result(run: AgentRun) -> AuditAgentResult:
     payload = json.loads(run.final_result_json)
-    if isinstance(payload, dict):
-        payload.setdefault("rule_coverage", 1.0)
-        payload.setdefault("information_completeness", 1.0)
     return AuditAgentResult.model_validate(payload)
 
 
