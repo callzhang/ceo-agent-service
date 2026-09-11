@@ -145,11 +145,16 @@ def test_domain_result_requires_all_decision_quality_fields(model, field):
             "summary": "Nothing to do.",
             "proposal": None,
             "decision_options": [],
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "error": _error(),
         }
         if model is ConsumerAgentResult
         else _audit_payload(outcome="failed")
     )
+    payload.pop(field)
     with pytest.raises(ValidationError):
         model.model_validate(payload)
 
@@ -170,6 +175,31 @@ def test_decision_quality_fields_are_readable_and_classify_needs_human():
 
     assert result.rule_coverage == 1.0
     assert result.information_completeness == 1.0
+
+
+@pytest.mark.parametrize(
+    ("risk", "confidence", "rule_coverage", "information_completeness"),
+    [
+        ("low", 1.0, 1.0, 0.1),
+        ("high", 1.0, 1.0, 1.0),
+    ],
+)
+def test_needs_human_rejects_non_needs_human_quality_classifications(
+    risk, confidence, rule_coverage, information_completeness
+):
+    payload = {
+        "outcome": "needs_human",
+        "summary": "A management decision is required.",
+        "proposal": None,
+        "decision_options": _decision_options(),
+        "risk": risk,
+        "confidence": confidence,
+        "rule_coverage": rule_coverage,
+        "information_completeness": information_completeness,
+        "error": _error(),
+    }
+    with pytest.raises(ValidationError, match="must match decision quality"):
+        ConsumerAgentResult.model_validate(payload)
 
 
 @pytest.mark.parametrize(

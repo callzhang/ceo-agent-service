@@ -32,16 +32,27 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
             "properties": {
                 "outcome": {"const": "proposal"},
                 "proposal": {"type": "object"},
+                "decision_options": {"type": "array", "maxItems": 0},
             },
         },
         {
             "type": "object",
             "properties": {
                 "outcome": {
-                    "enum": ["no_action", "needs_human", "failed"],
+                    "enum": ["no_action", "failed"],
                 },
                 "proposal": {"type": "null"},
+                "decision_options": {"type": "array", "maxItems": 0},
             },
+        },
+        {
+            "type": "object",
+            "properties": {
+                "outcome": {"const": "needs_human"},
+                "proposal": {"type": "null"},
+                "decision_options": {"type": "array", "minItems": 2, "maxItems": 4},
+            },
+            "required": ["outcome", "proposal", "decision_options"],
         },
     ]
 
@@ -59,6 +70,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
                 "outcome": {"const": "executed"},
                 "feedback": null_value,
                 "external_result": {"type": "object"},
+                "decision_options": {"type": "array", "maxItems": 0},
             },
             "required": ["outcome", "feedback", "external_result"],
         },
@@ -68,6 +80,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
                 "outcome": {"const": "feedback_provided"},
                 "feedback": {"type": "object"},
                 "external_result": null_value,
+                "decision_options": {"type": "array", "maxItems": 0},
             },
             "required": ["outcome", "feedback", "external_result"],
         },
@@ -77,6 +90,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
                 "outcome": {"const": "failed"},
                 "feedback": null_value,
                 "external_result": null_value,
+                "decision_options": {"type": "array", "maxItems": 0},
             },
             "required": ["outcome", "feedback", "external_result"],
         },
@@ -96,6 +110,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
                 "outcome": {"const": "dry_run"},
                 "feedback": null_value,
                 "external_result": null_value,
+                "decision_options": {"type": "array", "maxItems": 0},
             },
             "required": ["outcome", "feedback", "external_result"],
         },

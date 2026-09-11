@@ -220,6 +220,10 @@
         },
         "proposal": {
           "type": "object"
+        },
+        "decision_options": {
+          "maxItems": 0,
+          "type": "array"
         }
       },
       "type": "object"
@@ -229,14 +233,38 @@
         "outcome": {
           "enum": [
             "no_action",
-            "needs_human",
             "failed"
           ]
         },
         "proposal": {
           "type": "null"
+        },
+        "decision_options": {
+          "maxItems": 0,
+          "type": "array"
         }
       },
+      "type": "object"
+    },
+    {
+      "properties": {
+        "outcome": {
+          "const": "needs_human"
+        },
+        "proposal": {
+          "type": "null"
+        },
+        "decision_options": {
+          "maxItems": 4,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "outcome",
+        "proposal",
+        "decision_options"
+      ],
       "type": "object"
     }
   ],
