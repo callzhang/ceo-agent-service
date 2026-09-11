@@ -258,14 +258,14 @@ class DeliveryTarget(StrictModel):
 
 
 class SensitivePrivateMessage(StrictModel):
-    target: DeliveryTarget = Field(
-        description=(
-            "必须 kind=direct，且 direct_user_id 必须是非空的稳定 user_id，写收件人"
-            "本人在名册里的 user_id。kind、conversation_id、direct_user_id、title、"
-            "candidates 五个键同样都必须出现，未使用的一侧显式写空值而不是省略："
-            "conversation_id 写空字符串 \"\"、candidates 写空数组 []。"
-        )
-    )
+    # Deliberately carries no description. This field's type is a single model,
+    # so pydantic renders a description beside the `$ref`, and OpenAI's
+    # structured-output validator rejects the whole request for it: "$ref
+    # cannot have keywords {'description'}". Every meeting alignment turn then
+    # fails before the model reads a word of the prompt. What the description
+    # said is already in MEETING_ALIGNMENT_CROSS_FIELD_RULES, which both
+    # prompts print in full, and is enforced below by validate_private_target.
+    target: DeliveryTarget
     message: str = Field(min_length=1)
     reason: str = Field(min_length=1)
     recipient_evidence: list[str] = Field(

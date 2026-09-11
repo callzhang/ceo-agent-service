@@ -12,6 +12,7 @@ from app.meeting_alignment_models import (
     MeetingAlignmentRun,
     MeetingSource,
     load_persisted_meeting_alignment_decision,
+    render_meeting_alignment_cross_field_rules,
 )
 
 
@@ -904,20 +905,42 @@ def test_target_field_description_states_group_and_direct_combinations():
     assert "[]" in description
 
 
-def test_sensitive_private_target_description_states_its_own_required_keys():
-    description = MeetingAlignmentDecision.model_json_schema()["$defs"][
-        "SensitivePrivateMessage"
-    ]["properties"]["target"]["description"]
+def test_sensitive_private_target_carries_no_schema_description():
+    """A description here is rejected by the provider, so it must not come back.
 
-    assert "direct_user_id" in description
-    assert "非空" in description
-    # The nested target is the same five-key StrictModel as the top-level one,
-    # so it carries the same "emit the unused side empty, do not drop it" note.
-    for key in ("kind", "conversation_id", "title", "candidates"):
-        assert key in description, key
-    assert "省略" in description
-    assert '""' in description
-    assert "[]" in description
+    The field's type is a single model, so pydantic renders any description
+    beside the `$ref`, and OpenAI's structured-output validator refuses the
+    whole request: "$ref cannot have keywords {'description'}". Every meeting
+    alignment turn then fails before the model reads a word of the prompt,
+    which is what produced nine failed jobs on 2026-09-11.
+    """
+    target = MeetingAlignmentDecision.model_json_schema()["$defs"][
+        "SensitivePrivateMessage"
+    ]["properties"]["target"]
+
+    assert "$ref" in target
+    assert set(target) == {"$ref"}, target
+
+
+def test_the_rules_still_teach_the_sensitive_private_target_shape():
+    """What the removed description said has to survive somewhere the model reads.
+
+    The trap it guarded is real: the unused side of the target stays a required
+    key and has to be emitted empty rather than dropped, which is what the live
+    `target.direct_user_id: Field required` loop came from. Both prompts print
+    this block in full.
+    """
+    rules = render_meeting_alignment_cross_field_rules()
+
+    assert "sensitive_private_message.target.kind 必须是 direct" in rules
+    assert "direct_user_id 必须是非空的稳定 user_id" in rules
+    direct_shape = next(
+        line
+        for line in rules.splitlines()
+        if "direct target cannot contain group delivery fields" in line
+    )
+    for fragment in ("conversation_id", "candidates", "必填", '""', "[]"):
+        assert fragment in direct_shape, fragment
 
 
 def test_no_description_claims_the_two_direct_targets_contradict_each_other():

@@ -136,6 +136,38 @@ def test_pinned_snapshot_equals_its_model(file_name: str) -> None:
     )
 
 
+def _refs_with_siblings(node: object, path: tuple[str, ...] = ()) -> list[str]:
+    found: list[str] = []
+    if isinstance(node, dict):
+        if "$ref" in node and len(node) > 1:
+            siblings = ", ".join(sorted(key for key in node if key != "$ref"))
+            found.append(f"{'/'.join(path) or '(root)'} carries {siblings}")
+        for key, value in node.items():
+            found += _refs_with_siblings(value, path + (key,))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found += _refs_with_siblings(value, path + (str(index),))
+    return found
+
+
+@pytest.mark.parametrize(
+    "file_name", sorted(set(PINNED) | set(KNOWN_DRIFT) | set(NO_SINGLE_MODEL))
+)
+def test_no_schema_puts_keywords_beside_a_ref(file_name: str) -> None:
+    """OpenAI refuses the whole request for a `$ref` with a sibling keyword.
+
+    The message is "$ref cannot have keywords {'description'}", and it is
+    returned before the model sees any of the prompt, so every turn using that
+    schema fails identically and no retry helps. A description on a field whose
+    type is a single model is enough to cause it: that is what stopped every
+    meeting alignment run on 2026-09-11. Put the guidance in the prompt's
+    cross-field rules instead, where the model reads it anyway.
+    """
+    offenders = _refs_with_siblings(_snapshot(file_name))
+
+    assert not offenders, f"app/schemas/{file_name}: " + "; ".join(offenders)
+
+
 @pytest.mark.parametrize("file_name", sorted(KNOWN_DRIFT))
 def test_known_drift_is_still_drift(file_name: str) -> None:
     """When someone repairs one of these, make them move it to PINNED.
