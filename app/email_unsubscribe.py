@@ -2193,14 +2193,14 @@ class PlaywrightUnsubscribeBrowser:
             return UnsubscribePageState.PAYMENT
         if any(
             marker in normalized
-            for marker in ("sign in", "log in", "login", "password", "登录")
-        ):
-            return UnsubscribePageState.LOGIN_REQUIRED
-        if any(
-            marker in normalized
             for marker in ("already unsubscribed", "no longer subscribed", "已经退订")
         ):
             return UnsubscribePageState.ALREADY_UNSUBSCRIBED
+        if any(
+            marker in normalized
+            for marker in ("sign in", "log in", "login", "password", "登录")
+        ):
+            return UnsubscribePageState.LOGIN_REQUIRED
         if any(
             marker in normalized
             for marker in (

@@ -3191,6 +3191,21 @@ def test_terminal_text_is_awaited_when_the_shell_already_exposes_a_control() -> 
     assert discovery.controls == ()
 
 
+def test_already_unsubscribed_state_wins_over_login_prompt_on_terminal_page() -> None:
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": 120, "controlCount": 0}],
+        texts=[
+            "Sign in\nAccount\nThis subscription belongs to derekz@stardust.ai\n"
+            "You’re already unsubscribed\nYou’ll no longer receive these emails."
+        ],
+    )
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert discovery.state is UnsubscribePageState.ALREADY_UNSUBSCRIBED
+
+
 def test_settled_page_without_text_or_controls_reports_missing_state() -> None:
     browser = _discovery_browser(
         control_snapshots=[{"blocked": False, "forms": [], "links": []}],

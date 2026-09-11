@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-11: unsubscribe discovery now gives an explicit already-unsubscribed
+  terminal page precedence over a coexisting sign-in prompt. Some providers
+  render both strings for an account that is already unsubscribed; classifying
+  the login marker first incorrectly projected a completed skip as
+  `needs_human`.
+
 - 2026-09-11: the delivery-projection repair scan no longer requires the
   decision-quality judgement in order to rebuild a delivery fact.
   `_repair_completed_message_delivery_projections` validated each stored result
