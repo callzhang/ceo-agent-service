@@ -455,11 +455,11 @@ describe("service command tasks", () => {
     expect(screen.getByRole("button", { name: "立即运行" })).toBeEnabled();
 
     await user.clear(screen.getByLabelText("Cron 表达式"));
-    await user.type(screen.getByLabelText("Cron 表达式"), "0 */2 * * * *");
-    expect(screen.getByText("计划预览：按自定义计划执行 · Asia/Shanghai")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Cron 表达式"), "0 30 * * * *");
+    expect(screen.getByText("计划预览：每小时第30分钟执行 · Asia/Shanghai")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "保存更改" }));
 
-    await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(9, expect.objectContaining({ command: "produce-once", cron_expression: "0 */2 * * * *", prompt: "", runtime_id: "", skill_refs: [], version: 3 })));
+    await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(9, expect.objectContaining({ command: "produce-once", cron_expression: "0 30 * * * *", prompt: "", runtime_id: "", skill_refs: [], version: 3 })));
   });
 
   it("states that the WeChat command's decision runner loads no Skill", async () => {

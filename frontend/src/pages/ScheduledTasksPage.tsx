@@ -90,6 +90,7 @@ function draftScheduleDescription(expression: string, timezone: string) {
     if (seconds === "0" && minutes === "*" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = "每分钟执行";
     else if (/^\*\/\d+$/.test(seconds) && minutes === "*" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = `每${Number(seconds.slice(2))}秒执行`;
     else if (seconds === "0" && minutes === "0" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = "每小时整点执行";
+    else if (seconds === "0" && /^\d+$/.test(minutes) && hours === "*" && days === "*" && months === "*" && weekdays === "*" && Number(minutes) >= 0 && Number(minutes) <= 59) description = `每小时第${Number(minutes)}分钟执行`;
     else if (seconds === "0" && minutes === "0" && /^\d+$/.test(hours) && days === "*" && months === "*" && weekdays === "*") description = `每天${Number(hours).toString().padStart(2, "0")}:00执行`;
   }
   return `${description} · ${timezone}`;
