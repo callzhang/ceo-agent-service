@@ -543,7 +543,7 @@ def test_runner_always_starts_fresh_and_uses_schema(tmp_path: Path):
     assert runner.last_transcript_start_line == 0
 
 
-def test_runner_treats_invalid_model_decision_as_retryable(tmp_path: Path):
+def test_runner_normalizes_mechanical_trigger_mismatch(tmp_path: Path):
     payload = derek_view_payload(historical_sources=[])
     payload["topics"] = [
         {
@@ -563,8 +563,10 @@ def test_runner_treats_invalid_model_decision_as_retryable(tmp_path: Path):
         ),
     )
 
-    with pytest.raises(ValueError, match="MeetingAlignmentDecision"):
-        runner.decide(prompt="decide", run_id=1)
+    decision = runner.decide(prompt="decide", run_id=1)
+
+    assert "aligned_disagreement" in decision.trigger_reasons
+    assert decision.topics[0].state == "aligned"
 
 
 def test_runner_clears_prior_audit_metadata_before_executor_failure(tmp_path: Path):

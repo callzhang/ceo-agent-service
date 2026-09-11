@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import ValidationError
 
@@ -373,6 +373,14 @@ def parse_meeting_alignment_decision(raw: str) -> MeetingAlignmentDecision:
         return MeetingAlignmentDecision.model_validate_json(stripped)
     except (ValueError, ValidationError):
         pass
+    try:
+        payload = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError):
+        payload = None
+    if isinstance(payload, dict):
+        decision = _normalized_decision(payload)
+        if decision is not None:
+            return decision
     if decision := _embedded_decision(stripped):
         return decision
 
@@ -389,6 +397,9 @@ def parse_meeting_alignment_decision(raw: str) -> MeetingAlignmentDecision:
             pass
         if not isinstance(payload, dict):
             continue
+        decision = _normalized_decision(payload)
+        if decision is not None:
+            return decision
         for text in _decision_text_candidates(payload):
             if decision := _embedded_decision(text):
                 return decision
@@ -412,8 +423,107 @@ def _embedded_decision(text: str) -> MeetingAlignmentDecision | None:
         try:
             return MeetingAlignmentDecision.model_validate(payload)
         except (ValueError, ValidationError):
-            continue
+            if isinstance(payload, dict):
+                decision = _normalized_decision(payload)
+                if decision is not None:
+                    return decision
     return None
+
+
+def _normalized_decision(payload: dict[str, object]) -> MeetingAlignmentDecision | None:
+    normalized = _normalize_decision_shape(payload)
+    if normalized == payload:
+        return None
+    try:
+        return MeetingAlignmentDecision.model_validate(normalized)
+    except (ValueError, ValidationError):
+        return None
+
+
+def _normalize_decision_shape(payload: dict[str, object]) -> dict[str, object]:
+    normalized = dict(payload)
+    trigger_reasons = _normalize_trigger_reasons(
+        normalized.get("trigger_reasons"),
+        normalized.get("topics"),
+        normalized.get("derek_viewpoint"),
+    )
+    if trigger_reasons is not None:
+        normalized["trigger_reasons"] = trigger_reasons
+    target = _normalize_delivery_target(normalized.get("target"))
+    if target is not None:
+        normalized["target"] = target
+    private_message = normalized.get("sensitive_private_message")
+    if isinstance(private_message, dict):
+        private_normalized = dict(private_message)
+        private_target = _normalize_delivery_target(private_normalized.get("target"))
+        if private_target is not None:
+            private_normalized["target"] = private_target
+        normalized["sensitive_private_message"] = private_normalized
+    return normalized
+
+
+def _normalize_trigger_reasons(
+    raw_trigger_reasons: object,
+    raw_topics: object,
+    raw_derek_viewpoint: object,
+) -> list[object] | None:
+    if not isinstance(raw_trigger_reasons, list):
+        return None
+    topic_states = set()
+    if isinstance(raw_topics, list):
+        topic_states = {
+            topic.get("state")
+            for topic in raw_topics
+            if isinstance(topic, dict) and isinstance(topic.get("state"), str)
+        }
+    derived = list(dict.fromkeys(raw_trigger_reasons))
+    if "aligned" in topic_states:
+        derived = _append_once(derived, "aligned_disagreement")
+    else:
+        derived = [reason for reason in derived if reason != "aligned_disagreement"]
+    if "unresolved" in topic_states:
+        derived = _append_once(derived, "unresolved_disagreement")
+    else:
+        derived = [
+            reason for reason in derived if reason != "unresolved_disagreement"
+        ]
+    if raw_derek_viewpoint is None:
+        derived = [reason for reason in derived if reason != "derek_viewpoint"]
+    elif isinstance(raw_derek_viewpoint, dict):
+        derived = _append_once(derived, "derek_viewpoint")
+    return derived
+
+
+def _append_once(values: list[object], value: str) -> list[object]:
+    return values if value in values else [*values, value]
+
+
+def _normalize_delivery_target(raw_target: object) -> Any:
+    if not isinstance(raw_target, dict):
+        return raw_target
+    target = dict(raw_target)
+    kind = target.get("kind")
+    if kind == "group":
+        candidates = target.get("candidates")
+        first_candidate = (
+            candidates[0]
+            if isinstance(candidates, list)
+            and candidates
+            and isinstance(candidates[0], dict)
+            else None
+        )
+        if first_candidate is not None:
+            if not str(target.get("conversation_id") or "").strip():
+                target["conversation_id"] = str(
+                    first_candidate.get("conversation_id") or ""
+                )
+            if not str(target.get("title") or "").strip():
+                target["title"] = str(first_candidate.get("title") or "")
+        target["direct_user_id"] = ""
+    elif kind == "direct":
+        target["conversation_id"] = ""
+        target["candidates"] = []
+    return target
 
 
 def _decision_text_candidates(payload: dict[str, object]) -> list[str]:

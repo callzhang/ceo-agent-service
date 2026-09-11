@@ -358,8 +358,9 @@ class MeetingAlignmentDecision(StrictModel):
     @model_validator(mode="before")
     @classmethod
     def default_legacy_sensitive_private_message(cls, value: Any) -> Any:
-        if isinstance(value, dict) and "sensitive_private_message" not in value:
-            return {**value, "sensitive_private_message": None}
+        if isinstance(value, dict):
+            if "sensitive_private_message" not in value:
+                return {**value, "sensitive_private_message": None}
         return value
 
     @model_validator(mode="after")

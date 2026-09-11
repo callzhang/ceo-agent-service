@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 import app.meeting_alignment_models as models
+from app.meeting_alignment_agent import parse_meeting_alignment_decision
 from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
     MeetingAlignmentJob,
@@ -122,6 +123,77 @@ def valid_derek_viewpoint():
         "example": "先开放 5% 流量并验证回滚。",
         "historical_sources": ["历史项目复盘"],
     }
+
+
+def test_decision_normalizes_topic_trigger_pairing():
+    payload = valid_send_decision()
+    payload["topics"][0].update(
+        state="aligned",
+        conclusion="先小流量验证，再扩大范围。",
+        alignment_reason="双方明确同意这个推进方式。",
+    )
+    payload["trigger_reasons"] = ["meeting_summary"]
+    payload["key_questions"] = []
+
+    decision = parse_meeting_alignment_decision(json.dumps(payload))
+
+    assert "aligned_disagreement" in decision.trigger_reasons
+    assert "unresolved_disagreement" not in decision.trigger_reasons
+
+
+def test_decision_normalizes_derek_viewpoint_trigger_pairing():
+    payload = valid_send_decision()
+    payload["derek_viewpoint"] = valid_derek_viewpoint()
+    payload["trigger_reasons"] = ["meeting_summary"]
+
+    decision = parse_meeting_alignment_decision(json.dumps(payload))
+
+    assert "derek_viewpoint" in decision.trigger_reasons
+
+    payload = valid_send_decision()
+    payload["trigger_reasons"] = ["meeting_summary", "derek_viewpoint"]
+    payload["derek_viewpoint"] = None
+
+    decision = parse_meeting_alignment_decision(json.dumps(payload))
+
+    assert "derek_viewpoint" not in decision.trigger_reasons
+
+
+def test_decision_normalizes_target_shape_from_kind():
+    group_payload = valid_send_decision()
+    group_payload["target"]["conversation_id"] = ""
+    group_payload["target"]["direct_user_id"] = "stale-direct-user"
+
+    group_decision = parse_meeting_alignment_decision(json.dumps(group_payload))
+
+    assert group_decision.target is not None
+    assert group_decision.target.conversation_id == "cid-1"
+    assert group_decision.target.direct_user_id == ""
+
+    direct_payload = valid_send_decision()
+    direct_payload["audience_scope"] = "personal"
+    direct_payload["trigger_reasons"] = ["meeting_summary"]
+    direct_payload["topics"] = []
+    direct_payload["key_questions"] = []
+    direct_payload["target"] = {
+        "kind": "direct",
+        "conversation_id": "stale-group",
+        "direct_user_id": "alex",
+        "title": "Alex",
+        "candidates": [
+            {
+                "conversation_id": "stale-group",
+                "title": "项目群",
+                "evidence": ["stale group target from a previous candidate"],
+            }
+        ],
+    }
+
+    direct_decision = parse_meeting_alignment_decision(json.dumps(direct_payload))
+
+    assert direct_decision.target is not None
+    assert direct_decision.target.conversation_id == ""
+    assert direct_decision.target.candidates == []
 
 
 def test_send_decision_requires_message_and_explicit_target():
