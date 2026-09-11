@@ -51,6 +51,7 @@ from app.dws_client import (
     DwsClient,
     DwsError,
     extract_recall_key_from_send_result,
+    is_transient_dependency_error,
     local_time_zone_name,
     native_reply_delivery_payload,
 )
@@ -2902,29 +2903,7 @@ def _macos_interface_has_default_reachable_network(
 
 
 def _is_dws_transient_dependency_error(exc: Exception) -> bool:
-    if isinstance(exc, (subprocess.TimeoutExpired, TimeoutError)):
-        return True
-    if not isinstance(exc, DwsError):
-        return False
-    if exc.code in (
-        DwsClient.RETRYABLE_ERROR_CODES
-        | DwsClient.MESSAGE_LIST_RETRYABLE_ERROR_CODES
-        | DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES
-    ):
-        return True
-    normalized = str(exc).casefold()
-    return any(
-        marker in normalized
-        for marker in (
-            "check network, proxy, and dns settings",
-            "mcp service is reachable",
-            "network_error",
-            "timeout_error",
-            "command timed out after",
-            "exit code -9",
-            "exit code -15",
-        )
-    )
+    return is_transient_dependency_error(exc)
 
 
 class NetworkDependencyGate:

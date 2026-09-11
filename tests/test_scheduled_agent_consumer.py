@@ -32,6 +32,7 @@ from app.dispatcher.adapters import (
     ReplyQueueAdapter, ScheduledExecutionQueueAdapter, ScheduledTaskQueueAdapter,
 )
 from app.dispatcher.models import ClaimGuard
+from app.dws_client import DwsError
 from app.skill_files import SkillDocument
 from app.store import AgentRole, AutoReplyStore
 
@@ -402,6 +403,25 @@ def test_command_trigger_failure_ends_the_trigger_and_raises_attention(tmp_path)
     assert rows[0]["conversation_id"] == f"scheduled-task:{run.scheduled_task_id}"
     assert rows[0]["message_id"] == run.event_id
     assert "produce-once" in rows[0]["detail"] and "dws unreachable" in rows[0]["detail"]
+
+
+def test_a_briefly_unreachable_dependency_does_not_raise_attention(tmp_path):
+    store = AutoReplyStore(tmp_path / "command-transient.sqlite3")
+    run = command_task_run(store)
+
+    def produce_once():
+        raise DwsError(
+            "dws command failed with exit code 1; code=NETWORK_ERROR; "
+            "stderr=DNS resolution failed"
+        )
+
+    persisted = dispatch(store, run, None, registry=commands(produce_once))
+
+    # The trigger still records the failure; one DNS outage must not write one
+    # Attention entry per minute on top of it.
+    assert persisted.dispatch_status == "failed"
+    assert persisted.skip_or_error_reason.startswith(SERVICE_COMMAND_FAILED)
+    assert error_rows(store) == []
 
 
 def test_command_registry_rejects_bindings_that_do_not_match_the_catalog():

@@ -5241,3 +5241,35 @@ class DwsClient:
         if not isinstance(parsed, dict):
             raise DwsError("DingTalk OpenAPI returned invalid JSON response")
         return parsed
+
+
+def is_transient_dependency_error(exc: Exception) -> bool:
+    """True when the failure is the dependency being briefly unreachable.
+
+    Callers use this to retry or defer instead of recording a fault: a DNS
+    outage or a busy MCP gateway is one external event, not one incident per
+    attempt.
+    """
+    if isinstance(exc, (subprocess.TimeoutExpired, TimeoutError)):
+        return True
+    if not isinstance(exc, DwsError):
+        return False
+    if exc.code in (
+        DwsClient.RETRYABLE_ERROR_CODES
+        | DwsClient.MESSAGE_LIST_RETRYABLE_ERROR_CODES
+        | DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES
+    ):
+        return True
+    normalized = str(exc).casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "check network, proxy, and dns settings",
+            "mcp service is reachable",
+            "network_error",
+            "timeout_error",
+            "command timed out after",
+            "exit code -9",
+            "exit code -15",
+        )
+    )

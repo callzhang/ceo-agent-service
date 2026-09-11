@@ -18,6 +18,7 @@ from app.agent_cron.context import (
 from app.agent_cron.models import ScheduledTaskRun
 from app.agent_cron.scheduler import EXECUTION_UNAVAILABLE
 from app.dispatcher.models import ClaimGuard, DispatchEnvelope
+from app.dws_client import is_transient_dependency_error
 from app.store import AutoReplyStore, ReplyTask
 
 
@@ -83,12 +84,18 @@ class ScheduledTaskTriggerConsumer:
             summary = self._commands.run(command)
         except Exception as exc:  # noqa: BLE001 - the trigger records this failure fact
             reason = f"{SERVICE_COMMAND_FAILED}: {exc}"
-            self._store.record_error(
-                f"scheduled-task:{run.scheduled_task_id}", run.event_id,
-                SERVICE_COMMAND_FAILED,
-                f"Scheduled task {run.snapshot.task_id} ({run.snapshot.name}) "
-                f"command {command} failed for event {run.event_id}: {exc}",
-            )
+            # A dependency that is briefly unreachable is one external event,
+            # not one incident per trigger.  The per-minute commands would
+            # otherwise write an Attention entry every minute of a DNS outage
+            # (31 of them on 2026-09-11), which is what the run record already
+            # says.  Every other failure still raises Attention each time.
+            if not is_transient_dependency_error(exc):
+                self._store.record_error(
+                    f"scheduled-task:{run.scheduled_task_id}", run.event_id,
+                    SERVICE_COMMAND_FAILED,
+                    f"Scheduled task {run.snapshot.task_id} ({run.snapshot.name}) "
+                    f"command {command} failed for event {run.event_id}: {exc}",
+                )
             guard.finish_source(
                 self._now().astimezone(UTC), status="failed", reason=reason,
             )
