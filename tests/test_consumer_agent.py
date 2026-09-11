@@ -670,7 +670,7 @@ def test_consumer_instructions_require_reply_level_risk_controls_for_autonomous_
 
     assert "risk" in instructions
     assert "boundary" in instructions
-    assert "structured top-level fields `risk`" in instructions
+    assert "structured top-level fields: `risk` is `low`, `medium`, or `high`" in instructions
     assert "`rule_coverage`" in instructions
     assert "`information_completeness`" in instructions
 
