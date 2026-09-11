@@ -315,7 +315,7 @@ def _seed_weekly_okr_task(
         now=now,
     )
     if existing is not None:
-        return existing
+        return _bound_to_this_checkout(store, existing, now=now)
     runtime, runtime_reason = _select_runtime(
         options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
     )
@@ -382,6 +382,50 @@ def _seed_minutes_task(
         timezone_name="Asia/Shanghai",
         enabled=True,
         now=now,
+    )
+
+
+def _service_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _prompt_bound_to_this_checkout(prompt: str, service_root: str) -> str | None:
+    """Point a stored one-shot command at this checkout, or None if unchanged.
+
+    The seed writes the repository path into the prompt when it first creates
+    the task and never rewrites an existing task, so moving the checkout leaves
+    the command pointing at a directory that no longer exists.  Only the path
+    inside the command changes; later edits to the rest of the prompt survive.
+    """
+    segments = prompt.split("`")
+    changed = False
+    for index in range(1, len(segments), 2):
+        segment = segments[index]
+        if not segment.startswith("cd ") or " && " not in segment:
+            continue
+        head, rest = segment.split(" && ", 1)
+        try:
+            parts = shlex.split(head)
+        except ValueError:
+            continue
+        if len(parts) != 2 or parts[1] == service_root:
+            continue
+        segments[index] = f"cd {shlex.quote(service_root)} && {rest}"
+        changed = True
+    return "`".join(segments) if changed else None
+
+
+def _bound_to_this_checkout(
+    store: AutoReplyStore, task: ScheduledTask, *, now: datetime | None
+) -> ScheduledTask:
+    """Heal a seeded prompt whose one-shot command outlived its checkout."""
+    if task.deleted_at is not None or not task.prompt:
+        return task
+    prompt = _prompt_bound_to_this_checkout(task.prompt, str(_service_root()))
+    if prompt is None:
+        return task
+    return store.update_scheduled_task(
+        task.id, expected_version=task.version, prompt=prompt, now=now
     )
 
 

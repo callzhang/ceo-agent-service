@@ -17,6 +17,7 @@ from app.agent_cron.models import ScheduledTaskSkillRef
 from app.agent_cron.options import ScheduledTaskOptionService
 from app.agent_cron.consumer import ScheduledTaskTriggerConsumer
 from app.agent_cron.scheduler import AgentCronScheduler, ExecutionTerminalResolverRegistry
+from app.agent_cron import seeds as seeds_module
 from app.agent_cron.seeds import seed_scheduled_tasks
 from app.agent_runtime_contracts import (
     LOCAL_SERVICE_RUNTIME_CAPABILITIES,
@@ -994,3 +995,52 @@ def test_all_proactive_seeds_stay_visible_and_disabled_without_healthy_runtime(
     assert all(task.enabled for task in tasks if task.command)
     assert all(store.list_scheduled_task_runs(task.id) == () for task in tasks)
 
+
+def test_a_moved_checkout_rebinds_the_one_shot_command_in_place(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "moved-checkout.sqlite3")
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes={"codex_oauth"},
+        operation_skills=("ceo-weekly-report", "dingtang-okr-review"),
+    )
+    task = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "weekly-okr-report-sunday-v1",
+    )
+    service_root = str(Path(seeds_module.__file__).resolve().parents[2])
+    assert f"cd {shlex.quote(service_root)} && " in task.prompt
+
+    # The repository moves, and a user edit is added to the prompt.  Only the
+    # command's path is stale; the seed must not rewrite anything else.
+    stale = task.prompt.replace(
+        f"cd {shlex.quote(service_root)} && ",
+        "cd /old/checkout/ceo-agent-service && ",
+    ) + "\n\n用户补充：只在周日执行。"
+    edited = store.update_scheduled_task(
+        task.id, expected_version=task.version, prompt=stale, now=NOW
+    )
+
+    rebound = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "weekly-okr-report-sunday-v1",
+    )
+
+    assert "/old/checkout/ceo-agent-service" not in rebound.prompt
+    assert f"cd {shlex.quote(service_root)} && " in rebound.prompt
+    assert "用户补充：只在周日执行。" in rebound.prompt
+    assert rebound.version == edited.version + 1
+
+    # A prompt that already points at this checkout is left exactly as it is.
+    settled = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "weekly-okr-report-sunday-v1",
+    )
+    assert settled.prompt == rebound.prompt
+    assert settled.version == rebound.version
