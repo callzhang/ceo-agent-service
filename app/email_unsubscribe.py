@@ -1564,8 +1564,19 @@ class PlaywrightUnsubscribeBrowser:
                 host = urlsplit(self._document_url).netloc
             except ValueError:
                 host = ""
+        # The first line or two of what the page actually said. The success
+        # path already persists the whole redacted page text with its receipt,
+        # so a bounded prefix here is the same disclosure and it is the only
+        # thing that separates "a tracker bounce we never followed" from "a
+        # page our control model cannot read" -- lengths and a host name do
+        # not.
+        preview = ""
+        if text:
+            redacted, _digest = normalize_unsubscribe_result_text(text)
+            preview = " ".join(redacted.split())[:160]
         fields = {
             "host": host,
+            "text_preview": preview,
             "text_length": (
                 structure["text_length"] if structure is not None else len(text)
             ),

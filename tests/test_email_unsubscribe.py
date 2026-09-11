@@ -3242,6 +3242,10 @@ def test_settled_page_without_text_or_controls_reports_missing_state() -> None:
     # subscription token. The host says which side answered; that is all.
     assert "/unsubscribe" not in observation
     assert "host=" in observation
+    # What the page said, bounded and redacted the same way a receipt's page
+    # text is. Without it a tracker bounce and an unreadable app page are
+    # indistinguishable, which is what stalled this class for a day.
+    assert "text_preview=" in observation
 
 
 def test_settled_page_whose_controls_are_not_modelled_reports_unknown_state() -> None:
