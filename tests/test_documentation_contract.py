@@ -122,12 +122,16 @@ def test_readme_describes_user_owned_codex_environment() -> None:
     assert "CEO_REPOSITORY_UPGRADE_DISABLED" in readme
 
 
-def test_cron_docs_list_all_seven_default_seeds() -> None:
+def test_cron_docs_list_all_eight_default_seeds() -> None:
     runtime = _read("docs/runtime-mechanism.md")
     readme = _read("README.md")
     required = (
         "钉钉消息", "会议", "微信", "OA", "每日工作来源", "每周 OKR",
-        "ceo-minutes-sync", "20:00", "Asia/Shanghai",
+        "AI 听记同步", "20:00", "Asia/Shanghai",
+        # The hourly recent-message recovery is its own seeded service command
+        # now, so both documents have to name it rather than describe an
+        # interval hidden inside the per-minute check.
+        "恢复近期 DingTalk 消息",
     )
     for document in (runtime, readme):
         for value in required:

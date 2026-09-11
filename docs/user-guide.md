@@ -313,7 +313,7 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 | `/attempts/{id}` | 单次 trigger、回复、证据、工具事件和回执；从此处打开 Consumer/Audit 执行记录，不显示内部会话标识 |
 | `/oa-approvals/{process_instance_id}` | OA 详情、评论和历史处理结果 |
 | `/tasks` | 项目、TODO 和 follow-up |
-| `/scheduled-tasks` | Agent Cron 定时任务：Cron、启用状态、立即运行和运行记录。Agent 任务显示 prompt、Skills 和 Runtime；服务命令任务只显示命令名，由服务进程直接执行，不进入 `/history` |
+| `/scheduled-tasks` | Agent Cron 定时任务：Cron、启用状态、立即运行和运行记录。Agent 任务显示 prompt、Skills 和 Runtime；服务命令任务显示业务命令名和一块只读的“下游 consumer”信息（通道、执行器、角色边界、实际加载的 Skill、Runtime 路由可用性），由服务进程直接执行；没有发现真实对象时不进入 `/history` |
 | `/workers` | 后台投递和作业 worker 的运行状态；不显示工作台执行器或 lease |
 | `/settings` | 统一左侧导航；系统参数、路由、Channel gate、队列和运行记录 |
 | `/errors` | 需要处理的系统错误 |

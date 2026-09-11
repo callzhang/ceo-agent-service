@@ -127,10 +127,12 @@ def claim(adapter, source_id, owner):
 def commands(produce_once=lambda: "produce-once queued=0"):
     return ServiceCommandRegistry({
         "produce-once": produce_once,
+        "recover-recent-messages": lambda: "recover-recent-messages queued=0",
         "wechat-produce-once": lambda: "wechat produce-once queued=0",
         "scan-meetings-once": lambda: "scan-meetings-once queued=0",
         "scan-oa-approvals": lambda: "scan-oa-approvals queued=0",
         "scan-work-sources-once": lambda: "scan-work-sources-once queued=0",
+        "sync-minutes-once": lambda: "sync-minutes-once queued=0",
     })
 
 
@@ -171,6 +173,14 @@ def audit(outcome, revision):
                              "live_result_reference": {"status": "done"}}
                             if outcome == "executed" else None),
         "error": {"code": "", "retryable": False},
+        # needs_human must classify as NEEDS_HUMAN, which the decision quality
+        # gate reaches through high risk plus low confidence.  Leaving
+        # information_completeness low instead would classify it as ASK_BACK.
+        **({"risk": "high", "confidence": 0.1,
+            "rule_coverage": 1.0, "information_completeness": 1.0}
+           if outcome == "needs_human" else
+           {"risk": "low", "confidence": 1.0,
+            "rule_coverage": 1.0, "information_completeness": 1.0}),
     })
 
 
@@ -185,6 +195,8 @@ def proposal(label):
                                   "target": {"group": "cron"},
                                   "payload": {"argv": ["dws", "chat", "message", "send"]}}]},
         "error": {"code": "", "retryable": False},
+        "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
     })
 
 

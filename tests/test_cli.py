@@ -4912,6 +4912,114 @@ def test_produce_once_records_and_notifies_top_level_failure(monkeypatch, tmp_pa
     ]
 
 
+def test_recover_recent_messages_command_runs_the_widened_producer_pass(
+    monkeypatch, tmp_path, capsys
+):
+    calls = []
+
+    class FakeWorker:
+        def produce_once(self, max_tasks=None, *, recovery=False):
+            calls.append((max_tasks, recovery))
+            return 4
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        max_batches=3,
+    )
+
+    queued = cli.recover_recent_messages(settings)
+
+    assert queued == 4
+    assert calls == [(3, True)]
+    assert capsys.readouterr().out == "recover-recent-messages queued=4\n"
+    assert build_parser().parse_args(
+        ["recover-recent-messages", "--db", str(tmp_path / "worker.sqlite3")]
+    ).command == "recover-recent-messages"
+
+
+def test_recover_recent_messages_records_and_notifies_top_level_failure(
+    monkeypatch, tmp_path
+):
+    notifications = []
+
+    class FakeWorker:
+        def produce_once(self, max_tasks=None, *, recovery=False):
+            raise RuntimeError("dws not authenticated")
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+    monkeypatch.setattr(
+        cli,
+        "send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+        raising=False,
+    )
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        max_batches=3,
+    )
+
+    with pytest.raises(RuntimeError, match="dws not authenticated"):
+        cli.recover_recent_messages(settings)
+
+    errors = cli.AutoReplyStore(settings.db_path).list_errors(limit=1)
+    assert errors[0].kind == "producer"
+    assert notifications == [
+        {
+            "title": "CEO producer failed",
+            "message": "dws not authenticated",
+        }
+    ]
+
+
+def test_dingtalk_message_and_recovery_commands_never_run_concurrently(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    monkeypatch.setenv("CEO_WECHAT_READER_ENABLED", "1")
+    events: list[str] = []
+    first_pass_entered = threading.Event()
+    release_first_pass = threading.Event()
+
+    class Worker:
+        def produce_once(self, max_tasks=None, *, recovery=False):
+            label = "recovery" if recovery else "fast"
+            events.append(f"start:{label}")
+            if not recovery:
+                first_pass_entered.set()
+                assert release_first_pass.wait(timeout=5)
+            events.append(f"end:{label}")
+            return 0
+
+    store = AutoReplyStore(tmp_path / "lock.sqlite3")
+    registry = cli._service_command_registry(
+        store, Worker(), SimpleNamespace(max_batches=1)
+    )
+
+    fast = threading.Thread(target=lambda: registry.run("produce-once"))
+    fast.start()
+    assert first_pass_entered.wait(timeout=5)
+    recovery = threading.Thread(
+        target=lambda: registry.run("recover-recent-messages")
+    )
+    recovery.start()
+    recovery.join(timeout=0.2)
+    assert recovery.is_alive()
+    assert events == ["start:fast"]
+
+    release_first_pass.set()
+    fast.join(timeout=5)
+    recovery.join(timeout=5)
+
+    assert events == ["start:fast", "end:fast", "start:recovery", "end:recovery"]
+
+
 def test_consume_once_command_calls_worker_consume_once(monkeypatch, tmp_path):
     calls = []
 
@@ -7803,8 +7911,8 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
     calls: list[object] = []
 
     class Worker:
-        def produce_once(self, max_tasks=None):
-            calls.append(max_tasks)
+        def produce_once(self, max_tasks=None, *, recovery=False):
+            calls.append((max_tasks, recovery))
             return 3
 
     store = AutoReplyStore(tmp_path / "registry.sqlite3")
@@ -7814,13 +7922,18 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
 
     assert set(registry._implementations) == {
         "produce-once",
+        "recover-recent-messages",
         "wechat-produce-once",
         "scan-meetings-once",
         "scan-oa-approvals",
         "scan-work-sources-once",
+        "sync-minutes-once",
     }
     assert registry.run("produce-once") == "produce-once queued=3"
-    assert calls == [7]
+    assert registry.run("recover-recent-messages") == (
+        "recover-recent-messages queued=3"
+    )
+    assert calls == [(7, False), (7, True)]
     wechat = registry._implementations["wechat-produce-once"]
     assert isinstance(wechat, WechatProduceOnceCommand)
     assert wechat._restart_reader is cli._restart_wechat_reader_service

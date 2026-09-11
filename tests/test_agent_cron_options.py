@@ -604,7 +604,7 @@ def test_service_command_downstream_reports_real_channel_consumer_and_routes(
         tmp_path, snapshots={"codex_oauth": _snapshot("codex_oauth", healthy=True)}
     )
 
-    dingtalk, wechat, meeting, oa, work_sources = (
+    dingtalk, wechat, meeting, oa, work_sources, minutes, recovery = (
         service.list_service_command_options()
     )
 
@@ -615,6 +615,11 @@ def test_service_command_downstream_reports_real_channel_consumer_and_routes(
     assert (work_sources.name, work_sources.channel) == (
         "scan-work-sources-once",
         "work_summary",
+    )
+    assert (minutes.name, minutes.channel) == ("sync-minutes-once", "work_summary")
+    assert (recovery.name, recovery.channel) == (
+        "recover-recent-messages",
+        "dingtalk",
     )
     assert dingtalk.downstream.channel == "dingtalk"
     assert dingtalk.downstream.consumer_runners == (

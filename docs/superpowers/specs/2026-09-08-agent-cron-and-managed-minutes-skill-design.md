@@ -13,10 +13,12 @@
            | 服务命令任务（服务命令目录中的一个确定性命令，进程内执行，不经过 Agent）
 ```
 
-Agent 任务适合需要判断的检查；服务命令任务适合“只跑一条确定性 producer 命令”的检查，例如
-钉钉消息和微信消息的增量读取，这类检查放进 Agent 只会消耗模型调用并在历史里制造噪音。
+Agent 任务适合需要判断的检查；服务命令任务适合确定性的发现或同步工作，例如钉钉与微信消息的
+增量读取、会议与 OA 扫描，以及 AI 听记同步。把这类工作放进 Agent 只会消耗模型调用、在历史里
+制造噪音，并让同一条确定性命令在 `no_action` 与 `proposal` 之间随机摇摆。
 
-同时把已经停止更新的“每日 AI 听记同步”迁为 CEO Agent Service 管理的定时任务，并将其业务方法定义为 service-managed Skill `ceo-minutes-sync`。
+同时把已经停止更新的“每日 AI 听记同步”迁为 CEO Agent Service 管理的定时任务。它的业务方法一度
+定义为 service-managed Skill `ceo-minutes-sync`，现在改由确定性实现 `app/minutes_sync.py` 承担。
 
 本设计还统一现有 Consumer 队列的检查和分发机制：数据发现由 Agent Cron 触发，Cron 产生的执行输入由一个内部 Dispatcher 领取，并交给相应 Consumer；Consumer 队列检查本身不是用户可配置的 Cron。
 
@@ -54,7 +56,7 @@ Agent 任务适合需要判断的检查；服务命令任务适合“只跑一�
 - Cron 到期计算、触发去重、无补跑、重叠跳过和时区处理。
 - 从 Agent Runtime 当前配置动态提供执行方式。
 - 引用 service-managed Skills 和已安装 operation Skills。
-- `ceo-minutes-sync` 托管 Skill 及每日听记同步任务。
+- 每天同步 AI 听记的服务命令任务。
 - 将当前服务内的周期性业务发现迁为 Agent Cron，并移除对应的隐藏计时入口。
 - 一个内部 Consumer Dispatcher，通过 Queue Adapter 统一检查和分发不同业务队列。
 - Settings、架构文档、运行机制文档和操作文档同步更新。
@@ -115,8 +117,11 @@ Settings 删除或不新增以下内容：
 - 可读的下一次运行时间；
 - 最近运行状态和运行历史；服务命令的运行记录显示命令的可读名称。
 
-服务命令任务的页面只显示命令及其说明，并说明它发现的消息由统一 Dispatcher 的 reply consumer
-处理、该 consumer 的提示词、Skill 和 Runtime 路由由服务维护；不显示无效的编辑控件。
+服务命令任务的页面只显示命令及其说明，并以只读方式展示它发现的消息在下游如何被处理：
+通道、真实的 consumer 执行器名称、consumer 的角色边界文本（来自服务常量，不是运行时拼接后的
+完整提示词）、consumer 实际加载的 Skill（来自当前进程的 runtime Skill 快照，或已安装的业务
+Skill 目录；微信 consumer 不加载 Skill）、consumer 要求的 Runtime 能力与各路由的可用性。这些
+信息全部由 `scheduled-task-options` 从服务状态计算，不在任务上配置，也不显示任何编辑控件。
 
 任务描述使用与 Agent Composer 一致的交互，支持通过 `$` 搜索和引用 Skill。页面同时以独立标签显示已解析的 Skill，避免只依赖正文中的字符串。
 
@@ -327,27 +332,31 @@ eligible_at = ended_at + 10 minutes
 
 迁移后不在 Settings 增加 `settle` 配置。种子会议 Agent Cron 的任务描述明确“只处理已经结束至少 10 分钟且资料可读取的会议”，并引用 `ceo-meeting-work`。Cron 决定检查时机，任务描述与 Skill 决定会议是否已具备处理资格；用户以后可以通过明确编辑该任务调整等待窗口。
 
-## `ceo-minutes-sync` 托管 Skill
+## AI 听记同步
 
-新增 repository-owned、service-managed Skill `ceo-minutes-sync`。它定义：
+听记同步整条链路都是确定性的：列表分页、读取基本信息与摘要、读取逐字稿、按既有版式写入本地
+归档、推进内容游标。其中没有需要模型判断的一步，因此它是服务命令 `sync-minutes-once`，实现在
+`app/minutes_sync.py`，与 `app.cli sync-minutes-once` 是同一次执行。
 
-- 搜索新增或新获得访问权限的 DingTalk AI 听记；
-- 正确分页并读取听记基本信息、摘要和完整逐字稿；
-- 使用 `dingtalk-minutes` 完成正常读取；
-- 仅在访问被拒且需要申请权限时使用 `dingtalk-minutes-access-request`；
-- 将成功读取的内容归档到约定的本地工作数据目录；
-- 持久化内容游标，下一次运行可以发现上次内容边界以前仍缺失的材料；
-- 不把“进程成功”或“列表请求成功”当作内容已经同步；
-- 输出本次发现、成功、跳过、无权限和失败的可核验结果。
+- 归档目录沿用既有布局，逐字稿保留 `[MM:SS] 说话人: 内容` 的行式版式；
+- 内容游标持久化，下一次运行仍会补齐上次边界之前缺失的材料；
+- “列表请求成功”不算内容已同步，只有真正写入归档的听记才推进结果计数；
+- 时长不足五分钟的会议直接跳过，不读取也不归档；
+- 服务不代为申请任何听记权限。DingTalk 的凭据级失败（PAT 高/中风险无权限、Agent Code 不存在）
+  影响的是每一次调用，不是某一条听记的访问权限，把它当作“这条听记需要申请权限”会给每一位
+  五分钟以上会议的所有者发出访问请求，所以这条路径不存在；
+- 输出本次发现、成功、跳过和失败的可核验结果。
 
-Skill 不包含 Cron。种子任务单独配置：
+种子任务：
 
 ```text
 名称：每天同步 AI 听记
 Cron：北京时间每天 20:00
-Runtime：当前默认且可用的 CEO Agent Runtime
-Skills：ceo-minutes-sync 的精确 revision
+执行形式：服务命令 sync-minutes-once
 ```
+
+`ceo-minutes-sync` Skill 文件保留在仓库并继续作为可选的 managed Skill 导入，但不再被任何种子
+任务绑定；用户仍可在自建 Agent 任务里引用它。
 
 首轮可通过手动运行主动补齐当前内容缺口，但 Scheduler 本身不提供历史触发点补跑。
 
@@ -362,14 +371,18 @@ Skills：ceo-minutes-sync 的精确 revision
 | 任务 | 迁移默认计划 | 执行形式 | 主要 Skill |
 | --- | --- | --- | --- |
 | 检查 DingTalk 消息 | 每分钟 | 服务命令 `produce-once` | 无；发现的消息由 reply consumer 处理 |
-| 检查新增会议 | 每分钟 | Agent | `ceo-meeting-work`、`dingtalk-minutes`、`dingtalk-calendar` |
+| 恢复近期 DingTalk 消息 | 每小时 `:30` | 服务命令 `recover-recent-messages` | 无；与上一行共用 producer，只是放宽读取范围 |
+| 检查新增会议 | 每分钟 | 服务命令 `scan-meetings-once` | 无；发现的会议由 meeting consumer 处理 |
 | 检查 WeChat 消息 | 每 15 秒；上一轮未结束时跳过本轮 | 服务命令 `wechat-produce-once` | 无；发现的消息由 wechat reply consumer 处理 |
-| 同步 AI 听记 | 北京时间每天 20:00 | Agent | `ceo-minutes-sync` |
-| 检查 DingTalk OA | 每小时 | Agent | 对应 DingTalk/OA Skills |
-| 扫描工作来源 | 每天 | Agent | `ceo-work-tracking` 及来源 Skills |
+| 同步 AI 听记 | 北京时间每天 20:00 | 服务命令 `sync-minutes-once` | 无；同步过程确定性完成 |
+| 检查 DingTalk OA | 每小时 | 服务命令 `scan-oa-approvals` | 无；发现的审批由 OA consumer 处理 |
+| 扫描工作来源 | 每天 | 服务命令 `scan-work-sources-once` | 无；发现的工作项由 work-summary consumer 处理 |
 | 每周 OKR 汇总 | 北京时间周日 18:00 | Agent | `ceo-weekly-okr-report`、`dingtang-okr-review` |
 
-已经以 Agent 形式创建过的钉钉消息、微信消息 seed 在启动时原地转换为服务命令形式：保留名称、
+每周 OKR 周报是唯一保留 Agent 形式的种子任务：它要读多个来源、判断本周该写什么，没有一条
+确定性命令能表达。其余七项都以服务命令形式 seed。
+
+已经以 Agent 形式创建过的种子在启动时原地转换为服务命令形式：保留名称、
 Cron、时区；从未编辑过的旧 seed 转换后启用（它原来的停用只反映 Agent 形式缺少 Skill 或
 Runtime），用户编辑过的保留用户的启用状态；已删除的不动。
 
@@ -436,8 +449,9 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 
 ### Managed Skill 与迁移
 
-- `ceo-minutes-sync` 能作为 service-managed Skill 导入、修订和绑定精确 revision。
-- 听记同步验证真实内容新鲜度，而不只验证请求成功。
+- 听记同步验证真实内容新鲜度，而不只验证请求成功：断言归档目录里出现了新的听记文件和推进后的
+  内容游标，而不是命令退出码为零。
+- 听记同步不会发出任何权限申请；凭据级失败整次失败并进入 Attention，不退化成逐条申请。
 - 新任务验证成功后旧听记、消息、会议、OA、每日扫描和每周 OKR 计时入口被移除。
 - 重启不会重复创建种子任务。
 - WeChat 迁移不扩大联系人、群聊或发送授权，不新增复盘任务。
@@ -460,7 +474,7 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 
 1. 新进程已经运行；
 2. 所有种子任务只创建一次，下一次运行时间正确；
-3. 手动运行 AI 听记同步能读取当前真实数据并更新内容游标；
+3. 手动运行 AI 听记同步能读取当前真实数据、写入归档并更新内容游标，且没有发出权限申请；
 4. DingTalk、Meeting 和 WeChat 只由新的定时任务触发，没有旧循环重复执行；钉钉和微信消息检查
    以服务命令执行，运行记录链接 `service_command`，不产生 reply task、agent run 或 reply_attempt；
 5. Dispatcher 能将新输入交给正确 Consumer；
@@ -473,7 +487,7 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 1. 建立 Scheduled Task 数据模型、Cron 计算和后端 API。
 2. 建立内部 Dispatcher 与 Queue Adapter，先保持现有 Consumer 业务实现不变。
 3. 增加顶部“定时任务”页面，并移除 Settings 中任何 Agent Cron 入口。
-4. 新增 `ceo-minutes-sync` 托管 Skill 和听记种子任务，验证真实同步。
+4. 新增听记同步服务命令和种子任务，验证真实同步。
 5. 逐项迁移 DingTalk、Meeting、WeChat、OA、工作来源和每周 OKR；每项验证后删除旧计时入口。
 6. 完成回归测试、文档、服务重启、真实数据 readback 和浏览器验收。
 
@@ -484,3 +498,9 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
   旧的 `_run_wechat_loop` producer/consumer 角色删除，服务内只保留 `wechat-sender` 循环。
 - 2026-09-09：决定 13 细化：provider 暂时不可用导致的路由暂停只体现为运行记录和路由状态，
   不按每次触发写 Attention；配置性不可用仍逐次进入 Attention。
+- 2026-09-10：AI 听记同步、会议、OA 和工作来源检查改为服务命令，只有每周 OKR 周报保留 Agent
+  形式。听记同步的业务方法从 `ceo-minutes-sync` Skill 移到 `app/minutes_sync.py`：五分钟以下的
+  会议跳过，服务不再代为申请听记权限（凭据级失败会被误判成逐条无权限）。Skill 文件保留为可选
+  引用，不再被种子任务绑定。
+- 2026-09-10：DingTalk 近期消息恢复从每分钟检查内部的小时判断中拆出，成为每小时 `:30` 的服务
+  命令 `recover-recent-messages`；两条 DingTalk producer 命令共用一把锁，不会并行执行。

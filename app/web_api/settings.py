@@ -53,7 +53,13 @@ def info_sections() -> list[dict[str, object]]:
         {
             "title": "慢路径",
             "items": [
-                {"label": "周期", "description": f"每 {_duration(config.message_recovery_interval())} 运行一次。"},
+                {
+                    "label": "周期",
+                    "description": (
+                        "由 recover-recent-messages 这个独立定时任务触发，不再按固定间隔"
+                        "夹在每分钟的快路径检查里。"
+                    ),
+                },
                 {
                     "label": "私聊恢复",
                     "description": (

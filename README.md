@@ -49,7 +49,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 系统由八层组成：
 
 1. **DingTalk Inputs**：群聊、私聊、配置机器人私聊、在线文档、文件、图片、OA、日程、会议权限请求。
-2. **Producer 消息发现层**：快路径每分钟看未读；慢路径每小时补扫近期单聊和群聊。
+2. **Producer 消息发现层**：快路径每分钟看未读；慢路径由每小时 `:30` 的独立定时任务补扫近期单聊和群聊。
 3. **Producer 结构过滤层**：群聊必须 @ 触发；私聊不需要 @；只过滤可由平台结构证明的系统回执和重复 source revision，不按业务关键词路由。
 4. **SQLite Queue 状态层**：保存待处理任务、处理尝试、已读消息、已发送回复。
 5. **Channel Gate 层**：用 CLI status 和 authenticated probe 确认通道可用；只有明确 `needs_login` 才协调一次登录流程。
@@ -150,7 +150,7 @@ workload 启用 OAuth→API 故障切换并核对同一 run 的 attempt 与 secr
 
 ### 慢路径
 
-- 每小时补扫近期会话。
+- 由定时任务“恢复近期 DingTalk 消息”（服务命令 `recover-recent-messages`）在每小时 `:30` 触发，不再夹在每分钟的快路径里。两条 DingTalk producer 命令共用一把锁，不会并行执行。
 - 单聊：最近 24 小时、最多 50 个本地记录过的单聊。
 - 群聊：最近 24 小时、最多 3 个本地记录过的群聊。
 - 慢路径仍然遵守群聊触发规则：没有 @ 本人或广播 alias 的群聊消息不会进入 agent。
@@ -590,7 +590,7 @@ plist 通过 `SoftResourceLimits/NumberOfFiles=4096` 提高进程可打开文件
 运行模型只有一个 launchd job。它的 supervisor 运行 worker 和审计 Web 两个独立子进程；它们共享 SQLite，但不共享 Python 解释器。任一子进程退出时，supervisor 只退避重启该子进程，另一方继续服务；不会创建 meeting crontab 或第二个 plist：
 
 - `com.ceo-agent-service.main`：唯一 launchd job，托管队列 worker 与本地审计页面。
-- Agent Cron scheduler：按任务自己的 Cron 和时区创建 trigger；停机不补跑，重叠轮次跳过，手动运行不移动计划。启动时按稳定 migration key 幂等 seed 七个默认任务：钉钉消息、会议、微信、OA、每日工作来源、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）的 `ceo-minutes-sync`。
+- Agent Cron scheduler：按任务自己的 Cron 和时区创建 trigger；停机不补跑，重叠轮次跳过，手动运行不移动计划。启动时按稳定 migration key 幂等 seed 八个默认任务：钉钉消息、每小时 `:30` 的近期消息恢复、会议、微信、OA、每日工作来源、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）的 AI 听记同步。
 - 服务命令任务：定时任务分两种执行形式。`command` 为空的任务由 Agent 按 prompt、Skill 和 Runtime 执行；`command` 非空的任务由 Dispatcher 在本进程内直接运行确定性发现代码，不创建 synthetic scheduled Agent 任务。当前钉钉消息、会议、微信消息、OA、工作来源和 AI 听记检查都是服务命令；只有需要分析和编排的 OKR 周报保留为 Agent 任务。服务命令发现真实对象后，才由对应的 reply、meeting 或 work-summary Consumer 处理。
 - Agent 执行容量：单一 launchd 服务内按 `CEO_CONSUMER_WORKERS` 限制所有 Agent 队列合计并发，默认 2；各队列独立调度，Meeting 单类最多 1 个，同一会话仍串行。无需 Agent 的 trigger 和 Todo outbox 不占用 Agent 容量。
 - Consumer Dispatcher：直接从 scheduled trigger/execution、reply、meeting、work summary、OKR 和 Todo outbox 的既有事实来源领取；内部唤醒、等待、租约和 recovery 没有用户设置。

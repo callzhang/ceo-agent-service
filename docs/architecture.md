@@ -87,13 +87,18 @@ scheduled_tasks
 ```
 
 定时任务有两种执行形式，由 `scheduled_tasks.command` 区分。`command` 为空的是 Agent 任务，
-走上面的完整路径。`command` 非空的是服务命令任务：它只声明服务命令目录中的一个名字（当前为
-`produce-once`，即 `app.cli produce-once` 执行的同一次 DingTalk 消息增量读取；以及
-`wechat-produce-once`，即 `app.wechat.cli produce-once` 对已就绪微信账号的一次读取），不需要
-Runtime、Skill 或工作目录。scheduled adapter 领取 trigger 后，Dispatcher 在本进程内直接运行该
-命令；成功时把 `service_command + 命令名` 记为 trigger 的 execution link 并标记 `dispatched`，
-失败时 trigger 以 `failed` 结束并进入 Attention。服务命令任务不创建 reply task、agent run 或
-reply_attempt，因此不会在消息历史里留下每分钟一条的记录：
+走上面的完整路径。`command` 非空的是服务命令任务：它只声明服务命令目录中的一个名字（当前是
+DingTalk 消息、DingTalk 近期消息恢复、微信消息、会议、OA、工作来源和 AI 听记同步），不需要
+Runtime、Skill 或工作目录。判断标准是这次执行本身有没有判断空间：确定性的发现或同步工作属于
+服务命令，需要 Skill 判断的才是 Agent 任务。AI 听记同步的分页读取、归档和内容游标都由
+`app/minutes_sync.py` 确定性完成，因此它也是服务命令。
+scheduled adapter 领取 trigger 后，Dispatcher 在本进程内直接运行该命令；成功时把
+`service_command + 命令名` 记为 trigger 的 execution link 并标记 `dispatched`，失败时 trigger
+以 `failed` 结束并进入 Attention。服务命令任务不创建 synthetic scheduled reply task、agent run
+或 reply_attempt；命令发现真实对象后，才由既有 reply、meeting 或 work-summary Consumer 处理。
+因此没有新对象时不会在消息历史里留下每分钟一条的记录。`scheduled-task-options` 为每个服务
+命令附带一份从服务状态计算的只读“下游”描述（通道、consumer 执行器、角色边界常量、实际加载的
+Skill、consumer 要求的 Runtime 能力和路由可用性），页面据此说明命令发现的消息会被谁处理：
 
 ```text
 scheduled_tasks[command]
@@ -116,9 +121,10 @@ DingTalk Todo outbox。统一层只处理唤醒、公平领取、租约、全局
 继续负责自己的生命周期和外部事实。Dispatcher 的有界等待是跨进程恢复机制，不是用户 Cron，
 也没有用户可编辑的 polling/settle 设置。空队列只显示零指标，不生成 run。
 
-启动时以稳定 migration key 幂等创建七个默认任务：钉钉消息、会议、微信 reader、OA、每日工作来源、
-每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）运行的 `ceo-minutes-sync`。钉钉消息检查和微信消息检查以服务
-命令形式 seed；早先以 Agent 形式创建的同一 migration key 任务在启动时原地转换为命令形式，
+启动时以稳定 migration key 幂等创建八个默认任务：钉钉消息、每小时 `:30` 的钉钉近期消息恢复、
+会议、微信 reader、OA、每日工作来源、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）运行的
+AI 听记同步。除每周 OKR 周报之外的七项都以服务命令形式 seed；早先以 Agent 形式创建的同一
+migration key 任务在启动时原地转换为命令形式，
 保留名称、Cron 和时区，已删除的旧任务不动，其命令通过 Console API 不可修改。从未被编辑过的
 旧 seed（version 1）转换后按命令形式的默认值启用，因为它原来的停用只反映 Agent 形式缺少
 Runtime 或 Skill；被用户改过的任务保留用户选择的启用状态。Lark
@@ -478,9 +484,11 @@ launchd 和本地启动脚本都设置 `PYTHONDONTWRITEBYTECODE=1`。worker 与�
 
 ### Schema 初始化竞争
 
-worker 与审计页面会各自打开 SQLite。它们先取得同一个初始化文件锁，再检查 schema 版本和
-必要表。检查遇到短暂 `locked` 或 `busy` 时会在该锁内等待后复查；只有稳定确认 schema 过期或
-缺表才执行迁移。这样高负载写入不会被误判为 schema 缺失，也不会让审计页面在请求期间执行 DDL。
+worker 与审计页面会各自打开 SQLite。它们先取得同一个初始化文件锁，再检查 schema 版本、必要表、
+必要列和定时任务运行快照字段（包括 `scheduled_tasks.command`、`command` 快照字段）。检查遇到短暂
+`locked` 或 `busy` 时会在该锁内等待后复查；只有稳定确认 schema 过期、缺表、缺列或快照需要回填才
+执行迁移。这样高负载写入不会被误判为 schema 缺失，也不会让审计页面在请求期间执行 DDL；即使旧库
+的版本号已经提前写成当前版本，也会先完成定时任务 schema 的补齐再启动调度。
 
 ### Workbench 启动恢复竞争
 

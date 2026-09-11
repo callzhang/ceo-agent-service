@@ -844,6 +844,8 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "scan-meetings-once",
         "scan-oa-approvals",
         "scan-work-sources-once",
+        "sync-minutes-once",
+        "recover-recent-messages",
     ]
     assert [entry["display_name"] for entry in catalog] == [
         "检查钉钉消息",
@@ -851,6 +853,8 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "检查 DingTalk 会议",
         "检查 DingTalk OA 审批",
         "扫描工作来源",
+        "同步 AI 听记",
+        "恢复近期 DingTalk 消息",
     ]
     assert all(entry["description"].strip() for entry in catalog)
     assert store.get_scheduled_task(task_id).command == "produce-once"
@@ -928,7 +932,7 @@ def test_service_command_catalog_exposes_the_live_downstream_consumer(
     with client:
         payload = client.get("/api/console/scheduled-task-options").json()
 
-    dingtalk, wechat, meeting, oa, work_sources = payload[
+    dingtalk, wechat, meeting, oa, work_sources, minutes, recovery = payload[
         "service_command_options"
     ]
     routes = [
@@ -990,3 +994,9 @@ def test_service_command_catalog_exposes_the_live_downstream_consumer(
     assert work_sources["downstream"]["consumer_runners"] == ["TaskAgentRunner"]
     assert work_sources["downstream"]["loads_skills"] is False
     assert work_sources["downstream"]["instructions"] is None
+    assert (minutes["name"], minutes["channel"]) == ("sync-minutes-once", "work_summary")
+    assert (recovery["name"], recovery["channel"]) == (
+        "recover-recent-messages",
+        "dingtalk",
+    )
+    assert recovery["downstream"] == dingtalk["downstream"]

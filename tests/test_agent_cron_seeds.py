@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-import hashlib
 from pathlib import Path
 import shlex
 import subprocess
@@ -10,7 +9,6 @@ import sys
 import pytest
 
 from app.cli import build_parser
-import app.managed_skills as managed_skills_module
 from app.agent_cron.commands import (
     SERVICE_COMMAND_EXECUTION_KIND,
     ServiceCommandRegistry,
@@ -26,7 +24,6 @@ from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
 )
 from app.managed_skills import (
-    REPOSITORY_IMPORT_SOURCE,
     RuntimeSkillSnapshot,
     import_repository_managed_skills,
 )
@@ -547,19 +544,19 @@ def test_every_fixed_discovery_check_is_a_service_command(
         assert task.skill_refs == ()
         assert task.enabled is True
 
-    for migration_key in (
-        "weekly-okr-report-sunday-v1",
-        "ceo-minutes-sync-daily-v1",
-    ):
+    # The OKR weekly report is the one remaining Agent task: every fixed
+    # discovery check, the AI minutes sync included, is a service command.
+    for migration_key in ("weekly-okr-report-sunday-v1",):
         agent_task = _task_by_key(tasks, migration_key)
         assert agent_task.command == ""
         assert agent_task.prompt
         assert agent_task.runtime_id == "claude_api"
         assert agent_task.enabled is False
-    assert [
-        (ref.skill_source, ref.skill_name)
-        for ref in _task_by_key(tasks, "ceo-minutes-sync-daily-v1").skill_refs
-    ] == [("managed", "ceo-minutes-sync")]
+    # The AI minutes sync is a service command now, so it carries no Skill ref:
+    # the sync it used to describe lives in app/minutes_sync.py.
+    minutes = _task_by_key(tasks, "ceo-minutes-sync-daily-v1")
+    assert minutes.command == "sync-minutes-once"
+    assert minutes.skill_refs == ()
 
 
 def test_seed_creates_wechat_existing_producer_every_fifteen_seconds(
@@ -963,7 +960,7 @@ def test_seed_without_healthy_runtime_is_disabled_with_visible_reason(
         seed_scheduled_tasks(
             store=store, options=options, working_directory=tmp_path, now=NOW
         ),
-        "ceo-minutes-sync-daily-v1",
+        "weekly-okr-report-sunday-v1",
     )
 
     assert task.enabled is False
@@ -991,35 +988,9 @@ def test_all_proactive_seeds_stay_visible_and_disabled_without_healthy_runtime(
     agent_tasks = [task for task in tasks if not task.command]
     assert {task.migration_key for task in agent_tasks} == {
         "weekly-okr-report-sunday-v1",
-        "ceo-minutes-sync-daily-v1",
     }
     assert all(not task.enabled for task in agent_tasks)
     assert all("没有健康且已配置的 Runtime" in task.prompt for task in agent_tasks)
     assert all(task.enabled for task in tasks if task.command)
     assert all(store.list_scheduled_task_runs(task.id) == () for task in tasks)
-
-
-def test_seed_binds_revision_matching_current_repository_sha_not_last_revision(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "current-repository-sha.sqlite3")
-    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
-    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
-    assert skill is not None
-    current = store.list_managed_skill_revisions(skill.id)[0]
-    later_different = store.create_managed_skill_revision(
-        skill.id,
-        current.content.replace("# CEO Minutes Sync", "# Old repository draft", 1),
-        source=REPOSITORY_IMPORT_SOURCE,
-    )
-
-    task = _task_by_key(
-        seed_scheduled_tasks(
-            store=store, options=options, working_directory=tmp_path, now=NOW
-        ),
-        "ceo-minutes-sync-daily-v1",
-    )
-
-    assert task.skill_refs[0].managed_revision_id == current.id
-    assert task.skill_refs[0].managed_revision_id != later_different.id
 
