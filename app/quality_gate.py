@@ -448,6 +448,7 @@ def _check_structured_needs_human(
         latest
         + """
             select a.send_status, a.reviewed_at, a.agent_run_id,
+                   a.send_error, a.human_decision_options_json,
                    r.final_result_json
             from latest a
             left join agent_runs r on r.id=a.agent_run_id
@@ -479,6 +480,12 @@ def _check_structured_needs_human(
         classification = _structured_needs_human_classification(
             row["final_result_json"]
         )
+        if classification == "invalid":
+            classification = _runtime_confirmation_classification(
+                row["final_result_json"],
+                row["send_error"],
+                row["human_decision_options_json"],
+            )
         if classification == "needs_human":
             actionable += 1
         elif classification == "invalid":
@@ -501,6 +508,40 @@ def _check_structured_needs_human(
         count=invalid,
         severity="error",
         detail="needs_human projection has no valid structured decision result",
+    )
+
+
+def _runtime_confirmation_classification(
+    result_json: object,
+    send_error: object,
+    options_json: object,
+) -> str:
+    """Recognize service-generated confirmation results without a model run."""
+    if (
+        (
+            isinstance(result_json, str)
+            and result_json.strip()
+        )
+        or str(send_error or "").strip() != "confirmation_required"
+    ):
+        return "invalid"
+    try:
+        options = json.loads(str(options_json or ""))
+    except (TypeError, json.JSONDecodeError):
+        return "invalid"
+    if not isinstance(options, list):
+        return "invalid"
+    return _structured_needs_human_classification(
+        json.dumps(
+            {
+                "outcome": "needs_human",
+                "risk": "high",
+                "confidence": 0.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
+                "decision_options": options,
+            }
+        )
     )
 
 

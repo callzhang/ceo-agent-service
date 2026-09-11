@@ -637,6 +637,36 @@ def test_quality_gate_reports_needs_human_projection_when_queue_task_is_done(tmp
     assert store.count_current_unresolved_problem_attempts() == 1
 
 
+def test_quality_gate_accepts_service_generated_confirmation_options(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    attempt_id = _insert_needs_human_projection(
+        store,
+        result={"outcome": "needs_human"},
+    )
+    options = _structured_needs_human_result()["decision_options"]
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="confirmation_required",
+        human_decision_options_json=json.dumps(options),
+    )
+    with store._connect() as db:
+        db.execute(
+            "update agent_runs set final_result_json='' where id=("
+            "select agent_run_id from reply_attempts where id=?"
+            ")",
+            (attempt_id,),
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert ("reply_attempts", "needs_human", 1) in {
+        (item.source, item.code, item.count) for item in report.attention
+    }
+    assert not any(
+        item.code == "invalid_needs_human_result" for item in report.violations
+    )
+
+
 def test_quality_gate_requires_structured_high_risk_low_confidence_options(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     _insert_needs_human_projection(store, result=_structured_needs_human_result())

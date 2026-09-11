@@ -216,11 +216,11 @@ def _list_all_minutes(
             for item in typed_items
         }
         page_ids.discard("")
-        # The provider orders this listing newest-first. Once a non-empty page
-        # contains only items already accounted for, older pages cannot add
-        # work. This keeps the daily sync incremental and avoids a 100-page
-        # walk that can never finish on a large archive.
-        if page_ids and page_ids.issubset(archived_ids | permission_pending_ids):
+        # The provider orders this listing newest-first. The first known item
+        # is the durable boundary from a previous successful pass; older pages
+        # cannot contain newer work. This keeps the daily sync incremental and
+        # avoids a 100-page walk through already-accounted history.
+        if page_ids and page_ids.intersection(archived_ids | permission_pending_ids):
             return items, ""
         has_more = page.get("has_more")
         next_token = str(page.get("next_token") or "")

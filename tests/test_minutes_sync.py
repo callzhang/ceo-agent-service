@@ -297,12 +297,14 @@ def test_incomplete_minutes_pagination_does_not_claim_success(tmp_path: Path) ->
     assert cursor["archived_ids"] == ["u1"]
 
 
-def test_incremental_sync_stops_after_an_already_archived_page(tmp_path: Path) -> None:
+def test_incremental_sync_stops_at_first_already_accounted_page(
+    tmp_path: Path,
+) -> None:
     store = _store(tmp_path)
     dws = PaginatedFakeDws(
         {
             "": {
-                "items": [{"taskUuid": "u1"}],
+                "items": [{"taskUuid": "u2"}, {"taskUuid": "u1"}],
                 "has_more": True,
                 "next_token": "page-2",
             },
@@ -314,11 +316,14 @@ def test_incremental_sync_stops_after_an_already_archived_page(tmp_path: Path) -
         last_success_at="2026-09-10T00:00:00+00:00",
         cursor_json=json.dumps({"archived_ids": ["u1"]}),
     )
+    dws._basic = {"u2": {"title": "新会议", "startTime": 1789025858000}}
+    dws._paragraphs = {"u2": [{"startTime": 0, "paragraph": "内容"}]}
 
     result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
 
-    assert result.discovered == 0
+    assert result.discovered == 1
+    assert result.synced == 1
     assert dws.calls == [""]
     state = store.get_daily_scan_state(MINUTES_SYNC_SCANNER) or {}
     assert state["last_error"] == ""
-    assert json.loads(state["cursor_json"])["archived_ids"] == ["u1"]
+    assert json.loads(state["cursor_json"])["archived_ids"] == ["u1", "u2"]
