@@ -8786,7 +8786,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-09.1"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-11.1"
     assert {
         "lease_owner",
         "lease_expires_at",
@@ -9214,7 +9214,7 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
     )
     stale = json.dumps({"task_id": 2})
     with store._connect() as db:
-        assert store._schema_manifest_is_current_in_connection(db) is True
+        assert store._scheduled_task_run_snapshots_are_current(db) is True
         cols = {row["name"] for row in db.execute("pragma table_info(scheduled_task_runs)")}
         assert "snapshot_json" in cols
         # A JSON null value for command is a present key, not an absent one.
@@ -9226,7 +9226,7 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
                 " scheduled_for, dispatch_status, snapshot_json) values (?, ?, 'scheduled', ?, 'pending', ?)",
                 (f"evt-{index}", task.id, f"2026-09-11T0{index}:00:00+00:00", payload),
             )
-        assert store._schema_manifest_is_current_in_connection(db) is True
+        assert store._scheduled_task_run_snapshots_are_current(db) is True
 
         # Unparseable JSON is corrupt data, not a stale schema.
         db.execute(
@@ -9234,7 +9234,7 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
             " scheduled_for, dispatch_status, snapshot_json) values ('evt-bad', ?, 'scheduled', ?, 'pending', ?)",
             (task.id, "2026-09-11T05:00:00+00:00", "{not json"),
         )
-        assert store._schema_manifest_is_current_in_connection(db) is True
+        assert store._scheduled_task_run_snapshots_are_current(db) is True
 
         # A snapshot missing the command keys is what the check must catch.
         db.execute(
@@ -9242,4 +9242,4 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
             " scheduled_for, dispatch_status, snapshot_json) values ('evt-stale', ?, 'scheduled', ?, 'pending', ?)",
             (task.id, "2026-09-11T06:00:00+00:00", stale),
         )
-        assert store._schema_manifest_is_current_in_connection(db) is False
+        assert store._scheduled_task_run_snapshots_are_current(db) is False

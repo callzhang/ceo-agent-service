@@ -1114,10 +1114,16 @@ def test_current_schema_version_still_migrates_missing_command_column(
     assert migrated.get_scheduled_task(task.id).command == ""
 
 
-def test_current_schema_version_still_backfills_legacy_run_snapshot_fields(
+def test_pre_bump_schema_version_backfills_legacy_run_snapshot_fields(
     tmp_path: Path,
 ) -> None:
-    db_path = tmp_path / "current-version-legacy-snapshot.sqlite3"
+    """A database written before the snapshot fields carries an older version.
+
+    The row check no longer runs on every store construction, so the version is
+    what drives the repair: any build that changes the persisted snapshot shape
+    must bump STORE_SCHEMA_VERSION, which is what makes this database migrate.
+    """
+    db_path = tmp_path / "pre-bump-legacy-snapshot.sqlite3"
     previous = AutoReplyStore(db_path)
     task = _create_task(previous)
     run = previous.create_scheduled_task_run(
@@ -1132,7 +1138,7 @@ def test_current_schema_version_still_backfills_legacy_run_snapshot_fields(
         )
         db.execute(
             "update service_state set value=? where key=?",
-            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
+            ("2026-09-09.1", store_module.STORE_SCHEMA_VERSION_KEY),
         )
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
@@ -1244,3 +1250,60 @@ def test_corrupt_run_snapshot_neither_crashes_startup_nor_loops_migration(
         task.id, trigger_kind="manual", scheduled_for=NOW + timedelta(minutes=1), now=NOW
     )
     assert reopened.get_scheduled_task_run(healthy.id).snapshot.command == ""
+
+
+def _traced_construction(tmp_path, monkeypatch, path):
+    """Construct a store again, returning every SQL statement it issued."""
+    statements: list[str] = []
+    original_open = store_module.AutoReplyStore._open_connection
+
+    def traced(self):
+        connection = original_open(self)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(store_module.AutoReplyStore, "_open_connection", traced)
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    AutoReplyStore(path)
+    return statements
+
+
+def test_store_construction_does_not_read_run_snapshots_on_the_fast_path(
+    tmp_path, monkeypatch
+):
+    """A damaged scheduled_task_runs page must not kill every store construction.
+
+    The row check reads a table that grows with every scheduled run. Running it
+    on every construction made one damaged page fatal at startup for every CLI
+    subprocess, and `database disk image is malformed` arrives as
+    sqlite3.DatabaseError, which the callers' `except sqlite3.OperationalError`
+    does not catch.
+    """
+    path = tmp_path / "fast-path.sqlite3"
+    AutoReplyStore(path)  # first construction migrates and writes the version
+
+    statements = _traced_construction(tmp_path, monkeypatch, path)
+
+    # `pragma table_info` only reads the schema, which a damaged data page
+    # cannot affect; what must not happen is a row read.
+    offending = [
+        text for text in statements if "from scheduled_task_runs" in text.lower()
+    ]
+    assert not offending, f"fast path still reads rows: {offending[:2]}"
+
+
+def test_migration_still_verifies_the_run_snapshots_it_wrote(tmp_path, monkeypatch):
+    """The row check stays where a migration claims to have written the fields."""
+    path = tmp_path / "verified.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "update service_state set value='stale' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+
+    statements = _traced_construction(tmp_path, monkeypatch, path)
+
+    assert any(
+        "scheduled_task_runs" in text and "json_type" in text for text in statements
+    ), "post-migration verification must still read the snapshots back"

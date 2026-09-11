@@ -128,7 +128,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-09.1"
+STORE_SCHEMA_VERSION = "2026-09-11.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -1869,9 +1869,55 @@ class AutoReplyStore:
             )
         )
 
+    def _scheduled_task_run_snapshots_are_current(
+        self,
+        db: sqlite3.Connection,
+    ) -> bool:
+        """Whether every persisted run snapshot carries the command fields.
+
+        This reads rows, so it only runs where a migration has just claimed to
+        have produced them.  Running it on every store construction made one
+        damaged page in a table that grows with every scheduled run fatal at
+        startup for every CLI subprocess, and `database disk image is
+        malformed` arrives as `sqlite3.DatabaseError`, which the callers'
+        `except sqlite3.OperationalError` does not catch.
+        """
+        if "scheduled_task_runs" not in {
+            str(item["name"])
+            for item in db.execute(
+                "select name from sqlite_master where type='table'"
+            )
+        }:
+            return True
+        # Ask SQLite for the first offending row instead of materialising the
+        # table.  A snapshot that cannot be parsed is corrupt data, not an
+        # out-of-date schema: migrating cannot repair it, so json_valid
+        # excludes it here and the row still fails where it is read.
+        # json_type() distinguishes an absent key (NULL) from a key whose
+        # value is JSON null, which is what the presence test needs.
+        return (
+            db.execute(
+                """
+                select 1 from scheduled_task_runs
+                where json_valid(snapshot_json)
+                  and json_type(snapshot_json) = 'object'
+                  and (
+                    json_type(snapshot_json, '$.command') is null
+                    or json_type(
+                        snapshot_json, '$.required_runtime_capabilities'
+                    ) is null
+                  )
+                limit 1
+                """
+            ).fetchone()
+            is None
+        )
+
     def _schema_manifest_is_current_in_connection(
         self,
         db: sqlite3.Connection,
+        *,
+        include_run_snapshots: bool,
     ) -> bool:
         present_tables = {
             str(item["name"])
@@ -1912,38 +1958,6 @@ class AutoReplyStore:
             )
             for table_name, required_columns in STORE_SCHEMA_REQUIRED_COLUMNS.items()
         )
-        scheduled_task_run_snapshots_current = True
-        if "scheduled_task_runs" in present_tables:
-            # The question is only whether ANY snapshot predates the command
-            # columns, so ask SQLite for the first offending row instead of
-            # materialising the table. This check runs on every store
-            # construction, in every CLI subprocess: a full scan of a table
-            # that grows with every scheduled run made one damaged page fatal
-            # at startup for the whole service, which is the opposite of
-            # keeping the damage local.
-            #
-            # A snapshot that cannot be parsed is corrupt data, not an
-            # out-of-date schema: migrating cannot repair it, so json_valid
-            # excludes it here and the row still fails where it is read.
-            # json_type() distinguishes an absent key (NULL) from a key whose
-            # value is JSON null, which is what the presence test needs.
-            scheduled_task_run_snapshots_current = (
-                db.execute(
-                    """
-                    select 1 from scheduled_task_runs
-                    where json_valid(snapshot_json)
-                      and json_type(snapshot_json) = 'object'
-                      and (
-                        json_type(snapshot_json, '$.command') is null
-                        or json_type(
-                            snapshot_json, '$.required_runtime_capabilities'
-                        ) is null
-                      )
-                    limit 1
-                    """
-                ).fetchone()
-                is None
-            )
         return (
             set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
             and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
@@ -1951,14 +1965,21 @@ class AutoReplyStore:
             and required_trigger_definitions_present
             and feedback_processing_round_storage_valid
             and required_columns_present
-            and scheduled_task_run_snapshots_current
+            and (
+                not include_run_snapshots
+                or self._scheduled_task_run_snapshots_are_current(db)
+            )
             and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
         )
 
     def _schema_manifest_is_current(self) -> bool:
         try:
             with self._connect() as db:
-                return self._schema_manifest_is_current_in_connection(db)
+                # Post-migration verification: a migration has just claimed to
+                # have written the snapshot fields, so read them back.
+                return self._schema_manifest_is_current_in_connection(
+                    db, include_run_snapshots=True
+                )
         except sqlite3.OperationalError as exc:
             if _is_sqlite_lock_error(exc):
                 raise
@@ -1986,7 +2007,12 @@ class AutoReplyStore:
                 return bool(
                     row is not None
                     and str(row["value"] or "") == STORE_SCHEMA_VERSION
-                    and self._schema_manifest_is_current_in_connection(db)
+                    # Fast path on every store construction: structure only.
+                    # The version is written only after a migration passed the
+                    # row check, so a matching version already implies it.
+                    and self._schema_manifest_is_current_in_connection(
+                        db, include_run_snapshots=False
+                    )
                 )
         except sqlite3.OperationalError as exc:
             if _is_sqlite_lock_error(exc):

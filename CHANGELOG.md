@@ -1,5 +1,26 @@
 # Changelog
 
+- 2026-09-11: the store's schema-currency fast path no longer reads
+  `scheduled_task_runs` rows. That check ran on **every** `AutoReplyStore()`
+  construction, so one damaged page in a table that grows with every scheduled
+  run was fatal at startup for every CLI subprocess and crash-looped the cron
+  dispatcher; `database disk image is malformed` also arrives as
+  `sqlite3.DatabaseError`, which the callers' `except sqlite3.OperationalError`
+  never caught. The row check moves to the post-migration verification, where a
+  migration has just claimed to have written those fields.
+
+  This needs the version to carry the guarantee instead, so
+  `STORE_SCHEMA_VERSION` is bumped to `2026-09-11.1`: `e35e4dad` introduced the
+  snapshot fields **without** a bump, so databases migrated by builds between
+  the two carry a current version beside legacy snapshots, and dropping the
+  fast-path read would have left them unrepaired forever. On a copy of the
+  962 MB live database (7753 runs) the resulting migration takes 1.3s.
+
+  One guarantee is deliberately traded away: a database that carries the
+  current version *and* legacy snapshots no longer self-heals. After this bump
+  that state can only arise if a later change alters the persisted snapshot
+  shape without bumping again, which the repository already forbids.
+
 - 2026-09-11: the schema-currency check no longer scans `scheduled_task_runs`
   in full on every `AutoReplyStore()` construction. It asks SQLite for the
   first snapshot that predates the command columns and stops there
