@@ -4415,11 +4415,10 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "CEO_BATCH_SECONDS" in html
     assert "FAST_PATH_UNREAD_BACKOFF" in html
     assert "快路径扫描到未读会话后等待多久再读取" in html
-    assert "MESSAGE_RECOVERY_INTERVAL" in html
+    assert "MESSAGE_RECOVERY_INTERVAL" not in html
     assert "MEMORY_CONNECTOR_USER_ID" in html
     assert "CEO_MENTION_ALIASES" in html
     assert "群聊/消息触发时识别点名" in html
-    assert "每次慢路径兜底扫描之间至少间隔多久" in html
     assert "USER_ALIAS" in html
     assert "用户别名" in html
     assert "CEO_WORKSPACE" in html
@@ -4900,8 +4899,6 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
         "&system_value=3600"
         "&system_key=FAST_PATH_UNREAD_BACKOFF"
         "&system_value=5m"
-        "&system_key=MESSAGE_RECOVERY_INTERVAL"
-        "&system_value=30m"
         "&system_key=SINGLE_CHAT_READ_RECOVERY_WINDOW"
         "&system_value=12h"
         "&system_key=SINGLE_CHAT_READ_RECOVERY_LIMIT"
@@ -4925,10 +4922,10 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
     assert "CEO_TASK_DAILY_INTERVAL_SECONDS" not in env_text
     assert "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS" not in env_text
     assert "FAST_PATH_UNREAD_BACKOFF=5m" in env_text
-    assert "MESSAGE_RECOVERY_INTERVAL=30m" in env_text
+    assert "MESSAGE_RECOVERY_INTERVAL" not in env_text
     assert "SINGLE_CHAT_READ_RECOVERY_WINDOW=12h" in env_text
     assert "SINGLE_CHAT_READ_RECOVERY_LIMIT=25" in env_text
-    assert "MESSAGE_RECOVERY_INTERVAL" not in read_developer_prompt_template()
+    assert "FAST_PATH_UNREAD_BACKOFF" not in read_developer_prompt_template()
 
 
 def test_handle_agent_runtime_config_post_saves_enabled_api_fallback(
@@ -5616,13 +5613,13 @@ def test_browser_notification_event_ignores_invalid_attempt_id():
 
 def test_env_file_does_not_override_existing_environment(tmp_path: Path, monkeypatch):
     env_path = tmp_path / ".env"
-    env_path.write_text("MESSAGE_RECOVERY_INTERVAL=45m\n", encoding="utf-8")
-    monkeypatch.setenv("MESSAGE_RECOVERY_INTERVAL", "1h")
+    env_path.write_text("FAST_PATH_UNREAD_BACKOFF=45m\n", encoding="utf-8")
+    monkeypatch.setenv("FAST_PATH_UNREAD_BACKOFF", "1h")
 
     load_env_file(env_path)
 
-    assert "MESSAGE_RECOVERY_INTERVAL" in env_path.read_text(encoding="utf-8")
-    assert os.environ["MESSAGE_RECOVERY_INTERVAL"] == "1h"
+    assert "FAST_PATH_UNREAD_BACKOFF" in env_path.read_text(encoding="utf-8")
+    assert os.environ["FAST_PATH_UNREAD_BACKOFF"] == "1h"
 
 
 def test_render_config_dynamic_functions_do_not_hardcode_principal_name(monkeypatch):
@@ -5701,7 +5698,7 @@ def test_info_menu_moves_producer_configuration_values_to_configuration():
         active_tab="configuration",
     )
     assert "FAST_PATH_UNREAD_BACKOFF" in configuration_html
-    assert "MESSAGE_RECOVERY_INTERVAL" in configuration_html
+    assert "MESSAGE_RECOVERY_INTERVAL" not in configuration_html
     assert "SINGLE_CHAT_READ_RECOVERY_WINDOW" in configuration_html
     assert "SINGLE_CHAT_READ_RECOVERY_LIMIT" in configuration_html
     assert "CEO_MENTION_ALIASES" in configuration_html

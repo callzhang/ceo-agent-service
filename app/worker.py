@@ -44,7 +44,6 @@ from app.config import (
     env_duration,
     fast_path_unread_backoff_duration,
     handoff_ack,
-    message_recovery_interval,
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
 )
@@ -456,7 +455,6 @@ DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
 DOWNLOADED_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 DWS_UPGRADE_CHECK_RESULT_STATE_KEY = "dws_upgrade_check_result"
-MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
 ROBOT_DIRECT_MESSAGE_LOOKBACK = env_duration(
     "CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK",
@@ -468,7 +466,6 @@ DWS_PAT_AUTHORIZATION_REQUEST_SUPPRESSION_WINDOW = timedelta(hours=1)
 DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY = "dws_forbidden_conversations"
 DWS_FORBIDDEN_CONVERSATION_COOLDOWN = timedelta(minutes=5)
 ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
-MESSAGE_RECOVERY_INTERVAL = message_recovery_interval()
 FAST_PATH_UNREAD_BACKOFF = fast_path_unread_backoff_duration()
 SINGLE_CHAT_READ_RECOVERY_WINDOW = single_chat_read_recovery_window()
 SINGLE_CHAT_READ_RECOVERY_LIMIT = single_chat_read_recovery_limit()
@@ -963,7 +960,15 @@ class DingTalkAutoReplyWorker:
     def _host_matches(host: str, suffixes: tuple[str, ...]) -> bool:
         return any(host == suffix or host.endswith(f".{suffix}") for suffix in suffixes)
 
-    def produce_once(self, max_tasks: int | None = None) -> int:
+    def produce_once(
+        self, max_tasks: int | None = None, *, recovery: bool = False
+    ) -> int:
+        """Run one producer pass; ``recovery`` widens the read past unread state.
+
+        The fast pass reads only what DingTalk reports as unread.  The recovery
+        pass is its own scheduled service command, so the caller — not an
+        elapsed interval — decides which of the two runs.
+        """
         if max_tasks == 0:
             return 0
         self._pass_channel_results = {}
@@ -972,7 +977,6 @@ class DingTalkAutoReplyWorker:
         self._maybe_upgrade_dws_once_per_day()
         self._maybe_refresh_org_cache_once_per_week()
         fast_path_checked_at = self._now().astimezone(timezone.utc)
-        recovery_due = self._should_run_recent_message_recovery()
         queued_tasks = 0
         conversations = self._call_dws(
             "list_unread_conversations",
@@ -984,7 +988,7 @@ class DingTalkAutoReplyWorker:
             conversations = []
         else:
             self._mark_dws_auth_healthy()
-        if conversations and not recovery_due:
+        if conversations and not recovery:
             conversations = self._conversations_due_for_fast_path(conversations)
         unread_conversation_ids = {
             conversation.open_conversation_id for conversation in conversations
@@ -1004,9 +1008,9 @@ class DingTalkAutoReplyWorker:
             addressed_messages,
         )
         conversations, recovery_conversation_ids = (
-            self._conversations_with_due_recent_recovery(
+            self._conversations_with_recent_recovery(
                 conversations,
-                recovery_due=recovery_due,
+                recovery=recovery,
             )
         )
         conversations = self._prioritize_conversations_with_messages(
@@ -1027,7 +1031,7 @@ class DingTalkAutoReplyWorker:
             should_read_recent = self._should_read_recent_messages(
                 conversation,
                 conversation_mentions,
-                recovery_due=recovery_due,
+                recovery=recovery,
                 recovery_conversation_ids=recovery_conversation_ids,
             )
             if should_read_recent:
@@ -1041,8 +1045,6 @@ class DingTalkAutoReplyWorker:
             candidate_unread_messages = []
             should_read_unread = self._should_read_unread_messages(
                 conversation,
-                conversation_mentions,
-                recovery_due=recovery_due,
                 unread_conversation_ids=unread_conversation_ids,
             )
             if should_read_unread:
@@ -1112,7 +1114,7 @@ class DingTalkAutoReplyWorker:
                 error = ""
                 if (
                     FAST_PATH_UNREAD_BACKOFF > timedelta(0)
-                    and not recovery_due
+                    and not recovery
                     and conversation.open_conversation_id in unread_conversation_ids
                 ):
                     available_at = self._sqlite_timestamp(
@@ -1146,9 +1148,7 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _should_read_unread_messages(
         conversation: DingTalkConversation,
-        conversation_mentions: list[DingTalkMessage],
         *,
-        recovery_due: bool,
         unread_conversation_ids: set[str],
     ) -> bool:
         return conversation.open_conversation_id in unread_conversation_ids
@@ -1158,12 +1158,12 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         conversation_mentions: list[DingTalkMessage],
         *,
-        recovery_due: bool,
+        recovery: bool,
         recovery_conversation_ids: set[str],
     ) -> bool:
         if conversation.open_conversation_id in recovery_conversation_ids:
             return True
-        if not recovery_due:
+        if not recovery:
             return False
         if conversation.single_chat:
             return True
@@ -1244,18 +1244,13 @@ class DingTalkAutoReplyWorker:
             )
         return [*conversations, *recovered]
 
-    def _conversations_with_due_recent_recovery(
+    def _conversations_with_recent_recovery(
         self,
         conversations: list[DingTalkConversation],
         *,
-        recovery_due: bool | None = None,
+        recovery: bool,
     ) -> tuple[list[DingTalkConversation], set[str]]:
-        should_recover = (
-            self._should_run_recent_message_recovery()
-            if recovery_due is None
-            else recovery_due
-        )
-        if not should_recover:
+        if not recovery:
             return conversations, set()
         existing_ids = {
             conversation.open_conversation_id for conversation in conversations
@@ -1266,10 +1261,6 @@ class DingTalkAutoReplyWorker:
             for conversation in recovered
             if conversation.open_conversation_id not in existing_ids
         }
-        self.store.set_service_state(
-            MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY,
-            self._now().astimezone(timezone.utc).isoformat(),
-        )
         return recovered, recovery_conversation_ids
 
     def _conversations_updated_since_fast_path_check(
@@ -1395,20 +1386,6 @@ class DingTalkAutoReplyWorker:
         if not value:
             return None
         return self._parse_service_state_datetime(value)
-
-    def _should_run_recent_message_recovery(self) -> bool:
-        checked_at = self.store.get_service_state(MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY)
-        if not checked_at:
-            return True
-        try:
-            last_checked = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
-        except ValueError:
-            return True
-        if last_checked.tzinfo is None:
-            last_checked = last_checked.replace(tzinfo=timezone.utc)
-        return (
-            self._now().astimezone(timezone.utc) - last_checked.astimezone(timezone.utc)
-        ) >= MESSAGE_RECOVERY_INTERVAL
 
     def _maybe_upgrade_dws_once_per_day(self) -> None:
         today = self._now().date().isoformat()

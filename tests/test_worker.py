@@ -815,19 +815,21 @@ def fixed_worker_now() -> datetime:
 
 
 def test_worker_recovery_runtime_config_reads_environment(monkeypatch):
-    monkeypatch.setenv("MESSAGE_RECOVERY_INTERVAL", "15m")
     monkeypatch.setenv("FAST_PATH_UNREAD_BACKOFF", "2m")
     monkeypatch.setenv("SINGLE_CHAT_READ_RECOVERY_WINDOW", "6h")
     monkeypatch.setenv("SINGLE_CHAT_READ_RECOVERY_LIMIT", "11")
 
     importlib.reload(worker_module)
 
-    assert worker_module.MESSAGE_RECOVERY_INTERVAL == timedelta(minutes=15)
+    # Both the interval setting and the state key it drove are gone: the
+    # hourly recovery is a scheduled service command whose run history is
+    # the record of when it last ran.
+    assert not hasattr(worker_module, "MESSAGE_RECOVERY_INTERVAL")
+    assert not hasattr(worker_module, "MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY")
     assert worker_module.FAST_PATH_UNREAD_BACKOFF == timedelta(minutes=2)
     assert worker_module.SINGLE_CHAT_READ_RECOVERY_WINDOW == timedelta(hours=6)
     assert worker_module.SINGLE_CHAT_READ_RECOVERY_LIMIT == 11
     for name in (
-        "MESSAGE_RECOVERY_INTERVAL",
         "FAST_PATH_UNREAD_BACKOFF",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
@@ -3118,10 +3120,6 @@ def test_produce_once_fast_path_reads_only_unread_messages_without_recent_contex
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
-    )
 
     queued = worker.produce_once()
 
@@ -3146,10 +3144,6 @@ def test_produce_once_fast_path_enqueues_pending_before_backoff(
         codex,
         monkeypatch,
         fast_path_unread_backoff=timedelta(minutes=5),
-    )
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
     )
 
     queued = worker.produce_once()
@@ -3194,10 +3188,6 @@ def test_produce_once_fast_path_skips_bare_minutes_link_before_backoff(
         monkeypatch,
         fast_path_unread_backoff=timedelta(minutes=5),
     )
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
-    )
 
     queued = worker.produce_once()
 
@@ -3226,10 +3216,6 @@ def test_produce_once_fast_path_task_is_claimable_after_backoff(
         codex,
         monkeypatch,
         fast_path_unread_backoff=timedelta(minutes=5),
-    )
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
     )
     assert worker.produce_once() == 1
 
@@ -3583,10 +3569,6 @@ def test_fast_path_backoff_processes_trigger_when_unread_clears_without_user_rep
         fast_path_unread_backoff=timedelta(minutes=5),
     )
     runner = script_completed_result(worker, operation_id="fast-path-reply")
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
-    )
 
     assert worker.produce_once() == 1
     dws.conversations = []
@@ -4257,10 +4239,6 @@ def test_fast_path_backoff_skips_when_current_user_replied_after_trigger(
         monkeypatch,
         fast_path_unread_backoff=timedelta(minutes=5),
     )
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
-    )
 
     assert worker.produce_once() == 1
     dws.conversations = []
@@ -4301,10 +4279,6 @@ def test_fast_path_backoff_skips_when_trigger_was_recalled_after_wait(
         codex,
         monkeypatch,
         fast_path_unread_backoff=timedelta(minutes=5),
-    )
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
     )
 
     assert worker.produce_once() == 1
@@ -4363,10 +4337,6 @@ def test_produce_once_fast_path_skips_unread_conversations_unchanged_since_last_
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
-    )
-    worker.store.set_service_state(
         "message_fast_path_checked_at",
         "2026-05-13T09:30:00+00:00",
     )
@@ -4378,49 +4348,7 @@ def test_produce_once_fast_path_skips_unread_conversations_unchanged_since_last_
     assert dws.recent_message_reads == []
 
 
-def test_produce_once_skips_recent_conversation_recovery_between_hourly_fallbacks(
-    tmp_path: Path, monkeypatch
-):
-    recovered_conversation = DingTalkConversation(
-        open_conversation_id="cid-recovered",
-        title="最近处理过的单聊",
-        single_chat=True,
-        unread_point=0,
-    )
-    dws = FakeDws([], {"cid-recovered": [message("补充一下", message_id="msg-new")]})
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
-    )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation(
-        conversation_id=recovered_conversation.open_conversation_id,
-        title=recovered_conversation.title,
-        single_chat=True,
-        codex_session_id=None,
-    )
-    worker.store.mark_seen("msg-seen", recovered_conversation.open_conversation_id)
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
-    )
-
-    queued = worker.produce_once()
-
-    assert queued == 0
-    assert dws.recent_message_reads == []
-    assert dws.unread_message_reads == []
-    assert worker.store.count_reply_tasks(status="pending") == 0
-
-
-def test_produce_once_runs_recent_conversation_recovery_once_per_hour(
-    tmp_path: Path, monkeypatch
-):
-    recovered_conversation = DingTalkConversation(
-        open_conversation_id="cid-recovered",
-        title="最近处理过的单聊",
-        single_chat=True,
-        unread_point=0,
-    )
+def _recoverable_single_chat_worker(tmp_path: Path, monkeypatch):
     old_message = message("之前处理过", message_id="msg-seen", single_chat=True)
     new_message = message("补充一下", message_id="msg-new", single_chat=True)
     new_message.create_time = "2026-05-13 18:05:00"
@@ -4430,30 +4358,42 @@ def test_produce_once_runs_recent_conversation_recovery_once_per_hour(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     worker.store.upsert_conversation(
-        conversation_id=recovered_conversation.open_conversation_id,
-        title=recovered_conversation.title,
+        conversation_id="cid-recovered",
+        title="最近处理过的单聊",
         single_chat=True,
         codex_session_id=None,
     )
-    worker.store.mark_seen("msg-seen", recovered_conversation.open_conversation_id)
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T15:30:00+00:00",
-    )
+    worker.store.mark_seen("msg-seen", "cid-recovered")
+    return worker, dws
+
+
+def test_produce_once_never_recovers_recent_conversations_without_the_flag(
+    tmp_path: Path, monkeypatch
+):
+    worker, dws = _recoverable_single_chat_worker(tmp_path, monkeypatch)
 
     queued = worker.produce_once()
+
+    assert queued == 0
+    assert dws.recent_message_reads == []
+    assert dws.unread_message_reads == []
+    assert worker.store.count_reply_tasks(status="pending") == 0
+
+
+def test_produce_once_recovery_flag_widens_the_read(
+    tmp_path: Path, monkeypatch
+):
+    worker, dws = _recoverable_single_chat_worker(tmp_path, monkeypatch)
+
+    queued = worker.produce_once(recovery=True)
 
     assert queued == 1
     assert dws.recent_message_reads == ["cid-recovered"]
     assert dws.unread_message_reads == []
     assert worker.store.count_reply_tasks(status="pending") == 1
-    assert (
-        worker.store.get_service_state("message_recovery_checked_at")
-        == "2026-05-13T17:00:00+00:00"
-    )
 
 
-def test_produce_once_does_not_recover_recent_group_conversations(
+def test_produce_once_recovery_does_not_recover_recent_group_conversations(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws([], {"cid-group": [message("群里补充一下")]})
@@ -4469,12 +4409,8 @@ def test_produce_once_does_not_recover_recent_group_conversations(
         codex_session_id=None,
     )
     worker.store.mark_seen("msg-seen-group", "cid-group")
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T15:30:00+00:00",
-    )
 
-    queued = worker.produce_once()
+    queued = worker.produce_once(recovery=True)
 
     assert queued == 0
     assert dws.recent_message_reads == []
@@ -13625,7 +13561,8 @@ def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
     worker.store.mark_seen("msg-handled", "cid-1")
     script_completed_result(worker, "已处理恢复窗口中的最新私聊。")
 
-    worker.run_once()
+    worker.produce_once(recovery=True)
+    worker.consume_once()
 
     assert len(agent_runner(worker).calls) == 1
     runner = worker._test_agent_runner
@@ -13679,7 +13616,8 @@ def test_single_chat_recovery_processes_unseen_gap_before_later_seen_anchor(
     worker.store.mark_seen("msg-seen-new", "cid-1")
 
     script_no_action(worker)
-    worker.run_once()
+    worker.produce_once(recovery=True)
+    worker.consume_once()
 
     assert len(agent_runner(worker).calls) == 1
     runner = worker._test_agent_runner
@@ -13729,7 +13667,7 @@ def test_single_chat_recovery_does_not_coalesce_across_current_user_context(
     worker.store.upsert_conversation("cid-1", "韩露", True, None)
     worker.store.mark_seen("msg-seen-anchor", "cid-1")
 
-    assert worker.produce_once() == 2
+    assert worker.produce_once(recovery=True) == 2
 
     tasks = sorted(worker.store.list_reply_tasks(limit=10), key=lambda task: task.id)
     assert [task.trigger_message_id for task in tasks] == [
@@ -13851,10 +13789,6 @@ def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
         explicit_agent_result(ScriptOutcome.NO_ACTION, "cc only"),
     )
     store = worker.store
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
-    )
 
     worker.run_once()
 
@@ -13885,10 +13819,6 @@ def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
         ),
     )
     store = worker.store
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
-    )
 
     worker.run_once()
 
@@ -14040,10 +13970,6 @@ def test_group_unread_without_principal_mention_reads_unread_tail_but_does_not_q
         now_provider=fixed_worker_now,
         channel_gates=fixed_channel_gates(),
     )
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
-    )
 
     worker.run_once()
 
@@ -14080,12 +14006,8 @@ def test_recovery_due_group_unread_without_principal_mention_reads_unread_tail_b
         now_provider=fixed_worker_now,
         channel_gates=fixed_channel_gates(),
     )
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T15:30:00+00:00",
-    )
-
-    worker.run_once()
+    worker.produce_once(recovery=True)
+    worker.consume_once()
 
     assert dws.unread_message_reads == ["cid-1"]
     assert store.list_errors() == []
@@ -14692,10 +14614,6 @@ def test_fast_path_followup_does_not_inherit_oa_target_from_recent_context(
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="missing route")),
         monkeypatch,
     )
-    worker.store.set_service_state(
-        "message_recovery_checked_at",
-        "2026-05-13T16:30:00+00:00",
-    )
 
     assert worker.produce_once() == 1
     task = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
@@ -14940,7 +14858,8 @@ def test_read_group_mention_is_skipped_when_later_current_user_text_replied(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
-    worker.run_once()
+    worker.produce_once(recovery=True)
+    worker.consume_once()
 
     assert codex.calls == []
     assert worker.store.list_reply_attempts(limit=10) == []
@@ -14993,7 +14912,7 @@ def test_read_group_mention_after_seen_message_is_processed_from_mentions(
     )
     worker.store.mark_seen("msg-handled", "cid-hyperion")
 
-    queued = worker.produce_once()
+    queued = worker.produce_once(recovery=True)
 
     tasks = worker.store.claim_reply_tasks(limit=10)
     assert queued == 1
@@ -15045,7 +14964,7 @@ def test_split_person_auto_reply_does_not_hide_unanswered_group_mention(
     worker.store.upsert_conversation("cid-iter", "迭代群", False, None)
     worker.store.mark_seen("msg-handled", "cid-iter")
 
-    queued = worker.produce_once()
+    queued = worker.produce_once(recovery=True)
 
     tasks = worker.store.claim_reply_tasks(limit=10)
     assert queued == 1
