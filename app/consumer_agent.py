@@ -17,6 +17,7 @@ from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
 from app.agent_runtime_router import AgentRuntimeRouter
+from app.agent_effect_guard import provider_receipts
 from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
@@ -47,6 +48,8 @@ from app.wechat.codex_safety import make_consumer_agent_command
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = SERVICE_ROOT / "app" / "schemas" / "consumer_agent_result.schema.json"
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
+CONSUMER_UNREVIEWED_EFFECT = "consumer_unreviewed_provider_effect"
+
 CONSUMER_DYNAMIC_SKILL_SENTENCE = (
     "Consumer Agent A independently selects and reads every applicable business and operation Skill before forming the candidate. Provider command names, MCP tools, receipts, and readback procedures belong to the Agent/runtime capability and are not application review conditions."
 )
@@ -568,7 +571,43 @@ class ConsumerAgentRunner:
                 conversation_contract_hash=contract_hash,
                 force_new_session=False,
         )
+        self._report_unreviewed_provider_effects(task, result)
         return result
+
+    def _report_unreviewed_provider_effects(
+        self,
+        task: ReplyTask,
+        result: AgentTurnRunResult[ConsumerAgentResult],
+    ) -> None:
+        """Record that this proposal turn reached a provider, if it did.
+
+        Consumer may only propose; Audit executes.  The effect review in
+        app.agent_cli governs commands routed through that controlled CLI, so a
+        turn with plain shell access can call a provider directly and never
+        meet the gate.  The resulting effect is invisible: the delivery ledger
+        has no entry, so a retry repeats it, and because a DingTalk send posts
+        as the principal, Audit can read this turn's own message as
+        pre-existing evidence and close the task as a duplicate.
+
+        Recording it does not undo the effect.  It makes the breach visible
+        instead of self-concealing, and names the receipt so the delivery can
+        be reconciled by hand before anything is retried.
+        """
+        run = self.store.get_agent_run(result.run_id)
+        receipts = provider_receipts(run.tool_events if run is not None else None)
+        if not receipts:
+            return
+        self.store.record_error(
+            task.conversation_id,
+            task.trigger_message_id,
+            CONSUMER_UNREVIEWED_EFFECT,
+            (
+                f"Consumer run {result.run_id} on task {task.id} reached a provider "
+                f"during a proposal turn; provider receipts: {', '.join(receipts)}. "
+                "The delivery ledger has no record of this effect, so the task must "
+                "be reconciled by hand and must not be retried blindly."
+            ),
+        )
 
 
 def _prepare_outgoing_dingtalk_messages(
