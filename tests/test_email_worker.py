@@ -5263,6 +5263,115 @@ def test_email_agent_consumer_does_not_execute_legacy_auto_reply_task():
     assert failures == [(42, "email_auto_reply_disabled", "generation-1")]
 
 
+def _unresolvable_selection_task(*, error: str = ""):
+    return SimpleNamespace(
+        id=77,
+        attempts=1,
+        error=error,
+        execution_generation="generation-7",
+        conversation_id="email-thread:abc",
+        trigger_message_id="email-action:def",
+        trigger_message_json=json.dumps(
+            {"schema": "email_agent_action.v1", "action_type": "unsubscribe"}
+        ),
+    )
+
+
+class _UnresolvableSelectionStore:
+    def __init__(self, task):
+        self.task = task
+        self.deferred = []
+        self.completed = []
+        self.failed = []
+        self.errors = []
+
+    def claim_reply_tasks(self, limit, *, channel):
+        return [self.task]
+
+    def defer_reply_task(self, task_id, error, *, expected_execution_generation, available_at):
+        self.deferred.append((task_id, error, available_at))
+
+    def complete_reply_task(self, task_id, *, expected_execution_generation):
+        self.completed.append((task_id, expected_execution_generation))
+
+    def fail_reply_task(self, task_id, error, *, expected_execution_generation):
+        self.failed.append((task_id, error))
+
+    def record_error(self, conversation_id, trigger_message_id, kind, detail):
+        self.errors.append((conversation_id, trigger_message_id, kind, detail))
+
+
+def _raise_unresolvable_selection(_task):
+    from app.email_unsubscribe import UnsubscribeSelectionUnresolvable
+
+    raise UnsubscribeSelectionUnresolvable("unsubscribe candidate index changed")
+
+
+def test_unresolvable_unsubscribe_selection_is_retried_before_it_is_believed():
+    """An unreadable message looks the same from here as a link that is gone."""
+    module = _module()
+    task = _unresolvable_selection_task()
+    store = _UnresolvableSelectionStore(task)
+
+    module.run_email_agent_task_loop(
+        store,
+        SimpleNamespace(process=lambda *_a, **_k: pytest.fail("task executed")),
+        load_task_context=_raise_unresolvable_selection,
+        finalize_task=lambda *_a: pytest.fail("task finalized"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert store.completed == []
+    assert store.failed == []
+    assert len(store.deferred) == 1
+    task_id, error, available_at = store.deferred[0]
+    assert task_id == 77
+    assert error.startswith(
+        f"{module.UNRESOLVED_UNSUBSCRIBE_SELECTION_ERROR}:1:"
+    )
+    assert available_at
+
+
+def test_unresolvable_unsubscribe_selection_ends_as_a_skip_not_a_failure():
+    """The authorization names one entry; a rerun can only reach the same end.
+
+    Leaving the task `failed` made the queue read as broken and invited reruns
+    that could never succeed, which is how 94 email tasks accumulated on
+    2026-09-10.
+    """
+    module = _module()
+    task = _unresolvable_selection_task(
+        error=(
+            f"{module.UNRESOLVED_UNSUBSCRIBE_SELECTION_ERROR}:"
+            f"{module.UNRESOLVED_UNSUBSCRIBE_RECHECKS - 1}:"
+            "unsubscribe candidate index changed"
+        )
+    )
+    store = _UnresolvableSelectionStore(task)
+
+    module.run_email_agent_task_loop(
+        store,
+        SimpleNamespace(process=lambda *_a, **_k: pytest.fail("task executed")),
+        load_task_context=_raise_unresolvable_selection,
+        finalize_task=lambda *_a: pytest.fail("task finalized"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert store.deferred == []
+    assert store.failed == []
+    assert store.completed == [(77, "generation-7")]
+    assert len(store.errors) == 1
+    conversation_id, trigger_message_id, kind, detail = store.errors[0]
+    assert (conversation_id, trigger_message_id) == (
+        "email-thread:abc",
+        "email-action:def",
+    )
+    assert kind == "email_unsubscribe_candidate_unresolvable"
+    assert "unsubscribe candidate index changed" in detail
+
+
 def test_unsubscribe_task_uses_consumer_audit_orchestrator():
     module = _module()
     account_id = "account-1"

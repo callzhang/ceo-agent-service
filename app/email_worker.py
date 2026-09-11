@@ -33,6 +33,10 @@ STALE_EMAIL_TASK_SECONDS = 10 * 60
 MAX_EMAIL_TASK_PROCESSING_SECONDS = 60 * 60
 # Transient mailbox/network failures while loading a task are retried this often.
 EMAIL_TASK_TRANSIENT_RETRY_ATTEMPTS = 5
+# An authorized unsubscribe entry missing from the message is looked for again
+# in this many fresh reads before it is believed to be gone for good.
+UNRESOLVED_UNSUBSCRIBE_RECHECKS = 5
+UNRESOLVED_UNSUBSCRIBE_SELECTION_ERROR = "email_unsubscribe_candidate_unresolved"
 DIRECT_ACTION_DRAIN_MAX_ACTIONS = 25
 DIRECT_ACTION_DRAIN_MAX_SECONDS = 2.0
 
@@ -1317,6 +1321,69 @@ def _is_transient_email_provider_error(exc: BaseException) -> bool:
     }
 
 
+def _unresolved_selection_rechecks(task_error: str) -> int:
+    """How many times this task has already re-read the message and missed.
+
+    The count rides in the task's own error field because a deferral gives the
+    attempt budget back on purpose — claim adds one, defer takes it away — so
+    `attempts` never advances across deferrals and cannot bound anything.
+    """
+    prefix = f"{UNRESOLVED_UNSUBSCRIBE_SELECTION_ERROR}:"
+    if not task_error.startswith(prefix):
+        return 0
+    count, _, _ = task_error[len(prefix) :].partition(":")
+    try:
+        return max(int(count), 0)
+    except ValueError:
+        return 0
+
+
+def _handle_unresolvable_unsubscribe_selection(
+    task_store: object,
+    task: object,
+    exc: BaseException,
+) -> None:
+    """Re-read the message a few times, then close the task as a skip.
+
+    Nothing at this point distinguishes a message that could not be read this
+    cycle from one whose unsubscribe link the sender has rotated, so the entry
+    is looked for again in a fresh read before it is believed to be gone. Once
+    it is, the task is closed rather than failed: the ActionPlan authorized one
+    exact entry, no retry can move that authorization to a different one, and
+    leaving the row failed makes the queue read as broken while inviting reruns
+    that can only reach the same conclusion.
+    """
+    _LOGGER.info(
+        "email task %s cannot resolve its authorized unsubscribe entry: %s",
+        task.id,
+        exc,
+    )
+    rechecks = _unresolved_selection_rechecks(str(getattr(task, "error", "") or "")) + 1
+    if rechecks < UNRESOLVED_UNSUBSCRIBE_RECHECKS:
+        task_store.defer_reply_task(
+            task.id,
+            f"{UNRESOLVED_UNSUBSCRIBE_SELECTION_ERROR}:{rechecks}:{exc}",
+            expected_execution_generation=task.execution_generation,
+            available_at=_email_task_retry_available_at(rechecks),
+        )
+        return
+    task_store.record_error(
+        task.conversation_id,
+        task.trigger_message_id,
+        "email_unsubscribe_candidate_unresolvable",
+        (
+            f"{exc}. The ActionPlan authorized one exact entry and {rechecks} "
+            "fresh reads of the message did not offer it, so the task is "
+            "closed as skipped; authorizing a different entry would take a new "
+            "classification."
+        ),
+    )
+    task_store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+
 def _is_superseded_task_error(exc: BaseException) -> bool:
     from app.store import AgentRunLeaseLostError
 
@@ -1379,6 +1446,8 @@ def run_email_agent_task_loop(
     sleep: Callable[[float], None] = time.sleep,
     max_cycles: int | None = None,
 ) -> None:
+    from app.email_unsubscribe import UnsubscribeSelectionUnresolvable
+
     cycles = 0
     while max_cycles is None or cycles < max_cycles:
         failures = 0
@@ -1419,6 +1488,17 @@ def run_email_agent_task_loop(
                     refresh_context=lambda task=task: load_task_context(task),
                 )
                 finalize_task(task, result)
+            except UnsubscribeSelectionUnresolvable as exc:
+                # The ActionPlan authorized one exact unsubscribe entry, and
+                # the message no longer offers it: the sender rotated the link,
+                # the provider rendered the body differently, or the message
+                # could not be read this cycle. The service is not broken and
+                # the authorization cannot be transferred to a different entry,
+                # so this is a skip, not a failure. It is retried a few times
+                # first, because an unreadable message looks exactly the same
+                # from here as a link that is really gone.
+                _handle_unresolvable_unsubscribe_selection(task_store, task, exc)
+                continue
             except Exception as exc:  # noqa: BLE001 - isolate one Email task
                 failures += 1
                 last_error_type = type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH]

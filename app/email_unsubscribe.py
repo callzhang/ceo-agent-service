@@ -3356,6 +3356,18 @@ def select_browser_unsubscribe_entry(
     )
 
 
+class UnsubscribeSelectionUnresolvable(ValueError):
+    """The authorized candidate is not among the message's current entries.
+
+    An entry's identity is the sha256 of its exact URL, and the list is
+    re-derived from the message every time a task is loaded. So a link the
+    sender rotates, a body the provider renders differently, or a message that
+    cannot be read right now all end here. None of them is a defect in the
+    service, and none of them can be resolved by trying the same index again:
+    the authorization names one entry, and that entry is not on offer.
+    """
+
+
 def select_exact_unsubscribe_entry(
     entries: Sequence[UnsubscribeEntry],
     selection: Mapping[str, object],
@@ -3372,7 +3384,7 @@ def select_exact_unsubscribe_entry(
         raise ValueError("unsubscribe candidate selection is incomplete")
     index = selection["candidate_index"]
     if type(index) is not int or index < 0 or index >= len(entries):
-        raise ValueError("unsubscribe candidate index changed")
+        raise UnsubscribeSelectionUnresolvable("unsubscribe candidate index changed")
     entry = entries[index]
     expected = {
         "candidate_index": entry.index,
@@ -3381,7 +3393,7 @@ def select_exact_unsubscribe_entry(
         "candidate_reference": entry.reference,
     }
     if dict(selection) != expected:
-        raise ValueError("unsubscribe candidate binding changed")
+        raise UnsubscribeSelectionUnresolvable("unsubscribe candidate binding changed")
     return entry
 
 
