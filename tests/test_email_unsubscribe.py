@@ -73,6 +73,7 @@ from app.email_unsubscribe import (
     _browser_failure_category,
     _browser_failure_code,
     _browser_failure_observation_fields,
+    _is_unoperable_page,
     _result,
     _terminal_result,
     _validated_restored_audit_session,
@@ -3413,3 +3414,30 @@ def test_a_typographic_apostrophe_does_not_hide_a_confirmed_unsubscribe() -> Non
         state_from_text("Sign in to manage your preferences")
         is UnsubscribePageState.LOGIN_REQUIRED
     )
+
+
+def test_a_page_we_will_not_operate_is_terminal_not_a_retryable_failure() -> None:
+    """Re-reading the same page with the same model reaches the same place.
+
+    Four ESP hosts return one template -- "Unsubscribe … Wait, keep me
+    subscribed" -- whose control is neither a link nor a form submit, so this
+    service models none of it. Others return an empty document. Both were
+    filed as retryable browser faults, so the tasks churned the queue and came
+    back with the same code forever. They are terminal: what the page said is
+    recorded, and the task stops pretending a rerun might differ.
+    """
+    for category in (
+        UnsubscribeBrowserFailure.PAGE_CONTROLS_UNMODELLED,
+        UnsubscribeBrowserFailure.PAGE_STATE_UNKNOWN,
+        UnsubscribeBrowserFailure.PAGE_STATE_MISSING,
+    ):
+        assert _is_unoperable_page(UnsubscribeBrowserError(category))
+
+    # A broken browser is not an unoperable page: those must stay retryable,
+    # because the next attempt really can go differently.
+    for category in (
+        UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
+        UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+    ):
+        assert not _is_unoperable_page(UnsubscribeBrowserError(category))
+    assert not _is_unoperable_page(RuntimeError("unrelated"))

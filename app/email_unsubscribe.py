@@ -394,6 +394,25 @@ _VISIBLE_TEXT_WAIT_MS = 5_000
 _VISIBLE_TEXT_POLL_MS = 250
 
 
+# A page the browser reached and read, but whose controls this service will
+# not operate. Retrying re-reads the same page with the same model and reaches
+# the same place, so these are terminal, not retryable browser faults.
+_UNOPERABLE_PAGE_FAILURES = frozenset(
+    {
+        UnsubscribeBrowserFailure.PAGE_CONTROLS_UNMODELLED,
+        UnsubscribeBrowserFailure.PAGE_STATE_UNKNOWN,
+        UnsubscribeBrowserFailure.PAGE_STATE_MISSING,
+    }
+)
+
+
+def _is_unoperable_page(error: Exception) -> bool:
+    return (
+        isinstance(error, UnsubscribeBrowserError)
+        and error.category in _UNOPERABLE_PAGE_FAILURES
+    )
+
+
 def _browser_failure_observation_fields(error: Exception) -> dict[str, object]:
     """The page state a failure recorded, with the integrity metadata it owes.
 
@@ -4135,6 +4154,34 @@ class UnsubscribeExecutor:
                     error_code="email_unsubscribe_provider_auth_failed",
                 )
             except Exception as exc:
+                if _is_unoperable_page(exc):
+                    # The page was reached and read; this service just will not
+                    # operate what it offers. A rerun re-reads the same page
+                    # with the same model, so calling it a retryable browser
+                    # fault only churns the queue and hides the real state.
+                    # The observation records what the page said.
+                    receipt = UnsubscribeTerminalReceipt(
+                        receipt_id=(
+                            f"unsubscribe-receipt:{effect.effect_digest[:24]}"
+                            ":no_reliable_entry"
+                        ),
+                        evidence="page-not-operable",
+                        entry_reference=effect.entry_reference,
+                        effect_digest=effect.effect_digest,
+                    )
+                    return self._persist_terminal(
+                        effect,
+                        UnsubscribeOutcome.SKIPPED_NO_RELIABLE_ENTRY,
+                        receipt,
+                        journal,
+                        final_step=RedactedUnsubscribeStep(
+                            operation=operation.kind.value,
+                            state="skipped_no_reliable_entry",
+                            reference=receipt.receipt_id,
+                        ),
+                        claim_owned=True,
+                        **_browser_failure_observation_fields(exc),
+                    )
                 return _result(
                     UnsubscribeOutcome.FAILED_BROWSER,
                     journal,
