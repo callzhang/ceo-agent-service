@@ -86,7 +86,7 @@ def test_proposed_action_requires_stable_action_identity():
         ProposedAction.model_validate(action)
 
 
-def test_needs_human_requires_high_risk_and_low_confidence_for_all_task_types():
+def test_needs_human_follows_decision_quality_classification_for_all_task_types():
     consumer_payload = {
         "outcome": "needs_human",
         "summary": "A management decision is required.",
@@ -94,17 +94,23 @@ def test_needs_human_requires_high_risk_and_low_confidence_for_all_task_types():
         "decision_options": _decision_options(),
         "risk": "high",
         "confidence": 0.49,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
         "error": _error(),
     }
     accepted = ConsumerAgentResult.model_validate(consumer_payload)
     assert accepted.risk is RiskLevel.HIGH
     assert accepted.confidence == 0.49
 
-    for risk, confidence in (("low", 0.1), ("medium", 0.1), ("high", 0.5)):
-        with pytest.raises(ValidationError, match="high risk and confidence below 0.5"):
-            ConsumerAgentResult.model_validate(
-                {**consumer_payload, "risk": risk, "confidence": confidence}
-            )
+    low_coverage = ConsumerAgentResult.model_validate(
+        {
+            **consumer_payload,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 0.1,
+        }
+    )
+    assert low_coverage.outcome is ConsumerOutcome.NEEDS_HUMAN
 
     audit_payload = _audit_payload(
         outcome="needs_human",
@@ -116,6 +122,36 @@ def test_needs_human_requires_high_risk_and_low_confidence_for_all_task_types():
     audit = AuditAgentResult.model_validate(audit_payload)
     assert audit.risk is RiskLevel.HIGH
     assert audit.confidence == 0.49
+
+    audit_low_coverage = AuditAgentResult.model_validate(
+        {
+            **audit_payload,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 0.1,
+        }
+    )
+    assert audit_low_coverage.outcome is AuditOutcome.NEEDS_HUMAN
+
+
+@pytest.mark.parametrize("model", (ConsumerAgentResult, AuditAgentResult))
+@pytest.mark.parametrize(
+    "field", ["risk", "confidence", "rule_coverage", "information_completeness"]
+)
+def test_domain_result_requires_all_decision_quality_fields(model, field):
+    payload = (
+        {
+            "outcome": "no_action",
+            "summary": "Nothing to do.",
+            "proposal": None,
+            "decision_options": [],
+            "error": _error(),
+        }
+        if model is ConsumerAgentResult
+        else _audit_payload(outcome="failed")
+    )
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
 
 
 def test_decision_quality_fields_are_readable_and_classify_needs_human():
@@ -268,6 +304,10 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
         "external_result": None,
         "decision_options": [],
         "error": _error(),
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
     }
     payload.update(overrides)
     if payload["outcome"] == "needs_human":
@@ -460,7 +500,9 @@ def test_wire_schema_is_discriminated_and_contains_only_nested_fields(model):
         ),
         (
             AuditAgentWireResult,
-            _audit_wire_payload(outcome="needs_human", reconciliation=[{"action_index": 0}]),
+            _audit_wire_payload(
+                outcome="needs_human", reconciliation=[{"action_index": 0}]
+            ),
         ),
     ),
 )
@@ -480,6 +522,10 @@ def test_consumer_proposal_keeps_facts_and_judgment_separate():
             "outcome": "proposal",
             "summary": "Prepare the factual notice.",
             "proposal": _proposal(),
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
             "error": _error(),
         }
     )
@@ -541,9 +587,7 @@ def test_proposed_action_requires_capability_identity():
             "summary": "Missing source reference.",
             "proposal": {
                 **_proposal(),
-                "sourced_facts": [
-                    {"assertion": "Unsupported fact", "references": []}
-                ],
+                "sourced_facts": [{"assertion": "Unsupported fact", "references": []}],
             },
             "error": _error(),
         },
@@ -571,14 +615,17 @@ def test_needs_human_requires_actionable_options_and_wire_preserves_them():
     ]
     with pytest.raises(ValidationError, match="decision options"):
         ConsumerAgentResult.model_validate(
-                {
-                    "outcome": "needs_human",
-                    "summary": "A management decision is required.",
-                    "proposal": None,
-                    "risk": "high",
-                    "confidence": 0.1,
-                    "error": _error(),
-                }
+            {
+                "outcome": "needs_human",
+                "summary": "A management decision is required.",
+                "proposal": None,
+                "decision_options": [],
+                "risk": "high",
+                "confidence": 0.1,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
+                "error": _error(),
+            }
         )
 
     result = ConsumerAgentWireResult.model_validate(
@@ -844,6 +891,10 @@ def test_parse_typed_agent_result_uses_current_codex_output_shape():
         "outcome": "proposal",
         "summary": "Prepare the notice.",
         "proposal": _proposal(),
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
         "error": _error(),
     }
     raw = json.dumps(
@@ -930,6 +981,10 @@ def test_parse_typed_agent_result_ignores_later_hook_turn_result():
         "outcome": "proposal",
         "summary": "Notify the applicant.",
         "proposal": _proposal(),
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
         "error": _error(),
     }
     hook_result = {
@@ -968,6 +1023,10 @@ def test_parse_typed_agent_result_skips_later_malformed_candidate():
         "outcome": "proposal",
         "summary": "Prepare the notice.",
         "proposal": _proposal(),
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
         "error": _error(),
     }
     raw = "\n".join(
@@ -997,6 +1056,10 @@ def test_parse_typed_agent_result_accepts_single_stray_array_close_after_proposa
         "summary": "Prepare the notice.",
         "proposal": _proposal(),
         "error": _error(),
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
     }
     valid_json = json.dumps(payload)
     split_at = valid_json.rindex('}, "error"')
@@ -1073,12 +1136,12 @@ def test_audit_wire_result_preserves_revision_feedback_fields():
                 "observation": "The proposed argv omitted --yes.",
                 "requested_revision": "Add --yes without changing the action.",
             },
-                "external_result": None,
-                "risk": "medium",
-                "confidence": 0.8,
-                "rule_coverage": 1.0,
-                "information_completeness": 1.0,
-                "error_code": "dws_write_missing_yes",
+            "external_result": None,
+            "risk": "medium",
+            "confidence": 0.8,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "error_code": "dws_write_missing_yes",
             "error_retryable": True,
             "error_authorization_required": False,
         }
@@ -1086,7 +1149,9 @@ def test_audit_wire_result_preserves_revision_feedback_fields():
 
     assert result.outcome is AuditOutcome.FEEDBACK_PROVIDED
     assert result.feedback is not None
-    assert result.feedback.requested_revision == "Add --yes without changing the action."
+    assert (
+        result.feedback.requested_revision == "Add --yes without changing the action."
+    )
 
 
 def test_dingtalk_message_actions_require_canonical_target_fields():
@@ -1122,8 +1187,8 @@ def test_agent_message_json_objects_scans_fences_and_prose():
     from app.agent_result import agent_message_json_objects
 
     text = (
-        "Draft {not json} first:\n```json\n{\"a\": 1}\n```\n"
-        "then the final object: {\"b\": {\"nested\": [1, 2]}} done."
+        'Draft {not json} first:\n```json\n{"a": 1}\n```\n'
+        'then the final object: {"b": {"nested": [1, 2]}} done.'
     )
 
     assert agent_message_json_objects(text) == [{"a": 1}, {"b": {"nested": [1, 2]}}]

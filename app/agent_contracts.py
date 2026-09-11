@@ -13,9 +13,6 @@ from app.agent_result import AgentError
 from app.decision_quality import DecisionQuality, classify_decision_quality
 
 
-NEEDS_HUMAN_CONFIDENCE_THRESHOLD = 0.5
-
-
 class RiskLevel(StrEnum):
     """Estimated consequence if the proposed result is acted on incorrectly."""
 
@@ -25,16 +22,17 @@ class RiskLevel(StrEnum):
 
 
 def _consumer_result_json_schema(schema: dict[str, object]) -> None:
-    schema.setdefault("required", []).extend(
-        ("risk", "confidence", "rule_coverage", "information_completeness")
-    )
+    required = schema.setdefault("required", [])
+    for field in ("risk", "confidence", "rule_coverage", "information_completeness"):
+        if field not in required:
+            required.append(field)
     schema["anyOf"] = [
         {
             "type": "object",
             "properties": {
                 "outcome": {"const": "proposal"},
                 "proposal": {"type": "object"},
-            }
+            },
         },
         {
             "type": "object",
@@ -43,15 +41,16 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
                     "enum": ["no_action", "needs_human", "failed"],
                 },
                 "proposal": {"type": "null"},
-            }
+            },
         },
     ]
 
 
 def _audit_result_json_schema(schema: dict[str, object]) -> None:
-    schema.setdefault("required", []).extend(
-        ("risk", "confidence", "rule_coverage", "information_completeness")
-    )
+    required = schema.setdefault("required", [])
+    for field in ("risk", "confidence", "rule_coverage", "information_completeness"):
+        if field not in required:
+            required.append(field)
     null_value = {"type": "null"}
     schema["anyOf"] = [
         {
@@ -130,9 +129,7 @@ class ProposedAction(BaseModel):
             )
         conversation_id = str(self.target.get("conversation_id") or "").strip()
         message_id = str(
-            self.target.get("message_id")
-            or self.target.get("source_message_id")
-            or ""
+            self.target.get("message_id") or self.target.get("source_message_id") or ""
         ).strip()
         recipient = str(
             self.target.get("open_dingtalk_id")
@@ -142,7 +139,10 @@ class ProposedAction(BaseModel):
             or self.target.get("verified_participant_open_dingtalk_id")
             or ""
         ).strip()
-        if self.operation in {"send_to_group", "messages-send-to-group"} and not conversation_id:
+        if (
+            self.operation in {"send_to_group", "messages-send-to-group"}
+            and not conversation_id
+        ):
             raise ValueError("DingTalk group target requires conversation_id")
         if self.operation in {"messages-reply", "message.reply"} and not (
             conversation_id and message_id
@@ -150,13 +150,16 @@ class ProposedAction(BaseModel):
             raise ValueError(
                 "DingTalk reply target requires conversation_id and message_id"
             )
-        if self.operation in {
-            "send_direct_message",
-            "send_message_to_source_conversation",
-        } and not recipient:
+        if (
+            self.operation
+            in {
+                "send_direct_message",
+                "send_message_to_source_conversation",
+            }
+            and not recipient
+        ):
             raise ValueError("DingTalk direct target requires a stable recipient id")
         return self
-
 
 
 class ProposalFact(BaseModel):
@@ -215,14 +218,10 @@ class ConsumerAgentResult(BaseModel):
     proposal: ConsumerProposal | None
     decision_options: tuple[DecisionOption, ...] = ()
     error: AgentError
-    risk: RiskLevel = RiskLevel.LOW
-    confidence: float = Field(
-        default=1.0,
-        ge=0.0,
-        le=1.0,
-    )
-    rule_coverage: float = Field(default=1.0, ge=0.0, le=1.0)
-    information_completeness: float = Field(default=1.0, ge=0.0, le=1.0)
+    risk: RiskLevel
+    confidence: float = Field(ge=0.0, le=1.0)
+    rule_coverage: float = Field(ge=0.0, le=1.0)
+    information_completeness: float = Field(ge=0.0, le=1.0)
 
     @field_validator("outcome", mode="before")
     @classmethod
@@ -244,13 +243,6 @@ class ConsumerAgentResult(BaseModel):
         if (self.outcome is ConsumerOutcome.PROPOSAL) != (self.proposal is not None):
             raise ValueError("proposal is required only for proposal outcome")
         if self.outcome is ConsumerOutcome.NEEDS_HUMAN:
-            if not (
-                self.risk is RiskLevel.HIGH
-                and self.confidence < NEEDS_HUMAN_CONFIDENCE_THRESHOLD
-            ):
-                raise ValueError(
-                    "needs_human requires high risk and confidence below 0.5"
-                )
             if not 2 <= len(self.decision_options) <= 4:
                 raise ValueError("needs_human requires two to four decision options")
             keys = [option.key for option in self.decision_options]
@@ -308,14 +300,10 @@ class AuditAgentResult(BaseModel):
     external_result: AuditExternalResult | None
     decision_options: tuple[DecisionOption, ...] = ()
     error: AgentError
-    risk: RiskLevel = RiskLevel.LOW
-    confidence: float = Field(
-        default=1.0,
-        ge=0.0,
-        le=1.0,
-    )
-    rule_coverage: float = Field(default=1.0, ge=0.0, le=1.0)
-    information_completeness: float = Field(default=1.0, ge=0.0, le=1.0)
+    risk: RiskLevel
+    confidence: float = Field(ge=0.0, le=1.0)
+    rule_coverage: float = Field(ge=0.0, le=1.0)
+    information_completeness: float = Field(ge=0.0, le=1.0)
 
     @field_validator("outcome", mode="before")
     @classmethod
@@ -347,13 +335,6 @@ class AuditAgentResult(BaseModel):
         elif self.external_result is not None:
             raise ValueError("external result is only valid for executed")
         if self.outcome is AuditOutcome.NEEDS_HUMAN:
-            if not (
-                self.risk is RiskLevel.HIGH
-                and self.confidence < NEEDS_HUMAN_CONFIDENCE_THRESHOLD
-            ):
-                raise ValueError(
-                    "needs_human requires high risk and confidence below 0.5"
-                )
             if not 2 <= len(self.decision_options) <= 4:
                 raise ValueError("needs_human requires two to four decision options")
             keys = [option.key for option in self.decision_options]
@@ -375,5 +356,7 @@ class AuditAgentResult(BaseModel):
             if self.error.code != "dry_run_execution_suppressed":
                 raise ValueError("dry_run requires dry_run_execution_suppressed")
             if self.error.retryable or self.error.authorization_required:
-                raise ValueError("dry_run must not be retryable or require authorization")
+                raise ValueError(
+                    "dry_run must not be retryable or require authorization"
+                )
         return self
