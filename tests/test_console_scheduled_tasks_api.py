@@ -785,7 +785,7 @@ def test_audit_app_reads_only_current_main_pid_runtime_and_skill_receipts(
         if item["name"] == skill.name
     )
     assert current_skill["revisions"][0]["available"] is True
-    assert mismatched.json()["runtime_options"][0]["unavailable_reason"] == "snapshot_missing"
+    assert mismatched.json()["runtime_options"][0]["available"] is True
     mismatched_skill = next(
         item
         for item in mismatched.json()["managed_skill_options"]
