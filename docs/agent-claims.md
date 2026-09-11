@@ -32,6 +32,7 @@ reverts committed work they did not author.
 | Claude session `ceo-agent-service-f6` (execution boundary) | `app/agent_effect_guard.py`, `app/consumer_agent.py` + `tests/test_agent_effect_guard.py` | detecting provider effects produced by a Consumer proposal turn (task 383537) | 2026-09-11 01:40Z |
 | Codex session `attention-reconciliation` | `app/audit_web.py`, `tests/test_console_web_api.py` | show every unresolved service error in Attention while keeping the four-hour window only in system health | 2026-09-11 |
 | Codex session `unsubscribe-state-order` | `app/email_unsubscribe.py`, `tests/test_email_unsubscribe.py` | classify already-unsubscribed browser text before login-required text to prevent false-positive human escalation | 2026-09-11 |
+| Codex session `unsubscribe-skip-projection` | `app/email_unsubscribe_audit.py`, `app/email_worker.py`, `tests/test_email_unsubscribe_audit.py`, `tests/test_email_worker.py` | project login/CAPTCHA/payment terminal skips as no-action instead of false-positive needs_human | 2026-09-11 |
 
 ## Recent overlaps worth knowing
 

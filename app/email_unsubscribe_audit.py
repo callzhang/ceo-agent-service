@@ -56,16 +56,18 @@ class AuditedUnsubscribeTerminalState(str, Enum):
 
 # `disposition_for_unsubscribe_outcome` files every terminal skip the same way
 # - "skipped", not retryable - because what the browser may do next is the same
-# for all of them: nothing. This map deliberately overrides that one
-# distinction for the task projection, because who has to finish the operation
-# differs: a login, CAPTCHA or payment wall is a sensitive target the service
-# must never cross, so it reaches a person in the isolated browser session that
-# is already open, while a missing entry or an already unsubscribed address
-# leaves nothing for anyone to do.
+# for all of them: nothing. This map keeps every terminal skip as a
+# service-owned no-action result. A login, CAPTCHA or payment wall is a
+# boundary the service must never cross, but it is not a request for Derek to
+# choose an action: the Skill says to stop without further controls. A missing
+# entry or an already unsubscribed address likewise leaves nothing for anyone
+# to do. Escalation is reserved for a genuine high-risk/low-confidence or
+# low-coverage decision, not a bounded browser outcome that is already fully
+# evidenced.
 _TERMINAL_SKIP_STATES: Mapping[UnsubscribeOutcome, AuditedUnsubscribeTerminalState] = {
-    UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED: AuditedUnsubscribeTerminalState.HANDOFF,
-    UnsubscribeOutcome.SKIPPED_CAPTCHA: AuditedUnsubscribeTerminalState.HANDOFF,
-    UnsubscribeOutcome.SKIPPED_PAYMENT: AuditedUnsubscribeTerminalState.HANDOFF,
+    UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED: AuditedUnsubscribeTerminalState.NO_ACTION,
+    UnsubscribeOutcome.SKIPPED_CAPTCHA: AuditedUnsubscribeTerminalState.NO_ACTION,
+    UnsubscribeOutcome.SKIPPED_PAYMENT: AuditedUnsubscribeTerminalState.NO_ACTION,
     UnsubscribeOutcome.SKIPPED_NO_RELIABLE_ENTRY: (
         AuditedUnsubscribeTerminalState.NO_ACTION
     ),

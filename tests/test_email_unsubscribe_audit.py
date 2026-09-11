@@ -1784,10 +1784,10 @@ def _tool_event(
     [
         (
             UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED,
-            AuditedUnsubscribeTerminalState.HANDOFF,
+            AuditedUnsubscribeTerminalState.NO_ACTION,
         ),
-        (UnsubscribeOutcome.SKIPPED_CAPTCHA, AuditedUnsubscribeTerminalState.HANDOFF),
-        (UnsubscribeOutcome.SKIPPED_PAYMENT, AuditedUnsubscribeTerminalState.HANDOFF),
+        (UnsubscribeOutcome.SKIPPED_CAPTCHA, AuditedUnsubscribeTerminalState.NO_ACTION),
+        (UnsubscribeOutcome.SKIPPED_PAYMENT, AuditedUnsubscribeTerminalState.NO_ACTION),
         (
             UnsubscribeOutcome.SKIPPED_NO_RELIABLE_ENTRY,
             AuditedUnsubscribeTerminalState.NO_ACTION,
@@ -1844,7 +1844,7 @@ def test_a_rejected_second_call_does_not_undo_a_terminal_receipt():
 
     assert audited_unsubscribe_skip_receipt(run) == (
         UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED,
-        AuditedUnsubscribeTerminalState.HANDOFF,
+        AuditedUnsubscribeTerminalState.NO_ACTION,
     )
 
 
@@ -1882,7 +1882,7 @@ def test_a_rejection_that_names_no_action_keeps_the_step_over_reading():
 
     assert audited_unsubscribe_skip_receipt(run) == (
         UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED,
-        AuditedUnsubscribeTerminalState.HANDOFF,
+        AuditedUnsubscribeTerminalState.NO_ACTION,
     )
 
 

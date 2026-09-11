@@ -8370,7 +8370,7 @@ def _finalize_audited_unsubscribe(module, result, tool_events, *, task_id=383232
     return captured
 
 
-def test_audited_unsubscribe_login_skip_is_closed_as_a_human_handoff():
+def test_audited_unsubscribe_login_skip_is_closed_as_no_action():
     module = _module()
     # Live task 383232: the audited tool returned a terminal skip receipt and
     # the Audit model reported failed/login_required for it anyway.
@@ -8388,9 +8388,9 @@ def test_audited_unsubscribe_login_skip_is_closed_as_a_human_handoff():
     )
 
     assert captured["task_status"] == "done"
-    assert captured["send_status"] == "needs_human"
-    assert captured["send_error"] == "skipped_login_required"
-    assert captured["task_error"] == "skipped_login_required"
+    assert captured["send_status"] == "skipped"
+    assert captured["send_error"] == ""
+    assert captured["task_error"] == ""
 
 
 def test_audited_unsubscribe_retryable_login_skip_is_not_deferred():
@@ -8421,8 +8421,8 @@ def test_audited_unsubscribe_retryable_login_skip_is_not_deferred():
 
     assert "deferred" not in captured
     assert captured["task_status"] == "done"
-    assert captured["send_status"] == "needs_human"
-    assert captured["send_error"] == "skipped_login_required"
+    assert captured["send_status"] == "skipped"
+    assert captured["send_error"] == ""
 
 
 @pytest.mark.parametrize(
