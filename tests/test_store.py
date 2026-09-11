@@ -9243,3 +9243,27 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
             (task.id, "2026-09-11T06:00:00+00:00", stale),
         )
         assert store._scheduled_task_run_snapshots_are_current(db) is False
+
+
+def test_sqlite_failures_name_their_extended_result_code(tmp_path: Path, capsys):
+    """`disk I/O error` alone cannot tell a bad page from a locking problem."""
+    store = AutoReplyStore(tmp_path / "named-errors.sqlite3")
+
+    with pytest.raises(sqlite3.Error):
+        with store._connect() as db:
+            db.execute("select * from a_table_that_does_not_exist")
+
+    captured = capsys.readouterr().err
+    assert "SQLITE_ERROR" in captured
+    assert str(store.path) in captured
+
+
+def test_naming_an_error_does_not_swallow_it(tmp_path: Path, capsys):
+    """The failure must reach the caller unchanged; this is not a fallback."""
+    store = AutoReplyStore(tmp_path / "reraise.sqlite3")
+
+    with pytest.raises(sqlite3.OperationalError) as raised:
+        with store._connect() as db:
+            db.execute("select * from a_table_that_does_not_exist")
+
+    assert "a_table_that_does_not_exist" in str(raised.value)

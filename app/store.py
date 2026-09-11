@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import sys
 import threading
 import time
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
@@ -545,6 +546,27 @@ MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR = (
     "schema_migration_duplicate_running_meeting_run"
 )
 _INITIALIZED_STORE_PATHS: set[Path] = set()
+
+
+def _name_sqlite_extended_error(path: Path, error: sqlite3.Error) -> None:
+    """Name the SQLite extended result code on a failure's way out.
+
+    `disk I/O error` is the primary code SQLITE_IOERR and says nothing about
+    which operation failed. The extended code separates a failing read from a
+    failing shared-memory map or fsync, which is the part that tells a bad page
+    apart from a filesystem or locking problem. The error is re-raised
+    unchanged; this only names it.
+    """
+    name = getattr(error, "sqlite_errorname", "")
+    if not name:
+        return
+    print(
+        f"sqlite {name} code={getattr(error, 'sqlite_errorcode', '')} "
+        f"path={path}: {error}",
+        file=sys.stderr,
+        flush=True,
+    )
+
 _INITIALIZE_LOCK = threading.Lock()
 
 
@@ -2029,6 +2051,9 @@ class AutoReplyStore:
         try:
             with connection:
                 yield connection
+        except sqlite3.Error as error:
+            _name_sqlite_extended_error(self.path, error)
+            raise
         finally:
             connection.close()
 

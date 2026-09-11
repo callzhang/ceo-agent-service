@@ -1,5 +1,13 @@
 # Changelog
 
+- 2026-09-11: SQLite failures out of the store now name their extended result
+  code. `disk I/O error` is the primary code SQLITE_IOERR and says nothing about
+  which operation failed; the extended name separates a failing read
+  (`SQLITE_IOERR_READ`) from a shared-memory map (`SQLITE_IOERR_SHMMAP`) or an
+  fsync, which is what tells a damaged page apart from a filesystem or locking
+  problem. The error is re-raised unchanged - this names it, it does not handle
+  it.
+
 - 2026-09-11: the store's schema-currency fast path no longer reads
   `scheduled_task_runs` rows. That check ran on **every** `AutoReplyStore()`
   construction, so one damaged page in a table that grows with every scheduled
