@@ -49,7 +49,7 @@ CLI 原生 `auto_review` 是 Codex 对 `codex-auto-review` 模型的一次额外
 历史 `workbench_confirmations` 仅用于读取既有记录，不属于新 turn 的执行路径；确认与取消
 接口固定拒绝执行，主页也不再显示操作按钮。
 
-审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许三个内容反馈周期，基础设施失败不消耗反馈周期。反馈次数耗尽本身是自动闭环失败，不是人工决策依据；只有 Audit 自身返回满足高风险、低置信度和 Skill 缺口约束的结构化结果时才进入 `needs_human`。
+审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许三个内容反馈周期，基础设施失败不消耗反馈周期。反馈次数耗尽本身是自动闭环失败，不是人工决策依据；只有 Audit 自身返回信息完整且满足 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 的结构化结果时才进入 `needs_human`。
 
 所有任务都禁止使用 `discard` 动作或写入 `discarded` 状态。无需动作的结果在 trace 记录 `no_action` 后进入 `done`；需要修正时由审核 Agent 写入 `audit_feedback`，执行 Agent 生成新 revision；处理失败使用 `failed`；无法自动解决使用 `needs_human`。
 
@@ -603,13 +603,20 @@ Audit Rules 不能把 A 改成执行者。
 “先追问”之间选择。`needs_human` 只用于无法通过读取材料或向参与者提问解决、必须由
 Derek 作出的管理判断。
 
-`needs_human` 的通用判定不因业务领域而放宽：A 和 B 的结果都必须携带 `risk` 与
-`confidence`；只有 `risk=high`、`confidence < 0.5`、适用 Skill/规则确实无法替代该判断，
-且结果提供 2 至 4 个互斥且可执行的决策选项时，才能升级给 Derek。技术、依赖、读取、路由、
-schema、Audit 执行和重试失败必须保持 `failed`，即使错误对象为了说明拒绝原因带有
-`authorization_required=true`。例如邮件退订的登录失败、目标不匹配、授权证据不足或策略拒绝
-仍是领域失败；只有通用错误码 `authorization_required` 才表示不可替代的授权边界。这样不会把
-“Agent 已知如何安全地失败”误报成“需要 Derek 做业务选择”。
+A 和 B 的结果统一携带 `risk`、`confidence`、`rule_coverage`、`information_completeness`；
+后三者严格为 0--1。先看信息完整度：低于 `0.5` 只产生普通 proposal 或一个具体问题的
+ask-back，继续现有 Audit/send 链路；ask-back 不落新的 outcome，也不计 `needs_human`。否则，
+仅当 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 时进入 `needs_human`，并给出 2--4
+个互斥可执行的规则/Skill 选项；其余由 Skill 自主完成。one-time 与 Skill update 可同时作为
+反馈选择，复用同一业务对象、attempt 和兼容 session，产生新 revision，不新建 session。
+技术、provider、读取、路由、schema、Audit、retry failure 永远为 `failed`；领域
+`authorization_required` 不泛化为人工升级，低分也不能绕过失败。
+
+新 wire 四字段必填且严格校验。受控旧 `final_result_json` hydration 只补
+`rule_coverage=1.0`、`information_completeness=1.0`，保留旧 risk/confidence，且不改原始历史
+run/audit。Quality gate/Attention 只统计 current latest projection 的结构化结果；字段缺失、
+非法值或 outer outcome mismatch fail-closed 为 invalid violation，reviewed、historical、pending
+recovery 排除。
 
 ### Audit Agent B
 
@@ -916,7 +923,7 @@ session 指针读取 JSONL，并只向普通用户展示业务结果；内部角
 | `executed` | B 已执行，并返回 provider 结果或稳定外部动作标识。 |
 | `no_action` | A 确认当前触发无需外部动作。 |
 | `feedback_provided` | B 给出结构化反馈，等待 A 在原兼容 session 中生成下一 revision。 |
-| `needs_human` | 只能由 Derek 作出的不可约管理判断；不是普通材料不足。结果必须提供通用的 `risk` 和 `confidence`，且仅当风险为 `high`、置信度低于 `0.5` 时允许；同时提供 2 至 4 个互斥、可执行的选项，每项包含唯一稳定的 key、显示标签、执行指令和后果。 |
+| `needs_human` | 仅在信息完整且 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 时使用；必须提供 2 至 4 个互斥、可执行的规则/Skill 选项。普通材料不足走 ask-back，不计入此状态。 |
 | `failed` | 当前 run 失败；错误说明是否可重试。 |
 | `quarantined` | 历史数据中的旧投影标签，仅用于历史展示；新执行不得写入。 |
 

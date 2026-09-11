@@ -71,16 +71,21 @@ Consumer 在一次 invocation 开始时获得这一不可变 snapshot，之后�
 runtime config 加载。关闭功能不会取消、删除或改写已存在的 `pending`、`running` 或重试任务。
 缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，并阻止它继续创建新任务；其他功能不受影响。
 
-每个执行 Agent 和审核 Agent 的结构化结果都带有通用的 `risk`（`low`、`medium`、
-`high`）和 `confidence`（0 到 1）字段，不区分任务领域。`needs_human` 只有在风险为
-`high` 且置信度严格低于 `0.5` 时才允许；低置信度的技术或依赖失败仍然是 `failed`，
-规则覆盖但需要修改的结果进入 `needs_feedback`。这样人工入口表示不可安全自行决策的
-高后果规则缺口，而不是模型遇到不确定性就停止。结果还必须包含 2 至 4 个互斥、可执行的
-决策选项；只有适用 Skill/规则确实不支持 Agent 自主完成时，选项才交给 Derek。技术、依赖、
-读取、路由、schema、Audit 执行和重试失败不因低置信度而升级为人工决策，必须以 `failed`
-收口。特别是领域错误即使设置 `authorization_required=true` 也不构成通用授权边界：邮件
-退订的登录失败、目标不匹配、授权证据不足和风险策略拒绝均保持各自的失败码；只有错误码
-`authorization_required` 才可映射为 `needs_human`。
+每个 Consumer 和 Audit 的结构化结果必须统一携带四个字段：`risk`（`low`/`medium`/`high`）、
+`confidence`、`rule_coverage`、`information_completeness`，后三者均为闭区间 `[0, 1]`。
+路由严格按以下顺序执行：`information_completeness < 0.5` 时形成普通 proposal 或一个具体
+问题的 ask-back，沿现有 Audit/send 链路处理，不新增 ask-back 持久化 outcome；否则，
+`(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 才进入 `needs_human`，并提供 2--4 个
+互斥、可执行的规则/Skill 选项；其余由适用 Skill 自主完成。ask-back 不计入 needs_human。
+反馈可同时选择 one-time 与 Skill update；二者复用同一业务对象和同一 attempt，在兼容 session
+中生成新 revision，不新建 session。技术、provider、读取、路由、schema、Audit 或 retry failure
+永远是 `failed`；领域 `authorization_required` 也不泛化为 `needs_human`，不能用低分绕过失败。
+
+新 wire 结果的四字段均为必填并严格校验。旧 `final_result_json` hydration 仅可受控补齐
+`rule_coverage=1.0`、`information_completeness=1.0`，保留旧的 `risk`/`confidence`；原始历史
+run 和 audit 不改写。Quality gate 与 Attention 只按 current latest projection 的结构化结果计数：
+字段缺失、非法值或 outer outcome mismatch 均 fail-closed 为 invalid violation；reviewed、历史、
+pending recovery 排除，ask-back 不计 `needs_human`。
 
 ## 审核反馈闭环
 

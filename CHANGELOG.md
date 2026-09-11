@@ -1,5 +1,14 @@
 # Changelog
 
+- 2026-09-10: documented the decision-quality contract and projection gate: Consumer/Audit
+  results now share required `risk`, `confidence`, `rule_coverage`, and
+  `information_completeness` fields; information-incomplete results use the existing
+  ask-back path, while only the exact risk/coverage predicate may produce `needs_human`.
+  Technical/provider/read/route/schema/Audit/retry failures remain `failed`, feedback may
+  combine one-time and Skill updates on the same attempt, and quality/Attention counts are
+  fail-closed against the current latest projection only. Controlled legacy hydration and
+  preservation of historical runs are explicit.
+
 - 2026-09-10 (round 6): the remaining live email and meeting failure classes.
   - A terminal unsubscribe **skip** now ends the task where the lifecycle
     already put it instead of as a technical failure. The audited tool decides
