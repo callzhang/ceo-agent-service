@@ -80,6 +80,7 @@ from app.org_cache import (
     CachedOrgDirectory,
     refresh_org_cache,
 )
+from app.scheduled_task_recovery import close_superseded_scheduled_reply_tasks
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_agent import (
     TaskAgentCodexRunner,
@@ -3327,6 +3328,7 @@ def run_task_maintenance_loop(
                 + store.resolve_errors_recovered_by_terminal_work_summary_inputs()
                 + store.resolve_errors_recovered_by_scheduled_service_command()
                 + store.resolve_closed_blocked_reply_attempts()
+                + close_superseded_scheduled_reply_tasks(store)
             ),
         )
         run_step(
@@ -3718,6 +3720,7 @@ def _recover_processing_work_summary_inputs_on_service_start(
     completed_weekly_jobs = (
         store.complete_superseded_stale_weekly_okr_analysis_jobs()
     )
+    closed_superseded_scheduled_tasks = close_superseded_scheduled_reply_tasks(store)
     recovered_runtime_attempts = store.recover_stale_runtime_attempts(
         stale_after_seconds=_work_summary_processing_stale_seconds(settings),
     )
@@ -3726,6 +3729,7 @@ def _recover_processing_work_summary_inputs_on_service_start(
     return (
         recovered_runs
         + completed_weekly_jobs
+        + closed_superseded_scheduled_tasks
         + recovered_runtime_attempts
         + recovered_attempts
         + len(recovered_inputs)

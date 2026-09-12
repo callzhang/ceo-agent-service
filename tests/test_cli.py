@@ -6592,6 +6592,11 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         "check_follow_up_completions_command",
         lambda received, limit=1: calls.append("completion-check"),
     )
+    monkeypatch.setattr(
+        cli,
+        "close_superseded_scheduled_reply_tasks",
+        lambda received: calls.append("resolve-superseded") or 0,
+    )
 
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
@@ -6606,6 +6611,7 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         "resolve-work-summary",
         "resolve-scheduled-command",
         "resolve-blocked",
+        "resolve-superseded",
         (
             "health",
             "task_maintenance.resolve_recovered_errors",
