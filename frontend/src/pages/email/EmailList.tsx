@@ -110,13 +110,14 @@ export function EmailList({configs, onBusy}: {configs:EmailCategoryConfig[]; onB
         </section>
         {!!detail.item.attachment_metadata?.length&&<section aria-label="附件元数据"><h3>附件（仅元数据）</h3>{detail.item.attachment_metadata.map((file,index)=><p key={index}>{file.filename} · {file.mime_type} · {file.size_bytes} bytes</p>)}</section>}
         <p>分类来源：{sourceLabel(detail.item.classification_source)} · 置信度：{measured(detail.item.confidence)} · 描述版本：{detail.item.description_version || "未提供"}</p>
+        <p>当前 ActionPlan：{detail.item.current_action_plan_id || "未生成"}</p>
         <ProcessedClassificationEvidence row={detail.item}/>
         {(detail.provider_classification || detail.item.provider_classification)&&<section aria-label="邮箱观察事实"><h3>邮箱观察事实</h3><p>已观察到的文件夹与 Star / Flag 状态：</p><pre>{JSON.stringify(detail.provider_classification || detail.item.provider_classification,null,2)}</pre></section>}
         <section className="email-candidate-distribution" aria-label="候选分布"><h3>候选分布</h3><div className="email-probability-bar" aria-hidden="true">{Object.entries(detail.item.probabilities).sort(([,a],[,b])=>b-a).map(([key,value])=><span key={key} data-category={key} style={{flexGrow:Math.max(0,value)}} />)}</div><div className="email-probability-legend">{Object.entries(detail.item.probabilities).sort(([,a],[,b])=>b-a).map(([key,value])=><span key={key}><i data-category={key}/>{label(key)} {measured(value)}</span>)}</div><p className="muted">模型置信度：{measured(detail.item.confidence)} · 间隔：{measured(detail.item.margin)}</p></section>
         <ObservabilityDetails events={detail.observability}/>
         </div>
-        {filter!=="processed"&&detail.item.status==="pending_feedback"&&<form aria-label="分类确认" className="email-drawer-footer" onSubmit={event=>{event.preventDefault();void save();}}>
-          <p>建议：{label(detail.item.category)} · {measured(detail.item.confidence)}，请选择类别后保存。</p>
+        {(detail.item.status==="pending_feedback"||detail.item.status==="processed")&&<form aria-label="分类确认" className="email-drawer-footer" onSubmit={event=>{event.preventDefault();void save();}}>
+          <p>{detail.item.status==="pending_feedback"?"建议":"当前分类"}：{label(detail.item.category)} · {measured(detail.item.confidence)}，请选择类别后保存。</p>
           <div className="settings-pill-row" role="group" aria-label="选择分类">{options.map(item=><button type="button" key={item.category_key} disabled={saving||loading} aria-pressed={category===item.category_key} onClick={()=>setCategory(item.category_key)}>{item.display_name}</button>)}</div>
           {!options.length&&<p>暂无可用类别，请先检查邮件配置。</p>}{saveError&&<p role="alert">{saveError}</p>}
           <button type="submit" className="primary-button" disabled={!category||saving||loading}>{saving?"正在保存…":"保存分类并继续"}</button>
