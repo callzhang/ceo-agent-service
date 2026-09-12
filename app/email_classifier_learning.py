@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
+import tempfile
 import uuid
+from hashlib import sha256
 
 from app.email_classifier_contracts import EmailCategory
 from app.email_classifier_retrain import (
@@ -178,9 +181,43 @@ class EmailClassifierLearningService:
         provenance = selection.get("provenance")
         if isinstance(provenance, list) and all(isinstance(item, dict) for item in provenance):
             payload["selection"]["provenance"] = provenance
-        path = self.registry.root / f"training-request-{request_id}.json"
+        canonical = json.dumps(payload["selection"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        selection_digest = sha256(canonical.encode("utf-8")).hexdigest()
+        payload["selection_digest"] = selection_digest
         self.registry.root.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        for existing_path in sorted(self.registry.root.glob("training-request-*.json")):
+            try:
+                existing = json.loads(existing_path.read_text(encoding="utf-8"))
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if existing.get("selection_digest") == selection_digest:
+                return AutoRetrainResult(
+                    RetrainDecision(False, "training_selection_recorded", 0),
+                    state,
+                    None,
+                    None,
+                )
+        path = self.registry.root / f"training-request-{request_id}.json"
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.registry.root,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+            temporary = None
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         return AutoRetrainResult(
             RetrainDecision(False, "training_selection_recorded", 0),
             state,

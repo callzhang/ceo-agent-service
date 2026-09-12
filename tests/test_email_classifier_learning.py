@@ -197,6 +197,18 @@ def test_manual_training_selection_is_persisted_without_claiming_execution(tmp_p
     assert payload["online_model_changed"] is False
 
 
+def test_manual_training_selection_is_idempotent_for_same_scope(tmp_path: Path):
+    service, _store, _rows, _ = _service_with_pending(tmp_path)
+    selection = {
+        "sources": ["agent_auto_label", "user_feedback"],
+        "categories": ["work", "legal"],
+        "provenance": [{"source": "user_feedback", "category": "work", "sample_count": 2}],
+    }
+    service.request_manual_training(selection=selection)
+    service.request_manual_training(selection=selection)
+    assert len(list((tmp_path / "models").glob("training-request-*.json"))) == 1
+
+
 def test_learning_service_corrects_processed_classification_through_pipeline(
     tmp_path: Path,
 ):

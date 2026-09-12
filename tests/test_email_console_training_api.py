@@ -69,6 +69,36 @@ def test_learning_exposes_training_source_provenance_and_selection_is_recorded(t
     assert response.status_code == 202
     assert response.json()["learning"]["training_status"] == "recorded"
     assert response.json()["learning"]["selection"]["categories"] == ["legal", "work"]
+    assert all(
+        row["provenance"]["dataset_digest"]
+        for row in response.json()["learning"]["selection"]["provenance"]
+    )
+
+
+def test_training_selection_rejects_unknown_values_and_malformed_json(tmp_path, monkeypatch):
+    client, store, _registry = client_for(tmp_path)
+    monkeypatch.setattr(store, "list_training_examples", lambda **_: [
+        {"message_id": "user-1", "label": "work", "sample_digest": "d" * 64},
+    ])
+    unknown = client.post("/api/console/email/training", json={
+        "sources": ["not-real"], "categories": ["work"],
+    })
+    assert unknown.status_code == 400
+    assert unknown.json()["code"] == "invalid_training_selection"
+
+    malformed = client.post(
+        "/api/console/email/training",
+        content=b'{"sources":',
+        headers={"content-type": "application/json"},
+    )
+    assert malformed.status_code == 400
+    assert malformed.json()["code"] == "invalid_training_selection"
+
+
+def test_empty_training_request_keeps_legacy_manual_training_path(tmp_path):
+    client, _store, _registry = client_for(tmp_path)
+    response = client.post("/api/console/email/training", content=b"")
+    assert response.status_code == 200
 
 
 def test_promotion_config_changes_do_not_activate_model(tmp_path):
