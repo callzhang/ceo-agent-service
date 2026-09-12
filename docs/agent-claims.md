@@ -166,3 +166,16 @@ reverts committed work they did not author.
   trusted channel, route unsubscribe turns to a runtime without this reviewer,
   or accept these as a permanent terminal skip class. Evidence: the refusal
   message in `reply_attempts.audit_tool_events_json` for task 383338.
+
+  **Closed 2026-09-11, and my framing above was wrong.** None of the three
+  options was needed. The refusals were a property of the *old* tool, not of
+  the task: `execute_audited_email_unsubscribe` took four arguments including
+  a whole accepted proposal and declared `destructiveHint=True`, and the
+  reviewer read that as an unauthorized subscription-preference change. The
+  one-call replacement takes a single integer, declares
+  `destructiveHint=False` and `idempotentHint=True`, and reads its
+  authorization from durable state. All nine tasks were requeued through it
+  and all nine completed with no refusal. Nothing was written to the trusted
+  developer channel and no route was swapped. The lesson is to re-measure a
+  provider refusal after the call it refused has actually changed shape,
+  before treating it as a standing policy boundary.
