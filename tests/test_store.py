@@ -9457,3 +9457,91 @@ def test_only_a_failed_attempt_can_be_settled_and_only_once(tmp_path):
     assert not store.resolve_failed_reply_attempt_already_settled(
         sent, resolution="not a failure"
     )
+
+
+def _attempt(store, *, trigger: str, status: str, error: str = "") -> int:
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-supersede",
+        conversation_title="Supersession",
+        trigger_message_id=trigger,
+        trigger_sender="Sender",
+        trigger_text="trigger",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status=status,
+    )
+    if error:
+        with store._connect() as db:
+            db.execute(
+                "update reply_attempts set send_error=? where id=?", (error, attempt_id)
+            )
+    return attempt_id
+
+
+def _projected(store, attempt_id: int) -> str:
+    _total, rows = store.list_operation_logs_with_count(
+        limit=500, source_tables=("reply_attempts",), _skip_history_cache=True
+    )
+    return next(r.status for r in rows if r.source_id == attempt_id)
+
+
+def test_a_superseded_attempt_retires_whatever_status_it_stopped_on(tmp_path):
+    """The recovered collapse only ever applied to send_status='failed'.
+
+    68 blocked attempts from a runtime that no longer exists, 37 needs_human
+    rows nobody can act on, and 7 stranded pending placeholders all had a
+    strictly newer terminal attempt on the same trigger and still read as
+    open work, some for 46 days.
+    """
+
+    store = store_module.AutoReplyStore(tmp_path / "supersede.sqlite3")
+    for status in ("blocked", "needs_human", "pending"):
+        trigger = f"msg-{status}"
+        stale = _attempt(store, trigger=trigger, status=status)
+        assert _projected(store, stale) == status
+        _attempt(store, trigger=trigger, status="sent")
+        assert _projected(store, stale) == "recovered", status
+
+
+def test_an_unanswered_question_is_never_retired_by_its_own_closed_task(tmp_path):
+    """A needs_human attempt always sits on a task the service closed as done.
+
+    Collapsing on the terminal-task branch would therefore retire every open
+    question — including a payroll approval the Agent refused to self-authorize
+    and that had been waiting 44 hours.
+    """
+
+    store = store_module.AutoReplyStore(tmp_path / "open-question.sqlite3")
+    pending_question = _attempt(
+        store, trigger="msg-payroll", status="needs_human", error="needs_human"
+    )
+    store.ensure_reply_task(
+        channel="dingtalk",
+        conversation_id="cid-supersede",
+        conversation_title="Supersession",
+        single_chat=True,
+        trigger_message_id="msg-payroll",
+        trigger_create_time="2026-09-10T05:47:00+00:00",
+        trigger_sender="Sender",
+        trigger_text="trigger",
+        trigger_message_json="{}",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where trigger_message_id=?",
+                   ("msg-payroll",))
+
+    assert _projected(store, pending_question) == "needs_human"
+
+
+def test_an_explicit_resolution_still_retires_any_status(tmp_path):
+    store = store_module.AutoReplyStore(tmp_path / "explicit.sqlite3")
+    blocked = _attempt(store, trigger="msg-blocked-resolved", status="blocked")
+
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set resolved_at=current_timestamp, resolution=? "
+            "where id=?",
+            ("settled by the principal", blocked),
+        )
+
+    assert _projected(store, blocked) == "recovered"

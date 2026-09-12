@@ -24954,6 +24954,31 @@ class AutoReplyStore:
                             )
                             or coalesce(reply_attempts.resolved_at, '')<>''
                         ) then 'recovered'
+                        -- A superseded attempt is dead history whatever status
+                        -- it stopped on, but only a strictly newer terminal
+                        -- attempt on the same trigger proves it was superseded.
+                        -- The terminal-task branches above must NOT apply here:
+                        -- a needs_human attempt always sits on a task the
+                        -- service closed as done, so they would retire every
+                        -- open question, including ones nobody has answered.
+                        when send_status in ('blocked', 'needs_human', 'pending')
+                            and (
+                            exists (
+                                select 1
+                                from reply_attempts as superseding_attempts
+                                where superseding_attempts.channel=reply_attempts.channel
+                                  and superseding_attempts.conversation_id=
+                                      reply_attempts.conversation_id
+                                  and superseding_attempts.trigger_message_id=
+                                      reply_attempts.trigger_message_id
+                                  and superseding_attempts.id>reply_attempts.id
+                                  and superseding_attempts.send_status in (
+                                      'sent', 'completed', 'skipped', 'needs_human',
+                                      'reacted', 'commented', 'calendar', 'document'
+                                  )
+                            )
+                            or coalesce(reply_attempts.resolved_at, '')<>''
+                        ) then 'recovered'
                         else send_status
                     end as status,
                     case
