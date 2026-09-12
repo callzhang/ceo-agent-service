@@ -443,6 +443,123 @@ def _render_response_item(
     return None
 
 
+def normalize_stored_tool_events(
+    events: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Flatten persisted ``codex exec --json`` stream events for rendering.
+
+    ``AgentRun.tool_events`` (persisted verbatim into
+    ``reply_attempts.audit_tool_events_json`` when a run finalizes) holds the
+    raw ``codex exec --json`` stdout stream: ``thread.started`` /
+    ``turn.started`` / ``item.started`` / ``item.completed`` /
+    ``turn.completed`` records, each wrapping the actual call under a nested
+    ``item``. That is a different shape from the native Codex rollout file
+    (``response_item`` / ``event_msg`` with a nested ``item_completed``
+    payload) that :func:`_audit_event_from_jsonl` reads for a *live* session
+    on disk. Nothing before this normalized the stream shape, so once a
+    session's rollout file has rotated away and rendering falls back to the
+    stored events, every call rendered with no name, no arguments and no
+    result -- the stored account was never actually readable.
+
+    Only ``mcp_tool_call`` and ``command_execution`` items become visible
+    calls, matching what the live-session path already surfaces; other item
+    types (``agent_message``, ``reasoning``, ...) and the ``thread``/``turn``
+    envelopes carry no call to show. A ``started`` record and its matching
+    ``completed`` record share one ``item id``; the completed one is kept
+    since it is the only one carrying the result.
+    """
+    calls: dict[str, dict[str, str]] = {}
+    order: list[str] = []
+    unkeyed = 0
+    saw_item_wrapper = False
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict):
+            # thread.started / turn.started / turn.completed carry no item at
+            # all -- that is a normal envelope record, not a signal that this
+            # list is some other, non-stream shape.
+            continue
+        saw_item_wrapper = True
+        item_type = _string(item.get("type"))
+        if item_type == "mcp_tool_call":
+            flat = _flatten_stream_mcp_call(item)
+        elif item_type == "command_execution":
+            flat = _flatten_stream_command_execution(item)
+        else:
+            continue
+        if flat is None:
+            continue
+        item_id = _string(item.get("id"))
+        key = item_id or f"_unkeyed_{unkeyed}"
+        if not item_id:
+            unkeyed += 1
+        if key in calls:
+            if flat.get("output") or not calls[key].get("output"):
+                calls[key] = flat
+            continue
+        order.append(key)
+        calls[key] = flat
+    if not saw_item_wrapper:
+        # No event in this list ever wrapped a call under "item" -- this is
+        # not the stream shape at all (for example, events already stored in
+        # the older flattened shape), so return it untouched rather than
+        # silently discarding it.
+        return events
+    return [calls[key] for key in order]
+
+
+def _flatten_stream_mcp_call(item: dict[str, Any]) -> dict[str, str] | None:
+    tool = _string(item.get("tool")) or "tool"
+    call_id = _string(item.get("id"))
+    flat: dict[str, str] = {"event_type": "item_stream", "tool": tool}
+    server = _string(item.get("server"))
+    if server:
+        flat["mcp_name"] = server
+    if call_id:
+        flat["call_id"] = call_id
+    arguments = _json_argument_text(item.get("arguments"))
+    if arguments:
+        flat["input"] = arguments
+    output = _json_value_text(item.get("result"))
+    if not output:
+        error = item.get("error")
+        if error not in (None, "", {}):
+            output = _json_value_text(error)
+    if output:
+        flat["output"] = _truncate(output)
+    return flat
+
+
+def _flatten_stream_command_execution(item: dict[str, Any]) -> dict[str, str] | None:
+    command = _string(item.get("command"))
+    cwd = _string(item.get("cwd"))
+    call_id = _string(item.get("id"))
+    output = (
+        _string(item.get("aggregated_output"))
+        or _string(item.get("formatted_output"))
+        or _string(item.get("stdout"))
+    )
+    flat: dict[str, str] = {"event_type": "item_stream", "tool": "command_execution"}
+    if call_id:
+        flat["call_id"] = call_id
+    arguments = {
+        key: value for key, value in (("command", command), ("cwd", cwd)) if value
+    }
+    argument_text = _json_argument_text(arguments)
+    if argument_text:
+        flat["input"] = argument_text
+    if command:
+        flat["command"] = command
+    if cwd:
+        flat["path"] = cwd
+    if output:
+        flat["output"] = _truncate(output)
+    return flat
+
+
+
 def _audit_event_from_jsonl(payload: dict[str, Any]) -> dict[str, str] | None:
     if payload.get("type") == "event_msg":
         event = payload.get("payload")

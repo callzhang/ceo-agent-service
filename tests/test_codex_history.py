@@ -8,6 +8,7 @@ from app.codex_history import (
     extract_codex_audit_events_from_session,
     extract_codex_mcp_tool_results_from_session,
     find_codex_session_path,
+    normalize_stored_tool_events,
     render_local_codex_session,
     refresh_codex_session_path_index,
 )
@@ -619,3 +620,131 @@ def test_extract_codex_audit_events_from_session_preserves_dws_material_read(
             "output": "OpenAI 合作建议补充版\n建议先补齐材料。",
         },
     ]
+
+
+# The actual raw shape persisted into reply_attempts.audit_tool_events_json
+# for attempt 9129 -- the stdout stream of a real `codex exec --json` run,
+# not the native rollout file format. Trimmed to the fields the flattener
+# reads; unrelated bookkeeping fields are dropped.
+REAL_STREAM_EVENTS = [
+    {"provider": {"thread_id": "01a09446-9a75-71a0-978e-508174303693"}, "type": "thread.started"},
+    {"item": {"id": "item_0", "type": "agent_message", "message": "warning banner"}, "type": "item.completed"},
+    {"provider": {}, "type": "turn.started"},
+    {
+        "item": {
+            "arguments": {},
+            "error": None,
+            "id": "item_2",
+            "result": None,
+            "server": "memory_connector",
+            "status": "in_progress",
+            "tool": "user_get",
+            "type": "mcp_tool_call",
+        },
+        "type": "item.started",
+    },
+    {
+        "item": {
+            "arguments": {},
+            "error": None,
+            "id": "item_2",
+            "result": {"content": [{"type": "text", "text": '{"ok": true}'}]},
+            "server": "memory_connector",
+            "status": "completed",
+            "tool": "user_get",
+            "type": "mcp_tool_call",
+        },
+        "type": "item.completed",
+    },
+    {
+        "item": {
+            "aggregated_output": "",
+            "command": "/bin/zsh -lc \"sed -n '1,10p' SKILL.md\"",
+            "cwd": "/Users/derek/.agents/skills/ceo-mail-review",
+            "exit_code": None,
+            "id": "item_4",
+            "status": "in_progress",
+            "type": "command_execution",
+        },
+        "type": "item.started",
+    },
+    {
+        "item": {
+            "aggregated_output": "---\nname: ceo-mail-review\n---",
+            "command": "/bin/zsh -lc \"sed -n '1,10p' SKILL.md\"",
+            "cwd": "/Users/derek/.agents/skills/ceo-mail-review",
+            "exit_code": 0,
+            "id": "item_4",
+            "status": "completed",
+            "type": "command_execution",
+        },
+        "type": "item.completed",
+    },
+    {
+        "item": {
+            "arguments": {"task_id": 383926},
+            "error": None,
+            "id": "item_5",
+            "result": {"content": [{"type": "text", "text": '{"status": "done"}'}]},
+            "server": "agent_cli",
+            "status": "completed",
+            "tool": "unsubscribe_email",
+            "type": "mcp_tool_call",
+        },
+        "type": "item.completed",
+    },
+    {"provider": {}, "type": "turn.completed"},
+]
+
+
+def test_normalize_stored_tool_events_flattens_the_real_codex_json_stream_shape():
+    """This is the exact shape that made every call render as an unnamed,
+    argument-less, resultless "tool" row once the session transcript that
+    would otherwise be read live had rotated off the machine -- 13 rows on
+    attempt 9129, none of them readable.
+    """
+    flattened = normalize_stored_tool_events(REAL_STREAM_EVENTS)
+
+    assert [event["tool"] for event in flattened] == [
+        "user_get",
+        "command_execution",
+        "unsubscribe_email",
+    ]
+    user_get = flattened[0]
+    assert user_get["call_id"] == "item_2"
+    assert user_get["mcp_name"] == "memory_connector"
+    assert json.loads(user_get["output"])["content"][0]["text"] == '{"ok": true}'
+
+    command = flattened[1]
+    assert command["command"] == "/bin/zsh -lc \"sed -n '1,10p' SKILL.md\""
+    assert command["path"] == "/Users/derek/.agents/skills/ceo-mail-review"
+    assert command["output"] == "---\nname: ceo-mail-review\n---"
+
+    unsubscribe = flattened[2]
+    assert unsubscribe["call_id"] == "item_5"
+    assert json.loads(unsubscribe["input"]) == {"task_id": 383926}
+
+
+def test_normalize_stored_tool_events_keeps_the_completed_pair_not_the_started_one():
+    events = normalize_stored_tool_events(REAL_STREAM_EVENTS)
+    user_get = next(event for event in events if event["tool"] == "user_get")
+    # The in_progress "item.started" record for the same id carried no result;
+    # only the completed pairing does, and there must be exactly one row.
+    assert "output" in user_get
+    assert sum(1 for event in events if event["call_id"] == "item_2") == 1
+
+
+def test_normalize_stored_tool_events_is_a_no_op_on_already_flat_events():
+    already_flat = [
+        {"tool": "unsubscribe_email", "call_id": "call-1", "input": "{}", "output": "done"}
+    ]
+    assert normalize_stored_tool_events(already_flat) == already_flat
+
+
+def test_normalize_stored_tool_events_returns_empty_for_a_stream_with_no_calls():
+    envelope_only = [
+        {"provider": {}, "type": "thread.started"},
+        {"item": {"id": "item_0", "type": "agent_message", "message": "hi"}, "type": "item.completed"},
+        {"provider": {}, "type": "turn.completed"},
+    ]
+    assert normalize_stored_tool_events(envelope_only) == []

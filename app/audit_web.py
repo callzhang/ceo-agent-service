@@ -67,6 +67,7 @@ from app.codex_capacity import is_codex_provider_recovery_code
 from app.codex_history import (
     RenderedCodexEvent,
     extract_codex_audit_events_from_session,
+    normalize_stored_tool_events,
     render_local_codex_session,
 )
 from app.config import (
@@ -12690,7 +12691,11 @@ def _audit_tool_events_for_attempt(attempt: ReplyAttempt) -> list[dict[str, str]
         return []
     if not isinstance(payload, list):
         return []
-    return [event for event in payload if isinstance(event, dict)]
+    stored_events = [event for event in payload if isinstance(event, dict)]
+    # The stored events are the raw codex exec --json stream (persisted
+    # verbatim when the run finalized), not the flattened shape the calls
+    # below expect -- see normalize_stored_tool_events for why.
+    return normalize_stored_tool_events(stored_events)
 
 
 def _audit_tool_uses_html(uses: list[dict[str, object]]) -> str:
