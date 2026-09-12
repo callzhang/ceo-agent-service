@@ -6679,6 +6679,88 @@ def test_explicit_historical_trash_dependency_gates_exact_and_global_claims(
     assert mark_read.parameters == {}
 
 
+def test_login_required_unsubscribe_receipt_releases_dependent_trash(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "login-required-unsubscribe-trash.sqlite3")
+    store.create_account(
+        {
+            "account_id": "dingtalk-account",
+            "display_name": "DingTalk",
+            "email_address": "derek@example.com",
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_tls": True,
+            "imap_username": "derek@example.com",
+            "imap_secret_reference": "keychain://imap-test",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 465,
+            "smtp_tls": True,
+            "smtp_username": "derek@example.com",
+            "smtp_secret_reference": "keychain://smtp-test",
+            "enabled": True,
+            "scan_folders": ["INBOX"],
+            "scan_interval_seconds": 60,
+        }
+    )
+    classification = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        actions=(EmailAction.UNSUBSCRIBE, EmailAction.TRASH),
+        action_parameters={},
+        thread_id="thread-unsubscribe-trash",
+    )
+    _persist_scan(store, classification)
+    assert classification.action_plan is not None
+    action_plan = classification.action_plan
+    action_identity = email_action_identity(
+        account_id=classification.provider_locator.account_id,
+        stable_message_identity=classification.stable_message_identity,
+        action_type=EmailAction.UNSUBSCRIBE,
+        action_plan_version=action_plan.action_plan_version,
+    )
+    authorization = {
+        "action_identity": action_identity,
+        "action_plan_id": action_plan.action_plan_id,
+        "action_plan_version": action_plan.action_plan_version,
+        "classification_id": classification.classification_id,
+        "account_id": classification.provider_locator.account_id,
+        "stable_message_identity": classification.stable_message_identity,
+        "thread_identity": "thread-unsubscribe-trash",
+        "entry_reference": "unsubscribe-entry:" + "c" * 64,
+        "operations": [
+            {
+                "operation_reference": "step-1",
+                "kind": "open_entry",
+                "target_reference": "entry",
+            },
+        ],
+    }
+    authorization["effect_digest"] = email_unsubscribe_effect_digest(**authorization)
+    claim = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    assert claim is not None and claim["acquired"] is True
+    store.persist_email_unsubscribe_terminal(
+        **authorization,
+        outcome="skipped_login_required",
+        receipt_id="unsubscribe-receipt:login-required",
+        evidence="login-required-page",
+        final_step={
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "skipped_login_required",
+            "reference": "unsubscribe-receipt:login-required",
+        },
+        claim_owner=_UNSUBSCRIBE_OWNER_A,
+    )
+
+    trash = store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
+
+    assert trash is not None
+    assert trash.action_type is EmailAction.TRASH
+
+
 def test_claim_rejects_cycle_between_explicit_and_provider_safe_dependencies(
     tmp_path: Path,
 ):

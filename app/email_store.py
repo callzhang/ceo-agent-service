@@ -14170,11 +14170,7 @@ class EmailStore:
             """,
             (action_identity, row["action_plan_id"], row["classification_id"]),
         ).fetchone()
-        return receipt is not None and receipt["outcome"] in {
-            "done",
-            "already_unsubscribed",
-            "skipped_no_reliable_entry",
-        }
+        return receipt is not None and receipt["outcome"] in _EMAIL_UNSUBSCRIBE_OUTCOMES
 
     @staticmethod
     def _claimed_direct_action(
