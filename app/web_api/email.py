@@ -1381,7 +1381,13 @@ def register_email_routes(
 
     def training_source_catalog(email_store: EmailStore) -> list[dict[str, object]]:
         rows: dict[tuple[str, str], dict[str, object]] = {}
-        for sample in email_store.list_training_examples(include_inclusion=True):
+        list_feedback = getattr(email_store, "list_training_examples", None)
+        feedback_samples = (
+            list_feedback(include_inclusion=True)
+            if callable(list_feedback)
+            else []
+        )
+        for sample in feedback_samples:
             category = str(sample.get("label") or "")
             if category:
                 row = rows.setdefault(("user_feedback", category), {
@@ -1391,8 +1397,15 @@ def register_email_routes(
                 })
                 row["sample_count"] += 1
                 row["_identities"].append(str(sample.get("sample_digest") or sample.get("message_id") or sample.get("classification_id") or row["sample_count"]))
-        processed, _ = email_store.list_classifications(
-            status=EmailClassificationStatus.PROCESSED, limit=100000, offset=0
+        list_classifications = getattr(email_store, "list_classifications", None)
+        processed, _ = (
+            list_classifications(
+                status=EmailClassificationStatus.PROCESSED,
+                limit=100000,
+                offset=0,
+            )
+            if callable(list_classifications)
+            else ([], 0)
         )
         for sample in processed:
             if sample.get("classification_source") != "agent":
