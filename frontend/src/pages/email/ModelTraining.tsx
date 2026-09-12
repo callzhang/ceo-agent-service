@@ -158,7 +158,7 @@ function ModelDetails({model}: {model:EmailStagedModel}) {
       <div><dt>训练 / 验证 / 测试样本</dt><dd>{model.split_counts?.train ?? "未测量"} / {model.split_counts?.validation ?? "未测量"} / {model.split_counts?.test ?? "未测量"}</dd></div>
     </dl></section>
     <section aria-label="模型版本与评测"><h4>模型版本与评测</h4><dl className="detail-definition-list">{[
-      ["模型家族",model.compatibility?.head_format],["Embedding 版本",model.compatibility?.embedding_revision_reference],["描述版本",model.compatibility?.description_version],["输入 Schema",model.compatibility?.input_schema_version],["训练数据版本",model.training_snapshot_id],["评测方法",model.evaluation?.protocol],["测试集摘要",model.evaluation?.test_digest],["Artifact SHA-256",model.artifact_sha256]
+      ["模型家族",model.model_family || model.compatibility?.head_format],["Embedding 版本",model.compatibility?.embedding_revision_reference],["描述版本",model.compatibility?.description_version],["输入 Schema",model.compatibility?.input_schema_version],["训练数据版本",model.training_snapshot_id],["评测方法",model.evaluation?.protocol],["测试集摘要",model.evaluation?.test_digest],["Artifact SHA-256",model.artifact_sha256]
     ].map(([label,value])=><div key={String(label)}><dt>{String(label)}</dt><dd>{value==null?"未提供":String(value)}</dd></div>)}</dl></section>
     <section aria-label="训练参数"><h4>训练参数</h4><dl className="detail-definition-list">{[
       ["随机种子",model.parameters?.random_seed],["求解器",model.parameters?.solver],["最大迭代次数",model.parameters?.max_iter],["正则化系数",model.parameters?.regularization_alpha],["隐藏层",model.parameters?.hidden_layer_sizes],["描述权重 α",model.parameters?.alpha],["模型权重 β",model.parameters?.beta]

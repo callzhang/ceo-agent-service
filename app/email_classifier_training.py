@@ -424,6 +424,7 @@ def train_frozen_embedding_candidate(
     training_completed_at = datetime.now(timezone.utc)
     evidence = {
         "model_id": model_id,
+        "model_family": "embedding-mlp",
         "source_snapshot_id": snapshot_id,
         "source_snapshot_digest": str(snapshot["snapshot_digest"]),
         "source_snapshot_observed_at": str(snapshot["observed_at"]),

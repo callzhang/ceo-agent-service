@@ -423,6 +423,11 @@ def _project_staged_model_evidence(
         "model_id": _safe_evidence_identifier(
             evidence["model_id"], "model_id", _MODEL_EVIDENCE_ID
         ),
+        "model_family": _safe_exact_evidence_value(
+            evidence.get("model_family", "embedding-mlp"),
+            "model_family",
+            "embedding-mlp",
+        ),
         "status": _safe_evidence_status(evidence.get("status")),
         "trained_at": _safe_evidence_timestamp(evidence.get("trained_at"), "trained_at"),
         "training_snapshot_id": _safe_evidence_identifier(
@@ -734,7 +739,9 @@ class EmailTrainingSelectionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     sources: list[str] = Field(min_length=1)
     categories: list[str] = Field(min_length=1)
-    model_families: list[str] = Field(min_length=1)
+    model_families: list[str] = Field(
+        default_factory=lambda: ["embedding-mlp"], min_length=1
+    )
 
     @field_validator("sources", "categories", "model_families")
     @classmethod

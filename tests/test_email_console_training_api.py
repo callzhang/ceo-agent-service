@@ -160,6 +160,24 @@ def test_training_selection_rejects_unknown_values_and_malformed_json(tmp_path, 
     assert malformed.json()["code"] == "invalid_training_selection"
 
 
+def test_legacy_nonempty_training_selection_defaults_model_family(tmp_path, monkeypatch):
+    client, store, _registry = client_for(tmp_path)
+    monkeypatch.setattr(store, "latest_training_snapshot_state", lambda: {
+        "snapshot_id": "email-folder-snapshot-20260912T000000.000000Z-aaaaaaaaaaaa",
+        "snapshot_sha": "a" * 64,
+        "snapshot_version": "email-folder-training-snapshot-v1",
+        "description_version": "description-set-sha256:" + "b" * 64,
+        "category_sample_counts": {"work": 1},
+    })
+    monkeypatch.setattr(store, "get_training_snapshot", lambda _: {
+        "observations": [{"category_key": "work", "stable_message_identity": "m1"}],
+    })
+    response = client.post("/api/console/email/training", json={
+        "sources": ["folder_snapshot"], "categories": ["work"],
+    })
+    assert response.status_code != 400
+
+
 def test_empty_training_request_keeps_legacy_manual_training_path(tmp_path):
     client, _store, _registry = client_for(tmp_path)
     response = client.post("/api/console/email/training", content=b"")

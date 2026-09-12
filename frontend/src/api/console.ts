@@ -380,6 +380,7 @@ export interface EmailPromotionConfig {
 }
 export interface EmailStagedModel {
   model_id: string;
+  model_family?: string;
   status: string;
   trained_at: string;
   metrics: {accuracy: number | null; macro_f1: number | null; categories: Record<string, Record<string, number | null>>; important?: Record<string, number | null>} | null;
