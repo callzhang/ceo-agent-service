@@ -8421,8 +8421,16 @@ def test_route_refusing_the_call_is_retried_not_closed_as_a_decision():
     assert "task_status" not in captured
 
 
-def test_every_route_refusing_the_call_remains_a_technical_failure():
-    """Once retries are spent, the route failure is still not a decision."""
+def test_every_route_refusing_the_call_becomes_a_decision_with_options():
+    """Once retries are spent, the refusal is the only thing left to decide.
+
+    The route's own safety review declines to place the call, saying the
+    authorization reaches it only as agent-written context. Nothing the
+    service can do on its own changes that, so this is not a defect to retry
+    -- it is a capability the service does not have. Filing it as a technical
+    failure buried nine live tasks in the failed list where nobody was ever
+    going to answer them.
+    """
     module, captured = _route_refusal_case(
         error=(
             f"{_module().ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:"
@@ -8430,9 +8438,21 @@ def test_every_route_refusing_the_call_remains_a_technical_failure():
         )
     )
 
-    assert captured["task_status"] == "failed"
-    assert captured["send_status"] == "failed"
+    assert captured["task_status"] == "done"
+    assert captured["send_status"] == "needs_human"
     assert captured["send_error"] == module.ROUTE_REFUSED_UNSUBSCRIBE_ERROR
+    options = json.loads(captured["human_decision_options_json"])
+    assert 2 <= len(options) <= 4
+    assert {option["key"] for option in options} == {
+        "declare_standing_authorization",
+        "unsubscribe_manually",
+        "accept_as_terminal_skip",
+    }
+    assert all(
+        option[field].strip()
+        for option in options
+        for field in ("label", "instruction", "consequence")
+    )
 
 
 def test_repeated_route_refusals_actually_reach_a_person():
@@ -8456,7 +8476,7 @@ def test_repeated_route_refusals_actually_reach_a_person():
         seen.append(("finalized", captured.get("send_status")))
         break
 
-    assert seen[-1] == ("finalized", "failed"), seen
+    assert seen[-1] == ("finalized", "needs_human"), seen
     assert len(seen) == module.ROUTE_REFUSED_UNSUBSCRIBE_RETRIES, seen
 
 
@@ -8998,3 +9018,115 @@ def test_a_claim_that_wrote_nothing_is_released_outright():
     assert recovered == 1
     assert released == ["email-action:clean"]
     assert recovered_calls == [], "a released claim must not also be marked uncertain"
+
+
+def _browser_failure_task(error: str = ""):
+    return SimpleNamespace(
+        id=91,
+        attempts=1,
+        execution_generation="generation-91",
+        channel="email",
+        error=error,
+        trigger_message_id="email-action:browser-91",
+        conversation_id="email-thread:91",
+        conversation_title="Email unsubscribe",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+
+
+def _browser_failure_store(captured: dict, run):
+    class Store:
+        def get_agent_run(self, run_id):
+            assert run_id == run.id
+            return run
+
+        def finalize_orchestrated_reply_task(self, **kwargs):
+            captured.update(kwargs)
+
+        def defer_reply_task(self, task_id, error, **kwargs):
+            captured.update({"deferred": task_id, "defer_error": error})
+
+    return Store()
+
+
+def _browser_failure_result(run, code: str):
+    return SimpleNamespace(
+        status="failed_terminal",
+        final_run_id=run.id,
+        summary=f"{code}; audit retry attempts exhausted",
+        error=SimpleNamespace(code=code, authorization_required=False),
+    )
+
+
+def test_a_page_timeout_is_retried_in_a_fresh_generation():
+    """Spending a generation's turn budget is not the page's verdict.
+
+    The orchestrator flattens retryable to False whenever a role exhausts its
+    per-generation turns, so a page that merely timed out twice ended the task
+    for good. One live task died that way with no claim, no step and no
+    receipt -- nothing had been decided by anything.
+    """
+
+    module = _module()
+    run = SimpleNamespace(
+        id=910,
+        codex_session_id="",
+        transcript_start_line=0,
+        transcript_end_line=0,
+        tool_events=[],
+    )
+    captured: dict = {}
+
+    module._finalize_email_task(
+        _browser_failure_store(captured, run),
+        _browser_failure_task(),
+        _browser_failure_result(run, "email_unsubscribe_browser_timeout"),
+    )
+
+    assert captured["deferred"] == 91
+    assert captured["defer_error"] == "email_unsubscribe_browser_timeout:1"
+
+
+def test_the_page_timeout_ladder_is_bounded():
+    module = _module()
+    run = SimpleNamespace(
+        id=911,
+        codex_session_id="",
+        transcript_start_line=0,
+        transcript_end_line=0,
+        tool_events=[],
+    )
+    captured: dict = {}
+    spent = module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES - 1
+
+    module._finalize_email_task(
+        _browser_failure_store(captured, run),
+        _browser_failure_task(f"email_unsubscribe_browser_timeout:{spent}"),
+        _browser_failure_result(run, "email_unsubscribe_browser_timeout"),
+    )
+
+    assert "deferred" not in captured
+    assert captured["task_status"] == "failed"
+    assert captured["send_error"] == "email_unsubscribe_browser_timeout"
+
+
+def test_a_page_a_rerun_would_read_identically_is_not_retried():
+    module = _module()
+    run = SimpleNamespace(
+        id=912,
+        codex_session_id="",
+        transcript_start_line=0,
+        transcript_end_line=0,
+        tool_events=[],
+    )
+    captured: dict = {}
+
+    module._finalize_email_task(
+        _browser_failure_store(captured, run),
+        _browser_failure_task(),
+        _browser_failure_result(run, "email_unsubscribe_provider_auth_failed"),
+    )
+
+    assert "deferred" not in captured
+    assert captured["task_status"] == "failed"

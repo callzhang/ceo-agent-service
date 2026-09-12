@@ -400,6 +400,16 @@ BROWSER_EXECUTION_ERROR_CODES = frozenset(_BROWSER_FAILURE_CODES.values()) | {
     "email_unsubscribe_outcome_unresolved",
     "email_unsubscribe_outcome_unverified",
 }
+# Browser failures the next generation may simply not hit: the page timed out,
+# or the locked profile would not open. Every other browser code describes
+# something a rerun would read again exactly as it read it the first time.
+TRANSIENT_BROWSER_ERROR_CODES = frozenset(
+    {
+        "email_unsubscribe_browser_timeout",
+        "email_unsubscribe_browser_session_unavailable",
+        "email_unsubscribe_browser_failed",
+    }
+)
 _VISIBLE_TEXT_WAIT_MS = 5_000
 _VISIBLE_TEXT_POLL_MS = 250
 

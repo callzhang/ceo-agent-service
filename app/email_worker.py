@@ -42,6 +42,11 @@ UNRESOLVED_UNSUBSCRIBE_SELECTION_ERROR = "email_unsubscribe_candidate_unresolved
 # many times before the refusal is treated as a capability the service lacks.
 ROUTE_REFUSED_UNSUBSCRIBE_RETRIES = 5
 ROUTE_REFUSED_UNSUBSCRIBE_ERROR = "email_unsubscribe_route_refused"
+# A browser fault the page itself caused - a timeout, a session that would not
+# open - is retried across this many fresh generations. The per-generation
+# role budget is an orchestration detail: spending it says nothing about
+# whether the page will answer next time.
+TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES = 4
 DIRECT_ACTION_DRAIN_MAX_ACTIONS = 25
 DIRECT_ACTION_DRAIN_MAX_SECONDS = 2.0
 
@@ -1341,6 +1346,24 @@ def _unresolved_selection_rechecks(task_error: str) -> int:
         return 0
 
 
+def _transient_browser_retry_count(task_error: str, code: str) -> int:
+    """How many generations this task has already spent on the same page fault.
+
+    Rides in the task's own error for the same reason _route_refusal_count
+    does: a deferral hands the attempt budget back, so task.attempts cancels
+    itself out and can bound nothing.
+    """
+
+    prefix = f"{code}:"
+    if not task_error.startswith(prefix):
+        return 0
+    count, _, _ = task_error[len(prefix) :].partition(":")
+    try:
+        return max(int(count), 0)
+    except ValueError:
+        return 0
+
+
 def _route_refusal_count(task_error: str) -> int:
     """How many times a route has already refused to place this task's call.
 
@@ -2500,6 +2523,72 @@ def _decision_options_json(result: object) -> str:
     return "[]"
 
 
+def _is_retryable_browser_failure(result: object) -> bool:
+    """Say whether this failure was the page's doing rather than the task's.
+
+    The orchestrator flattens `retryable` to False whenever a role spends its
+    per-generation turn budget, so the result cannot be asked. The code can:
+    a timeout or an unopenable profile may simply not happen next time, while
+    every other browser code describes a page a rerun would read identically.
+    """
+
+    from app.email_unsubscribe import TRANSIENT_BROWSER_ERROR_CODES
+
+    error = getattr(result, "error", None)
+    code = str(getattr(error, "code", "") or "")
+    # The ladder writes "<code>:<n>" back onto the task, and the next
+    # generation's failure arrives as the bare code again; both must match.
+    return code.partition(":")[0] in TRANSIENT_BROWSER_ERROR_CODES
+
+
+def _route_refused_unsubscribe_decision_options_json() -> str:
+    """Return the choices that actually exist once every route has refused.
+
+    The route's own safety review declines to place the call, saying the
+    authorization to unsubscribe reaches it only as agent-written context.
+    Nothing the service can do on its own changes that, so this is Derek's
+    decision and these are its real branches.
+    """
+
+    return json.dumps(
+        [
+            {
+                "key": "declare_standing_authorization",
+                "label": "在受信任通道声明常规授权",
+                "instruction": (
+                    "在 Audit turn 的 developer instructions 中如实写明："
+                    "邮箱属于本人、退订是本人长期配置的策略、退订入口取自邮件自带的"
+                    "List-Unsubscribe，并写明服务不会发信、不填凭证、不付款、不解验证码。"
+                    "写完后由路由的安全审查自行判断，不再做其他规避。"
+                ),
+                "consequence": (
+                    "审查若接受，这批任务可继续；若仍然拒绝，即按终态跳过处理。"
+                ),
+            },
+            {
+                "key": "unsubscribe_manually",
+                "label": "我自己在浏览器里退订",
+                "instruction": (
+                    "服务把这些邮件的退订入口交给我，由我在浏览器中手动完成，"
+                    "服务不再尝试自动退订。"
+                ),
+                "consequence": "订阅确实被退掉，但每封都要我自己点一次。",
+            },
+            {
+                "key": "accept_as_terminal_skip",
+                "label": "接受为终态跳过",
+                "instruction": (
+                    "把路由拒绝记为这个服务当前不具备的能力，任务终态跳过，"
+                    "不再重试，也不再提醒。"
+                ),
+                "consequence": "这些订阅退不掉，队列保持干净。",
+            },
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
 def _finalize_email_task(store: object, task: object, result: object) -> None:
     from app.email_unsubscribe_audit import (
         AuditedUnsubscribeTerminalState,
@@ -2589,8 +2678,30 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
                 task_status, send_status = status_map["failed_retryable"]
                 error = f"{ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:{refusals}"
             else:
-                task_status, send_status = status_map["failed_terminal"]
+                # Every route declining our own tool is a capability this
+                # service does not have, and that is a decision, not a defect.
+                # Filing it as a technical failure buried it in the failed
+                # list where nobody was ever going to answer it.
+                task_status, send_status = status_map["needs_human"]
                 error = ROUTE_REFUSED_UNSUBSCRIBE_ERROR
+                human_decision_options_json = (
+                    _route_refused_unsubscribe_decision_options_json()
+                )
+        elif _is_retryable_browser_failure(result):
+            # A page that timed out or a session that would not open says
+            # nothing about the next generation. The per-generation role
+            # budget is spent, the task is not.
+            code = str(result.error.code or "")
+            spent = _transient_browser_retry_count(
+                str(getattr(task, "error", "") or ""),
+                code,
+            ) + 1
+            if spent < TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
+                task_status, send_status = status_map["failed_retryable"]
+                error = f"{code}:{spent}"
+            else:
+                task_status, send_status = status_map["failed_terminal"]
+                error = code
     if task_status == "pending":
         # A deferred orchestration (runtime not ready, provider recovery, lease
         # race) keeps the task and retries it later, exactly like the DingTalk
