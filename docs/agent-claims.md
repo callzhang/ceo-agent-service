@@ -31,10 +31,25 @@ reverts committed work they did not author.
 | Codex session `attention-reconciliation` | `app/audit_web.py`, `tests/test_console_web_api.py` | show every unresolved service error in Attention while keeping the four-hour window only in system health | 2026-09-11 |
 | Codex session `consumer-email-minutes-repair` | `app/email_worker.py`, `tests/test_email_worker.py`, `app/task_scanners.py`, `tests/test_task_scanners.py`, `app/minutes_sync.py`, `tests/test_minutes_sync.py`, `app/quality_gate.py`, `tests/test_quality_gate.py` | repair technical needs_human projection, runtime confirmation quality projection, and avoidable minute scanner pagination failures | 2026-09-11 |
 | Codex session `meeting-target-repair` | `app/meeting_alignment_agent.py`, `app/meeting_alignment_delivery.py`, `app/meeting_alignment_source.py`, `tests/test_meeting_alignment_agent.py`, `tests/test_meeting_alignment_delivery.py`, `tests/test_meeting_alignment_source.py` | retry source-aware meeting target validation failures and resolve organizer fallback before marking meeting jobs failed | 2026-09-11 |
-| Claude session `attempt-detail-evidence` | `app/web_api/attempts.py`, `app/web_api/registration.py`, `app/feedback_processing.py`, `app/email_unsubscribe.py`, `app/email_store.py`, `frontend/src/api/attempts.ts`, `frontend/src/pages/AttemptDetailPage.tsx`, `frontend/src/pages/AttemptDetailPage.test.tsx`, `frontend/src/styles.css`, `tests/test_console_attempt_detail_api.py`, `tests/test_email_unsubscribe.py`, `tests/test_email_store.py` | make the Attempt page carry the evidence a run actually produced: its tool calls, both Codex sessions, the linked email, and the unsubscribe receipt; then persist the entry URL so an unsubscribe can be reproduced by hand | 2026-09-12 |
 
 
 ## Recent overlaps worth knowing
+
+- 2026-09-12, Claude session `attempt-detail-evidence`: **the live email schema
+  is now v37 and the running service was restarted.** Verifying the Attempt DTO
+  against the real database constructed an `EmailStore` on it, which applied the
+  v36→v37 migration (`email_unsubscribe_receipts.entry_url`) before the code was
+  committed, and held a write lock long enough that the email agent consumer
+  died once with `database is locked`. The migration is additive and the service
+  has been kicked and verified on pid 82522 with no stuck `processing` rows, but
+  two things follow for everyone else: a process still running pre-v37 code will
+  refuse that database (`latest_version > EMAIL_SCHEMA_VERSION`), so do not start
+  an older checkout against it; and `launchctl kickstart` at 01:19 deployed the
+  working tree as it stood, including the uncommitted edit to
+  `app/agent_wire_contracts.py` that has been there since this session began.
+  The one `failed` task afterwards is 383933 (`周日生成 OKR 周报`,
+  `codex_process_failed` / "runtime route is paused"), which predates the
+  restart and belongs to the cron change in `ceb3931e`.
 
 - 2026-09-11: three findings left open by the failed-item repair round, each
   needing an owner. They are recorded here because the evidence is perishable.
