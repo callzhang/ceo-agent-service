@@ -9130,3 +9130,55 @@ def test_a_page_a_rerun_would_read_identically_is_not_retried():
 
     assert "deferred" not in captured
     assert captured["task_status"] == "failed"
+
+
+def test_the_production_unsubscribe_effect_accepts_what_the_operation_passes(
+    tmp_path,
+):
+    """The two sides of one call drifted and only production noticed.
+
+    DirectEmailUnsubscribeOperation.execute collects the operations a run
+    performs and passes them as `executed=`. The test fixtures were updated to
+    take that argument; the production closure built by
+    build_direct_email_unsubscribe_operation was not, so every live browser
+    run died as unsubscribe_operation_rejected:TypeError while the whole test
+    suite stayed green.
+    """
+
+    import inspect
+
+    module = _module()
+    operation = module.build_direct_email_unsubscribe_operation(
+        SimpleNamespace(
+            db_path=tmp_path / "signature.sqlite3",
+            workspace=tmp_path,
+        )
+    )
+
+    inspect.signature(operation.run_effect).bind(
+        object(),  # effect
+        object(),  # entry
+        one_click_verified=False,
+        executed=[],
+    )
+
+
+def test_the_operation_still_runs_when_the_effect_ignores_executed(tmp_path):
+    """`executed` is optional for any caller that does not collect it."""
+
+    import inspect
+
+    module = _module()
+    operation = module.build_direct_email_unsubscribe_operation(
+        SimpleNamespace(
+            db_path=tmp_path / "signature-optional.sqlite3",
+            workspace=tmp_path,
+        )
+    )
+    bound = inspect.signature(operation.run_effect).bind(
+        object(),
+        object(),
+        one_click_verified=False,
+    )
+    bound.apply_defaults()
+    assert bound.arguments["executed"] is None

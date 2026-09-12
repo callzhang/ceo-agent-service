@@ -3731,6 +3731,7 @@ def build_direct_email_unsubscribe_operation(settings: object) -> object:
         entry: UnsubscribeEntry,
         *,
         one_click_verified: bool,
+        executed: list | None = None,
     ):
         account = email_store.get_account(effect.account_id)
         if not isinstance(account, Mapping):
@@ -3749,6 +3750,7 @@ def build_direct_email_unsubscribe_operation(settings: object) -> object:
                 context.source_factory,
             ),
             session_manager=context.browser_session_manager,
+            executed=executed,
         )
 
     return DirectEmailUnsubscribeOperation(
