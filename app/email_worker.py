@@ -1750,12 +1750,20 @@ def reconcile_missing_model_action_tasks(
     conflicts = 0
     for classification in candidates:
         try:
-            message = load_message(classification)
-            if not isinstance(message, Mapping):
-                raise ValueError("model action repair message is unavailable")
             plan = EmailActionPlan.model_validate_json(
                 json.dumps(classification["action_plan"])
             )
+            message = load_message(classification)
+            if not isinstance(message, Mapping):
+                if not _reconcile_missing_model_action_from_durable_context(
+                    email_store,
+                    action_task_producer,
+                    plan,
+                    classification,
+                ):
+                    raise ValueError("model action repair message is unavailable")
+                repaired += 1
+                continue
             action_task_producer.produce(plan, message)
             remaining = {
                 int(item["id"])
@@ -1766,9 +1774,27 @@ def reconcile_missing_model_action_tasks(
             repaired += 1
         except Exception:  # noqa: BLE001 - each durable conflict is isolated
             conflicts += 1
+    terminal_candidates = tuple(
+        email_store.list_terminal_unsubscribe_tasks_missing_receipts()
+    )
+    terminal_repaired = 0
+    for classification in terminal_candidates:
+        try:
+            plan = EmailActionPlan.model_validate_json(
+                json.dumps(classification["action_plan"])
+            )
+            _persist_missing_unsubscribe_entry_skip(
+                email_store,
+                plan,
+                classification,
+            )
+            terminal_repaired += 1
+        except Exception:  # noqa: BLE001 - each durable conflict is isolated
+            conflicts += 1
+    repaired += terminal_repaired
     payload: dict[str, object] = {
         "status": "ready" if conflicts == 0 else "degraded",
-        "candidates": len(candidates),
+        "candidates": len(candidates) + len(terminal_candidates),
         "repaired": repaired,
         "conflicts": conflicts,
     }
@@ -1776,10 +1802,250 @@ def reconcile_missing_model_action_tasks(
         payload["error_code"] = "model_action_reconciliation_conflict"
     record_health("component:email-model-action-reconciliation", payload)
     return {
-        "candidates": len(candidates),
+        "candidates": len(candidates) + len(terminal_candidates),
         "repaired": repaired,
         "conflicts": conflicts,
     }
+
+
+def _reconcile_missing_model_action_from_durable_context(
+    email_store: object,
+    action_task_producer: object,
+    action_plan: object,
+    classification: Mapping[str, object],
+) -> bool:
+    """Repair or terminalize an unsubscribe plan when the source message moved."""
+
+    try:
+        task_input = _durable_email_agent_task_input(email_store, classification)
+    except Exception:  # noqa: BLE001 - caller reports one isolated conflict
+        return False
+    produce_task_input = getattr(action_task_producer, "produce_task_input", None)
+    if callable(produce_task_input):
+        try:
+            produce_task_input(action_plan, task_input)
+            return True
+        except Exception as exc:  # noqa: BLE001 - fall through to skipped receipt
+            if not _missing_unsubscribe_entry_error(exc):
+                raise
+    _persist_missing_unsubscribe_entry_skip(email_store, action_plan, classification)
+    return True
+
+
+def _durable_email_agent_task_input(
+    email_store: object,
+    classification: Mapping[str, object],
+):
+    from app.agent_context import PriorReceipt
+    from app.email_classifier_contracts import EmailAttachmentMetadata
+    from app.email_task_adapter import EmailAgentTaskInput, EmailThreadMessage
+
+    account_id = str(classification["account_id"])
+    stable_identity = str(classification["stable_message_identity"])
+    rows = email_store.list_email_context_thread(
+        account_id=account_id,
+        stable_message_identity=stable_identity,
+    )
+    trigger_row = next(
+        (
+            row
+            for row in rows
+            if isinstance(row, Mapping)
+            and row.get("stable_message_identity") == stable_identity
+        ),
+        None,
+    )
+    if not isinstance(trigger_row, Mapping):
+        raise ValueError("email task source message is unavailable")
+
+    def thread_message(row: Mapping[str, object]) -> EmailThreadMessage:
+        return EmailThreadMessage(
+            message_id=str(row.get("stable_message_identity") or ""),
+            sender=str(row.get("sender") or "unknown"),
+            text=str(row.get("normalized_text") or ""),
+            create_time=str(row.get("received_at") or ""),
+        )
+
+    attachment_values = trigger_row.get("attachment_metadata") or ()
+    if not isinstance(attachment_values, Sequence) or isinstance(
+        attachment_values, str | bytes
+    ):
+        raise ValueError("email attachment metadata is invalid")
+    receipt_values = email_store.list_email_context_receipts(
+        account_id=account_id,
+        stable_message_identity=stable_identity,
+    )
+    return EmailAgentTaskInput(
+        stable_message_identity=stable_identity,
+        thread_identity=str(
+            trigger_row.get("thread_identity") or classification.get("thread_id") or ""
+        ),
+        subject=str(trigger_row.get("subject") or classification.get("subject") or ""),
+        trigger=thread_message(trigger_row),
+        thread_messages=tuple(
+            thread_message(row)
+            for row in rows
+            if isinstance(row, Mapping)
+            and row.get("stable_message_identity") != stable_identity
+        ),
+        attachments=tuple(
+            EmailAttachmentMetadata.model_validate(item) for item in attachment_values
+        ),
+        prior_receipts=tuple(
+            PriorReceipt(
+                receipt_id=str(receipt.get("receipt_id") or ""),
+                operation=str(receipt.get("operation") or ""),
+                summary=str(receipt.get("summary") or ""),
+                completed=bool(receipt.get("completed")),
+            )
+            for receipt in receipt_values
+            if isinstance(receipt, Mapping)
+        ),
+        body_text=str(trigger_row.get("normalized_text") or ""),
+    )
+
+
+def _missing_unsubscribe_entry_error(exc: BaseException) -> bool:
+    name = type(exc).__name__
+    message = str(exc)
+    return (
+        name in {"UnsubscribeSelectionUnresolvable", "EmailAgentTaskMetadataError"}
+        or "unsubscribe candidate" in message
+        or "email unsubscribe has no HTTPS browser candidate" in message
+    )
+
+
+def _persist_missing_unsubscribe_entry_skip(
+    email_store: object,
+    action_plan: object,
+    classification: Mapping[str, object],
+) -> None:
+    from app.email_classifier_contracts import EmailAction
+    from app.email_store import email_unsubscribe_effect_digest
+    from app.email_task_adapter import email_action_identity
+
+    action_parameters = getattr(action_plan, "action_parameters")
+    unsubscribe_parameters = dict(action_parameters.get(EmailAction.UNSUBSCRIBE, {}))
+    account_id = str(getattr(action_plan, "account_id"))
+    stable_identity = str(classification["stable_message_identity"])
+    action_plan_version = int(getattr(action_plan, "action_plan_version"))
+    action_identity = email_action_identity(
+        account_id=account_id,
+        stable_message_identity=stable_identity,
+        action_type=EmailAction.UNSUBSCRIBE,
+        action_plan_version=action_plan_version,
+    )
+    claim = email_store.get_email_unsubscribe_claim(action_identity)
+    if isinstance(claim, Mapping):
+        entry_reference = str(claim["entry_reference"])
+        operations = tuple(claim["operations"])
+        effect_digest = str(claim["effect_digest"])
+        snapshot = email_store.get_email_unsubscribe_state_snapshot(action_identity)
+        previous_effect_digest = next(
+            (
+                str(effect["previous_effect_digest"])
+                for effect in snapshot.get("effects", ())
+                if isinstance(effect, Mapping)
+                and effect.get("effect_digest") == effect_digest
+            ),
+            "",
+        )
+    else:
+        entry_reference = str(
+            unsubscribe_parameters.get("candidate_reference") or ""
+        ).strip()
+        if not entry_reference:
+            raise ValueError("unsubscribe action has no authorized entry reference")
+        operation_reference = (
+            "unsubscribe-op:"
+            + sha256(f"reconcile_handoff\n{entry_reference}".encode()).hexdigest()
+        )
+        previous_effect_digest = ""
+        operations = (
+            {
+                "operation_reference": operation_reference,
+                "kind": "reconcile_handoff",
+                "target_reference": entry_reference,
+            },
+        )
+        effect_digest = email_unsubscribe_effect_digest(
+            action_identity=action_identity,
+            action_plan_id=str(getattr(action_plan, "action_plan_id")),
+            action_plan_version=action_plan_version,
+            classification_id=int(getattr(action_plan, "classification_id")),
+            account_id=account_id,
+            stable_message_identity=stable_identity,
+            thread_identity=str(
+                classification.get("thread_id")
+                or classification.get("thread_identity")
+                or ""
+            ),
+            entry_reference=entry_reference,
+            operations=operations,
+        )
+    rows = email_store.list_email_context_thread(
+        account_id=account_id,
+        stable_message_identity=stable_identity,
+    )
+    trigger_row = next(
+        (
+            row
+            for row in rows
+            if isinstance(row, Mapping)
+            and row.get("stable_message_identity") == stable_identity
+        ),
+        None,
+    )
+    if not isinstance(trigger_row, Mapping):
+        raise ValueError("email task source message is unavailable")
+    thread_identity = str(
+        trigger_row.get("thread_identity") or classification.get("thread_id") or ""
+    )
+    if not isinstance(claim, Mapping):
+        effect_digest = email_unsubscribe_effect_digest(
+            action_identity=action_identity,
+            action_plan_id=str(getattr(action_plan, "action_plan_id")),
+            action_plan_version=action_plan_version,
+            classification_id=int(getattr(action_plan, "classification_id")),
+            account_id=account_id,
+            stable_message_identity=stable_identity,
+            thread_identity=thread_identity,
+            entry_reference=entry_reference,
+            operations=operations,
+        )
+    receipt_id = (
+        "unsubscribe-receipt:"
+        + sha256(f"missing-task\n{action_identity}".encode()).hexdigest()[:32]
+    )
+    steps = email_store.list_email_unsubscribe_steps(action_identity)
+    if len(steps) < len(operations):
+        operation = operations[len(steps)]
+        final_step = {
+            "sequence": len(steps) + 1,
+            "operation": str(operation["kind"]),
+            "state": "skipped_no_reliable_entry",
+            "reference": receipt_id,
+        }
+    else:
+        final_step = None
+    email_store.persist_email_unsubscribe_terminal(
+        action_identity=action_identity,
+        effect_digest=effect_digest,
+        action_plan_id=str(getattr(action_plan, "action_plan_id")),
+        action_plan_version=action_plan_version,
+        classification_id=int(getattr(action_plan, "classification_id")),
+        account_id=account_id,
+        stable_message_identity=stable_identity,
+        thread_identity=thread_identity,
+        entry_reference=entry_reference,
+        operations=operations,
+        previous_effect_digest=previous_effect_digest,
+        outcome="skipped_no_reliable_entry",
+        receipt_id=receipt_id,
+        evidence="durable_context_entry_unavailable",
+        final_step=final_step,
+        claim_owner=None,
+    )
 
 
 def reconcile_historical_operations(

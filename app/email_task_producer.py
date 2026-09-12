@@ -80,6 +80,15 @@ class EmailActionTaskProducer:
         if EmailAction.UNSUBSCRIBE not in action_plan.agent_actions:
             return ()
         task_input = self._task_input(action_plan, message)
+        return self.produce_task_input(action_plan, task_input)
+
+    def produce_task_input(
+        self,
+        action_plan: EmailActionPlan,
+        task_input: EmailAgentTaskInput,
+    ) -> tuple[EmailAgentTaskRoute, ...]:
+        if EmailAction.UNSUBSCRIBE not in action_plan.agent_actions:
+            return ()
         return self.adapter.ensure_action_plan_tasks(action_plan, task_input)
 
     def _task_input(

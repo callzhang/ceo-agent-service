@@ -1625,9 +1625,17 @@ def _direct_action_failed_retryable(row: sqlite3.Row, *, claimed_at: str) -> boo
 
 
 def _exhausted_direct_action_is_service_transient(row: sqlite3.Row) -> bool:
-    return str(row["provider_operation"]) == "provider_factory" and str(
-        row["error"]
-    ).startswith("provider_factory_failed:")
+    provider_operation = str(row["provider_operation"])
+    error = str(row["error"])
+    if provider_operation == "provider_factory" and error.startswith(
+        "provider_factory_failed:"
+    ):
+        return True
+    return (
+        str(row["action_type"]) == EmailAction.TRASH.value
+        and provider_operation == "READ"
+        and error == "provider_read_failed:ImapMessageUnavailable"
+    )
 
 
 def _json_load(raw: str, *, field: str, expected_type: type[Any]) -> Any:
@@ -13989,7 +13997,6 @@ class EmailStore:
                 join email_action_plans as p
                   on p.action_plan_id=c.current_action_plan_id
                 where c.status='processed'
-                  and c.classification_source='model'
                   and instr(p.actions_json, '"unsubscribe"') > 0
                 order by c.id
                 """
@@ -14001,6 +14008,15 @@ class EmailStore:
                     action_type=EmailAction.UNSUBSCRIBE,
                     action_plan_version=int(row["action_plan_version"]),
                 )
+                receipt = db.execute(
+                    """
+                    select 1 from email_unsubscribe_receipts
+                    where action_identity=?
+                    """,
+                    (action_identity,),
+                ).fetchone()
+                if receipt is not None:
+                    continue
                 task = db.execute(
                     """
                     select 1 from reply_tasks
@@ -14011,6 +14027,62 @@ class EmailStore:
                 if task is None:
                     missing.append(self._classification_row(row))
         return missing
+
+    def list_terminal_unsubscribe_tasks_missing_receipts(self) -> list[dict[str, Any]]:
+        """Find terminal unsubscribe tasks whose durable receipt projection is absent."""
+
+        terminal: list[dict[str, Any]] = []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select c.*, p.action_plan_version, p.actions_json
+                from email_classifications as c
+                join email_action_plans as p
+                  on p.action_plan_id=c.current_action_plan_id
+                where c.status='processed'
+                  and instr(p.actions_json, '"unsubscribe"') > 0
+                order by c.id
+                """
+            ).fetchall()
+            for row in rows:
+                action_identity = email_action_identity(
+                    account_id=row["account_id"],
+                    stable_message_identity=row["stable_message_identity"],
+                    action_type=EmailAction.UNSUBSCRIBE,
+                    action_plan_version=int(row["action_plan_version"]),
+                )
+                receipt = db.execute(
+                    """
+                    select 1 from email_unsubscribe_receipts
+                    where action_identity=?
+                    """,
+                    (action_identity,),
+                ).fetchone()
+                if receipt is not None:
+                    continue
+                task = db.execute(
+                    """
+                    select id, status, error, attempts, updated_at
+                    from reply_tasks
+                    where channel='email' and trigger_message_id=?
+                    """,
+                    (action_identity,),
+                ).fetchone()
+                if task is None or task["status"] not in {
+                    "done",
+                    "failed",
+                    "skipped",
+                    "needs_human",
+                }:
+                    continue
+                terminal.append(
+                    {
+                        **self._classification_row(row),
+                        "unsubscribe_action_identity": action_identity,
+                        "unsubscribe_task": dict(task),
+                    }
+                )
+        return terminal
 
     def repair_current_action_plan(
         self, action_plan: EmailActionPlan

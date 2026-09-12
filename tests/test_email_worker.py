@@ -552,6 +552,24 @@ def test_model_action_reconciliation_skips_nonunsubscribe_and_reports_conflict(
         model_text="exact current text",
         unsubscribe_entries=entries,
     )
+    with sqlite3.connect(database) as db:
+        row = db.execute(
+            "select id, current_action_plan_id "
+            "from email_classifications where stable_message_identity=?",
+            (f"account-1:message-id:{junk_message['messageId']}",),
+        ).fetchone()
+        assert row is not None
+        classification_id, action_plan_id = row
+        db.execute(
+            "update email_classifications "
+            "set classification_source='agent' where id=?",
+            (classification_id,),
+        )
+        db.execute(
+            "update email_action_plans set classification_source='agent' "
+            "where action_plan_id=?",
+            (action_plan_id,),
+        )
     health = []
 
     result = module.reconcile_missing_model_action_tasks(
@@ -561,20 +579,20 @@ def test_model_action_reconciliation_skips_nonunsubscribe_and_reports_conflict(
         record_health=lambda scope, payload: health.append((scope, payload)),
     )
 
-    assert result == {"candidates": 1, "repaired": 0, "conflicts": 1}
+    assert result == {"candidates": 1, "repaired": 1, "conflicts": 0}
     assert health == [
         (
             "component:email-model-action-reconciliation",
             {
-                "status": "degraded",
+                "status": "ready",
                 "candidates": 1,
-                "repaired": 0,
-                "conflicts": 1,
-                "error_code": "model_action_reconciliation_conflict",
+                "repaired": 1,
+                "conflicts": 0,
             },
         )
     ]
     assert task_store.list_reply_tasks(channel="email") == []
+    assert email_store.list_missing_unsubscribe_action_tasks() == []
 
 
 def test_training_maintenance_ticks_runtime_and_reconciliation_once():

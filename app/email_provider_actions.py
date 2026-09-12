@@ -153,6 +153,15 @@ class DeterministicEmailActionExecutor:
                     action.locator,
                     action_type=action.action_type,
                 )
+            except ImapMessageUnavailable as exc:
+                if _message_unavailable_satisfies_action(action, exc):
+                    return ProviderActionResult(
+                        status="done",
+                        provider_operation="readback_noop",
+                        provider_target=action.locator.stable_message_identity,
+                        provider_result_id=_message_unavailable_revision(action),
+                    )
+                return self._failed(action, "READ", "provider_read_failed", exc)
             except Exception as exc:
                 return self._failed(action, "READ", "provider_read_failed", exc)
             if current.satisfies(
@@ -266,6 +275,22 @@ def _changed_locator(
     if all(getattr(original, field) == getattr(observed, field) for field in coordinates):
         return None
     return observed
+
+
+def _message_unavailable_satisfies_action(
+    action: StoredEmailAction,
+    exc: ImapMessageUnavailable,
+) -> bool:
+    """Treat a missing message as terminal only for trash-style cleanup."""
+
+    return action.action_type is EmailAction.TRASH and "missing" in str(exc).casefold()
+
+
+def _message_unavailable_revision(action: StoredEmailAction) -> str:
+    digest = sha256(
+        f"message-unavailable\n{action.locator.stable_message_identity}".encode()
+    ).hexdigest()[:32]
+    return f"message-unavailable:{digest}"
 
 
 def _close_provider(provider: object) -> None:
@@ -478,8 +503,10 @@ class ImapDeterministicProvider:
                 )
                 if state is not None:
                     matches.append(state)
-        if len(matches) != 1:
-            raise ImapMessageUnavailable("message lookup was missing or ambiguous")
+        if not matches:
+            raise ImapMessageUnavailable("message lookup was missing")
+        if len(matches) > 1:
+            raise ImapMessageUnavailable("message lookup was ambiguous")
         return matches[0]
 
     def apply(

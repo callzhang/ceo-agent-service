@@ -273,6 +273,56 @@ def test_initial_read_failure_returns_failed_result_without_writing() -> None:
     assert provider.command_log == ["READ"]
 
 
+def test_missing_message_satisfies_trash_without_provider_write() -> None:
+    module = import_module("app.email_provider_actions")
+    action = _action(EmailAction.TRASH, {})
+
+    class MissingMessageProvider:
+        def __init__(self) -> None:
+            self.command_log: list[str] = []
+
+        def read_state(self, locator, *, action_type):
+            self.command_log.append("READ")
+            raise module.ImapMessageUnavailable("message lookup was missing")
+
+        def apply(self, locator, action_type, parameters, *, observed_state):
+            pytest.fail("missing trash must not issue a provider write")
+
+    provider = MissingMessageProvider()
+
+    result = module.DeterministicEmailActionExecutor(provider).execute(action)
+
+    assert result.status == "done"
+    assert result.provider_operation == "readback_noop"
+    assert result.provider_target == action.locator.stable_message_identity
+    assert result.provider_result_id.startswith("message-unavailable:")
+    assert provider.command_log == ["READ"]
+
+
+def test_ambiguous_message_does_not_satisfy_trash() -> None:
+    module = import_module("app.email_provider_actions")
+    action = _action(EmailAction.TRASH, {})
+
+    class AmbiguousMessageProvider:
+        def read_state(self, locator, *, action_type):
+            raise module.ImapMessageUnavailable("message lookup was ambiguous")
+
+        def apply(self, locator, action_type, parameters, *, observed_state):
+            pytest.fail("ambiguous trash must not issue a provider write")
+
+    result = module.DeterministicEmailActionExecutor(
+        AmbiguousMessageProvider()
+    ).execute(action)
+
+    assert result == module.ProviderActionResult(
+        status="failed",
+        provider_operation="READ",
+        provider_target=action.locator.stable_message_identity,
+        provider_result_id="",
+        error="provider_read_failed:ImapMessageUnavailable",
+    )
+
+
 def test_readback_failure_is_reconciled_by_retry_without_duplicate_write() -> None:
     module = import_module("app.email_provider_actions")
     provider = StatefulFakeImapProvider(fail_reads={2})
