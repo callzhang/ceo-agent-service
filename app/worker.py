@@ -38,7 +38,6 @@ from app.consumer_agent import ConsumerAgentRunner
 from app.external_action_identity import expected_external_action
 from app.config import (
     agent_mention_aliases,
-    assistant_signature,
     broadcast_mention_aliases,
     codex_capacity_retry_duration,
     env_duration,
@@ -48,6 +47,7 @@ from app.config import (
     single_chat_read_recovery_window,
 )
 from app.corpus import MEDIA_OR_LINK_PATTERN, count_information_units
+from app.outbound_postfix import outbound_body_echo_key
 from app.dispatcher.models import ClaimGuard
 from app.dws_client import (
     DINGTALK_MESSAGE_TIME_ZONE,
@@ -167,7 +167,6 @@ XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER = (
     f"{CRITICAL_INFO_UNAVAILABLE_PREFIX}xiaoqing_interview"
 )
 DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
-SPLIT_PERSON_SIGNATURE = assistant_signature()
 # A task without an active agent lease must be released shortly after the
 # bounded agent turn timeout. A continuously renewed lease cannot keep a
 # feedback or provider loop in processing indefinitely either.
@@ -471,6 +470,9 @@ DINGTALK_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GROUP_CONTEXT_RECOVERY_WINDOW = timedelta(hours=24)
 RECENT_REPLY_WINDOW = timedelta(hours=24)
 RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
+# A message read back from a chat is only ever minutes to a day old, so a
+# week of sent bodies covers every echo the readers can still surface.
+SERVICE_OUTBOUND_ECHO_WINDOW = timedelta(days=7)
 REFERENCED_FILE_CONTEXT_WINDOW = timedelta(minutes=10)
 DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
 DOWNLOADED_IMAGE_MAX_BYTES = 20 * 1024 * 1024
@@ -4689,6 +4691,7 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         messages: list[DingTalkMessage],
     ) -> list[DingTalkMessage]:
+        service_outbound = self._service_outbound_messages(messages)
         if conversation.single_chat:
             eligible_messages = messages
             latest_current_user_message_time = None
@@ -4698,7 +4701,7 @@ class DingTalkAutoReplyWorker:
                 message.create_time
                 for message in messages
                 if self._is_current_user_message_for_candidate_filter(message)
-                and not self._is_split_person_auto_reply_message(message)
+                and message.open_message_id not in service_outbound
                 and not self._is_processing_ack_message(message)
                 and not self._is_system_or_notification_message(message)
             ]
@@ -4713,6 +4716,7 @@ class DingTalkAutoReplyWorker:
             message
             for message in eligible_messages
             if not self._is_current_user_message_for_candidate_filter(message)
+            and message.open_message_id not in service_outbound
             and (
                 ignore_current_user_cutoff
                 or latest_current_user_message_time is None
@@ -4720,6 +4724,28 @@ class DingTalkAutoReplyWorker:
             )
         ]
         return sorted(candidates, key=lambda message: message.create_time)
+
+    def _service_outbound_messages(
+        self, messages: list[DingTalkMessage]
+    ) -> set[str]:
+        """Ids of the messages the service itself delivered into these chats.
+
+        A delivery sent through DWS carries the signed-in user's identity, so in
+        the robot chat our own follow-up is indistinguishable from something the
+        user typed: without this the service reads its own output back and opens
+        a run on it.
+        """
+        if not messages:
+            return set()
+        sent_body_keys = self.store.recorded_outbound_body_keys(
+            "dingtalk",
+            self._sqlite_timestamp(self._now() - SERVICE_OUTBOUND_ECHO_WINDOW),
+        )
+        return {
+            message.open_message_id
+            for message in messages
+            if outbound_body_echo_key(message.content) in sent_body_keys
+        }
 
     def _candidate_source_messages(
         self,
@@ -4866,10 +4892,6 @@ class DingTalkAutoReplyWorker:
             )
             return profile is not None and profile.user_id == current_user_id
         return False
-
-    @staticmethod
-    def _is_split_person_auto_reply_message(message: DingTalkMessage) -> bool:
-        return SPLIT_PERSON_SIGNATURE in message.content
 
     @staticmethod
     def _is_processing_ack_message(message: DingTalkMessage) -> bool:

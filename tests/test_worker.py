@@ -50,6 +50,7 @@ from app.dws_client import (
     DwsOaApprovalCandidate,
     DwsUserProfile,
 )
+from app.outbound_postfix import compose_outbound_postfix
 from app.store import AgentRole, AutoReplyStore
 from app.skill_features import FeatureRegistry
 from app.runtime_environment import central_python
@@ -3825,6 +3826,56 @@ def test_robot_direct_current_user_message_still_triggers_reply(
     pending_tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
     assert len(pending_tasks) == 1
     assert pending_tasks[0].trigger_message_id == "msg-robot-direct"
+
+
+def test_robot_direct_message_the_service_sent_itself_is_not_a_trigger(
+    tmp_path: Path, monkeypatch
+):
+    """A delivery DWS made under the user's identity must not open a new run.
+
+    The meeting follow-up the service sends into the robot chat comes back from
+    DingTalk with the user as its sender, so only the record of what we sent
+    keeps the service from answering itself.
+    """
+    delivery = dict(
+        channel="dingtalk",
+        delivery_key="meeting-alignment:1",
+        body="【会议跟进】销售周会\n\n本次会议未形成统一规则。",
+        original_text="销售周会纪要",
+        feedback_base_url="",
+    )
+    # DingTalk hands a sent message back with its blank line rewritten as a
+    # markdown hard break.
+    echo = message(
+        compose_outbound_postfix(**delivery).final_body.replace("\n\n", "  \n"),
+        message_id="msg-service-echo",
+        single_chat=True,
+        sender_user_id=None,
+    ).model_copy(
+        update={
+            "open_conversation_id": "cid-bot",
+            "conversation_title": "磊哥",
+            "sender_name": "磊哥",
+            "sender_open_dingtalk_id": "current-open-id",
+            "raw_payload": {"ceo_agent_source": "robot_direct"},
+        }
+    )
+    dws = FakeDws([], {"cid-bot": [echo]})
+    dws.robot_direct_messages = {"cid-bot": [echo]}
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    worker.store.prepare_outbound_postfix(**delivery)
+    worker.store.set_current_user_id("principal-user-1")
+    worker.store.upsert_org_user_profile(
+        user_id="principal-user-1",
+        name="Derek",
+        open_dingtalk_id="current-open-id",
+        manager_user_id=None,
+        department_ids=set(),
+    )
+
+    assert worker.produce_once(max_tasks=1) == 0
+    assert worker.store.list_reply_tasks(statuses=("pending",), limit=10) == []
 
 
 def test_no_reply_agent_envelope_reaction_adds_emoji_without_text_reply(
@@ -14958,9 +15009,14 @@ def test_read_group_mention_after_seen_message_is_processed_from_mentions(
     assert dws.recent_message_reads == ["cid-hyperion"]
 
 
-def test_split_person_auto_reply_does_not_hide_unanswered_group_mention(
+def test_own_group_reply_does_not_hide_an_unanswered_group_mention(
     tmp_path: Path, monkeypatch
 ):
+    """The service's own reply must not read as the user having spoken last.
+
+    A group reply is delivered under the user's identity, so counting it as the
+    user's latest message would cut off the mention it was still owed.
+    """
     handled = message(
         "@Alex Chen(明哥) 和我迭代一下材料",
         message_id="msg-handled",
@@ -14975,8 +15031,15 @@ def test_split_person_auto_reply_does_not_hide_unanswered_group_mention(
     missed.open_conversation_id = "cid-iter"
     missed.conversation_title = "迭代群"
     missed.create_time = "2026-05-29 21:55:10"
+    delivery = dict(
+        channel="dingtalk",
+        delivery_key="agent-message:cid-iter:msg-handled",
+        body="可以，别先把我屏蔽了。",
+        original_text="@Alex Chen(明哥) 和我迭代一下材料",
+        feedback_base_url="",
+    )
     auto_reply = principal_message(
-        "可以，别先把我屏蔽了。（by明哥分身）",
+        compose_outbound_postfix(**delivery).final_body,
         message_id="msg-auto-reply",
         create_time="2026-05-29 21:55:41",
     )
@@ -14997,6 +15060,7 @@ def test_split_person_auto_reply_does_not_hide_unanswered_group_mention(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    worker.store.prepare_outbound_postfix(**delivery)
     worker.store.upsert_conversation("cid-iter", "迭代群", False, None)
     worker.store.mark_seen("msg-handled", "cid-iter")
 

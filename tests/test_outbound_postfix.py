@@ -4,6 +4,7 @@ from app.outbound_postfix import (
     POSTFIX_VERSION,
     PreparedOutboundMessage,
     compose_outbound_postfix,
+    outbound_body_echo_key,
 )
 from app.codex_decision import append_signature
 from app.feedback_spike import prepare_outgoing_reply_text
@@ -92,3 +93,17 @@ def test_compose_rejects_unrecognized_feedback_callback_when_disabled() -> None:
             original_text="请同步进度",
             feedback_base_url="",
         )
+
+
+def test_echo_key_survives_the_hard_break_dingtalk_returns() -> None:
+    """DingTalk rewrites a blank line as a markdown hard break on the way back.
+
+    Recognising our own delivery therefore cannot compare the raw text: the body
+    we sent and the body we read back differ by exactly that rewrite.
+    """
+    sent = "【会议跟进】销售周会\n\n本次会议未形成统一规则。"
+    echoed = sent.replace("\n\n", "  \n")
+
+    assert echoed != sent
+    assert outbound_body_echo_key(echoed) == outbound_body_echo_key(sent)
+    assert outbound_body_echo_key("另一条消息") != outbound_body_echo_key(sent)

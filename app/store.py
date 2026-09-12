@@ -95,6 +95,7 @@ from app.outbound_postfix import (
     PreparedOutboundMessage,
     compose_outbound_postfix,
     normalize_outbound_postfix_inputs,
+    outbound_body_echo_key,
 )
 from app.task_models import (
     DingTalkTodoLinkStatus,
@@ -4718,6 +4719,25 @@ class AutoReplyStore:
             feedback_token=str(row["feedback_token"]),
             postfix_version=str(row["postfix_version"]),
         )
+
+    def recorded_outbound_body_keys(self, channel: str, since: str) -> set[str]:
+        """Echo keys for every message this service sent on a channel since `since`.
+
+        DWS sends as the signed-in user, so a message the service delivered into
+        the user's own robot chat carries the user's identity and cannot be told
+        apart from something the user typed. This record of what we sent is the
+        only thing that separates the two.
+        """
+        normalized_channel = channel.strip()
+        if normalized_channel not in {"dingtalk", "wechat"}:
+            raise ValueError("unsupported outbound channel")
+        with self._connect() as db:
+            rows = db.execute(
+                """select final_body from outbound_postfixes
+                   where channel=? and created_at>=?""",
+                (normalized_channel, since),
+            ).fetchall()
+        return {outbound_body_echo_key(str(row["final_body"])) for row in rows}
 
     def get_outbound_postfix_receipt(
         self,

@@ -37,6 +37,13 @@ source message ID 和顺序。
 私聊默认视为发给当前管理者，无需 @。机器人私聊使用配置的机器人身份读取和回复。平台生成的
 自身发送回执、重复投递和已处理 source revision 在入队前过滤。
 
+service 自己投递出去的消息也在此过滤。DWS 以登录用户身份发送，所以机器人私聊里 service 投递的
+会议跟进、follow-up 确认回到读取端时，sender 就是当前管理者本人，与用户手打的消息在身份上
+完全一致。唯一能区分两者的是 service 自己的发送记录：`outbound_postfixes` 保存了每一条
+service 发出的最终正文，`_candidate_messages()` 按这条记录剔除自身投递。比对使用
+`outbound_body_echo_key()`，因为钉钉会把发送时的空行改写成 markdown 硬换行，原文不能直接相等。
+没有这条过滤时，service 会把自己的产出当成新 trigger，为每条投递再开一次 run。
+
 ### 当前 pre-Agent 结构过滤清单
 
 `app.worker.DingTalkAutoReplyWorker._is_system_or_notification_message()` 当前执行以下窄范围过滤。

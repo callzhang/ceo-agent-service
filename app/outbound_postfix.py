@@ -58,6 +58,17 @@ def compose_outbound_postfix(
     )
 
 
+def outbound_body_echo_key(body: str) -> str:
+    """Key a body by what survives the channel rendering it and handing it back.
+
+    DingTalk returns a message we sent with its line breaks rewritten: the blank
+    line we send between paragraphs comes back as a markdown hard break. The
+    text we stored and the text we read back are therefore equal only once every
+    run of whitespace is collapsed to one space.
+    """
+    return " ".join(body.split())
+
+
 def normalize_outbound_postfix_inputs(
     *,
     channel: str,
