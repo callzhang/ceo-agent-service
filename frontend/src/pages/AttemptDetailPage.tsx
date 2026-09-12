@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { command, displayValue } from "../api/console";
-import { getAttemptDetail, type AttemptDetail, type AttemptMetadata, type AttemptRuntimeEntry } from "../api/attempts";
+import { getAttemptDetail, type AttemptAgentSession, type AttemptDetail, type AttemptMetadata, type AttemptRuntimeEntry, type AttemptToolUse } from "../api/attempts";
 import { SummaryText } from "../components/data/SummaryText";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
@@ -20,12 +20,25 @@ function MetadataGrid({ rows }: { rows: AttemptMetadata[] }) {
   return <section className="console-card attempt-metadata-card"><div className="attempt-metadata-grid">{rows.map((row) => <div className="attempt-metadata-item" key={row.label}><span>{row.label}</span><strong>{row.value || "未记录"}</strong></div>)}</div></section>;
 }
 
+function ToolUseList({ uses }: { uses: AttemptToolUse[] }) {
+  if (!uses.length) return <p className="page-state">这一段没有留下可读的调用记录。</p>;
+  return <ol className="attempt-tool-use-list">{uses.map((use, index) => <li key={`${use.call_id}-${index}`}><article className="attempt-tool-use"><header><strong>{use.title || use.tool || "未命名调用"}</strong>{use.source && <small>{use.source}</small>}</header>{use.relevance && <p className="attempt-tool-use-relevance">{use.relevance}</p>}<dl><div><dt>参数</dt><dd><SummaryText value={displayValue(use.args)} lines={4} /></dd></div><div><dt>结果</dt><dd><SummaryText value={displayValue(use.output)} lines={6} /></dd></div></dl></article></li>)}</ol>;
+}
+
+function AgentProcess({ sessions, toolUses }: { sessions: AttemptAgentSession[]; toolUses: AttemptToolUse[] }) {
+  if (!sessions.length) {
+    if (!toolUses.length) return null;
+    return <section className="console-card attempt-process-card"><h2>执行过程</h2><p>这次处理实际调用的工具、参数和返回结果。</p><ToolUseList uses={toolUses} /></section>;
+  }
+  return <section className="console-card attempt-process-card"><h2>执行过程</h2><p>按角色分开：处理 Agent 形成方案，审计 Agent 核验方案并执行对外动作。每一条是它实际调用的工具、参数和返回结果。</p>{sessions.map((session) => <details className="attempt-process-role" key={session.session_id} open={sessions.length === 1 || session.role === "audit"}><summary><strong>{session.label}</strong><span>{session.tool_uses.length} 次调用</span></summary><div className="attempt-process-role-body"><Link className="agent-log-button" to={session.url}>查看完整 Agent 记录</Link><ToolUseList uses={session.tool_uses} /></div></details>)}</section>;
+}
+
 function RuntimeEntry({ entry }: { entry: AttemptRuntimeEntry }) {
   const isAudit = entry.role === "audit";
   const phase = isAudit ? "审计核验" : entry.role === "consumer" ? "处理判断" : "系统处理";
   const description = isAudit ? "核验方案的事实、边界和对外动作；必要时会要求下一轮修订。" : "根据当前消息和已知上下文形成处理方案。";
   const retry = entry.turn_attempt > 0 ? ` · 第 ${entry.turn_attempt + 1} 次尝试` : "";
-  return <article className="attempt-runtime-entry"><div className="attempt-runtime-heading"><div><strong>{phase} · 第 {entry.proposal_revision + 1} 轮{retry}</strong><p>{description}</p></div><StatusBadge value={entry.status} /></div>{(entry.failure_code || entry.effect_started_at) && <dl className="attempt-runtime-grid">{entry.failure_code && <div><dt>结果说明</dt><dd>{entry.failure_code}</dd></div>}{entry.effect_started_at && <div><dt>开始外部动作</dt><dd>{entry.effect_started_at}</dd></div>}</dl>}</article>;
+  return <article className="attempt-runtime-entry"><div className="attempt-runtime-heading"><div><strong>{phase} · 第 {entry.proposal_revision + 1} 轮{retry}</strong><p>{description}</p></div><StatusBadge value={entry.status} /></div>{(entry.failure_code || entry.effect_started_at) && <dl className="attempt-runtime-grid">{entry.failure_code && <div><dt>结果说明</dt><dd>{entry.failure_code}</dd></div>}{entry.effect_started_at && <div><dt>开始外部动作</dt><dd>{entry.effect_started_at}</dd></div>}</dl>}{entry.session_url && <Link className="agent-log-button" to={entry.session_url}>查看这一步的 Agent 记录</Link>}</article>;
 }
 
 function ExecutionDetail({ detail, role, snapshot }: { detail: AttemptDetail; role: "consumer" | "audit"; snapshot: string }) {
@@ -36,6 +49,7 @@ function ExecutionDetail({ detail, role, snapshot }: { detail: AttemptDetail; ro
     ? "这里只展示审计 Agent 对方案、边界和对外动作的核验记录。"
     : "这里只展示处理 Agent 形成方案的记录。";
   const entries = detail.runtime_attempts.filter((entry) => entry.role === role);
+  const session = detail.agent_sessions.find((item) => item.role === role);
 
   return <ConsolePageLayout title={`${title} · ${roleLabel}`} actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to={`/attempts/${detail.id}`}>返回 Attempt</Link></>}>
     <section className="console-card execution-detail-overview">
@@ -43,8 +57,12 @@ function ExecutionDetail({ detail, role, snapshot }: { detail: AttemptDetail; ro
       <StatusBadge value={detail.status.raw} />
     </section>
     <section className="console-card execution-detail-context">
-      <span>会话：<strong>{detail.conversation.title || "未记录"}</strong></span>
+      <span>{detail.conversation.label}：<strong>{detail.conversation.title || "未记录"}</strong></span>
       <span>触发人：<strong>{detail.conversation.trigger_sender || "未提供"}</strong></span>
+    </section>
+    <section className="console-card attempt-process-card" aria-label={`${roleLabel} 调用记录`}>
+      <div className="execution-detail-list-header"><div><h2>调用记录</h2><p>这一个角色实际调用的工具、参数和返回结果。</p></div>{session && <Link className="agent-log-button" to={session.url}>查看完整 Agent 记录</Link>}</div>
+      <ToolUseList uses={session?.tool_uses || []} />
     </section>
     <section className="console-card execution-detail-list" aria-label={`${roleLabel} 执行记录`}>
       <div className="execution-detail-list-header"><div><h2>执行步骤</h2><p>每一条代表一轮处理或一次重试；它们不会自动等同于重复发送。</p></div><span>{entries.length} 个步骤</span></div>
@@ -156,7 +174,7 @@ export function AttemptDetailPage() {
       {(detail.calendar.event_id || detail.calendar.response_status) && <DetailSection title="日历信息" value={[detail.calendar.event_id, detail.calendar.response_status, displayValue(detail.calendar.result)].filter(Boolean).join("\n")} />}
       {detail.quality_warnings.length > 0 && <section className="console-card attempt-quality-warning"><h2>Audit quality warnings</h2><ul>{detail.quality_warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section>}
       {detail.context_only_info && <DetailSection title="Audit context" value={detail.context_only_info} />}
-      {!detail.agent_execution_record && <DetailSection title="Tool uses" value={detail.tool_uses} />}
+      <AgentProcess sessions={detail.agent_sessions} toolUses={detail.tool_uses} />
       {detail.runtime_attempts.length > 0 && <details className="console-card attempt-runtime-card"><summary><div><h2>处理过程</h2><p>每一轮会先由处理 Agent 形成方案，再由审计 Agent 核验。多条记录表示修订、重试或重新核验，不代表重复发送。 </p></div><span>{detail.runtime_attempts.length} 个处理步骤</span></summary><div className="attempt-runtime-list">{detail.runtime_attempts.map((entry, index) => <RuntimeEntry entry={entry} key={`${entry.role}-${entry.proposal_revision}-${entry.turn_attempt}-${index}`} />)}</div></details>}
       {message && <p className="attempt-action-message" role="status" aria-live="polite">{message}</p>}
       {(detail.actions.can_rerun || detail.actions.can_recall) && <div className="attempt-bottom-actions">{detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认重新处理这条 Attempt？")) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>重新处理</button>}{detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}</div>}

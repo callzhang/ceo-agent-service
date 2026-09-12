@@ -5,8 +5,28 @@ export interface AttemptMetadata {
   value: string;
 }
 
+export interface AttemptToolUse {
+  title: string;
+  tool: string;
+  call_id: string;
+  relevance: string;
+  source: string;
+  args: unknown;
+  format: string;
+  output: string;
+}
+
+export interface AttemptAgentSession {
+  role: string;
+  label: string;
+  session_id: string;
+  url: string;
+  tool_uses: AttemptToolUse[];
+}
+
 export interface AttemptRuntimeEntry {
   role: string;
+  session_url: string;
   proposal_revision: number;
   turn_attempt: number;
   route: string;
@@ -57,7 +77,7 @@ export interface AttemptDetail {
   action_pills: Array<{ label: string; status: string }>;
   quality_warnings: string[];
   context_only_info: string;
-  tool_uses: unknown[];
+  tool_uses: AttemptToolUse[];
   agent_execution_record: boolean;
   revision_count: number;
   oa: { process_instance_id: string; task_id: string; url: string; action: string; remark: string; result: unknown };
@@ -79,6 +99,7 @@ export interface AttemptDetail {
     terminal: boolean;
     action_label: string;
   };
+  agent_sessions: AttemptAgentSession[];
   runtime_attempts: AttemptRuntimeEntry[];
   created_at: string;
   updated_at: string;

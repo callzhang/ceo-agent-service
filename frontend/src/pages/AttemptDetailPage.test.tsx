@@ -60,7 +60,12 @@ const detail = {
     terminal: true,
     action_label: "无需操作",
   },
-  runtime_attempts: [{ role: "consumer", proposal_revision: 0, turn_attempt: 0, route: "consumer", runtime: "codex", credential_mode: "configured", model: "qwen", session_available: true, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 1, transcript_end: 2, effect_started_at: "" }],
+  tool_uses: [],
+  agent_sessions: [
+    { role: "consumer", label: "处理过程", session_id: "session-consumer", url: "/codex/session-consumer", tool_uses: [{ title: "read_thread", tool: "read_thread", call_id: "call-1", relevance: "", source: "dingtalk", args: { conversation_id: "cid-1" }, format: "", output: "最近 3 条消息" }] },
+    { role: "audit", label: "审计过程", session_id: "session-8448", url: "/codex/session-8448", tool_uses: [{ title: "unsubscribe_email", tool: "unsubscribe_email", call_id: "call-2", relevance: "", source: "", args: { task_id: 383926 }, format: "", output: "skipped_no_reliable_entry" }] },
+  ],
+  runtime_attempts: [{ role: "consumer", session_url: "/codex/session-consumer", proposal_revision: 0, turn_attempt: 0, route: "consumer", runtime: "codex", credential_mode: "configured", model: "qwen", session_available: true, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 1, transcript_end: 2, effect_started_at: "" }],
   created_at: "2026-08-29T10:00:00Z",
   updated_at: "2026-08-29T10:01:00Z",
 };
@@ -127,6 +132,42 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("处理判断 · 第 1 轮")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "返回 Attempt" })).toHaveAttribute("href", "/attempts/8448");
     expect(screen.queryByRole("heading", { name: "生成回复" })).not.toBeInTheDocument();
+  });
+
+  it("shows what each role actually called, not only that a role ran", async () => {
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "执行过程" })).toBeInTheDocument();
+    expect(screen.getByText("unsubscribe_email")).toBeInTheDocument();
+    expect(screen.getByText('{"task_id":383926}')).toBeInTheDocument();
+    expect(screen.getByText("skipped_no_reliable_entry")).toBeInTheDocument();
+    expect(screen.getByText("read_thread")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "查看完整 Agent 记录" })[0]).toHaveAttribute("href", "/codex/session-consumer");
+  });
+
+  it("shows the Consumer calls on the Consumer execution page", async () => {
+    renderPage("/attempts/8448/execution/consumer");
+
+    expect(await screen.findByRole("heading", { name: "调用记录" })).toBeInTheDocument();
+    expect(screen.getByText("read_thread")).toBeInTheDocument();
+    expect(screen.getByText("最近 3 条消息")).toBeInTheDocument();
+    expect(screen.queryByText("unsubscribe_email")).not.toBeInTheDocument();
+  });
+
+  it("keeps the process visible for an Attempt whose transcripts are gone", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        agent_sessions: [],
+        tool_uses: [{ title: "exec_command", tool: "exec_command", call_id: "call-9", relevance: "", source: "", args: { command: "rg 岗位" }, format: "", output: "2 个匹配" }],
+      },
+      meta: { snapshot_at: "2026-08-29T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "执行过程" })).toBeInTheDocument();
+    expect(screen.getByText("exec_command")).toBeInTheDocument();
+    expect(screen.getByText("2 个匹配")).toBeInTheDocument();
   });
 
   it("submits the inline feedback form with the edited values", async () => {

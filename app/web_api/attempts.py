@@ -1,6 +1,7 @@
 """Structured Attempt detail payloads for the React console."""
 
 import json
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
 
@@ -39,15 +40,84 @@ def _status_message(attempt: Any, attention: Any) -> tuple[str, bool]:
     return f"当前状态：{status or '未提供'}。", False
 
 
+def _run_role(run: Any) -> str:
+    role = getattr(run, "role", None)
+    return str(getattr(role, "value", role) or "")
+
+
+_AGENT_ROLE_LABELS = {"consumer": "处理过程", "audit": "审计过程"}
+
+_CONVERSATION_LABELS = {
+    "email": "邮件",
+    "wechat": "微信会话",
+    "dingtalk": "群名",
+}
+
+
+def _conversation_label(attempt: Any) -> str:
+    channel = str(getattr(attempt, "channel", "") or "").strip()
+    return _CONVERSATION_LABELS.get(channel, "会话")
+
+
+def _transcript_owner(run: Any) -> Any:
+    """Address an agent run's transcript slice the way an Attempt row is read.
+
+    An agent run records the same three values an Attempt row does - session id
+    and the transcript line range it owns - under its own column names.
+    """
+    return SimpleNamespace(
+        codex_session_id=str(getattr(run, "codex_session_id", "") or ""),
+        codex_transcript_start_line=int(getattr(run, "transcript_start_line", 0) or 0),
+        codex_transcript_end_line=int(getattr(run, "transcript_end_line", 0) or 0),
+        audit_tool_events_json="",
+    )
+
+
+def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]:
+    """Return each role's readable transcript, with the calls it made.
+
+    The Attempt row stores a single session id, which is the last role that
+    ran. Linking only that one hides the Consumer transcript even though it is
+    on disk, so every run with a readable transcript gets its own entry.
+    """
+    from app.audit_web import _audit_event_uses_for_attempt
+    from app.codex_history import find_codex_session_path
+
+    sessions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    candidates = [(_run_role(run), _transcript_owner(run)) for run in agent_runs]
+    candidates.append(("", attempt))
+    for role, owner in candidates:
+        session_id = str(getattr(owner, "codex_session_id", "") or "").strip()
+        if not session_id or session_id in seen:
+            continue
+        if find_codex_session_path(session_id) is None:
+            continue
+        seen.add(session_id)
+        sessions.append(
+            {
+                "role": role,
+                "label": _AGENT_ROLE_LABELS.get(role, "Agent session"),
+                "session_id": session_id,
+                "url": f"/codex/{quote(session_id, safe='')}",
+                "tool_uses": json_safe(_audit_event_uses_for_attempt(owner)),
+            }
+        )
+    return sessions
+
+
 def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
     result = []
     for run in agent_runs:
-        role = str(getattr(getattr(run, "role", None), "value", getattr(run, "role", "")) or "")
+        role = _run_role(run)
         for item in store.list_agent_runtime_attempts(run.id):
             session_id = str(getattr(item, "session_id", "") or "").strip()
             result.append(
                 {
                     "role": normalize_display_value(role),
+                    "session_url": (
+                        f"/codex/{quote(session_id, safe='')}" if session_id else ""
+                    ),
                     "proposal_revision": int(getattr(run, "proposal_revision", 0) or 0),
                     "turn_attempt": int(getattr(run, "turn_attempt", 0) or 0),
                     "route": normalize_display_value(getattr(item, "route_name", "")),
@@ -102,9 +172,17 @@ def _feedback_payload(events: list[Any]) -> list[dict[str, str]]:
     return payload
 
 
+def _execution_url(
+    attempt: Any, agent_sessions: list[dict[str, Any]], role: str
+) -> str:
+    if not any(session["role"] == role for session in agent_sessions):
+        return ""
+    return f"/attempts/{int(attempt.id)}/execution/{role}"
+
+
 def _action_links(
     attempt: Any,
-    agent_runs: list[Any],
+    agent_sessions: list[dict[str, Any]],
     reply_task: Any,
     sent_reply: Any,
     wechat_delivery: Any,
@@ -123,26 +201,13 @@ def _action_links(
     dingtalk_url = ""
     if service_task and str(getattr(attempt, "oa_url", "") or "").strip():
         dingtalk_url = str(attempt.oa_url).strip()
-    elif not service_task and str(getattr(attempt, "channel", "") or "") != "wechat":
+    elif not service_task and str(getattr(attempt, "channel", "") or "") == "dingtalk":
+        # Only a DingTalk conversation id can open a DingTalk conversation. An
+        # email or WeChat attempt carries its own channel identity, and sending
+        # that to the popup produces a link that cannot resolve.
         conversation_id = str(getattr(attempt, "conversation_id", "") or "").strip()
         if conversation_id:
             dingtalk_url = f"/open-dingtalk-popup?conversation_id={quote(conversation_id, safe='')}"
-    consumer = next(
-        (run for run in reversed(agent_runs) if str(getattr(getattr(run, "role", None), "value", getattr(run, "role", ""))) == "consumer" and getattr(run, "codex_session_id", "")),
-        None,
-    )
-    audit = next(
-        (run for run in reversed(agent_runs) if str(getattr(getattr(run, "role", None), "value", getattr(run, "role", ""))) == "audit" and getattr(run, "codex_session_id", "")),
-        None,
-    )
-    session_id = str(getattr(attempt, "codex_session_id", "") or "").strip()
-    if not session_id:
-        session_id = str(getattr(audit or consumer, "codex_session_id", "") or "").strip()
-    if session_id:
-        from app.codex_history import find_codex_session_path
-
-        if find_codex_session_path(session_id) is None:
-            session_id = ""
     delivery_action_label = ""
     delivery_action_url = ""
     if wechat_delivery is not None:
@@ -166,9 +231,16 @@ def _action_links(
         "rerun_url": f"/api/console/history/{int(attempt.id)}/rerun",
         "recall_url": f"/api/console/history/{int(attempt.id)}/recall",
         "feedback_url": f"/api/console/history/{int(attempt.id)}/feedback",
-        "consumer_url": f"/attempts/{int(attempt.id)}/execution/consumer" if consumer else "",
-        "audit_url": f"/attempts/{int(attempt.id)}/execution/audit" if audit else "",
-        "agent_url": f"/codex/{quote(session_id, safe='')}" if session_id else "",
+        "consumer_url": _execution_url(attempt, agent_sessions, "consumer"),
+        "audit_url": _execution_url(attempt, agent_sessions, "audit"),
+        "agent_url": next(
+            (
+                str(session["url"])
+                for session in agent_sessions
+                if session["session_id"] == str(getattr(attempt, "codex_session_id", "") or "").strip()
+            ),
+            "",
+        ),
         "dingtalk_url": dingtalk_url,
         "wechat_open_url": (
             f"/api/console/history/{int(attempt.id)}/open-wechat-message"
@@ -224,6 +296,7 @@ def build_attempt_detail(store: Any, attempt_id: int) -> tuple[int, dict[str, An
         decision_options=_needs_human_decision_options(attempt, agent_runs),
     )
     runtime_attempts = _runtime_payload(agent_runs, store)
+    agent_sessions = _agent_sessions(attempt, agent_runs)
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
     status_message, requires_decision = _status_message(attempt, attention)
@@ -258,13 +331,22 @@ def build_attempt_detail(store: Any, attempt_id: int) -> tuple[int, dict[str, An
         action_pills.append({"label": f"📆 {attempt.calendar_response_status.strip()}", "status": attempt.calendar_response_status})
     if _route_failure_recovery_state(attempt, reply_task):
         action_pills.append({"label": "↻ Recovery", "status": _route_failure_recovery_state(attempt, reply_task)})
-    tool_uses = json_safe(_audit_tool_uses_for_attempt(attempt)) if not agent_runs else []
+    # The calls a run made are the only readable account of what it did. They
+    # used to be dropped whenever agent runs existed, on the assumption that a
+    # per-role page showed them instead; no such page ever rendered them, so
+    # the process was missing from every agent Attempt. When the runs do have
+    # readable transcripts their calls are carried per role by agent_sessions,
+    # addressed by the run that made them; this field then holds nothing, and
+    # it stays the only source for an Attempt whose transcript is gone.
+    tool_uses = (
+        [] if agent_sessions else json_safe(_audit_tool_uses_for_attempt(attempt))
+    )
     return 200, {
         "id": attempt.id,
         "title": normalize_display_value(attempt.conversation_title),
         "type": normalize_display_value(attempt.action),
         "conversation": {
-            "label": "群名",
+            "label": _conversation_label(attempt),
             "title": normalize_display_value(attempt.conversation_title),
             "trigger_sender": normalize_display_value(attempt.trigger_sender),
         },
@@ -330,9 +412,10 @@ def build_attempt_detail(store: Any, attempt_id: int) -> tuple[int, dict[str, An
             "result": _stored_json(attempt.calendar_response_result_json, {}),
         },
         "actions": _action_links(
-            attempt, agent_runs, reply_task, sent_reply, wechat_delivery
+            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery
         ),
-            "runtime_attempts": runtime_attempts,
+        "agent_sessions": agent_sessions,
+        "runtime_attempts": runtime_attempts,
         "created_at": normalize_display_value(attempt.created_at),
         "updated_at": normalize_display_value(attempt.updated_at),
     }

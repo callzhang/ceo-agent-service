@@ -1027,6 +1027,24 @@ h1, h2, h3, p { margin-top: 0; }
 .feedback-iteration-text { min-height: 1.5em; white-space: pre-wrap; }
 .attempt-feedback-event-meta { display: flex; justify-content: space-between; gap: 10px; margin-top: 9px; font-weight: 500; }
 .attempt-runtime-list { display: grid; gap: 10px; }
+.attempt-process-card h2 { margin-bottom: 6px; }
+.attempt-process-card > p { margin: 0 0 14px; color: var(--ink-soft); font-size: .82rem; line-height: 1.5; }
+.attempt-process-role { margin-bottom: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
+.attempt-process-role:last-child { margin-bottom: 0; }
+.attempt-process-role > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; cursor: pointer; list-style: none; }
+.attempt-process-role > summary::-webkit-details-marker { display: none; }
+.attempt-process-role > summary strong { color: var(--ink); font-size: .86rem; font-weight: 800; }
+.attempt-process-role > summary span { color: var(--ink-soft); font-size: .76rem; }
+.attempt-process-role-body { display: grid; justify-items: start; gap: 12px; padding: 0 14px 14px; }
+.attempt-tool-use-list { display: grid; gap: 10px; width: 100%; margin: 0; padding: 0; list-style: none; counter-reset: attempt-tool-use; }
+.attempt-tool-use { min-width: 0; padding: 12px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.attempt-tool-use header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.attempt-tool-use header strong { color: var(--ink); font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .82rem; font-weight: 800; }
+.attempt-tool-use header small { overflow-wrap: anywhere; color: var(--ink-soft); font-size: .72rem; }
+.attempt-tool-use-relevance { margin: 0 0 8px; color: var(--ink-soft); font-size: .78rem; }
+.attempt-tool-use dl { display: grid; gap: 8px; margin: 0; }
+.attempt-tool-use dt { color: var(--ink-soft); font-size: .68rem; }
+.attempt-tool-use dd { margin: 3px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .74rem; line-height: 1.45; }
 .attempt-runtime-entry { padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
 .attempt-runtime-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .attempt-runtime-heading strong { overflow-wrap: anywhere; }
