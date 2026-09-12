@@ -67,8 +67,29 @@ it("opens readonly body and metadata drawer and restores focus without losing se
   const drawer=await screen.findByRole("dialog",{name:"邮件详情"});
   expect(await within(drawer).findByText(/完整正文/)).toHaveTextContent("> 引用邮件");
   expect(drawer).toHaveTextContent("a.pdf");expect(drawer).not.toHaveTextContent("SECRET");
-  expect(within(drawer).queryByRole("button",{name:/保存分类/})).not.toBeInTheDocument();
+  expect(within(drawer).getByRole("button",{name:"保存分类并继续"})).toBeInTheDocument();
   await user.keyboard("{Escape}");expect(trigger).toHaveFocus();expect(screen.getByLabelText("URL")).toHaveTextContent("selected=1");
+});
+it("reclassifies a processed message with its current ActionPlan and advances selection",async()=>{
+  const user=userEvent.setup();
+  const legalConfig={...config,category_key:"legal",display_name:"法务"};
+  api.listEmailConfigs.mockResolvedValue({items:[config,legalConfig]});
+  api.listEmailClassifications
+    .mockResolvedValueOnce({items:[{...row("1","processed"),current_action_plan_id:"plan-v1"},row("2","processed")],meta:{total:2,page:1,page_size:50,snapshot_at:""}})
+    .mockResolvedValueOnce({items:[row("2","processed")],meta:{total:1,page:1,page_size:50,snapshot_at:""}});
+  api.getEmailClassification.mockResolvedValue({item:{...row("1","processed"),category:"work",current_action_plan_id:"plan-v1",message_text:"完整正文",attachment_metadata:[]},observability:[]});
+  api.confirmEmailClassification.mockResolvedValue({ok:true,message:"已保存"});
+  show("/email?filter=processed&page=1&page_size=50&selected=1");
+
+  const drawer=await screen.findByRole("dialog",{name:"邮件详情"});
+  expect(drawer).toHaveTextContent("当前分类：工作");
+  expect(drawer).toHaveTextContent("plan-v1");
+  await user.click(within(drawer).getByRole("button",{name:"法务"}));
+  await user.click(within(drawer).getByRole("button",{name:"保存分类并继续"}));
+
+  expect(api.confirmEmailClassification).toHaveBeenCalledWith("1","legal",expect.any(String),"plan-v1");
+  await waitFor(()=>expect(screen.getByLabelText("URL")).toHaveTextContent("selected=2"));
+  expect(screen.getByRole("button",{name:"打开邮件 邮件2"})).toBeInTheDocument();
 });
 it("labels the pending decision bar for keyboard and assistive navigation",async()=>{
   const user=userEvent.setup();show("/email?filter=pending_feedback&selected=1");
