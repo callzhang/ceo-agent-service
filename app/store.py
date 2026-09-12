@@ -25085,9 +25085,21 @@ class AutoReplyStore:
                     trigger_sender as source_actor,
                     conversation_title as context,
                     trigger_text as summary,
-                    case when coalesce(resolved_at, '')='' then send_error
-                         else send_error || char(10) || 'Resolved: ' || resolution
-                    end as detail,
+                    -- What the run produced: the reply it sent, or the audit
+                    -- conclusion when it sent nothing. Without it a reader has
+                    -- only the trigger text and cannot tell the two apart.
+                    trim(
+                        coalesce(
+                            nullif(final_reply_text, ''),
+                            nullif(audit_summary, ''),
+                            ''
+                        )
+                        || case when send_error<>''
+                                then char(10) || send_error else '' end
+                        || case when coalesce(resolved_at, '')<>''
+                                then char(10) || 'Resolved: ' || resolution
+                                else '' end
+                    , char(10)) as detail,
                     conversation_id as conversation_id,
                     trigger_message_id as message_id,
                     0 as project_id,

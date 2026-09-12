@@ -1755,6 +1755,52 @@ def test_operation_logs_project_recovered_failures_without_losing_history(tmp_pa
     assert failed == []
 
 
+def test_operation_logs_carry_the_outcome_a_reply_attempt_reached(tmp_path: Path):
+    """A history row must say what the run did, not repeat what triggered it.
+
+    A skipped run produces no reply, so a row that carries only the trigger text
+    reads as though the service answered with the message it was given.
+    """
+    store = _store(tmp_path)
+    skipped_id = store.record_reply_attempt(
+        conversation_id="history-outcome",
+        conversation_title="磊哥",
+        trigger_message_id="history-outcome-message",
+        trigger_sender="磊哥",
+        trigger_text="【会议跟进】销售周会",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="skipped",
+    )
+    store.update_reply_attempt(
+        skipped_id,
+        audit_summary="No action: the follow-up asks nothing of Derek.",
+    )
+    sent_id = store.record_reply_attempt(
+        conversation_id="history-outcome",
+        conversation_title="磊哥",
+        trigger_message_id="history-outcome-message-2",
+        trigger_sender="磊哥",
+        trigger_text="这条要回复吗？",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+    store.update_reply_attempt(
+        sent_id,
+        audit_summary="Replied with the agreed scope.",
+        final_reply_text="先按灰度推进。",
+    )
+
+    rows = {
+        row.source_id: row
+        for row in store.list_operation_logs(source_tables=("reply_attempts",))
+    }
+
+    assert rows[skipped_id].detail == "No action: the follow-up asks nothing of Derek."
+    assert rows[sent_id].detail == "先按灰度推进。"
+
+
 def test_operation_logs_project_recovered_meeting_failures(tmp_path: Path):
     store = _store(tmp_path)
     job_id = store.upsert_meeting_alignment_job(
