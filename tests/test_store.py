@@ -1574,7 +1574,12 @@ def test_recover_orphaned_task_agent_run_when_parent_input_is_pending(tmp_path: 
     )
     assert len(store.reset_processing_work_summary_inputs()) == 1
 
-    assert store.recover_orphaned_task_agent_runs() == 1
+    # The reset closes the run and its runtime attempt in its own transaction,
+    # so the reaper has nothing left to find. It used to leave both live, and
+    # because the reaper only sees an orphan once the parent input is already
+    # out of 'processing', service start ran it BEFORE the reset that creates
+    # them -- so every restart's wreckage waited for the next restart.
+    assert store.recover_orphaned_task_agent_runs() == 0
 
     with store._connect() as db:
         run = db.execute(
@@ -9545,3 +9550,100 @@ def test_an_explicit_resolution_still_retires_any_status(tmp_path):
         )
 
     assert _projected(store, blocked) == "recovered"
+
+
+def _input_with_live_run(store):
+    """One work item mid-flight: claimed, with a running run and a leased attempt."""
+
+    input_id = store.enqueue_work_summary_input("local_file", "source", "{}")
+    assert len(store.claim_work_summary_inputs(1)) == 1
+    run_id = store.begin_task_agent_run(input_id)
+    attempt = store.claim_runtime_operation_attempt(
+        "task",
+        str(run_id),
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="leaving-processing",
+        lease_seconds=1800,
+    )
+    return input_id, run_id, attempt
+
+
+def _live_counts(store, run_id: int, attempt_id: int) -> tuple[str, str]:
+    with store._connect() as db:
+        run = db.execute(
+            "select status from task_agent_runs where id=?", (run_id,)
+        ).fetchone()
+    attempt = store.get_agent_runtime_attempt(attempt_id)
+    return run["status"], attempt.status
+
+
+def test_an_input_never_leaves_processing_with_a_live_run_behind_it(tmp_path: Path):
+    """The reaper could only ever see an orphan the reset had already made.
+
+    recover_orphaned_task_agent_runs joins on `input.status <> 'processing'`,
+    and service start ran it BEFORE reset_processing_work_summary_inputs. So
+    every restart's reaper found nothing, the reset then orphaned that
+    restart's runs, and the wreckage waited for the NEXT restart -- 6 attempts
+    closed that way on 2026-09-12 and 36 on 2026-09-08. A runtime attempt left
+    leased that way is what a re-claimed input then collides with, which is
+    where runtime_attempt_active came from.
+    """
+
+    store = AutoReplyStore(tmp_path / "leaving-processing.sqlite3")
+    _input_id, run_id, attempt = _input_with_live_run(store)
+    assert _live_counts(store, run_id, attempt.id) == ("running", "starting")
+
+    store.reset_processing_work_summary_inputs()
+
+    assert _live_counts(store, run_id, attempt.id) == ("failed", "failed")
+    recovered = store.get_agent_runtime_attempt(attempt.id)
+    assert recovered.failure_code == "runtime_parent_terminal_no_effect"
+    assert recovered.lease_expires_at == ""
+
+
+def test_the_stale_reset_also_closes_what_it_orphans(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "stale-leaving.sqlite3")
+    input_id, run_id, attempt = _input_with_live_run(store)
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set updated_at=datetime('now','-3600 seconds') "
+            "where id=?",
+            (input_id,),
+        )
+
+    assert store.reset_stale_processing_work_summary_inputs(1200) == 1
+
+    assert _live_counts(store, run_id, attempt.id) == ("failed", "failed")
+
+
+def test_a_capacity_deferral_closes_what_it_orphans(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "capacity-leaving.sqlite3")
+    input_id, run_id, attempt = _input_with_live_run(store)
+
+    store.defer_work_summary_input_for_capacity(
+        input_id, "runtime_provider_unreachable", available_at=""
+    )
+
+    assert _live_counts(store, run_id, attempt.id) == ("failed", "failed")
+
+
+def test_an_attempt_that_started_a_provider_effect_is_left_alone(tmp_path: Path):
+    """Only an attempt that did nothing outside is safe to close from here."""
+
+    store = AutoReplyStore(tmp_path / "effectful-leaving.sqlite3")
+    _input_id, run_id, attempt = _input_with_live_run(store)
+    with store._connect() as db:
+        db.execute(
+            "update agent_runtime_attempts set first_effect_started_at=current_timestamp "
+            "where id=?",
+            (attempt.id,),
+        )
+
+    store.reset_processing_work_summary_inputs()
+
+    run_status, attempt_status = _live_counts(store, run_id, attempt.id)
+    assert run_status == "failed"
+    assert attempt_status == "starting"

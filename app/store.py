@@ -21179,22 +21179,95 @@ class AutoReplyStore:
             ).fetchone()
         return WorkSummaryInput.model_validate(dict(row)) if row is not None else None
 
+    @staticmethod
+    def _close_task_runs_leaving_processing(
+        db: sqlite3.Connection,
+        input_ids: Sequence[int],
+    ) -> int:
+        """Close the runs and runtime attempts of inputs leaving 'processing'.
+
+        recover_orphaned_task_agent_runs can only see an orphan once its parent
+        input is no longer processing, so running it *before* the reset that
+        creates the orphans finds nothing and the wreckage waits for the next
+        restart. Closing in the same transaction as the status change removes
+        the ordering question entirely: an input never leaves 'processing'
+        while a live run or a leased runtime attempt still points at it.
+
+        Only an attempt that has started no provider effect is closed; one that
+        has is left alone for the ordinary effect reconciliation.
+        """
+
+        if not input_ids:
+            return 0
+        placeholders = ",".join("?" for _ in input_ids)
+        run_rows = db.execute(
+            f"""
+            select id from task_agent_runs
+            where status='running' and summary_input_id in ({placeholders})
+            """,
+            list(input_ids),
+        ).fetchall()
+        if not run_rows:
+            return 0
+        run_ids = [int(row["id"]) for row in run_rows]
+        run_placeholders = ",".join("?" for _ in run_ids)
+        db.execute(
+            f"""
+            update task_agent_runs
+            set status='failed',
+                error='orphaned_task_agent_run_parent_not_processing',
+                finished_at=current_timestamp, updated_at=current_timestamp
+            where status='running' and id in ({run_placeholders})
+            """,
+            run_ids,
+        )
+        db.execute(
+            f"""
+            update agent_runtime_attempts
+            set status='failed', failure_class='process',
+                failure_code='runtime_parent_terminal_no_effect',
+                failover_permitted=1, lease_owner='', lease_expires_at='',
+                finished_at=current_timestamp, updated_at=current_timestamp
+            where workload_kind='task'
+              and workload_key in ({run_placeholders})
+              and status in ('starting', 'running')
+              and first_effect_started_at=''
+            """,
+            [str(run_id) for run_id in run_ids],
+        )
+        return len(run_ids)
+
     def reset_stale_processing_work_summary_inputs(self, max_age_seconds: int) -> int:
         if max_age_seconds <= 0:
             return 0
         with self._connect() as db:
+            db.execute("begin immediate")
+            stale = [
+                int(row["id"])
+                for row in db.execute(
+                    """
+                    select id from work_summary_inputs
+                    where status='processing'
+                      and datetime(updated_at) <= datetime('now', ?)
+                    """,
+                    (f"-{int(max_age_seconds)} seconds",),
+                )
+            ]
+            if not stale:
+                return 0
+            placeholders = ",".join("?" for _ in stale)
             cursor = db.execute(
-                """
+                f"""
                 update work_summary_inputs
                 set status='pending',
                     attempts=max(attempts - 1, 0),
                     error='',
                     updated_at=current_timestamp
-                where status='processing'
-                  and datetime(updated_at) <= datetime('now', ?)
+                where id in ({placeholders})
                 """,
-                (f"-{int(max_age_seconds)} seconds",),
+                stale,
             )
+            self._close_task_runs_leaving_processing(db, stale)
             return cursor.rowcount
 
     def reset_processing_work_summary_inputs(self) -> list[WorkSummaryInput]:
@@ -21222,6 +21295,7 @@ class AutoReplyStore:
                 """,
                 input_ids,
             )
+            self._close_task_runs_leaving_processing(db, input_ids)
             return [WorkSummaryInput.model_validate(dict(row)) for row in rows]
 
     def mark_work_summary_input_done(
@@ -21296,6 +21370,7 @@ class AutoReplyStore:
                 """,
                 (error, available_at, input_id),
             )
+            self._close_task_runs_leaving_processing(db, [input_id])
 
     def defer_work_summary_input_for_capacity(
         self, input_id: int, error: str, *, available_at: str
@@ -21313,6 +21388,7 @@ class AutoReplyStore:
                 """,
                 (error, available_at, input_id),
             )
+            self._close_task_runs_leaving_processing(db, [input_id])
 
     def defer_meeting_alignment_job_for_capacity(
         self, job_id: int, *, available_at: str, error: str
