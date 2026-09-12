@@ -2814,6 +2814,20 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                             where sr.conversation_id=a.conversation_id
                               and sr.trigger_message_id=a.trigger_message_id
                         )
+                        or exists (
+                            select 1
+                            from business_object_tasks current_business_object
+                            join reply_tasks current_task
+                              on current_task.id=current_business_object.reply_task_id
+                            where current_business_object.business_object_key=(
+                                'message:' || a.channel || ':' ||
+                                a.conversation_id || ':' ||
+                                a.trigger_message_id
+                            )
+                              and lower(current_task.status) in (
+                                  'done', 'skipped', 'needs_human'
+                              )
+                        )
                     ) then 'recovered'
                     else lower(coalesce(a.send_status, ''))
                 end as live_status

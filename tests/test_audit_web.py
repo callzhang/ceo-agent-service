@@ -7419,6 +7419,70 @@ def test_worker_attempt_counts_hide_historical_needs_human_business_object(
     assert store.get_reply_attempt(attempt_id).send_status == "needs_human"
 
 
+def test_attention_hides_failed_attempt_recovered_by_coalesced_business_object(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    original_message_id = "approval-reminder-1"
+    current = store.ensure_reply_task(
+        conversation_id="salary-conversation",
+        conversation_title="Payroll approval",
+        single_chat=True,
+        trigger_message_id="later-coalesced-call",
+        trigger_create_time="2026-09-10 14:44:58",
+        trigger_sender="Ming Hu",
+        trigger_text="[视频通话] 未接通",
+        business_object_key=(
+            "message:dingtalk:salary-conversation:approval-reminder-1"
+        ),
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where id=?", (current.id,))
+    attempt_id = store.record_reply_attempt(
+        conversation_id="salary-conversation",
+        conversation_title="Payroll approval",
+        trigger_message_id=original_message_id,
+        trigger_sender="Ming Hu",
+        trigger_text="请审批工资，今天是发放工资的日子。",
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="runtime_provider_unreachable",
+        send_status="failed",
+        channel="dingtalk",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="failed",
+        send_error="runtime_provider_unreachable",
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+    payload = build_worker_status_payload(store)
+    reply_attempt_queue = next(
+        queue for queue in payload["queues"] if queue["name"] == "Reply attempts"
+    )
+
+    assert not any(
+        row["category"] == "Reply" and row["id"] == str(attempt_id)
+        for row in rows
+    )
+    assert reply_attempt_queue["failed"] == 0
+    assert reply_attempt_queue["counts"].get("recovered", 0) == 1
+    assert store.count_current_unresolved_problem_attempts() == 0
+    assert [
+        row.source_id
+        for row in store.list_operation_logs(
+            statuses=("recovered",), source_tables=("reply_attempts",)
+        )
+    ] == [attempt_id]
+    assert (
+        store.list_operation_logs(
+            statuses=("failed",), source_tables=("reply_attempts",)
+        )
+        == []
+    )
+
+
 def test_attention_includes_recent_unresolved_service_errors(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error(

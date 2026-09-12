@@ -129,7 +129,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-11.2"
+STORE_SCHEMA_VERSION = "2026-09-11.3"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -4010,6 +4010,10 @@ class AutoReplyStore:
                 ("feedback_scope", "text not null default 'one_time'"),
                 ("skill_update_requested", "integer not null default 0"),
                 ("skill_update_receipts_json", "text not null default '[]'"),
+                # An attempt the principal settled outside the service, and the
+                # live evidence that says so. Same pair `errors` already keeps.
+                ("resolved_at", "text not null default ''"),
+                ("resolution", "text not null default ''"),
             ):
                 if column not in reply_attempt_columns:
                     try:
@@ -19986,6 +19990,20 @@ class AutoReplyStore:
                         and historical_task.trigger_message_id=attempts.trigger_message_id
                         and current_business_object.reply_task_id<>historical_task.id
                   )
+                  and not exists (
+                      select 1
+                      from business_object_tasks as current_business_object
+                      join reply_tasks as current_task
+                        on current_task.id=current_business_object.reply_task_id
+                      where current_business_object.business_object_key=(
+                          'message:' || attempts.channel || ':' ||
+                          attempts.conversation_id || ':' ||
+                          attempts.trigger_message_id
+                      )
+                        and current_task.status in (
+                            'done', 'skipped', 'needs_human', 'pending', 'processing'
+                        )
+                  )
                   and (
                       (
                           attempts.send_status = 'needs_human'
@@ -20047,6 +20065,20 @@ class AutoReplyStore:
                         and historical_task.conversation_id=attempts.conversation_id
                         and historical_task.trigger_message_id=attempts.trigger_message_id
                         and current_business_object.reply_task_id<>historical_task.id
+                  )
+                  and not exists (
+                      select 1
+                      from business_object_tasks as current_business_object
+                      join reply_tasks as current_task
+                        on current_task.id=current_business_object.reply_task_id
+                      where current_business_object.business_object_key=(
+                          'message:' || attempts.channel || ':' ||
+                          attempts.conversation_id || ':' ||
+                          attempts.trigger_message_id
+                      )
+                        and current_task.status in (
+                            'done', 'skipped', 'needs_human', 'pending', 'processing'
+                        )
                   )
                   and (
                       (
@@ -20117,6 +20149,20 @@ class AutoReplyStore:
                         and historical_task.conversation_id=attempts.conversation_id
                         and historical_task.trigger_message_id=attempts.trigger_message_id
                         and current_business_object.reply_task_id<>historical_task.id
+                  )
+                  and not exists (
+                      select 1
+                      from business_object_tasks as current_business_object
+                      join reply_tasks as current_task
+                        on current_task.id=current_business_object.reply_task_id
+                      where current_business_object.business_object_key=(
+                          'message:' || attempts.channel || ':' ||
+                          attempts.conversation_id || ':' ||
+                          attempts.trigger_message_id
+                      )
+                        and current_task.status in (
+                            'done', 'skipped', 'needs_human', 'pending', 'processing'
+                        )
                   )
                   and (
                       (
@@ -24852,6 +24898,18 @@ class AutoReplyStore:
                                   and terminal_tasks.conversation_id=reply_attempts.conversation_id
                                   and terminal_tasks.trigger_message_id=reply_attempts.trigger_message_id
                                   and terminal_tasks.status in ('done', 'skipped', 'needs_human')
+                            )
+                            or exists (
+                                select 1
+                                from business_object_tasks as current_business_object
+                                join reply_tasks as current_task
+                                  on current_task.id=current_business_object.reply_task_id
+                                where current_business_object.business_object_key=(
+                                    'message:' || reply_attempts.channel || ':' ||
+                                    reply_attempts.conversation_id || ':' ||
+                                    reply_attempts.trigger_message_id
+                                )
+                                  and current_task.status in ('done', 'skipped', 'needs_human')
                             )
                         ) then 'recovered'
                         else send_status
