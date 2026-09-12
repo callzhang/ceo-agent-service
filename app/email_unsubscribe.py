@@ -3052,6 +3052,67 @@ class PlaywrightUnsubscribeBrowser:
             ) from None
 
 
+def open_live_unsubscribe_session(
+    profile: object,
+    *,
+    timeout_ms: int = 5_000,
+    connected_recipient: str = "",
+    email_otp_resolver: Callable[[EmailOtpChallenge], ConnectedMailboxOtp | None]
+    | None = None,
+) -> tuple[object, object, object, Callable[[], None]]:
+    """Open one isolated page in the dedicated profile and adapt it.
+
+    The caller owns the profile lock through the session manager; this only
+    builds the context, the single blank page, and the browser adapter, and
+    returns the cleanup that closes both.
+    """
+
+    from app.email_browser_profile import launch_persistent_email_context
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise UnsubscribeBrowserError(
+            UnsubscribeBrowserFailure.RUNTIME_UNAVAILABLE,
+            "headless browser runtime is unavailable",
+        ) from exc
+    playwright = sync_playwright().start()
+    context = None
+    try:
+        context = launch_persistent_email_context(playwright, profile)
+        page = context.new_page()
+        for existing in tuple(getattr(context, "pages", ())):
+            if existing is not page:
+                existing.close()
+        if str(getattr(page, "url")) != "about:blank":
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.SESSION_RESTORE_REJECTED,
+                "browser session restore rejected",
+            )
+        browser = PlaywrightUnsubscribeBrowser(
+            page,
+            timeout_ms=timeout_ms,
+            connected_recipient=connected_recipient,
+            email_otp_resolver=email_otp_resolver,
+        )
+
+        def cleanup() -> None:
+            try:
+                context.close()
+            finally:
+                playwright.stop()
+
+        return context, page, browser, cleanup
+    except Exception:
+        if context is not None:
+            try:
+                context.close()
+            except Exception:
+                pass
+        playwright.stop()
+        raise
+
+
 def execute_unsubscribe_in_dedicated_profile(
     effect: EmailUnsubscribeEffect,
     entries: tuple[UnsubscribeEntry, ...],
@@ -3078,7 +3139,6 @@ def execute_unsubscribe_in_dedicated_profile(
     from app.email_browser_profile import (
         EmailBrowserProfileError,
         email_browser_session_manager,
-        launch_persistent_email_context,
     )
 
     manager = session_manager or email_browser_session_manager(profile)
@@ -3108,54 +3168,13 @@ def execute_unsubscribe_in_dedicated_profile(
         except (EmailBrowserProfileError, OSError):
             pass
 
-    def fresh_isolated_page(context: object) -> object:
-        page = context.new_page()
-        for existing in tuple(getattr(context, "pages", ())):
-            if existing is page:
-                continue
-            existing.close()
-        if str(getattr(page, "url")) != "about:blank":
-            raise UnsubscribeBrowserError(
-                UnsubscribeBrowserFailure.SESSION_RESTORE_REJECTED,
-                "browser session restore rejected",
-            )
-        return page
-
     def open_live_session() -> tuple[object, object, object, Callable[[], None]]:
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as exc:
-            raise UnsubscribeBrowserError(
-                UnsubscribeBrowserFailure.RUNTIME_UNAVAILABLE,
-                "headless browser runtime is unavailable",
-            ) from exc
-        playwright = sync_playwright().start()
-        context = None
-        try:
-            context = launch_persistent_email_context(playwright, profile)
-            page = fresh_isolated_page(context)
-            browser = PlaywrightUnsubscribeBrowser(
-                page,
-                timeout_ms=timeout_ms,
-                connected_recipient=connected_recipient,
-                email_otp_resolver=email_otp_resolver,
-            )
-
-            def cleanup() -> None:
-                try:
-                    context.close()
-                finally:
-                    playwright.stop()
-
-            return context, page, browser, cleanup
-        except Exception:
-            if context is not None:
-                try:
-                    context.close()
-                except Exception:
-                    pass
-            playwright.stop()
-            raise
+        return open_live_unsubscribe_session(
+            profile,
+            timeout_ms=timeout_ms,
+            connected_recipient=connected_recipient,
+            email_otp_resolver=email_otp_resolver,
+        )
 
     restored_session: _RestoredAuditSession | None = None
     session_reference = ""
@@ -4271,3 +4290,15 @@ class UnsubscribeExecutor:
             journal,
             error_code="email_unsubscribe_outcome_unverified",
         )
+
+
+# The direct unsubscribe driver in app.email_unsubscribe_direct builds the
+# same results from the same page reads, so it needs these under a public
+# name. They stay one definition: the private names are what this module's
+# own call sites already use.
+make_unsubscribe_result = _result
+terminal_unsubscribe_result = _terminal_result
+browser_failure_code = _browser_failure_code
+browser_failure_category = _browser_failure_category
+browser_failure_observation_fields = _browser_failure_observation_fields
+is_unoperable_page = _is_unoperable_page

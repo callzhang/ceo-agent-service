@@ -24,9 +24,11 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
         "read_text_file",
         "read_spreadsheet",
         "execute_audited_email_unsubscribe",
+        "unsubscribe_email",
     }
     assert all(description.strip() for description in descriptions.values())
     assert "email unsubscribe" in descriptions["execute_audited_email_unsubscribe"]
+    assert "Unsubscribe this email task" in descriptions["unsubscribe_email"]
     assert "Consumer and Audit commands" in agent_cli.server.instructions
     assert "execute_email_unsubscribe" not in descriptions
 

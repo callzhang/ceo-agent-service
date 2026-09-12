@@ -9490,6 +9490,7 @@ def test_connect_closes_connection_after_each_call(
         "claim": None,
         "continuation": None,
         "effects": (),
+        "receipt": None,
     }
     assert store.get_email_unsubscribe_terminal_snapshot("missing-identity") is None
 

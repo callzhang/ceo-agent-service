@@ -96,6 +96,7 @@ def test_legacy_unsubscribe_write_tool_is_not_registered() -> None:
 
     assert "execute_email_unsubscribe" not in tool_names
     assert "execute_audited_email_unsubscribe" in tool_names
+    assert "unsubscribe_email" in tool_names
 
 
 @dataclass(frozen=True)

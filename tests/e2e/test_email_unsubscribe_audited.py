@@ -48,7 +48,10 @@ from app.email_unsubscribe import (
     browser_unsubscribe_entries,
     execute_unsubscribe_in_dedicated_profile,
 )
-from app.email_unsubscribe_audit import EmailUnsubscribeAuditOperation
+from app.email_unsubscribe_direct import (
+    DirectEmailUnsubscribeOperation,
+    run_unsubscribe_in_dedicated_profile,
+)
 from app.email_unsubscribe_continuation import EmailUnsubscribeContinuationDriver
 from app.email_worker import _finalize_email_task, run_email_agent_task_loop
 from app.process_runner import ProcessRunResult
@@ -360,23 +363,15 @@ class _AuditedTurnExecutor:
             if run.role is AgentRole.AUDIT and run.status == "running"
         ]
         audit_run = max(running, key=lambda run: run.id)
-        assert f"audit_agent_run_id={audit_run.id}" in prompt
         task = self.task_store.get_reply_task(self.task_id)
         assert task is not None
+        # The whole call: one argument the model cannot forge.
         capability_arguments = json.loads(
-            json.dumps(
-                {
-                    "task_id": task.id,
-                    "execution_generation": task.execution_generation,
-                    "audit_agent_run_id": audit_run.id,
-                    "accepted_action": accepted_action,
-                },
-                sort_keys=True,
-            )
+            json.dumps({"task_id": task.id}, sort_keys=True)
         )
         mcp_result = asyncio.run(
             agent_cli.server.call_tool(
-                "execute_audited_email_unsubscribe",
+                "unsubscribe_email",
                 capability_arguments,
             )
         )
@@ -387,7 +382,7 @@ class _AuditedTurnExecutor:
         self.audit_invocations.append(
             {
                 "run_id": audit_run.id,
-                "capability": "execute_audited_email_unsubscribe",
+                "capability": "unsubscribe_email",
                 "arguments": capability_arguments,
                 "mcp_content": mcp_content,
                 "accepted_action": accepted_action,
@@ -692,10 +687,11 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
         launch_for_fixture,
     )
     monkeypatch.setattr(
-        "app.email_unsubscribe_audit.browser_unsubscribe_entries",
-        lambda entries: browser_unsubscribe_entries(
+        "app.email_unsubscribe.browser_unsubscribe_entries",
+        lambda entries, **kwargs: browser_unsubscribe_entries(
             entries,
             allow_loopback_for_tests=True,
+            **{key: value for key, value in kwargs.items() if key != "allow_loopback_for_tests"},
         ),
     )
 
@@ -749,29 +745,20 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             allow_loopback_for_tests=True,
         )
 
-        def execute_effect(
-            effect,
-            resolved_entries,
-            *,
-            owner,
-            executed_prefix_length,
-        ):
-            return execute_unsubscribe_in_dedicated_profile(
+        def run_effect(effect, entry, *, one_click_verified):
+            return run_unsubscribe_in_dedicated_profile(
                 effect,
-                tuple(resolved_entries),
-                store=email_store,
+                entry,
                 profile=dedicated_profile,
-                owner=owner,
-                executed_prefix_length=executed_prefix_length,
+                one_click_verified=one_click_verified,
                 timeout_ms=3_000,
             )
 
-        audit_operation = EmailUnsubscribeAuditOperation(
+        unsubscribe_operation = DirectEmailUnsubscribeOperation(
             task_store=task_store,
             email_store=email_store,
             resolve_entries=lambda *_args, **_kwargs: entries,
-            execute_effect=execute_effect,
-            owner_id="audited-email-e2e",
+            run_effect=run_effect,
         )
         operation_builds: list[Path] = []
 
@@ -779,11 +766,11 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             received_path = Path(settings.db_path)
             operation_builds.append(received_path)
             assert received_path.resolve() == database.resolve()
-            return audit_operation
+            return unsubscribe_operation
 
         monkeypatch.setattr("app.config.worker_db_path", lambda: database)
         monkeypatch.setattr(
-            "app.email_worker.build_audited_email_unsubscribe_operation",
+            "app.email_worker.build_direct_email_unsubscribe_operation",
             build_fixture_operation,
         )
         executor = _AuditedTurnExecutor(
@@ -858,55 +845,32 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
         browser_launches,
         _UnsubscribeHandler.requests,
     )
-    assert [run.role for run in runs].count(AgentRole.CONSUMER) == 2
-    assert [run.role for run in runs].count(AgentRole.AUDIT) == 2
+    # The second page used to cost a second Consumer/Audit round through a
+    # durable continuation. One call now walks both pages.
+    assert [run.role for run in runs].count(AgentRole.CONSUMER) == 1
+    assert [run.role for run in runs].count(AgentRole.AUDIT) == 1
     assert all(run.status == "completed" for run in runs)
-    assert len(executor.audit_invocations) == 2
+    assert len(executor.audit_invocations) == 1
     assert [(run.role.value, run.proposal_revision) for run in runs] == [
         ("consumer", 0),
         ("audit", 0),
-        ("consumer", 1),
-        ("audit", 1),
     ]
-    first_consumer, first_audit, second_consumer, second_audit = runs
-    assert first_consumer.parent_agent_run_id is None
-    assert first_audit.parent_agent_run_id == first_consumer.id
-    assert second_consumer.parent_agent_run_id == first_audit.id
-    assert second_audit.parent_agent_run_id == second_consumer.id
+    consumer_run, audit_run = runs
+    assert consumer_run.parent_agent_run_id is None
+    assert audit_run.parent_agent_run_id == consumer_run.id
     assert all(run.reply_task_id == task.id for run in runs)
     assert all(run.execution_generation == task.execution_generation for run in runs)
     assert [invocation["run_id"] for invocation in executor.audit_invocations] == [
-        first_audit.id,
-        second_audit.id,
+        audit_run.id
     ]
     assert [invocation["capability"] for invocation in executor.audit_invocations] == [
-        "execute_audited_email_unsubscribe",
-        "execute_audited_email_unsubscribe",
+        "unsubscribe_email"
     ]
-    assert operation_builds == [database, database]
-
-    first_operations = executor.consumer_proposals[0]["payload"]["operations"]
-    second_operations = executor.consumer_proposals[1]["payload"]["operations"]
-    assert [item["kind"] for item in first_operations] == ["open_entry"]
-    assert [item["kind"] for item in second_operations] == [
-        "open_entry",
-        "submit_form",
+    assert operation_builds == [database]
+    assert executor.continuation_receipts == []
+    assert [invocation["arguments"] for invocation in executor.audit_invocations] == [
+        {"task_id": task.id}
     ]
-    assert second_operations[:-1] == first_operations
-    assert len(executor.continuation_receipts) == 1
-    assert [
-        len(invocation["accepted_action"]["payload"]["operations"])
-        for invocation in executor.audit_invocations
-    ] == [1, 2]
-    for index, invocation in enumerate(executor.audit_invocations):
-        arguments = invocation["arguments"]
-        assert arguments == {
-            "task_id": task.id,
-            "execution_generation": task.execution_generation,
-            "audit_agent_run_id": (first_audit.id, second_audit.id)[index],
-            "accepted_action": executor.consumer_proposals[index],
-        }
-        assert invocation["accepted_action"] == executor.consumer_proposals[index]
 
     steps = email_store.list_email_unsubscribe_steps(str(payload["action_identity"]))
     assert [step["operation"] for step in steps] == ["open_entry", "submit_form"]
@@ -950,7 +914,6 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     claim = email_store.get_email_unsubscribe_claim(str(payload["action_identity"]))
     assert claim is not None
     assert all(claim[key] == value for key, value in expected_binding.items())
-    assert claim["audit_agent_run_id"] == second_audit.id
     assert all(receipt[key] == value for key, value in expected_binding.items())
 
     with sqlite3.connect(database) as db:
@@ -990,33 +953,21 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     assert message_row["account_id"] == ACCOUNT_ID
     assert message_row["stable_message_identity"] == MESSAGE_IDENTITY
     assert message_row["thread_identity"] == THREAD_IDENTITY
-    assert len(effect_rows) == 2
-    first_effect, second_effect = effect_rows
-    assert [row["action_identity"] for row in effect_rows] == [
-        expected_binding["action_identity"],
-        expected_binding["action_identity"],
-    ]
-    assert [row["audit_agent_run_id"] for row in effect_rows] == [
-        first_audit.id,
-        second_audit.id,
-    ]
-    assert json.loads(first_effect["operations_json"]) == first_operations
-    assert json.loads(second_effect["operations_json"]) == second_operations
-    assert first_effect["previous_effect_digest"] == ""
-    assert second_effect["previous_effect_digest"] == first_effect["effect_digest"]
-    assert receipt["effect_digest"] == second_effect["effect_digest"]
-    assert claim["effect_digest"] == second_effect["effect_digest"]
-    assert (
-        executor.continuation_receipts[0]["previous_effect_digest"]
-        == (first_effect["effect_digest"])
-    )
+    # One call, one effect: no digest chain to keep append-only.
+    assert len(effect_rows) == 1
+    [only_effect] = effect_rows
+    assert only_effect["action_identity"] == expected_binding["action_identity"]
+    assert only_effect["previous_effect_digest"] == ""
+    assert receipt["effect_digest"] == only_effect["effect_digest"]
+    assert claim["effect_digest"] == only_effect["effect_digest"]
+    # Both pages are in the durable journal even though one call wrote them.
     assert [step["action_identity"] for step in step_rows] == [
         expected_binding["action_identity"],
         expected_binding["action_identity"],
     ]
     assert [step["effect_digest"] for step in step_rows] == [
-        first_effect["effect_digest"],
-        second_effect["effect_digest"],
+        only_effect["effect_digest"],
+        only_effect["effect_digest"],
     ]
     assert _UnsubscribeHandler.requests == [
         {
@@ -1052,14 +1003,11 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     assert str(sentinel_path.resolve()) not in serialized_prompts
     assert sentinel_content.decode("utf-8") not in serialized_prompts
     assert all(
-        "execute_audited_email_unsubscribe" not in json.dumps(command)
+        "unsubscribe_email" not in json.dumps(command)
         for command in executor.commands[0::2]
     )
     assert all(
         "mcp_servers.agent_cli.command" in json.dumps(command)
         for command in executor.commands[1::2]
     )
-    assert all(
-        "execute_audited_email_unsubscribe" in prompt
-        for prompt in executor.audit_prompts
-    )
+    assert all("unsubscribe_email" in prompt for prompt in executor.audit_prompts)

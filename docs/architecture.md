@@ -335,13 +335,19 @@ metadata-only，没有 image/content material；只投影文件名、MIME、字�
 下载、打开、OCR、解析、总结或推断附件正文。不可变 ActionPlan 是唯一动作授权；Adapter
 只排队，不发送、不打开退订页面。
 
-在 `email_unsubscribe_audited_v2` 中，Consumer A 是只读判断角色，每个 revision 只提出
-一个与 task 和 ActionPlan 绑定的精确下一步 operation。Audit Agent B 是唯一拥有 task-bound
-unsubscribe 写能力的角色；它校验 task、plan、账户、邮件和 thread 身份，已接受 operation
-prefix、previous effect digest 以及页面/provider readback。
-多步骤页面每轮只追加一个新 operation，Audit 只执行该新 operation，不重放已接受的
-operation prefix。需要下一步页面操作时保存 `awaiting_audit` continuation；`awaiting_audit` 是退订
-effect/claim 的领域状态，不是顶层 task 状态。
+退订不做结构化审核。Agent 自己退订并带回证据：Audit turn 调用 `unsubscribe_email(task_id)`，
+一次调用完成整件事——打开 ActionPlan 已授权的 entry，按页面当场呈现的控件操作，直到第一个终态页面，
+然后返回 outcome 和脱敏后的页面原文。工具只接受一个调用方无法伪造的参数（task id），其余全部从
+durable 状态读出，所以没有 proposal 要抄写、没有 acceptance 要绑定、没有 continuation 要续。
+
+幂等性只靠 receipt：`email_unsubscribe_receipts` 里每个动作身份一条，已有 receipt 时再调一次只会
+把它原样返回，不会重复退订。这取代了原先的 claim 租约、effect digest 链、owner fence 和
+Consumer→Audit 往返——退订在真实世界本来就是幂等的，那套 exactly-once 支架换不来任何东西，
+却让每一次点击都要花一整轮 agent，而过期的 continuation 会让任务失败在机制上而不是页面上。
+同理，有浏览器步骤但没有 receipt 不再升级为 needs_human：重跑一次即可。
+
+页面要求登录或 CAPTCHA 时记 `skipped_login_required` / `skipped_captcha`；页面读到了但这个服务
+不操作它提供的控件时记 `skipped_no_reliable_entry`，并保留页面原文，这类结果不重试。
 
 分类器按阶段运行。冷启动只由 Agent 处理服务上线后出现的未读 Inbox/未绑定来源邮件；已读邮件
 不交给 Agent，且分类过程不把邮件标为已读。训练只在冻结的 provider-folder snapshot 上离线、
@@ -887,13 +893,12 @@ run 才能被持久队列恢复。
   且没有活着的 Agent run，或累计超过 60 分钟）并以 `stale_email_task_recovery` 重新入队，再一次只认领
   5 条；任务在该循环里串行执行，认领过多只会拉长尾部锁定时间，进程重启时会把未开始的任务永久留在
   `processing`（Attention 看不到它们）。
-- **Audit 只需指认、不必抄写**：`execute_audited_email_unsubscribe` 只读取 `accepted_action` 的
-  `action_identity`，实际执行的永远是 Consumer 持久化的那条提案；模型漏字段、截断摘要或整段提案
-  传入都不会改变执行内容，身份不匹配时工具结果的 summary 会说明原因。退订页面若在
+- **Audit 无需抄写任何东西**：`unsubscribe_email` 只接受 `task_id`，其余全部从 durable 状态读出；
+  模型漏字段、截断摘要或抄错 operation 都不可能发生，因为没有东西给它抄。退订页面若在
   `domcontentloaded` 后仍是空白（脚本渲染），浏览器会最多等待 5 秒再判定 `page_state_missing`。
-- **无证据的 executed**：审计化退订任务里，Audit 只有在本轮真的调用了
-  `execute_audited_email_unsubscribe`（存在绑定到该 Audit run 的 claim/effect）时才能返回 `executed`；
+- **无证据的 executed**：退订任务里，Audit 只有在存在该动作身份的 receipt 时才能返回 `executed`；
   否则解析阶段就判为 `codex_result_invalid`，下一轮带修正块重做，编排层的 continuation 守卫只作最后兜底。
+  receipt 由服务写入，模型无法伪造，也不按 turn 计数——一次退订一条 receipt，不是一轮一条。
   有证据的 `executed` 其 `external_result.operation_id` 由服务从 Audit run 回填（不透明操作号是服务
   自己的，模型抄错不应让任务终态失败）；缺少 `external_result` 则同样进入修正轮。
 - **结果不合契约**：Agent 返回了 JSON 但不满足 wire schema 时，解析器报 `codex_result_invalid`

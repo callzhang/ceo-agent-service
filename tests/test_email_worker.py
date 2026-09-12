@@ -8153,12 +8153,22 @@ def test_bare_authorization_required_result_is_failed():
     assert captured["send_error"] == "authorization_required"
 
 
-def test_uncertain_unsubscribe_with_durable_step_becomes_needs_human():
+def test_a_durable_step_without_a_receipt_stays_an_ordinary_retry():
+    """An unsubscribe that may already have happened is simply run again.
+
+    This used to become needs_human with two options that both amounted to
+    doing nothing. Unsubscribing is idempotent and the page reports an address
+    that is already unsubscribed, so a step with no receipt is not evidence of
+    anything a person has to decide.
+    """
+
     module = _module()
     task = SimpleNamespace(
         id=71,
+        attempts=1,
         execution_generation="generation-71",
         channel="email",
+        error="",
         trigger_message_id="email-action:uncertain-71",
         conversation_id="email-thread:71",
         conversation_title="Email unsubscribe",
@@ -8176,15 +8186,12 @@ def test_uncertain_unsubscribe_with_durable_step_becomes_needs_human():
 
     class Store:
         def get_email_unsubscribe_claim(self, action_identity):
-            assert action_identity == task.trigger_message_id
             return {"status": "uncertain", "phase": "effect_uncertain"}
 
         def list_email_unsubscribe_steps(self, action_identity):
-            assert action_identity == task.trigger_message_id
             return [{"sequence": 1, "operation": "open_entry", "state": "completed"}]
 
         def get_email_unsubscribe_receipt(self, action_identity):
-            assert action_identity == task.trigger_message_id
             return None
 
         def get_agent_run(self, run_id):
@@ -8206,10 +8213,10 @@ def test_uncertain_unsubscribe_with_durable_step_becomes_needs_human():
 
     module._finalize_email_task(Store(), task, result)
 
-    assert captured["task_status"] == "done"
-    assert captured["send_status"] == "needs_human"
-    assert captured["send_error"] == "email_unsubscribe_effect_uncertain"
-    assert len(json.loads(captured["human_decision_options_json"])) == 2
+    assert captured["task_status"] == "failed"
+    assert captured["send_status"] == "failed"
+    assert captured["send_error"] != "email_unsubscribe_effect_uncertain"
+    assert json.loads(captured["human_decision_options_json"]) == []
 
 
 def test_structured_authorization_result_keeps_needs_human_options():

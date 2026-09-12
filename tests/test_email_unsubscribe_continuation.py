@@ -293,6 +293,7 @@ class FakeEmailStore:
         self.claim = _claim()
         self.continuation = _continuation()
         self.effect = _effect()
+        self.receipt = None
 
     def get_email_unsubscribe_state_snapshot(self, action_identity: str):
         assert action_identity == ACTION_IDENTITY
@@ -300,6 +301,7 @@ class FakeEmailStore:
             "claim": deepcopy(self.claim),
             "continuation": deepcopy(self.continuation),
             "effects": (() if self.effect is None else (deepcopy(self.effect),)),
+            "receipt": deepcopy(self.receipt),
         }
 
     def get_email_unsubscribe_claim(self, action_identity: str):
@@ -969,27 +971,37 @@ def test_durable_unsubscribe_operation_limit_is_independent_and_bounded():
         )
 
 
-@pytest.mark.parametrize(
-    ("claim_run", "effect_run", "audit_run_id", "expected"),
-    [
-        (23, 23, 23, True),
-        (23, None, 23, True),
-        (None, 23, 23, True),
-        (23, 23, 24, False),
-        (None, None, 23, False),
-    ],
-)
-def test_execution_evidence_requires_claim_or_effect_bound_to_the_audit_run(
-    claim_run, effect_run, audit_run_id, expected
-):
+@pytest.mark.parametrize("audit_run_id", [23, 24])
+def test_execution_evidence_is_the_receipt_whichever_turn_wrote_it(audit_run_id):
+    """One unsubscribe leaves one receipt, not one per Audit turn.
+
+    The audited lifecycle demanded a claim or effect carrying *this* run's id,
+    so a receipt written by an earlier turn read as no evidence at all and the
+    turn was failed as `codex_result_invalid`.
+    """
+
     module = _module()
     store = FakeEmailStore()
-    store.claim = None if claim_run is None else _claim(audit_agent_run_id=claim_run)
-    store.effect = None if effect_run is None else {**_effect(), "audit_agent_run_id": effect_run}
+    store.receipt = {"outcome": "done", "receipt_id": "unsubscribe-receipt:41"}
 
     driver = module.EmailUnsubscribeContinuationDriver(store)
 
-    assert driver.audit_run_has_execution_evidence(_task(), audit_run_id=audit_run_id) is expected
+    assert (
+        driver.audit_run_has_execution_evidence(_task(), audit_run_id=audit_run_id)
+        is True
+    )
+
+
+def test_executed_without_a_receipt_is_not_evidence():
+    module = _module()
+    store = FakeEmailStore()
+    store.receipt = None
+
+    driver = module.EmailUnsubscribeContinuationDriver(store)
+
+    assert (
+        driver.audit_run_has_execution_evidence(_task(), audit_run_id=23) is False
+    )
 
 
 def test_execution_evidence_is_not_required_outside_the_audited_lifecycle():

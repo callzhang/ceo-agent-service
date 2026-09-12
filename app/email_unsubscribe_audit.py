@@ -39,6 +39,10 @@ from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 AUDITED_LIFECYCLE_VERSION = "email_unsubscribe_audited_v2"
 PAYLOAD_SCHEMA = "email_agent_action.v1"
 AUDITED_UNSUBSCRIBE_TOOL = "execute_audited_email_unsubscribe"
+UNSUBSCRIBE_TOOL = "unsubscribe_email"
+# Transcripts written before the one-call tool still name the audited
+# one, and those runs are read back by the same readers.
+_UNSUBSCRIBE_TOOLS = frozenset({UNSUBSCRIBE_TOOL, AUDITED_UNSUBSCRIBE_TOOL})
 AUDIT_BINDING_REJECTED_CODE = "unsubscribe_audit_run_invalid"
 # A binding rejection is worth a fresh Audit turn, not an unbounded supply of
 # them: the orchestrator turns any retryable Audit failure into another turn,
@@ -102,7 +106,7 @@ def audited_unsubscribe_skip_receipt(
         item = event.get("item")
         if (
             not isinstance(item, Mapping)
-            or item.get("tool") != AUDITED_UNSUBSCRIBE_TOOL
+            or item.get("tool") not in _UNSUBSCRIBE_TOOLS
         ):
             continue
         structured = _tool_structured_content(item.get("result"))
@@ -150,7 +154,7 @@ def audited_unsubscribe_route_refusal(run: object) -> str:
         item = event.get("item")
         if (
             not isinstance(item, Mapping)
-            or item.get("tool") != AUDITED_UNSUBSCRIBE_TOOL
+            or item.get("tool") not in _UNSUBSCRIBE_TOOLS
         ):
             continue
         if _tool_structured_content(item.get("result")) is not None:

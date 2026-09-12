@@ -103,13 +103,20 @@ class EmailUnsubscribeContinuationDriver:
     def audit_run_has_execution_evidence(
         self, task: ReplyTask, *, audit_run_id: int
     ) -> bool:
-        """Return whether the audited unsubscribe tool ran for this Audit turn.
+        """Return whether the unsubscribe tool ran and left a receipt.
 
-        The tool binds the claim and every effect it writes to the Audit run
-        that invoked it, so an `executed` result from that run must be backed by
-        a claim or effect carrying its id. Tasks outside the audited unsubscribe
-        lifecycle have no such evidence contract.
+        The receipt is the evidence. Only the service writes one, and it
+        writes one only after the browser reached a terminal page, so an
+        `executed` result with no receipt is a claim the durable record does
+        not support. Tasks outside the unsubscribe lifecycle have no such
+        evidence contract.
+
+        The audited lifecycle additionally required the receipt's claim or
+        effect to carry this Audit run's id, which made a receipt written by
+        an earlier turn look like no evidence at all. One unsubscribe needs
+        one receipt, not one per turn.
         """
+        del audit_run_id
         if task.channel != "email" or _validated_unsubscribe_task_payload(task) is None:
             return True
         try:
@@ -118,15 +125,8 @@ class EmailUnsubscribeContinuationDriver:
             )
         except Exception:
             return False
-        if not isinstance(snapshot, dict):
-            return False
-        claim = snapshot.get("claim")
-        effects = snapshot.get("effects") or ()
-        return (
-            isinstance(claim, dict) and claim.get("audit_agent_run_id") == audit_run_id
-        ) or any(
-            isinstance(effect, dict) and effect.get("audit_agent_run_id") == audit_run_id
-            for effect in effects
+        return isinstance(snapshot, dict) and isinstance(
+            snapshot.get("receipt"), dict
         )
 
     def load_snapshot(self, task: ReplyTask) -> _EmailUnsubscribeSnapshot:
@@ -153,6 +153,13 @@ class EmailUnsubscribeContinuationDriver:
             )
         except Exception as exc:
             return _EmailUnsubscribeSnapshot(_snapshot_failure_state(exc))
+        if isinstance(raw_snapshot, dict) and isinstance(
+            raw_snapshot.get("receipt"), dict
+        ):
+            # One unsubscribe, one receipt, and the action is over. Nothing
+            # below this line can change that, and the lineage it validates
+            # belongs to a lifecycle that no longer runs.
+            return _EmailUnsubscribeSnapshot(_SnapshotState.TERMINAL)
         try:
             return _validated_snapshot(payload, raw_snapshot)
         except (EmailPersistenceCorruption, KeyError, TypeError, ValueError):

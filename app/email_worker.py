@@ -2500,66 +2500,6 @@ def _decision_options_json(result: object) -> str:
     return "[]"
 
 
-def _uncertain_unsubscribe_decision_options_json() -> str:
-    """Return bounded choices for a browser effect whose outcome is unknown."""
-
-    return json.dumps(
-        [
-            {
-                "key": "reconcile_current_provider_state",
-                "label": "先核验当前状态",
-                "instruction": (
-                    "只读取当前邮箱和退订页面状态，核对已发生的浏览器步骤；"
-                    "在证据完整前不要再次提交退订操作。"
-                ),
-                "consequence": "补齐状态证据后再决定是否需要一次新的明确授权。",
-            },
-            {
-                "key": "stop_without_action",
-                "label": "停止不再操作",
-                "instruction": "保留当前不确定状态，不执行新的外部浏览器操作。",
-                "consequence": "不会重放可能已经发生过的退订动作。",
-            },
-        ],
-        ensure_ascii=False,
-        sort_keys=True,
-    )
-
-
-def _has_uncertain_unsubscribe_effect(store: object, task: object) -> bool:
-    """Detect durable browser progress without a terminal provider receipt."""
-
-    if getattr(task, "channel", "email") != "email":
-        return False
-    action_identity = str(getattr(task, "trigger_message_id", "") or "").strip()
-    get_claim = getattr(store, "get_email_unsubscribe_claim", None)
-    list_steps = getattr(store, "list_email_unsubscribe_steps", None)
-    get_receipt = getattr(store, "get_email_unsubscribe_receipt", None)
-    if not action_identity or not callable(get_claim) or not callable(list_steps):
-        return False
-    try:
-        claim = get_claim(action_identity)
-        if not isinstance(claim, Mapping) or claim.get("status") not in {
-            "uncertain",
-            "navigating",
-            "dispatching",
-            "awaiting_audit",
-        }:
-            return False
-        steps = list_steps(action_identity)
-        if not steps:
-            return False
-        receipt = get_receipt(action_identity) if callable(get_receipt) else None
-        return receipt is None
-    except Exception:  # noqa: BLE001 - fail closed to ordinary task handling
-        _LOGGER.warning(
-            "could not inspect uncertain unsubscribe effect for %s",
-            action_identity,
-            exc_info=True,
-        )
-        return False
-
-
 def _finalize_email_task(store: object, task: object, result: object) -> None:
     from app.email_unsubscribe_audit import (
         AuditedUnsubscribeTerminalState,
@@ -2593,14 +2533,12 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
         else:
             task_status, send_status = "failed", "failed"
     error = str(result.error.code or "")
-    if send_status != "needs_human" and _has_uncertain_unsubscribe_effect(store, task):
-        # A browser step is durable evidence that an external effect may have
-        # happened. Without a terminal receipt, retrying the same operation is
-        # unsafe; expose a bounded management choice instead of auto-replaying
-        # or leaving the task as a misleading technical failure.
-        task_status, send_status = "done", "needs_human"
-        error = "email_unsubscribe_effect_uncertain"
-        human_decision_options_json = _uncertain_unsubscribe_decision_options_json()
+    # A browser step without a receipt used to stop the task and ask a person
+    # which of two ways to do nothing they preferred. Unsubscribing is
+    # idempotent -- the provider does not mind hearing it twice, and the page
+    # says so when it has already happened -- so the durable step proves
+    # nothing that warrants a question. The receipt is the fence; without one,
+    # the right move is to run it again.
     run = store.get_agent_run(result.final_run_id) if result.final_run_id else None
     # A terminal unsubscribe skip is a lifecycle outcome, not a technical
     # failure: the receipt the audited tool persisted decides where the task

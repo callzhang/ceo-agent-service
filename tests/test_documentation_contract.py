@@ -194,18 +194,19 @@ def test_current_email_docs_describe_audited_v2_boundary() -> None:
         assert "`auto_reply`、SMTP 和 `mailto` 发送全部禁用" in section
 
         assert "`email_unsubscribe_audited_v2`" in section
-        assert "Consumer A 是只读" in section
-        assert "每个revision只提出一个" in semantic_section
-        assert "task" in section
+        # 退订走一次调用的直连路径：不再有 proposal/acceptance 仪式、
+        # effect digest 链、claim 租约或 continuation。
+        assert "退订不做结构化审核" in section
+        assert "`unsubscribe_email(task_id)`" in section
+        assert "一次调用完成整件事" in section
         assert "ActionPlan" in section
-        assert "operation" in section
-        assert "Audit Agent B 是唯一" in section
-        assert "task-bound" in section
-        assert "unsubscribe 写能力" in section
-        assert "不重放已接受的operationprefix" in semantic_section
-        assert "`awaiting_audit`" in section
-        assert "领域状态" in section
-        assert "不是顶层 task 状态" in section
+        assert "幂等性只靠 receipt" in section
+        assert "`email_unsubscribe_receipts`" in section
+        assert "不会重复退订" in section
+        assert "continuation" in section
+        assert "不再升级为 needs_human" in section
+        assert "Consumer A 是只读" not in section
+        assert "不重放已接受的operationprefix" not in semantic_section
 
         assert "附件" in section
         assert "metadata-only" in section

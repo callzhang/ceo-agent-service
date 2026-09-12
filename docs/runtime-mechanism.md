@@ -275,13 +275,16 @@ image/content material，只包含文件名、MIME、字节大小、数量和 in
 或 image path。任何组件都不得下载、打开、OCR、解析、总结或推断附件正文。持久 trigger payload 不包含凭证、附件内容、本地路径、
 完整私密 URL 或 query token。
 
-Consumer A 是只读判断角色；它读取当前邮件、thread、安全 prior receipt 和 ActionPlan，每个
-revision 只提出一个与当前 task/ActionPlan 绑定的新 operation，不执行浏览器 effect。
-Audit Agent B 是唯一拥有 task-bound unsubscribe 写能力的角色；它校验 task、plan、账户、
-邮件、thread 身份，已接受 operation prefix、previous effect digest 和当前 readback。多步骤页面每轮在已接受 prefix 后只追加一个 operation，Audit 只执行
-新 operation，不重放已接受的 operation prefix。仍需继续页面流程时持久化 `awaiting_audit`
-continuation；`awaiting_audit` 是 effect/claim 的领域状态，
-不是顶层 task 状态。历史 run、session、step、receipt 和失败事实保持不可变。
+退订不做结构化审核。Agent 自己退订并带回证据：Audit turn 调用 `unsubscribe_email(task_id)`，
+一次调用完成整件事——打开 ActionPlan 已授权的 entry，按页面当场呈现的控件操作，直到第一个
+终态页面，然后返回 outcome 和脱敏后的页面原文。工具只接受 task id 这一个调用方无法伪造的
+参数，其余全部从 durable 状态读出，所以没有 proposal 要抄写、没有 acceptance 要绑定、
+也没有 continuation 要续。
+
+幂等性只靠 receipt：`email_unsubscribe_receipts` 里每个动作身份一条，已有 receipt 时再调一次
+只会把它原样返回，不会重复退订。这取代了原先的 claim 租约、effect digest 链、owner fence 和
+Consumer→Audit 往返——退订在真实世界本来就是幂等的。同理，有浏览器步骤但没有 receipt
+不再升级为 needs_human，重跑一次即可。历史 run、session、step、receipt 和失败事实保持不可变。
 
 冷启动期间，实时主路径是 Agent，且只处理服务观察到的未读 Inbox/未绑定来源邮件；Agent 不处理
 已读邮件，也不因分类而改成已读。冻结训练 snapshot 直接采用 provider 文件夹和 important 信号，

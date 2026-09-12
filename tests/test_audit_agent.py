@@ -826,7 +826,7 @@ def test_audited_email_executed_without_tool_evidence_is_an_invalid_result(setup
         _audit_jsonl("operation-1", session="session-email-audit")
     )
 
-    with pytest.raises(ResultParseError, match="execute_audited_email_unsubscribe"):
+    with pytest.raises(ResultParseError, match="unsubscribe_email"):
         AuditAgentRunner(
             store=store,
             workspace=Path("/workspace"),
@@ -844,11 +844,11 @@ def test_audited_email_executed_without_tool_evidence_is_an_invalid_result(setup
     assert run is not None and run.status == "failed"
     error = json.loads(run.structured_error_json)
     assert error["code"] == "codex_result_invalid"
-    assert "execute_audited_email_unsubscribe" in error["detail"]
+    assert "unsubscribe_email" in error["detail"]
     assert driver.calls == [(email_task.id, run.id)]
-    assert "Return executed only after execute_audited_email_unsubscribe" in executor.prompts[0]
+    assert "Return executed only after the tool returned a" in executor.prompts[0]
     assert (
-        "A receipt whose outcome is a terminal skip ends the operation"
+        "including a terminal skip"
         in executor.prompts[0]
     )
 
@@ -915,8 +915,12 @@ def test_audited_email_turn_receives_task_bound_cli_and_prompt_identity(setup):
     assert "mcp_servers.agent_cli" in rendered_command
     assert "allowed_tools" not in rendered_command
     assert f"task_id={task.id}" in rendered_prompt
-    assert f"execution_generation={task.execution_generation}" in rendered_prompt
-    assert f"audit_agent_run_id={result.run_id}" in rendered_prompt
+    assert "unsubscribe_email" in rendered_prompt
+    # The tool reads the rest from durable state, so the prompt hands the
+    # model nothing else it could retype wrongly.
+    assert "execution_generation=" not in rendered_prompt
+    assert "audit_agent_run_id=" not in rendered_prompt
+    assert result.run_id
 
 
 def test_consumer_command_does_not_expose_audited_unsubscribe_write() -> None:

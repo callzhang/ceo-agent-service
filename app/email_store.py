@@ -93,6 +93,9 @@ _EMAIL_REPLY_CLAIM_STATUSES = frozenset(
 _EMAIL_UNSUBSCRIBE_CLAIM_STATUSES = frozenset(
     {"dispatching", "awaiting_audit", "uncertain", "done"}
 )
+# The direct unsubscribe path holds no lease, so a claim it retires is
+# stamped with a name no live owner fence can ever match.
+_DIRECT_UNSUBSCRIBE_OWNER_ID = "direct-unsubscribe"
 _EMAIL_UNSUBSCRIBE_OUTCOMES = frozenset(
     {
         "done",
@@ -9437,6 +9440,10 @@ class EmailStore:
                 """,
                 (action_identity,),
             ).fetchone()
+            receipt_row = db.execute(
+                "select * from email_unsubscribe_receipts where action_identity=?",
+                (action_identity,),
+            ).fetchone()
             effect_rows = db.execute(
                 "select * from email_unsubscribe_effects "
                 "where action_identity=? limit ?",
@@ -9462,11 +9469,17 @@ class EmailStore:
             effects = tuple(
                 self._email_unsubscribe_effect_row(row) for row in effect_rows
             )
+            receipt = (
+                None
+                if receipt_row is None
+                else self._email_unsubscribe_receipt_row(receipt_row)
+            )
             db.rollback()
             return {
                 "claim": claim,
                 "continuation": continuation,
                 "effects": effects,
+                "receipt": receipt,
             }
 
     def get_email_unsubscribe_terminal_snapshot(
@@ -10520,6 +10533,101 @@ class EmailStore:
                 == 1
             )
 
+    def retire_email_unsubscribe_claim_for_direct_run(
+        self,
+        *,
+        action_identity: str,
+        effect_digest: str,
+        action_plan_id: str,
+        action_plan_version: int,
+        classification_id: int,
+        account_id: str,
+        stable_message_identity: str,
+        thread_identity: str,
+        entry_reference: str,
+        operations: Sequence[Mapping[str, object]],
+        previous_effect_digest: str = "",
+    ) -> bool:
+        """Point a claim left by the audited lifecycle at the direct run.
+
+        The direct unsubscribe path holds no lease: it opens the authorized
+        entry, operates the page, and persists one receipt. A claim written
+        by the old Consumer-proposes / Audit-accepts lifecycle still carries
+        that lifecycle's effect digest, and persist_email_unsubscribe_terminal
+        refuses a receipt whose digest does not match the claim -- which is
+        how five live tasks ended as EmailUnsubscribeClaimConflict.
+
+        Nothing is deleted. The claim is moved onto this run's digest and
+        marked terminal, and the effect row is added beside the one already
+        there, so every operation the old lifecycle recorded stays readable.
+        Returns False when there is no claim to retire; the receipt write
+        then creates its own.
+        """
+
+        binding = _validate_unsubscribe_binding(
+            action_identity=action_identity,
+            effect_digest=effect_digest,
+            action_plan_id=action_plan_id,
+            action_plan_version=action_plan_version,
+            classification_id=classification_id,
+            account_id=account_id,
+            stable_message_identity=stable_message_identity,
+            thread_identity=thread_identity,
+            entry_reference=entry_reference,
+        )
+        validated_operations = _validate_unsubscribe_operations(operations)
+        expected_digest = email_unsubscribe_effect_digest(
+            **{key: binding[key] for key in binding if key != "effect_digest"},
+            operations=validated_operations,
+            previous_effect_digest=previous_effect_digest,
+        )
+        if effect_digest != expected_digest:
+            raise EmailUnsubscribeClaimConflict(
+                "unsubscribe claim digest does not match its operations"
+            )
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            claim = db.execute(
+                "select * from email_unsubscribe_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            if claim is None:
+                return False
+            db.execute(
+                """
+                update email_unsubscribe_claims
+                   set effect_digest=?, operations_json=?, status='done',
+                       phase='terminal', owner_id=?, owner_generation=1,
+                       lease_token=?, updated_at=?
+                 where action_identity=?
+                """,
+                (
+                    effect_digest,
+                    _json_dump(validated_operations),
+                    _DIRECT_UNSUBSCRIBE_OWNER_ID,
+                    f"direct-unsubscribe:{effect_digest[:24]}",
+                    now,
+                    action_identity,
+                ),
+            )
+            db.execute(
+                """
+                insert or ignore into email_unsubscribe_effects (
+                    action_identity, effect_digest, previous_effect_digest,
+                    operations_json, created_at
+                ) values (?, ?, ?, ?, ?)
+                """,
+                (
+                    action_identity,
+                    effect_digest,
+                    previous_effect_digest,
+                    _json_dump(validated_operations),
+                    now,
+                ),
+            )
+            return True
+
     def recover_terminated_email_unsubscribe_claims(
         self,
         *,
@@ -10809,6 +10917,7 @@ class EmailStore:
         started_at: str = "",
         completed_at: str = "",
         final_step: Mapping[str, object] | None = None,
+        journal_steps: Sequence[Mapping[str, object]] = (),
         claim_owner: Mapping[str, object] | None = None,
     ) -> dict[str, Any]:
         binding = _validate_unsubscribe_binding(
@@ -10890,23 +10999,28 @@ class EmailStore:
             if claim_owner is None
             else _validate_email_unsubscribe_owner(claim_owner)
         )
-        validated_step: dict[str, object] | None = None
-        if final_step is not None:
-            if set(final_step) != {"sequence", "operation", "state", "reference"}:
+        # A one-call unsubscribe reaches the terminal page through every step
+        # it took, and none of those steps had a lease to write itself under.
+        # They are written here, with the terminal one last.
+        validated_steps: list[dict[str, object]] = []
+        for step in (*journal_steps, *((final_step,) if final_step is not None else ())):
+            if set(step) != {"sequence", "operation", "state", "reference"}:
                 raise ValueError("unsubscribe terminal step fields are invalid")
-            _require_positive_int(final_step["sequence"], field="sequence")
-            validated_step = {
-                "sequence": final_step["sequence"],
-                "operation": _validate_unsubscribe_opaque(
-                    final_step["operation"], field="operation"
-                ),
-                "state": _validate_unsubscribe_opaque(
-                    final_step["state"], field="state"
-                ),
-                "reference": _validate_unsubscribe_opaque(
-                    final_step["reference"], field="reference"
-                ),
-            }
+            _require_positive_int(step["sequence"], field="sequence")
+            validated_steps.append(
+                {
+                    "sequence": step["sequence"],
+                    "operation": _validate_unsubscribe_opaque(
+                        step["operation"], field="operation"
+                    ),
+                    "state": _validate_unsubscribe_opaque(
+                        step["state"], field="state"
+                    ),
+                    "reference": _validate_unsubscribe_opaque(
+                        step["reference"], field="reference"
+                    ),
+                }
+            )
         with self._connect() as db:
             db.execute("begin immediate")
             plan = db.execute(
@@ -11092,7 +11206,7 @@ class EmailStore:
                     raise EmailUnsubscribeReceiptConflict(
                         "unsubscribe identity is bound to different terminal evidence"
                     )
-            if validated_step is not None:
+            for validated_step in validated_steps:
                 previous = db.execute(
                     """
                     select coalesce(max(sequence), 0) from email_unsubscribe_steps

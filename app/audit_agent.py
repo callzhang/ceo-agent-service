@@ -184,25 +184,22 @@ class AuditAgentRunner:
         email_unsubscribe_tools = self._email_unsubscribe_tools(task, run)
         if email_unsubscribe_tools:
             prompt += (
-                "\n\n### Task-bound Email Unsubscribe Capability\n"
-                "Only this running Audit turn may invoke "
-                "execute_audited_email_unsubscribe with these exact binding values:\n"
+                "\n\n### Email Unsubscribe Capability\n"
+                "Call unsubscribe_email once with:\n"
                 f"task_id={task.id}\n"
-                f"execution_generation={task.execution_generation}\n"
-                f"audit_agent_run_id={run.id}\n"
-                "Pass accepted_action as the accepted ProposedAction; only its "
-                "action_identity is read and the Consumer's persisted proposal "
-                "executes, so never retype or edit the proposal. "
-                "Execute at most one new browser operation and never use reply, "
-                "SMTP, mailto, or attachment content. Return executed only after "
-                "execute_audited_email_unsubscribe has returned a receipt or "
-                "continuation for this turn; without that tool result return "
-                "failed or feedback_provided, never executed. A receipt whose "
-                "outcome is a terminal skip ends the operation for this turn: "
-                "report it in the summary, never call the tool again in the "
-                "same turn, and do not invent an error code for it, because "
-                "the service derives the task's terminal state from that "
-                "receipt."
+                "One call does the whole unsubscribe: it opens the entry this "
+                "task already authorized, operates what the page offers, and "
+                "returns status, outcome, evidence and the redacted page text "
+                "behind them. There is nothing to propose, accept or continue, "
+                "so never retype an operation and never call it twice in one "
+                "turn -- a second call after a receipt returns that same "
+                "receipt. Return executed only after the tool returned a "
+                "receipt; without one return failed, never executed. Report "
+                "the returned outcome in the summary as it stands, including a "
+                "terminal skip, and do not invent an error code for it: the "
+                "service derives the task's terminal state from that receipt. "
+                "Never use reply, SMTP, mailto, or attachment content to "
+                "unsubscribe."
             )
         prompt += (
             "\n\n### Needs Human Display Contract\n"
@@ -278,7 +275,7 @@ class AuditAgentRunner:
             ):
                 raise ResultParseError(
                     "external_result: executed without a receipt from "
-                    "execute_audited_email_unsubscribe"
+                    "unsubscribe_email"
                 )
             if result.external_result is None:
                 raise ResultParseError(
@@ -305,7 +302,13 @@ class AuditAgentRunner:
         task: ReplyTask,
         run: AgentRun,
     ) -> tuple[str, ...]:
-        """Grant the write tool only to the current valid audited-v2 turn."""
+        """Grant the unsubscribe tool to the running Audit turn of this task.
+
+        The tool takes one argument the caller cannot forge -- the task id --
+        and reads everything else from durable state, so the grant no longer
+        has to prove which Consumer proposal an operation came from. What the
+        tool will do is already fixed by the ActionPlan.
+        """
 
         try:
             payload = json.loads(task.trigger_message_json)
@@ -316,45 +319,13 @@ class AuditAgentRunner:
             or task.channel != "email"
             or payload.get("schema") != "email_agent_action.v1"
             or payload.get("action_type") != "unsubscribe"
-            or payload.get("lifecycle_version") != "email_unsubscribe_audited_v2"
             or run.reply_task_id != task.id
             or run.execution_generation != task.execution_generation
             or run.role is not AgentRole.AUDIT
             or run.status != "running"
-            or not run.operation_id.strip()
-            or run.parent_agent_run_id is None
         ):
             return ()
-        parent = self.store.get_agent_run(run.parent_agent_run_id)
-        if (
-            parent is None
-            or parent.reply_task_id != task.id
-            or parent.execution_generation != task.execution_generation
-            or parent.role is not AgentRole.CONSUMER
-            or parent.status != "completed"
-            or parent.proposal_revision != run.proposal_revision
-        ):
-            return ()
-        completed_consumers = [
-            candidate
-            for candidate in self.store.list_agent_runs_for_task_generation(
-                task.id,
-                task.execution_generation,
-            )
-            if candidate.role is AgentRole.CONSUMER
-            and candidate.status == "completed"
-            and candidate.proposal_revision == run.proposal_revision
-        ]
-        if (
-            not completed_consumers
-            or max(
-                completed_consumers,
-                key=lambda candidate: (candidate.turn_attempt, candidate.id),
-            ).id
-            != parent.id
-        ):
-            return ()
-        return ("execute_audited_email_unsubscribe",)
+        return ("unsubscribe_email",)
 
 
 def _external_action_identity_prompt(

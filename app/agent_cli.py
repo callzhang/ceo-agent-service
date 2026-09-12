@@ -770,6 +770,36 @@ async def execute_audited_email_unsubscribe_tool(
 
 
 @server.tool(
+    name="unsubscribe_email",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+async def unsubscribe_email_tool(task_id: int) -> dict[str, object]:
+    """Unsubscribe this email task and return the page's own evidence.
+
+    One call does the whole thing: it opens the entry the ActionPlan already
+    authorized, operates what the page offers, and returns the outcome with
+    the redacted page text behind it. Calling it again after it returned a
+    receipt returns that same receipt instead of unsubscribing twice.
+    """
+
+    if isinstance(task_id, bool) or task_id <= 0:
+        raise AgentReadOnlyViolationError("email_unsubscribe_task_id_invalid")
+    from app.config import worker_db_path
+    from app.email_worker import run_email_unsubscribe
+
+    return await asyncio.to_thread(
+        run_email_unsubscribe,
+        worker_db_path(),
+        task_id,
+    )
+
+
+@server.tool(
     name="read_skill",
     annotations=ToolAnnotations(
         readOnlyHint=True,
