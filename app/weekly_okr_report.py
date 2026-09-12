@@ -1204,8 +1204,16 @@ def run_weekly_okr_report(
             period_label=resolved_period,
             manager_count=len(roster.managers),
         )
-    _validate_manager_coverage(analysis, roster.managers)
+    _validate_manager_coverage(analysis, roster.managers, allow_missing=True)
     _validate_kr_coverage(analysis, manager_payloads)
+    # A member analyze() isolated has no review to render: everything below
+    # renders and appendices *from* analysis.manager_reviews, so it must walk
+    # only the managers actually present in it, not the requested roster --
+    # the gap itself is already visible in executive_summary and warnings.
+    analyzed_names = {review.name for review in analysis.manager_reviews}
+    analyzed_managers = [
+        manager for manager in roster.managers if manager.name in analyzed_names
+    ]
     report_title = (
         f"CEO-2 管理者 OKR 进度周报（{week_start.isoformat()}—{week_end.isoformat()}）"
     )
@@ -1213,7 +1221,7 @@ def run_weekly_okr_report(
         title=report_title,
         period_label=resolved_period,
         analysis=analysis,
-        managers=roster.managers,
+        managers=analyzed_managers,
         manager_payloads=manager_payloads,
     )
     master_path = run_dir / "管理者OKR进度周报-完整底稿.md"
@@ -1222,12 +1230,12 @@ def run_weekly_okr_report(
         report_markdown,
         title=report_title,
         period_label=resolved_period,
-        managers=roster.managers,
+        managers=analyzed_managers,
     )
     appendix_dir = run_dir / "评分附录"
     appendix_dir.mkdir(parents=True, exist_ok=True)
     appendix_paths: dict[str, Path] = {}
-    for manager in roster.managers:
+    for manager in analyzed_managers:
         appendix_path = appendix_dir / (
             f"manager-{hashlib.sha256(manager.user_id.encode('utf-8')).hexdigest()[:16]}.md"
         )
@@ -1237,7 +1245,7 @@ def run_weekly_okr_report(
         _render_management_report(
             summary_prefix=summary_prefix,
             limits_section=limits_section,
-            managers=roster.managers,
+            managers=analyzed_managers,
             appendix_documents={},
         ),
         encoding="utf-8",
@@ -1262,7 +1270,7 @@ def run_weekly_okr_report(
         name=report_title,
     )
     appendix_documents: dict[str, PublishedDocument] = {}
-    for manager in roster.managers:
+    for manager in analyzed_managers:
         appendix_documents[manager.name] = gateway.publish_document(
             workspace_id=workspace_id,
             folder_id=document.node_id,
@@ -1275,7 +1283,7 @@ def run_weekly_okr_report(
         _render_management_report(
             summary_prefix=summary_prefix,
             limits_section=limits_section,
-            managers=roster.managers,
+            managers=analyzed_managers,
             appendix_documents=appendix_documents,
         ),
         encoding="utf-8",
@@ -1827,14 +1835,35 @@ def _validate_live_okr_payload(payload: object, *, manager: ManagerIdentity) -> 
 def _validate_manager_coverage(
     analysis: WeeklyOkrAnalysis,
     managers: list[ManagerIdentity],
+    *,
+    allow_missing: bool = False,
 ) -> None:
-    expected = [manager.name for manager in managers]
+    """Reject rows the model invented, duplicated, or dropped.
+
+    The single-manager call in ``_analyze_one`` asks the model about exactly
+    one manager and must get exactly that one back (``allow_missing=False``,
+    the default) -- a model that returns zero or the wrong manager for a
+    single-manager prompt is a real failure, not a gap to isolate.
+
+    The aggregate call in ``run_weekly_okr_report`` is different: by the time
+    it runs, ``analyze`` has already isolated any member whose analysis call
+    kept failing instead of discarding the whole report, and recorded exactly
+    who was skipped and why in ``warnings`` -- a real, deliberate, visible
+    gap, not a bug. Requiring every roster member to appear here too
+    (``allow_missing=True``) would undo that isolation at the very next line
+    of the pipeline: a report with fifteen finished sections would still be
+    thrown away because three could not be produced. What this still has to
+    catch there is a manager who should not be in the report at all, or a
+    name duplicated across two reviews -- both would mean something upstream
+    fabricated or split a row, and no known-gap accounting excuses that.
+    """
+    expected = {manager.name for manager in managers}
     actual = [review.name for review in analysis.manager_reviews]
     if len(actual) != len(set(actual)):
         raise ValueError("weekly OKR analysis contains duplicate manager rows")
-    if set(actual) != set(expected):
-        missing = sorted(set(expected) - set(actual))
-        extra = sorted(set(actual) - set(expected))
+    extra = sorted(set(actual) - expected)
+    missing = [] if allow_missing else sorted(expected - set(actual))
+    if extra or missing:
         raise ValueError(
             f"weekly OKR analysis manager coverage mismatch: missing={missing}, extra={extra}"
         )

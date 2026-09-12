@@ -556,6 +556,69 @@ def test_force_run_publishes_verified_document_then_group_summary(tmp_path):
     assert store.state["weekly_okr_report:last_success_date"] == "2026-07-30"
 
 
+def test_a_report_with_one_isolated_manager_still_publishes(tmp_path):
+    """The exact failure this pipeline had on 2026-09-12: analyze() correctly
+    isolated a manager it could not score, but run_weekly_okr_report's own
+    coverage check, and the rendering calls after it, still assumed every
+    requested manager had a review -- so the whole run raised
+    "manager coverage mismatch" and published nothing, discarding the other
+    manager's finished section along with it.
+    """
+    store = FakeStore()
+    gateway = FakeGateway(managers())
+    source = FakeSource()
+
+    class PartiallyIsolatingAgent(FakeAgent):
+        def analyze(self, **kwargs):
+            analysis = super().analyze(**kwargs)
+            kept = [
+                review for review in analysis.manager_reviews if review.name == "甲"
+            ]
+            return analysis.model_copy(
+                update={
+                    "executive_summary": "已完成 1 / 2 位 CEO-2 成员的逐 KR 综合证据评分；"
+                    "本次未能完成评分的成员：乙，其区块缺失，不代表这些成员没有进展。",
+                    "manager_reviews": kept,
+                    "warnings": ["乙 的 KR 评分未完成，本次报告缺少该成员区块：runtime_result_validation_failed"],
+                }
+            )
+
+    result = run_weekly_okr_report(
+        store=store,
+        gateway=gateway,
+        source=source,
+        agent=PartiallyIsolatingAgent(),
+        workspace=tmp_path,
+        now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+        force=True,
+        deliver=True,
+        period_label="2026 Q3",
+    )
+
+    assert result.status == "sent"
+    published = next(
+        content
+        for name, content, _folder_id in gateway.published
+        if "评分附录" not in name
+    )
+    assert "甲" in published
+    appendix_section = published.split("## 逐人评分附录", 1)[1].split(
+        "## 数据覆盖与限制", 1
+    )[0]
+    # 乙 is named as a known gap in the executive summary and the limits
+    # section, but never gets a scorecard row or an appendix entry -- there
+    # is no section of theirs to link to.
+    assert "乙" not in appendix_section
+    assert "本次未能完成评分的成员：乙" in published
+    # Only the analyzed manager gets an appendix document; the isolated one
+    # never had a section to publish.
+    appendix_names = {
+        name for name, _content, _folder_id in gateway.published if "评分附录" in name
+    }
+    assert appendix_names == {"CEO-2 管理者 OKR 进度周报（2026-07-27—2026-07-30）｜评分附录｜甲"}
+    assert store.state["weekly_okr_report:last_success_date"] == "2026-07-30"
+
+
 def test_report_orchestration_returns_typed_wait_result_for_in_progress(tmp_path):
     store = FakeStore()
     gateway = FakeGateway(managers())
