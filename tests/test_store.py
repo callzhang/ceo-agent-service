@@ -8858,7 +8858,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-11.2"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-11.3"
     assert {
         "lease_owner",
         "lease_expires_at",
@@ -9339,3 +9339,121 @@ def test_naming_an_error_does_not_swallow_it(tmp_path: Path, capsys):
             db.execute("select * from a_table_that_does_not_exist")
 
     assert "a_table_that_does_not_exist" in str(raised.value)
+
+
+def _failed_attempt(store, *, trigger: str = "msg-settled-outside") -> int:
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-settled-outside",
+        conversation_title="胡明",
+        trigger_message_id=trigger,
+        trigger_sender="胡明",
+        trigger_text="[Ding]磊哥，请审批工资。",
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="runtime_provider_unreachable",
+        send_status="failed",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set send_error=? where id=?",
+            ("runtime_provider_unreachable", attempt_id),
+        )
+    return attempt_id
+
+
+def _history_status(store, attempt_id: int) -> str:
+    _total, rows = store.list_operation_logs_with_count(
+        limit=200,
+        source_tables=("reply_attempts",),
+        _skip_history_cache=True,
+    )
+    row = next(
+        row
+        for row in rows
+        if row.source_table == "reply_attempts" and row.source_id == attempt_id
+    )
+    return row.status
+
+
+def test_an_attempt_the_principal_settled_himself_stops_reading_as_failed(
+    tmp_path,
+):
+    """The only way a failed attempt could recover was a later attempt on the
+    same trigger. When the principal just does the work himself in DingTalk,
+    no such attempt ever exists, so the row read as an open failure forever
+    while nothing was open. `errors` has had resolved_at/resolution all along.
+    """
+
+    store = store_module.AutoReplyStore(tmp_path / "settled.sqlite3")
+    attempt_id = _failed_attempt(store)
+    assert _history_status(store, attempt_id) == "failed"
+
+    assert store.resolve_failed_reply_attempt_already_settled(
+        attempt_id,
+        resolution="approval completed 15:45:52 by the principal in DingTalk",
+    )
+
+    assert _history_status(store, attempt_id) == "recovered"
+
+
+def test_the_resolution_appends_and_never_rewrites_the_failure(tmp_path):
+    store = store_module.AutoReplyStore(tmp_path / "settled-detail.sqlite3")
+    attempt_id = _failed_attempt(store)
+
+    store.resolve_failed_reply_attempt_already_settled(
+        attempt_id,
+        resolution="approval completed 15:45:52",
+    )
+
+    _total, rows = store.list_operation_logs_with_count(
+        limit=200,
+        source_tables=("reply_attempts",),
+        _skip_history_cache=True,
+    )
+    row = next(row for row in rows if row.source_id == attempt_id)
+    assert "runtime_provider_unreachable" in row.detail
+    assert "Resolved: approval completed 15:45:52" in row.detail
+    with store._connect() as db:
+        stored = db.execute(
+            "select send_status, send_error from reply_attempts where id=?",
+            (attempt_id,),
+        ).fetchone()
+    assert stored["send_status"] == "failed"
+    assert stored["send_error"] == "runtime_provider_unreachable"
+
+
+def test_settling_an_attempt_requires_live_evidence(tmp_path):
+    store = store_module.AutoReplyStore(tmp_path / "settled-evidence.sqlite3")
+    attempt_id = _failed_attempt(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_failed_reply_attempt_already_settled(
+            attempt_id,
+            resolution="   ",
+        )
+
+
+def test_only_a_failed_attempt_can_be_settled_and_only_once(tmp_path):
+    store = store_module.AutoReplyStore(tmp_path / "settled-once.sqlite3")
+    attempt_id = _failed_attempt(store)
+    sent = store.record_reply_attempt(
+        conversation_id="cid-settled-outside",
+        conversation_title="胡明",
+        trigger_message_id="msg-already-sent",
+        trigger_sender="胡明",
+        trigger_text="hello",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+
+
+    assert store.resolve_failed_reply_attempt_already_settled(
+        attempt_id, resolution="settled"
+    )
+    assert not store.resolve_failed_reply_attempt_already_settled(
+        attempt_id, resolution="settled again"
+    )
+    assert not store.resolve_failed_reply_attempt_already_settled(
+        sent, resolution="not a failure"
+    )

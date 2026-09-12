@@ -15620,6 +15620,47 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def resolve_failed_reply_attempt_already_settled(
+        self,
+        attempt_id: int,
+        *,
+        resolution: str,
+    ) -> bool:
+        """Record that a failed attempt's work was settled outside the service.
+
+        `errors` has kept `resolved_at`/`resolution` for a long time, so a
+        service error that later recovered stops reading as active. A failed
+        `reply_attempts` row had no such pair, and the only way it could stop
+        reading as failed was for a *later attempt on the same trigger* to
+        reach a terminal state. When the principal simply does the work
+        himself in DingTalk, no later attempt on that trigger ever exists, so
+        the row reads as an open failure forever even though nothing is open.
+
+        Nothing is rewritten: `send_status` and `send_error` are untouched and
+        the history detail keeps the original error with the resolution
+        appended, exactly as a resolved `errors` row does. The live evidence
+        is required, because this is the one closure that is not derived from
+        anything the service itself did.
+        """
+
+        evidence = resolution.strip()
+        if not evidence:
+            raise ValueError("resolution evidence must be non-empty")
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select send_status, coalesce(resolved_at, '') as resolved_at "
+                "from reply_attempts where id=?",
+                (attempt_id,),
+            ).fetchone()
+            if row is None or row["send_status"] != "failed" or row["resolved_at"]:
+                return False
+            db.execute(
+                "update reply_attempts "
+                "set resolved_at=current_timestamp, resolution=? where id=?",
+                (evidence, attempt_id),
+            )
+            return True
+
     def close_failed_reply_task_already_settled(
         self,
         task_id: int,
@@ -24911,6 +24952,7 @@ class AutoReplyStore:
                                 )
                                   and current_task.status in ('done', 'skipped', 'needs_human')
                             )
+                            or coalesce(reply_attempts.resolved_at, '')<>''
                         ) then 'recovered'
                         else send_status
                     end as status,
@@ -24922,7 +24964,9 @@ class AutoReplyStore:
                     trigger_sender as source_actor,
                     conversation_title as context,
                     trigger_text as summary,
-                    send_error as detail,
+                    case when coalesce(resolved_at, '')='' then send_error
+                         else send_error || char(10) || 'Resolved: ' || resolution
+                    end as detail,
                     conversation_id as conversation_id,
                     trigger_message_id as message_id,
                     0 as project_id,
