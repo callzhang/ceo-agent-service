@@ -14,6 +14,13 @@ from types import SimpleNamespace
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def configured_email_classifier_api(monkeypatch):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_api")
+    monkeypatch.setenv("CEO_CODEX_API_KEY", "test-email-api-key")
+    monkeypatch.setenv("CEO_CODEX_API_MODEL", "gpt-5.5")
+
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
@@ -5777,18 +5784,23 @@ def test_email_dependency_builder_applies_classifier_model_override_only(
     )
 
     bootstrap = module.build_email_worker_dependencies(settings)
-    bootstrap.build_dependencies(
+    dependencies = bootstrap.build_dependencies(
         ({"account_id": "account-1", "enabled": True},),
         SimpleNamespace(
             loaded=SimpleNamespace(model_id="email-model:test", classifier=object()),
             tick=lambda: None,
         ),
     )
+    from app.email_agent_api import EmailClassifierApiBackend
+
+    assert isinstance(
+        dependencies.run_classification_once.args[1].backend,
+        EmailClassifierApiBackend,
+    )
     assert description_agents[0]({"candidate": "test"}) == {"candidate": "test"}
 
-    assert len(routed_calls) == 2
-    assert routed_calls[0]["codex_oauth_model"] == "gpt-5.6-luna"
-    assert "codex_oauth_model" not in routed_calls[1]
+    assert len(routed_calls) == 1
+    assert "codex_oauth_model" not in routed_calls[0]
 
 
 def test_worker_startup_isolates_legacy_before_agent_claim_and_starts_components(
