@@ -2132,7 +2132,7 @@ def test_queue_attention_rows_routes_service_errors_to_history_detail(tmp_path: 
     assert service_error["detail_url"] == f"/history/errors/{error_id}"
 
 
-def test_queue_attention_rows_includes_current_needs_human_attempts(tmp_path: Path):
+def test_queue_attention_rows_excludes_current_needs_human_attempts(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="needs-human-conversation",
@@ -2154,10 +2154,7 @@ def test_queue_attention_rows_includes_current_needs_human_attempts(tmp_path: Pa
 
     rows = audit_web_module._queue_attention_rows(store)
 
-    needs_human = next(row for row in rows if row["id"] == str(attempt_id))
-    assert needs_human["category"] == "Reply"
-    assert needs_human["status"] == "needs_human"
-    assert needs_human["error"] == "high risk decision requires review"
+    assert not any(row["id"] == str(attempt_id) for row in rows)
 
 
 def test_console_error_detail_returns_error_record(tmp_path: Path):

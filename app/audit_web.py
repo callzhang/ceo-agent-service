@@ -3173,7 +3173,10 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 )
     for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
         send_status = str(attempt["send_status"] or "").casefold()
-        if send_status not in {"failed", "needs_human"}:
+        # Attention is the service-error surface. A genuine business decision
+        # stays available from its attempt/detail page, but must not inflate
+        # the error count or appear beside technical failures.
+        if send_status != "failed":
             continue
         trigger_key = (
             attempt["channel"],
