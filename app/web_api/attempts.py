@@ -74,13 +74,14 @@ def _transcript_owner(run: Any) -> Any:
 
 
 def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]:
-    """Return each role's readable transcript, with the calls it made.
+    """Return each role's readable transcript.
 
     The Attempt row stores a single session id, which is the last role that
     ran. Linking only that one hides the Consumer transcript even though it is
-    on disk, so every run with a readable transcript gets its own entry.
+    on disk, so every run with a readable transcript gets its own entry. The
+    calls themselves are not copied here: the Agent record at that URL already
+    carries them with their inputs, outputs and the reasoning around them.
     """
-    from app.audit_web import _audit_event_uses_for_attempt
     from app.codex_history import find_codex_session_path
 
     sessions: list[dict[str, Any]] = []
@@ -100,7 +101,6 @@ def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]
                 "label": _AGENT_ROLE_LABELS.get(role, "Agent session"),
                 "session_id": session_id,
                 "url": f"/codex/{quote(session_id, safe='')}",
-                "tool_uses": json_safe(_audit_event_uses_for_attempt(owner)),
             }
         )
     return sessions

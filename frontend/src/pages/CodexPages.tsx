@@ -25,7 +25,7 @@ type CodexSessionPayload = {
   available?: boolean;
   message?: string;
   events?: CodexSessionEvent[];
-  related_attempts?: Array<{ id: number; status: string }>;
+  related_attempts?: Array<{ id: number; status: string; role?: string; role_label?: string }>;
 };
 
 function displayEventTime(value?: string) {
@@ -125,9 +125,9 @@ function SessionTimeline({ events }: { events: CodexSessionEvent[] }) {
   </section>;
 }
 
-function RelatedAttempts({ attempts }: { attempts: Array<{ id: number; status: string }> }) {
+function RelatedAttempts({ attempts }: { attempts: Array<{ id: number; status: string; role?: string; role_label?: string }> }) {
   if (!attempts.length) return null;
-  return <section className="console-card codex-related-attempts"><div><h2>关联事项</h2><p>这些业务记录使用了本次 Agent 执行。</p></div><ul>{attempts.map((attempt) => <li key={attempt.id}><Link to={`/attempts/${attempt.id}`}>Attempt #{attempt.id}</Link><StatusBadge value={attempt.status || "unknown"} /></li>)}</ul></section>;
+  return <section className="console-card codex-related-attempts"><div><h2>关联事项</h2><p>这些业务记录使用了本次 Agent 执行。</p></div><ul>{attempts.map((attempt) => <li key={`${attempt.id}-${attempt.role || ""}`}><Link to={`/attempts/${attempt.id}`}>Attempt #{attempt.id}</Link>{attempt.role_label && <span className="codex-related-role">{attempt.role_label}</span>}<StatusBadge value={attempt.status || "unknown"} /></li>)}</ul></section>;
 }
 
 export function CodexSessionDetailPage() {

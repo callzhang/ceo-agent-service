@@ -2461,10 +2461,14 @@ def _validate_unsubscribe_entry_url(value: object, *, entry_reference: str) -> s
     reproduced by hand, which means the stored value carries whatever query
     and token the provider put in the link, and opening it performs a real
     unsubscribe. It is therefore not run through ``assert_no_credentials``,
-    which rejects exactly those tokens. What is still enforced is that the URL
-    is the one this receipt is bound to: its sha256 must equal the digest in
-    ``entry_reference``, so the column cannot drift from the identity the rest
-    of the lifecycle agrees on.
+    which rejects exactly those tokens.
+
+    What is enforced is binding, not a second opinion about which URLs are
+    acceptable: the value's sha256 must equal the digest in
+    ``entry_reference``. Only ``unsubscribe_entry_reference`` mints those
+    digests, and it already refuses anything but a private HTTPS, loopback
+    HTTP or mailto entry, so restating that rule here could only disagree with
+    it - and did, rejecting the loopback entries that rule allows.
     """
 
     if value is None or value == "":
@@ -2477,12 +2481,6 @@ def _validate_unsubscribe_entry_url(value: object, *, entry_reference: str) -> s
         or "\n" in value
     ):
         raise ValueError("entry_url must be a bounded single-line URL")
-    parsed = urlsplit(value)
-    if parsed.scheme.casefold() == "mailto":
-        if not parsed.path.strip():
-            raise ValueError("entry_url must be a bounded single-line URL")
-    elif parsed.scheme.casefold() != "https" or not parsed.hostname:
-        raise ValueError("entry_url must be an https or mailto unsubscribe entry")
     expected = entry_reference.removeprefix("unsubscribe-entry:")
     if sha256(value.encode("utf-8")).hexdigest() != expected:
         raise ValueError("entry_url does not match the receipt entry reference")

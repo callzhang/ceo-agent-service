@@ -21,7 +21,6 @@ export interface AttemptAgentSession {
   label: string;
   session_id: string;
   url: string;
-  tool_uses: AttemptToolUse[];
 }
 
 export interface AttemptUnsubscribeReceipt {

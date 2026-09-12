@@ -20823,6 +20823,53 @@ class AutoReplyStore:
             rows = db.execute(query, args).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
+    def list_codex_session_attempt_roles(
+        self, codex_session_id: str
+    ) -> list[dict[str, object]]:
+        """Return the Attempts this Codex session ran for, and the role it ran as.
+
+        An Attempt row stores one session id, the last role that ran, so a
+        Consumer transcript matched nothing and its page could not say which
+        business record it belonged to. The agent run that owns the session
+        names both its task and its role.
+        """
+        with self._connect() as db:
+            runs = db.execute(
+                """
+                select reply_task_id, role
+                from agent_runs
+                where codex_session_id=?
+                order by id desc
+                """,
+                (codex_session_id,),
+            ).fetchall()
+            results: list[dict[str, object]] = []
+            seen: set[tuple[int, str]] = set()
+            for run in runs:
+                role = str(run["role"] or "")
+                for row in db.execute(
+                    """
+                    select attempt.id as id, attempt.send_status as send_status
+                    from reply_attempts attempt
+                    join agent_runs run on run.id = attempt.agent_run_id
+                    where run.reply_task_id = ?
+                    order by attempt.id desc
+                    """,
+                    (run["reply_task_id"],),
+                ).fetchall():
+                    key = (int(row["id"]), role)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    results.append(
+                        {
+                            "id": int(row["id"]),
+                            "status": str(row["send_status"] or ""),
+                            "role": role,
+                        }
+                    )
+        return results
+
     def upsert_codex_session_search_index(
         self,
         *,

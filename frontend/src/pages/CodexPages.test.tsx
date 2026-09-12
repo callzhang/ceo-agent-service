@@ -33,6 +33,24 @@ describe("CodexSessionDetailPage", () => {
     expect(screen.queryByText("Runtime details")).not.toBeInTheDocument();
   });
 
+  it("names the role a transcript ran as, not only the Attempt it belongs to", async () => {
+    getCodexSession.mockResolvedValueOnce({
+      item: {
+        available: true,
+        events: [{ timestamp: "2026-09-12T06:20:50Z", kind: "assistant", title: "Assistant", body: "已执行退订入口发现。", expanded: true }],
+        related_attempts: [{ id: 9129, status: "skipped", role: "consumer", role_label: "处理 Agent" }],
+      },
+      meta: { snapshot_at: "2026-09-12T06:21:40Z" },
+    });
+
+    render(<MemoryRouter initialEntries={["/codex/session-consumer"]}><Routes><Route path="/codex/:sessionId" element={<CodexSessionDetailPage />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByRole("link", { name: "Attempt #9129" })).toHaveAttribute("href", "/attempts/9129");
+    // Without the role, a Consumer transcript and an Audit transcript of the
+    // same Attempt read identically.
+    expect(screen.getByText("处理 Agent")).toBeInTheDocument();
+  });
+
   it("renders available session events as a readable execution timeline rather than raw JSON", async () => {
     getCodexSession.mockResolvedValueOnce({
       item: {

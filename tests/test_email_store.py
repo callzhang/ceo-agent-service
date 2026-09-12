@@ -9766,6 +9766,40 @@ def test_unsubscribe_receipt_records_the_entry_url_it_was_earned_against(
     assert persisted["entry_url"] == _UNSUBSCRIBE_ENTRY_URL
 
 
+def test_unsubscribe_receipt_accepts_every_entry_shape_the_reference_allows(
+    tmp_path: Path,
+):
+    # unsubscribe_entry_reference mints digests for private HTTPS, loopback
+    # HTTP and mailto entries. A second scheme rule here could only disagree
+    # with it, and one did: it rejected loopback entries and turned the whole
+    # unsubscribe into unsubscribe_operation_rejected.
+    for index, url in enumerate(
+        (
+            "http://127.0.0.1:8123/unsubscribe?token=loopback",
+            "mailto:unsubscribe@news.example.com?subject=stop",
+        )
+    ):
+        store = EmailStore(tmp_path / f"email-{index}.sqlite3")
+        authorization = _unsubscribe_authorization(
+            store, entry_reference=_entry_reference_for(url)
+        )
+        claim = store.claim_email_unsubscribe_write(
+            **authorization, owner=_UNSUBSCRIBE_OWNER_A
+        )
+        assert claim is not None and claim["acquired"] is True
+
+        receipt = store.persist_email_unsubscribe_terminal(
+            **authorization,
+            entry_url=url,
+            outcome="done",
+            receipt_id=f"unsubscribe-receipt:shape-{index}",
+            evidence="terminal-page",
+            claim_owner=_UNSUBSCRIBE_OWNER_A,
+        )
+
+        assert receipt["entry_url"] == url
+
+
 def test_unsubscribe_receipt_rejects_an_entry_url_it_is_not_bound_to(tmp_path: Path):
     store = EmailStore(tmp_path / "email.sqlite3")
     authorization = _unsubscribe_authorization(

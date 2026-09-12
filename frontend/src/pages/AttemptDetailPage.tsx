@@ -25,12 +25,13 @@ function ToolUseList({ uses }: { uses: AttemptToolUse[] }) {
   return <ol className="attempt-tool-use-list">{uses.map((use, index) => <li key={`${use.call_id}-${index}`}><article className="attempt-tool-use"><header><strong>{use.title || use.tool || "未命名调用"}</strong>{use.source && <small>{use.source}</small>}</header>{use.relevance && <p className="attempt-tool-use-relevance">{use.relevance}</p>}<dl><div><dt>参数</dt><dd><SummaryText value={displayValue(use.args)} lines={4} /></dd></div><div><dt>结果</dt><dd><SummaryText value={displayValue(use.output)} lines={6} /></dd></div></dl></article></li>)}</ol>;
 }
 
-function AgentProcess({ sessions, toolUses }: { sessions: AttemptAgentSession[]; toolUses: AttemptToolUse[] }) {
-  if (!sessions.length) {
-    if (!toolUses.length) return null;
-    return <section className="console-card attempt-process-card"><h2>执行过程</h2><p>这次处理实际调用的工具、参数和返回结果。</p><ToolUseList uses={toolUses} /></section>;
-  }
-  return <section className="console-card attempt-process-card"><h2>执行过程</h2><p>按角色分开：处理 Agent 形成方案，审计 Agent 核验方案并执行对外动作。每一条是它实际调用的工具、参数和返回结果。</p>{sessions.map((session) => <details className="attempt-process-role" key={session.session_id} open={sessions.length === 1 || session.role === "audit"}><summary><strong>{session.label}</strong><span>{session.tool_uses.length} 次调用</span></summary><div className="attempt-process-role-body"><Link className="agent-log-button" to={session.url}>查看完整 Agent 记录</Link><ToolUseList uses={session.tool_uses} /></div></details>)}</section>;
+function RecordedCalls({ sessions, toolUses }: { sessions: AttemptAgentSession[]; toolUses: AttemptToolUse[] }) {
+  // Only for an Attempt whose Codex transcript is gone. When the record
+  // exists it is the one home for the process - it carries these calls with
+  // their inputs and outputs, plus the reasoning and messages around them -
+  // so repeating a thinner copy here only split the evidence in two.
+  if (sessions.length || !toolUses.length) return null;
+  return <section className="console-card attempt-process-card"><h2>执行过程</h2><p>这次处理调用的工具、参数和返回结果。本次执行的 Agent 记录已不在本机，以下是事项自身留存的调用。</p><ToolUseList uses={toolUses} /></section>;
 }
 
 function EmailContext({ email }: { email: AttemptEmail | null }) {
@@ -78,8 +79,8 @@ function ExecutionDetail({ detail, role, snapshot }: { detail: AttemptDetail; ro
       <span>触发人：<strong>{detail.conversation.trigger_sender || "未提供"}</strong></span>
     </section>
     <section className="console-card attempt-process-card" aria-label={`${roleLabel} 调用记录`}>
-      <div className="execution-detail-list-header"><div><h2>调用记录</h2><p>这一个角色实际调用的工具、参数和返回结果。</p></div>{session && <Link className="agent-log-button" to={session.url}>查看完整 Agent 记录</Link>}</div>
-      <ToolUseList uses={session?.tool_uses || []} />
+      <div className="execution-detail-list-header"><div><h2>调用记录</h2><p>这一个角色调用的工具、参数和返回结果，连同它当时的推理与输出，都在这次执行的 Agent 记录里。</p></div>{session && <Link className="agent-log-button" to={session.url}>查看 {session.label} 的 Agent 记录</Link>}</div>
+      {!session && <p className="page-state">本次执行的 Agent 记录已不在本机。</p>}
     </section>
     <section className="console-card execution-detail-list" aria-label={`${roleLabel} 执行记录`}>
       <div className="execution-detail-list-header"><div><h2>执行步骤</h2><p>每一条代表一轮处理或一次重试；它们不会自动等同于重复发送。</p></div><span>{entries.length} 个步骤</span></div>
@@ -192,7 +193,7 @@ export function AttemptDetailPage() {
       {(detail.calendar.event_id || detail.calendar.response_status) && <DetailSection title="日历信息" value={[detail.calendar.event_id, detail.calendar.response_status, displayValue(detail.calendar.result)].filter(Boolean).join("\n")} />}
       {detail.quality_warnings.length > 0 && <section className="console-card attempt-quality-warning"><h2>Audit quality warnings</h2><ul>{detail.quality_warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section>}
       {detail.context_only_info && <DetailSection title="Audit context" value={detail.context_only_info} />}
-      <AgentProcess sessions={detail.agent_sessions} toolUses={detail.tool_uses} />
+      <RecordedCalls sessions={detail.agent_sessions} toolUses={detail.tool_uses} />
       {detail.runtime_attempts.length > 0 && <details className="console-card attempt-runtime-card"><summary><div><h2>处理过程</h2><p>每一轮会先由处理 Agent 形成方案，再由审计 Agent 核验。多条记录表示修订、重试或重新核验，不代表重复发送。 </p></div><span>{detail.runtime_attempts.length} 个处理步骤</span></summary><div className="attempt-runtime-list">{detail.runtime_attempts.map((entry, index) => <RuntimeEntry entry={entry} key={`${entry.role}-${entry.proposal_revision}-${entry.turn_attempt}-${index}`} />)}</div></details>}
       {message && <p className="attempt-action-message" role="status" aria-live="polite">{message}</p>}
       {(detail.actions.can_rerun || detail.actions.can_recall) && <div className="attempt-bottom-actions">{detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认重新处理这条 Attempt？")) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>重新处理</button>}{detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}</div>}

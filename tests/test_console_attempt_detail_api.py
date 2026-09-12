@@ -170,7 +170,7 @@ def test_email_attempt_is_not_presented_as_a_dingtalk_conversation(tmp_path: Pat
     assert item["actions"]["dingtalk_url"] == ""
 
 
-def test_attempt_detail_carries_each_role_calls_and_transcript(
+def test_attempt_detail_reaches_every_role_transcript(
     tmp_path: Path, readable_transcripts
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -185,10 +185,9 @@ def test_attempt_detail_carries_each_role_calls_and_transcript(
     # session id made it unreachable from the console.
     assert sessions["consumer"]["url"] == "/codex/session-consumer"
     assert sessions["audit"]["url"] == "/codex/session-audit"
-    assert [use["tool"] for use in sessions["consumer"]["tool_uses"]] == ["read_thread"]
-    audit_call = sessions["audit"]["tool_uses"][0]
-    assert audit_call["tool"] == "unsubscribe_email"
-    assert "skipped_no_reliable_entry" in audit_call["output"]
+    # The calls live in the Agent record at those URLs, not copied here.
+    assert "tool_uses" not in sessions["consumer"]
+    assert item["tool_uses"] == []
 
 
 def test_recorded_calls_survive_an_attempt_whose_transcript_is_gone(
@@ -247,3 +246,16 @@ def test_non_email_attempt_has_no_email_context(tmp_path: Path):
 
     assert item is not None
     assert item["email"] is None
+
+
+def test_codex_session_roles_resolve_both_transcripts_of_one_attempt(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=True)
+
+    consumer = store.list_codex_session_attempt_roles("session-consumer")
+    audit = store.list_codex_session_attempt_roles("session-audit")
+
+    # The Attempt row stores only the last role's session, so matching on it
+    # left the Consumer transcript with no business record at all.
+    assert consumer == [{"id": attempt_id, "status": "skipped", "role": "consumer"}]
+    assert audit == [{"id": attempt_id, "status": "skipped", "role": "audit"}]

@@ -1733,14 +1733,34 @@ def register_console_routes(
                          "detail_url": f"/codex/{conversation.codex_session_id}" if conversation.codex_session_id else ""})
         return list_envelope(rows, page=1, page_size=max(20, len(rows)), total=len(rows))
 
+    _CODEX_ROLE_LABELS = {"consumer": "处理 Agent", "audit": "审计 Agent"}
+
     @app.get("/api/console/codex/sessions/{session_id}")
     def console_codex_session(session_id: str):
         from app.codex_history import render_local_codex_session
         rendered = render_local_codex_session(session_id)
-        related = store_factory().list_reply_attempts_for_codex_session(session_id)
+        store = store_factory()
+        # An Attempt row stores one session id, the last role that ran, so
+        # matching on it alone left a Consumer transcript with no business
+        # record at all and never said which role a transcript was.
+        related = [
+            {
+                "id": int(item["id"]),
+                "status": str(item["status"]),
+                "role": str(item["role"]),
+                "role_label": _CODEX_ROLE_LABELS.get(str(item["role"]), ""),
+            }
+            for item in store.list_codex_session_attempt_roles(session_id)
+        ]
+        seen = {row["id"] for row in related}
+        related.extend(
+            {"id": item.id, "status": item.send_status, "role": "", "role_label": ""}
+            for item in store.list_reply_attempts_for_codex_session(session_id)
+            if item.id not in seen
+        )
         return item_envelope({"session_id": session_id, "available": not rendered.missing,
                               "events": [json_safe(event.__dict__) for event in rendered.events] if not rendered.missing else [],
-                              "related_attempts": [{"id": item.id, "status": item.send_status} for item in related],
+                              "related_attempts": related,
                               "message": "本机执行记录不可用" if rendered.missing else ""})
 
     @app.get("/api/console/wechat/review")
