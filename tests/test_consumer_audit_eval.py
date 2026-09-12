@@ -290,7 +290,23 @@ def test_eval_cases_traverse_orchestration_with_exactly_the_expected_write(case:
             else []
         )
         return
-    assert result.status == "failed_terminal"
+    # Only a proposal the Audit kept asking to revise reaches here. Exhausting
+    # the revision ceiling used to collapse into an opaque failed task;
+    # 3a9ca3a8 "fix(agent): surface exhausted audit feedback" deliberately
+    # keeps the final concrete revision as a choice Derek can act on, and
+    # missed this contract.
+    assert result.status == "needs_human"
+    assert result.feedback_cycles == MAX_CONTENT_FEEDBACK_CYCLES
+    assert result.feedback is not None
+    assert result.feedback.requested_revision.strip()
+    assert result.audit_result is not None
+    options = result.audit_result.decision_options
+    assert 2 <= len(options) <= 4
+    # The revision the Audit actually asked for is one of the offered choices,
+    # not a summary of it.
+    assert any(
+        option.instruction == result.feedback.requested_revision for option in options
+    )
     assert sink.row_count(f"agent-task:{task.id}:{task.execution_generation}:proposal:0") == 0
     expected_oa_reads = (
         [

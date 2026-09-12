@@ -146,9 +146,15 @@ def test_current_docs_describe_content_first_meeting_audience_boundary() -> None
     for document in (architecture, reliability, readme):
         assert "日历只用于" in document or "日历仅用于" in document
         assert "业务内容" in document
-        assert "绝不私信会议创建人" in document
         assert "完整日历" in document
         assert "个人、非业务" in document
+        # a4f7f80a "fix(meeting): allow organizer direct fallback" deliberately
+        # withdrew the never-DM-the-creator rule and shipped the fallback in
+        # app/meeting_alignment_delivery.py. It updated architecture.md and
+        # reply-worker-reliability.md and missed README.md and this test, so
+        # the contract kept asserting a policy the service no longer follows.
+        assert "绝不私信会议创建人" not in document
+        assert "组织者" in document
 
     assert "多个合理群不是人工选择条件" in architecture
     assert "多个合理群由 Agent 决定" in reliability
