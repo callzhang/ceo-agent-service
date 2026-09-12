@@ -289,6 +289,18 @@ def _strip_json_fence(text: str) -> str:
     return content.strip()
 
 
+def extract_first_json_object(text: str) -> str:
+    """Return the first balanced JSON object in a model's reply.
+
+    A reply can carry the object inside a wrapper the model chose: a fenced
+    block, an explanation, or a reasoning block such as MiniMax-M3's
+    `<think>...</think>`. Callers that need the object rather than the whole
+    reply share this so a probe cannot end up stricter than the business path
+    that consumes the same provider.
+    """
+    return _first_balanced_json_object(text)
+
+
 def _first_balanced_json_object(text: str) -> str:
     start = text.find("{")
     if start < 0:

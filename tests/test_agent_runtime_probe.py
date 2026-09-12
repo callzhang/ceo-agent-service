@@ -3,6 +3,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+import app.agent_runtime_probe as probe_module
+from app.agent_result import ResultParseError
+
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.agent_runtime_contracts import LOCAL_SERVICE_RUNTIME_CAPABILITIES
@@ -774,3 +777,54 @@ def test_refresher_does_not_adopt_its_own_persisted_snapshot(monkeypatch, tmp_pa
     refresher.refresh_expired(force=True)
 
     assert probed == ["codex_api"]
+
+
+def test_probe_accepts_the_wrapper_a_reasoning_model_puts_around_the_object():
+    """A probe must not be stricter than the business path it gates.
+
+    MiniMax-M3 returns the object inside a `<think>` block. The business
+    parser already reads through that wrapper, so a route whose real work
+    would succeed was being marked unhealthy and skipped.
+    """
+    wrapped = (
+        '<think>The user asked for the synthetic probe result.</think>\n\n'
+        '{"ok":true}'
+    )
+
+    assert probe_module._parse_probe_result(wrapped) == {"ok": True}
+    assert probe_module._parse_probe_result('{"ok":true}') == {"ok": True}
+
+
+def test_probe_still_rejects_a_non_canonical_object():
+    """Reading through a wrapper must not accept a different answer."""
+    for reply in ('<think>x</think>\n{"ok":false}', '{"ok":true,"extra":1}', "no json"):
+        with pytest.raises((ValueError, ResultParseError)):
+            probe_module._parse_probe_result(reply)
+
+
+def test_claude_probe_grammar_accepts_a_wrapped_object():
+    events = (
+        {"type": "turn.started", "session_id": "s1"},
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": '<think>y</think>{"ok":true}'},
+        },
+        {
+            "type": "turn.completed",
+            "session_id": "s1",
+            "result": '<think>y</think>{"ok":true}',
+        },
+    )
+
+    assert probe_module._claude_probe_grammar_valid(events) is True
+
+
+def test_claude_probe_grammar_still_requires_the_result_to_match_the_message():
+    """The wrapper is the model's business; grammar consistency is not."""
+    events = (
+        {"type": "turn.started", "session_id": "s1"},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": '{"ok":true}'}},
+        {"type": "turn.completed", "session_id": "s1", "result": '{"ok":false}'},
+    )
+
+    assert probe_module._claude_probe_grammar_valid(events) is False

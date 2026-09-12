@@ -1,5 +1,17 @@
 # Changelog
 
+- 2026-09-11: a runtime health probe no longer requires the provider's reply to
+  be nothing but the canonical object. MiniMax-M3 returns it inside a
+  `<think>...</think>` block, so `friday_runtime` was marked unhealthy and
+  skipped even though the business path would have succeeded on the same reply -
+  `parse_typed_agent_result` reads through fences, prose and reasoning blocks
+  via `_first_balanced_json_object`. A probe that gates a route must not be
+  stricter than the work it gates, so all three probe checks (the Friday result,
+  `_parse_probe_result`, and the Claude event grammar) now share that extraction
+  through the new `extract_first_json_object`. The extracted object still has to
+  be exactly `{"ok":true}`, and the Claude grammar still requires the terminal
+  result to equal the assistant message.
+
 - 2026-09-11: email unsubscribe tasks with durable browser steps but no
   terminal receipt now stop at an explicit `needs_human` decision instead of
   remaining failed or being replayed. The choices are bounded to read-only

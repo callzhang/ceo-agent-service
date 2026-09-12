@@ -21,6 +21,7 @@ from app.agent_runtime_contracts import (
     RuntimeKind,
     RuntimeRoute,
 )
+from app.agent_result import ResultParseError, extract_first_json_object
 from app.agent_runtime_production import RuntimeCapabilityRegistry
 from app.agent_runtime_router import (
     CodexCommandFactory,
@@ -93,7 +94,7 @@ class AgentRuntimeProbe:
                     model=route.model,
                     timeout_seconds=self._total_timeout_seconds,
                 )
-                parsed = json.loads(result.text)
+                parsed = json.loads(extract_first_json_object(result.text))
                 if parsed != {"ok": True}:
                     raise ValueError("Friday probe result is not canonical")
             except FridayRuntimeError as exc:
@@ -588,9 +589,12 @@ def _probe_stream_failure_code(raw: str) -> str | None:
 
 
 def _parse_probe_result(raw: str) -> dict[str, object]:
-    if raw != _PROBE_CANONICAL_RESULT:
-        raise ValueError("runtime probe result is not canonical")
-    result = json.loads(raw)
+    # The probe must not be stricter than the business path that consumes the
+    # same provider: a reply may carry the object inside a fence, an
+    # explanation, or a reasoning block, and `parse_typed_agent_result` already
+    # accepts all three. The extracted object still has to be exactly the
+    # canonical probe result below.
+    result = json.loads(extract_first_json_object(raw))
     if not (
         isinstance(result, dict)
         and set(result) == {"ok"}
@@ -599,6 +603,14 @@ def _parse_probe_result(raw: str) -> dict[str, object]:
     ):
         raise ValueError("runtime probe result is invalid")
     return result
+
+
+def _canonical_probe_object(text: str) -> bool:
+    """Whether the reply carries exactly the canonical probe object."""
+    try:
+        return json.loads(extract_first_json_object(text)) == {"ok": True}
+    except (ResultParseError, json.JSONDecodeError, ValueError):
+        return False
 
 
 def _claude_probe_grammar_valid(
@@ -612,11 +624,17 @@ def _claude_probe_grammar_valid(
     if tuple(event.get("type") for event in events) != expected_types:
         return False
     message = events[1].get("item")
+    text = message.get("text") if isinstance(message, dict) else None
     if not (
         isinstance(message, dict)
         and message.get("type") == "agent_message"
-        and message.get("text") == _PROBE_CANONICAL_RESULT
-        and events[-1].get("result") == message.get("text")
+        and isinstance(text, str)
+        # The wrapper a model puts around the object is its own business; the
+        # object itself must be exactly the canonical probe result. The
+        # terminal result still has to be the same text, which is what makes
+        # the grammar self-consistent.
+        and _canonical_probe_object(text)
+        and events[-1].get("result") == text
     ):
         return False
     start_session = events[0].get("session_id")
