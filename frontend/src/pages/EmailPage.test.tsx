@@ -298,7 +298,7 @@ it("renders training duration, coverage and safe parameters without inventing ab
 });
 it("selects only executable training sources and records a narrowed folder scope",async()=>{
   const user=userEvent.setup();
-  api.listEmailLearning.mockResolvedValue({learning:learning({training_sources:[
+  api.listEmailLearning.mockResolvedValue({learning:learning({model_families:[{family:"embedding-mlp",display_name:"Embedding + MLP",supported:true,configured:true}],training_sources:[
     {source:"agent_auto_label",category:"work",sample_count:12,supported:false,provenance:{classification_source:"agent"}},
     {source:"folder_snapshot",category:"work",sample_count:12,supported:true,provenance:{snapshot_id:"snapshot-1"}},
     {source:"folder_snapshot",category:"legal",sample_count:4,supported:true,provenance:{snapshot_id:"snapshot-1"}},
@@ -309,8 +309,28 @@ it("selects only executable training sources and records a narrowed folder scope
   const source=screen.getByRole("checkbox",{name:"Agent 自动标注（暂不支持）"});expect(source).not.toBeChecked();expect(source).toBeDisabled();
   const category=screen.getByRole("checkbox",{name:"legal"});expect(category).toBeChecked();await user.click(category);
   await user.click(screen.getByRole("button",{name:"开始训练"}));
-  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"]});
+  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]});
   expect(await within(screen.getByRole("region",{name:"训练数据来源"})).findByRole("status")).toHaveTextContent("训练已提交");
+});
+it("shows model family support and submits the selected family",async()=>{
+  const user=userEvent.setup();
+  api.listEmailLearning.mockResolvedValue({learning:learning({
+    model_families:[
+      {family:"embedding-mlp",display_name:"Embedding + MLP",supported:true,configured:true},
+      {family:"tfidf-logistic-regression",display_name:"TF-IDF",supported:false,configured:true},
+      {family:"fasttext",display_name:"fastText",supported:false,configured:false},
+    ],
+    training_sources:[{source:"folder_snapshot",category:"work",sample_count:12,supported:true,provenance:{snapshot_id:"snapshot-1"}}],
+  })});
+  api.requestEmailTraining.mockResolvedValue({ok:true,learning:{training_status:"running",training_run_id:"run-family",selection:{sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]}}});
+  show("/email?tab=learning");
+  const region=await screen.findByRole("region",{name:"训练数据来源"});
+  expect(region).toHaveTextContent("模型家族");
+  expect(screen.getByRole("checkbox",{name:"Embedding + MLP"})).toBeChecked();
+  expect(screen.getByRole("checkbox",{name:"TF-IDF（暂不支持）"})).toBeDisabled();
+  expect(screen.getByRole("checkbox",{name:"fastText（暂不支持）"})).toBeDisabled();
+  await user.click(screen.getByRole("button",{name:"开始训练"}));
+  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]});
 });
 it("reuses a mode request ID on retry and prevents duplicate submissions",async()=>{
   const user=userEvent.setup(),pending=deferred<unknown>();api.saveEmailRuntimeMode.mockReturnValueOnce(pending.promise).mockRejectedValueOnce(new Error("重试失败"));show("/email?tab=learning");

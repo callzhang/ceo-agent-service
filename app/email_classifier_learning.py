@@ -12,6 +12,7 @@ import uuid
 from hashlib import sha256
 
 from app.email_classifier_contracts import EmailCategory
+from app.email_classifier_model_families import validate_model_families
 from app.email_classifier_retrain import (
     AutoRetrainResult,
     RetrainDecision,
@@ -220,6 +221,12 @@ class EmailClassifierLearningService:
         canonical = _selection_provenance(
             self.store, sources=sources, categories=categories
         )
+        model_families = validate_model_families(
+            _selection_values(selection, "model_families")
+            if "model_families" in selection
+            else ["embedding-mlp"]
+        )
+        canonical["model_families"] = model_families
         selection_json = json.dumps(
             canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )

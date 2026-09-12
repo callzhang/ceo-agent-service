@@ -932,6 +932,7 @@ def test_selected_folder_categories_reach_the_staged_trainer(tmp_path, monkeypat
         training_selection={
             "sources": ["folder_snapshot"],
             "categories": ["legal"],
+            "model_families": ["embedding-mlp"],
             "provenance": [{"source": "folder_snapshot", "category": "legal"}],
         },
     )

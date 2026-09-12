@@ -20,6 +20,7 @@ from app.email_classifier_training import (
     TrainingResult,
     train_frozen_embedding_candidate,
 )
+from app.email_classifier_model_families import validate_model_families
 from app.email_embedding_cache import EmbeddingCache
 from app.email_embedding_classifier import CategoryDescription
 from app.email_model_registry import (
@@ -901,8 +902,15 @@ def _run_training_job(
         if training_selection is not None:
             sources = training_selection.get("sources")
             categories = training_selection.get("categories")
+            model_families = training_selection.get("model_families", ["embedding-mlp"])
             if sources != ["folder_snapshot"]:
                 raise RuntimeError("unsupported training selection source")
+            if not isinstance(model_families, list):
+                raise RuntimeError("training selection model families are missing")
+            try:
+                validate_model_families(model_families)
+            except ValueError as exc:
+                raise RuntimeError("unsupported training selection model family") from exc
             if not isinstance(categories, list) or not categories or not all(
                 isinstance(category, str) and category.strip()
                 for category in categories

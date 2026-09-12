@@ -65,6 +65,7 @@ def test_learning_exposes_training_source_provenance_and_selection_is_executable
     response = client.post("/api/console/email/training", json={
         "sources": ["folder_snapshot"],
         "categories": ["legal", "work"],
+        "model_families": ["embedding-mlp"],
     })
     assert response.status_code == 202
     assert response.json()["learning"]["training_status"] == "recorded"
@@ -75,13 +76,77 @@ def test_learning_exposes_training_source_provenance_and_selection_is_executable
     )
 
 
+def test_learning_exposes_model_family_support_and_persists_selection(tmp_path, monkeypatch):
+    client, store, registry = client_for(tmp_path)
+    monkeypatch.setattr(store, "latest_training_snapshot_state", lambda: {
+        "snapshot_id": "email-folder-training-snapshot-1",
+        "snapshot_sha": "a" * 64,
+        "snapshot_version": "snapshot-v1",
+        "description_version": "description-v1",
+        "category_sample_counts": {"work": 2},
+    })
+    monkeypatch.setattr(store, "get_training_snapshot", lambda _snapshot_id: {
+        "observations": [
+            {"category_key": "work", "stable_message_identity": "m1"},
+            {"category_key": "work", "stable_message_identity": "m2"},
+        ]
+    })
+    captured = {}
+    # The route factory is replaced with a small durable-run-shaped recorder below.
+    def learning_service():
+        def request_manual_training(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                decision=SimpleNamespace(due=False, reason="training_selection_recorded", pending_examples=0),
+                training_run=SimpleNamespace(
+                    run_id="run-family-selection",
+                    status="queued",
+                    training_selection=kwargs["selection"],
+                ),
+            )
+        return SimpleNamespace(
+            registry=registry,
+            retrain_state_path=tmp_path / "training.json",
+            request_manual_training=request_manual_training,
+        )
+    app = FastAPI()
+    register_email_routes(app, lambda: store, email_learning_factory=learning_service)
+    client = TestClient(app)
+    learning = client.get("/api/console/email/learning").json()["learning"]
+    families = {row["family"]: row for row in learning["model_families"]}
+    assert families["embedding-mlp"]["supported"] is True
+    assert families["tfidf-logistic-regression"]["supported"] is False
+    assert families["fasttext"]["supported"] is False
+
+    response = client.post("/api/console/email/training", json={
+        "sources": ["folder_snapshot"],
+        "categories": ["work"],
+        "model_families": ["embedding-mlp"],
+    })
+    assert response.status_code == 202
+    assert captured["selection"]["model_families"] == ["embedding-mlp"]
+    assert response.json()["learning"]["selection"]["model_families"] == ["embedding-mlp"]
+
+
+@pytest.mark.parametrize("family", ["tfidf-logistic-regression", "fasttext"])
+def test_training_rejects_model_family_without_staged_executor(tmp_path, family):
+    client, _store, _registry = client_for(tmp_path)
+    response = client.post("/api/console/email/training", json={
+        "sources": ["folder_snapshot"],
+        "categories": ["work"],
+        "model_families": [family],
+    })
+    assert response.status_code == 400
+    assert response.json()["code"] == "unsupported_model_family"
+
+
 def test_training_selection_rejects_unknown_values_and_malformed_json(tmp_path, monkeypatch):
     client, store, _registry = client_for(tmp_path)
     monkeypatch.setattr(store, "list_training_examples", lambda **_: [
         {"message_id": "user-1", "label": "work", "sample_digest": "d" * 64},
     ])
     unknown = client.post("/api/console/email/training", json={
-        "sources": ["not-real"], "categories": ["work"],
+        "sources": ["not-real"], "categories": ["work"], "model_families": ["embedding-mlp"],
     })
     assert unknown.status_code == 400
     assert unknown.json()["code"] == "unsupported_training_source"

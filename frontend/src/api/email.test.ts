@@ -36,6 +36,6 @@ it("passes cancellation to model detail and retains absent evaluation as null",a
 });
 it("sends selected training sources and categories to the training request",async()=>{
   const fetch=vi.fn().mockResolvedValue(reply({ok:true,learning:{training_status:"recorded"}}));vi.stubGlobal("fetch",fetch);
-  await requestEmailTraining({sources:["agent_auto_label","user_feedback"],categories:["legal","work"]});
-  expect(fetch).toHaveBeenCalledWith("/api/console/email/training",expect.objectContaining({method:"POST",body:JSON.stringify({sources:["agent_auto_label","user_feedback"],categories:["legal","work"]})}));
+  await requestEmailTraining({sources:["agent_auto_label","user_feedback"],categories:["legal","work"],model_families:["embedding-mlp"]});
+  expect(fetch).toHaveBeenCalledWith("/api/console/email/training",expect.objectContaining({method:"POST",body:JSON.stringify({sources:["agent_auto_label","user_feedback"],categories:["legal","work"],model_families:["embedding-mlp"]})}));
 });

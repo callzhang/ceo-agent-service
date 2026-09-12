@@ -32,6 +32,7 @@ from app.email_classifier_contracts import (
     build_email_action_plan,
     validate_email_category_key,
 )
+from app.email_classifier_model_families import model_family_catalog
 from app.email_category_config import (
     EmailFolderBindingCoordinator,
     VerifiedEmailFolderBinding,
@@ -733,8 +734,9 @@ class EmailTrainingSelectionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     sources: list[str] = Field(min_length=1)
     categories: list[str] = Field(min_length=1)
+    model_families: list[str] = Field(min_length=1)
 
-    @field_validator("sources", "categories")
+    @field_validator("sources", "categories", "model_families")
     @classmethod
     def validate_values(cls, value: list[str]) -> list[str]:
         if any(not item.strip() for item in value) or len(set(value)) != len(value):
@@ -1314,6 +1316,18 @@ def register_email_routes(
         try:
             if payload is not None:
                 catalog = training_source_catalog(require_store())
+                family_catalog = {row["family"]: row for row in model_family_catalog()}
+                unknown_families = sorted(set(payload.model_families) - set(family_catalog))
+                unsupported_families = sorted(
+                    family for family in payload.model_families
+                    if family in family_catalog and family_catalog[family]["supported"] is not True
+                )
+                if unknown_families or unsupported_families:
+                    return error_response(
+                        "unsupported_model_family",
+                        "所选模型家族暂不支持训练，请只选择已接入 executor 的家族",
+                        400,
+                    )
                 if set(payload.sources) != {"folder_snapshot"}:
                     return error_response(
                         "unsupported_training_source",
@@ -1574,6 +1588,7 @@ def register_email_routes(
                 "active_mode": active_mode.value,
                 "pending_examples": pending_examples,
                 "training_sources": training_source_catalog(email_store),
+                "model_families": model_family_catalog(),
                 "last_trained_feedback_count": state.last_trained_feedback_count,
                 "last_trained_at": state.last_trained_at,
                 "last_feedback_at": state.last_feedback_at,

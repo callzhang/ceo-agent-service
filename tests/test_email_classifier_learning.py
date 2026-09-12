@@ -230,12 +230,13 @@ def test_manual_folder_selection_is_bound_to_the_training_run(tmp_path: Path):
     controller = Controller()
     service.controller = controller
     result = service.request_manual_training(
-        selection={"sources": ["folder_snapshot"], "categories": ["work"]}
+        selection={"sources": ["folder_snapshot"], "categories": ["work"], "model_families": ["embedding-mlp"]}
     )
 
     assert result.training_run is not None
     assert result.decision.reason == "manual_selected"
     assert result.training_run.training_selection["categories"] == ["work"]
+    assert result.training_run.training_selection["model_families"] == ["embedding-mlp"]
     assert controller.selection["provenance"][0]["sample_count"] == 1
     assert controller.selection["provenance"][0]["dataset_digest"]
     payload = json.loads(next((tmp_path / "models").glob("training-request-*.json")).read_text())
