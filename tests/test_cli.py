@@ -6293,6 +6293,44 @@ def test_meeting_consumer_dry_run_and_zero_limit_never_deliver(monkeypatch, tmp_
     assert calls[0]["deliver"] is False
 
 
+def test_meeting_delivery_loop_resolves_service_error_after_successful_cycle(
+    monkeypatch, tmp_path
+):
+    class StopLoop(Exception):
+        pass
+
+    class FakeStore:
+        def __init__(self, _path):
+            self.resolutions = []
+
+        def resolve_unresolved_errors_by_kind(self, kind, *, resolution):
+            self.resolutions.append((kind, resolution))
+            return 1
+
+    store = FakeStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: store)
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda _settings: object())
+    monkeypatch.setattr(
+        cli,
+        "deliver_ready_meeting_alignment_jobs",
+        lambda *_args, **_kwargs: [],
+    )
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_delivery_loop(
+            WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+            sleep=lambda _seconds: (_ for _ in ()).throw(StopLoop()),
+            network_ready=lambda: True,
+        )
+
+    assert store.resolutions == [
+        (
+            "meeting_alignment_delivery",
+            "recovered by later successful meeting delivery cycle",
+        )
+    ]
+
+
 def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_path):
     calls = []
 

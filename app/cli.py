@@ -3233,6 +3233,10 @@ def run_meeting_delivery_loop(
                     now=datetime.now().astimezone(),
                     limit=20,
                 )
+                store.resolve_unresolved_errors_by_kind(
+                    "meeting_alignment_delivery",
+                    resolution="recovered by later successful meeting delivery cycle",
+                )
             except Exception as exc:
                 if not _is_dws_transient_dependency_error(exc):
                     store.record_error("", "", "meeting_alignment_delivery", str(exc))
