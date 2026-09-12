@@ -59,6 +59,150 @@ def test_backend_posts_untrusted_prompt_and_extracts_responses_output_text():
     assert payload["text"]["format"]["strict"] is True
 
 
+def test_backend_extracts_standard_output_message_content_text():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "output": [
+                    {
+                        "content": [{"text": json.dumps(_result())}],
+                    }
+                ]
+            },
+            request=request,
+        )
+
+    backend = EmailClassifierApiBackend(
+        base_url="https://api.example.test/v1",
+        model="gpt-test",
+        api_key="SECRET-KEY",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    assert json.loads(
+        backend.classify(
+            prompt="bounded",
+            task_id="email-task-content",
+            allowed_category_keys=("work",),
+            unsubscribe_candidates=(),
+        )
+    )["category"] == "work"
+
+
+def test_backend_retries_5xx_then_succeeds():
+    attempts = 0
+    events = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(503, request=request)
+        return httpx.Response(
+            200,
+            json={"output_text": json.dumps(_result())},
+            request=request,
+        )
+
+    backend = EmailClassifierApiBackend(
+        base_url="https://api.example.test/v1",
+        model="gpt-test",
+        api_key="SECRET-KEY",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleeper=lambda _seconds: None,
+        recorder=events.append,
+    )
+
+    assert json.loads(
+        backend.classify(
+            prompt="PRIVATE PROMPT",
+            task_id="email-task-5xx",
+            allowed_category_keys=("work",),
+            unsubscribe_candidates=(),
+        )
+    )["category"] == "work"
+    assert attempts == 2
+    assert [event["status"] for event in events] == ["retry", "success"]
+
+
+@pytest.mark.parametrize(
+    "request_error",
+    [
+        httpx.TooManyRedirects("SECRET-KEY redirect", request=httpx.Request("POST", "https://api.example.test")),
+        httpx.RequestError("SECRET-KEY request failed", request=httpx.Request("POST", "https://api.example.test")),
+    ],
+)
+def test_backend_sanitizes_and_retries_other_request_errors(request_error):
+    events = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise request_error
+
+    backend = EmailClassifierApiBackend(
+        base_url="https://api.example.test/v1",
+        model="gpt-test",
+        api_key="SECRET-KEY",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleeper=lambda _seconds: None,
+        recorder=events.append,
+        max_retries=1,
+    )
+
+    with pytest.raises(EmailClassifierApiError, match="retryable") as exc_info:
+        backend.classify(
+            prompt="PRIVATE PROMPT",
+            task_id="email-task-request-error",
+            allowed_category_keys=("work",),
+            unsubscribe_candidates=(),
+        )
+
+    assert len(events) == 2
+    assert all(event["error_code"] == "request_error" for event in events)
+    assert "SECRET-KEY" not in str(exc_info.value)
+    assert "PRIVATE PROMPT" not in str(exc_info.value)
+    assert "SECRET-KEY" not in repr(events)
+    assert "PRIVATE PROMPT" not in repr(events)
+
+
+@pytest.mark.parametrize(
+    "response_json",
+    [
+        {"output": "sensitive raw response"},
+        {"output": [{"content": [{"text": 42}]}]},
+        {"output": [{"content": "sensitive raw content"}]},
+        {"output_text": {"raw": "sensitive raw response"}},
+    ],
+)
+def test_backend_sanitizes_malformed_response_errors(response_json):
+    events = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response_json, request=request)
+
+    backend = EmailClassifierApiBackend(
+        base_url="https://api.example.test/v1",
+        model="gpt-test",
+        api_key="SECRET-KEY",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        recorder=events.append,
+    )
+
+    with pytest.raises(EmailClassifierApiError, match="invalid_classification") as exc_info:
+        backend.classify(
+            prompt="PRIVATE PROMPT",
+            task_id="email-task-malformed",
+            allowed_category_keys=("work",),
+            unsubscribe_candidates=(),
+        )
+
+    assert events[0]["error_code"] == "invalid_classification"
+    assert "SECRET-KEY" not in str(exc_info.value)
+    assert "PRIVATE PROMPT" not in str(exc_info.value)
+    assert "sensitive raw" not in str(exc_info.value)
+    assert "sensitive raw" not in repr(events)
+
+
 def test_backend_rejects_invalid_result_and_does_not_retry_validation_errors():
     calls = []
 
@@ -78,7 +222,7 @@ def test_backend_rejects_invalid_result_and_does_not_retry_validation_errors():
         sleeper=lambda _seconds: None,
     )
 
-    with pytest.raises(ValueError, match="allowed category"):
+    with pytest.raises(EmailClassifierApiError, match="invalid_classification"):
         backend.classify(
             prompt="bounded",
             task_id="email-task-2",

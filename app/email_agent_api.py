@@ -91,16 +91,29 @@ class EmailClassifierApiBackend:
                     self._event(task_id, attempt, started, usage, "error", code)
                     kind = "retryable" if retryable else "non-retryable"
                     raise EmailClassifierApiError(f"{kind} email classifier API error ({code})")
-                raw = _response_text(response)
-                validated = validate_agent_classification_result(
-                    raw,
-                    allowed_category_keys=allowed_category_keys,
-                    unsubscribe_candidates=unsubscribe_candidates,
-                )
+                try:
+                    raw = _response_text(response)
+                    validated = validate_agent_classification_result(
+                        raw,
+                        allowed_category_keys=allowed_category_keys,
+                        unsubscribe_candidates=unsubscribe_candidates,
+                    )
+                except (TypeError, ValueError):
+                    self._event(
+                        task_id,
+                        attempt,
+                        started,
+                        usage,
+                        "error",
+                        "invalid_classification",
+                    )
+                    raise EmailClassifierApiError(
+                        "non-retryable email classifier API error (invalid_classification)"
+                    ) from None
                 self._event(task_id, attempt, started, usage, "success", None)
                 return validated.model_dump_json()
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
-                code = "timeout" if isinstance(exc, httpx.TimeoutException) else "connection_error"
+            except httpx.RequestError as exc:
+                code = "timeout" if isinstance(exc, httpx.TimeoutException) else "request_error"
                 if attempt <= self._max_retries:
                     self._event(task_id, attempt, started, {}, "retry", code)
                     self._sleeper(0.1 * (2 ** (attempt - 1)))
@@ -137,24 +150,41 @@ class EmailClassifierApiBackend:
 
 def _response_text(response: httpx.Response) -> str:
     body = response.json()
-    if isinstance(body.get("output_text"), str):
-        return body["output_text"]
-    for item in body.get("output", ()):
-        if not isinstance(item, Mapping) or item.get("type") != "message":
-            continue
-        for content in item.get("content", ()):
-            if isinstance(content, Mapping) and content.get("type") == "output_text":
-                text = content.get("text")
-                if isinstance(text, str):
-                    return text
+    if not isinstance(body, Mapping):
+        raise ValueError("Responses API returned an invalid object")
+    output_text = body.get("output_text")
+    if isinstance(output_text, str):
+        return output_text
+    if output_text is not None:
+        raise ValueError("Responses API returned invalid output text")
+    output = body.get("output")
+    if not isinstance(output, list):
+        raise ValueError("Responses API returned invalid output")
+    for item in output:
+        if not isinstance(item, Mapping):
+            raise ValueError("Responses API returned invalid output item")
+        content = item.get("content")
+        if not isinstance(content, list):
+            raise ValueError("Responses API returned invalid content")
+        for content_item in content:
+            if not isinstance(content_item, Mapping):
+                raise ValueError("Responses API returned invalid content item")
+            text = content_item.get("text")
+            if isinstance(text, str):
+                return text
+            if text is not None:
+                raise ValueError("Responses API returned invalid content text")
     raise ValueError("Responses API returned no output text")
 
 
 def _usage(response: httpx.Response) -> Mapping[str, object]:
     try:
-        usage = response.json().get("usage")
+        body = response.json()
     except (ValueError, TypeError):
         return {}
+    if not isinstance(body, Mapping):
+        return {}
+    usage = body.get("usage")
     if not isinstance(usage, Mapping):
         return {}
     return {
