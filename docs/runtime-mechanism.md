@@ -88,6 +88,11 @@ run 和 audit 不改写。Quality gate 与 Attention 只按 current latest proje
 字段缺失、非法值或 outer outcome mismatch 均 fail-closed 为 invalid violation；reviewed、历史、
 pending recovery 排除，ask-back 不计 `needs_human`。
 
+`needs_human` 是 Agent run 的业务决策终态；对应的 `reply_task` 可以已经是
+`done`，但在 Derek 提交决策前仍属于当前待处理项。Attention 必须展示这类满足
+`(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5`、且带 2--4 个可执行选项的
+结构化决策；无结构化依据或 `information_completeness<0.5` 的记录不进入 Attention。
+
 ## 审核反馈闭环
 
 ```text

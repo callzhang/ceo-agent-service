@@ -2132,7 +2132,7 @@ def test_queue_attention_rows_routes_service_errors_to_history_detail(tmp_path: 
     assert service_error["detail_url"] == f"/history/errors/{error_id}"
 
 
-def test_queue_attention_rows_excludes_current_needs_human_attempts(tmp_path: Path):
+def test_queue_attention_rows_excludes_unstructured_needs_human_attempts(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="needs-human-conversation",
@@ -2155,6 +2155,63 @@ def test_queue_attention_rows_excludes_current_needs_human_attempts(tmp_path: Pa
     rows = audit_web_module._queue_attention_rows(store)
 
     assert not any(row["id"] == str(attempt_id) for row in rows)
+
+
+def test_queue_attention_rows_includes_actionable_structured_needs_human_attempts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="needs-human-conversation",
+        conversation_title="Needs human conversation",
+        single_chat=False,
+        trigger_message_id="needs-human-message",
+        trigger_create_time="2026-08-29 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="Choose the applicable travel policy.",
+        execution_generation="initial",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="needs-human-conversation",
+        conversation_title="Needs human conversation",
+        trigger_message_id="needs-human-message",
+        trigger_sender="Mina",
+        trigger_text="Choose the applicable travel policy.",
+        action="send_reply",
+        sensitivity_kind="general",
+        channel="dingtalk",
+        send_status="needs_human",
+    )
+    result = {
+        "outcome": "needs_human",
+        "risk": "high",
+        "confidence": 0.2,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "decision_options": [
+            {"key": "one_time", "label": "本次执行", "instruction": "本次执行", "consequence": "仅处理本次"},
+            {"key": "skill_update", "label": "更新规则", "instruction": "更新规则", "consequence": "沉淀为规则"},
+        ],
+    }
+    with store._connect() as db:
+        task_id = db.execute(
+            "select id from reply_tasks where conversation_id=? and trigger_message_id=?",
+            ("needs-human-conversation", "needs-human-message"),
+        ).fetchone()[0]
+        db.execute("update reply_tasks set status='done' where id=?", (task_id,))
+        run = db.execute(
+            """insert into agent_runs (
+                reply_task_id, execution_generation, role, status, final_result_json
+            ) values (?, 'initial', 'consumer', 'completed', ?)""",
+            (task_id, json.dumps(result)),
+        )
+        db.execute("update reply_attempts set agent_run_id=? where id=?", (run.lastrowid, attempt_id))
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    decision = next(row for row in rows if row["id"] == str(attempt_id))
+    assert decision["category"] == "Reply decision"
+    assert decision["status"] == "needs_human"
+    assert decision["root_cause"] == "高风险且置信度低（0.20）"
+    assert decision["detail_url"] == f"/attempts/{attempt_id}"
 
 
 def test_console_error_detail_returns_error_record(tmp_path: Path):
