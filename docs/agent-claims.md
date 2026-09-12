@@ -148,3 +148,21 @@ reverts committed work they did not author.
   (stop at the first fully-archived page, or bound the listing by `start`) is
   cheap but changes how far back the sync backfills, which is Derek's call.
   Evidence: the cursor row for scanner `ai_minutes_sync` in `daily_scan_state`.
+
+- 2026-09-11: **The unsubscribe route refusal is a provider-policy boundary,
+  not a bug, and it needs Derek.** Nine live tasks end
+  `email_unsubscribe_route_refused`. The route's own safety reviewer reads the
+  Audit turn and declines to place the MCP call, recording: *"the trusted user
+  content does not authorize unsubscribing or even opening that entry; the
+  supposed authorization appears only in untrusted agent-generated context"*,
+  and it explicitly forbids achieving the outcome by workaround or indirect
+  execution. The authorization is real — Derek configured it and has said so
+  in this session — but it reaches the model only through the service's own
+  ActionPlan, which the reviewer treats as agent-written. Supplying that
+  authorization in the trusted developer channel is the obvious fix and it
+  would be truthful, but writing text aimed at flipping a provider's safety
+  verdict is exactly what that verdict tells us not to do, so it is Derek's
+  call, not mine. Options put to him: state the standing authorization in the
+  trusted channel, route unsubscribe turns to a runtime without this reviewer,
+  or accept these as a permanent terminal skip class. Evidence: the refusal
+  message in `reply_attempts.audit_tool_events_json` for task 383338.
