@@ -76,6 +76,7 @@ _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
 MAX_CLASSIFIER_RUNTIME_SAMPLES = 2048
 HISTORICAL_DEFER_RETRY_SECONDS = 60
 DIRECT_ACTION_MAX_ATTEMPTS = 3
+DIRECT_ACTION_EXHAUSTED_TRANSIENT_RETRY_SECONDS = 300
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
 MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS = 32
@@ -1606,6 +1607,27 @@ def _retry_is_due(next_attempt_at: object, claimed_at: str) -> bool:
         raise EmailPersistenceCorruption(
             "invalid direct action retry timestamp"
         ) from exc
+
+
+def _direct_action_failed_retryable(row: sqlite3.Row, *, claimed_at: str) -> bool:
+    if row["status"] != "failed":
+        return False
+    attempt_count = int(row["attempt_count"])
+    if attempt_count < DIRECT_ACTION_MAX_ATTEMPTS:
+        return _retry_is_due(row["next_attempt_at"], claimed_at)
+    if not _exhausted_direct_action_is_service_transient(row):
+        return False
+    finished_at = _required_utc_timestamp(str(row["finished_at"]), field="finished_at")
+    retry_at = datetime.fromisoformat(finished_at) + timedelta(
+        seconds=DIRECT_ACTION_EXHAUSTED_TRANSIENT_RETRY_SECONDS
+    )
+    return retry_at.isoformat(timespec="seconds") <= claimed_at
+
+
+def _exhausted_direct_action_is_service_transient(row: sqlite3.Row) -> bool:
+    return str(row["provider_operation"]) == "provider_factory" and str(
+        row["error"]
+    ).startswith("provider_factory_failed:")
 
 
 def _json_load(raw: str, *, field: str, expected_type: type[Any]) -> Any:
@@ -13831,11 +13853,9 @@ class EmailStore:
                     for sibling in current_siblings
                     if (
                         sibling["status"] == "pending"
-                        or (
-                            sibling["status"] == "failed"
-                            and int(sibling["attempt_count"])
-                            < DIRECT_ACTION_MAX_ATTEMPTS
-                            and _retry_is_due(sibling["next_attempt_at"], claimed_at)
+                        or _direct_action_failed_retryable(
+                            sibling,
+                            claimed_at=claimed_at,
                         )
                     )
                     and self._direct_action_predecessors_done(db, sibling)
@@ -14045,9 +14065,7 @@ class EmailStore:
             if any(item["status"] == "processing" for item in siblings):
                 return None
             retryable = row["status"] == "pending" or (
-                row["status"] == "failed"
-                and int(row["attempt_count"]) < DIRECT_ACTION_MAX_ATTEMPTS
-                and _retry_is_due(row["next_attempt_at"], claimed_at)
+                _direct_action_failed_retryable(row, claimed_at=claimed_at)
             )
             if (
                 not retryable
