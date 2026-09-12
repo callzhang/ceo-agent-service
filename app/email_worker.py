@@ -1205,6 +1205,22 @@ class EmailWorkerReadiness:
         )
 
 
+def _process_component_ready_callback(
+    readiness: EmailWorkerReadiness,
+    component_names: Sequence[str],
+) -> Callable[[str], object]:
+    """Forward readiness only for components in the process barrier."""
+
+    barrier_components = frozenset(component_names)
+
+    def mark_ready(component_name: str) -> object:
+        if component_name in barrier_components:
+            return readiness.mark_ready(component_name)
+        return None
+
+    return mark_ready
+
+
 def run_scan_and_direct_actions_loop(
     accounts: Sequence[Mapping[str, object]],
     active_model: object,
@@ -4245,11 +4261,15 @@ def run_email_worker(
             record_health=dependencies.record_health,
             accounts=len(accounts),
         )
+        process_component_ready = _process_component_ready_callback(
+            readiness,
+            component_names,
+        )
         components = email_worker_components(
             dependencies,
             accounts=accounts,
             active_model=active_model,
-            component_ready=readiness.mark_ready,
+            component_ready=process_component_ready,
         )
         if not agent_consumer_allowed:
             components = tuple(

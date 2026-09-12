@@ -2768,10 +2768,10 @@ def test_agent_junk_mailto_selection_cannot_authorize_unsubscribe() -> None:
         ("done", True),
         ("already_unsubscribed", True),
         ("skipped_no_reliable_entry", True),
-        ("skipped_login_required", False),
-        ("skipped_captcha", False),
-        ("skipped_payment", False),
-        ("failed_browser", False),
+        ("skipped_login_required", True),
+        ("skipped_captcha", True),
+        ("skipped_payment", True),
+        ("failed_browser", True),
     ),
 )
 def test_dependent_trash_waits_for_safe_unsubscribe_terminal_evidence(
@@ -5156,6 +5156,7 @@ def test_scan_failure_isolated_per_account_and_health_is_bounded_and_sanitized()
     assert [scope for scope, _payload in health] == [
         "account:broken",
         "account:healthy",
+        "component:email-provider-actions",
         "component:email-scan-actions",
     ]
     encoded = repr(health)
@@ -7917,6 +7918,32 @@ def test_process_readiness_does_not_wait_for_training_maintenance():
     assert health == []
 
     barrier.mark_ready("email-agent-consumer")
+    assert health == [
+        (
+            "process:email-worker",
+            {"status": "ready", "accounts": 1, "components": 2},
+        )
+    ]
+
+
+def test_process_readiness_callback_ignores_independent_training_component():
+    module = _module()
+    health = []
+    barrier = module.EmailWorkerReadiness(
+        ("email-scan-actions", "email-agent-consumer"),
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        accounts=1,
+    )
+    mark_ready = module._process_component_ready_callback(
+        barrier,
+        ("email-scan-actions", "email-agent-consumer"),
+    )
+
+    mark_ready("email-training")
+    assert health == []
+
+    mark_ready("email-scan-actions")
+    mark_ready("email-agent-consumer")
     assert health == [
         (
             "process:email-worker",
