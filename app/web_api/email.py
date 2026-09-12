@@ -1312,6 +1312,8 @@ def register_email_routes(
                 return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
             if not isinstance(body, dict):
                 return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+            if not body:
+                body = None
         payload = None
         if body is not None:
             try:
