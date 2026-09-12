@@ -2311,11 +2311,20 @@ class PlaywrightUnsubscribeBrowser:
                 # The confirmation LinkedIn and others actually print.
                 "you've unsubscribed",
                 "you have unsubscribed",
+                # What the tracker hosts print instead of the word
+                # "unsubscribed": a statement about what will now happen.
+                # Three live receipts recorded this page as
+                # skipped_no_reliable_entry while the unsubscribe had in fact
+                # completed.
+                "you will no longer receive",
+                "you'll no longer receive",
+                "you have been removed from",
                 "unsubscribe complete",
                 "unsubscribe confirmation complete",
                 "subscription cancelled",
                 "list-unsubscribe post returned http 2",
                 "退订成功",
+                "不会再收到",
             )
         ):
             return UnsubscribePageState.DONE
@@ -2360,10 +2369,13 @@ class PlaywrightUnsubscribeBrowser:
         authentication_controls = tuple(
             item for item in controls if item.continuation_kind is not None
         )
-        state = (
-            UnsubscribePageState.ACTION_REQUIRED
-            if authentication_controls
-            else self._state_from_text(text)
+        # What the page says about this address outranks what it offers. A
+        # provider that prints "You're already unsubscribed" above its own
+        # site-wide Sign in button is not asking anyone to sign in, and
+        # reading the button first recorded a completed unsubscribe as
+        # skipped_login_required.
+        state = self._state_from_text(text) or (
+            UnsubscribePageState.ACTION_REQUIRED if authentication_controls else None
         )
         if state is None:
             state = UnsubscribePageState.ACTION_REQUIRED

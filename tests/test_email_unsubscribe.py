@@ -3157,6 +3157,76 @@ def test_discover_current_page_reads_controls_after_the_page_renders() -> None:
     assert discovery.controls[0].intent == "unsubscribe"
 
 
+def test_a_stated_terminal_outcome_outranks_the_sites_own_sign_in_button() -> None:
+    """A completed unsubscribe was being filed as skipped_login_required.
+
+    Google's unsubscribe page prints "You're already unsubscribed" above the
+    site-wide "Sign in" chrome that every Google page carries. Reading the
+    authentication control first made the page ACTION_REQUIRED, the driver
+    skipped it as login-required, and a receipt recorded a completed
+    unsubscribe as a skip. Nobody was being asked to sign in.
+    """
+
+    from app.email_unsubscribe import _AuditedControlBinding
+
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": 120, "controlCount": 1}],
+        texts=["placeholder"],
+    )
+    sign_in = _AuditedControlBinding(
+        control=UnsubscribeDiscoveredControl(
+            reference="unsubscribe-control:sign-in",
+            kind="credential_handoff",
+            intent="continue",
+        ),
+        target_url="https://news.example.com/signin",
+        method="GET",
+        enctype="application/x-www-form-urlencoded",
+        successful_controls=(),
+    )
+    text = (
+        "Skip to main content Account Help Sign in This email subscription "
+        "belongs to derek@example.com You\u2019re already unsubscribed "
+        "You\u2019ll no longer receive \u201cPerformance suggestions\u201d emails."
+    )
+    browser._awaited_page_read = lambda: ((sign_in,), text)
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert discovery.state is UnsubscribePageState.ALREADY_UNSUBSCRIBED
+
+
+def test_an_authentication_control_still_wins_when_the_page_states_nothing() -> None:
+    from app.email_unsubscribe import _AuditedControlBinding
+
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": 40, "controlCount": 1}],
+        texts=["placeholder"],
+    )
+    sign_in = _AuditedControlBinding(
+        control=UnsubscribeDiscoveredControl(
+            reference="unsubscribe-control:sign-in",
+            kind="credential_handoff",
+            intent="continue",
+        ),
+        target_url="https://news.example.com/signin",
+        method="GET",
+        enctype="application/x-www-form-urlencoded",
+        successful_controls=(),
+    )
+    browser._awaited_page_read = lambda: (
+        (sign_in,),
+        "Manage your subscription preferences",
+    )
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert discovery.state is UnsubscribePageState.ACTION_REQUIRED
+    assert [control.kind for control in discovery.controls] == ["credential_handoff"]
+
+
 def test_page_without_visible_text_is_classified_from_its_control_structure() -> None:
     browser = _discovery_browser(
         control_snapshots=[
@@ -3410,6 +3480,21 @@ def test_a_typographic_apostrophe_does_not_hide_a_confirmed_unsubscribe() -> Non
         state_from_text("You’re already unsubscribed")
         is UnsubscribePageState.ALREADY_UNSUBSCRIBED
     )
+    # What three tracker hosts actually print. Each of these was recorded as
+    # skipped_no_reliable_entry while the unsubscribe had already completed.
+    assert (
+        state_from_text(
+            "Unsubscribe You will no longer receive emails from "
+            "m******e@g*******s.c* to your inbox: d****z@s******t.a*. "
+            "Unsubscribe Wait, keep me subscribed"
+        )
+        is UnsubscribePageState.DONE
+    )
+    assert (
+        state_from_text("You have been removed from this mailing list")
+        is UnsubscribePageState.DONE
+    )
+    assert state_from_text("您不会再收到我们的邮件") is UnsubscribePageState.DONE
     assert (
         state_from_text("Sign in to manage your preferences")
         is UnsubscribePageState.LOGIN_REQUIRED
