@@ -123,7 +123,7 @@ DingTalk Todo outbox。统一层只处理唤醒、公平领取、租约、全局
 
 启动时以稳定 migration key 幂等创建八个默认任务：钉钉消息、每小时 `:30` 的钉钉近期消息恢复、
 会议、微信 reader、OA、每日工作来源、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）运行的
-AI 听记同步。除每周 OKR 周报之外的七项都以服务命令形式 seed；早先以 Agent 形式创建的同一
+AI 听记同步。八项全部以服务命令形式 seed；早先以 Agent 形式创建的同一
 migration key 任务在启动时原地转换为命令形式，
 保留名称、Cron 和时区，已删除的旧任务不动，其命令通过 Console API 不可修改。从未被编辑过的
 旧 seed（version 1）转换后按命令形式的默认值启用，因为它原来的停用只反映 Agent 形式缺少

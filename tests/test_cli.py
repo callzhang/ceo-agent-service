@@ -7967,6 +7967,7 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
         "scan-oa-approvals",
         "scan-work-sources-once",
         "sync-minutes-once",
+        "weekly-okr-report",
     }
     assert registry.run("produce-once") == "produce-once queued=3"
     assert registry.run("recover-recent-messages") == (

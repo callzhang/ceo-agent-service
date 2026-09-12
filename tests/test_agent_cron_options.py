@@ -604,9 +604,9 @@ def test_service_command_downstream_reports_real_channel_consumer_and_routes(
         tmp_path, snapshots={"codex_oauth": _snapshot("codex_oauth", healthy=True)}
     )
 
-    dingtalk, wechat, meeting, oa, work_sources, minutes, recovery = (
-        service.list_service_command_options()
-    )
+    (
+        dingtalk, wechat, meeting, oa, work_sources, minutes, okr, recovery
+    ) = service.list_service_command_options()
 
     assert (dingtalk.name, dingtalk.channel) == ("produce-once", "dingtalk")
     assert (wechat.name, wechat.channel) == ("wechat-produce-once", "wechat")
@@ -621,6 +621,7 @@ def test_service_command_downstream_reports_real_channel_consumer_and_routes(
         "recover-recent-messages",
         "dingtalk",
     )
+    assert (okr.name, okr.channel) == ("weekly-okr-report", "dingtalk")
     assert dingtalk.downstream.channel == "dingtalk"
     assert dingtalk.downstream.consumer_runners == (
         ConsumerAgentRunner.__name__,

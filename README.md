@@ -591,7 +591,7 @@ plist 通过 `SoftResourceLimits/NumberOfFiles=4096` 提高进程可打开文件
 
 - `com.ceo-agent-service.main`：唯一 launchd job，托管队列 worker 与本地审计页面。
 - Agent Cron scheduler：按任务自己的 Cron 和时区创建 trigger；停机不补跑，重叠轮次跳过，手动运行不移动计划。启动时按稳定 migration key 幂等 seed 八个默认任务：钉钉消息、每小时 `:30` 的近期消息恢复、会议、微信、OA、每日工作来源、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）的 AI 听记同步。
-- 服务命令任务：定时任务分两种执行形式。`command` 为空的任务由 Agent 按 prompt、Skill 和 Runtime 执行；`command` 非空的任务由 Dispatcher 在本进程内直接运行确定性发现代码，不创建 synthetic scheduled Agent 任务。当前钉钉消息、会议、微信消息、OA、工作来源和 AI 听记检查都是服务命令；只有需要分析和编排的 OKR 周报保留为 Agent 任务。服务命令发现真实对象后，才由对应的 reply、meeting 或 work-summary Consumer 处理。
+- 服务命令任务：定时任务分两种执行形式。`command` 为空的任务由 Agent 按 prompt、Skill 和 Runtime 执行；`command` 非空的任务由 Dispatcher 在本进程内直接运行确定性发现代码，不创建 synthetic scheduled Agent 任务。当前八个种子任务全部是服务命令，OKR 周报也在其中：它的提示词本来就是“只执行一次确定性命令”，而那条命令要用无头浏览器逐个读取管理者的实时 OKR，整轮超过五十分钟，远超 Agent 的空闲与总时长上限。服务命令发现真实对象后，才由对应的 reply、meeting 或 work-summary Consumer 处理。
 - Agent 执行容量：单一 launchd 服务内按 `CEO_CONSUMER_WORKERS` 限制所有 Agent 队列合计并发，默认 2；各队列独立调度，Meeting 单类最多 1 个，同一会话仍串行。无需 Agent 的 trigger 和 Todo outbox 不占用 Agent 容量。
 - Consumer Dispatcher：直接从 scheduled trigger/execution、reply、meeting、work summary、OKR 和 Todo outbox 的既有事实来源领取；内部唤醒、等待、租约和 recovery 没有用户设置。
 - 消息入队：钉钉消息由 `produce-once` 服务命令按分钟增量读取、去重并写入 reply task；队列的 `available_at` 按实际时间解析，兼容带时区的 ISO 时间与数据库时间格式，不以字符串顺序判断是否到期。reply task 由 Dispatcher 的 reply consumer 领取，调用 Agent 后执行发送或跳过；同一会话仍串行。

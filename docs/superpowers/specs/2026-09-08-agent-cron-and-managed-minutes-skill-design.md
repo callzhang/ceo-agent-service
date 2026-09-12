@@ -377,10 +377,9 @@ Cron：北京时间每天 20:00
 | 同步 AI 听记 | 北京时间每天 20:00 | 服务命令 `sync-minutes-once` | 无；同步过程确定性完成 |
 | 检查 DingTalk OA | 每小时 | 服务命令 `scan-oa-approvals` | 无；发现的审批由 OA consumer 处理 |
 | 扫描工作来源 | 每天 | 服务命令 `scan-work-sources-once` | 无；发现的工作项由 work-summary consumer 处理 |
-| 每周 OKR 汇总 | 北京时间周日 18:00 | Agent | `ceo-weekly-okr-report`、`dingtang-okr-review` |
+| 每周 OKR 汇总 | 北京时间周日 18:00 | 服务命令 `weekly-okr-report` | 无；命令自身完成读取、分析与发送 |
 
-每周 OKR 周报是唯一保留 Agent 形式的种子任务：它要读多个来源、判断本周该写什么，没有一条
-确定性命令能表达。其余七项都以服务命令形式 seed。
+八项全部以服务命令形式 seed，没有 Agent 形式的种子任务。
 
 已经以 Agent 形式创建过的种子在启动时原地转换为服务命令形式：保留名称、
 Cron、时区；从未编辑过的旧 seed 转换后启用（它原来的停用只反映 Agent 形式缺少 Skill 或
@@ -504,3 +503,9 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
   引用，不再被种子任务绑定。
 - 2026-09-10：DingTalk 近期消息恢复从每分钟检查内部的小时判断中拆出，成为每小时 `:30` 的服务
   命令 `recover-recent-messages`；两条 DingTalk producer 命令共用一把锁，不会并行执行。
+- 2026-09-12：每周 OKR 周报改为服务命令 `weekly-okr-report`，至此没有 Agent 形式的种子任务。
+  它的提示词本来就只是“执行一次确定性命令”，而该命令用无头浏览器逐个读取管理者的实时 OKR，
+  实测单轮超过五十分钟且中途无输出：Agent 运行时在 900 秒空闲上限处杀掉进程（总时长上限也
+  只有 1200 秒），任务记为 `codex_process_failed`，而被杀的只是 Agent，命令本身脱离运行记录
+  继续执行。判断标准未变，只是这条任务的真实耗时证明了它不可能在 Agent 形式下完成。
+  随之删除 seed 中只服务于 Agent 形式的 Runtime 选择、Skill 引用与一次性命令拼装逻辑。

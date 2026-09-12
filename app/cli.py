@@ -939,6 +939,12 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
                 "sync-minutes-once "
                 f"queued={sync_minutes_once_command(settings, max_new_items=settings.max_batches)}"
             ),
+            # Cron owns the timing, so the command runs on the trigger rather
+            # than re-deciding whether today is its scheduled Sunday.
+            "weekly-okr-report": lambda: (
+                "weekly-okr-report "
+                f"status={weekly_okr_report_command(settings, force=True).status}"
+            ),
         }
     )
 

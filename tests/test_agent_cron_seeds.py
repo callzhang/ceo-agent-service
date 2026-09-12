@@ -17,7 +17,6 @@ from app.agent_cron.models import ScheduledTaskSkillRef
 from app.agent_cron.options import ScheduledTaskOptionService
 from app.agent_cron.consumer import ScheduledTaskTriggerConsumer
 from app.agent_cron.scheduler import AgentCronScheduler, ExecutionTerminalResolverRegistry
-from app.agent_cron import seeds as seeds_module
 from app.agent_cron.seeds import seed_scheduled_tasks
 from app.agent_runtime_contracts import (
     LOCAL_SERVICE_RUNTIME_CAPABILITIES,
@@ -545,19 +544,16 @@ def test_every_fixed_discovery_check_is_a_service_command(
         assert task.skill_refs == ()
         assert task.enabled is True
 
-    # The OKR weekly report is the one remaining Agent task: every fixed
-    # discovery check, the AI minutes sync included, is a service command.
-    for migration_key in ("weekly-okr-report-sunday-v1",):
-        agent_task = _task_by_key(tasks, migration_key)
-        assert agent_task.command == ""
-        assert agent_task.prompt
-        assert agent_task.runtime_id == "claude_api"
-        assert agent_task.enabled is False
-    # The AI minutes sync is a service command now, so it carries no Skill ref:
-    # the sync it used to describe lives in app/minutes_sync.py.
+    # Every seeded task is a service command, the weekly OKR report included:
+    # its whole prompt was "run one deterministic command", and that command
+    # outlives any Agent timeout.
+    assert all(task.command for task in tasks)
     minutes = _task_by_key(tasks, "ceo-minutes-sync-daily-v1")
     assert minutes.command == "sync-minutes-once"
     assert minutes.skill_refs == ()
+    okr = _task_by_key(tasks, "weekly-okr-report-sunday-v1")
+    assert okr.command == "weekly-okr-report"
+    assert okr.skill_refs == ()
 
 
 def test_seed_creates_wechat_existing_producer_every_fifteen_seconds(
@@ -722,17 +718,12 @@ def test_seed_creates_sunday_evening_weekly_okr_task(tmp_path: Path) -> None:
 
     assert task.name == "周日生成 OKR 周报"
     assert task.cron_expression == "0 0 18 * * 0"
-    assert [(ref.skill_source, ref.skill_name) for ref in task.skill_refs] == [
-        ("operation", "ceo-weekly-report"),
-        ("operation", "dingtang-okr-review"),
-    ]
-    assert "--force" in task.prompt
-    assert (
-        f"`{_cli_command(store, tmp_path, 'weekly-okr-report --force')}`"
-        in task.prompt
-    )
-    assert "命令自身完成分析、发布和发送" in task.prompt
-    assert "不要在命令外重复" in task.prompt
+    # The report reads every manager's live OKR through a headless browser and
+    # runs far past any Agent timeout, with no judgement anywhere in it.
+    assert task.command == "weekly-okr-report"
+    assert task.prompt == ""
+    assert task.skill_refs == ()
+    assert task.runtime_id == ""
     assert task.enabled is True
 
 
@@ -878,6 +869,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
                 "sync-minutes-once": (
                     lambda: produced.append("sync-minutes-once") or "queued=0"
                 ),
+                "weekly-okr-report": (
+                    lambda: produced.append("weekly-okr-report") or "status=sent"
+                ),
             }
         ),
     )
@@ -901,6 +895,7 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         "scan-work-sources-once",
         "sync-minutes-once",
         "wechat-produce-once",
+        "weekly-okr-report",
     ]
     for task in tasks:
         runs = store.list_scheduled_task_runs(task.id)
@@ -918,7 +913,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         assert reply.channel == "scheduled"
         assert reply.trigger_text == task.prompt
         assert task.name in reply.trigger_message_json
-    assert len(store.list_reply_tasks(channel="scheduled")) == len(tasks) - 7
+    # Every seed is a service command, so a Cron tick creates no scheduled
+    # reply task at all: the commands run in-process on their own triggers.
+    assert store.list_reply_tasks(channel="scheduled") == []
 
 
 def test_seed_is_idempotent_and_preserves_user_edits(tmp_path: Path) -> None:
@@ -951,34 +948,15 @@ def test_seed_is_idempotent_and_preserves_user_edits(tmp_path: Path) -> None:
     ) == edited
 
 
-def test_seed_without_healthy_runtime_is_disabled_with_visible_reason(
-    tmp_path: Path,
-) -> None:
+def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
+    """No seed needs a Runtime, so an unhealthy fleet cannot disable one.
+
+    The weekly OKR report was the last seed that bound a Runtime, and it was
+    seeded disabled with a written reason whenever no route was healthy.  As a
+    service command it runs in this process, so the Cron keeps working while
+    every model route is down.
+    """
     store = AutoReplyStore(tmp_path / "disabled.sqlite3")
-    options = _options(tmp_path, store, healthy_routes=set())
-
-    task = _task_by_key(
-        seed_scheduled_tasks(
-            store=store, options=options, working_directory=tmp_path, now=NOW
-        ),
-        "weekly-okr-report-sunday-v1",
-    )
-
-    assert task.enabled is False
-    assert task.runtime_id == "claude_api"
-    assert "未启用" in task.prompt
-    assert "没有健康且已配置的 Runtime" in task.prompt
-    assert "snapshot_unhealthy" in task.prompt
-    assert task.runtime_id in {
-        option.route_name for option in options.list_runtime_options()
-    }
-    assert store.list_scheduled_task_runs(task.id) == ()
-
-
-def test_all_proactive_seeds_stay_visible_and_disabled_without_healthy_runtime(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "all-disabled.sqlite3")
     options = _options(tmp_path, store, healthy_routes=set())
 
     tasks = seed_scheduled_tasks(
@@ -986,61 +964,11 @@ def test_all_proactive_seeds_stay_visible_and_disabled_without_healthy_runtime(
     )
 
     assert len(tasks) == 8
-    agent_tasks = [task for task in tasks if not task.command]
-    assert {task.migration_key for task in agent_tasks} == {
-        "weekly-okr-report-sunday-v1",
-    }
-    assert all(not task.enabled for task in agent_tasks)
-    assert all("没有健康且已配置的 Runtime" in task.prompt for task in agent_tasks)
-    assert all(task.enabled for task in tasks if task.command)
-    assert all(store.list_scheduled_task_runs(task.id) == () for task in tasks)
+    for task in tasks:
+        assert task.command, task.migration_key
+        assert task.enabled is True
+        assert task.prompt == ""
+        assert task.runtime_id == ""
+        assert store.list_scheduled_task_runs(task.id) == ()
 
 
-def test_a_moved_checkout_rebinds_the_one_shot_command_in_place(tmp_path: Path) -> None:
-    store = AutoReplyStore(tmp_path / "moved-checkout.sqlite3")
-    options = _options(
-        tmp_path,
-        store,
-        healthy_routes={"codex_oauth"},
-        operation_skills=("ceo-weekly-report", "dingtang-okr-review"),
-    )
-    task = _task_by_key(
-        seed_scheduled_tasks(
-            store=store, options=options, working_directory=tmp_path, now=NOW
-        ),
-        "weekly-okr-report-sunday-v1",
-    )
-    service_root = str(Path(seeds_module.__file__).resolve().parents[2])
-    assert f"cd {shlex.quote(service_root)} && " in task.prompt
-
-    # The repository moves, and a user edit is added to the prompt.  Only the
-    # command's path is stale; the seed must not rewrite anything else.
-    stale = task.prompt.replace(
-        f"cd {shlex.quote(service_root)} && ",
-        "cd /old/checkout/ceo-agent-service && ",
-    ) + "\n\n用户补充：只在周日执行。"
-    edited = store.update_scheduled_task(
-        task.id, expected_version=task.version, prompt=stale, now=NOW
-    )
-
-    rebound = _task_by_key(
-        seed_scheduled_tasks(
-            store=store, options=options, working_directory=tmp_path, now=NOW
-        ),
-        "weekly-okr-report-sunday-v1",
-    )
-
-    assert "/old/checkout/ceo-agent-service" not in rebound.prompt
-    assert f"cd {shlex.quote(service_root)} && " in rebound.prompt
-    assert "用户补充：只在周日执行。" in rebound.prompt
-    assert rebound.version == edited.version + 1
-
-    # A prompt that already points at this checkout is left exactly as it is.
-    settled = _task_by_key(
-        seed_scheduled_tasks(
-            store=store, options=options, working_directory=tmp_path, now=NOW
-        ),
-        "weekly-okr-report-sunday-v1",
-    )
-    assert settled.prompt == rebound.prompt
-    assert settled.version == rebound.version

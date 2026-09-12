@@ -845,6 +845,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "scan-oa-approvals",
         "scan-work-sources-once",
         "sync-minutes-once",
+        "weekly-okr-report",
         "recover-recent-messages",
     ]
     assert [entry["display_name"] for entry in catalog] == [
@@ -854,6 +855,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "检查 DingTalk OA 审批",
         "扫描工作来源",
         "同步 AI 听记",
+        "生成 OKR 周报",
         "恢复近期 DingTalk 消息",
     ]
     assert all(entry["description"].strip() for entry in catalog)
@@ -932,9 +934,9 @@ def test_service_command_catalog_exposes_the_live_downstream_consumer(
     with client:
         payload = client.get("/api/console/scheduled-task-options").json()
 
-    dingtalk, wechat, meeting, oa, work_sources, minutes, recovery = payload[
-        "service_command_options"
-    ]
+    (
+        dingtalk, wechat, meeting, oa, work_sources, minutes, okr, recovery
+    ) = payload["service_command_options"]
     routes = [
         {
             "route_name": option["route_name"],

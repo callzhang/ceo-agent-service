@@ -89,6 +89,15 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
         channel="work_summary",
     ),
     ServiceCommandOption(
+        name="weekly-okr-report",
+        display_name="生成 OKR 周报",
+        description=(
+            "读取管理者的实时 OKR、生成本周周报并发送；整轮读取会超过 Agent 的"
+            "空闲与总时长上限，因此只能以服务命令形式在本进程内执行。"
+        ),
+        channel="dingtalk",
+    ),
+    ServiceCommandOption(
         name="recover-recent-messages",
         display_name="恢复近期 DingTalk 消息",
         description=(

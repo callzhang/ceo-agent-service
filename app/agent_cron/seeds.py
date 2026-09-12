@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-import shlex
-import sys
 
-from app.agent_cron.models import ScheduledTask, ScheduledTaskSkillRef
+from app.agent_cron.models import ScheduledTask
 from app.agent_cron.options import RuntimeOption, ScheduledTaskOptionService
-from app.agent_runtime_contracts import LOCAL_SERVICE_RUNTIME_CAPABILITIES
 from app.store import AutoReplyStore
 
 
 MINUTES_SYNC_MIGRATION_KEY = "ceo-minutes-sync-daily-v1"
+WEEKLY_OKR_MIGRATION_KEY = "weekly-okr-report-sunday-v1"
+WEEKLY_OKR_SERVICE_COMMAND = "weekly-okr-report"
 DINGTALK_MESSAGE_MIGRATION_KEY = "dingtalk-message-check-v1"
 DINGTALK_MESSAGE_SERVICE_COMMAND = "produce-once"
 DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY = "dingtalk-message-recovery-v1"
@@ -24,29 +23,6 @@ DINGTALK_OA_MIGRATION_KEY = "dingtalk-oa-check-v1"
 DINGTALK_OA_SERVICE_COMMAND = "scan-oa-approvals"
 WORK_SOURCE_MIGRATION_KEY = "work-source-scan-daily-v1"
 WORK_SOURCE_SERVICE_COMMAND = "scan-work-sources-once"
-PRODUCER_RUNTIME_CAPABILITIES = LOCAL_SERVICE_RUNTIME_CAPABILITIES
-
-
-def _one_shot_command(
-    store: AutoReplyStore,
-    working_directory: Path,
-    command: str,
-    *,
-    module: str = "app.cli",
-    include_workspace: bool = True,
-) -> str:
-    service_root = shlex.quote(str(Path(__file__).resolve().parents[2]))
-    python = shlex.quote(str(Path(sys.executable).resolve()))
-    database_path = shlex.quote(str(store.path.expanduser().resolve()))
-    workspace_path = shlex.quote(str(working_directory.expanduser().resolve()))
-    invocation = (
-        f"cd {service_root} && {python} -m {module} {command} --db {database_path}"
-    )
-    return (
-        f"{invocation} --workspace {workspace_path}"
-        if include_workspace
-        else invocation
-    )
 
 
 def seed_scheduled_tasks(
@@ -306,53 +282,31 @@ def _seed_weekly_okr_task(
     working_directory: Path,
     now: datetime | None,
 ) -> ScheduledTask:
-    migration_key = "weekly-okr-report-sunday-v1"
-    existing = _existing_task(
-        store,
-        migration_key,
-        options=options,
-        required_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
+    """Seed the weekly OKR report as a deterministic service command.
+
+    It was an Agent task whose whole prompt was "run exactly one deterministic
+    command", and that command reads every manager's live OKR through a
+    headless browser.  One real run took over fifty minutes and produced no
+    output until the end, so the Agent runtime killed it at its 900-second
+    idle limit and the orphaned command kept running outside any run record.
+    No Agent timeout can hold this work, and there is no judgement in it.
+    """
+    del options, working_directory
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key=WEEKLY_OKR_MIGRATION_KEY,
+        command=WEEKLY_OKR_SERVICE_COMMAND,
+        seed_enabled=True,
         now=now,
     )
-    if existing is not None:
-        return _bound_to_this_checkout(store, existing, now=now)
-    runtime, runtime_reason = _select_runtime(
-        options, required_capabilities=PRODUCER_RUNTIME_CAPABILITIES
-    )
-    report_ref, report_reason = _operation_ref(
-        options=options, name="ceo-weekly-report", position=0
-    )
-    okr_ref, okr_reason = _operation_ref(
-        options=options, name="dingtang-okr-review", position=1
-    )
-    command = _one_shot_command(
-        store, working_directory, "weekly-okr-report --force"
-    )
-    prompt = (
-        "使用 $ceo-weekly-report 与 $dingtang-okr-review 理解现有周报边界。"
-        f"只执行一次确定性命令：`{command}`，使时间资格只由本 Cron 控制。"
-        "命令自身完成分析、发布和发送；不要在命令外重复读取 OKR、创建文档或"
-        "发送群消息，并以命令返回的结构化状态报告本次结果。"
-    )
-    reasons = tuple(
-        reason
-        for reason in (runtime_reason, report_reason, okr_reason)
-        if reason is not None
-    )
-    if reasons:
-        prompt += "\n\n未启用：" + "；".join(reasons) + "。"
+    if adopted is not None:
+        return adopted
     return store.create_scheduled_task(
-        migration_key=migration_key,
+        migration_key=WEEKLY_OKR_MIGRATION_KEY,
         name="周日生成 OKR 周报",
-        prompt=prompt,
+        command=WEEKLY_OKR_SERVICE_COMMAND,
         cron_expression="0 0 18 * * 0",
         timezone_name="Asia/Shanghai",
-        runtime_id=runtime.route_name,
-        runtime_options={"model": runtime.model},
-        required_runtime_capabilities=PRODUCER_RUNTIME_CAPABILITIES,
-        working_directory=str(working_directory.expanduser().resolve()),
-        skill_refs=(report_ref, okr_ref),
-        enabled=not reasons,
+        enabled=True,
         now=now,
     )
 
@@ -385,50 +339,6 @@ def _seed_minutes_task(
     )
 
 
-def _service_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
-
-def _prompt_bound_to_this_checkout(prompt: str, service_root: str) -> str | None:
-    """Point a stored one-shot command at this checkout, or None if unchanged.
-
-    The seed writes the repository path into the prompt when it first creates
-    the task and never rewrites an existing task, so moving the checkout leaves
-    the command pointing at a directory that no longer exists.  Only the path
-    inside the command changes; later edits to the rest of the prompt survive.
-    """
-    segments = prompt.split("`")
-    changed = False
-    for index in range(1, len(segments), 2):
-        segment = segments[index]
-        if not segment.startswith("cd ") or " && " not in segment:
-            continue
-        head, rest = segment.split(" && ", 1)
-        try:
-            parts = shlex.split(head)
-        except ValueError:
-            continue
-        if len(parts) != 2 or parts[1] == service_root:
-            continue
-        segments[index] = f"cd {shlex.quote(service_root)} && {rest}"
-        changed = True
-    return "`".join(segments) if changed else None
-
-
-def _bound_to_this_checkout(
-    store: AutoReplyStore, task: ScheduledTask, *, now: datetime | None
-) -> ScheduledTask:
-    """Heal a seeded prompt whose one-shot command outlived its checkout."""
-    if task.deleted_at is not None or not task.prompt:
-        return task
-    prompt = _prompt_bound_to_this_checkout(task.prompt, str(_service_root()))
-    if prompt is None:
-        return task
-    return store.update_scheduled_task(
-        task.id, expected_version=task.version, prompt=prompt, now=now
-    )
-
-
 def _existing_task(
     store: AutoReplyStore,
     migration_key: str,
@@ -455,53 +365,6 @@ def _existing_task(
             if task.migration_key == migration_key
         ),
         None,
-    )
-
-
-def _select_runtime(
-    options: ScheduledTaskOptionService,
-    *,
-    required_capabilities: frozenset[str] = frozenset(),
-) -> tuple[RuntimeOption, str | None]:
-    runtime_options = options.list_runtime_options(
-        required_capabilities=required_capabilities
-    )
-    selected = next((option for option in runtime_options if option.available), None)
-    if selected is not None:
-        return selected, None
-    return (
-        runtime_options[0],
-        "没有健康且已配置的 Runtime（"
-        + _runtime_unavailable_summary(runtime_options)
-        + "）",
-    )
-
-
-def _operation_ref(
-    *, options: ScheduledTaskOptionService, name: str, position: int
-) -> tuple[ScheduledTaskSkillRef, str | None]:
-    option = next(
-        (item for item in options.list_operation_skill_options() if item.name == name),
-        None,
-    )
-    reason = None
-    if option is None or not option.available:
-        reason = (
-            f"operation Skill {name} 当前不可用（"
-            + (
-                option.unavailable_reason
-                if option is not None and option.unavailable_reason
-                else "operation_skill_unavailable"
-            )
-            + "）"
-        )
-    return (
-        ScheduledTaskSkillRef(
-            skill_source="operation",
-            skill_name=name,
-            position=position,
-        ),
-        reason,
     )
 
 
