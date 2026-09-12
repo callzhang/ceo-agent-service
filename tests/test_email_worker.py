@@ -3838,6 +3838,45 @@ def test_folder_materializer_binds_one_exact_existing_display_name() -> None:
     assert provider.created == []
 
 
+def test_folder_materializer_binds_each_enabled_account_independently() -> None:
+    providers = {
+        "primary": _FolderProvider(
+            [(ProviderFolder("work-primary", "工作", FolderRole.UNBOUND),)]
+        ),
+        "secondary": _FolderProvider(
+            [(), (ProviderFolder("work-secondary", "工作", FolderRole.UNBOUND),)]
+        ),
+    }
+    factory_calls: list[str] = []
+
+    def provider_factory(account):
+        account_id = str(account["account_id"])
+        factory_calls.append(account_id)
+        return providers[account_id]
+
+    coordinator = _module().ProviderFolderBindingCoordinator(
+        provider_factory,
+        now=lambda: "2026-09-08T10:00:00+00:00",
+    )
+
+    bindings = coordinator.create_and_verify_bindings(
+        category_key="work",
+        provider_folder_name="工作",
+        enabled_accounts=(
+            {"account_id": "primary"},
+            {"account_id": "secondary"},
+        ),
+    )
+
+    assert factory_calls == ["primary", "secondary"]
+    assert [(item.account_id, item.provider_folder_id) for item in bindings] == [
+        ("primary", "work-primary"),
+        ("secondary", "work-secondary"),
+    ]
+    assert providers["primary"].created == []
+    assert providers["secondary"].created == ["工作"]
+
+
 def test_folder_materializer_marks_duplicate_exact_names_ambiguous() -> None:
     provider = _FolderProvider(
         [
