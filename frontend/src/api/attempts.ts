@@ -24,6 +24,34 @@ export interface AttemptAgentSession {
   tool_uses: AttemptToolUse[];
 }
 
+export interface AttemptUnsubscribeReceipt {
+  outcome: string;
+  evidence: string;
+  result_text: string;
+  receipt_id: string;
+  entry_reference: string;
+  started_at: string;
+  completed_at: string;
+  steps: Array<{ sequence: number; operation: string; state: string }>;
+}
+
+export interface AttemptEmail {
+  classification_id: string;
+  classification_url: string;
+  account_id: string;
+  action_type: string;
+  category: string;
+  action_plan_id: string;
+  stable_message_identity: string;
+  subject: string;
+  sender: string;
+  folder: string;
+  received_at: string;
+  rfc_message_id: string;
+  candidate_source: string;
+  unsubscribe: AttemptUnsubscribeReceipt | null;
+}
+
 export interface AttemptRuntimeEntry {
   role: string;
   session_url: string;
@@ -99,6 +127,7 @@ export interface AttemptDetail {
     terminal: boolean;
     action_label: string;
   };
+  email: AttemptEmail | null;
   agent_sessions: AttemptAgentSession[];
   runtime_attempts: AttemptRuntimeEntry[];
   created_at: string;

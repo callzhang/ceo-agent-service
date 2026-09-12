@@ -438,7 +438,11 @@ def register_console_routes(
 
     @app.get("/api/console/history/{attempt_id}")
     def console_history_detail(attempt_id: int):
-        status, payload = build_attempt_detail(store_factory(), attempt_id)
+        status, payload = build_attempt_detail(
+            store_factory(),
+            attempt_id,
+            email_store=email_store_factory() if email_store_factory else None,
+        )
         if payload is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Attempt not found", "details": {}}, status_code=404)
         return JSONResponse(item_envelope(payload), status_code=status)

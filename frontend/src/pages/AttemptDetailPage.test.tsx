@@ -61,6 +61,7 @@ const detail = {
     action_label: "无需操作",
   },
   tool_uses: [],
+  email: null,
   agent_sessions: [
     { role: "consumer", label: "处理过程", session_id: "session-consumer", url: "/codex/session-consumer", tool_uses: [{ title: "read_thread", tool: "read_thread", call_id: "call-1", relevance: "", source: "dingtalk", args: { conversation_id: "cid-1" }, format: "", output: "最近 3 条消息" }] },
     { role: "audit", label: "审计过程", session_id: "session-8448", url: "/codex/session-8448", tool_uses: [{ title: "unsubscribe_email", tool: "unsubscribe_email", call_id: "call-2", relevance: "", source: "", args: { task_id: 383926 }, format: "", output: "skipped_no_reliable_entry" }] },
@@ -152,6 +153,52 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("read_thread")).toBeInTheDocument();
     expect(screen.getByText("最近 3 条消息")).toBeInTheDocument();
     expect(screen.queryByText("unsubscribe_email")).not.toBeInTheDocument();
+  });
+
+  it("shows the email an email Attempt acted on and the receipt it earned", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        conversation: { label: "邮件", title: "Email unsubscribe", trigger_sender: "noreply@email.openai.com" },
+        email: {
+          classification_id: "6811963115514558557",
+          classification_url: "/email?tab=list&selected=6811963115514558557",
+          account_id: "dingtalk_primary",
+          action_type: "unsubscribe",
+          category: "junk",
+          action_plan_id: "email-action-plan:dd0fff87",
+          stable_message_identity: "dingtalk_primary:message-id:<msg@host>",
+          subject: "有 4 种新图像风格等你尝试",
+          sender: "noreply@email.openai.com",
+          folder: "已删除邮件",
+          received_at: "Sat, 12 Sep 2026 06:18:39 +0000",
+          rfc_message_id: "<msg@host>",
+          candidate_source: "body_html_https",
+          unsubscribe: {
+            outcome: "skipped_no_reliable_entry",
+            evidence: "page-not-operable",
+            result_text: "host='r.openai.com' control_count=0",
+            receipt_id: "unsubscribe-receipt:5fd912d9",
+            entry_reference: "unsubscribe-entry:870a914f",
+            started_at: "2026-09-12T06:21:29+00:00",
+            completed_at: "2026-09-12T06:21:29+00:00",
+            steps: [{ sequence: 1, operation: "open_entry", state: "skipped_no_reliable_entry" }],
+          },
+        },
+      },
+      meta: { snapshot_at: "2026-09-12T06:21:40Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "关联邮件" })).toBeInTheDocument();
+    expect(screen.getByText("有 4 种新图像风格等你尝试")).toBeInTheDocument();
+    expect(screen.getByText("已删除邮件")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "打开这封邮件" })).toHaveAttribute("href", "/email?tab=list&selected=6811963115514558557");
+    expect(screen.getByRole("heading", { name: "退订回执" })).toBeInTheDocument();
+    expect(screen.getAllByText("skipped_no_reliable_entry").length).toBeGreaterThan(0);
+    expect(screen.getByText("page-not-operable")).toBeInTheDocument();
+    expect(screen.getByText("host='r.openai.com' control_count=0")).toBeInTheDocument();
+    expect(screen.getByText("open_entry")).toBeInTheDocument();
   });
 
   it("keeps the process visible for an Attempt whose transcripts are gone", async () => {

@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { command, displayValue } from "../api/console";
-import { getAttemptDetail, type AttemptAgentSession, type AttemptDetail, type AttemptMetadata, type AttemptRuntimeEntry, type AttemptToolUse } from "../api/attempts";
+import { getAttemptDetail, type AttemptAgentSession, type AttemptDetail, type AttemptEmail, type AttemptMetadata, type AttemptRuntimeEntry, type AttemptToolUse } from "../api/attempts";
 import { SummaryText } from "../components/data/SummaryText";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
@@ -31,6 +31,23 @@ function AgentProcess({ sessions, toolUses }: { sessions: AttemptAgentSession[];
     return <section className="console-card attempt-process-card"><h2>执行过程</h2><p>这次处理实际调用的工具、参数和返回结果。</p><ToolUseList uses={toolUses} /></section>;
   }
   return <section className="console-card attempt-process-card"><h2>执行过程</h2><p>按角色分开：处理 Agent 形成方案，审计 Agent 核验方案并执行对外动作。每一条是它实际调用的工具、参数和返回结果。</p>{sessions.map((session) => <details className="attempt-process-role" key={session.session_id} open={sessions.length === 1 || session.role === "audit"}><summary><strong>{session.label}</strong><span>{session.tool_uses.length} 次调用</span></summary><div className="attempt-process-role-body"><Link className="agent-log-button" to={session.url}>查看完整 Agent 记录</Link><ToolUseList uses={session.tool_uses} /></div></details>)}</section>;
+}
+
+function EmailContext({ email }: { email: AttemptEmail | null }) {
+  if (!email) return null;
+  const receipt = email.unsubscribe;
+  const rows = [
+    ["主题", email.subject],
+    ["发件人", email.sender],
+    ["收件时间", email.received_at],
+    ["所在文件夹", email.folder],
+    ["邮箱账号", email.account_id],
+    ["Message-ID", email.rfc_message_id],
+    ["动作", email.action_type],
+    ["分类", email.category],
+    ["退订入口来源", email.candidate_source],
+  ].filter(([, value]) => value);
+  return <section className="console-card attempt-email-card"><div className="execution-detail-list-header"><div><h2>关联邮件</h2><p>这条 Attempt 处理的邮件，以及它为这封邮件留下的回执。</p></div>{email.classification_url && <Link className="agent-log-button" to={email.classification_url}>打开这封邮件</Link>}</div><dl className="attempt-email-grid">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>{receipt && <div className="attempt-email-receipt"><h3>退订回执</h3><dl className="attempt-email-grid"><div><dt>结果</dt><dd>{receipt.outcome}</dd></div><div><dt>依据</dt><dd>{receipt.evidence}</dd></div><div><dt>开始</dt><dd>{receipt.started_at}</dd></div><div><dt>结束</dt><dd>{receipt.completed_at}</dd></div></dl>{receipt.result_text && <p className="attempt-email-observation">{receipt.result_text}</p>}{receipt.steps.length > 0 && <ol className="attempt-email-steps">{receipt.steps.map((step) => <li key={step.sequence}><strong>{step.operation}</strong><span>{step.state}</span></li>)}</ol>}</div>}</section>;
 }
 
 function RuntimeEntry({ entry }: { entry: AttemptRuntimeEntry }) {
@@ -167,6 +184,7 @@ export function AttemptDetailPage() {
       {((detail.status.attention.reason || ["sent", "skipped", "needs_human", "failed"].includes(detail.status.raw.trim().toLowerCase()))) && <section className="console-card compact-card attempt-status-card"><p><strong>事项：</strong>{detail.status.subject}</p><p><strong>当前状态：</strong>{detail.status.message}</p><p><strong>需要你决策：</strong>{detail.status.requires_decision ? "是" : "否"}</p>{detail.status.attention.reason && <dl className="attempt-attention-details"><div><dt>原因</dt><dd>{detail.status.attention.reason}</dd></div><div><dt>外部副作用</dt><dd>{detail.status.attention.external_effect}</dd></div>{detail.status.attention.retry_at && <div><dt>重试计划</dt><dd>{detail.status.attention.retry_at}</dd></div>}</dl>}</section>}
       <MetadataGrid rows={[...detail.metadata, ...(detail.revision_count ? [{ label: "revisions", value: `${detail.revision_count} revisions` }] : [])]} />
       <section className="attempt-review-grid"><div className="console-card attempt-review-main"><div className="reply-meta" aria-label="处理状态">{detail.action_pills.map((pill) => <StatusBadge key={`${pill.label}-${pill.status}`} value={pill.status} />)}</div><ReviewBlock title={detail.trigger.title} value={detail.trigger.text} /><ReviewBlock title={detail.audit_explanation.title} value={detail.audit_explanation.text} className="attempt-audit-section" /><ReviewBlock title={detail.generated_reply.title} value={detail.generated_reply.text} className="attempt-generated-reply" /></div><aside className="attempt-review-side" aria-label="反馈与人工处理">{detail.status.requires_decision && <section className="console-card attempt-decision-card"><h2>需要你的判断</h2><p>选择上方方案会创建一个新的处理修订，原始 Attempt 保留。若方案说明会产生外部动作，后续处理会按说明执行并回读。</p>{detail.decision_options.map((option, index) => <button className="attempt-decision-option" type="button" disabled={decisionSubmitting} key={option.instruction} onClick={() => { if (window.confirm(`确认选择“${option.label}”？`)) void runDecision(option.url, option.instruction); }}><strong>{index + 1}. {option.label}</strong><span>{option.consequence}</span></button>)}<label htmlFor="attempt-custom-decision">其他处理指令（默认仅本次）</label><label className="attempt-skill-toggle" htmlFor="attempt-skill-update"><input id="attempt-skill-update" type="checkbox" checked={skillUpdateRequested} onChange={(event) => setSkillUpdateRequested(event.target.checked)} /> 同时把这条反馈沉淀为 Skill 规则</label><textarea id="attempt-custom-decision" value={customDecision} placeholder="例如：采用方案二，并说明交付边界" onChange={(event) => setCustomDecision(event.target.value)} /><p className="attempt-decision-hint">请填写其他处理指令后提交；下方“反馈迭代”只保存反馈，不会执行处理。</p><button type="button" className="primary-button" disabled={!customDecision.trim() || decisionSubmitting} onClick={() => { if (window.confirm("确认提交这条人工处理指令？")) void runDecision(detail.decision_options[0]?.url || `/api/console/history/${detail.id}/human-decision`, customDecision.trim()); }}>{decisionSubmitting ? "提交中…" : "提交处理指令"}</button>{message && <p className="attempt-decision-message" role="status" aria-live="polite">{message}</p>}</section>}<FeedbackPanel detail={detail} onSaved={setMessage} /></aside></section>
+      <EmailContext email={detail.email} />
       <References references={detail.references} />
       {detail.failure_reason && <DetailSection title="失败原因" value={detail.failure_reason} />}
       {detail.recovery_state && <DetailSection title="后续路由恢复" value="关联任务已完成；原始失败记录仍保留，后续处理没有重写该审计事实。" />}

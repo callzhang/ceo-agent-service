@@ -138,6 +138,91 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _email_payload(
+    attempt: Any, reply_task: Any, email_store: Any
+) -> dict[str, Any] | None:
+    """Return the email an email-channel Attempt acted on, and what it did.
+
+    An email Attempt addresses its work by action identity, so the message it
+    came from, the plan that authorized the action and the receipt the action
+    earned are all reachable but none of them were on the page.
+    """
+    if str(getattr(attempt, "channel", "") or "") != "email":
+        return None
+    trigger = _stored_json(getattr(reply_task, "trigger_message_json", ""), {})
+    if not isinstance(trigger, dict):
+        trigger = {}
+    classification_id = str(trigger.get("classification_id") or "").strip()
+    payload: dict[str, Any] = {
+        "classification_id": classification_id,
+        "classification_url": (
+            f"/email?tab=list&selected={quote(classification_id, safe='')}"
+            if classification_id
+            else ""
+        ),
+        "account_id": normalize_display_value(trigger.get("account_id")),
+        "action_type": normalize_display_value(trigger.get("action_type")),
+        "category": normalize_display_value(trigger.get("category")),
+        "action_plan_id": normalize_display_value(trigger.get("action_plan_id")),
+        "stable_message_identity": normalize_display_value(
+            trigger.get("stable_message_identity")
+        ),
+        "subject": "",
+        "sender": normalize_display_value(getattr(attempt, "trigger_sender", "")),
+        "folder": "",
+        "received_at": normalize_display_value(
+            getattr(attempt, "trigger_create_time", "")
+        ),
+        "rfc_message_id": "",
+        "candidate_source": "",
+        "unsubscribe": None,
+    }
+    parameters = trigger.get("action_parameters")
+    if isinstance(parameters, dict):
+        payload["candidate_source"] = normalize_display_value(
+            parameters.get("candidate_source")
+        )
+    if email_store is None:
+        return payload
+    if classification_id.isdigit():
+        classification = email_store.get_classification(int(classification_id))
+        if classification is not None:
+            payload.update(
+                {
+                    "subject": normalize_display_value(classification.get("subject")),
+                    "sender": normalize_display_value(classification.get("sender")),
+                    "folder": normalize_display_value(classification.get("folder")),
+                    "received_at": normalize_display_value(
+                        classification.get("received_at")
+                    ),
+                    "rfc_message_id": normalize_display_value(
+                        classification.get("rfc_message_id")
+                    ),
+                }
+            )
+    action_identity = str(getattr(attempt, "trigger_message_id", "") or "").strip()
+    receipt = email_store.get_email_unsubscribe_receipt(action_identity)
+    if receipt is not None:
+        payload["unsubscribe"] = {
+            "outcome": normalize_display_value(receipt.get("outcome")),
+            "evidence": normalize_display_value(receipt.get("evidence")),
+            "result_text": normalize_display_value(receipt.get("result_text")),
+            "receipt_id": normalize_display_value(receipt.get("receipt_id")),
+            "entry_reference": normalize_display_value(receipt.get("entry_reference")),
+            "started_at": normalize_display_value(receipt.get("started_at")),
+            "completed_at": normalize_display_value(receipt.get("completed_at")),
+            "steps": [
+                {
+                    "sequence": int(step.get("sequence") or 0),
+                    "operation": normalize_display_value(step.get("operation")),
+                    "state": normalize_display_value(step.get("state")),
+                }
+                for step in email_store.list_email_unsubscribe_steps(action_identity)
+            ],
+        }
+    return payload
+
+
 def _references_payload(attempt: Any) -> list[dict[str, str]]:
     """Return human-readable materials, never raw tool calls, for an Attempt."""
     from app.audit_web import _audit_document_uses_for_attempt
@@ -254,7 +339,9 @@ def _action_links(
     }
 
 
-def build_attempt_detail(store: Any, attempt_id: int) -> tuple[int, dict[str, Any] | None]:
+def build_attempt_detail(
+    store: Any, attempt_id: int, *, email_store: Any = None
+) -> tuple[int, dict[str, Any] | None]:
     """Build a rich, JSON-safe Attempt DTO without rendering HTML."""
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
@@ -380,6 +467,7 @@ def build_attempt_detail(store: Any, attempt_id: int) -> tuple[int, dict[str, An
         },
         "audit_explanation": {"title": "审计说明", "text": normalize_display_value(audit_explanation)},
         "generated_reply": {"title": "生成回复", "text": normalize_display_value(_attempt_detail_reply_text(attempt, sent_reply))},
+        "email": _email_payload(attempt, reply_task, email_store),
         "references": _references_payload(attempt),
         "feedback": {
             "reviewer_feedback": normalize_display_value(attempt.reviewer_feedback),
