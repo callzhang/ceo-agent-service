@@ -659,7 +659,6 @@ def test_quality_gate_accepts_service_generated_confirmation_options(tmp_path):
             ")",
             (attempt_id,),
         )
-
     report = scan_hourly_quality(store.path, now=NOW)
 
     assert ("reply_attempts", "needs_human", 1) in {
@@ -682,13 +681,6 @@ def test_quality_gate_accepts_service_generated_uncertain_unsubscribe_options(tm
         send_error="email_unsubscribe_effect_uncertain",
         human_decision_options_json=json.dumps(options),
     )
-    with store._connect() as db:
-        db.execute(
-            "update agent_runs set final_result_json='' where id=("
-            "select agent_run_id from reply_attempts where id=?"
-            ")",
-            (attempt_id,),
-        )
 
     report = scan_hourly_quality(store.path, now=NOW)
 

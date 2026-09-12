@@ -517,14 +517,18 @@ def _service_generated_needs_human_classification(
     options_json: object,
 ) -> str:
     """Recognize service-generated decisions without replacing run evidence."""
-    if (
-        (
-            isinstance(result_json, str)
-            and result_json.strip()
-        )
-        or str(send_error or "").strip()
-        not in {"confirmation_required", "email_unsubscribe_effect_uncertain"}
+    error_code = str(send_error or "").strip()
+    # Email uncertainty deliberately keeps the original Consumer/Audit result
+    # as historical evidence. The current attempt projection is the new
+    # service-generated human boundary, so a non-human final result is
+    # expected and must not invalidate the projection.
+    if error_code == "confirmation_required" and (
+        not isinstance(result_json, str) or not result_json.strip()
     ):
+        pass
+    elif error_code == "email_unsubscribe_effect_uncertain":
+        pass
+    else:
         return "invalid"
     try:
         options = json.loads(str(options_json or ""))
