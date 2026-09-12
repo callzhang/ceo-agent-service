@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from pathlib import Path
+import uuid
 
 from app.email_classifier_contracts import EmailCategory
 from app.email_classifier_retrain import (
@@ -41,6 +43,16 @@ class SnapshotPublicationResult:
     snapshot: dict[str, object]
     retrain: AutoRetrainResult
     pending_trigger: bool = False
+
+
+def _selection_values(selection: dict[str, object], key: str) -> list[str]:
+    value = selection.get(key)
+    if not isinstance(value, list):
+        raise ValueError(f"training selection {key} must be a list")
+    values = sorted({item.strip() for item in value if isinstance(item, str) and item.strip()})
+    if len(values) != len(value):
+        raise ValueError(f"training selection {key} contains invalid values")
+    return values
 
 
 class EmailClassifierLearningService:
@@ -121,12 +133,60 @@ class EmailClassifierLearningService:
             )
 
     def request_manual_training(
-        self, *, now: datetime | None = None
+        self,
+        *,
+        now: datetime | None = None,
+        selection: dict[str, object] | None = None,
     ) -> AutoRetrainResult:
         current = now or datetime.now(timezone.utc)
         with retrain_state_reservation(self.retrain_state_path):
             state = load_retrain_state(self.retrain_state_path)
+            if selection is not None:
+                return self._record_training_selection(
+                    state, selection=selection, now=current
+                )
             return self._request_if_ready(state, now=current, manual=True)
+
+    def _record_training_selection(
+        self,
+        state: RetrainState,
+        *,
+        selection: dict[str, object],
+        now: datetime,
+    ) -> AutoRetrainResult:
+        """Persist a selection until the executor can consume it safely.
+
+        The current subprocess still consumes the immutable default snapshot. A
+        selected request is therefore recorded as a dry request instead of
+        claiming that a differently scoped model was trained.
+        """
+
+        sources = _selection_values(selection, "sources")
+        categories = _selection_values(selection, "categories")
+        if not sources or not categories:
+            raise ValueError("training selection requires sources and categories")
+        request_id = uuid.uuid4().hex
+        payload = {
+            "request_id": request_id,
+            "requested_at": now.astimezone(timezone.utc).isoformat(),
+            "status": "recorded",
+            "selection": {"sources": sources, "categories": categories},
+            "production_feedback_written": False,
+            "online_model_changed": False,
+            "execution": "pending_executor_support",
+        }
+        provenance = selection.get("provenance")
+        if isinstance(provenance, list) and all(isinstance(item, dict) for item in provenance):
+            payload["selection"]["provenance"] = provenance
+        path = self.registry.root / f"training-request-{request_id}.json"
+        self.registry.root.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        return AutoRetrainResult(
+            RetrainDecision(False, "training_selection_recorded", 0),
+            state,
+            None,
+            None,
+        )
 
     def request_description_proposal_evaluation(
         self, proposal_id: str, *, now: datetime | None = None

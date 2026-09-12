@@ -729,6 +729,19 @@ class EmailPromotionConfigPayload(BaseModel):
     expected_current_version: str = Field(min_length=1)
 
 
+class EmailTrainingSelectionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    sources: list[str] = Field(min_length=1)
+    categories: list[str] = Field(min_length=1)
+
+    @field_validator("sources", "categories")
+    @classmethod
+    def validate_values(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() for item in value) or len(set(value)) != len(value):
+            raise ValueError("training selection values must be unique and non-blank")
+        return value
+
+
 class EmailRuntimeModePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     mode: Literal["agent_primary", "model_primary"]
@@ -1273,14 +1286,38 @@ def register_email_routes(
         return response
 
     @app.post("/api/console/email/training")
-    def email_manual_training():
+    async def email_manual_training(request: Request):
         if email_learning_factory is None:
             return error_response(
                 "email_learning_unavailable",
                 "Email learning is unavailable",
                 503,
             )
-        result = email_learning_factory().request_manual_training()
+        try:
+            body = await request.json()
+        except (ValueError, TypeError):
+            body = {}
+        payload = None
+        if body:
+            try:
+                payload = EmailTrainingSelectionPayload.model_validate(body)
+            except (ValueError, TypeError, ValidationError):
+                return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+        if body and payload is None:
+            return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+        service = email_learning_factory()
+        request_selection = payload.model_dump() if payload is not None else None
+        try:
+            if payload is not None:
+                catalog = training_source_catalog(require_store())
+                request_selection["provenance"] = [
+                    row for row in catalog
+                    if row["source"] in payload.sources and row["category"] in payload.categories
+                ]
+            result = (service.request_manual_training(selection=request_selection)
+                      if payload is not None else service.request_manual_training())
+        except ValueError:
+            return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
         run = result.training_run
         return JSONResponse(
             {
@@ -1290,11 +1327,50 @@ def register_email_routes(
                     "retrain_reason": result.decision.reason,
                     "pending_examples": result.decision.pending_examples,
                     "training_run_id": run.run_id if run else None,
-                    "training_status": run.status if run else None,
+                    "training_status": (run.status if run else
+                                         "recorded" if result.decision.reason == "training_selection_recorded"
+                                         else None),
+                    **({"selection": request_selection} if request_selection is not None else {}),
                 },
             },
-            status_code=202 if run else 200,
+            status_code=202,
         )
+
+    def training_source_catalog(email_store: EmailStore) -> list[dict[str, object]]:
+        rows: dict[tuple[str, str], dict[str, object]] = {}
+        for sample in email_store.list_training_examples(include_inclusion=True):
+            category = str(sample.get("label") or "")
+            if category:
+                row = rows.setdefault(("user_feedback", category), {
+                    "source": "user_feedback", "category": category,
+                    "sample_count": 0, "provenance": {"classification_source": "user"},
+                })
+                row["sample_count"] += 1
+        processed, _ = email_store.list_classifications(
+            status=EmailClassificationStatus.PROCESSED, limit=100000, offset=0
+        )
+        for sample in processed:
+            if sample.get("classification_source") != "agent":
+                continue
+            category = str(sample.get("confirmed_category") or sample.get("predicted_category") or "")
+            if category:
+                row = rows.setdefault(("agent_auto_label", category), {
+                    "source": "agent_auto_label", "category": category,
+                    "sample_count": 0, "provenance": {"classification_source": "agent"},
+                })
+                row["sample_count"] += 1
+        snapshot = email_store.latest_training_snapshot_state()
+        if snapshot:
+            for category, count in dict(snapshot.get("category_sample_counts") or {}).items():
+                rows[("folder_snapshot", str(category))] = {
+                    "source": "folder_snapshot", "category": str(category),
+                    "sample_count": int(count),
+                    "provenance": {"snapshot_id": snapshot.get("snapshot_id"),
+                                   "snapshot_digest": snapshot.get("snapshot_sha"),
+                                   "snapshot_version": snapshot.get("snapshot_version"),
+                                   "description_version": snapshot.get("description_version")},
+                }
+        return sorted(rows.values(), key=lambda row: (str(row["source"]), str(row["category"])))
 
     def training_controls(service, email_store, staged_evidence, registry_issues):
         from app.email_description_optimizer import description_set_digest
@@ -1459,6 +1535,7 @@ def register_email_routes(
                 "active_model_id": active_model_id,
                 "active_mode": active_mode.value,
                 "pending_examples": pending_examples,
+                "training_sources": training_source_catalog(email_store),
                 "last_trained_feedback_count": state.last_trained_feedback_count,
                 "last_trained_at": state.last_trained_at,
                 "last_feedback_at": state.last_feedback_at,

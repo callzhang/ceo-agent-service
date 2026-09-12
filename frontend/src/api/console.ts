@@ -347,6 +347,13 @@ export interface EmailLearningEvidence {
   models: EmailModelEvidence[];
   registry_issues: Array<{ model_id: string; integrity_status: "corrupt"; integrity_error: string }>;
   category_thresholds: Record<string, number>;
+  training_sources: EmailTrainingSource[];
+}
+export interface EmailTrainingSource {
+  source: string;
+  category: string;
+  sample_count: number;
+  provenance: Record<string, unknown>;
 }
 export interface EmailRuntime {
   mode: "agent_primary" | "model_primary";
@@ -675,6 +682,12 @@ export function listEmailLearning(signal?: AbortSignal) {
   return request<{ ok: boolean; learning: EmailLearningEvidence; meta: { snapshot_at: string } }>(
     "/api/console/email/learning",
     { signal },
+  );
+}
+
+export function requestEmailTraining(payload: {sources: string[]; categories: string[]}) {
+  return request<{ok: boolean; learning: {training_status: string; training_run_id: string | null; selection: typeof payload}}>(
+    "/api/console/email/training", {method: "POST", body: JSON.stringify(payload)},
   );
 }
 

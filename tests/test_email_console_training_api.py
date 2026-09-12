@@ -16,8 +16,16 @@ def client_for(tmp_path):
     store = EmailStore(tmp_path / "mail.sqlite3")
     registry = EmailModelRegistry(tmp_path / "models")
     app = FastAPI()
-    register_email_routes(app, lambda: store, email_learning_factory=lambda: SimpleNamespace(
-        registry=registry, retrain_state_path=tmp_path / "training.json"))
+    def learning_service():
+        return SimpleNamespace(
+            registry=registry,
+            retrain_state_path=tmp_path / "training.json",
+            request_manual_training=lambda **_: SimpleNamespace(
+                decision=SimpleNamespace(due=False, reason="training_selection_recorded", pending_examples=0),
+                training_run=None,
+            ),
+        )
+    register_email_routes(app, lambda: store, email_learning_factory=learning_service)
     return TestClient(app), store, registry
 
 
@@ -30,6 +38,37 @@ def test_training_console_empty_registry_explains_agent_mode(tmp_path):
     assert learning["runtime"]["toggle_enabled"] is False
     assert learning["promotion_gate"]["config"]["macro_f1_min"] == .95
     assert learning["promotion_gate"]["promotion_eligible"] is False
+
+
+def test_learning_exposes_training_source_provenance_and_selection_is_recorded(tmp_path, monkeypatch):
+    client, store, registry = client_for(tmp_path)
+    monkeypatch.setattr(store, "list_training_examples", lambda **_: [
+        {"message_id": "user-1", "label": "work", "confirmed_at": "2026-09-12T00:00:00Z", "included_in_model_id": None},
+        {"message_id": "user-2", "label": "work", "confirmed_at": "2026-09-12T00:00:01Z", "included_in_model_id": None},
+    ])
+    monkeypatch.setattr(store, "list_classifications", lambda **_: ([
+        {"id": 2, "classification_source": "agent", "predicted_category": "legal",
+         "confirmed_category": "legal", "status": "processed"},
+    ], 1))
+    monkeypatch.setattr(store, "latest_training_snapshot_state", lambda: {
+        "snapshot_id": "email-folder-snapshot-20260912T000000.000000Z-aaaaaaaaaaaa",
+        "snapshot_sha": "a" * 64, "snapshot_version": "email-folder-training-snapshot-v1",
+        "description_version": "description-set-sha256:" + "b" * 64,
+        "input_schema_version": "email-folder-model-input-v2", "sample_count": 3,
+        "group_count": 2, "category_sample_counts": {"work": 2, "legal": 1},
+    })
+    learning = client.get("/api/console/email/learning").json()["learning"]
+    rows = learning["training_sources"]
+    assert {row["source"] for row in rows} == {"user_feedback", "agent_auto_label", "folder_snapshot"}
+    assert all(row["provenance"] for row in rows)
+    assert next(row["sample_count"] for row in rows if row["source"] == "user_feedback" and row["category"] == "work") == 2
+    response = client.post("/api/console/email/training", json={
+        "sources": ["agent_auto_label", "user_feedback"],
+        "categories": ["legal", "work"],
+    })
+    assert response.status_code == 202
+    assert response.json()["learning"]["training_status"] == "recorded"
+    assert response.json()["learning"]["selection"]["categories"] == ["legal", "work"]
 
 
 def test_promotion_config_changes_do_not_activate_model(tmp_path):

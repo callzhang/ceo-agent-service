@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+import json
 from pathlib import Path
 from threading import Barrier, Lock, Thread
 import time
@@ -170,6 +171,30 @@ def test_feedback_api_service_confirms_first_and_records_state_without_retrainin
         tmp_path / "models" / "retrain-state.json"
     ).last_feedback_at
     assert store.list_training_examples()[0]["label"] == "legal"
+
+
+def test_manual_training_selection_is_persisted_without_claiming_execution(tmp_path: Path):
+    service, _store, _rows, _ = _service_with_pending(tmp_path)
+
+    result = service.request_manual_training(
+        selection={
+            "sources": ["agent_auto_label", "user_feedback"],
+            "categories": ["work", "legal"],
+        }
+    )
+
+    assert result.training_run is None
+    assert result.decision.reason == "training_selection_recorded"
+    request_files = list((tmp_path / "models").glob("training-request-*.json"))
+    assert len(request_files) == 1
+    payload = json.loads(request_files[0].read_text())
+    assert payload["status"] == "recorded"
+    assert payload["selection"] == {
+        "sources": ["agent_auto_label", "user_feedback"],
+        "categories": ["legal", "work"],
+    }
+    assert payload["production_feedback_written"] is False
+    assert payload["online_model_changed"] is False
 
 
 def test_learning_service_corrects_processed_classification_through_pipeline(

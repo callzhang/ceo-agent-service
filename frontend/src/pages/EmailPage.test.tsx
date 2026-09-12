@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { EmailClassificationListParams } from "../api/console";
-const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "getEmailClassification", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
+const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "getEmailClassification", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
 vi.mock("../api/console", async importOriginal => ({ ...await importOriginal<object>(), ...api }));
 import { EmailPage } from "./EmailPage";
 const config = { category_key: "work", display_name: "工作", core_description: "工作定义", include: ["项目"], exclude: ["私人"], threshold: .9, actions: ["move"], action_parameters: {}, enabled: true, config_version: "c1", description_version: "d1", updated_at: "", bindings: [] };
@@ -295,6 +295,20 @@ it("renders training duration, coverage and safe parameters without inventing ab
   await user.click(await screen.findByRole("button",{name:"查看 training-v1"}));
   const training=await screen.findByRole("region",{name:"训练记录"});expect(training).toHaveTextContent("60000.0 ms");expect(training).toHaveTextContent("123 / 未测量");expect(training).toHaveTextContent("2 / 97");
   expect(screen.getByRole("region",{name:"训练参数"})).toHaveTextContent("20260905");expect(screen.getByRole("region",{name:"训练参数"})).toHaveTextContent("lbfgs");
+});
+it("shows all training sources selected by default and records an excluded source",async()=>{
+  const user=userEvent.setup();
+  api.listEmailLearning.mockResolvedValue({learning:learning({training_sources:[
+    {source:"agent_auto_label",category:"work",sample_count:12,provenance:{classification_source:"agent"}},
+    {source:"user_feedback",category:"work",sample_count:4,provenance:{classification_source:"user"}},
+  ]})});
+  api.requestEmailTraining.mockResolvedValue({ok:true,learning:{training_status:"recorded",training_run_id:null,selection:{sources:["user_feedback"],categories:["work"]}}});
+  show("/email?tab=learning");
+  expect(await screen.findByRole("region",{name:"训练数据来源"})).toHaveTextContent("Agent 自动标注");
+  const source=screen.getByRole("checkbox",{name:"Agent 自动标注"});expect(source).toBeChecked();await user.click(source);
+  await user.click(screen.getByRole("button",{name:"开始训练"}));
+  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["user_feedback"],categories:["work"]});
+  expect(await within(screen.getByRole("region",{name:"训练数据来源"})).findByRole("status")).toHaveTextContent("训练请求已记录");
 });
 it("reuses a mode request ID on retry and prevents duplicate submissions",async()=>{
   const user=userEvent.setup(),pending=deferred<unknown>();api.saveEmailRuntimeMode.mockReturnValueOnce(pending.promise).mockRejectedValueOnce(new Error("重试失败"));show("/email?tab=learning");

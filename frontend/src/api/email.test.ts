@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from "vitest";
-import {createEmailCategory,getEmailClassification,getEmailModelVersion,listEmailClassifications,saveEmailConfig,saveEmailPromotionConfig,saveEmailRuntimeMode} from "./console";
+import {createEmailCategory,getEmailClassification,getEmailModelVersion,listEmailClassifications,requestEmailTraining,saveEmailConfig,saveEmailPromotionConfig,saveEmailRuntimeMode} from "./console";
 afterEach(()=>vi.unstubAllGlobals());
 function reply(value:unknown){return new Response(JSON.stringify(value),{status:200});}
 it("preserves nullable importance, provider truth, quoted text and large string IDs",async()=>{
@@ -33,4 +33,9 @@ it("passes cancellation to model detail and retains absent evaluation as null",a
   const result=await getEmailModelVersion("model/version",controller.signal);
   expect(fetch).toHaveBeenCalledWith("/api/console/email/model-versions/model%2Fversion",expect.objectContaining({signal:controller.signal}));
   expect(result.model.metrics).toBeNull();expect(result.model.end_to_end_latency_ms).toBeNull();
+});
+it("sends selected training sources and categories to the training request",async()=>{
+  const fetch=vi.fn().mockResolvedValue(reply({ok:true,learning:{training_status:"recorded"}}));vi.stubGlobal("fetch",fetch);
+  await requestEmailTraining({sources:["agent_auto_label","user_feedback"],categories:["legal","work"]});
+  expect(fetch).toHaveBeenCalledWith("/api/console/email/training",expect.objectContaining({method:"POST",body:JSON.stringify({sources:["agent_auto_label","user_feedback"],categories:["legal","work"]})}));
 });

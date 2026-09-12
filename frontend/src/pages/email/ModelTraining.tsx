@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { getEmailModelVersion, saveEmailPromotionConfig, saveEmailRuntimeMode, type EmailCategoryConfig, type EmailLearningEvidence, type EmailPromotionConfig, type EmailRuntime, type EmailStagedModel } from "../../api/console";
+import { getEmailModelVersion, requestEmailTraining, saveEmailPromotionConfig, saveEmailRuntimeMode, type EmailCategoryConfig, type EmailLearningEvidence, type EmailPromotionConfig, type EmailRuntime, type EmailStagedModel } from "../../api/console";
 import { EmailDrawer } from "./EmailDrawer";
 import { checkLabel, checkValue, errorMessage, localTime, measured, modeLabel, reasonLabel, statusLabel } from "./shared";
 import { modelMetric, trendPoints, type TrendMetric } from "./modelTrend";
@@ -17,9 +17,23 @@ export function ModelTraining({learning,configs,reload,runtimeVerified,onRuntime
   const [detail,setDetail]=useState<EmailStagedModel|null>(null);
   const [detailError,setDetailError]=useState("");
   const [retry,setRetry]=useState(0);
+  const [selectedSources,setSelectedSources]=useState<string[]>(()=>Array.from(new Set((learning.training_sources || []).map(row=>row.source))));
+  const [selectedCategories,setSelectedCategories]=useState<string[]>(()=>Array.from(new Set((learning.training_sources || []).map(row=>row.category))));
+  const [trainingRequest,setTrainingRequest]=useState("");
+  const [trainingBusy,setTrainingBusy]=useState(false);
   const lock=useRef(false);
   const requestId=useRef("");
   const models=learning.staged_models || [];
+  const sourceRows=learning.training_sources || [];
+  const sourceKeys=Array.from(new Set(sourceRows.map(row=>row.source)));
+  const categoryKeys=Array.from(new Set(sourceRows.map(row=>row.category)));
+  useEffect(()=>{setSelectedSources(sourceKeys);setSelectedCategories(categoryKeys);},[learning.training_sources]);
+  async function startTraining(){
+    setTrainingBusy(true);setTrainingRequest("");onBusy(true);
+    try { const result=await requestEmailTraining({sources:selectedSources,categories:selectedCategories}); setTrainingRequest(result.learning.training_status==="recorded"?"训练请求已记录；当前执行器尚未消费该选择，未生成新的模型。":"训练请求已提交。"); }
+    catch(reason){setTrainingRequest(errorMessage(reason));}
+    finally{setTrainingBusy(false);onBusy(false);}
+  }
   useEffect(()=>{
     setDetail(null);setDetailError("");
     if(!selected)return;
@@ -75,6 +89,11 @@ export function ModelTraining({learning,configs,reload,runtimeVerified,onRuntime
     </>:<p role="alert">晋升配置暂不可用，请刷新重试。</p>}
     {!!learning.registry_issues?.length&&<p role="alert">模型 Registry 完整性异常：{learning.registry_issues.map(issue=>issue.model_id+"（"+issue.integrity_error+"）").join("；")}</p>}
     <ModelTrend models={models} config={learning.promotion_gate?.config}/>
+    <section aria-label="训练数据来源" className="email-training-sources"><h3>训练数据来源</h3><p className="muted">默认全选。取消勾选只影响本次训练请求，不修改反馈记录或线上模型。</p>
+      <div className="email-source-columns"><fieldset><legend>来源</legend>{sourceKeys.map(source=><label key={source}><input type="checkbox" checked={selectedSources.includes(source)} onChange={event=>setSelectedSources(current=>event.target.checked?[...current,source]:current.filter(value=>value!==source))}/>{sourceLabel(source)}</label>)}</fieldset><fieldset><legend>类别</legend>{categoryKeys.map(category=><label key={category}><input type="checkbox" checked={selectedCategories.includes(category)} onChange={event=>setSelectedCategories(current=>event.target.checked?[...current,category]:current.filter(value=>value!==category))}/>{category}</label>)}</fieldset></div>
+      {sourceRows.length?<div className="responsive-table-wrap"><table className="settings-table" aria-label="训练数据来源明细"><thead><tr><th>来源</th><th>类别</th><th>样本数</th><th>数据版本 / 摘要</th></tr></thead><tbody>{sourceRows.map(row=><tr key={row.source+row.category}><td>{sourceLabel(row.source)}</td><td>{row.category}</td><td>{row.sample_count}</td><td>{provenanceLabel(row.provenance)}</td></tr>)}</tbody></table></div>:<p>暂无可用训练数据来源。</p>}
+      <button className="primary-button" disabled={trainingBusy||!selectedSources.length||!selectedCategories.length} onClick={()=>void startTraining()}>{trainingBusy?"正在记录训练请求…":"开始训练"}</button>{trainingRequest&&<p role="status">{trainingRequest}</p>}
+    </section>
     <h3>模型版本</h3>
     {!models.length&&!learning.models?.length?<p>暂无训练版本。</p>:<div className="responsive-table-wrap"><table className="settings-table email-model-table" aria-label="模型版本"><thead><tr><th>完整模型名与版本</th><th>状态</th><th>训练时间</th><th>样本数</th><th>Macro F1</th><th>端到端 P95</th><th>完整性</th><th>详情</th></tr></thead><tbody>
       {models.map(model=><tr key={model.model_id}><td>{model.model_id}</td><td>{statusLabel(model.status)}{runtime?.active_model_id===model.model_id?" · 主模型":""}</td><td>{localTime(model.trained_at)}</td><td>{model.training?.sample_count ?? (model.split_counts?model.split_counts.train+model.split_counts.validation+model.split_counts.test:"未测量")}</td><td>{measured(model.metrics?.macro_f1)}</td><td>{measured(model.end_to_end_latency_ms?.p95," ms")}</td><td>{integrityLabel(model.integrity_status,model.failure_reason)}</td><td><button className="compact-button" aria-label={"查看 "+model.model_id} onClick={()=>setSelected(model.model_id)}>查看</button></td></tr>)}
@@ -86,6 +105,9 @@ export function ModelTraining({learning,configs,reload,runtimeVerified,onRuntime
   </section>;
   function setLegacy(value:EmailLearningEvidence["models"][number]|null){setLegacyModel(value);}
 }
+
+function sourceLabel(value:string){return value==="agent_auto_label"?"Agent 自动标注":value==="user_feedback"?"用户反馈":value==="folder_snapshot"?"邮件文件夹快照":value;}
+function provenanceLabel(value:Record<string,unknown>){return String(value.snapshot_id || value.classification_source || "未提供");}
 
 const thresholdFields=[["macro_f1_min","Macro F1 最低值",0,1,"any"],["category_precision_min","每类别 Precision 最低值",0,1,"any"],["category_validation_samples_min","每类别独立验证样本数",1,undefined,1],["p95_latency_max_ms","端到端 P95 上限（ms）",0,undefined,"any"]] as const;
 function ThresholdEditor({config,reload,disabled,onBusy}: {config:EmailPromotionConfig;reload:RefreshLearning;disabled:boolean;onBusy:(busy:boolean)=>void}) {
