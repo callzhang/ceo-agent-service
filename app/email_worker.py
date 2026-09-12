@@ -2541,54 +2541,6 @@ def _is_retryable_browser_failure(result: object) -> bool:
     return code.partition(":")[0] in TRANSIENT_BROWSER_ERROR_CODES
 
 
-def _route_refused_unsubscribe_decision_options_json() -> str:
-    """Return the choices that actually exist once every route has refused.
-
-    The route's own safety review declines to place the call, saying the
-    authorization to unsubscribe reaches it only as agent-written context.
-    Nothing the service can do on its own changes that, so this is Derek's
-    decision and these are its real branches.
-    """
-
-    return json.dumps(
-        [
-            {
-                "key": "declare_standing_authorization",
-                "label": "在受信任通道声明常规授权",
-                "instruction": (
-                    "在 Audit turn 的 developer instructions 中如实写明："
-                    "邮箱属于本人、退订是本人长期配置的策略、退订入口取自邮件自带的"
-                    "List-Unsubscribe，并写明服务不会发信、不填凭证、不付款、不解验证码。"
-                    "写完后由路由的安全审查自行判断，不再做其他规避。"
-                ),
-                "consequence": (
-                    "审查若接受，这批任务可继续；若仍然拒绝，即按终态跳过处理。"
-                ),
-            },
-            {
-                "key": "unsubscribe_manually",
-                "label": "我自己在浏览器里退订",
-                "instruction": (
-                    "服务把这些邮件的退订入口交给我，由我在浏览器中手动完成，"
-                    "服务不再尝试自动退订。"
-                ),
-                "consequence": "订阅确实被退掉，但每封都要我自己点一次。",
-            },
-            {
-                "key": "accept_as_terminal_skip",
-                "label": "接受为终态跳过",
-                "instruction": (
-                    "把路由拒绝记为这个服务当前不具备的能力，任务终态跳过，"
-                    "不再重试，也不再提醒。"
-                ),
-                "consequence": "这些订阅退不掉，队列保持干净。",
-            },
-        ],
-        ensure_ascii=False,
-        sort_keys=True,
-    )
-
-
 def _finalize_email_task(store: object, task: object, result: object) -> None:
     from app.email_unsubscribe_audit import (
         AuditedUnsubscribeTerminalState,
@@ -2678,15 +2630,17 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
                 task_status, send_status = status_map["failed_retryable"]
                 error = f"{ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:{refusals}"
             else:
-                # Every route declining our own tool is a capability this
-                # service does not have, and that is a decision, not a defect.
-                # Filing it as a technical failure buried it in the failed
-                # list where nobody was ever going to answer it.
-                task_status, send_status = status_map["needs_human"]
+                # This used to become needs_human with three options. Two
+                # things were wrong with that. The console refuses a decision
+                # on any non-DingTalk attempt (app/audit_web.py:9683), so the
+                # options were unclickable; and the premise was wrong -- the
+                # refusal tracked the shape of the tool being offered, not the
+                # task, and stopped entirely once the tool took one argument
+                # and declared itself idempotent. A route that will not place
+                # the call after the whole ladder is spent is a plain failure,
+                # and it belongs where failures are visible.
+                task_status, send_status = status_map["failed_terminal"]
                 error = ROUTE_REFUSED_UNSUBSCRIBE_ERROR
-                human_decision_options_json = (
-                    _route_refused_unsubscribe_decision_options_json()
-                )
         elif _is_retryable_browser_failure(result):
             # A page that timed out or a session that would not open says
             # nothing about the next generation. The per-generation role

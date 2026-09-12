@@ -8421,15 +8421,15 @@ def test_route_refusing_the_call_is_retried_not_closed_as_a_decision():
     assert "task_status" not in captured
 
 
-def test_every_route_refusing_the_call_becomes_a_decision_with_options():
-    """Once retries are spent, the refusal is the only thing left to decide.
+def test_every_route_refusing_the_call_is_a_plain_failure_not_a_question():
+    """An email needs_human card is a question nobody can answer.
 
-    The route's own safety review declines to place the call, saying the
-    authorization reaches it only as agent-written context. Nothing the
-    service can do on its own changes that, so this is not a defect to retry
-    -- it is a capability the service does not have. Filing it as a technical
-    failure buried nine live tasks in the failed list where nobody was ever
-    going to answer them.
+    The console refuses a decision on any non-DingTalk attempt
+    (app/audit_web.py:9683 `if source.channel != "dingtalk"`), so the three
+    options this used to emit returned an error on every click — four such
+    cards reached Derek. The premise was wrong too: the refusal tracked the
+    shape of the tool being offered, not the task, and stopped entirely once
+    the tool took one argument and declared itself idempotent.
     """
     module, captured = _route_refusal_case(
         error=(
@@ -8438,21 +8438,11 @@ def test_every_route_refusing_the_call_becomes_a_decision_with_options():
         )
     )
 
-    assert captured["task_status"] == "done"
-    assert captured["send_status"] == "needs_human"
+    assert captured["task_status"] == "failed"
+    assert captured["send_status"] == "failed"
     assert captured["send_error"] == module.ROUTE_REFUSED_UNSUBSCRIBE_ERROR
-    options = json.loads(captured["human_decision_options_json"])
-    assert 2 <= len(options) <= 4
-    assert {option["key"] for option in options} == {
-        "declare_standing_authorization",
-        "unsubscribe_manually",
-        "accept_as_terminal_skip",
-    }
-    assert all(
-        option[field].strip()
-        for option in options
-        for field in ("label", "instruction", "consequence")
-    )
+    # No decision card, because the email channel has no way to service one.
+    assert json.loads(captured["human_decision_options_json"]) == []
 
 
 def test_repeated_route_refusals_actually_reach_a_person():
@@ -8476,7 +8466,7 @@ def test_repeated_route_refusals_actually_reach_a_person():
         seen.append(("finalized", captured.get("send_status")))
         break
 
-    assert seen[-1] == ("finalized", "needs_human"), seen
+    assert seen[-1] == ("finalized", "failed"), seen
     assert len(seen) == module.ROUTE_REFUSED_UNSUBSCRIBE_RETRIES, seen
 
 
