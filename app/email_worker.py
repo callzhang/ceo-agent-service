@@ -4228,14 +4228,16 @@ def run_email_worker(
                     "unresolved_count": 0,
                 },
             )
-        all_component_names = (
+        # Training maintenance reports its own health, but it may legitimately
+        # take longer than the scan and consumer loops. It must not keep the
+        # process-level status stuck at "starting".
+        readiness_component_names = (
             "email-scan-actions",
             "email-agent-consumer",
-            "email-training",
         )
         component_names = tuple(
             name
-            for name in all_component_names
+            for name in readiness_component_names
             if not (not agent_consumer_allowed and name == "email-agent-consumer")
         )
         readiness = EmailWorkerReadiness(

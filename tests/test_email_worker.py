@@ -7904,6 +7904,27 @@ def test_readiness_barrier_reports_ready_only_after_all_component_heartbeats():
     ]
 
 
+def test_process_readiness_does_not_wait_for_training_maintenance():
+    module = _module()
+    health = []
+    barrier = module.EmailWorkerReadiness(
+        ("email-scan-actions", "email-agent-consumer"),
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        accounts=1,
+    )
+
+    barrier.mark_ready("email-scan-actions")
+    assert health == []
+
+    barrier.mark_ready("email-agent-consumer")
+    assert health == [
+        (
+            "process:email-worker",
+            {"status": "ready", "accounts": 1, "components": 2},
+        )
+    ]
+
+
 def test_default_worker_wait_detects_an_unexpected_component_exit():
     module = _module()
 
