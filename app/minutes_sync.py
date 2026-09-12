@@ -423,7 +423,16 @@ def sync_minutes_once(
             pending.add(task_uuid)
             continue
 
-        if not paragraphs:
+        try:
+            rendered_summary = summary_markdown(summary)
+        except MinutesSummaryShapeUnknown:
+            failed += 1
+            continue
+        # DingTalk can publish a usable summary before it exposes transcript
+        # paragraphs. Archive that summary now instead of turning a readable
+        # minute into a service-command failure; an item with neither artifact
+        # remains a genuine failure and will be retried on a later pass.
+        if not paragraphs and not rendered_summary.strip():
             failed += 1
             continue
         path = _archive_path(

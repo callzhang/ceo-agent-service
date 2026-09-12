@@ -119,6 +119,33 @@ def test_archive_matches_the_existing_local_layout(tmp_path: Path) -> None:
     assert _cursor(store)["archived_ids"] == ["u1"]
 
 
+def test_a_minute_with_summary_but_no_transcript_is_still_synced(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    dws = FakeDws(
+        [{"taskUuid": "summary-only"}],
+        basic={
+            "summary-only": {
+                "title": "摘要已生成",
+                "startTime": 1789025858000,
+            }
+        },
+        summary={"summary-only": {"fullSummary": "只有摘要，没有转写。"}},
+    )
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.discovered == 1
+    assert result.synced == 1
+    assert result.failed == 0
+    [written] = list((tmp_path / "AI听记").rglob("*.md"))
+    text = written.read_text(encoding="utf-8")
+    assert "只有摘要，没有转写。" in text
+    assert "# Transcript" in text
+    assert _cursor(store)["archived_ids"] == ["summary-only"]
+
+
 def test_an_archived_minute_is_not_fetched_again(tmp_path: Path) -> None:
     store = _store(tmp_path)
     dws = FakeDws(
