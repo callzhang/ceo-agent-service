@@ -2067,9 +2067,9 @@ def sync_minutes_once_command(
 ) -> int:
     """Mirror new DingTalk AI minutes into the local archive.
 
-    Deterministic throughout, and it sends nothing outward: restricted minutes
-    are recorded, never asked about, because the provider's per-minute denial
-    code is not yet known (see app.minutes_sync).
+    Deterministic throughout, and it sends nothing outward. A partial result
+    must fail the service command so the scheduled trigger cannot be recorded
+    as successfully dispatched while some minutes remain unsynchronized.
     """
     from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY, sync_minutes_once
 
@@ -2086,6 +2086,8 @@ def sync_minutes_once_command(
         max_new_items=max_new_items,
     )
     print(f"sync-minutes-once {result.summary()}", flush=True)
+    if result.failed or result.permission_pending:
+        raise RuntimeError(f"sync-minutes-once incomplete: {result.summary()}")
     return result.synced
 
 

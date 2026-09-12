@@ -39,6 +39,7 @@ from app.cli import (
     retry_work_summary_input_command,
     send_attempt_command,
     settings_from_args,
+    sync_minutes_once_command,
     test_ding_command as run_test_ding_command,
     run_audit_web_command,
 )
@@ -4594,6 +4595,54 @@ def test_main_passes_max_batches_to_bounded_scan_commands(
     cli.main()
 
     assert calls == [(tmp_path / "worker.sqlite3", 3)]
+
+
+def test_sync_minutes_once_command_fails_when_sync_has_failed_items(
+    tmp_path, monkeypatch, capsys
+):
+    class FakeStore:
+        def __init__(self, db_path):
+            assert db_path == tmp_path / "worker.sqlite3"
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            assert kwargs == {
+                "ding_robot_code": None,
+                "ding_robot_name": None,
+                "ding_receiver_user_id": None,
+            }
+
+    result = SimpleNamespace(
+        failed=2,
+        permission_pending=0,
+        synced=2,
+        summary=lambda: (
+            "discovered=4 synced=2 skipped=0 "
+            "permission_requested=0 permission_pending=0 failed=2"
+        ),
+    )
+    minutes_sync = import_module("app.minutes_sync")
+    monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+    monkeypatch.setattr(
+        minutes_sync,
+        "sync_minutes_once",
+        lambda *_args, **_kwargs: result,
+    )
+
+    with pytest.raises(RuntimeError, match="failed=2"):
+        sync_minutes_once_command(
+            WorkerSettings(
+                db_path=tmp_path / "worker.sqlite3",
+                workspace=tmp_path / "workspace",
+            ),
+            max_new_items=4,
+        )
+
+    assert capsys.readouterr().out == (
+        "sync-minutes-once discovered=4 synced=2 skipped=0 "
+        "permission_requested=0 permission_pending=0 failed=2\n"
+    )
 
 
 def test_cli_does_not_import_audit_web_until_command_needs_it():
