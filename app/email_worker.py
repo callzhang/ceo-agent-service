@@ -1284,8 +1284,13 @@ def run_scan_and_direct_actions_loop(
                     "component:email-provider-actions",
                     {"status": "degraded", "error_code": "provider_action_failed"},
                 )
-            elif direct_results:
-                provider_changed = True
+            else:
+                if direct_results:
+                    provider_changed = True
+                record_health(
+                    "component:email-provider-actions",
+                    {"status": "ready", "failures": 0},
+                )
         except Exception as exc:  # noqa: BLE001 - keep the scan cadence alive
             failures += 1
             record_health("component:email-provider-actions", _safe_health_error(exc))

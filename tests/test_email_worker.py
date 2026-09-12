@@ -7554,6 +7554,26 @@ def test_failed_direct_action_degrades_provider_component_health():
     ) in health
 
 
+def test_empty_direct_action_drain_marks_provider_component_ready():
+    module = _module()
+    health = []
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 0},
+        run_direct_actions_once=lambda: None,
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert (
+        "component:email-provider-actions",
+        {"status": "ready", "failures": 0},
+    ) in health
+
+
 def test_direct_action_drain_processes_multiple_actions_but_stops_at_count_bound():
     module = _module()
     calls = []
