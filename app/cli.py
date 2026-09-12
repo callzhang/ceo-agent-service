@@ -147,6 +147,9 @@ def run_consumer_dispatcher_loop(
     dispatcher.run(stop_event=stop_event)
 
 WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = 3
+# The router raises this when another worker already holds the workload's
+# runtime attempt. It says nothing about the work item.
+RUNTIME_ATTEMPT_ACTIVE_CODE = "runtime_attempt_active"
 WECHAT_READER_LAUNCHD_LABEL = "com.stardust.ceo-agent.wechat-reader"
 WORK_SUMMARY_RETRY_BASE_DELAY_SECONDS = 60
 WORK_SUMMARY_RETRY_MAX_DELAY_SECONDS = 15 * 60
@@ -1576,6 +1579,14 @@ def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> b
         return False
     if attempts >= WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS:
         return False
+    if _is_runtime_lease_conflict(error):
+        # Another worker holds the runtime attempt for this workload. That is
+        # a scheduler condition, not a decision about the work item, and the
+        # lease is gone within seconds. app/meeting_alignment.py already
+        # treats the identical code as retryable for the same reason; here it
+        # fell through every predicate and terminalized the item on its first
+        # attempt, taking a Service error with it.
+        return True
     if isinstance(error, Exception) and is_external_dependency_error(error):
         return True
     if isinstance(error, TaskDecisionRepairExhausted):
@@ -1587,6 +1598,35 @@ def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> b
         return True
     normalized = error_text.lower()
     return any(marker in normalized for marker in WORK_SUMMARY_TRANSIENT_ERROR_MARKERS)
+
+
+def _is_runtime_lease_conflict(error: Exception | str) -> bool:
+    """Say whether a failure is only "someone else is already running this".
+
+    Matched on the routed error code rather than on message text, because the
+    code is the contract the router raises and the text around it is not.
+    """
+
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    if isinstance(error, BaseException):
+        current: BaseException | None = error
+        visited: set[int] = set()
+        while current is not None and id(current) not in visited:
+            if (
+                isinstance(current, RoutedCodexExecutionError)
+                and current.code == RUNTIME_ATTEMPT_ACTIVE_CODE
+            ):
+                return True
+            visited.add(id(current))
+            original = getattr(current, "original_error", None)
+            current = (
+                original
+                if isinstance(original, BaseException)
+                else current.__cause__ or current.__context__
+            )
+        return False
+    return str(error).strip() == RUNTIME_ATTEMPT_ACTIVE_CODE
 
 
 def _should_skip_work_summary_input(error: str) -> bool:

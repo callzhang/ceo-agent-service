@@ -8198,3 +8198,60 @@ def test_repair_exhausted_work_item_is_retried_then_bounded():
     )
     # A plain validation error is still not retried.
     assert cli._should_retry_work_summary_input(ValueError("update_project requires project"), 1) is False
+
+
+def test_a_runtime_lease_conflict_is_retried_not_terminalized():
+    """Two live work items died on "someone else is already running this".
+
+    work_summary_inputs 17748/17749 reached status='failed' with
+    runtime_attempt_active on attempt 1 of 3, and each took a `task_agent`
+    Service error with it. The router raises that code when another worker
+    holds the workload's runtime attempt; the lease is gone within seconds and
+    it says nothing about the work item. app/meeting_alignment.py already
+    treats the identical code as retryable, and its comment says why: "A
+    runtime lease conflict is a scheduler condition, not a terminal decision."
+    Here it matched no predicate and fell through to the terminal branch.
+    """
+
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    conflict = RoutedCodexExecutionError("runtime_attempt_active")
+
+    assert cli._should_retry_work_summary_input(conflict, 1) is True
+    # The budget still bounds it.
+    assert (
+        cli._should_retry_work_summary_input(
+            conflict, cli.WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS
+        )
+        is False
+    )
+
+
+def test_a_lease_conflict_is_found_through_the_exception_chain():
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    try:
+        try:
+            raise RoutedCodexExecutionError("runtime_attempt_active")
+        except RoutedCodexExecutionError as inner:
+            raise RuntimeError("task agent run failed") from inner
+    except RuntimeError as wrapped:
+        assert cli._is_runtime_lease_conflict(wrapped) is True
+        assert cli._should_retry_work_summary_input(wrapped, 1) is True
+
+
+def test_only_the_lease_conflict_code_is_treated_as_a_conflict():
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    # Matched on the routed code, never on message text.
+    assert cli._is_runtime_lease_conflict(
+        RoutedCodexExecutionError("runtime_execution_failed")
+    ) is False
+    assert cli._is_runtime_lease_conflict(RuntimeError("runtime_attempt_active ish")) is False
+    assert cli._is_runtime_lease_conflict("runtime_attempt_active") is True
+    assert (
+        cli._should_retry_work_summary_input(
+            RoutedCodexExecutionError("runtime_execution_failed"), 1
+        )
+        is False
+    )
