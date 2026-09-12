@@ -77,6 +77,7 @@ from app.store import (
     AutoReplyStore,
     ReplyTask,
     RuntimeAttemptSessionMode,
+    RuntimeRoutePausedError,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -1488,19 +1489,26 @@ class AgentTurnProcess(Generic[ResultT]):
         route: RuntimeRoute,
         source_session_id: str | None,
     ) -> AgentRuntimeAttempt:
-        attempt = self.store.claim_agent_runtime_attempt(
-            run.id,
-            route.name,
-            route.runtime_kind.value,
-            route.credential_mode.value,
-            route.model,
-            session_mode=(
-                RuntimeAttemptSessionMode.RESUME
-                if source_session_id
-                else RuntimeAttemptSessionMode.FRESH
-            ),
-            source_session_id=source_session_id or "",
-        )
+        try:
+            attempt = self.store.claim_agent_runtime_attempt(
+                run.id,
+                route.name,
+                route.runtime_kind.value,
+                route.credential_mode.value,
+                route.model,
+                session_mode=(
+                    RuntimeAttemptSessionMode.RESUME
+                    if source_session_id
+                    else RuntimeAttemptSessionMode.FRESH
+                ),
+                source_session_id=source_session_id or "",
+            )
+        except RuntimeRoutePausedError as exc:
+            # A pause can be opened by the failed predecessor between route
+            # selection and this successor claim. Preserve the retryable
+            # runtime boundary instead of letting the raw store exception be
+            # classified as terminal ``codex_process_failed`` by the worker.
+            raise RuntimeRouteUnavailableError(f"{route.name}_paused") from exc
         return self.store.mark_agent_runtime_attempt_running_once(attempt.id)
 
     def _fail_runtime_attempt_unclassified(

@@ -2,15 +2,17 @@ import inspect
 import json
 from types import SimpleNamespace
 
+import pytest
 import app.agent_turn_runner as agent_turn_runner
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_turn_runner import (
     AgentTurnProcess,
+    RuntimeRouteUnavailableError,
     _decode_runtime_domain_result,
     _encode_runtime_domain_result,
     _persist_provider_event,
 )
-from app.store import AgentRole, AutoReplyStore
+from app.store import AgentRole, AutoReplyStore, RuntimeRoutePausedError
 
 
 def test_runner_has_no_application_effect_recovery_policy_helpers():
@@ -29,6 +31,27 @@ def test_runner_has_no_application_effect_recovery_policy_helpers():
     assert not hasattr(AgentTurnProcess, "_require_direct_send_receipt")
     assert not hasattr(AgentTurnProcess, "_record_direct_send_receipt")
     assert not hasattr(AgentTurnProcess, "_validate_audit_result")
+
+
+def test_successor_claim_route_pause_stays_retryable():
+    class Store:
+        def claim_agent_runtime_attempt(self, *args, **kwargs):
+            raise RuntimeRoutePausedError("runtime route is paused")
+
+    runner = object.__new__(AgentTurnProcess)
+    runner.store = Store()
+    route = SimpleNamespace(
+        name="codex_api",
+        runtime_kind=SimpleNamespace(value="codex_cli"),
+        credential_mode=SimpleNamespace(value="service_api"),
+        model="MiniMax-M2.5",
+    )
+
+    with pytest.raises(RuntimeRouteUnavailableError) as raised:
+        runner._claim_and_start_attempt(SimpleNamespace(id=19205), route, None)
+
+    assert raised.value.code == "runtime_execution_failed"
+    assert raised.value.reason == "codex_api_paused"
 
 
 def _audit_result(proposal_revision: int) -> AuditAgentResult:
