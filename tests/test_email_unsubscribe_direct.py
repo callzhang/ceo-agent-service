@@ -448,6 +448,23 @@ def test_one_call_unsubscribes_and_persists_the_receipt(tmp_path: Path) -> None:
     assert len(browser.calls) == 1
 
 
+def test_the_receipt_records_the_entry_this_call_opened(tmp_path: Path) -> None:
+    effect = _effect()
+    operation, task, email_store, _browser = _operation(
+        tmp_path,
+        [_terminal(effect, UnsubscribePageState.DONE, "You have unsubscribed.")],
+    )
+
+    operation.execute(task.id)
+
+    receipt = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
+    assert receipt is not None
+    # This is the tool the Audit turn actually calls, so a receipt written here
+    # is the only one most unsubscribes ever get: recording the URL on the
+    # other lifecycle alone left every real receipt without one.
+    assert receipt["entry_url"] == PRIVATE_URL
+
+
 def test_a_second_call_returns_the_receipt_instead_of_unsubscribing_again(
     tmp_path: Path,
 ) -> None:

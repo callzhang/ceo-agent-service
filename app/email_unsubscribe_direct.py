@@ -494,6 +494,7 @@ class DirectEmailUnsubscribeOperation:
                 self._persist(
                     self._performed_effect(effect, executed),
                     result,
+                    entry_url=entry.private_url,
                 )
             return _normalize_result(result).model_dump(mode="json")
         except Exception as exc:  # noqa: BLE001 - a public tool fails closed
@@ -552,6 +553,8 @@ class DirectEmailUnsubscribeOperation:
         self,
         effect: EmailUnsubscribeEffect,
         result: UnsubscribeExecutionResult,
+        *,
+        entry_url: str,
     ) -> None:
         from app.email_unsubscribe_audit import _store_arguments
 
@@ -580,6 +583,7 @@ class DirectEmailUnsubscribeOperation:
         explicit = bool(result.result_text)
         self.email_store.persist_email_unsubscribe_terminal(
             **store_arguments,
+            entry_url=entry_url,
             outcome=result.outcome.value,
             receipt_id=receipt.receipt_id,
             evidence=receipt.evidence,
