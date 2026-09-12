@@ -481,7 +481,7 @@ def _check_structured_needs_human(
             row["final_result_json"]
         )
         if classification == "invalid":
-            classification = _runtime_confirmation_classification(
+            classification = _service_generated_needs_human_classification(
                 row["final_result_json"],
                 row["send_error"],
                 row["human_decision_options_json"],
@@ -511,18 +511,19 @@ def _check_structured_needs_human(
     )
 
 
-def _runtime_confirmation_classification(
+def _service_generated_needs_human_classification(
     result_json: object,
     send_error: object,
     options_json: object,
 ) -> str:
-    """Recognize service-generated confirmation results without a model run."""
+    """Recognize service-generated decisions without replacing run evidence."""
     if (
         (
             isinstance(result_json, str)
             and result_json.strip()
         )
-        or str(send_error or "").strip() != "confirmation_required"
+        or str(send_error or "").strip()
+        not in {"confirmation_required", "email_unsubscribe_effect_uncertain"}
     ):
         return "invalid"
     try:

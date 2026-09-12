@@ -634,7 +634,10 @@ def test_quality_gate_reports_needs_human_projection_when_queue_task_is_done(tmp
     assert ("reply_attempts", "needs_human", 1) in {
         (item.source, item.code, item.count) for item in report.attention
     }
-    assert store.count_current_unresolved_problem_attempts() == 1
+    # The quality gate intentionally keeps a done-task needs_human projection
+    # actionable, while the queue helper excludes a trigger owned by a done
+    # current business object from its unresolved-work count.
+    assert store.count_current_unresolved_problem_attempts() == 0
 
 
 def test_quality_gate_accepts_service_generated_confirmation_options(tmp_path):
@@ -647,6 +650,36 @@ def test_quality_gate_accepts_service_generated_confirmation_options(tmp_path):
     store.update_reply_attempt(
         attempt_id,
         send_error="confirmation_required",
+        human_decision_options_json=json.dumps(options),
+    )
+    with store._connect() as db:
+        db.execute(
+            "update agent_runs set final_result_json='' where id=("
+            "select agent_run_id from reply_attempts where id=?"
+            ")",
+            (attempt_id,),
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert ("reply_attempts", "needs_human", 1) in {
+        (item.source, item.code, item.count) for item in report.attention
+    }
+    assert not any(
+        item.code == "invalid_needs_human_result" for item in report.violations
+    )
+
+
+def test_quality_gate_accepts_service_generated_uncertain_unsubscribe_options(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    attempt_id = _insert_needs_human_projection(
+        store,
+        result={"outcome": "proposal"},
+    )
+    options = _structured_needs_human_result()["decision_options"]
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="email_unsubscribe_effect_uncertain",
         human_decision_options_json=json.dumps(options),
     )
     with store._connect() as db:
