@@ -320,9 +320,7 @@ class CodexWeeklyOkrAgent:
                 encoding="utf-8",
             )
             source_hash = _analysis_source_hash(manager_payload["liveOkr"])
-            manager_cache_key = hashlib.sha256(
-                manager.user_id.encode("utf-8")
-            ).hexdigest()[:16]
+            manager_cache_key = _manager_cache_key(manager)
             analysis_path = source_path.with_name(
                 f"analysis.manager-{manager_cache_key}.json"
             )
@@ -342,19 +340,46 @@ class CodexWeeklyOkrAgent:
             )
             for manager, manager_source, analysis_path, source_hash in jobs
         }
+        results: list[WeeklyOkrAnalysis] = []
+        unanalyzed: list[tuple[ManagerIdentity, str]] = []
         try:
-            results = [futures[manager.user_id].result() for manager in managers]
+            for manager in managers:
+                try:
+                    results.append(futures[manager.user_id].result())
+                except WeeklyOkrAnalysisInProgress:
+                    raise
+                except Exception as exc:
+                    # One member the model cannot score is a gap in that
+                    # member's section, not a reason to withhold the report for
+                    # everyone: on 2026-09-12 three members failed this way and
+                    # the other fifteen were never written.
+                    unanalyzed.append((manager, str(exc)[:200]))
         except BaseException:
             for future in futures.values():
                 future.cancel()
             executor.shutdown(wait=False, cancel_futures=True)
             raise
         executor.shutdown(wait=True)
+        if not results:
+            raise RuntimeError(
+                "weekly OKR analysis produced no member section: "
+                + "; ".join(f"{manager.name}: {reason}" for manager, reason in unanalyzed)
+            )
 
+        missing_note = (
+            ""
+            if not unanalyzed
+            else (
+                "；本次未能完成评分的成员："
+                + "、".join(manager.name for manager, _ in unanalyzed)
+                + "，其区块缺失，不代表这些成员没有进展"
+            )
+        )
         return WeeklyOkrAnalysis(
             executive_summary=(
-                f"已完成 {len(managers)} 位 CEO-2 成员的逐 KR 综合证据评分；"
-                "系统进度仅作为线索，最终判断以评论/进展、独立证据、实际效果和完成时间为准。"
+                f"已完成 {len(results)} / {len(managers)} 位 CEO-2 成员的逐 KR 综合证据评分；"
+                "系统进度仅作为线索，最终判断以评论/进展、独立证据、实际效果和完成时间为准"
+                f"{missing_note}。"
             ),
             company_progress=_unique_strings(
                 item for result in results for item in result.company_progress[:1]
@@ -367,7 +392,11 @@ class CodexWeeklyOkrAgent:
                 item for result in results for item in result.source_coverage
             ),
             warnings=_unique_strings(
-                item for result in results for item in result.warnings
+                [item for result in results for item in result.warnings]
+                + [
+                    f"{manager.name} 的 KR 评分未完成，本次报告缺少该成员区块：{reason}"
+                    for manager, reason in unanalyzed
+                ]
             ),
         )
 
@@ -485,7 +514,12 @@ class CodexWeeklyOkrAgent:
                         "interpreter from CEO_PYTHON (or $HOME/miniforge3/bin/python); "
                         "never invoke a repository-local .venv/bin/python path."
                     ),
-                    output_schema_path=WEEKLY_OKR_REPORT_SCHEMA_PATH,
+                    output_schema_path=_schema_requiring_exact_kr_rows(
+                        expected_kr_count,
+                        destination=analysis_path.with_name(
+                            f"schema.manager-{_manager_cache_key(manager)}.json"
+                        ),
+                    ),
                     use_output_schema=True,
                 ),
                 parser=parse_validated,
@@ -541,6 +575,34 @@ def _load_weekly_analysis_cache(
     _validate_manager_coverage(analysis, [manager])
     _validate_kr_coverage(analysis, filtered_payload["managers"])
     return analysis
+
+
+def _manager_cache_key(manager) -> str:
+    return hashlib.sha256(manager.user_id.encode("utf-8")).hexdigest()[:16]
+
+
+def _schema_requiring_exact_kr_rows(
+    expected_kr_count: int, *, destination: Path
+) -> Path:
+    """Write a copy of the report schema that admits exactly N kr_reviews.
+
+    The shared schema only says ``minItems: 1``, so a model satisfies it by
+    returning a single row while the service requires one row per live KR.
+    That is what happened on 2026-09-12: three managers came back with one row
+    each, every retry repeated it, and the whole report aborted.  Binding the
+    count into the structured-output contract removes the shape the model was
+    allowed to return.
+    """
+    schema = json.loads(
+        WEEKLY_OKR_REPORT_SCHEMA_PATH.read_text(encoding="utf-8")
+    )
+    reviews = schema["properties"]["manager_reviews"]["items"]["properties"][
+        "kr_reviews"
+    ]
+    reviews["minItems"] = expected_kr_count
+    reviews["maxItems"] = expected_kr_count
+    destination.write_text(json.dumps(schema, ensure_ascii=False), encoding="utf-8")
+    return destination
 
 
 def _weekly_okr_required_capabilities() -> frozenset[str]:

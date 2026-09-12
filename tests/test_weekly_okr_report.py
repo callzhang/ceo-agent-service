@@ -1,6 +1,7 @@
 import json
 import threading
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -1733,3 +1734,146 @@ def json_string(value):
     import json
 
     return json.dumps(json.dumps(value, ensure_ascii=False), ensure_ascii=False)
+
+
+def _write_live_source(tmp_path: Path, roster) -> Path:
+    source = FakeSource()
+    source_path = tmp_path / "live.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "managers": [
+                    {
+                        "manager": {"name": m.name, "userId": m.user_id},
+                        "liveOkr": source.fetch_user_okr(
+                            user_id=m.user_id, period_label="2026 Q3"
+                        ),
+                    }
+                    for m in roster
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return source_path
+
+
+def _manager_name_from_prompt(prompt: str) -> str:
+    source_line = next(
+        line for line in prompt.splitlines()
+        if line.startswith("- 实时叮当 OKR 聚合文件：")
+    )
+    filtered = json.loads(
+        Path(source_line.split("：", 1)[1]).read_text(encoding="utf-8")
+    )
+    return filtered["managers"][0]["manager"]["name"]
+
+
+
+def test_the_output_schema_pins_the_exact_kr_row_count(tmp_path: Path) -> None:
+    """A model cannot satisfy the contract with one summary row.
+
+    The shared schema says `minItems: 1`, and on 2026-09-12 three members came
+    back with exactly one row each, every retry repeated it, and the report was
+    abandoned.  The count the service already knows now binds the structured
+    output itself.
+    """
+    roster = (
+        ManagerIdentity("甲", "总监", "u1", "o1"),
+        ManagerIdentity("乙", "经理", "u2", "o2"),
+    )
+    source_path = _write_live_source(tmp_path, roster)
+    schemas: list[dict] = []
+
+    def executor(_command, prompt, _env):
+        name = _manager_name_from_prompt(prompt)
+        return json.dumps(_weekly_payload_for(name), ensure_ascii=False)
+
+    class SchemaCapturingRouted(CallbackRouted):
+        def execute(self, **kwargs):
+            factory = kwargs["command_factory"]
+            schema_path = Path(factory.output_schema_path)
+            schemas.append(json.loads(schema_path.read_text(encoding="utf-8")))
+            return super().execute(**kwargs)
+
+    CodexWeeklyOkrAgent(
+        workspace=tmp_path,
+        store=AutoReplyStore(tmp_path / "weekly-schema.sqlite3"),
+        routed_execution=SchemaCapturingRouted(executor),
+    ).analyze(
+        source_path=source_path,
+        managers=roster,
+        period_label="2026 Q3",
+        week_start=datetime(2026, 7, 27).date(),
+        week_end=datetime(2026, 7, 30).date(),
+    )
+
+    assert len(schemas) == 2
+    for schema in schemas:
+        rows = schema["properties"]["manager_reviews"]["items"]["properties"][
+            "kr_reviews"
+        ]
+        assert rows["minItems"] == rows["maxItems"] == 1
+
+
+def test_a_member_the_model_cannot_score_does_not_withhold_the_report(
+    tmp_path: Path,
+) -> None:
+    """Fifteen finished sections are worth more than none.
+
+    Before this, one member's validation failure propagated out of the thread
+    pool and aborted the whole weekly report.
+    """
+    roster = (
+        ManagerIdentity("甲", "总监", "u1", "o1"),
+        ManagerIdentity("乙", "经理", "u2", "o2"),
+    )
+    source_path = _write_live_source(tmp_path, roster)
+
+    def executor(_command, prompt, _env):
+        name = _manager_name_from_prompt(prompt)
+        if name == "乙":
+            raise RuntimeError("runtime_result_validation_failed")
+        return json.dumps(_weekly_payload_for(name), ensure_ascii=False)
+
+    analysis = CodexWeeklyOkrAgent(
+        workspace=tmp_path,
+        store=AutoReplyStore(tmp_path / "weekly-partial.sqlite3"),
+        routed_execution=CallbackRouted(executor),
+    ).analyze(
+        source_path=source_path,
+        managers=roster,
+        period_label="2026 Q3",
+        week_start=datetime(2026, 7, 27).date(),
+        week_end=datetime(2026, 7, 30).date(),
+    )
+
+    assert [review.name for review in analysis.manager_reviews] == ["甲"]
+    # The absence is stated where a reader will see it, not silently dropped.
+    assert "1 / 2" in analysis.executive_summary
+    assert "乙" in analysis.executive_summary
+    assert any("乙" in warning for warning in analysis.warnings)
+
+
+def test_the_report_still_fails_when_no_member_could_be_scored(
+    tmp_path: Path,
+) -> None:
+    roster = (ManagerIdentity("甲", "总监", "u1", "o1"),)
+    source_path = _write_live_source(tmp_path, roster)
+
+    def executor(_command, _prompt, _env):
+        raise RuntimeError("runtime_result_validation_failed")
+
+    with pytest.raises(RuntimeError, match="no member section"):
+        CodexWeeklyOkrAgent(
+            workspace=tmp_path,
+            store=AutoReplyStore(tmp_path / "weekly-none.sqlite3"),
+            routed_execution=CallbackRouted(executor),
+        ).analyze(
+            source_path=source_path,
+            managers=roster,
+            period_label="2026 Q3",
+            week_start=datetime(2026, 7, 27).date(),
+            week_end=datetime(2026, 7, 30).date(),
+        )
