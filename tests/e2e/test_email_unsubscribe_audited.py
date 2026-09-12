@@ -878,6 +878,14 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     receipt = email_store.get_email_unsubscribe_receipt(str(payload["action_identity"]))
     assert receipt is not None
     assert receipt["result_text"] == "You have been unsubscribed"
+    # A real headless browser navigated this exact private URL through the
+    # `unsubscribe_email` tool's actual lifecycle (DirectEmailUnsubscribeOperation,
+    # not the legacy audited executor) - this is the coverage that would have
+    # caught entry_url being wired into the wrong `_persist`.
+    assert receipt["entry_url"] == f"{origin}/manage?token=loopback-private"
+    assert sha256(receipt["entry_url"].encode("utf-8")).hexdigest() == (
+        receipt["entry_reference"].removeprefix("unsubscribe-entry:")
+    )
     expected_binding = {
         "action_identity": payload["action_identity"],
         "action_plan_id": plan.action_plan_id,

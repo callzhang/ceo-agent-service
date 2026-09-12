@@ -28,6 +28,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| Claude session `attempt-detail-evidence` | `tests/e2e/test_email_unsubscribe_audited.py` | assert `entry_url` on the real-headless-browser e2e that already exercises `DirectEmailUnsubscribeOperation` | 2026-09-12 |
 | Claude session `attempt-detail-evidence` | `app/email_unsubscribe_direct.py`, `tests/test_email_unsubscribe_direct.py`, `app/store.py`, `app/web_api/registration.py`, `app/web_api/attempts.py`, `frontend/src/pages/CodexPages.tsx`, `frontend/src/pages/AttemptDetailPage.tsx` | record the unsubscribe entry URL on the lifecycle the `unsubscribe_email` tool actually runs, then name the role on the Agent record and drop the Attempt page's duplicate call list | 2026-09-12 |
 | Codex session `attention-reconciliation` | `app/audit_web.py`, `tests/test_console_web_api.py` | show every unresolved service error in Attention while keeping the four-hour window only in system health | 2026-09-11 |
 | Codex session `consumer-email-minutes-repair` | `app/email_worker.py`, `tests/test_email_worker.py`, `app/task_scanners.py`, `tests/test_task_scanners.py`, `app/minutes_sync.py`, `tests/test_minutes_sync.py`, `app/quality_gate.py`, `tests/test_quality_gate.py` | repair technical needs_human projection, runtime confirmation quality projection, and avoidable minute scanner pagination failures | 2026-09-11 |
