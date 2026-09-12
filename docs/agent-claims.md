@@ -28,13 +28,33 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| Claude session `attempt-detail-evidence` | `app/email_unsubscribe_direct.py`, `tests/test_email_unsubscribe_direct.py`, `app/store.py`, `app/web_api/registration.py`, `app/web_api/attempts.py`, `frontend/src/pages/CodexPages.tsx`, `frontend/src/pages/AttemptDetailPage.tsx` | record the unsubscribe entry URL on the lifecycle the `unsubscribe_email` tool actually runs, then name the role on the Agent record and drop the Attempt page's duplicate call list | 2026-09-12 |
 | Codex session `attention-reconciliation` | `app/audit_web.py`, `tests/test_console_web_api.py` | show every unresolved service error in Attention while keeping the four-hour window only in system health | 2026-09-11 |
 | Codex session `consumer-email-minutes-repair` | `app/email_worker.py`, `tests/test_email_worker.py`, `app/task_scanners.py`, `tests/test_task_scanners.py`, `app/minutes_sync.py`, `tests/test_minutes_sync.py`, `app/quality_gate.py`, `tests/test_quality_gate.py` | repair technical needs_human projection, runtime confirmation quality projection, and avoidable minute scanner pagination failures | 2026-09-11 |
 | Codex session `meeting-target-repair` | `app/meeting_alignment_agent.py`, `app/meeting_alignment_delivery.py`, `app/meeting_alignment_source.py`, `tests/test_meeting_alignment_agent.py`, `tests/test_meeting_alignment_delivery.py`, `tests/test_meeting_alignment_source.py` | retry source-aware meeting target validation failures and resolve organizer fallback before marking meeting jobs failed | 2026-09-11 |
 
 
 ## Recent overlaps worth knowing
+
+- 2026-09-12, from another Claude session (`e583f9e6 fix(console): flatten the
+  stored tool-event stream so the fallback call list is readable`): its edit to
+  `app/audit_web.py` is 7 lines (one import, one function body swapped to call
+  `normalize_stored_tool_events` in `app/codex_history.py`), touching
+  `_audit_tool_events_for_attempt` only. `attention-reconciliation`'s claim on
+  the same file is unrelated Attention-rendering work; no textual overlap seen,
+  but that Codex session has no inbound channel from this board, so it will not
+  see this note on its own - check it against `_audit_tool_events_for_attempt`
+  before landing if the diff is anywhere near it.
+
+  I independently verified the fix rather than taking the report at face value:
+  re-ran the four claimed test files (385 passed, matches), confirmed live
+  against attempt #9129 whose Codex session files have since rotated off disk -
+  `agent_sessions` is now `[]`, making `app/web_api/attempts.py`'s `tool_uses`
+  fallback (from `7f52991b`) the only path Derek's browser hits for it. Before
+  restarting, the running process (started 13:40:19, fix committed 13:50:02)
+  was still serving all-`"tool"` unnamed rows over HTTP; restarted (pid 54797)
+  and confirmed the same endpoint now returns `user_get` /
+  `command_execution` / `unsubscribe_email` with real args and output, with no
+  stuck `processing` rows and no new `failed` rows afterward.
 
 - 2026-09-12, Claude session `attempt-detail-evidence`: **the live email schema
   is now v37 and the running service was restarted.** Verifying the Attempt DTO
