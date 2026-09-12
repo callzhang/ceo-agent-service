@@ -40,7 +40,7 @@ def test_training_console_empty_registry_explains_agent_mode(tmp_path):
     assert learning["promotion_gate"]["promotion_eligible"] is False
 
 
-def test_learning_exposes_training_source_provenance_and_selection_is_recorded(tmp_path, monkeypatch):
+def test_learning_exposes_training_source_provenance_and_selection_is_executable(tmp_path, monkeypatch):
     client, store, registry = client_for(tmp_path)
     monkeypatch.setattr(store, "list_training_examples", lambda **_: [
         {"message_id": "user-1", "label": "work", "confirmed_at": "2026-09-12T00:00:00Z", "included_in_model_id": None},
@@ -63,7 +63,7 @@ def test_learning_exposes_training_source_provenance_and_selection_is_recorded(t
     assert all(row["provenance"] for row in rows)
     assert next(row["sample_count"] for row in rows if row["source"] == "user_feedback" and row["category"] == "work") == 2
     response = client.post("/api/console/email/training", json={
-        "sources": ["agent_auto_label", "user_feedback"],
+        "sources": ["folder_snapshot"],
         "categories": ["legal", "work"],
     })
     assert response.status_code == 202
@@ -84,7 +84,7 @@ def test_training_selection_rejects_unknown_values_and_malformed_json(tmp_path, 
         "sources": ["not-real"], "categories": ["work"],
     })
     assert unknown.status_code == 400
-    assert unknown.json()["code"] == "invalid_training_selection"
+    assert unknown.json()["code"] == "unsupported_training_source"
 
     malformed = client.post(
         "/api/console/email/training",

@@ -58,6 +58,62 @@ def _selection_values(selection: dict[str, object], key: str) -> list[str]:
     return values
 
 
+class UnsupportedTrainingSelection(ValueError):
+    """The console requested a source that the staged trainer cannot consume."""
+
+
+def _selection_provenance(
+    store: EmailStore,
+    *,
+    sources: list[str],
+    categories: list[str],
+) -> dict[str, object]:
+    if sources != ["folder_snapshot"]:
+        raise UnsupportedTrainingSelection(
+            "only folder_snapshot training data is currently executable"
+        )
+    state = store.latest_training_snapshot_state()
+    if state is None:
+        raise ValueError("folder training snapshot is unavailable")
+    snapshot_id = str(state["snapshot_id"])
+    snapshot = store.get_training_snapshot(snapshot_id)
+    if snapshot is None:
+        raise ValueError("folder training snapshot is unavailable")
+    rows = tuple(snapshot["observations"])
+    available = {
+        str(row["category_key"])
+        for row in rows
+        if row["category_key"] is not None
+    }
+    if not set(categories) <= available:
+        raise ValueError("training selection category is unavailable")
+    provenance: list[dict[str, object]] = []
+    for category in categories:
+        identities = sorted(
+            str(row["stable_message_identity"])
+            for row in rows
+            if row["category_key"] == category
+        )
+        digest = sha256(
+            json.dumps(identities, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        provenance.append(
+            {
+                "source": "folder_snapshot",
+                "category": category,
+                "sample_count": len(identities),
+                "snapshot_id": snapshot_id,
+                "snapshot_digest": state["snapshot_sha"],
+                "snapshot_version": state["snapshot_version"],
+                "description_version": state["description_version"],
+                "dataset_digest": digest,
+            }
+        )
+    return {"sources": sources, "categories": categories, "provenance": provenance}
+
+
 class EmailClassifierLearningService:
     """Persist feedback, then launch and poll the immutable registry lifecycle."""
 
@@ -157,46 +213,61 @@ class EmailClassifierLearningService:
         selection: dict[str, object],
         now: datetime,
     ) -> AutoRetrainResult:
-        """Persist a selection until the executor can consume it safely.
-
-        The current subprocess still consumes the immutable default snapshot. A
-        selected request is therefore recorded as a dry request instead of
-        claiming that a differently scoped model was trained.
-        """
-
         sources = _selection_values(selection, "sources")
         categories = _selection_values(selection, "categories")
         if not sources or not categories:
             raise ValueError("training selection requires sources and categories")
-        request_id = uuid.uuid4().hex
-        payload = {
-            "request_id": request_id,
-            "requested_at": now.astimezone(timezone.utc).isoformat(),
-            "status": "recorded",
-            "selection": {"sources": sources, "categories": categories},
-            "production_feedback_written": False,
-            "online_model_changed": False,
-            "execution": "pending_executor_support",
-        }
-        provenance = selection.get("provenance")
-        if isinstance(provenance, list) and all(isinstance(item, dict) for item in provenance):
-            payload["selection"]["provenance"] = provenance
-        canonical = json.dumps(payload["selection"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        selection_digest = sha256(canonical.encode("utf-8")).hexdigest()
-        payload["selection_digest"] = selection_digest
+        canonical = _selection_provenance(
+            self.store, sources=sources, categories=categories
+        )
+        selection_json = json.dumps(
+            canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        selection_digest = sha256(selection_json.encode("utf-8")).hexdigest()
         self.registry.root.mkdir(parents=True, exist_ok=True)
         for existing_path in sorted(self.registry.root.glob("training-request-*.json")):
             try:
                 existing = json.loads(existing_path.read_text(encoding="utf-8"))
             except (OSError, TypeError, ValueError, json.JSONDecodeError):
                 continue
-            if existing.get("selection_digest") == selection_digest:
-                return AutoRetrainResult(
-                    RetrainDecision(False, "training_selection_recorded", 0),
-                    state,
-                    None,
-                    None,
-                )
+            if existing.get("selection_digest") != selection_digest:
+                continue
+            existing_run = None
+            existing_run_id = existing.get("run_id")
+            if isinstance(existing_run_id, str) and existing_run_id:
+                try:
+                    existing_run = self.controller._load_run(existing_run_id)
+                except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                    existing_run = None
+            return AutoRetrainResult(
+                RetrainDecision(False, "training_selection_deduplicated", 0),
+                state,
+                None,
+                existing_run,
+            )
+        snapshot = self.store.latest_training_snapshot_state()
+        assert snapshot is not None
+        signal = _snapshot_signal(snapshot, manual=True)
+        run = self.controller.start(
+            now=now,
+            signal=signal,
+            snapshot_id=str(snapshot["snapshot_id"]),
+            training_selection=canonical,
+        )
+        updated = state.with_active_run(run.run_id)
+        save_retrain_state(self.retrain_state_path, updated)
+        request_id = uuid.uuid4().hex
+        payload = {
+            "request_id": request_id,
+            "requested_at": now.astimezone(timezone.utc).isoformat(),
+            "status": run.status,
+            "run_id": run.run_id,
+            "selection": canonical,
+            "production_feedback_written": False,
+            "online_model_changed": False,
+            "execution": "staged_candidate_training",
+        }
+        payload["selection_digest"] = selection_digest
         path = self.registry.root / f"training-request-{request_id}.json"
         temporary: Path | None = None
         try:
@@ -219,10 +290,10 @@ class EmailClassifierLearningService:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
         return AutoRetrainResult(
-            RetrainDecision(False, "training_selection_recorded", 0),
-            state,
+            RetrainDecision(True, "manual_selected", 0),
+            updated,
             None,
-            None,
+            run,
         )
 
     def request_description_proposal_evaluation(

@@ -17,20 +17,21 @@ export function ModelTraining({learning,configs,reload,runtimeVerified,onRuntime
   const [detail,setDetail]=useState<EmailStagedModel|null>(null);
   const [detailError,setDetailError]=useState("");
   const [retry,setRetry]=useState(0);
-  const [selectedSources,setSelectedSources]=useState<string[]>(()=>Array.from(new Set((learning.training_sources || []).map(row=>row.source))));
-  const [selectedCategories,setSelectedCategories]=useState<string[]>(()=>Array.from(new Set((learning.training_sources || []).map(row=>row.category))));
+  const [selectedSources,setSelectedSources]=useState<string[]>(()=>Array.from(new Set((learning.training_sources || []).filter(row=>row.supported!==false).map(row=>row.source))));
+  const [selectedCategories,setSelectedCategories]=useState<string[]>(()=>Array.from(new Set((learning.training_sources || []).filter(row=>row.supported!==false).map(row=>row.category))));
   const [trainingRequest,setTrainingRequest]=useState("");
   const [trainingBusy,setTrainingBusy]=useState(false);
   const lock=useRef(false);
   const requestId=useRef("");
   const models=learning.staged_models || [];
   const sourceRows=learning.training_sources || [];
+  const supportedRows=sourceRows.filter(row=>row.supported!==false);
   const sourceKeys=Array.from(new Set(sourceRows.map(row=>row.source)));
-  const categoryKeys=Array.from(new Set(sourceRows.map(row=>row.category)));
-  useEffect(()=>{setSelectedSources(sourceKeys);setSelectedCategories(categoryKeys);},[learning.training_sources]);
+  const categoryKeys=Array.from(new Set(supportedRows.map(row=>row.category)));
+  useEffect(()=>{setSelectedSources(Array.from(new Set(supportedRows.map(row=>row.source))));setSelectedCategories(categoryKeys);},[learning.training_sources]);
   async function startTraining(){
     setTrainingBusy(true);setTrainingRequest("");onBusy(true);
-    try { const result=await requestEmailTraining({sources:selectedSources,categories:selectedCategories}); setTrainingRequest(result.learning.training_status==="recorded"?"训练请求已记录；当前执行器尚未消费该选择，未生成新的模型。":"训练请求已提交。"); }
+    try { const result=await requestEmailTraining({sources:selectedSources,categories:selectedCategories}); setTrainingRequest(result.learning.training_status?"训练已提交，正在生成 staged 候选模型。":"训练请求已提交。"); }
     catch(reason){setTrainingRequest(errorMessage(reason));}
     finally{setTrainingBusy(false);onBusy(false);}
   }
@@ -89,9 +90,9 @@ export function ModelTraining({learning,configs,reload,runtimeVerified,onRuntime
     </>:<p role="alert">晋升配置暂不可用，请刷新重试。</p>}
     {!!learning.registry_issues?.length&&<p role="alert">模型 Registry 完整性异常：{learning.registry_issues.map(issue=>issue.model_id+"（"+issue.integrity_error+"）").join("；")}</p>}
     <ModelTrend models={models} config={learning.promotion_gate?.config}/>
-    <section aria-label="训练数据来源" className="email-training-sources"><h3>训练数据来源</h3><p className="muted">默认全选。取消勾选只影响本次训练请求，不修改反馈记录或线上模型。</p>
-      <div className="email-source-columns"><fieldset><legend>来源</legend>{sourceKeys.map(source=><label key={source}><input type="checkbox" checked={selectedSources.includes(source)} onChange={event=>setSelectedSources(current=>event.target.checked?[...current,source]:current.filter(value=>value!==source))}/>{sourceLabel(source)}</label>)}</fieldset><fieldset><legend>类别</legend>{categoryKeys.map(category=><label key={category}><input type="checkbox" checked={selectedCategories.includes(category)} onChange={event=>setSelectedCategories(current=>event.target.checked?[...current,category]:current.filter(value=>value!==category))}/>{category}</label>)}</fieldset></div>
-      {sourceRows.length?<div className="responsive-table-wrap"><table className="settings-table" aria-label="训练数据来源明细"><thead><tr><th>来源</th><th>类别</th><th>样本数</th><th>数据版本 / 摘要</th></tr></thead><tbody>{sourceRows.map(row=><tr key={row.source+row.category}><td>{sourceLabel(row.source)}</td><td>{row.category}</td><td>{row.sample_count}</td><td>{provenanceLabel(row.provenance)}</td></tr>)}</tbody></table></div>:<p>暂无可用训练数据来源。</p>}
+    <section aria-label="训练数据来源" className="email-training-sources"><h3>训练数据来源</h3><p className="muted">可执行来源默认全选。取消勾选只影响本次 staged 训练，不修改反馈记录或线上模型。</p>
+      <div className="email-source-columns"><fieldset><legend>来源</legend>{sourceKeys.map(source=>{const supported=sourceRows.filter(row=>row.source===source).every(row=>row.supported!==false);return <label key={source}><input type="checkbox" checked={selectedSources.includes(source)} disabled={!supported} onChange={event=>setSelectedSources(current=>event.target.checked?[...current,source]:current.filter(value=>value!==source))}/>{sourceLabel(source)}{!supported&&"（暂不支持）"}</label>})}{sourceRows.some(row=>row.supported===false)&&<p className="muted">Agent 自动标注、用户反馈尚未接入本次 staged 训练。</p>}</fieldset><fieldset><legend>类别</legend>{categoryKeys.map(category=><label key={category}><input type="checkbox" checked={selectedCategories.includes(category)} onChange={event=>setSelectedCategories(current=>event.target.checked?[...current,category]:current.filter(value=>value!==category))}/>{category}</label>)}</fieldset></div>
+      {sourceRows.length?<div className="responsive-table-wrap"><table className="settings-table" aria-label="训练数据来源明细"><thead><tr><th>来源</th><th>类别</th><th>样本数</th><th>数据版本 / 摘要</th></tr></thead><tbody>{sourceRows.map(row=><tr key={row.source+row.category}><td>{sourceLabel(row.source)}{row.supported===false?"（暂不支持）":""}</td><td>{row.category}</td><td>{row.sample_count}</td><td>{provenanceLabel(row.provenance)}</td></tr>)}</tbody></table></div>:<p>暂无可用训练数据来源。</p>}
       <button className="primary-button" disabled={trainingBusy||!selectedSources.length||!selectedCategories.length} onClick={()=>void startTraining()}>{trainingBusy?"正在记录训练请求…":"开始训练"}</button>{trainingRequest&&<p role="status">{trainingRequest}</p>}
     </section>
     <h3>模型版本</h3>

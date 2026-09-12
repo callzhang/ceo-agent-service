@@ -5,6 +5,8 @@ from pathlib import Path
 from threading import Barrier, Lock, Thread
 import time
 
+import pytest
+
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -13,7 +15,10 @@ from app.email_classifier_contracts import (
     EmailProviderLocator,
     INITIAL_EMAIL_CATEGORY_KEYS,
 )
-from app.email_classifier_learning import EmailClassifierLearningService
+from app.email_classifier_learning import (
+    EmailClassifierLearningService,
+    UnsupportedTrainingSelection,
+)
 from app.email_classifier_retrain import (
     RetrainPolicy,
     TrainingSubprocessController,
@@ -173,36 +178,99 @@ def test_feedback_api_service_confirms_first_and_records_state_without_retrainin
     assert store.list_training_examples()[0]["label"] == "legal"
 
 
-def test_manual_training_selection_is_persisted_without_claiming_execution(tmp_path: Path):
+def test_manual_training_selection_rejects_unmapped_sources(tmp_path: Path):
     service, _store, _rows, _ = _service_with_pending(tmp_path)
 
+    with pytest.raises(UnsupportedTrainingSelection):
+        service.request_manual_training(
+            selection={
+                "sources": ["agent_auto_label", "user_feedback"],
+                "categories": ["work", "legal"],
+            }
+        )
+
+
+def test_manual_folder_selection_is_bound_to_the_training_run(tmp_path: Path):
+    service, store, _rows, _ = _service_with_pending(tmp_path)
+    snapshot = {
+        "snapshot_id": "email-folder-snapshot-20260912T000000.000000Z-aaaaaaaaaaaa",
+        "snapshot_sha": "a" * 64,
+        "snapshot_version": "email-folder-training-snapshot-v1",
+        "description_version": "description-set-sha256:" + "b" * 64,
+        "input_schema_version": "email-folder-model-input-v2",
+        "folder_label_watermark": 2,
+        "important_label_watermark": 2,
+        "minimum_ready": True,
+        "observations": [
+            {"stable_message_identity": "mail-1", "category_key": "work"},
+            {"stable_message_identity": "mail-2", "category_key": "legal"},
+        ],
+    }
+    store.latest_training_snapshot_state = lambda: snapshot
+    store.get_training_snapshot = lambda _snapshot_id: snapshot
+
+    class Controller:
+        def __init__(self):
+            self.selection = None
+
+        def start(self, *, now, signal, snapshot_id, training_selection):
+            self.selection = training_selection
+            return TrainingSubprocessRun(
+                run_id="selected-run",
+                status="running",
+                pid=123,
+                started_at=now.isoformat(),
+                updated_at=now.isoformat(),
+                snapshot_id=snapshot_id,
+                snapshot_sha=signal.snapshot_sha,
+                description_version=signal.description_version,
+                training_selection=training_selection,
+            )
+
+    controller = Controller()
+    service.controller = controller
     result = service.request_manual_training(
-        selection={
-            "sources": ["agent_auto_label", "user_feedback"],
-            "categories": ["work", "legal"],
-        }
+        selection={"sources": ["folder_snapshot"], "categories": ["work"]}
     )
 
-    assert result.training_run is None
-    assert result.decision.reason == "training_selection_recorded"
-    request_files = list((tmp_path / "models").glob("training-request-*.json"))
-    assert len(request_files) == 1
-    payload = json.loads(request_files[0].read_text())
-    assert payload["status"] == "recorded"
-    assert payload["selection"] == {
-        "sources": ["agent_auto_label", "user_feedback"],
-        "categories": ["legal", "work"],
-    }
-    assert payload["production_feedback_written"] is False
-    assert payload["online_model_changed"] is False
+    assert result.training_run is not None
+    assert result.decision.reason == "manual_selected"
+    assert result.training_run.training_selection["categories"] == ["work"]
+    assert controller.selection["provenance"][0]["sample_count"] == 1
+    assert controller.selection["provenance"][0]["dataset_digest"]
+    payload = json.loads(next((tmp_path / "models").glob("training-request-*.json")).read_text())
+    assert payload["run_id"] == "selected-run"
+    assert payload["execution"] == "staged_candidate_training"
 
 
 def test_manual_training_selection_is_idempotent_for_same_scope(tmp_path: Path):
-    service, _store, _rows, _ = _service_with_pending(tmp_path)
+    service, store, _rows, _ = _service_with_pending(tmp_path)
+    snapshot = {
+        "snapshot_id": "email-folder-snapshot-20260912T000000.000000Z-aaaaaaaaaaaa",
+        "snapshot_sha": "a" * 64, "snapshot_version": "email-folder-training-snapshot-v1",
+        "description_version": "description-set-sha256:" + "b" * 64,
+        "input_schema_version": "email-folder-model-input-v2", "folder_label_watermark": 2,
+        "important_label_watermark": 2, "minimum_ready": True,
+        "observations": [{"stable_message_identity": "mail-1", "category_key": "work"}],
+    }
+    store.latest_training_snapshot_state = lambda: snapshot
+    store.get_training_snapshot = lambda _snapshot_id: snapshot
+    service.controller = type("Controller", (), {
+        "start": lambda self, **kwargs: TrainingSubprocessRun(
+            run_id="selected-run", status="running", pid=123,
+            started_at=kwargs["now"].isoformat(), updated_at=kwargs["now"].isoformat(),
+            snapshot_id=kwargs["snapshot_id"], snapshot_sha=kwargs["signal"].snapshot_sha,
+            description_version=kwargs["signal"].description_version,
+            training_selection=kwargs["training_selection"],
+        ),
+        "_load_run": lambda self, _run_id: TrainingSubprocessRun(
+            run_id="selected-run", status="running", pid=123,
+            started_at="2026-09-12T00:00:00+00:00", updated_at="2026-09-12T00:00:00+00:00",
+        ),
+    })()
     selection = {
-        "sources": ["agent_auto_label", "user_feedback"],
-        "categories": ["work", "legal"],
-        "provenance": [{"source": "user_feedback", "category": "work", "sample_count": 2}],
+        "sources": ["folder_snapshot"],
+        "categories": ["work"],
     }
     service.request_manual_training(selection=selection)
     service.request_manual_training(selection=selection)

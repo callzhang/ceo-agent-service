@@ -353,6 +353,7 @@ export interface EmailTrainingSource {
   source: string;
   category: string;
   sample_count: number;
+  supported?: boolean;
   provenance: Record<string, unknown>;
 }
 export interface EmailRuntime {

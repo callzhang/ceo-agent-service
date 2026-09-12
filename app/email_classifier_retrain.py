@@ -365,6 +365,7 @@ class TrainingSubprocessRun:
     description_set_digest: str = ""
     launch_attempt: int = 0
     launch_lease_expires_at: str | None = None
+    training_selection: dict[str, object] | None = None
 
 
 class TrainingSubprocessController:
@@ -400,6 +401,7 @@ class TrainingSubprocessController:
         signal: SnapshotTrainingSignal | None = None,
         snapshot_id: str = "",
         description_overlay: object | None = None,
+        training_selection: dict[str, object] | None = None,
     ) -> TrainingSubprocessRun:
         run_id = uuid.uuid4().hex
         historical_error_state = self.registry.historical_systematic_error_state()
@@ -463,6 +465,7 @@ class TrainingSubprocessController:
             description_proposal_id=proposal_id,
             source_description_version=source_description_version,
             description_set_digest=description_set_digest,
+            training_selection=training_selection,
         )
         self._save_run(queued)
         return self._launch_reserved(queued, now=now, command=command)
@@ -893,6 +896,19 @@ def _run_training_job(
         if snapshot_id != started.snapshot_id:
             raise RuntimeError("training command snapshot does not match queued run")
         store = EmailStore(db_path)
+        training_selection = started.training_selection
+        selected_categories: tuple[str, ...] | None = None
+        if training_selection is not None:
+            sources = training_selection.get("sources")
+            categories = training_selection.get("categories")
+            if sources != ["folder_snapshot"]:
+                raise RuntimeError("unsupported training selection source")
+            if not isinstance(categories, list) or not categories or not all(
+                isinstance(category, str) and category.strip()
+                for category in categories
+            ):
+                raise RuntimeError("invalid training selection categories")
+            selected_categories = tuple(sorted(set(categories)))
         historical_error_state = read_frozen_historical_error_state(registry, started)
         dimension = int(os.environ["CEO_EMAIL_EMBEDDING_DIMENSION"])
         description_overlay = None
@@ -924,6 +940,14 @@ def _run_training_job(
                 for row in store.list_category_configs()
                 if row["enabled"]
             }
+        if selected_categories is not None:
+            descriptions = {
+                category: descriptions[category]
+                for category in selected_categories
+                if category in descriptions
+            }
+            if set(descriptions) != set(selected_categories):
+                raise RuntimeError("training selection categories are unavailable")
         from app.email_candidate_benchmark import benchmark_candidate
 
         result = train_frozen_embedding_candidate(
@@ -940,7 +964,9 @@ def _run_training_job(
             parent_model_id=registry.active_model_id_unverified(),
             trained_at=trained_at,
             expected_snapshot_sha=started.snapshot_sha,
-            expected_description_version=started.description_version,
+            expected_description_version=(
+                None if selected_categories is not None else started.description_version
+            ),
             historical_systematic_error_state=historical_error_state,
             description_overlay=description_overlay,
             benchmark_candidate=benchmark_candidate,

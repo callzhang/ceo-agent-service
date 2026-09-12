@@ -1314,14 +1314,21 @@ def register_email_routes(
         try:
             if payload is not None:
                 catalog = training_source_catalog(require_store())
-                allowed_sources = {str(row["source"]) for row in catalog}
-                allowed_categories = {str(row["category"]) for row in catalog}
-                unknown_sources = sorted(set(payload.sources) - allowed_sources)
+                if set(payload.sources) != {"folder_snapshot"}:
+                    return error_response(
+                        "unsupported_training_source",
+                        "当前只有邮件文件夹快照可以进入训练执行器；Agent 自动标注和用户反馈尚未接入训练输入",
+                        400,
+                    )
+                folder_rows = [
+                    row for row in catalog if row["source"] == "folder_snapshot"
+                ]
+                allowed_categories = {str(row["category"]) for row in folder_rows}
                 unknown_categories = sorted(set(payload.categories) - allowed_categories)
-                if unknown_sources or unknown_categories:
+                if unknown_categories:
                     return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
                 provenance = [
-                    row for row in catalog
+                    row for row in folder_rows
                     if row["source"] in payload.sources and row["category"] in payload.categories
                 ]
                 if not provenance:
@@ -1332,6 +1339,8 @@ def register_email_routes(
         except ValueError:
             return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
         run = result.training_run
+        if run is not None and getattr(run, "training_selection", None) is not None:
+            request_selection = run.training_selection
         return JSONResponse(
             {
                 "ok": True,
@@ -1356,7 +1365,7 @@ def register_email_routes(
             if category:
                 row = rows.setdefault(("user_feedback", category), {
                     "source": "user_feedback", "category": category,
-                    "sample_count": 0, "_identities": [],
+                    "sample_count": 0, "supported": False, "_identities": [],
                     "provenance": {"classification_source": "user"},
                 })
                 row["sample_count"] += 1
@@ -1371,7 +1380,7 @@ def register_email_routes(
             if category:
                 row = rows.setdefault(("agent_auto_label", category), {
                     "source": "agent_auto_label", "category": category,
-                    "sample_count": 0, "_identities": [],
+                    "sample_count": 0, "supported": False, "_identities": [],
                     "provenance": {"classification_source": "agent"},
                 })
                 row["sample_count"] += 1
@@ -1382,6 +1391,7 @@ def register_email_routes(
                 rows[("folder_snapshot", str(category))] = {
                     "source": "folder_snapshot", "category": str(category),
                     "sample_count": int(count),
+                    "supported": True,
                     "_identities": [str(snapshot.get("snapshot_sha") or snapshot.get("snapshot_id") or "")],
                     "provenance": {"snapshot_id": snapshot.get("snapshot_id"),
                                    "snapshot_digest": snapshot.get("snapshot_sha"),

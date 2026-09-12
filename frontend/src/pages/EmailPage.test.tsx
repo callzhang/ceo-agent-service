@@ -296,19 +296,21 @@ it("renders training duration, coverage and safe parameters without inventing ab
   const training=await screen.findByRole("region",{name:"训练记录"});expect(training).toHaveTextContent("60000.0 ms");expect(training).toHaveTextContent("123 / 未测量");expect(training).toHaveTextContent("2 / 97");
   expect(screen.getByRole("region",{name:"训练参数"})).toHaveTextContent("20260905");expect(screen.getByRole("region",{name:"训练参数"})).toHaveTextContent("lbfgs");
 });
-it("shows all training sources selected by default and records an excluded source",async()=>{
+it("selects only executable training sources and records a narrowed folder scope",async()=>{
   const user=userEvent.setup();
   api.listEmailLearning.mockResolvedValue({learning:learning({training_sources:[
-    {source:"agent_auto_label",category:"work",sample_count:12,provenance:{classification_source:"agent"}},
-    {source:"user_feedback",category:"work",sample_count:4,provenance:{classification_source:"user"}},
+    {source:"agent_auto_label",category:"work",sample_count:12,supported:false,provenance:{classification_source:"agent"}},
+    {source:"folder_snapshot",category:"work",sample_count:12,supported:true,provenance:{snapshot_id:"snapshot-1"}},
+    {source:"folder_snapshot",category:"legal",sample_count:4,supported:true,provenance:{snapshot_id:"snapshot-1"}},
   ]})});
-  api.requestEmailTraining.mockResolvedValue({ok:true,learning:{training_status:"recorded",training_run_id:null,selection:{sources:["user_feedback"],categories:["work"]}}});
+  api.requestEmailTraining.mockResolvedValue({ok:true,learning:{training_status:"running",training_run_id:"run-1",selection:{sources:["folder_snapshot"],categories:["work"]}}});
   show("/email?tab=learning");
   expect(await screen.findByRole("region",{name:"训练数据来源"})).toHaveTextContent("Agent 自动标注");
-  const source=screen.getByRole("checkbox",{name:"Agent 自动标注"});expect(source).toBeChecked();await user.click(source);
+  const source=screen.getByRole("checkbox",{name:"Agent 自动标注（暂不支持）"});expect(source).not.toBeChecked();expect(source).toBeDisabled();
+  const category=screen.getByRole("checkbox",{name:"legal"});expect(category).toBeChecked();await user.click(category);
   await user.click(screen.getByRole("button",{name:"开始训练"}));
-  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["user_feedback"],categories:["work"]});
-  expect(await within(screen.getByRole("region",{name:"训练数据来源"})).findByRole("status")).toHaveTextContent("训练请求已记录");
+  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"]});
+  expect(await within(screen.getByRole("region",{name:"训练数据来源"})).findByRole("status")).toHaveTextContent("训练已提交");
 });
 it("reuses a mode request ID on retry and prevents duplicate submissions",async()=>{
   const user=userEvent.setup(),pending=deferred<unknown>();api.saveEmailRuntimeMode.mockReturnValueOnce(pending.promise).mockRejectedValueOnce(new Error("重试失败"));show("/email?tab=learning");
