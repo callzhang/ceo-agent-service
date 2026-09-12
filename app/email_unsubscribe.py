@@ -390,6 +390,16 @@ _BROWSER_FAILURE_CODES = {
         "email_unsubscribe_page_state_missing"
     ),
 }
+# Codes that can only come from having operated a page. A role without a
+# browser reporting one of these is reporting something it did not observe.
+BROWSER_EXECUTION_ERROR_CODES = frozenset(_BROWSER_FAILURE_CODES.values()) | {
+    "email_unsubscribe_browser_failed",
+    "email_unsubscribe_browser_session_unavailable",
+    "email_unsubscribe_provider_auth_failed",
+    "email_unsubscribe_authentication_controls_blocked",
+    "email_unsubscribe_outcome_unresolved",
+    "email_unsubscribe_outcome_unverified",
+}
 _VISIBLE_TEXT_WAIT_MS = 5_000
 _VISIBLE_TEXT_POLL_MS = 250
 

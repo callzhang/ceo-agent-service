@@ -2842,3 +2842,62 @@ def test_claude_route_session_is_not_checked_as_local_codex_history(store, task)
 
     assert runner._route_session_exists("claude_api", "claude-session") is True
     assert checked == []
+
+
+def _consumer_failure_wire(error_code: str, outcome: str = "failed") -> str:
+    payload = json.dumps(
+        {
+            "outcome": "failed",
+            "summary": "The unsubscribe page state could not be determined.",
+            "proposal": None,
+            "decision_options": [],
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "error_code": error_code,
+            "error_retryable": True,
+            "error_authorization_required": False,
+            "outcome": outcome,
+        }
+    )
+    return json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": payload},
+        }
+    )
+
+
+def test_consumer_cannot_report_a_page_it_never_opened() -> None:
+    """One live task failed eight Consumer turns on a page nothing had opened.
+
+    Its durable record held no claim, no step and no receipt, so no browser
+    had ever run. The Consumer was repeating a technical failure it found in
+    its own task context as this turn's finding, and the task could never
+    reach the turn that would actually open the page.
+    """
+
+    with pytest.raises(ResultParseError, match="no browser"):
+        consumer_agent._parse_consumer_result(
+            _consumer_failure_wire("email_unsubscribe_page_state_unknown")
+        )
+
+
+def test_a_failure_the_consumer_turn_can_own_is_still_accepted() -> None:
+    result = consumer_agent._parse_consumer_result(
+        _consumer_failure_wire("email_provider_transient:TimeoutError")
+    )
+
+    assert result.error.code == "email_provider_transient:TimeoutError"
+
+
+def test_only_a_failed_outcome_is_checked_for_browser_codes() -> None:
+    result = consumer_agent._parse_consumer_result(
+        _consumer_failure_wire(
+            "email_unsubscribe_page_state_unknown",
+            outcome="no_action",
+        )
+    )
+
+    assert result.error.code == "email_unsubscribe_page_state_unknown"

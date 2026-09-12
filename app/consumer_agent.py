@@ -11,8 +11,10 @@ from app.agent_contracts import (
     AuditAgentResult,
     AuditFeedback,
     ConsumerAgentResult,
+    ConsumerOutcome,
     ProposedAction,
 )
+from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
@@ -570,7 +572,7 @@ class ConsumerAgentRunner:
                     ),
                 ),
                 configure_command=make_consumer_agent_command,
-                parse_result=parse_consumer_agent_wire_result,
+                parse_result=_parse_consumer_result,
                 prepare_result=lambda parsed: _prepare_outgoing_dingtalk_messages(
                     parsed,
                     store=self.store,
@@ -745,6 +747,37 @@ def consumer_developer_instructions(
         )
         if part
     )
+
+
+def _parse_consumer_result(raw: str):
+    """Reject a Consumer failure that reports a page it never opened.
+
+    The Consumer turn is read-only and has no browser: it cannot have
+    observed an unsubscribe page state. One live task failed eight Consumer
+    turns in a row with `email_unsubscribe_page_state_unknown` while its
+    durable record held no claim, no step and no receipt -- nothing had ever
+    run. The model was repeating a technical failure it found in its own task
+    context as though it were this turn's finding, and the task could never
+    retry its way out because it never reached the turn that would open the
+    page.
+
+    A borrowed verdict is a result-contract violation, so it gets the ordinary
+    correction turn rather than terminating the task.
+    """
+
+    from app.email_unsubscribe import BROWSER_EXECUTION_ERROR_CODES
+
+    result = parse_consumer_agent_wire_result(raw)
+    if result.outcome is not ConsumerOutcome.FAILED:
+        return result
+    code = str(getattr(result.error, "code", "") or "")
+    if code in BROWSER_EXECUTION_ERROR_CODES:
+        raise ResultParseError(
+            f"error_code: {code} reports operating a page, and this turn has "
+            "no browser. Propose the authorized action, or fail with a code "
+            "naming what this turn itself could not do."
+        )
+    return result
 
 
 def audit_developer_instructions(
