@@ -3236,6 +3236,11 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     result = json.loads(str(row["final_result_json"] or ""))
                 except (TypeError, json.JSONDecodeError):
                     result = {}
+                # Service-generated boundaries are deliberately allowed to
+                # have no persisted Agent result.  Mirror the quality gate's
+                # synthetic values so the projection remains renderable.
+                if not isinstance(result, dict) or not result:
+                    result = {"risk": "high", "confidence": 0.0, "rule_coverage": 1.0}
                 risk = str(result.get("risk") or "high")
                 confidence = result.get("confidence")
                 rule_coverage = result.get("rule_coverage")

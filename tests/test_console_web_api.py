@@ -2157,6 +2157,37 @@ def test_queue_attention_rows_excludes_unstructured_needs_human_attempts(tmp_pat
     assert not any(row["id"] == str(attempt_id) for row in rows)
 
 
+def test_queue_attention_rows_renders_service_generated_needs_human_without_run(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="service-decision-conversation",
+        conversation_title="Service decision",
+        trigger_message_id="service-decision-message",
+        trigger_sender="Mina",
+        trigger_text="Confirm the provider action.",
+        action="send_reply",
+        sensitivity_kind="general",
+        channel="dingtalk",
+        send_status="needs_human",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="needs_human",
+        send_error="confirmation_required",
+        human_decision_options_json=json.dumps(
+            [
+                {"key": "one_time", "label": "本次执行", "instruction": "本次执行", "consequence": "仅处理本次"},
+                {"key": "skill_update", "label": "更新规则", "instruction": "更新规则", "consequence": "沉淀为规则"},
+            ]
+        ),
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    decision = next(row for row in rows if row["id"] == str(attempt_id))
+    assert decision["root_cause"] == "高风险且置信度低（0.00）"
+
+
 def test_queue_attention_rows_includes_actionable_structured_needs_human_attempts(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
