@@ -421,7 +421,7 @@ function emailText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function mapEmailClassification(value: unknown): EmailClassificationItem {
+function mapEmailClassification(value: unknown, includeBody = false): EmailClassificationItem {
   const row = asRecord(value);
   const confirmedCategory = emailText(row.confirmed_category);
   const predictedCategory = emailText(row.predicted_category);
@@ -442,8 +442,6 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
     sender: emailText(row.sender),
     subject: emailText(row.subject),
     preview: emailText(row.preview),
-    message_text: emailText(row.message_text),
-    quoted_text: emailText(row.quoted_text),
     important: typeof row.important === "boolean" ? row.important : null,
     provider_classification: isRecord(row.provider_classification) ? row.provider_classification as unknown as EmailProviderClassification : null,
     description_version: emailText(row.description_version),
@@ -467,6 +465,10 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
     created_at: emailText(row.created_at),
     updated_at: emailText(row.updated_at),
   };
+  if (includeBody) {
+    item.message_text = emailText(row.message_text);
+    item.quoted_text = emailText(row.quoted_text);
+  }
   return item;
 }
 
@@ -599,7 +601,7 @@ export function getEmailClassification(id: string, signal?: AbortSignal) {
     const payload = asRecord(value);
     return {
       ok: payload.ok === true,
-      item: mapEmailClassification(payload.item),
+      item: mapEmailClassification(payload.item, true),
       observability: Array.isArray(payload.observability) ? payload.observability as EmailObservabilityEvent[] : [],
       provider_classification: isRecord(payload.provider_classification) ? payload.provider_classification as unknown as EmailProviderClassification : null,
       meta: asRecord(payload.meta) as { snapshot_at: string },
