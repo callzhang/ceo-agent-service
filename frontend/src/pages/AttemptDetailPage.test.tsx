@@ -180,6 +180,7 @@ describe("AttemptDetailPage", () => {
             result_text: "host='r.openai.com' control_count=0",
             receipt_id: "unsubscribe-receipt:5fd912d9",
             entry_reference: "unsubscribe-entry:870a914f",
+            entry_url: "https://r.openai.com/asm/unsubscribe?token=private-token",
             started_at: "2026-09-12T06:21:29+00:00",
             completed_at: "2026-09-12T06:21:29+00:00",
             steps: [{ sequence: 1, operation: "open_entry", state: "skipped_no_reliable_entry" }],
@@ -199,6 +200,8 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("page-not-operable")).toBeInTheDocument();
     expect(screen.getByText("host='r.openai.com' control_count=0")).toBeInTheDocument();
     expect(screen.getByText("open_entry")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "https://r.openai.com/asm/unsubscribe?token=private-token" })).toHaveAttribute("href", "https://r.openai.com/asm/unsubscribe?token=private-token");
+    expect(screen.getByText("退订入口（打开会真实执行退订）")).toBeInTheDocument();
   });
 
   it("keeps the process visible for an Attempt whose transcripts are gone", async () => {

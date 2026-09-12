@@ -209,6 +209,9 @@ def _email_payload(
             "result_text": normalize_display_value(receipt.get("result_text")),
             "receipt_id": normalize_display_value(receipt.get("receipt_id")),
             "entry_reference": normalize_display_value(receipt.get("entry_reference")),
+            # The address the run actually opened. Recorded so a receipt can be
+            # reproduced by hand; opening it performs a real unsubscribe.
+            "entry_url": normalize_display_value(receipt.get("entry_url")),
             "started_at": normalize_display_value(receipt.get("started_at")),
             "completed_at": normalize_display_value(receipt.get("completed_at")),
             "steps": [

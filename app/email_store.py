@@ -65,7 +65,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 36
+EMAIL_SCHEMA_VERSION = 37
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -436,6 +436,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "completed_at": ("text", True, "''"),
         "result_text_truncated": ("integer", True, "0"),
         "result_text_digest": ("text", True, "''"),
+        "entry_url": ("text", True, "''"),
         "created_at": ("text", True, None),
     },
     "email_training_snapshots": {
@@ -677,6 +678,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "observation_digest = '' or length(observation_digest) = 64",
         "result_text_truncated in (0, 1)",
         "result_text_digest = '' or length(result_text_digest) = 64",
+        "entry_url = '' or length(entry_url) <= 2048",
         "trim(created_at) != ''",
     ),
     "email_training_snapshots": (
@@ -2448,6 +2450,45 @@ def _validate_unsubscribe_controls(
     return validated
 
 
+_MAX_UNSUBSCRIBE_ENTRY_URL_BYTES = 2048
+
+
+def _validate_unsubscribe_entry_url(value: object, *, entry_reference: str) -> str:
+    """Return the unsubscribe URL a receipt was earned against, or ''.
+
+    This is the one durable unsubscribe field that is not a redacted
+    reference: Derek asked for the address itself so a receipt can be
+    reproduced by hand, which means the stored value carries whatever query
+    and token the provider put in the link, and opening it performs a real
+    unsubscribe. It is therefore not run through ``assert_no_credentials``,
+    which rejects exactly those tokens. What is still enforced is that the URL
+    is the one this receipt is bound to: its sha256 must equal the digest in
+    ``entry_reference``, so the column cannot drift from the identity the rest
+    of the lifecycle agrees on.
+    """
+
+    if value is None or value == "":
+        return ""
+    if (
+        not isinstance(value, str)
+        or value != value.strip()
+        or len(value.encode("utf-8")) > _MAX_UNSUBSCRIBE_ENTRY_URL_BYTES
+        or "\r" in value
+        or "\n" in value
+    ):
+        raise ValueError("entry_url must be a bounded single-line URL")
+    parsed = urlsplit(value)
+    if parsed.scheme.casefold() == "mailto":
+        if not parsed.path.strip():
+            raise ValueError("entry_url must be a bounded single-line URL")
+    elif parsed.scheme.casefold() != "https" or not parsed.hostname:
+        raise ValueError("entry_url must be an https or mailto unsubscribe entry")
+    expected = entry_reference.removeprefix("unsubscribe-entry:")
+    if sha256(value.encode("utf-8")).hexdigest() != expected:
+        raise ValueError("entry_url does not match the receipt entry reference")
+    return value
+
+
 def _validate_unsubscribe_binding(
     *,
     action_identity: object,
@@ -2870,6 +2911,9 @@ class EmailStore:
                 latest_version = 35
             if latest_version == 35:
                 self._migrate_v35_to_v36(db, replace_version=is_prototype)
+                latest_version = 36
+            if latest_version == 36:
+                self._migrate_v36_to_v37(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -4658,6 +4702,41 @@ class EmailStore:
         else:
             db.execute(
                 "insert into email_schema_migrations(version, applied_at) values (36, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v36_to_v37(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Record the unsubscribe entry a receipt was earned against.
+
+        Until now a receipt stored only ``entry_reference``, the sha256 of the
+        private URL. Nothing else persisted the URL and the message body the
+        candidate came from is not kept either, so an outcome such as
+        ``skipped_no_reliable_entry`` named a host and no address: no reviewer
+        could open what the run opened. Derek asked for the URL itself rather
+        than a redacted origin, accepting that the column holds a live
+        unsubscribe link. Existing rows keep an empty value - their URL is not
+        recoverable from anything this service stored.
+        """
+
+        self._ensure_column(
+            db,
+            table="email_unsubscribe_receipts",
+            column="entry_url",
+            declaration=(
+                "text not null default '' "
+                "check(entry_url = '' or length(entry_url) <= 2048)"
+            ),
+        )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=37, applied_at=? where version=36",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (37, ?)",
                 (self._now(),),
             )
 
@@ -11098,6 +11177,7 @@ class EmailStore:
         stable_message_identity: str,
         thread_identity: str,
         entry_reference: str,
+        entry_url: str = "",
         operations: Sequence[Mapping[str, object]],
         previous_effect_digest: str = "",
         outcome: str,
@@ -11138,6 +11218,9 @@ class EmailStore:
             raise ValueError("unsubscribe terminal outcome is invalid")
         receipt_id = _validate_unsubscribe_opaque(receipt_id, field="receipt_id")
         evidence = _validate_unsubscribe_opaque(evidence, field="evidence")
+        entry_url = _validate_unsubscribe_entry_url(
+            entry_url, entry_reference=binding["entry_reference"]
+        )
         if not isinstance(result_text, str):
             raise ValueError("unsubscribe result_text must be text")
         from app.email_unsubscribe import normalize_unsubscribe_result_text
@@ -11342,6 +11425,10 @@ class EmailStore:
                 "select * from email_unsubscribe_receipts where action_identity=?",
                 (action_identity,),
             ).fetchone()
+            # entry_url is deliberately absent from this comparison: it is the
+            # pre-image of entry_reference, which is compared, so it adds no
+            # independent evidence and a receipt written before the column
+            # existed must not read as a conflict.
             requested_receipt = {
                 **binding,
                 "outcome": outcome,
@@ -11361,10 +11448,10 @@ class EmailStore:
                         action_identity, effect_digest, action_plan_id,
                         action_plan_version, classification_id, account_id,
                         stable_message_identity, thread_identity, entry_reference,
-                        outcome, receipt_id, evidence, result_text,
+                        entry_url, outcome, receipt_id, evidence, result_text,
                         observation_digest, result_text_truncated,
                         result_text_digest, started_at, completed_at, created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         action_identity,
@@ -11376,6 +11463,7 @@ class EmailStore:
                         stable_message_identity,
                         thread_identity,
                         entry_reference,
+                        entry_url,
                         outcome,
                         receipt_id,
                         evidence,
@@ -11492,6 +11580,7 @@ class EmailStore:
             "stable_message_identity": row["stable_message_identity"],
             "thread_identity": row["thread_identity"],
             "entry_reference": row["entry_reference"],
+            "entry_url": row["entry_url"],
             "outcome": row["outcome"],
             "receipt_id": row["receipt_id"],
             "evidence": row["evidence"],

@@ -1,5 +1,46 @@
 # Changelog
 
+- 2026-09-12: an unsubscribe receipt now records the entry URL it was earned
+  against (`email_unsubscribe_receipts.entry_url`, schema v37). Until now the
+  only durable trace was `entry_reference`, the sha256 of the private URL, and
+  the HTML body the candidate came from is not stored either, so an outcome
+  like `skipped_no_reliable_entry` named a host (`r.openai.com`) and no
+  address: attempt #9129 could not be reproduced by hand from anything this
+  service kept. Derek asked for the full URL rather than a redacted origin, so
+  the column holds the query and token the provider put in the link and opening
+  it performs a real unsubscribe - anyone who can read the table or the Attempt
+  page can unsubscribe on the user's behalf. The value is checked against
+  `entry_reference` (its sha256 must match) and is deliberately exempt from
+  `assert_no_credentials`, which rejects exactly those tokens. Receipts written
+  before this change keep an empty value; their URL is not recoverable.
+
+- 2026-09-12: the Attempt page now carries the evidence its run produced. The
+  detail DTO dropped `tool_uses` whenever an Attempt had agent runs, deferring
+  to a per-role execution page that only ever rendered route/model metadata, so
+  no agent Attempt showed what it called. Each role's calls now come from the
+  run that made them, both Codex transcripts are linked (only the last role's
+  was), an email Attempt carries its message and unsubscribe receipt, and an
+  email Attempt no longer offers a DingTalk conversation link built from an
+  email thread digest.
+
+- 2026-09-12: the service no longer reads its own deliveries back as triggers.
+  DWS sends as the signed-in user, so a meeting follow-up delivered into the
+  robot chat returns with the user as its sender and passed every identity
+  check: `read_robot_direct_messages` only excludes the robot's own open ids,
+  and `_is_current_user_message_for_candidate_filter` exempts robot-direct
+  messages outright. Eight follow-ups opened a run on themselves that way.
+  `_candidate_messages` now drops any message whose body matches one this
+  service recorded sending (`outbound_postfixes`), compared through
+  `outbound_body_echo_key` because DingTalk rewrites a sent blank line as a
+  markdown hard break. That record replaces the `（by X 分身）` signature check,
+  which recognised the same thing by content and never ran on this path.
+
+- 2026-09-12: a history row now carries what the run produced - the reply it
+  sent, or the audit conclusion when it sent nothing - instead of leaving the
+  console to fall back to the trigger text. A skipped attempt rendered its own
+  trigger under 答, reading as though the service had answered with the message
+  it was given.
+
 - 2026-09-11: a runtime health probe no longer requires the provider's reply to
   be nothing but the canonical object. MiniMax-M3 returns it inside a
   `<think>...</think>` block, so `friday_runtime` was marked unhealthy and

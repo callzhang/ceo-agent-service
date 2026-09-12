@@ -349,6 +349,8 @@ Consumer→Audit 往返——退订在真实世界本来就是幂等的，那套
 页面要求登录或 CAPTCHA 时记 `skipped_login_required` / `skipped_captcha`；页面读到了但这个服务
 不操作它提供的控件时记 `skipped_no_reliable_entry`，并保留页面原文，这类结果不重试。
 
+receipt 另外保存 `entry_url`，即这次实际打开的完整私密 URL。`entry_reference` 只是该 URL 的 sha256，邮件 HTML 正文也不落库，所以在此之前 `skipped_no_reliable_entry` 这类结论只能指出 host，无法被人工复现。写入前校验 sha256 与 `entry_reference` 一致；该值是可直接触发对外副作用的链接，只在 receipt 表和 Attempt 详情页出现，不进入 `trigger_message_json`、步骤日志或错误码。
+
 分类器按阶段运行。冷启动只由 Agent 处理服务上线后出现的未读 Inbox/未绑定来源邮件；已读邮件
 不交给 Agent，且分类过程不把邮件标为已读。训练只在冻结的 provider-folder snapshot 上离线、
 分阶段执行，shadow 模型不进入实时扫描。单个类别达到历史门槛后，只能用于显式、分批、可恢复的

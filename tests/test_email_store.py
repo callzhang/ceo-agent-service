@@ -207,8 +207,8 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     assert "email_training_snapshots" in tables
     assert "email_training_snapshot_observations" in tables
     assert preserved_model_text == "__subject__preserved migration row"
-    assert versions == list(range(22, 37))
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 36
+    assert versions == list(range(22, 38))
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 37
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select frozen from email_training_snapshots").fetchall() == []
@@ -249,7 +249,7 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == list(range(23, 37))
+        ] == list(range(23, 38))
 
 
 def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path):
@@ -306,7 +306,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == list(range(23, 37))
+    ] == list(range(23, 38))
 
 
 def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
@@ -1370,7 +1370,9 @@ _UNSUBSCRIBE_OWNER_B = {
 }
 
 
-def _unsubscribe_authorization(store: EmailStore) -> dict[str, object]:
+def _unsubscribe_authorization(
+    store: EmailStore, *, entry_reference: str = "unsubscribe-entry:" + "b" * 64
+) -> dict[str, object]:
     store.create_account(
         {
             "account_id": "dingtalk-account",
@@ -1414,7 +1416,7 @@ def _unsubscribe_authorization(store: EmailStore) -> dict[str, object]:
         "account_id": classification.provider_locator.account_id,
         "stable_message_identity": classification.stable_message_identity,
         "thread_identity": "thread-unsubscribe-41",
-        "entry_reference": "unsubscribe-entry:" + "b" * 64,
+        "entry_reference": entry_reference,
         "operations": [
             {
                 "operation_reference": "step-1",
@@ -1478,7 +1480,7 @@ def _downgrade_email_database_to_v16(database: Path) -> None:
             row[1]
             for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
         }
-        for column in ("result_text_digest", "result_text_truncated"):
+        for column in ("entry_url", "result_text_digest", "result_text_truncated"):
             if column in receipt_columns:
                 db.execute(
                     f"alter table email_unsubscribe_receipts drop column {column}"
@@ -3210,8 +3212,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_35() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 36
+def test_email_schema_version_is_37() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 37
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:
@@ -3986,6 +3988,7 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             34,
             35,
             36,
+            37,
         ]
         assert {
             row[1]
@@ -4246,6 +4249,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
         34,
         35,
         36,
+        37,
     ]
 
     EmailStore(database)
@@ -4332,6 +4336,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
         34,
         35,
         36,
+        37,
     ]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
@@ -4757,6 +4762,7 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
         34,
         35,
         36,
+        37,
     ]
 
 
@@ -9206,7 +9212,7 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
 
     migrated = EmailStore(database)
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 36
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 37
     assert migrated.get_account("primary")["imap_move_mode"] == "copy_as_move"
     assert (
         migrated.list_account_folder_bindings("junk")[0]["provider_folder_id"]
@@ -9573,7 +9579,7 @@ def test_v36_drops_policy_keys_from_immutable_email_task_inputs(tmp_path: Path) 
         }
     )
     with sqlite3.connect(database) as db:
-        db.execute("update email_schema_migrations set version=35 where version=36")
+        db.execute("update email_schema_migrations set version=35 where version=37")
         db.execute(
             """
             insert into reply_task_inputs (
@@ -9606,7 +9612,7 @@ def test_v36_drops_policy_keys_from_immutable_email_task_inputs(tmp_path: Path) 
     assert "unsubscribe_network_policy_reference" not in payload
     assert "unsubscribe_network_policy_origin_references" not in payload
     assert payload["action_type"] == "unsubscribe"
-    assert versions[-1] == 36
+    assert versions[-1] == 37
 
 
 def _fd_regression_account_values() -> dict[str, object]:
@@ -9710,3 +9716,94 @@ def test_read_loop_does_not_accumulate_file_descriptors(tmp_path: Path) -> None:
     finally:
         gc.enable()
     assert after == before
+
+
+_UNSUBSCRIBE_ENTRY_URL = (
+    "https://r.openai.com/asm/unsubscribe"
+    "?token=abc123def456ghi789jkl012mno345pqr678stu901"
+)
+
+
+def _entry_reference_for(url: str) -> str:
+    return "unsubscribe-entry:" + sha256(url.encode("utf-8")).hexdigest()
+
+
+def test_unsubscribe_receipt_records_the_entry_url_it_was_earned_against(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    authorization = _unsubscribe_authorization(
+        store, entry_reference=_entry_reference_for(_UNSUBSCRIBE_ENTRY_URL)
+    )
+    claim = store.claim_email_unsubscribe_write(
+        **authorization, owner=_UNSUBSCRIBE_OWNER_A
+    )
+    assert claim is not None and claim["acquired"] is True
+
+    receipt = store.persist_email_unsubscribe_terminal(
+        **authorization,
+        entry_url=_UNSUBSCRIBE_ENTRY_URL,
+        outcome="skipped_no_reliable_entry",
+        receipt_id="unsubscribe-receipt:entry-url",
+        evidence="page-not-operable",
+        final_step={
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "skipped_no_reliable_entry",
+            "reference": "unsubscribe-receipt:entry-url",
+        },
+        claim_owner=_UNSUBSCRIBE_OWNER_A,
+    )
+
+    # Without this the outcome named a host and no address, so no reviewer
+    # could open what the run opened: the URL is stored nowhere else and the
+    # message body the candidate came from is not kept.
+    assert receipt["entry_url"] == _UNSUBSCRIBE_ENTRY_URL
+    persisted = store.get_email_unsubscribe_receipt(
+        str(authorization["action_identity"])
+    )
+    assert persisted is not None
+    assert persisted["entry_url"] == _UNSUBSCRIBE_ENTRY_URL
+
+
+def test_unsubscribe_receipt_rejects_an_entry_url_it_is_not_bound_to(tmp_path: Path):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    authorization = _unsubscribe_authorization(
+        store, entry_reference=_entry_reference_for(_UNSUBSCRIBE_ENTRY_URL)
+    )
+    claim = store.claim_email_unsubscribe_write(
+        **authorization, owner=_UNSUBSCRIBE_OWNER_A
+    )
+    assert claim is not None and claim["acquired"] is True
+
+    with pytest.raises(ValueError, match="entry reference"):
+        store.persist_email_unsubscribe_terminal(
+            **authorization,
+            entry_url="https://r.openai.com/asm/unsubscribe?token=another-address",
+            outcome="done",
+            receipt_id="unsubscribe-receipt:mismatch",
+            evidence="terminal-page",
+            claim_owner=_UNSUBSCRIBE_OWNER_A,
+        )
+
+
+def test_unsubscribe_receipt_has_no_entry_url_when_no_entry_was_selected(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    authorization = _unsubscribe_authorization(store)
+    claim = store.claim_email_unsubscribe_write(
+        **authorization, owner=_UNSUBSCRIBE_OWNER_A
+    )
+    assert claim is not None and claim["acquired"] is True
+
+    receipt = store.persist_email_unsubscribe_terminal(
+        **authorization,
+        outcome="skipped_no_reliable_entry",
+        receipt_id="unsubscribe-receipt:no-entry",
+        evidence="entry-selection",
+        claim_owner=_UNSUBSCRIBE_OWNER_A,
+    )
+
+    # An entry that was never selected has no URL to record.
+    assert receipt["entry_url"] == ""

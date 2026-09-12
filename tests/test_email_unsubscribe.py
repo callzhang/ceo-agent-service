@@ -3526,3 +3526,43 @@ def test_a_page_we_will_not_operate_is_terminal_not_a_retryable_failure() -> Non
     ):
         assert not _is_unoperable_page(UnsubscribeBrowserError(category))
     assert not _is_unoperable_page(RuntimeError("unrelated"))
+
+
+class _UnoperablePageBrowser(_ScriptedBrowser):
+    """A page that loads and reads, but offers nothing this service will drive."""
+
+    def execute_operation(
+        self,
+        effect: EmailUnsubscribeEffect,
+        private_url: str,
+        operation: UnsubscribeOperation,
+    ) -> UnsubscribeObservation:
+        self.calls.append(operation.operation_reference)
+        raise UnsubscribeBrowserError(
+            UnsubscribeBrowserFailure.PAGE_CONTROLS_UNMODELLED
+        )
+
+
+def test_unoperable_page_receipt_records_the_entry_it_opened(tmp_path: Path) -> None:
+    store = _authorized_store(tmp_path)
+    effect = _effect()
+    browser = _UnoperablePageBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-loaded",
+                next_operation_reference=effect.operations[0].operation_reference,
+            )
+        ]
+    )
+
+    result = UnsubscribeExecutor(store, browser, owner=UNSUBSCRIBE_OWNER).execute(
+        effect, (_entry(),)
+    )
+
+    assert result.outcome is UnsubscribeOutcome.SKIPPED_NO_RELIABLE_ENTRY
+    receipt = store.get_email_unsubscribe_receipt(effect.action_identity)
+    assert receipt is not None
+    # skipped_no_reliable_entry named a host and no address, so the page this
+    # run decided against could not be opened again by hand.
+    assert receipt["entry_url"] == TOKEN_URL

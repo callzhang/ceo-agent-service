@@ -1034,6 +1034,10 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-email-grid dd { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--ink); font-size: .8rem; line-height: 1.45; }
 .attempt-email-receipt { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .attempt-email-receipt h3 { margin: 0; font-size: .86rem; }
+.attempt-email-entry { margin: 14px 0 0; }
+.attempt-email-entry dt { color: var(--ink-soft); font-size: .68rem; }
+.attempt-email-entry dd { margin: 4px 0 0; overflow-wrap: anywhere; font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .74rem; line-height: 1.45; }
+.attempt-email-entry a { color: var(--accent); }
 .attempt-email-observation { margin: 12px 0 0; overflow-wrap: anywhere; padding: 10px 11px; border-radius: 8px; background: var(--surface-muted); font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .74rem; line-height: 1.45; }
 .attempt-email-steps { display: grid; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; counter-reset: attempt-email-step; }
 .attempt-email-steps li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }

@@ -3763,6 +3763,7 @@ class UnsubscribeExecutor:
         *,
         final_step: RedactedUnsubscribeStep | None,
         claim_owned: bool,
+        entry_url: str = "",
         result_text: str = "",
         observation_digest: str = "",
         result_text_digest: str | None = None,
@@ -3788,6 +3789,7 @@ class UnsubscribeExecutor:
         try:
             persisted = self.store.persist_email_unsubscribe_terminal(
                 **self._store_arguments(effect),
+                entry_url=entry_url,
                 outcome=outcome.value,
                 receipt_id=receipt.receipt_id,
                 evidence=receipt.evidence,
@@ -4037,6 +4039,7 @@ class UnsubscribeExecutor:
                     reference=receipt.receipt_id,
                 ),
                 claim_owned=False,
+                entry_url=entry.private_url,
             )
 
         if existing_continuation is not None:
@@ -4066,6 +4069,7 @@ class UnsubscribeExecutor:
                         reference=observation.state_reference,
                     ),
                     claim_owned=False,
+                    entry_url=entry.private_url,
                     result_text=terminal.result_text,
                     observation_digest=terminal.observation_digest,
                     result_text_digest=terminal.result_text_digest,
@@ -4139,6 +4143,7 @@ class UnsubscribeExecutor:
                 journal,
                 final_step=reconcile_step,
                 claim_owned=False,
+                entry_url=entry.private_url,
                 result_text=terminal.result_text,
                 observation_digest=terminal.observation_digest,
                 result_text_digest=terminal.result_text_digest,
@@ -4231,6 +4236,7 @@ class UnsubscribeExecutor:
                             reference=receipt.receipt_id,
                         ),
                         claim_owned=True,
+                        entry_url=entry.private_url,
                         **_browser_failure_observation_fields(exc),
                     )
                 return _result(
@@ -4260,6 +4266,7 @@ class UnsubscribeExecutor:
                     journal,
                     final_step=operation_step,
                     claim_owned=True,
+                    entry_url=entry.private_url,
                     result_text=terminal.result_text,
                     observation_digest=terminal.observation_digest,
                     result_text_digest=terminal.result_text_digest,

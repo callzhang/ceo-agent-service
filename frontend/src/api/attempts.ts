@@ -30,6 +30,7 @@ export interface AttemptUnsubscribeReceipt {
   result_text: string;
   receipt_id: string;
   entry_reference: string;
+  entry_url: string;
   started_at: string;
   completed_at: string;
   steps: Array<{ sequence: number; operation: string; state: string }>;
