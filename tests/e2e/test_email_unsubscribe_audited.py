@@ -745,13 +745,14 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             allow_loopback_for_tests=True,
         )
 
-        def run_effect(effect, entry, *, one_click_verified):
+        def run_effect(effect, entry, *, one_click_verified, executed=None):
             return run_unsubscribe_in_dedicated_profile(
                 effect,
                 entry,
                 profile=dedicated_profile,
                 one_click_verified=one_click_verified,
                 timeout_ms=3_000,
+                executed=executed,
             )
 
         unsubscribe_operation = DirectEmailUnsubscribeOperation(

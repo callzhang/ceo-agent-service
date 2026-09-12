@@ -16,6 +16,7 @@ the only durable fence, and the page's own redacted text is the evidence.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 
 from app.email_unsubscribe import (
@@ -218,6 +219,7 @@ def run_direct_unsubscribe(
     *,
     one_click_verified: bool = False,
     max_controls: int = MAX_DIRECT_UNSUBSCRIBE_CONTROLS,
+    executed: list[UnsubscribeOperation] | None = None,
 ) -> UnsubscribeExecutionResult:
     """Open the authorized entry, operate the page, and return the outcome.
 
@@ -230,6 +232,10 @@ def run_direct_unsubscribe(
     journal: list[RedactedUnsubscribeStep] = []
     operation = opening_operation(entry, one_click_verified=one_click_verified)
     operated: set[str] = set()
+    # The caller persists the effect, and an effect has to say which operations
+    # its journal records. In this lifecycle that list is only known once the
+    # page has been read, so it is collected here rather than accepted up front.
+    performed = executed if executed is not None else []
     for _ in range(max(1, max_controls) + 1):
         try:
             observation = browser.execute_operation(
@@ -256,6 +262,7 @@ def run_direct_unsubscribe(
                     visible_text=_observation_text(exc),
                 )
             return _failure(journal, exc)
+        performed.append(operation)
         journal.append(
             RedactedUnsubscribeStep(
                 operation=operation.kind.value,
@@ -316,6 +323,7 @@ def run_unsubscribe_in_dedicated_profile(
     connected_recipient: str = "",
     email_otp_resolver: object | None = None,
     session_manager: object | None = None,
+    executed: list[UnsubscribeOperation] | None = None,
 ) -> UnsubscribeExecutionResult:
     """Run one whole unsubscribe inside the locked headless profile.
 
@@ -356,6 +364,7 @@ def run_unsubscribe_in_dedicated_profile(
             effect,
             entry,
             one_click_verified=one_click_verified,
+            executed=executed,
         )
     finally:
         _close_session(manager, profile, effect.action_identity)
@@ -472,13 +481,20 @@ class DirectEmailUnsubscribeOperation:
                     opening_operation(entry, one_click_verified=one_click_verified),
                 ),
             )
+            executed: list[UnsubscribeOperation] = []
             result = self.run_effect(
                 effect,
                 entry,
                 one_click_verified=one_click_verified,
+                executed=executed,
             )
             if isinstance(result, UnsubscribeExecutionResult) and result.receipt:
-                self._persist(effect, result, _store_arguments(effect))
+                # The effect that gets persisted is the one this run actually
+                # performed, not the single entry operation it started from.
+                self._persist(
+                    self._performed_effect(effect, executed),
+                    result,
+                )
             return _normalize_result(result).model_dump(mode="json")
         except Exception as exc:  # noqa: BLE001 - a public tool fails closed
             return _failed_call(
@@ -486,12 +502,60 @@ class DirectEmailUnsubscribeOperation:
                 detail=_rejection_detail(exc),
             )
 
+    def _performed_effect(
+        self,
+        effect: EmailUnsubscribeEffect,
+        executed: list[UnsubscribeOperation],
+    ) -> EmailUnsubscribeEffect:
+        """Return the effect whose operations describe this action's journal.
+
+        A durable journal step is checked against `operations[sequence - 1]`
+        of the effect it is bound to, where `sequence` counts every step this
+        action has ever recorded. The audited lifecycle satisfied that by
+        making each continuation effect carry the whole accepted prefix; this
+        lifecycle accepts nothing up front, so the prefix is reconstructed
+        from the steps already on disk and this run's operations are appended
+        to it. Without that, a run that clicked one control wrote a step at
+        sequence 2 against an effect declaring one operation, and the
+        whole-table integrity check then failed every later call for every
+        action -- which is how seven requeued tasks died in a row.
+        """
+
+        from app.email_unsubscribe import UnsubscribeOperationKind
+
+        prefix: list[UnsubscribeOperation] = []
+        for step in self.email_store.list_email_unsubscribe_steps(
+            effect.action_identity
+        ):
+            try:
+                kind = UnsubscribeOperationKind(step["operation"])
+            except ValueError:
+                # A step this lifecycle never wrote and cannot name. Keep the
+                # position so later indexes stay aligned, and keep its own
+                # reference so the entry still points at something real.
+                kind = UnsubscribeOperationKind.RECONCILE_HANDOFF
+            prefix.append(
+                UnsubscribeOperation(
+                    operation_reference=_operation_reference(
+                        f"journaled:{step['sequence']}", step["reference"]
+                    ),
+                    kind=kind,
+                    target_reference=step["reference"],
+                )
+            )
+        operations = (*prefix, *executed)
+        if not operations:
+            return effect
+        return replace(effect, operations=operations)
+
     def _persist(
         self,
         effect: EmailUnsubscribeEffect,
         result: UnsubscribeExecutionResult,
-        store_arguments: dict[str, object],
     ) -> None:
+        from app.email_unsubscribe_audit import _store_arguments
+
+        store_arguments = _store_arguments(effect)
         receipt = result.receipt
         assert receipt is not None
         # A claim the audited lifecycle left behind carries that lifecycle's
@@ -502,6 +566,7 @@ class DirectEmailUnsubscribeOperation:
         # Every page this run touched, appended after whatever the audited
         # lifecycle already wrote for this action.
         start = len(self.email_store.list_email_unsubscribe_steps(effect.action_identity))
+        assert start + len(result.journal) <= len(effect.operations)
         journal = [
             {
                 "sequence": start + offset,

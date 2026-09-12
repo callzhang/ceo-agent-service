@@ -413,12 +413,13 @@ def _operation(tmp_path: Path, observations: list[object]):
         del locator, expected_reference
         return (ENTRY,)
 
-    def run_effect(effect, entry, *, one_click_verified):
+    def run_effect(effect, entry, *, one_click_verified, executed=None):
         return run_direct_unsubscribe(
             browser,
             effect,
             entry,
             one_click_verified=one_click_verified,
+            executed=executed,
         )
 
     operation = DirectEmailUnsubscribeOperation(
@@ -561,3 +562,166 @@ def test_an_invalid_task_id_fails_closed(tmp_path: Path, task_id: object) -> Non
     result = operation.execute(task_id)
 
     assert result["status"] == "failed"
+
+
+def _journal_prefix_violations(store) -> list[tuple]:
+    """Replay the durable invariant the whole-table integrity check enforces."""
+
+    import json as _json
+
+    with store._connect() as db:
+        effects = {
+            (r["action_identity"], r["effect_digest"]): _json.loads(r["operations_json"])
+            for r in db.execute(
+                "select action_identity, effect_digest, operations_json "
+                "from email_unsubscribe_effects"
+            )
+        }
+        bad = []
+        for row in db.execute(
+            "select * from email_unsubscribe_steps order by action_identity, sequence"
+        ):
+            ops = effects.get((row["action_identity"], row["effect_digest"]))
+            if ops is None:
+                bad.append((row["sequence"], row["operation"], "no effect row"))
+                continue
+            if row["state"] != "action_required":
+                continue
+            if (
+                row["sequence"] > len(ops)
+                or row["operation"] != ops[row["sequence"] - 1]["kind"]
+            ):
+                bad.append((row["sequence"], row["operation"], [o["kind"] for o in ops]))
+        return bad
+
+
+def test_a_run_that_clicks_a_control_stays_inside_the_journal_invariant(
+    tmp_path: Path,
+) -> None:
+    """A click wrote a step at sequence 2 against a one-operation effect.
+
+    email_unsubscribe_steps rows are validated against
+    `operations[sequence - 1]` of the effect they are bound to. The opening
+    entry operation is the only thing this lifecycle knows up front, so a run
+    that operated one control left an out-of-range step. That check scans the
+    WHOLE table, so the single bad row then raised
+    "unsubscribe journal does not match its audited operation prefix" on every
+    later call for every action -- seven requeued tasks failed in a row behind
+    one row.
+    """
+
+    effect = _effect()
+    operation, task, email_store, browser = _operation(
+        tmp_path,
+        [
+            # Page one asks for confirmation; the click lands on a page that
+            # is still action-required, then the third page is terminal.
+            _action_required(_control("form", "unsubscribe", "control-one")),
+            _action_required(_control("link", "confirm", "control-two")),
+            _terminal(effect, UnsubscribePageState.DONE, "You have unsubscribed."),
+        ],
+    )
+
+    result = operation.execute(task.id)
+
+    assert result["outcome"] == "done"
+    assert len(browser.calls) == 3
+    steps = email_store.list_email_unsubscribe_steps(ACTION_IDENTITY)
+    assert [s["operation"] for s in steps] == [
+        "open_entry",
+        "submit_form",
+        "click_confirmation",
+    ]
+    assert _journal_prefix_violations(email_store) == []
+
+
+def test_the_effect_records_every_operation_the_run_performed(
+    tmp_path: Path,
+) -> None:
+    effect = _effect()
+    operation, task, email_store, _browser = _operation(
+        tmp_path,
+        [
+            _action_required(_control("form", "unsubscribe", "control-one")),
+            _terminal(effect, UnsubscribePageState.DONE, "Unsubscribed."),
+        ],
+    )
+
+    operation.execute(task.id)
+
+    with email_store._connect() as db:
+        rows = db.execute(
+            "select operations_json from email_unsubscribe_effects "
+            "where action_identity=?",
+            (ACTION_IDENTITY,),
+        ).fetchall()
+    assert len(rows) == 1
+    kinds = [item["kind"] for item in json.loads(rows[0]["operations_json"])]
+    assert kinds == ["open_entry", "submit_form"]
+
+
+def test_an_effect_that_underdeclares_its_journal_can_be_repaired(
+    tmp_path: Path,
+) -> None:
+    """The shape that took the whole email subsystem down.
+
+    A direct run wrote a step at sequence 2 bound to an effect declaring one
+    operation. _validate_durable_rows scans EVERY step in the table, so that
+    single row made EmailStore refuse to open at all -- not just the
+    unsubscribe tool, the entire email subsystem, for every action.
+    """
+
+    effect = _effect()
+    operation, task, email_store, _browser = _operation(
+        tmp_path,
+        [
+            # The middle page stays action-required, which is the only state
+            # the prefix invariant actually checks.
+            _action_required(_control("form", "unsubscribe", "control-one")),
+            _action_required(_control("link", "confirm", "control-two")),
+            _terminal(effect, UnsubscribePageState.DONE, "Unsubscribed."),
+        ],
+    )
+    operation.execute(task.id)
+
+    # Recreate the corruption: shrink the effect back to the single entry
+    # operation the broken code declared, keeping its digest.
+    with email_store._connect() as db:
+        row = db.execute(
+            "select effect_digest, operations_json from email_unsubscribe_effects "
+            "where action_identity=?",
+            (ACTION_IDENTITY,),
+        ).fetchone()
+        shrunk = json.dumps(json.loads(row["operations_json"])[:1])
+        db.execute(
+            "update email_unsubscribe_effects set operations_json=? "
+            "where action_identity=? and effect_digest=?",
+            (shrunk, ACTION_IDENTITY, row["effect_digest"]),
+        )
+    assert _journal_prefix_violations(email_store) != []
+
+    result = email_store.repair_email_unsubscribe_effect_journal(ACTION_IDENTITY)
+
+    assert result["repaired"] is True
+    assert result["operations"] == ["open_entry", "submit_form", "click_confirmation"]
+    assert _journal_prefix_violations(email_store) == []
+    # The store opens again, which is the whole point.
+    from app.email_store import EmailStore
+
+    reopened = EmailStore(email_store.path)
+    assert reopened.get_email_unsubscribe_receipt(ACTION_IDENTITY) is not None
+
+
+def test_repairing_a_healthy_action_changes_nothing(tmp_path: Path) -> None:
+    effect = _effect()
+    operation, task, email_store, _browser = _operation(
+        tmp_path,
+        [_terminal(effect, UnsubscribePageState.DONE, "You have unsubscribed.")],
+    )
+    operation.execute(task.id)
+    before = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
+
+    result = email_store.repair_email_unsubscribe_effect_journal(ACTION_IDENTITY)
+
+    assert result["repaired"] is False
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) == before

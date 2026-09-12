@@ -10533,6 +10533,169 @@ class EmailStore:
                 == 1
             )
 
+    def repair_email_unsubscribe_effect_journal(
+        self,
+        action_identity: str,
+    ) -> dict[str, Any]:
+        """Make an effect's operations describe the journal actually bound to it.
+
+        A durable step is validated against ``operations[sequence - 1]`` of the
+        effect it carries, where ``sequence`` counts every step the action has
+        ever recorded. The audited lifecycle satisfied that by making each
+        continuation effect carry the whole accepted prefix. The direct
+        lifecycle briefly wrote effects that declared only the entry
+        operation, so a run that clicked one control left a step indexing past
+        its own effect -- and because the integrity check scans every step in
+        the table, that one row made EmailStore refuse to open at all.
+
+        This rebuilds the effect from the journal it owns: one entry per step
+        of the action, in sequence order, so every index resolves. The steps,
+        the claim and the receipt are repointed to the recomputed digest in
+        the same transaction, and the superseded effect row is removed only
+        after nothing references it. Nothing about what happened is changed --
+        the operations written are the ones the journal already records.
+
+        Returns what it changed; an action whose effects already cover their
+        journal is left alone and reported as ``{"repaired": False}``.
+        """
+
+        action_identity = _validate_unsubscribe_opaque(
+            action_identity, field="action_identity"
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            claim = db.execute(
+                "select * from email_unsubscribe_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            steps = db.execute(
+                "select * from email_unsubscribe_steps where action_identity=? "
+                "order by sequence",
+                (action_identity,),
+            ).fetchall()
+            if claim is None or not steps:
+                return {"repaired": False, "reason": "no claim or no journal"}
+            effects = {
+                row["effect_digest"]: row
+                for row in db.execute(
+                    "select * from email_unsubscribe_effects where action_identity=?",
+                    (action_identity,),
+                )
+            }
+            undercovered = sorted(
+                {
+                    step["effect_digest"]
+                    for step in steps
+                    if step["effect_digest"] in effects
+                    and step["sequence"]
+                    > len(
+                        _json_load(
+                            effects[step["effect_digest"]]["operations_json"],
+                            field="operations_json",
+                            expected_type=list,
+                        )
+                    )
+                }
+            )
+            if not undercovered:
+                return {"repaired": False, "reason": "every effect covers its journal"}
+            operations = [
+                {
+                    "operation_reference": "unsubscribe-op:"
+                    + sha256(
+                        f"journaled:{step['sequence']}\n{step['reference']}".encode()
+                    ).hexdigest(),
+                    "kind": step["operation"],
+                    "target_reference": step["reference"],
+                }
+                for step in steps
+            ]
+            validated = _validate_unsubscribe_operations(operations)
+            repaired: list[dict[str, Any]] = []
+            for stale_digest in undercovered:
+                stale = effects[stale_digest]
+                digest = email_unsubscribe_effect_digest(
+                    action_identity=action_identity,
+                    action_plan_id=claim["action_plan_id"],
+                    action_plan_version=claim["action_plan_version"],
+                    classification_id=claim["classification_id"],
+                    account_id=claim["account_id"],
+                    stable_message_identity=claim["stable_message_identity"],
+                    thread_identity=claim["thread_identity"],
+                    entry_reference=claim["entry_reference"],
+                    operations=validated,
+                    previous_effect_digest=stale["previous_effect_digest"],
+                )
+                if digest == stale_digest:
+                    continue
+                db.execute(
+                    """
+                    insert or ignore into email_unsubscribe_effects (
+                        action_identity, effect_digest, previous_effect_digest,
+                        operations_json, created_at
+                    ) values (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        action_identity,
+                        digest,
+                        stale["previous_effect_digest"],
+                        _json_dump(validated),
+                        stale["created_at"],
+                    ),
+                )
+                moved_steps = db.execute(
+                    "update email_unsubscribe_steps set effect_digest=? "
+                    "where action_identity=? and effect_digest=?",
+                    (digest, action_identity, stale_digest),
+                ).rowcount
+                moved_claim = db.execute(
+                    "update email_unsubscribe_claims "
+                    "set effect_digest=?, operations_json=?, updated_at=current_timestamp "
+                    "where action_identity=? and effect_digest=?",
+                    (digest, _json_dump(validated), action_identity, stale_digest),
+                ).rowcount
+                moved_receipt = db.execute(
+                    "update email_unsubscribe_receipts set effect_digest=? "
+                    "where action_identity=? and effect_digest=?",
+                    (digest, action_identity, stale_digest),
+                ).rowcount
+                still_referenced = db.execute(
+                    """
+                    select
+                      (select count(*) from email_unsubscribe_steps
+                        where action_identity=? and effect_digest=?) as steps,
+                      (select count(*) from email_unsubscribe_claims
+                        where action_identity=? and effect_digest=?) as claims,
+                      (select count(*) from email_unsubscribe_receipts
+                        where action_identity=? and effect_digest=?) as receipts,
+                      (select count(*) from email_unsubscribe_continuations
+                        where action_identity=? and effect_digest=?) as continuations,
+                      (select count(*) from email_unsubscribe_effects
+                        where action_identity=? and previous_effect_digest=?) as children
+                    """,
+                    (action_identity, stale_digest) * 5,
+                ).fetchone()
+                if not any(int(still_referenced[key]) for key in still_referenced.keys()):
+                    db.execute(
+                        "delete from email_unsubscribe_effects "
+                        "where action_identity=? and effect_digest=?",
+                        (action_identity, stale_digest),
+                    )
+                repaired.append(
+                    {
+                        "stale_effect_digest": stale_digest,
+                        "effect_digest": digest,
+                        "steps": moved_steps,
+                        "claims": moved_claim,
+                        "receipts": moved_receipt,
+                    }
+                )
+            return {
+                "repaired": bool(repaired),
+                "operations": [item["kind"] for item in validated],
+                "effects": repaired,
+            }
+
     def retire_email_unsubscribe_claim_for_direct_run(
         self,
         *,
