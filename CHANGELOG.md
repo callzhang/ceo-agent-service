@@ -1,5 +1,16 @@
 # Changelog
 
+- 2026-09-13: service startup now closes weekly OKR analysis jobs whose
+  technical runtime or result-validation failure has been replaced by a later
+  successful analysis for the same manager. Result-contract failures join
+  route and lease failures in this recovery path, while business rejections
+  remain failed.
+- 2026-09-13: the headless Dingteam OKR source now scopes the QR-login tab to
+  the active login panel and confirms desktop DingTalk SSO through the actual
+  accessibility action. The confirmation must disappear before the refresh is
+  accepted, and accessibility traversal no longer drops controls when PyObjC
+  reuses temporary wrapper addresses.
+
 - 2026-09-13: meeting alignment's provider-facing response schema now marks
   every declared top-level property as required and removes Pydantic defaults
   from that schema while preserving those defaults for legacy persisted input.

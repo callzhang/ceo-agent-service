@@ -3733,6 +3733,7 @@ def _recover_processing_work_summary_inputs_on_service_start(
     recovered_runs = store.recover_orphaned_task_agent_runs()
     completed_weekly_jobs = (
         store.complete_superseded_stale_weekly_okr_analysis_jobs()
+        + store.complete_superseded_failed_weekly_okr_analysis_jobs()
     )
     closed_superseded_scheduled_tasks = close_superseded_scheduled_reply_tasks(store)
     recovered_runtime_attempts = store.recover_stale_runtime_attempts(

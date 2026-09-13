@@ -131,15 +131,15 @@ def test_login_redirect_uses_local_dingtalk_sso_before_expiring(monkeypatch):
         def wait_for(self, **kwargs):
             calls.append(("wait_for", kwargs))
 
+        def filter(self, **kwargs):
+            calls.append(("filter", kwargs))
+            return self
+
         def click(self, **kwargs):
             calls.append(("click_avatar", kwargs))
 
     class Page:
         url = "https://login.dingtalk.com/oauth2/challenge.htm"
-
-        def get_by_text(self, text, *, exact):
-            calls.append(("get_by_text", text, exact))
-            return self
 
         def click(self, **kwargs):
             calls.append(("click_qr", kwargs))
@@ -164,8 +164,10 @@ def test_login_redirect_uses_local_dingtalk_sso_before_expiring(monkeypatch):
     assert module._attempt_local_dingtalk_sso(Page()) is True
     assert calls == [
         ("submit", 1),
-        ("get_by_text", "QR Code", True),
-        ("click_qr", {"timeout": module.LOCAL_SSO_TIMEOUT_MS}),
+        ("locator", module.LOCAL_SSO_QR_TAB),
+        ("filter", {"has_text": "QR Code"}),
+        ("wait_for", {"state": "visible", "timeout": module.LOCAL_SSO_TIMEOUT_MS}),
+        ("click_avatar", {"timeout": module.LOCAL_SSO_TIMEOUT_MS}),
         ("locator", module.LOCAL_SSO_ACCOUNT_AVATAR),
         ("wait_for", {"state": "visible", "timeout": module.LOCAL_SSO_TIMEOUT_MS}),
         ("click_avatar", {"timeout": module.LOCAL_SSO_TIMEOUT_MS}),
@@ -240,6 +242,7 @@ def test_local_sso_selectors_are_scoped_to_the_current_login_page():
     assert module.LOCAL_SSO_DIRECT_BUTTON.startswith(".app-page.app-page-curr ")
     assert module.LOCAL_SSO_ACCOUNT_AVATAR.startswith(".app-page.app-page-curr ")
     assert module.LOCAL_SSO_CORP_ITEM.startswith(".app-page.app-page-curr ")
+    assert module.LOCAL_SSO_QR_TAB.startswith(".flex-box-tab-content ")
 
 
 def test_native_dingtalk_confirmation_allows_slow_local_sso(monkeypatch):

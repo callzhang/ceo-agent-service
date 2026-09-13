@@ -22725,11 +22725,11 @@ class AutoReplyStore:
     ) -> int:
         """Close technical-failure analysis jobs a later completed analysis replaced.
 
-        A job that ended `runtime_route_unavailable` / `runtime_lease_expired`
-        is not owed output once the same manager has a completed analysis for
-        a later week, or a completed analysis started after it (the rerun that
-        actually shipped that week's report). Leaving them `failed` kept
-        outage-era jobs in the failed set for weeks.
+        A job that ended in a runtime route, lease, or result-validation
+        failure is not owed output once the same manager has a completed
+        analysis for a later week, or a completed analysis started after it
+        (the rerun that actually shipped that week's report). Leaving them
+        `failed` kept outage-era jobs in the failed set for weeks.
         """
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute(
@@ -22739,7 +22739,11 @@ class AutoReplyStore:
                     lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
                 where stale.status='failed'
-                  and stale.error in ('runtime_route_unavailable', 'runtime_lease_expired')
+                  and stale.error in (
+                    'runtime_route_unavailable',
+                    'runtime_lease_expired',
+                    'runtime_result_validation_failed'
+                  )
                   and exists (
                     select 1
                     from weekly_okr_analysis_jobs as completed

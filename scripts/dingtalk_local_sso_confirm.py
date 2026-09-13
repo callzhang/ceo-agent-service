@@ -9,7 +9,7 @@ DINGTALK_BUNDLE_ID = "com.alibaba.DingTalkMac"
 CONFIRM_URL_FRAGMENT = "login.dingtalk.com/oauth2/local_confirm.htm"
 CONFIRM_APP_NAME = "叮当OKR"
 CONFIRM_TIMEOUT_SECONDS = 35
-RETURN_KEY_CODE = 36
+LOGIN_ACTION_TEXTS = {"登录", "Log In"}
 
 
 def _is_dingteam_confirmation(url: str, text: str) -> bool:
@@ -46,6 +46,44 @@ def _subtree_text(element, *, limit: int = 200) -> str:
     return " ".join(parts)
 
 
+def _action_names(element):
+    from ApplicationServices import AXUIElementCopyActionNames
+
+    error, actions = AXUIElementCopyActionNames(element, None)
+    return list(actions or []) if error == 0 else []
+
+
+def _perform_action(element, action: str) -> int:
+    from ApplicationServices import AXUIElementPerformAction
+
+    return int(AXUIElementPerformAction(element, action))
+
+
+def _find_login_action(root):
+    stack = [root]
+    text_action = None
+    inspected = 0
+    while stack and inspected < 1_000:
+        element = stack.pop()
+        inspected += 1
+        role = _attribute(element, "AXRole")
+        text = " ".join(_subtree_text(element, limit=20).split())
+        if text in LOGIN_ACTION_TEXTS and "AXPress" in _action_names(element):
+            if role in {"AXButton", "AXGroup"}:
+                return element
+            text_action = text_action or element
+        stack.extend(_attribute(element, "AXChildren") or [])
+    return text_action
+
+
+def _press_login_action(root) -> None:
+    action = _find_login_action(root)
+    if action is None:
+        raise RuntimeError("Dingteam local login button was not found")
+    if _perform_action(action, "AXPress") != 0:
+        raise RuntimeError("Dingteam local login button could not be pressed")
+
+
 def _find_confirmation(app):
     roots = []
     focused = _attribute(app, "AXFocusedUIElement")
@@ -54,14 +92,9 @@ def _find_confirmation(app):
     roots.extend(_attribute(app, "AXWindows") or [])
 
     stack = list(roots)
-    seen = set()
     inspected = 0
     while stack and inspected < 1_000:
         element = stack.pop()
-        identity = id(element)
-        if identity in seen:
-            continue
-        seen.add(identity)
         inspected += 1
         url = _attribute(element, "AXURL")
         url_text = str(url) if url is not None else ""
@@ -80,7 +113,6 @@ def _find_confirmation(app):
 def main() -> int:
     from AppKit import NSRunningApplication
     from ApplicationServices import AXUIElementCreateApplication
-    import Quartz
 
     apps = NSRunningApplication.runningApplicationsWithBundleIdentifier_(
         DINGTALK_BUNDLE_ID
@@ -91,14 +123,15 @@ def main() -> int:
     app = AXUIElementCreateApplication(pid)
     deadline = time.monotonic() + CONFIRM_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
-        if _find_confirmation(app) is not None:
-            for key_down in (True, False):
-                event = Quartz.CGEventCreateKeyboardEvent(
-                    None, RETURN_KEY_CODE, key_down
-                )
-                Quartz.CGEventPostToPid(pid, event)
-                time.sleep(0.05)
-            return 0
+        confirmation = _find_confirmation(app)
+        if confirmation is not None:
+            _press_login_action(confirmation)
+            dismissed_deadline = time.monotonic() + 5
+            while time.monotonic() < dismissed_deadline:
+                if _find_confirmation(app) is None:
+                    return 0
+                time.sleep(0.1)
+            raise RuntimeError("Dingteam local login confirmation did not close")
         time.sleep(0.1)
     raise RuntimeError("Dingteam local login confirmation was not found")
 

@@ -113,6 +113,42 @@ def enqueue_trigger_task(
     )
 
 
+def test_service_start_closes_superseded_failed_weekly_okr_jobs(monkeypatch):
+    calls: list[object] = []
+    store = SimpleNamespace(
+        recover_orphaned_task_agent_runs=lambda: calls.append("orphaned") or 1,
+        complete_superseded_stale_weekly_okr_analysis_jobs=lambda: (
+            calls.append("stale-weekly") or 2
+        ),
+        complete_superseded_failed_weekly_okr_analysis_jobs=lambda: (
+            calls.append("failed-weekly") or 3
+        ),
+        recover_stale_runtime_attempts=lambda **kwargs: (
+            calls.append(("runtime", kwargs)) or 4
+        ),
+        recover_expired_terminal_task_runtime_attempts=lambda: (
+            calls.append("terminal-runtime") or 5
+        ),
+        reset_processing_work_summary_inputs=lambda: calls.append("inputs") or [1, 2],
+    )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
+    monkeypatch.setattr(
+        cli,
+        "close_superseded_scheduled_reply_tasks",
+        lambda received: calls.append("scheduled") or 6,
+    )
+    settings = SimpleNamespace(
+        db_path=Path("/tmp/unused.sqlite3"),
+        task_codex_timeout_seconds=60,
+        task_codex_idle_timeout_seconds=30,
+    )
+
+    recovered = cli._recover_processing_work_summary_inputs_on_service_start(settings)
+
+    assert recovered == 1 + 2 + 3 + 6 + 4 + 5 + 2
+    assert calls[:4] == ["orphaned", "stale-weekly", "failed-weekly", "scheduled"]
+
+
 def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, int]:
     store.enqueue_reply_task(
         channel="wechat",

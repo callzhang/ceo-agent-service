@@ -9351,7 +9351,14 @@ def test_discard_unstarted_agent_run_removes_only_a_fresh_claim(tmp_path: Path):
     assert store.get_agent_run(terminal.id) is not None
 
 
-@pytest.mark.parametrize("failure", ("runtime_lease_expired", "runtime_route_unavailable"))
+@pytest.mark.parametrize(
+    "failure",
+    (
+        "runtime_lease_expired",
+        "runtime_route_unavailable",
+        "runtime_result_validation_failed",
+    ),
+)
 def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: str):
     store = AutoReplyStore(tmp_path / "superseded-failed-weekly-okr.sqlite3")
     stale = store.begin_weekly_okr_analysis_job(
