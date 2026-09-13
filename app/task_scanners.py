@@ -365,6 +365,29 @@ def scan_pending_oa_approvals(
         timespec="seconds"
     )
     window_end = scan_time.isoformat(timespec="seconds")
+    store.backfill_oa_audit_metadata()
+    reconciled_completed_attempt_ids: list[int] = []
+    reconciliation_read_failures: list[str] = []
+    detail_cache: dict[str, Any] = {}
+    for attempt in store.list_open_oa_needs_human_attempts():
+        process_instance_id = attempt.oa_process_instance_id.strip()
+        try:
+            detail_payload = read_detail(process_instance_id)
+        except Exception:
+            reconciliation_read_failures.append(process_instance_id)
+            continue
+        detail_cache[process_instance_id] = detail_payload
+        terminal_state = _oa_terminal_process_state(detail_payload)
+        if terminal_state is None:
+            continue
+        _status, process_result = terminal_state
+        if store.resolve_completed_oa_needs_human_attempt(
+            attempt.id,
+            process_instance_id=process_instance_id,
+            process_result=process_result,
+        ):
+            reconciled_completed_attempt_ids.append(attempt.id)
+
     approvals = []
     try:
         for page in range(1, max_pages + 1):
@@ -425,7 +448,9 @@ def scan_pending_oa_approvals(
             continue
         try:
             tasks_payload = read_tasks(process_instance_id)
-            detail_payload = read_detail(process_instance_id)
+            detail_payload = detail_cache.get(process_instance_id)
+            if detail_payload is None:
+                detail_payload = read_detail(process_instance_id)
         except Exception:
             read_failures.append(process_instance_id)
             continue
@@ -530,6 +555,12 @@ def scan_pending_oa_approvals(
                 "process_revisions": process_revisions,
                 "skipped_missing_task_id_process_instance_ids": skipped_missing_task_id,
                 "read_failure_process_instance_ids": read_failures,
+                "reconciliation_read_failure_process_instance_ids": (
+                    reconciliation_read_failures
+                ),
+                "reconciled_completed_attempt_ids": (
+                    reconciled_completed_attempt_ids
+                ),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -539,6 +570,39 @@ def scan_pending_oa_approvals(
         last_error="",
     )
     return queued
+
+
+def _oa_terminal_process_state(value: Any) -> tuple[str, str] | None:
+    """Extract a definite terminal process state, never a task-row status."""
+
+    if not isinstance(value, dict):
+        return None
+    status = str(
+        value.get("status")
+        or value.get("processInstanceStatus")
+        or value.get("process_instance_status")
+        or ""
+    ).strip().upper()
+    terminal_statuses = {
+        "CANCELED",
+        "CANCELLED",
+        "CLOSED",
+        "COMPLETED",
+        "REVOKED",
+        "TERMINATED",
+    }
+    if status in terminal_statuses:
+        result = str(
+            value.get("processInstanceResult")
+            or value.get("process_instance_result")
+            or status.casefold()
+        ).strip()
+        return status, result
+    for key in ("result", "data", "process_instance", "processInstance"):
+        nested = _oa_terminal_process_state(value.get(key))
+        if nested is not None:
+            return nested
+    return None
 
 
 def _cache_oa_applicant_profile(

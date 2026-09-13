@@ -159,6 +159,11 @@ event 和 provider 结果仍然作为 append-only 事实保留。
 Consumer/Audit 流程；原 `needs_human` attempt 继续作为历史事实保留。没有明确指令时
 不得自动猜测决策，已经送达或完成的 attempt 也不得由该入口重新打开。
 
+如果 Derek 已直接在钉钉完成 OA，定时 OA 扫描会读取该 process instance 的实时状态。
+实例已进入明确终态时，服务不重放审批动作，而是把当前 `needs_human` attempt 收口为
+`skipped`，保存实时结果作为 resolution，并从当前 Attention 移除；原 Agent run 和决策
+内容仍作为历史事实保留。仍为 `RUNNING` 或读取失败时不得自动改写。
+
 ### 重复外发故障的统一排查顺序
 
 当人员收到多条相似或互相矛盾的消息时，不得先把问题归因于某一条 prompt 或某个发送命令。

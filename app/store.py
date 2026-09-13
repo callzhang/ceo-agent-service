@@ -15735,6 +15735,43 @@ class AutoReplyStore:
             )
             return True
 
+    def resolve_completed_oa_needs_human_attempt(
+        self,
+        attempt_id: int,
+        *,
+        process_instance_id: str,
+        process_result: str,
+    ) -> bool:
+        """Close an OA decision that no longer exists in the live approval queue.
+
+        The OA scanner creates a terminal ``needs_human`` attempt when a
+        decision really requires Derek. Derek may then complete that approval
+        directly in DingTalk. Once the process is terminal there is no action
+        left for the service, so the local attempt is ``skipped`` rather than
+        left indefinitely actionable.
+        """
+
+        process_id = process_instance_id.strip()
+        if not process_id:
+            raise ValueError("process_instance_id must be non-empty")
+        result = process_result.strip() or "completed"
+        resolution = f"Live DingTalk OA process completed with result {result}."
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update reply_attempts
+                set send_status='skipped', send_error='',
+                    resolved_at=current_timestamp, resolution=?,
+                    updated_at=current_timestamp
+                where id=?
+                  and send_status='needs_human'
+                  and oa_process_instance_id=?
+                  and trim(coalesce(resolved_at, ''))=''
+                """,
+                (resolution, attempt_id, process_id),
+            )
+            return cursor.rowcount == 1
+
     def close_failed_reply_task_already_settled(
         self,
         task_id: int,
@@ -20789,6 +20826,40 @@ class AutoReplyStore:
                 limit ?
                 """,
                 (process_id, max(1, limit)),
+            ).fetchall()
+            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def list_open_oa_needs_human_attempts(
+        self, *, limit: int = 100
+    ) -> list[ReplyAttempt]:
+        """Return latest unresolved OA decisions with no active local rerun."""
+
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select attempts.*
+                from reply_attempts attempts
+                where attempts.send_status='needs_human'
+                  and trim(coalesce(attempts.resolved_at, ''))=''
+                  and trim(attempts.oa_process_instance_id)<>''
+                  and attempts.id=(
+                      select max(latest.id)
+                      from reply_attempts latest
+                      where latest.oa_process_instance_id=
+                            attempts.oa_process_instance_id
+                  )
+                  and not exists (
+                      select 1
+                      from reply_tasks tasks
+                      where tasks.channel=attempts.channel
+                        and tasks.conversation_id=attempts.conversation_id
+                        and tasks.trigger_message_id=attempts.trigger_message_id
+                        and tasks.status in ('pending', 'processing')
+                  )
+                order by attempts.id desc
+                limit ?
+                """,
+                (max(1, limit),),
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 

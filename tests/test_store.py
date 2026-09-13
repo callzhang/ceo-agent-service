@@ -7917,6 +7917,65 @@ def test_backfill_oa_audit_metadata_recovers_completed_agent_scan_attempt(
     assert attempt.oa_action == "review"
 
 
+def test_completed_oa_needs_human_attempt_is_closed_as_skipped(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-completed:revision-1",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-completed",
+        send_status="needs_human",
+    )
+
+    assert store.resolve_completed_oa_needs_human_attempt(
+        attempt_id,
+        process_instance_id="proc-completed",
+        process_result="agree",
+    )
+    assert not store.resolve_completed_oa_needs_human_attempt(
+        attempt_id,
+        process_instance_id="proc-completed",
+        process_result="agree",
+    )
+
+    with store._connect() as db:
+        row = db.execute(
+            "select send_status, send_error, resolved_at, resolution "
+            "from reply_attempts where id=?",
+            (attempt_id,),
+        ).fetchone()
+    assert row["send_status"] == "skipped"
+    assert row["send_error"] == ""
+    assert row["resolved_at"]
+    assert "agree" in row["resolution"]
+
+
+def test_completed_oa_closure_requires_matching_process_identity(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-expected:revision-1",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-expected",
+        send_status="needs_human",
+    )
+
+    assert not store.resolve_completed_oa_needs_human_attempt(
+        attempt_id,
+        process_instance_id="proc-other",
+        process_result="agree",
+    )
+    assert store.get_reply_attempt(attempt_id).send_status == "needs_human"
+
+
 def test_setup_wizard_step_state_round_trips(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
