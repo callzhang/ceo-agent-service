@@ -3,6 +3,12 @@ from typing import Any, Literal, NamedTuple, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.decision_quality import (
+    DecisionQualityResult,
+    DecisionRisk,
+    classify_decision_quality,
+)
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -353,7 +359,19 @@ class MeetingAlignmentDecision(StrictModel):
         )
     )
     audit_summary: str = Field(min_length=1)
+    risk: DecisionRisk = DecisionRisk.LOW
     confidence: float = Field(ge=0, le=1)
+    rule_coverage: float = Field(default=1.0, ge=0, le=1)
+    information_completeness: float = Field(default=1.0, ge=0, le=1)
+
+    def decision_quality(self) -> DecisionQualityResult:
+        """Classify this meeting decision with the shared result-quality rules."""
+        return classify_decision_quality(
+            risk=self.risk,
+            confidence=self.confidence,
+            rule_coverage=self.rule_coverage,
+            information_completeness=self.information_completeness,
+        )
 
     @model_validator(mode="before")
     @classmethod

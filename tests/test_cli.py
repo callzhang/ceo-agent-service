@@ -3014,8 +3014,9 @@ def test_process_work_items_command_uses_task_agent_timeouts(
                     "follow_up_drafts": [],
                     "update_summary": "不是持续跟进事项。",
                     "skip_reason": "一次性信息。",
-                    "failure_risk": "无持续业务风险。",
-                    "failure_risk_score": 0.0,
+                    "risk": "low",
+                    "rule_coverage": 1.0,
+                    "information_completeness": 1.0,
                     "memory_recall_used": False,
                     "confidence": 0.9,
                 }

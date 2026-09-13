@@ -4,6 +4,8 @@ from typing import Any, Literal, Mapping
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.fields import FieldInfo
 
+from app.decision_quality import DecisionQualityResult, DecisionRisk, classify_decision_quality
+
 
 def _null_means_omitted(field: FieldInfo) -> bool:
     """Optional fields with a non-null default: the model may send null for them."""
@@ -366,9 +368,19 @@ class TaskAgentDecision(StrictTaskModel):
     update_summary: str = ""
     merge_reason: str = ""
     memory_recall_used: bool = False
+    risk: DecisionRisk = DecisionRisk.LOW
     confidence: float = 0.0
-    failure_risk: str = ""
-    failure_risk_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    rule_coverage: float = Field(default=1.0, ge=0.0, le=1.0)
+    information_completeness: float = Field(default=1.0, ge=0.0, le=1.0)
+
+    def decision_quality(self) -> DecisionQualityResult:
+        """Classify this task decision with the shared result-quality rules."""
+        return classify_decision_quality(
+            risk=self.risk,
+            confidence=self.confidence,
+            rule_coverage=self.rule_coverage,
+            information_completeness=self.information_completeness,
+        )
 
 
 class WorkProject(BaseModel):

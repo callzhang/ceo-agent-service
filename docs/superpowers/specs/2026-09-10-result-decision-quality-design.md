@@ -111,14 +111,13 @@ provider 事实。
 接入时至少要增加一条“低信息走 ask-back、满足人工门槛才 needs_human、技术失败仍 failed”
 的契约测试，以及一条当前投影读回测试。
 
-当前接入边界：Consumer/Audit 结果和质量门已使用这套四字段及共享判定器；会议对齐的
-`MeetingAlignmentDecision` 仍是旧的领域模型（只有 `confidence`，并存在直接写入
-`needs_human` 的身份解析路径），任务跟踪的 `TaskAgentDecision` 仍保留
-`failure_risk`/`failure_risk_score` 旧字段。它们不能继续绕过统一判定器；后续迁移应以
-共享质量模型为输入，补齐四字段、`ask_back` 优先级和技术失败边界，并分别增加领域回归测试。
-在迁移完成前，不应宣称“所有 Agent 结果都已满足通用质量契约”。迁移是一次契约切换：
-删除旧字段和旧分支，不做旧字段回填、双写或从旧字段推导新分类；旧 payload 直接按契约
-失败并在同一业务对象上重新生成新版本。
+当前接入边界：Consumer/Audit、会议对齐的 `MeetingAlignmentDecision`、任务跟踪的
+`TaskAgentDecision`、质量门和 Attention 都使用这套四字段及共享判定器；会议身份解析的
+人工边界也通过共享判定器得到 `needs_human`。迁移是一次契约切换：删除
+`failure_risk`/`failure_risk_score` 等旧字段和旧分支，不做旧字段回填、双写或从旧字段
+推导新分类；旧 payload 直接按契约失败并在同一业务对象上重新生成新版本。新领域接入时
+仍必须增加“低信息走 ask-back、满足人工门槛才 needs_human、技术失败仍 failed”的契约
+测试，以及一条当前投影读回测试。
 
 ## 测试和验收
 

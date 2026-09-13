@@ -61,6 +61,27 @@ def valid_send_decision():
     }
 
 
+def test_meeting_decision_exposes_unified_quality_fields():
+    payload = valid_send_decision()
+    payload.update(
+        {
+            "risk": "high",
+            "rule_coverage": 0.8,
+            "information_completeness": 1.0,
+        }
+    )
+    decision = MeetingAlignmentDecision.model_validate(payload)
+    assert decision.risk == "high"
+    assert decision.rule_coverage == 0.8
+    assert decision.information_completeness == 1.0
+    assert decision.decision_quality().classification.value == "autonomous"
+
+    with pytest.raises(ValidationError):
+        MeetingAlignmentDecision.model_validate(
+            {**payload, "failure_risk": "legacy"}
+        )
+
+
 def valid_job():
     return {
         "id": 1,

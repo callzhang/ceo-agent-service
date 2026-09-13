@@ -117,8 +117,9 @@ def test_task_result_parser_rejects_runtime_paths_before_persistence(monkeypatch
             "merge_reason": "",
             "memory_recall_used": False,
             "confidence": 0.8,
-            "failure_risk": "",
-            "failure_risk_score": 0.2,
+            "risk": "low",
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         },
         ensure_ascii=False,
     )

@@ -616,8 +616,9 @@ def test_process_todo_completion_candidate_marks_accepted_when_todo_closes(tmp_p
                     "merge_reason": "todo completion evidence accepted",
                     "memory_recall_used": True,
                     "confidence": 0.95,
-                    "failure_risk": "验收状态误判会导致重复追问。",
-                    "failure_risk_score": 0.4,
+                    "risk": "low",
+                    "rule_coverage": 1.0,
+                    "information_completeness": 1.0,
                 }
             )
         ),
@@ -689,8 +690,9 @@ def test_process_todo_completion_candidate_marks_rejected_when_agent_skips(tmp_p
                     "merge_reason": "",
                     "memory_recall_used": True,
                     "confidence": 0.7,
-                    "failure_risk": "弱证据自动关闭会遗漏后续验收。",
-                    "failure_risk_score": 0.5,
+                    "risk": "low",
+                    "rule_coverage": 1.0,
+                    "information_completeness": 1.0,
                 }
             )
         ),
@@ -722,8 +724,9 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
         "merge_reason": "",
         "memory_recall_used": False,
         "confidence": 0.8,
-        "failure_risk": "none",
-        "failure_risk_score": 0,
+        "risk": "low",
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
     }
 
     class LifecycleCodex(FakeCodex):
@@ -964,8 +967,9 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
             "merge_reason": "",
             "memory_recall_used": False,
             "confidence": 0.5,
-            "failure_risk": "测试prompt。",
-            "failure_risk_score": 0.1,
+            "risk": "low",
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 
@@ -1130,8 +1134,9 @@ def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
             "merge_reason": "follow-up reply corrected owner",
             "memory_recall_used": True,
             "confidence": 0.86,
-            "failure_risk": "继续追错owner会影响执行效率和用户体验。",
-            "failure_risk_score": 0.8,
+            "risk": "low",
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 
@@ -1231,8 +1236,9 @@ def test_process_work_item_accepts_clear_follow_up_completion_reply(tmp_path):
             "merge_reason": "reply explicitly completed the follow-up TODO",
             "memory_recall_used": True,
             "confidence": 0.95,
-            "failure_risk": "已完成事项不关闭会造成重复追问。",
-            "failure_risk_score": 0.4,
+            "risk": "low",
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 
@@ -1309,8 +1315,9 @@ def test_process_work_item_discards_ambiguous_follow_up_reply_without_changes(
             "merge_reason": "",
             "memory_recall_used": False,
             "confidence": 0.72,
-            "failure_risk": "如果误判为完成，会漏掉售前材料缺口。",
-            "failure_risk_score": 0.55,
+            "risk": "low",
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 
@@ -1628,8 +1635,9 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
             "merge_reason": "follow-up reply corrected owner",
             "memory_recall_used": True,
             "confidence": 0.86,
-            "failure_risk": "继续追错owner会影响执行效率和用户体验。",
-            "failure_risk_score": 0.8,
+            "risk": "low",
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 
@@ -1733,8 +1741,9 @@ def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_pat
             "merge_reason": "matched existing Marketing recruiting project and TODO",
             "memory_recall_used": True,
             "confidence": 0.86,
-            "failure_risk": "If left open, the agent will keep interrupting HR about a routine process step.",
-            "failure_risk_score": 0.2,
+            "risk": "low",
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 
@@ -4126,8 +4135,9 @@ def test_task_agent_codex_runner_uses_standard_runtime_factory():
                 "follow_up_drafts": [],
                 "follow_up_changes": [],
                 "update_summary": "跳过。",
-                "failure_risk": "无持续跟进风险。",
-                "failure_risk_score": 0,
+                "risk": "low",
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
                 "memory_recall_used": False,
                 "confidence": 0.8,
             }
@@ -5298,8 +5308,9 @@ def test_task_agent_decision_supports_follow_up_changes():
             "merge_reason": "follow-up reply corrected owner",
             "memory_recall_used": True,
             "confidence": 0.86,
-            "failure_risk": "继续追错owner会降低执行效率并造成被追问人的焦虑。",
-            "failure_risk_score": 0.8,
+            "risk": "low",
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
 
@@ -5311,7 +5322,7 @@ def test_task_agent_decision_supports_follow_up_changes():
     assert decision.follow_up_changes[0].owner_user_id == "02412744671048909"
 
 
-def test_task_agent_decision_exposes_task_worthiness_risk_fields():
+def test_task_agent_decision_exposes_unified_quality_fields():
     decision = TaskAgentDecision.model_validate(
         {
             "action": "skip",
@@ -5324,12 +5335,14 @@ def test_task_agent_decision_exposes_task_worthiness_risk_fields():
             "merge_reason": "",
             "memory_recall_used": False,
             "confidence": 0.8,
-            "failure_risk": "如果不跟进，只会影响单次工具账号使用，不影响公司项目。",
-            "failure_risk_score": 0.1,
+            "risk": "low",
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
         }
     )
-    assert decision.failure_risk == "如果不跟进，只会影响单次工具账号使用，不影响公司项目。"
-    assert decision.failure_risk_score == 0.1
+    assert decision.risk == "low"
+    assert decision.rule_coverage == 1.0
+    assert decision.information_completeness == 1.0
 
 
 def test_task_agent_codex_runner_uses_routed_execution_contract():

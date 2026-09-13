@@ -13,6 +13,7 @@ from app.codex_capacity import (
 )
 from app.codex_failure import CODEX_PROCESS_FAILED, classify_codex_process_failure
 from app.config import codex_capacity_retry_duration, principal_display_name
+from app.decision_quality import DecisionQuality, DecisionRisk, classify_decision_quality
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.dispatcher.models import ClaimGuard
 from app.external_retry import is_external_dependency_error
@@ -63,6 +64,19 @@ DISCOVERY_PAGE_SIZE = 50
 REPLAY_PAGE_SIZE_LIMIT = 100
 DEFAULT_MEETING_DISCOVERY_LOOKBACK = timedelta(days=14)
 MINIMUM_MEETING_DURATION = timedelta(minutes=5)
+
+
+def _meeting_identity_status() -> str:
+    """Classify unresolved organizer identity through the shared quality gate."""
+    quality = classify_decision_quality(
+        risk=DecisionRisk.HIGH,
+        confidence=0.0,
+        rule_coverage=0.0,
+        information_completeness=1.0,
+    )
+    if quality.classification is not DecisionQuality.NEEDS_HUMAN:
+        raise RuntimeError("meeting identity boundary must require human decision")
+    return quality.classification.value
 TERMINAL_STATUSES = frozenset(
     {"no_action", "sent", "failed", "skipped", "needs_human"}
 )
@@ -876,7 +890,7 @@ def _analyze_meeting_job(
             )
             store.update_meeting_alignment_job(
                 job.id,
-                status="needs_human",
+                status=_meeting_identity_status(),
                 decision_json=decision_json,
                 target_kind=target.kind if target is not None else "",
                 target_id=target_id,
@@ -1229,7 +1243,7 @@ def _deliver_meeting_job(
         if str(exc) == "meeting organizer identity is unresolved":
             store.update_meeting_alignment_job(
                 job.id,
-                status="needs_human",
+                status=_meeting_identity_status(),
                 locked_at=None,
                 available_at="",
                 error=_error_json("meeting_identity", str(exc)),

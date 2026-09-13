@@ -81,6 +81,31 @@ def test_project_category_is_fixed_enum():
         )
 
 
+def test_task_agent_decision_uses_unified_quality_fields_and_rejects_legacy_risk_fields():
+    payload = {
+        "action": "skip",
+        "skip_reason": "没有可更新的工作项。",
+        "risk": "low",
+        "confidence": 0.9,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    }
+    decision = TaskAgentDecision.model_validate(payload)
+    assert decision.risk == "low"
+    assert decision.rule_coverage == 1.0
+    assert decision.information_completeness == 1.0
+    assert decision.decision_quality().classification.value == "autonomous"
+
+    with pytest.raises(ValidationError):
+        TaskAgentDecision.model_validate(
+            {
+                **payload,
+                "failure_risk": "legacy",
+                "failure_risk_score": 0.1,
+            }
+        )
+
+
 def test_task_agent_decision_accepts_project_todo_and_follow_up():
     decision = TaskAgentDecision.model_validate(
         {
