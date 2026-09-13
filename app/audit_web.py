@@ -2787,14 +2787,14 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
     current_instance_id = str(process_payload["instance_id"])
     raw_runtime_loop_scopes = process_payload.get("runtime_loop_scopes")
     runtime_loop_scopes = (
-        {
+        tuple(
             scope
             for scope in raw_runtime_loop_scopes
             if isinstance(scope, str)
             and re.fullmatch(r"[A-Za-z0-9:_-]{1,160}", scope) is not None
-        }
+        )
         if isinstance(raw_runtime_loop_scopes, list)
-        else set()
+        else ()
     )
 
     def safe_process_count(field: str) -> int:
@@ -2813,7 +2813,7 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
         "readiness_total": safe_process_count("readiness_total"),
         "updated_at": process_updated_at,
     }
-    runtime_loops: list[dict[str, object]] = []
+    runtime_loop_entries: dict[str, dict[str, object]] = {}
     accounts: list[dict[str, object]] = []
     checks: list[dict[str, object]] = []
     for scope, payload, updated_at in parsed_rows:
@@ -2834,11 +2834,22 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
                 entry[field] = value
         entry["updated_at"] = updated_at
         if scope in runtime_loop_scopes:
-            runtime_loops.append(entry)
+            runtime_loop_entries[scope] = entry
         elif scope.startswith("account:"):
             accounts.append(entry)
         else:
             checks.append(entry)
+    runtime_loops = [
+        runtime_loop_entries.get(
+            scope,
+            {
+                "scope": scope,
+                "status": "starting",
+                "updated_at": process_updated_at,
+            },
+        )
+        for scope in runtime_loop_scopes
+    ]
     return {
         "status": process["status"],
         "updated_at": process_updated_at,

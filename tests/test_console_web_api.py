@@ -1367,7 +1367,17 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
             "scope": "component:email-scan-actions",
             "status": "ready",
             "updated_at": email["runtime_loops"][0]["updated_at"],
-        }
+        },
+        {
+            "scope": "component:email-agent-consumer",
+            "status": "starting",
+            "updated_at": email["process"]["updated_at"],
+        },
+        {
+            "scope": "component:email-training",
+            "status": "starting",
+            "updated_at": email["process"]["updated_at"],
+        },
     ]
     assert email["accounts"] == [
         {
