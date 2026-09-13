@@ -1,5 +1,15 @@
 # Changelog
 
+- 2026-09-13: Settings → Status now represents Email worker as one process with
+  separate runtime-loop, account, and internal-check groups instead of calling
+  every persisted health scope a worker. Process health now distinguishes the
+  three actual runtime loops from the two loops required for startup readiness.
+  Every Email worker start also stamps one process-instance id on its health
+  records, and the status API excludes records left by earlier instances; this
+  prevents old `ready` checks from appearing as current health. Healthy internal
+  checks are collapsed by default, while degraded or failed checks open
+  automatically.
+
 - 2026-09-13: the React Status API now preserves required fields whose current
   value is `null`. The route previously excluded every `None` value during
   response serialization, so an empty dispatcher queue omitted its required

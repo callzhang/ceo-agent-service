@@ -4118,6 +4118,32 @@ def _persist_email_worker_health(task_store):
     return record_health
 
 
+def test_email_worker_health_recorder_stamps_one_instance_on_every_record():
+    module = _module()
+    writes = []
+    task_store = SimpleNamespace(
+        set_service_state=lambda key, value: writes.append((key, json.loads(value)))
+    )
+
+    record_health = module._email_worker_health_recorder(
+        task_store,
+        instance_id="email-worker-instance-test",
+    )
+    record_health("component:email-scan-actions", {"status": "ready"})
+    record_health("account:account-1", {"status": "ready"})
+
+    assert writes == [
+        (
+            "email_worker_health:component:email-scan-actions",
+            {"instance_id": "email-worker-instance-test", "status": "ready"},
+        ),
+        (
+            "email_worker_health:account:account-1",
+            {"instance_id": "email-worker-instance-test", "status": "ready"},
+        ),
+    ]
+
+
 def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
     tmp_path,
     monkeypatch,
@@ -7929,7 +7955,18 @@ def test_startup_records_process_heartbeat_only_after_dependencies_are_ready():
         ),
         (
             "process:email-worker",
-            {"status": "starting", "accounts": 1, "components": 3},
+            {
+                "status": "starting",
+                "accounts": 1,
+                "runtime_loops": 3,
+                "runtime_loop_scopes": [
+                    "component:email-scan-actions",
+                    "component:email-agent-consumer",
+                    "component:email-training",
+                ],
+                "readiness_ready": 0,
+                "readiness_total": 2,
+            },
         ),
     ]
 
@@ -7941,6 +7978,11 @@ def test_readiness_barrier_reports_ready_only_after_all_component_heartbeats():
         ("email-scan-actions", "email-agent-consumer", "email-training"),
         record_health=lambda scope, payload: health.append((scope, payload)),
         accounts=1,
+        runtime_loop_scopes=(
+            "component:email-scan-actions",
+            "component:email-agent-consumer",
+            "component:email-training",
+        ),
     )
 
     barrier.mark_ready("email-scan-actions")
@@ -7951,7 +7993,18 @@ def test_readiness_barrier_reports_ready_only_after_all_component_heartbeats():
     assert health == [
         (
             "process:email-worker",
-            {"status": "ready", "accounts": 1, "components": 3},
+            {
+                "status": "ready",
+                "accounts": 1,
+                "runtime_loops": 3,
+                "runtime_loop_scopes": [
+                    "component:email-scan-actions",
+                    "component:email-agent-consumer",
+                    "component:email-training",
+                ],
+                "readiness_ready": 3,
+                "readiness_total": 3,
+            },
         )
     ]
 
@@ -7963,6 +8016,11 @@ def test_process_readiness_does_not_wait_for_training_maintenance():
         ("email-scan-actions", "email-agent-consumer"),
         record_health=lambda scope, payload: health.append((scope, payload)),
         accounts=1,
+        runtime_loop_scopes=(
+            "component:email-scan-actions",
+            "component:email-agent-consumer",
+            "component:email-training",
+        ),
     )
 
     barrier.mark_ready("email-scan-actions")
@@ -7972,7 +8030,18 @@ def test_process_readiness_does_not_wait_for_training_maintenance():
     assert health == [
         (
             "process:email-worker",
-            {"status": "ready", "accounts": 1, "components": 2},
+            {
+                "status": "ready",
+                "accounts": 1,
+                "runtime_loops": 3,
+                "runtime_loop_scopes": [
+                    "component:email-scan-actions",
+                    "component:email-agent-consumer",
+                    "component:email-training",
+                ],
+                "readiness_ready": 2,
+                "readiness_total": 2,
+            },
         )
     ]
 
@@ -7984,6 +8053,11 @@ def test_process_readiness_callback_ignores_independent_training_component():
         ("email-scan-actions", "email-agent-consumer"),
         record_health=lambda scope, payload: health.append((scope, payload)),
         accounts=1,
+        runtime_loop_scopes=(
+            "component:email-scan-actions",
+            "component:email-agent-consumer",
+            "component:email-training",
+        ),
     )
     mark_ready = module._process_component_ready_callback(
         barrier,
@@ -7998,7 +8072,18 @@ def test_process_readiness_callback_ignores_independent_training_component():
     assert health == [
         (
             "process:email-worker",
-            {"status": "ready", "accounts": 1, "components": 2},
+            {
+                "status": "ready",
+                "accounts": 1,
+                "runtime_loops": 3,
+                "runtime_loop_scopes": [
+                    "component:email-scan-actions",
+                    "component:email-agent-consumer",
+                    "component:email-training",
+                ],
+                "readiness_ready": 2,
+                "readiness_total": 2,
+            },
         )
     ]
 

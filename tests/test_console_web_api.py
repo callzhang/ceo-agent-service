@@ -1203,7 +1203,14 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
             },
             "components": [],
             "connectors": {},
-            "email": {"status": "ready", "updated_at": "", "entries": []},
+            "email": {
+                "status": "ready",
+                "updated_at": "",
+                "process": None,
+                "runtime_loops": [],
+                "accounts": [],
+                "checks": [],
+            },
             "queues": [],
             "dispatcher_queues": [],
             "attention_rows": [],
@@ -1248,19 +1255,45 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
         json.dumps(
             {
                 "status": "ready",
+                "instance_id": "current-instance",
                 "accounts": 2,
-                "components": 3,
+                "runtime_loops": 3,
+                "runtime_loop_scopes": [
+                    "component:email-scan-actions",
+                    "component:email-agent-consumer",
+                    "component:email-training",
+                ],
+                "readiness_ready": 2,
+                "readiness_total": 2,
                 "imap_secret": "must-not-leak",
             }
         ),
+    )
+    store.set_service_state(
+        "email_worker_health:component:email-scan-actions",
+        json.dumps({"status": "ready", "instance_id": "current-instance"}),
     )
     store.set_service_state(
         "email_worker_health:component:email-provider-actions",
         json.dumps(
             {
                 "status": "degraded",
+                "instance_id": "current-instance",
                 "error_code": "provider_action_failed",
                 "private_target": "INBOX/secret",
+            }
+        ),
+    )
+    store.set_service_state(
+        "email_worker_health:account:account-a",
+        json.dumps({"status": "ready", "instance_id": "current-instance"}),
+    )
+    store.set_service_state(
+        "email_worker_health:component:email-stale-check",
+        json.dumps(
+            {
+                "status": "ready",
+                "instance_id": "previous-instance",
             }
         ),
     )
@@ -1321,21 +1354,37 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
     assert any(item["name"] == "email-worker" for item in payload["components"])
     email = payload["email"]
     assert email["status"] == "ready"
-    assert email["entries"] == [
+    assert email["process"] == {
+        "status": "ready",
+        "accounts": 2,
+        "runtime_loops": 3,
+        "readiness_ready": 2,
+        "readiness_total": 2,
+        "updated_at": email["process"]["updated_at"],
+    }
+    assert email["runtime_loops"] == [
+        {
+            "scope": "component:email-scan-actions",
+            "status": "ready",
+            "updated_at": email["runtime_loops"][0]["updated_at"],
+        }
+    ]
+    assert email["accounts"] == [
+        {
+            "scope": "account:account-a",
+            "status": "ready",
+            "updated_at": email["accounts"][0]["updated_at"],
+        }
+    ]
+    assert email["checks"] == [
         {
             "scope": "component:email-provider-actions",
             "status": "degraded",
             "error_code": "provider_action_failed",
-            "updated_at": email["entries"][0]["updated_at"],
-        },
-        {
-            "scope": "process:email-worker",
-            "status": "ready",
-            "accounts": 2,
-            "components": 3,
-            "updated_at": email["entries"][1]["updated_at"],
-        },
+            "updated_at": email["checks"][0]["updated_at"],
+        }
     ]
+    assert "email-stale-check" not in json.dumps(email, sort_keys=True)
     serialized = json.dumps(email, sort_keys=True)
     assert "must-not-leak" not in serialized
     assert "INBOX/secret" not in serialized

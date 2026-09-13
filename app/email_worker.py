@@ -16,6 +16,7 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 from types import SimpleNamespace
 from typing import Any, TextIO
+from uuid import uuid4
 
 from app.email_category_config import VerifiedEmailFolderBinding
 from app.email_provider_folders import FolderRole, ProviderFolder
@@ -1179,13 +1180,31 @@ class EmailWorkerReadiness:
         *,
         record_health: Callable[[str, Mapping[str, object]], object],
         accounts: int,
+        runtime_loop_scopes: Sequence[str] = (),
     ) -> None:
         self._component_names = frozenset(component_names)
         self._record_health = record_health
         self._accounts = accounts
+        self._runtime_loop_scopes = tuple(runtime_loop_scopes)
         self._ready: set[str] = set()
         self._published = False
         self._lock = Lock()
+
+    def set_runtime_loop_scopes(self, scopes: Sequence[str]) -> None:
+        with self._lock:
+            if self._ready or self._published:
+                raise RuntimeError("runtime loop scopes must be set before readiness")
+            self._runtime_loop_scopes = tuple(scopes)
+
+    def process_health(self, status: str) -> dict[str, object]:
+        return {
+            "status": status,
+            "accounts": self._accounts,
+            "runtime_loops": len(self._runtime_loop_scopes),
+            "runtime_loop_scopes": list(self._runtime_loop_scopes),
+            "readiness_ready": len(self._ready),
+            "readiness_total": len(self._component_names),
+        }
 
     def mark_ready(self, component_name: str) -> None:
         if component_name not in self._component_names:
@@ -1197,11 +1216,7 @@ class EmailWorkerReadiness:
             self._published = True
         self._record_health(
             "process:email-worker",
-            {
-                "status": "ready",
-                "accounts": self._accounts,
-                "components": len(self._component_names),
-            },
+            self.process_health("ready"),
         )
 
 
@@ -2993,6 +3008,23 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
     )
 
 
+def _email_worker_health_recorder(
+    task_store: object,
+    *,
+    instance_id: str | None = None,
+) -> Callable[[str, Mapping[str, object]], object]:
+    worker_instance_id = instance_id or uuid4().hex
+
+    def record_health(scope: str, payload: Mapping[str, object]) -> object:
+        stamped_payload = {**dict(payload), "instance_id": worker_instance_id}
+        return task_store.set_service_state(
+            f"email_worker_health:{scope}",
+            json.dumps(stamped_payload, sort_keys=True, separators=(",", ":")),
+        )
+
+    return record_health
+
+
 def build_email_worker_dependencies(
     settings: object,
     *,
@@ -3073,11 +3105,7 @@ def build_email_worker_dependencies(
             observability_store=email_store,
         )
 
-    def record_health(scope: str, payload: Mapping[str, object]):
-        task_store.set_service_state(
-            f"email_worker_health:{scope}",
-            json.dumps(dict(payload), sort_keys=True, separators=(",", ":")),
-        )
+    record_health = _email_worker_health_recorder(task_store)
 
     def load_scan_config(active_model: object):
         model_record = registry.get_model(active_model.loaded.model_id)
@@ -4307,6 +4335,8 @@ def run_email_worker(
                         ),
                     },
                 )
+        runtime_loop_scopes = tuple(f"component:{name}" for name, _target in components)
+        readiness.set_runtime_loop_scopes(runtime_loop_scopes)
     except EmailWorkerStartupError as exc:
         _close_active_model(active_model, active_error=exc)
         raise
@@ -4319,11 +4349,7 @@ def run_email_worker(
 
     dependencies.record_health(
         "process:email-worker",
-        {
-            "status": "starting",
-            "accounts": len(accounts),
-            "components": len(components),
-        },
+        readiness.process_health("starting"),
     )
     print(
         f"email-worker starting accounts={len(accounts)} components={len(components)}",
