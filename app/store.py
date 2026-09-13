@@ -15814,12 +15814,28 @@ class AutoReplyStore:
                   and (
                       trim(coalesce(json_extract(
                           audit.final_result_json,
+                          '$.external_result.live_result_reference.sent_message_id'
+                      ), ''))<>''
+                      or trim(coalesce(json_extract(
+                          audit.final_result_json,
+                          '$.external_result.live_result_reference.sentMessageId'
+                      ), ''))<>''
+                      or trim(coalesce(json_extract(
+                          audit.final_result_json,
                           '$.external_result.live_result_reference.message_id'
                       ), ''))<>''
                       or trim(coalesce(json_extract(
                           audit.final_result_json,
                           '$.external_result.live_result_reference.openMessageId'
                       ), ''))<>''
+                      or lower(trim(coalesce(json_extract(
+                          audit.final_result_json,
+                          '$.external_result.live_result_reference.delivery_status'
+                      ), ''))) in ('success', 'sent')
+                      or lower(trim(coalesce(json_extract(
+                          audit.final_result_json,
+                          '$.external_result.live_result_reference.deliveryStatus'
+                      ), ''))) in ('success', 'sent')
                       or lower(trim(coalesce(json_extract(
                           audit.final_result_json,
                           '$.external_result.live_result_reference.sendStatus'

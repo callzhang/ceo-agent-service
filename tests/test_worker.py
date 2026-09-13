@@ -773,6 +773,88 @@ def test_completed_message_delivery_projection_repair_is_idempotent(tmp_path: Pa
         assert db.execute("select count(*) from sent_reply_observers").fetchone()[0] == 1
 
 
+def test_completed_delivery_projection_repair_finds_sent_message_id_receipts(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="source-conversation",
+        conversation_title="Source",
+        single_chat=False,
+        trigger_message_id="trigger-message",
+        trigger_create_time="2026-09-07 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="请引用回复",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation,
+        role=AgentRole.CONSUMER, proposal_revision=0, turn_attempt=0,
+        parent_agent_run_id=None, operation_id="", owner="consumer",
+    ).run
+    consumer_result = ConsumerAgentResult.model_validate(
+        {
+            "outcome": "proposal", "summary": "reply",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "proposal": {
+                "objective": "reply", "actions": [{
+                    "description": "reply", "action_identity": "reply-result",
+                    "capability": "dingtalk-chat", "operation": "reply",
+                    "target": {
+                        "conversation_id": "source-conversation",
+                        "message_id": "trigger-message",
+                    },
+                    "payload": {"content": "补齐回复"},
+                }], "sourced_facts": [], "authored_judgment": "",
+            },
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+        }
+    )
+    store.complete_agent_run(
+        consumer.id, consumer_result.model_dump(mode="json"), owner="consumer"
+    )
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation,
+        role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0,
+        parent_agent_run_id=consumer.id, operation_id="audit-1", owner="audit",
+    ).run
+    audit_result = AuditAgentResult.model_validate(
+        {
+            "outcome": "executed", "summary": "sent", "proposal_revision": 0,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "feedback": None,
+            "external_result": {
+                "operation_id": "provider-1",
+                "live_result_reference": {
+                    "action_identity": "reply-result",
+                    "conversation_id": "source-conversation",
+                    "referenced_message_id": "trigger-message",
+                    "delivery_status": "SUCCESS",
+                    "sent_message_id": "sent-message",
+                },
+            },
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+        }
+    )
+    store.complete_agent_run(
+        audit.id, audit_result.model_dump(mode="json"), owner="audit"
+    )
+    worker = object.__new__(DingTalkAutoReplyWorker)
+    worker.store = store
+
+    assert worker._repair_completed_message_delivery_projections() == 1
+    sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
+    assert sent is not None
+    assert sent.agent_run_id == audit.id
+    assert "sent-message" in sent.send_result_json
+
+
 def explicit_agent_result(
     outcome: ScriptOutcome,
     summary: str,
