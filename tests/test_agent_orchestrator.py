@@ -2690,7 +2690,7 @@ def test_authorization_wait_defers_without_consuming_feedback_cycle(store):
     assert len(audit.calls) == 1
 
 
-def test_runtime_confirmation_required_is_a_technical_failure_for_audit(store):
+def test_runtime_confirmation_required_becomes_a_human_choice_for_audit(store):
     task = _task(store)
     consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
     audit = ScriptedAudit(
@@ -2708,16 +2708,19 @@ def test_runtime_confirmation_required_is_a_technical_failure_for_audit(store):
         AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
     )
 
-    assert result.status == "failed_terminal"
+    assert result.status == "needs_human"
     assert result.error.code == "confirmation_required"
     assert result.error.retryable is False
     assert result.audit_result is not None
-    assert result.audit_result.outcome is AuditOutcome.FAILED
-    assert result.audit_result.decision_options == ()
+    assert result.audit_result.outcome is AuditOutcome.NEEDS_HUMAN
+    assert [option.key for option in result.audit_result.decision_options] == [
+        "confirm_external_action",
+        "stop_without_action",
+    ]
     assert len(audit.calls) == 1
 
 
-def test_runtime_confirmation_required_is_a_technical_failure_for_consumer(store):
+def test_runtime_confirmation_required_becomes_a_human_choice_for_consumer(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -2737,12 +2740,15 @@ def test_runtime_confirmation_required_is_a_technical_failure_for_consumer(store
         task,
     )
 
-    assert result.status == "failed_terminal"
+    assert result.status == "needs_human"
     assert result.error.code == "confirmation_required"
     assert result.error.retryable is False
     assert result.consumer_result is not None
-    assert result.consumer_result.outcome is ConsumerOutcome.FAILED
-    assert result.consumer_result.decision_options == ()
+    assert result.consumer_result.outcome is ConsumerOutcome.NEEDS_HUMAN
+    assert [option.key for option in result.consumer_result.decision_options] == [
+        "confirm_external_action",
+        "stop_without_action",
+    ]
 
 
 def test_authorization_recovery_retries_audit_with_next_turn_attempt(store):
@@ -2831,7 +2837,7 @@ def test_dry_run_audit_finishes_without_creating_a_human_decision(store):
     assert result.audit_result.decision_options == ()
 
 
-def test_safely_reopened_runtime_route_reuses_proposal_in_new_audit_run(store):
+def test_safely_reopened_runtime_route_rebuilds_consumer_in_new_generation(store):
     pending_task = _task(store)
     task = store.claim_reply_task(pending_task.id)
     assert task is not None
@@ -2847,7 +2853,11 @@ def test_safely_reopened_runtime_route_reuses_proposal_in_new_audit_run(store):
     )
     orchestrator = AgentOrchestrator(
         store=store,
-        consumer=ScriptedConsumer(store, _consumer_result("proposal", "candidate-0")),
+        consumer=ScriptedConsumer(
+            store,
+            _consumer_result("proposal", "candidate-0"),
+            _consumer_result("proposal", "candidate-0"),
+        ),
         audit=audit,
     )
 
@@ -2870,7 +2880,7 @@ def test_safely_reopened_runtime_route_reuses_proposal_in_new_audit_run(store):
     second = _process(orchestrator, recovered_task)
 
     assert second.status == "executed"
-    assert [call["turn_attempt"] for call in audit.calls] == [0, 1]
+    assert [call["turn_attempt"] for call in audit.calls] == [0, 0]
     assert audit.calls[0]["run_id"] != audit.calls[1]["run_id"]
 
 
@@ -3013,7 +3023,7 @@ def test_retryable_consumer_exhaustion_preserves_live_okr_read_error(store):
     )
 
 
-def test_recovered_failed_consumer_task_reclaims_same_run(store):
+def test_recovered_failed_consumer_task_reopens_in_new_generation(store):
     failure = ConsumerAgentResult.model_validate(
         {
             "outcome": "failed",
@@ -3046,7 +3056,7 @@ def test_recovered_failed_consumer_task_reclaims_same_run(store):
     )
 
     failed = _process(orchestrator, task)
-    assert failed.status == "failed_terminal"
+    assert failed.status == "failed_retryable"
     failed_run_id = failed.final_run_id
     store.fail_reply_task(
         task.id,

@@ -11414,7 +11414,14 @@ class AutoReplyStore:
         reason: str,
         recovery_code: str = "",
     ) -> ReplyTask:
-        """Reopen the latest failed Consumer or Audit turn in the same generation."""
+        """Reopen a failed Consumer or Audit turn in a fresh runtime generation.
+
+        A service repair can change the runtime capabilities available to a
+        Codex process.  Reusing the old generation also reuses its persisted
+        conversation session, whose MCP inventory is fixed when that session
+        starts.  A recovery therefore needs a new generation and no persisted
+        route session; the old runs remain immutable history.
+        """
         reason = reason.strip()
         if not reason:
             raise ValueError("retry reason must be non-empty")
@@ -11446,15 +11453,42 @@ class AutoReplyStore:
                 )
             if not retryable:
                 raise ValueError("failed reply task is not retryable")
+            next_generation = uuid4().hex
+            db.execute(
+                """
+                delete from conversation_runtime_sessions
+                where conversation_id=(
+                    select conversation_id from reply_tasks where id=?
+                )
+                """,
+                (task_id,),
+            )
+            db.execute(
+                """
+                update conversations
+                set codex_session_id=null, codex_session_contract_hash=''
+                where conversation_id=(
+                    select conversation_id from reply_tasks where id=?
+                )
+                """,
+                (task_id,),
+            )
             cursor = db.execute(
                 """
                 update reply_tasks
                 set status='pending', attempts=0,
                     locked_at=null, available_at='', error=?, recovery_code=?,
-                    execution_generation=?, updated_at=?
+                    force_new_decision=1, execution_generation=?, updated_at=?
                 where id=? and status='failed' and execution_generation=?
                 """,
-                (reason, recovery_code.strip(), row["execution_generation"], now_text, task_id, row["execution_generation"]),
+                (
+                    reason,
+                    recovery_code.strip(),
+                    next_generation,
+                    now_text,
+                    task_id,
+                    row["execution_generation"],
+                ),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")

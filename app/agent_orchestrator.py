@@ -733,7 +733,7 @@ class AgentOrchestrator:
         if run.status == "failed" and _is_runtime_confirmation_required(error):
             result = _runtime_confirmation_consumer_result(error)
             return _consumer_terminal(
-                "failed_terminal",
+                "needs_human",
                 run,
                 result,
                 feedback_cycles,
@@ -847,7 +847,7 @@ class AgentOrchestrator:
         if run.status == "failed" and _is_runtime_confirmation_required(error):
             result = _runtime_confirmation_audit_result(run, error)
             return _audit_terminal(
-                "failed_terminal",
+                "needs_human",
                 run,
                 result,
                 feedback_cycles,
@@ -1526,13 +1526,27 @@ def _terminal_confirmation_error(error: AgentError) -> AgentError:
 def _runtime_confirmation_consumer_result(error: AgentError) -> ConsumerAgentResult:
     terminal_error = _terminal_confirmation_error(error)
     return ConsumerAgentResult(
-        # Runtime confirmation is an execution/authorization boundary, not a
-        # business decision.  It has no typed proposal for the user to choose
-        # from, so it must remain a technical failure instead of polluting the
-        # reusable needs_human queue.
-        outcome=ConsumerOutcome.FAILED,
+        # The provider refused an external write until it receives an explicit
+        # confirmation.  This is a real operator boundary, not a service
+        # outage: close the attempt as needs_human with concrete choices and
+        # never treat it as a retryable technical failure.
+        outcome=ConsumerOutcome.NEEDS_HUMAN,
         summary=terminal_error.code,
         proposal=None,
+        decision_options=(
+            DecisionOption(
+                key="confirm_external_action",
+                label="确认执行外部操作",
+                instruction="确认按当前已审计方案执行这次外部操作。",
+                consequence="Agent 会执行一次外部操作并读取结果；不会重复执行其他动作。",
+            ),
+            DecisionOption(
+                key="stop_without_action",
+                label="停止当前事项",
+                instruction="不执行外部操作，保留当前审计记录并结束事项。",
+                consequence="不会发送消息、接受日程、创建待办或执行审批。",
+            ),
+        ),
         error=terminal_error,
         risk="high",
         confidence=0.0,
@@ -1547,13 +1561,25 @@ def _runtime_confirmation_audit_result(
 ) -> AuditAgentResult:
     terminal_error = _terminal_confirmation_error(error)
     return AuditAgentResult(
-        # See the Consumer result above: provider/runtime confirmation cannot
-        # be resolved by a management choice and therefore is not needs_human.
-        outcome=AuditOutcome.FAILED,
+        outcome=AuditOutcome.NEEDS_HUMAN,
         summary=terminal_error.code,
         proposal_revision=run.proposal_revision,
         feedback=None,
         external_result=None,
+        decision_options=(
+            DecisionOption(
+                key="confirm_external_action",
+                label="确认执行外部操作",
+                instruction="确认按当前已审计方案执行这次外部操作。",
+                consequence="Agent 会执行一次外部操作并读取结果；不会重复执行其他动作。",
+            ),
+            DecisionOption(
+                key="stop_without_action",
+                label="停止当前事项",
+                instruction="不执行外部操作，保留当前审计记录并结束事项。",
+                consequence="不会发送消息、接受日程、创建待办或执行审批。",
+            ),
+        ),
         risk="high",
         confidence=0.0,
         rule_coverage=1.0,

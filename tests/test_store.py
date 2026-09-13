@@ -5066,6 +5066,12 @@ def test_retry_failed_reply_task_creates_a_new_retryable_consumer_turn(
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
     assert task is not None
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+        "stale-consumer-session",
+        "service-contract",
+    )
     claim = store.claim_agent_run(
         task_id,
         task.execution_generation,
@@ -5094,13 +5100,20 @@ def test_retry_failed_reply_task_creates_a_new_retryable_consumer_turn(
     )
 
     assert recovered.status == "pending"
-    assert recovered.execution_generation == task.execution_generation
+    assert recovered.execution_generation != task.execution_generation
     assert recovered.error == "operator_retry_after_runtime_fix"
+    assert (
+        store.get_conversation_runtime_session(
+            task.conversation_id,
+            "codex_oauth",
+        )
+        is None
+    )
     retry_claim = store.claim_reply_task(task_id)
     assert retry_claim is not None
     same_turn = store.claim_agent_run(
         task_id,
-        task.execution_generation,
+        recovered.execution_generation,
         role=AgentRole.CONSUMER,
         proposal_revision=0,
         turn_attempt=0,
@@ -5108,15 +5121,26 @@ def test_retry_failed_reply_task_creates_a_new_retryable_consumer_turn(
         operation_id="",
         owner="worker-2",
     )
-    assert same_turn.claimed is False
+    assert same_turn.claimed is True
+    duplicate_turn = store.claim_agent_run(
+        task_id,
+        recovered.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-2",
+    )
+    assert duplicate_turn.claimed is False
     next_turn = store.claim_agent_run(
         task_id,
-        task.execution_generation,
+        recovered.execution_generation,
         role=AgentRole.CONSUMER,
         proposal_revision=0,
         turn_attempt=store.next_agent_run_turn_attempt(
             task_id,
-            task.execution_generation,
+            recovered.execution_generation,
             role=AgentRole.CONSUMER,
             proposal_revision=0,
         ),
@@ -5260,7 +5284,7 @@ def test_retry_failed_reply_task_reopens_effect_free_failure_without_retryable_f
     )
 
     assert recovered.status == "pending"
-    assert recovered.execution_generation == task.execution_generation
+    assert recovered.execution_generation != task.execution_generation
 
 
 def test_retry_failed_reply_task_uses_durable_delivery_for_idempotency(tmp_path: Path):
@@ -5363,7 +5387,7 @@ def test_retry_failed_reply_task_rejects_older_run_and_reopens_safe_latest_audit
     )
 
     assert recovered.status == "pending"
-    assert recovered.execution_generation == task.execution_generation
+    assert recovered.execution_generation != task.execution_generation
     assert recovered.error == "operator_retry_after_runtime_fix"
 
 
