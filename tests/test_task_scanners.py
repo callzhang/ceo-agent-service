@@ -749,6 +749,96 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     assert '"source":"oa_pending_scan"' in task.trigger_message_json
 
 
+def test_scan_pending_oa_approvals_closes_completed_oa_needs_human_attempt(tmp_path):
+    class FakeDws:
+        detail_reads: list[str] = []
+
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return []
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            raise AssertionError("a completed OA instance has no pending task to read")
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            self.detail_reads.append(process_instance_id)
+            return {
+                "result": {
+                    "status": "COMPLETED",
+                    "processInstanceResult": "agree",
+                }
+            }
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    trigger_message_id = "oa-pending:proc-completed:revision-1"
+    store.enqueue_reply_task(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id=trigger_message_id,
+        trigger_create_time="2026-09-10T12:00:00+00:00",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        oa_url=(
+            "https://aflow.dingtalk.com/detail?"
+            "procInstId=proc-completed&taskId=task-completed"
+        ),
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id=trigger_message_id,
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='done' "
+            "where conversation_id=? and trigger_message_id=?",
+            ("oa_pending_scan", trigger_message_id),
+        )
+
+    dws = FakeDws()
+    assert scan_pending_oa_approvals(store, dws) == 0
+    assert dws.detail_reads == ["proc-completed"]
+    assert store.get_reply_attempt(attempt_id).send_status == "skipped"
+    state = store.get_daily_scan_state("oa_pending")
+    assert state is not None
+    assert json.loads(state["cursor_json"])["reconciled_completed_attempt_ids"] == [
+        attempt_id
+    ]
+
+
+def test_scan_pending_oa_approvals_keeps_running_oa_needs_human_attempt(tmp_path):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return []
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": []}}
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {"result": {"status": "RUNNING"}}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-running:revision-1",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-running",
+        send_status="needs_human",
+    )
+
+    assert scan_pending_oa_approvals(store, FakeDws()) == 0
+    assert store.get_reply_attempt(attempt_id).send_status == "needs_human"
+
+
 def test_scan_pending_oa_approvals_caches_applicant_open_dingtalk_id(tmp_path):
     class Profile:
         user_id = "applicant-user-1"

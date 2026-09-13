@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import quote
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -40,7 +40,7 @@ from app.agent_cron.models import (
     ensure_utc_datetime,
     parse_utc_datetime,
 )
-from app.business_identity import reply_business_object_key
+from app.business_identity import oa_identifiers_from_url, reply_business_object_key
 from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
     classify_codex_process_failure,
@@ -15735,6 +15735,43 @@ class AutoReplyStore:
             )
             return True
 
+    def resolve_completed_oa_needs_human_attempt(
+        self,
+        attempt_id: int,
+        *,
+        process_instance_id: str,
+        process_result: str,
+    ) -> bool:
+        """Close an OA decision that no longer exists in the live approval queue.
+
+        The OA scanner creates a terminal ``needs_human`` attempt when a
+        decision really requires Derek. Derek may then complete that approval
+        directly in DingTalk. Once the process is terminal there is no action
+        left for the service, so the local attempt is ``skipped`` rather than
+        left indefinitely actionable.
+        """
+
+        process_id = process_instance_id.strip()
+        if not process_id:
+            raise ValueError("process_instance_id must be non-empty")
+        result = process_result.strip() or "completed"
+        resolution = f"Live DingTalk OA process completed with result {result}."
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update reply_attempts
+                set send_status='skipped', send_error='',
+                    resolved_at=current_timestamp, resolution=?,
+                    updated_at=current_timestamp
+                where id=?
+                  and send_status='needs_human'
+                  and oa_process_instance_id=?
+                  and trim(coalesce(resolved_at, ''))=''
+                """,
+                (resolution, attempt_id, process_id),
+            )
+            return cursor.rowcount == 1
+
     def close_failed_reply_task_already_settled(
         self,
         task_id: int,
@@ -20792,6 +20829,40 @@ class AutoReplyStore:
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
+    def list_open_oa_needs_human_attempts(
+        self, *, limit: int = 100
+    ) -> list[ReplyAttempt]:
+        """Return latest unresolved OA decisions with no active local rerun."""
+
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select attempts.*
+                from reply_attempts attempts
+                where attempts.send_status='needs_human'
+                  and trim(coalesce(attempts.resolved_at, ''))=''
+                  and trim(attempts.oa_process_instance_id)<>''
+                  and attempts.id=(
+                      select max(latest.id)
+                      from reply_attempts latest
+                      where latest.oa_process_instance_id=
+                            attempts.oa_process_instance_id
+                  )
+                  and not exists (
+                      select 1
+                      from reply_tasks tasks
+                      where tasks.channel=attempts.channel
+                        and tasks.conversation_id=attempts.conversation_id
+                        and tasks.trigger_message_id=attempts.trigger_message_id
+                        and tasks.status in ('pending', 'processing')
+                  )
+                order by attempts.id desc
+                limit ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
     def list_oa_attempt_histories(
         self, process_instance_ids: Sequence[str]
     ) -> dict[str, list[ReplyAttempt]]:
@@ -20829,13 +20900,17 @@ class AutoReplyStore:
         with self._connect() as db:
             rows = db.execute(
                 """
-                select reply_attempts.id, reply_tasks.oa_url
+                select reply_attempts.id, reply_tasks.oa_url,
+                       reply_tasks.business_object_key
                 from reply_attempts
                 join reply_tasks on reply_tasks.conversation_id=reply_attempts.conversation_id
                     and reply_tasks.trigger_message_id=reply_attempts.trigger_message_id
                 where reply_attempts.action='agent_run'
                     and reply_attempts.oa_process_instance_id=''
-                    and reply_tasks.oa_url<>''
+                    and (
+                        reply_tasks.oa_url<>''
+                        or reply_tasks.business_object_key like 'oa:%'
+                    )
                 """
             ).fetchall()
             repaired = 0
@@ -20844,7 +20919,17 @@ class AutoReplyStore:
                     str(row["oa_url"] or "")
                 )
                 if not process_instance_id:
+                    business_key = str(row["business_object_key"] or "").strip()
+                    if business_key.startswith("oa:") and ":" in business_key[3:]:
+                        process_instance_id, task_id = business_key[3:].rsplit(":", 1)
+                if not process_instance_id:
                     continue
+                oa_url = str(row["oa_url"] or "").strip()
+                if not oa_url:
+                    oa_url = (
+                        "https://aflow.dingtalk.com/detail?"
+                        f"procInstId={quote(process_instance_id)}&taskId={quote(task_id)}"
+                    )
                 cursor = db.execute(
                     """
                     update reply_attempts
@@ -20856,7 +20941,7 @@ class AutoReplyStore:
                     (
                         process_instance_id,
                         task_id,
-                        str(row["oa_url"] or ""),
+                        oa_url,
                         int(row["id"]),
                     ),
                 )
@@ -20865,16 +20950,7 @@ class AutoReplyStore:
 
     @staticmethod
     def _oa_identifiers_from_url(url: str) -> tuple[str, str]:
-        query = parse_qs(urlsplit(url).query)
-        values = {
-            "".join(key.replace("_", "").casefold().split()): value
-            for key, value in query.items()
-        }
-        process_values = values.get("procinstid") or values.get("processinstanceid")
-        task_values = values.get("taskid")
-        process_instance_id = str(process_values[0]).strip() if process_values else ""
-        task_id = str(task_values[0]).strip() if task_values else ""
-        return process_instance_id, task_id
+        return oa_identifiers_from_url(url)
 
     def list_reply_attempts_for_codex_session(
         self, codex_session_id: str, limit: int | None = None

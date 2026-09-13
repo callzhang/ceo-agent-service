@@ -2718,7 +2718,14 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
     rows = []
     with store._connect() as db:
         if not _sqlite_table_exists(db, "service_state"):
-            return {"status": "unavailable", "updated_at": "", "entries": []}
+            return {
+                "status": "unavailable",
+                "updated_at": "",
+                "process": None,
+                "runtime_loops": [],
+                "accounts": [],
+                "checks": [],
+            }
         rows = db.execute(
             """
             select key, value, updated_at
@@ -2727,10 +2734,8 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
             order by key
             """
         ).fetchall()
-    entries: list[dict[str, object]] = []
+    parsed_rows: list[tuple[str, dict[str, object], str]] = []
     safe_integer_fields = {
-        "accounts",
-        "components",
         "failures",
         "persisted_count",
         "task_count",
@@ -2758,10 +2763,66 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
             "unavailable",
         }:
             status = "unavailable"
-        entry: dict[str, object] = {
-            "scope": scope,
-            "status": status,
+        instance_id = payload.get("instance_id")
+        if not isinstance(instance_id, str) or re.fullmatch(
+            r"[A-Za-z0-9_-]{1,160}", instance_id
+        ) is None:
+            continue
+        payload["status"] = status
+        parsed_rows.append((scope, payload, str(row["updated_at"] or "")))
+    process_row = next(
+        (row for row in parsed_rows if row[0] == "process:email-worker"),
+        None,
+    )
+    if process_row is None:
+        return {
+            "status": "unavailable",
+            "updated_at": "",
+            "process": None,
+            "runtime_loops": [],
+            "accounts": [],
+            "checks": [],
         }
+    _process_scope, process_payload, process_updated_at = process_row
+    current_instance_id = str(process_payload["instance_id"])
+    raw_runtime_loop_scopes = process_payload.get("runtime_loop_scopes")
+    runtime_loop_scopes = (
+        tuple(
+            scope
+            for scope in raw_runtime_loop_scopes
+            if isinstance(scope, str)
+            and re.fullmatch(r"[A-Za-z0-9:_-]{1,160}", scope) is not None
+        )
+        if isinstance(raw_runtime_loop_scopes, list)
+        else ()
+    )
+
+    def safe_process_count(field: str) -> int:
+        value = process_payload.get(field)
+        return (
+            value
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            else 0
+        )
+
+    process = {
+        "status": str(process_payload["status"]),
+        "accounts": safe_process_count("accounts"),
+        "runtime_loops": safe_process_count("runtime_loops"),
+        "readiness_ready": safe_process_count("readiness_ready"),
+        "readiness_total": safe_process_count("readiness_total"),
+        "updated_at": process_updated_at,
+    }
+    runtime_loop_entries: dict[str, dict[str, object]] = {}
+    accounts: list[dict[str, object]] = []
+    checks: list[dict[str, object]] = []
+    for scope, payload, updated_at in parsed_rows:
+        if (
+            scope == "process:email-worker"
+            or payload.get("instance_id") != current_instance_id
+        ):
+            continue
+        entry: dict[str, object] = {"scope": scope, "status": payload["status"]}
         error_code = payload.get("error_code")
         if isinstance(error_code, str) and re.fullmatch(
             r"[A-Za-z0-9:_-]{1,160}", error_code
@@ -2771,16 +2832,31 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
             value = payload.get(field)
             if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                 entry[field] = value
-        entry["updated_at"] = str(row["updated_at"] or "")
-        entries.append(entry)
-    process = next(
-        (entry for entry in entries if entry["scope"] == "process:email-worker"),
-        None,
-    )
+        entry["updated_at"] = updated_at
+        if scope in runtime_loop_scopes:
+            runtime_loop_entries[scope] = entry
+        elif scope.startswith("account:"):
+            accounts.append(entry)
+        else:
+            checks.append(entry)
+    runtime_loops = [
+        runtime_loop_entries.get(
+            scope,
+            {
+                "scope": scope,
+                "status": "starting",
+                "updated_at": process_updated_at,
+            },
+        )
+        for scope in runtime_loop_scopes
+    ]
     return {
-        "status": "unavailable" if process is None else process["status"],
-        "updated_at": "" if process is None else process["updated_at"],
-        "entries": entries,
+        "status": process["status"],
+        "updated_at": process_updated_at,
+        "process": process,
+        "runtime_loops": runtime_loops,
+        "accounts": accounts,
+        "checks": checks,
     }
 
 
@@ -10183,7 +10259,14 @@ def create_audit_app(
             },
             "components": _service_component_snapshots(),
             "connectors": {},
-            "email": {"status": "refreshing", "updated_at": "", "entries": []},
+            "email": {
+                "status": "refreshing",
+                "updated_at": "",
+                "process": None,
+                "runtime_loops": [],
+                "accounts": [],
+                "checks": [],
+            },
             "queues": [],
             "dispatcher_queues": [],
             "attention_rows": [],

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { displayValue, getStatus, type WorkerStatus } from "../api/console";
+import { displayValue, getStatus, type StatusEmailHealthEntry, type WorkerStatus } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { StatusBadge } from "../components/status/StatusBadge";
@@ -22,6 +22,33 @@ function StatusTable({ headers, rows, mobileLabels }: { headers: string[]; rows:
     <thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead>
     <tbody>{rows.map((cells, rowIndex) => <tr key={rowIndex}>{cells.map((cell, cellIndex) => <td data-label={mobileLabels[cellIndex] || headers[cellIndex]} key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
   </table></div>;
+}
+
+function emailHealthName(scope: string) {
+  const separator = scope.indexOf(":");
+  return separator === -1 ? scope : scope.slice(separator + 1);
+}
+
+function emailHealthDetail(item: StatusEmailHealthEntry) {
+  if (item.error_code) return item.error_code;
+  const counts = [
+    ["failures", item.failures],
+    ["persisted", item.persisted_count],
+    ["tasks", item.task_count],
+    ["isolated", item.isolated_count],
+    ["superseded", item.superseded_count],
+    ["unresolved", item.unresolved_count],
+  ].filter((entry): entry is [string, number] => typeof entry[1] === "number");
+  return counts.length ? counts.map(([label, value]) => `${label} ${value}`).join(" · ") : "-";
+}
+
+function emailHealthRows(items: StatusEmailHealthEntry[]) {
+  return items.map((item) => [
+    emailHealthName(item.scope),
+    <StatusBadge value={displayValue(item.status)} key="status" />,
+    emailHealthDetail(item),
+    displayValue(item.updated_at || "-"),
+  ]);
 }
 
 export function StatusPanel() {
@@ -47,7 +74,6 @@ export function StatusPanel() {
   if (!payload) return <section className="console-card page-state" role="status">正在加载…</section>;
 
   const { service, system_health: systemHealth, summary, components, queues, dispatcher_queues: dispatcherQueues, connectors, email, wechat } = payload;
-  const emailRows = email.entries;
   const connectorRows = Object.entries(connectors).map(([name, value]) => {
     return [name, <StatusBadge value={value.state} key="state" />, displayValue(value.reason_code || value.detail || "未提供")];
   });
@@ -75,7 +101,25 @@ export function StatusPanel() {
       {wechatRows.length > 0 && <div className="status-table-secondary"><StatusTable headers={["Check", "Status", "Detail"]} mobileLabels={["Check", "Status", "Detail"]} rows={wechatRows} /></div>}
     </StatusSection>
     <StatusSection title="Email worker">
-      <StatusTable headers={["Scope", "Status", "Detail", "Updated"]} mobileLabels={["Scope", "Status", "Detail", "Updated"]} rows={emailRows.map((item) => [displayValue(item.scope), <StatusBadge value={displayValue(item.status)} key="status" />, displayValue(item.error_code || (item.accounts !== undefined ? `accounts ${item.accounts}` : item.failures !== undefined ? `failures ${item.failures}` : "-")), displayValue(item.updated_at || "-")])} />
+      <dl className="email-worker-summary">
+        <div><dt>Process</dt><dd><StatusBadge value={email.process?.status || email.status} /></dd></div>
+        <div><dt>Accounts</dt><dd><strong>{displayValue(email.process?.accounts ?? 0)}</strong></dd></div>
+        <div><dt>Runtime loops</dt><dd><strong>{displayValue(email.process?.runtime_loops ?? 0)}</strong></dd></div>
+        <div><dt>Startup readiness</dt><dd><strong>{email.process ? `${email.process.readiness_ready}/${email.process.readiness_total}` : "-"}</strong></dd></div>
+        <div><dt>Updated</dt><dd>{displayValue(email.process?.updated_at || email.updated_at || "-")}</dd></div>
+      </dl>
+      <div className="email-worker-group">
+        <h3>Runtime loops</h3>
+        <StatusTable headers={["Loop", "Status", "Detail", "Updated"]} mobileLabels={["Loop", "Status", "Detail", "Updated"]} rows={emailHealthRows(email.runtime_loops)} />
+      </div>
+      <div className="email-worker-group">
+        <h3>Accounts</h3>
+        <StatusTable headers={["Account", "Status", "Detail", "Updated"]} mobileLabels={["Account", "Status", "Detail", "Updated"]} rows={emailHealthRows(email.accounts)} />
+      </div>
+      <details className="email-worker-checks" open={email.checks.some((item) => item.status !== "ready") || undefined}>
+        <summary>Internal checks ({email.checks.length})</summary>
+        <StatusTable headers={["Check", "Status", "Detail", "Updated"]} mobileLabels={["Check", "Status", "Detail", "Updated"]} rows={emailHealthRows(email.checks)} />
+      </details>
     </StatusSection>
     <StatusSection title="Queues">
       <StatusTable headers={["Queue", "Status counts", "Pending", "Processing", "Retryable", "Failed", "Updated", "Latest error"]} mobileLabels={["Queue", "Status counts", "Pending", "Processing", "Retryable", "Failed", "Updated", "Latest error"]} rows={queues.map((item) => [<><strong>{displayValue(item.name)}</strong><small className="table-subtitle">{displayValue(item.table)}</small></>, displayValue(item.counts), displayValue(item.pending), displayValue(item.processing), displayValue(item.retryable), displayValue(item.failed), displayValue(item.latest_updated_at), displayValue(item.latest_error || "-")])} />

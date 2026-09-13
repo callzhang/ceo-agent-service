@@ -65,8 +65,6 @@ class EmailHealthEntry(StrictStatusModel):
     scope: str
     status: str
     error_code: str | None = None
-    accounts: int | None = None
-    components: int | None = None
     failures: int | None = None
     persisted_count: int | None = None
     task_count: int | None = None
@@ -76,10 +74,22 @@ class EmailHealthEntry(StrictStatusModel):
     updated_at: str
 
 
+class EmailProcessHealth(StrictStatusModel):
+    status: str
+    accounts: int
+    runtime_loops: int
+    readiness_ready: int
+    readiness_total: int
+    updated_at: str
+
+
 class EmailHealth(StrictStatusModel):
     status: str
     updated_at: str
-    entries: list[EmailHealthEntry]
+    process: EmailProcessHealth | None
+    runtime_loops: list[EmailHealthEntry]
+    accounts: list[EmailHealthEntry]
+    checks: list[EmailHealthEntry]
 
 
 class WechatEndpointStatus(StrictStatusModel):

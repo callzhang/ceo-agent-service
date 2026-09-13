@@ -143,12 +143,40 @@ export interface StatusSystemHealth { state: string; detail: string; checked_at:
 export interface StatusPersistedComponent { component: string; state: string; status: string; detail: string; latest_tick_at: string; latest_error: string; latest_error_at: string; updated_at: string; }
 export interface StatusComponent { name: string; role: string; cadence: string; status: string; latest_tick_at: string; latest_error: string; latest_error_at: string; }
 export interface StatusDispatcherQueue { name: string; pending: number; due: number; oldest_available_at: string | null; running: number; latest_error: string; }
+export interface StatusEmailHealthEntry {
+  scope: string;
+  status: string;
+  error_code?: string | null;
+  failures?: number | null;
+  persisted_count?: number | null;
+  task_count?: number | null;
+  isolated_count?: number | null;
+  superseded_count?: number | null;
+  unresolved_count?: number | null;
+  updated_at: string;
+}
+export interface StatusEmailProcess {
+  status: string;
+  accounts: number;
+  runtime_loops: number;
+  readiness_ready: number;
+  readiness_total: number;
+  updated_at: string;
+}
+export interface StatusEmailHealth {
+  status: string;
+  updated_at: string;
+  process: StatusEmailProcess | null;
+  runtime_loops: StatusEmailHealthEntry[];
+  accounts: StatusEmailHealthEntry[];
+  checks: StatusEmailHealthEntry[];
+}
 export interface WorkerStatus {
   service: StatusService;
   system_health: StatusSystemHealth;
   components: StatusComponent[];
   connectors: Record<string, { channel: string; state: string; reason_code: string; detail: string; commands: string[][] }>;
-  email: { status: string; updated_at: string; entries: Array<Record<string, string | number | null>> };
+  email: StatusEmailHealth;
   wechat: { reader: { enabled: boolean; status: string; error: string }; sender: { enabled: boolean; status: string; error: string }; preflight: { status: string; error: string }; account: { ready: boolean; account_id: string } };
   queues: Array<{ name: string; table: string; counts: Record<string, number>; pending: number; processing: number; failed: number; retryable: number; latest_updated_at: string; latest_error: string }>;
   dispatcher_queues: StatusDispatcherQueue[];
@@ -804,17 +832,28 @@ function connectorStatus(value: unknown): boolean {
 }
 
 function emailHealth(value: unknown): boolean {
-  const row = exactRecord(value, ["status", "updated_at", "entries"]);
-  const allowedEntry = ["scope", "status", "error_code", "accounts", "components", "failures", "persisted_count", "task_count", "isolated_count", "superseded_count", "unresolved_count", "updated_at"];
-  return row !== null && strings(row, ["status", "updated_at"]) && Array.isArray(row.entries) && row.entries.every((value) => {
-    const entry = exactRecord(value, ["scope", "status", "updated_at"], allowedEntry.slice(2, -1));
+  const row = exactRecord(value, ["status", "updated_at", "process", "runtime_loops", "accounts", "checks"]);
+  const optionalEntryFields = ["error_code", "failures", "persisted_count", "task_count", "isolated_count", "superseded_count", "unresolved_count"];
+  const validEntry = (value: unknown) => {
+    const entry = exactRecord(value, ["scope", "status", "updated_at"], optionalEntryFields);
     return entry !== null && strings(entry, ["scope", "status", "updated_at"])
       && Object.entries(entry).every(([key, item]) => {
         if (key === "scope" || key === "status" || key === "updated_at") return typeof item === "string";
         if (key === "error_code") return item === null || typeof item === "string";
         return item === null || (Number.isInteger(item) && Number(item) >= 0);
       });
-  });
+  };
+  const process = row === null || row.process === null ? null : exactRecord(
+    row.process,
+    ["status", "accounts", "runtime_loops", "readiness_ready", "readiness_total", "updated_at"],
+  );
+  return row !== null && strings(row, ["status", "updated_at"])
+    && (row.process === null || (process !== null
+      && strings(process, ["status", "updated_at"])
+      && counts(process, ["accounts", "runtime_loops", "readiness_ready", "readiness_total"])))
+    && Array.isArray(row.runtime_loops) && row.runtime_loops.every(validEntry)
+    && Array.isArray(row.accounts) && row.accounts.every(validEntry)
+    && Array.isArray(row.checks) && row.checks.every(validEntry);
 }
 
 function wechatStatus(value: unknown): boolean {

@@ -515,6 +515,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .status-table small { display: block; color: var(--ink-soft); }
 .table-subtitle { margin-top: 3px; font-family: ui-monospace, monospace; font-size: 0.7rem; }
 .status-table-secondary { margin-top: 14px; }
+.email-worker-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0 0 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
+.email-worker-summary div { min-width: 0; padding: 12px 14px; border-right: 1px solid var(--line); }
+.email-worker-summary div:last-child { border-right: 0; }
+.email-worker-summary dt { margin-bottom: 6px; color: var(--ink-soft); font-size: .72rem; font-weight: 700; }
+.email-worker-summary dd { margin: 0; overflow-wrap: anywhere; font-size: .82rem; }
+.email-worker-summary strong { font-size: 1rem; }
+.email-worker-group { margin-top: 16px; }
+.email-worker-group h3 { margin-bottom: 8px; font-size: .86rem; }
+.email-worker-checks { margin-top: 16px; }
+.email-worker-checks > summary { cursor: pointer; color: var(--ink-soft); font-size: .82rem; font-weight: 750; }
+.email-worker-checks[open] > summary { margin-bottom: 8px; }
 .status-metric small { color: var(--ink-soft); font-size: 0.75rem; }
 .status-metric-good strong { color: var(--accent); }
 .status-metric-warning strong { color: var(--warning); }
@@ -758,6 +769,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .runtime-card-wide { grid-column: auto; }
   .settings-pill-row { max-width: 100%; overflow-x: auto; }
   .status-section { padding: 16px; }
+  .email-worker-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .email-worker-summary div, .email-worker-summary div:last-child { border-right: 0; border-bottom: 1px solid var(--line); }
+  .email-worker-summary div:last-child { grid-column: 1 / -1; border-bottom: 0; }
   .status-table-wrap { overflow: visible; }
   .status-table, .status-table thead, .status-table tbody, .status-table tr, .status-table th, .status-table td { display: block; }
   .status-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

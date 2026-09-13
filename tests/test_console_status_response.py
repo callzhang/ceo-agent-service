@@ -27,7 +27,14 @@ def _status_payload() -> dict[str, object]:
         },
         "components": [],
         "connectors": {},
-        "email": {"status": "ready", "updated_at": "", "entries": []},
+        "email": {
+            "status": "ready",
+            "updated_at": "",
+            "process": None,
+            "runtime_loops": [],
+            "accounts": [],
+            "checks": [],
+        },
         "wechat": {
             "reader": {"enabled": True, "status": "ready", "error": ""},
             "sender": {"enabled": True, "status": "ready", "error": ""},

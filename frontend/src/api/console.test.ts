@@ -9,7 +9,14 @@ function statusEnvelope() {
       system_health: { state: "healthy", detail: "healthy", checked_at: "now", violations: 0, components: [] },
       components: [{ name: "agent-cron-scheduler", role: "business trigger scheduling", cadence: "task configured", status: "running", latest_tick_at: "now", latest_error: "", latest_error_at: "" }],
       connectors: {},
-      email: { status: "ready", updated_at: "", entries: [] },
+      email: {
+        status: "ready",
+        updated_at: "now",
+        process: { status: "ready", accounts: 1, runtime_loops: 3, readiness_ready: 2, readiness_total: 2, updated_at: "now" },
+        runtime_loops: [],
+        accounts: [],
+        checks: [],
+      },
       wechat: { reader: { status: "ready", enabled: true, error: "" }, sender: { status: "ready", enabled: true, error: "" }, preflight: { status: "on_send", error: "" }, account: { ready: true, account_id: "account" } },
       queues: [{ name: "Reply tasks", table: "reply_tasks", counts: {}, pending: 0, processing: 0, failed: 0, retryable: 0, latest_updated_at: "", latest_error: "" }],
       dispatcher_queues: [{ name: "scheduled", pending: 0, due: 0, oldest_available_at: null, running: 0, latest_error: "" }],
@@ -89,12 +96,10 @@ describe("console API helpers", () => {
   it("accepts explicit nulls for optional status fields", async () => {
     const originalFetch = globalThis.fetch;
     const payload = statusEnvelope();
-    (payload.item.email.entries as unknown[]).push({
+    (payload.item.email.accounts as unknown[]).push({
       scope: "account:dingtalk_primary",
       status: "ready",
       error_code: null,
-      accounts: null,
-      components: null,
       failures: null,
       persisted_count: 0,
       task_count: null,
