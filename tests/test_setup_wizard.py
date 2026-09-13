@@ -832,7 +832,9 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
         "servers": {
             "exa": {"url": "https://mcp.exa.ai/mcp"},
             "xiaoqing_interview": {
-                "url": "https://interview.hr.startask.net/api/mcp"
+                "url": "https://interview.hr.startask.net/api/mcp",
+                "startup_timeout_sec": 120,
+                "tool_timeout_sec": 90,
             },
         }
     }
@@ -909,7 +911,9 @@ def test_run_setup_mcp_writes_service_manifest_and_environment(tmp_path: Path):
         "servers": {
             "exa": {"url": "https://mcp.exa.ai/mcp"},
             "xiaoqing_interview": {
-                "url": "https://interview.hr.startask.net/api/mcp"
+                "url": "https://interview.hr.startask.net/api/mcp",
+                "startup_timeout_sec": 120,
+                "tool_timeout_sec": 90,
             },
         }
     }
@@ -1174,7 +1178,9 @@ def test_run_setup_mcp_uses_os_service_path_and_redacts_output(
         "servers": {
             "exa": {"url": "https://mcp.exa.ai/mcp"},
             "xiaoqing_interview": {
-                "url": "https://interview.hr.startask.net/api/mcp"
+                "url": "https://interview.hr.startask.net/api/mcp",
+                "startup_timeout_sec": 120,
+                "tool_timeout_sec": 90,
             },
         }
     }
@@ -1311,7 +1317,9 @@ def test_run_setup_mcp_reports_missing_memory_url(monkeypatch, tmp_path: Path):
         "servers": {
             "exa": {"url": "https://mcp.exa.ai/mcp"},
             "xiaoqing_interview": {
-                "url": "https://interview.hr.startask.net/api/mcp"
+                "url": "https://interview.hr.startask.net/api/mcp",
+                "startup_timeout_sec": 120,
+                "tool_timeout_sec": 90,
             },
         }
     }

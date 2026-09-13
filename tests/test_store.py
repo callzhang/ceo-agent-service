@@ -1739,13 +1739,16 @@ def test_current_schema_sentinel_requires_new_runtime_parent_tables(tmp_path: Pa
     assert {"weekly_okr_analysis_jobs", "wechat_memory_import_jobs"} <= tables
 
 
-def test_current_schema_repairs_agent_runs_missing_tool_events_column(
+def test_current_schema_removes_legacy_agent_runs_tool_events_column(
     tmp_path: Path,
 ):
     db_path = tmp_path / "agent-runs-missing-tool-events.sqlite3"
     store = AutoReplyStore(db_path)
     with store._connect() as db:
-        db.execute("alter table agent_runs drop column tool_events_json")
+        db.execute(
+            "alter table agent_runs add column "
+            "tool_events_json text not null default '[]'"
+        )
 
     assert store._schema_is_current() is False
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
@@ -1756,7 +1759,7 @@ def test_current_schema_repairs_agent_runs_missing_tool_events_column(
         columns = {
             row["name"] for row in db.execute("pragma table_info(agent_runs)").fetchall()
         }
-    assert "tool_events_json" in columns
+    assert "tool_events_json" not in columns
     assert reopened._schema_is_current() is True
 
 

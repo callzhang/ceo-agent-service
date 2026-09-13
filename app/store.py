@@ -225,6 +225,9 @@ STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
     "universal_action_executions",
 )
+STORE_SCHEMA_REMOVED_COLUMNS = {
+    "agent_runs": ("tool_events_json",),
+}
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "scheduled_tasks": (
         "migration_key",
@@ -270,7 +273,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "input_version",
         "claimed_input_version",
     ),
-    "agent_runs": ("tool_events_json",),
     "agent_effect_intents": ("external_action_key",),
     "sent_replies": ("agent_run_id", "external_action_key"),
     "agent_runtime_attempts": (
@@ -1982,6 +1984,15 @@ class AutoReplyStore:
             )
             for table_name, required_columns in STORE_SCHEMA_REQUIRED_COLUMNS.items()
         )
+        removed_columns_present = any(
+            set(removed_columns).intersection(
+                {
+                    str(item["name"])
+                    for item in db.execute(f"pragma table_info({table_name})")
+                }
+            )
+            for table_name, removed_columns in STORE_SCHEMA_REMOVED_COLUMNS.items()
+        )
         return (
             set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
             and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
@@ -1989,6 +2000,7 @@ class AutoReplyStore:
             and required_trigger_definitions_present
             and feedback_processing_round_storage_valid
             and required_columns_present
+            and not removed_columns_present
             and (
                 not include_run_snapshots
                 or self._scheduled_task_run_snapshots_are_current(db)
@@ -2022,9 +2034,14 @@ class AutoReplyStore:
         raise RuntimeError("schema manifest check retry loop exhausted")
 
     def _schema_is_current(self) -> bool:
+        # A fresh database has no service_state table yet. This probe is an
+        # expected pre-initialization miss, so keep it off the normal
+        # connection path that annotates every SQLite error as an operational
+        # failure.
+        connection = self._open_connection()
         try:
-            with self._connect() as db:
-                row = db.execute(
+            with connection:
+                row = connection.execute(
                     "select value from service_state where key=?",
                     (STORE_SCHEMA_VERSION_KEY,),
                 ).fetchone()
@@ -2035,13 +2052,15 @@ class AutoReplyStore:
                     # The version is written only after a migration passed the
                     # row check, so a matching version already implies it.
                     and self._schema_manifest_is_current_in_connection(
-                        db, include_run_snapshots=False
+                        connection, include_run_snapshots=False
                     )
                 )
         except sqlite3.OperationalError as exc:
             if _is_sqlite_lock_error(exc):
                 raise
             return False
+        finally:
+            connection.close()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:

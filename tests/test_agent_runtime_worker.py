@@ -2992,12 +2992,13 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
 
     assert worker.consume_once(max_tasks=1) == 0
 
-    # The Audit role retry ceiling is exhausted inside one worker pass, so the
-    # orchestration ends failed_terminal below the task attempt budget.
-    exhausted = worker.store.get_reply_task(task_id)
-    assert exhausted is not None and exhausted.status == "failed"
-    assert exhausted.attempts == 1
-    assert exhausted.error == "audit_dependency_unavailable"
+    # Inner Audit retries are a transport budget. The retryable result is
+    # returned to the task-level worker, which applies task backoff and only
+    # terminalizes after the task attempt ceiling is reached.
+    waiting = worker.store.get_reply_task(task_id)
+    assert waiting is not None and waiting.status == "pending"
+    assert waiting.attempts == 1
+    assert waiting.error == "audit_dependency_unavailable"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "failed"
@@ -3017,9 +3018,9 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
 
     assert worker.consume_once(max_tasks=1) == 0
 
-    retried = worker.store.get_reply_task(task_id)
-    assert retried is not None and retried.status == "failed"
-    assert retried.attempts == 1
+    exhausted = worker.store.get_reply_task(task_id)
+    assert exhausted is not None and exhausted.status == "failed"
+    assert exhausted.attempts == 2
     attempts = [
         attempt
         for attempt in worker.store.list_reply_attempts(limit=10)
@@ -3027,7 +3028,7 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
     ]
     assert len(attempts) == 1
     assert {attempt.send_error for attempt in attempts} == {"audit_dependency_unavailable"}
-    assert executor.audit_attempts == 2
+    assert executor.audit_attempts == 4
 
 
 def test_oa_material_binds_exact_target_from_quoted_approval_card(tmp_path: Path):
@@ -5511,6 +5512,8 @@ def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
         tmp_path,
         [trigger],
         executor,
+        # Make the task-level ceiling explicit for this terminal retry path.
+        max_task_attempts=1,
     )
     task_id = _enqueue(worker.store, trigger)
 
