@@ -62,6 +62,8 @@ def test_service_manifest_resolves_environment_backed_command_transport(
             "xiaoqing_interview": {
                 "command_env": "CEO_XIAOQING_MCP_COMMAND",
                 "args_env": "CEO_XIAOQING_MCP_ARGS_JSON",
+                "startup_timeout_sec": 120,
+                "tool_timeout_sec": 90,
             },
         },
     )
@@ -86,6 +88,8 @@ def test_service_manifest_resolves_environment_backed_command_transport(
     assert (
         'mcp_servers.xiaoqing_interview.args=["serve", "--stdio"]' in options
     )
+    assert "mcp_servers.xiaoqing_interview.startup_timeout_sec=120" in options
+    assert "mcp_servers.xiaoqing_interview.tool_timeout_sec=90" in options
 
 
 def test_present_environment_backed_server_fails_when_command_is_missing(
@@ -568,6 +572,34 @@ def test_disabled_servers_emit_inert_disabled_overrides(tmp_path: Path) -> None:
         'mcp_servers.cua_repl={"enabled" = false, "command" = "/usr/bin/false"}'
         in options
     )
+
+
+def test_remote_disabled_servers_keep_a_remote_transport(tmp_path: Path) -> None:
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}},
+                "disabled_servers": ["brightdata", "crm_connector", "fundflow"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    options = service_mcp_config_options(path=manifest, env={})
+
+    assert (
+        'mcp_servers.brightdata={"enabled" = false, "url" = '
+        '"https://disabled.invalid/mcp"}'
+    ) in options
+    assert (
+        'mcp_servers.crm_connector={"enabled" = false, "url" = '
+        '"https://disabled.invalid/mcp"}'
+    ) in options
+    assert (
+        'mcp_servers.fundflow={"enabled" = false, "url" = '
+        '"https://disabled.invalid/mcp"}'
+    ) in options
 
 
 @pytest.mark.parametrize(

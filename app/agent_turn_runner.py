@@ -414,6 +414,61 @@ def _process_failure_code(process: ProcessRunResult) -> str:
     return code
 
 
+_PROCESS_DIAGNOSTIC_EVENT_TYPES = frozenset(
+    {
+        "error",
+        "turn.failed",
+        "response.failed",
+        "item.error",
+        "thread.error",
+    }
+)
+
+
+def _process_failure_detail(process: ProcessRunResult) -> str:
+    """Keep actionable process diagnostics without persisting agent output."""
+    parts: list[str] = []
+
+    def add(value: object) -> None:
+        if not isinstance(value, str):
+            return
+        normalized = " ".join(value.split())
+        if normalized and normalized not in parts:
+            parts.append(normalized)
+
+    for line in process.stderr.splitlines():
+        add(line)
+
+    def add_error_fields(value: object) -> None:
+        if isinstance(value, str):
+            add(value)
+            return
+        if not isinstance(value, dict):
+            return
+        for key in ("message", "detail", "reason"):
+            add(value.get(key))
+
+    for line in process.stdout.splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("type") in _PROCESS_DIAGNOSTIC_EVENT_TYPES:
+            add_error_fields(payload.get("error"))
+            add_error_fields(payload)
+        elif "error" in payload:
+            add_error_fields(payload.get("error"))
+
+    detail = " | ".join(parts)
+    if not detail:
+        return ""
+    detail = redact_credentials(detail)
+    detail = redact_forbidden_leak_markers(detail)
+    return detail[:1000]
+
+
 def _agent_process_error_code(exc: Exception) -> str:
     code = str(exc).strip()
     explicit_code = getattr(exc, "code", "")
@@ -1558,7 +1613,9 @@ class AgentTurnProcess(Generic[ResultT]):
         self, process: ProcessRunResult, *, run: AgentRun
     ) -> None:
         if process.timed_out:
-            raise RuntimeError("codex_process_timeout")
+            error = RuntimeError("codex_process_timeout")
+            error.detail = process.timeout_reason
+            raise error
         if process.returncode != 0:
             failure_code = _process_failure_code(process)
             persisted = self.store.get_agent_run(run.id)
@@ -1572,7 +1629,9 @@ class AgentTurnProcess(Generic[ResultT]):
                 raise ResultParseError(
                     "no valid typed result JSON found in Codex JSONL"
                 )
-            raise RuntimeError(failure_code)
+            error = RuntimeError(failure_code)
+            error.detail = _process_failure_detail(process)
+            raise error
 
     def _fail_running(
         self,

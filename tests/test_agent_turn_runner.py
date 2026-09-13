@@ -10,8 +10,10 @@ from app.agent_turn_runner import (
     RuntimeRouteUnavailableError,
     _decode_runtime_domain_result,
     _encode_runtime_domain_result,
+    _process_failure_detail,
     _persist_provider_event,
 )
+from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore, RuntimeRoutePausedError
 
 
@@ -300,3 +302,46 @@ def test_runtime_failure_detail_keeps_wrapped_validation_reason():
 
     assert "invalid AgentEnvelope: missing user_response" in detail
     assert "runtime_result_validation_failed" in detail
+
+
+def test_process_failure_detail_keeps_diagnostics_without_agent_output():
+    process = ProcessRunResult(
+        returncode=1,
+        stdout=(
+            '{"type":"error","error":{"message":"MCP startup failed: timed out"}}\n'
+            '{"type":"agent_message","text":"private business output"}'
+        ),
+        stderr="fatal: authorization token=secret-value",
+    )
+
+    detail = _process_failure_detail(process)
+
+    assert "MCP startup failed: timed out" in detail
+    assert "fatal: authorization [REDACTED]" in detail
+    assert "secret-value" not in detail
+    assert "private business output" not in detail
+
+
+def test_raise_for_process_failure_attaches_diagnostics_to_runtime_error():
+    class Store:
+        def get_agent_run(self, run_id: int):
+            assert run_id == 9
+            return SimpleNamespace(tool_events=())
+
+    runner = object.__new__(AgentTurnProcess)
+    runner.store = Store()
+
+    with pytest.raises(RuntimeError) as raised:
+        runner._raise_for_process_failure(
+            ProcessRunResult(
+                returncode=1,
+                stdout='{"type":"error","message":"worker crashed"}',
+                stderr="fatal: MCP connection refused",
+            ),
+            run=SimpleNamespace(id=9, role=AgentRole.AUDIT),
+        )
+
+    assert str(raised.value) == "codex_process_failed"
+    assert raised.value.detail == (
+        "fatal: MCP connection refused | worker crashed"
+    )

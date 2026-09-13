@@ -17,10 +17,15 @@ DEFAULT_SERVICE_MCP_CONFIG_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "service-mcp.json"
 )
 _MANIFEST_FIELDS = frozenset({"servers", "disabled_servers"})
-# Codex only accepts a whole-table override for a server, and every server
-# table must carry a transport. A disabled server never launches, so this
-# placeholder is inert; it exists only to satisfy the config schema.
+# Codex merges command-line tables with the user's server tables. A disabled
+# server still needs a transport of the same kind as the inherited entry:
+# replacing a remote URL with a stdio command makes Codex reject the merged
+# table before it can start the service-owned MCP servers.
 DISABLED_SERVER_PLACEHOLDER_COMMAND = "/usr/bin/false"
+DISABLED_SERVER_PLACEHOLDER_URL = "https://disabled.invalid/mcp"
+_REMOTE_DISABLED_SERVER_NAMES = frozenset(
+    {"brightdata", "crm_connector", "fundflow"}
+)
 _SERVER_FIELDS = frozenset(
     {
         "url",
@@ -32,6 +37,8 @@ _SERVER_FIELDS = frozenset(
         "bearer_token_env_var",
         "http_headers",
         "env_http_headers",
+        "startup_timeout_sec",
+        "tool_timeout_sec",
     }
 )
 _SENSITIVE_STATIC_HEADERS = frozenset(
@@ -61,6 +68,8 @@ class ServiceMcpServer:
     bearer_token_env_var: str | None = None
     http_headers: tuple[tuple[str, str], ...] = ()
     env_http_headers: tuple[tuple[str, str], ...] = ()
+    startup_timeout_sec: int | None = None
+    tool_timeout_sec: int | None = None
 
 
 @dataclass(frozen=True)
@@ -312,11 +321,33 @@ def service_mcp_config_options(
                 f"{prefix}.env_http_headers",
                 dict(server.env_http_headers),
             )
+        if server.startup_timeout_sec is not None:
+            _append_option(
+                options,
+                f"{prefix}.startup_timeout_sec",
+                server.startup_timeout_sec,
+            )
+        if server.tool_timeout_sec is not None:
+            _append_option(
+                options,
+                f"{prefix}.tool_timeout_sec",
+                server.tool_timeout_sec,
+            )
     for name in disabled_servers:
+        if name in _REMOTE_DISABLED_SERVER_NAMES:
+            value = {
+                "enabled": False,
+                "url": DISABLED_SERVER_PLACEHOLDER_URL,
+            }
+        else:
+            value = {
+                "enabled": False,
+                "command": DISABLED_SERVER_PLACEHOLDER_COMMAND,
+            }
         _append_option(
             options,
             f"mcp_servers.{name}",
-            {"enabled": False, "command": DISABLED_SERVER_PLACEHOLDER_COMMAND},
+            value,
         )
     return options
 
@@ -459,6 +490,8 @@ def _resolve_server(
     )
     http_headers = _string_mapping(name, entry, "http_headers")
     env_http_headers = _environment_mapping(name, entry, "env_http_headers")
+    startup_timeout_sec = _optional_timeout(name, entry, "startup_timeout_sec")
+    tool_timeout_sec = _optional_timeout(name, entry, "tool_timeout_sec")
     static_header_names = {header.casefold() for header, _ in http_headers}
     environment_header_names = {
         header.casefold() for header, _ in env_http_headers
@@ -514,6 +547,8 @@ def _resolve_server(
         bearer_token_env_var=bearer_token_env_var,
         http_headers=http_headers,
         env_http_headers=env_http_headers,
+        startup_timeout_sec=startup_timeout_sec,
+        tool_timeout_sec=tool_timeout_sec,
     )
 
 
@@ -541,6 +576,22 @@ def _required_string(name: str, entry: dict[str, object], field: str) -> str:
     if _contains_control_character(value) or not _is_utf8_safe(value):
         raise _ServerConfigProblem(
             f"{name}.{field} contains invalid characters",
+            field=field,
+        )
+    return value
+
+
+def _optional_timeout(
+    name: str,
+    entry: dict[str, object],
+    field: str,
+) -> int | None:
+    if field not in entry:
+        return None
+    value = entry[field]
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 600:
+        raise _ServerConfigProblem(
+            f"{name}.{field} must be an integer between 1 and 600",
             field=field,
         )
     return value
