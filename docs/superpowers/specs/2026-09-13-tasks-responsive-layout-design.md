@@ -1,7 +1,7 @@
 # Tasks Responsive Layout Design
 
 **Date:** 2026-09-13
-**Status:** Approved for implementation
+**Status:** Implemented and verified live
 
 ## Problem and evidence
 
@@ -124,3 +124,18 @@ unchanged. Controls must not be hidden solely to make the layout fit.
   required to prevent the same overflow.
 - Replacing the established React/Vite/CSS architecture or adding a component
   library.
+
+## Implementation evidence
+
+- Frontend verification: 40 test files passed, with 465 tests passed and 2
+  pre-existing tests skipped.
+- Production build: Vite generated `assets/index-CuP8IeYb.css`; the live Tasks
+  route returned HTTP 200 with that asset.
+- Browser geometry: document width equaled viewport width at 1600 x 900,
+  1024 x 768, 768 x 1024, and 390 x 844.
+- Wide filters used one row; medium filters used two rows; mobile filters used
+  five stacked controls and task rows retained the labeled-card presentation.
+- The 1456 px Sent TODOs table remained locally scrollable within 1144 px,
+  932 px, and 676 px wrappers without increasing the document width.
+- The repository-wide Ruff gate remains blocked by the same 63 unrelated
+  findings recorded before implementation; this UI change added none of them.
