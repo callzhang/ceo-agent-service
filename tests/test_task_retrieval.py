@@ -159,6 +159,29 @@ def test_retrieve_project_candidates_excludes_archived_and_done_projects(tmp_pat
     assert candidates == []
 
 
+def test_retrieve_project_candidates_searches_all_active_projects(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    target_id = store.create_work_project(
+        title="极光协议客户迁移",
+        category="projects",
+        status="active",
+    )
+    for index in range(600):
+        store.create_work_project(
+            title=f"普通项目 {index}",
+            category="projects",
+            status="active",
+        )
+
+    candidates = retrieve_project_candidates(
+        store,
+        summary="极光协议",
+        limit=3,
+    )
+
+    assert candidates[0].project.id == target_id
+
+
 def test_retrieve_project_candidates_returns_empty_for_empty_query_or_no_projects(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 

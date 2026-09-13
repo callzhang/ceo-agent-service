@@ -31,6 +31,7 @@ from app.task_models import (
     TodoChange,
     TodoStatus,
     WorkItem,
+    WorkItemSourceType,
     WorkSummaryInput,
     owner_identity_is_supported,
 )
@@ -71,6 +72,36 @@ TASK_RESULT_CODEC = RoutedResultCodec.text(
 
 # Repair turns a work item may spend per pass on repairable rules.
 TASK_DECISION_REPAIR_ROUNDS = 2
+
+# These fields describe the durable identity and management meaning of a project.
+# The structured response schema supplies defaults for them, so a model that emits
+# a full update object can otherwise erase good stored data accidentally.
+PROTECTED_PROJECT_FIELDS = frozenset(
+    {
+        "title",
+        "category",
+        "tags",
+        "status",
+        "priority",
+        "risk_level",
+        "owner_user_id",
+        "owner_name",
+        "owner_evidence",
+        "related_people",
+        "goal",
+        "background",
+        "facts",
+        "source_conversations",
+    }
+)
+
+PROJECT_STORAGE_FIELDS = {
+    "tags": "tags_json",
+    "owner_evidence": "owner_evidence_json",
+    "related_people": "related_people_json",
+    "facts": "facts_json",
+    "source_conversations": "source_conversations_json",
+}
 
 
 class RepairableTaskDecisionValidationError(ValueError):
@@ -370,6 +401,15 @@ Required evidence sequence for every non-skip decision:
 
 Current Work Item JSON:
 {work_item_json}
+
+Source-specific mutation authority:
+- A local_file source may update a clearly matched existing project, but it may
+  not create a new project. Return action="skip" when no existing project is a
+  defensible match.
+- A todo_completion_check or follow_up_completion_check that finds no TODO,
+  follow-up, or project-status lifecycle transition must return action="skip".
+  Do not rewrite current_state, blocker, next_step, or durable metadata merely
+  to say that completion evidence is still absent.
 
 Current candidate context:
 {candidate_prompt}
@@ -840,6 +880,7 @@ def apply_task_agent_decision(
         decision,
         now=now,
     )
+    _validate_work_item_mutation_authority(work_item, decision)
     _validate_owner_changes(store, decision)
 
     if record_run:
@@ -949,6 +990,43 @@ def apply_task_agent_decision(
     return project_id
 
 
+def _validate_work_item_mutation_authority(
+    work_item: WorkItem,
+    decision: TaskAgentDecision,
+) -> None:
+    source_type = work_item.source.type
+    if (
+        source_type == WorkItemSourceType.LOCAL_FILE
+        and decision.action == "create_project"
+    ):
+        raise RepairableTaskDecisionValidationError(
+            "local_file sources cannot create projects; update a defensible "
+            "existing match or skip"
+        )
+
+    completion_sources = {
+        WorkItemSourceType.TODO_COMPLETION_CHECK,
+        WorkItemSourceType.FOLLOW_UP_COMPLETION_CHECK,
+    }
+    if source_type not in completion_sources or decision.action == "skip":
+        return
+
+    project_status_transition = bool(
+        decision.project is not None
+        and "status" in decision.project.model_fields_set
+        and decision.project.status.value != "active"
+    )
+    if not (
+        decision.todo_changes
+        or decision.follow_up_changes
+        or decision.follow_up_drafts
+        or project_status_transition
+    ):
+        raise RepairableTaskDecisionValidationError(
+            "completion check without a lifecycle transition must skip"
+        )
+
+
 def _validate_task_agent_decision(
     decision: TaskAgentDecision,
     *,
@@ -1044,6 +1122,10 @@ def _validate_task_agent_decision(
     if decision.action == "update_project" and decision.project.id is None:
         raise RepairableTaskDecisionValidationError(
             "update_project requires project.id"
+        )
+    if decision.action == "create_project" and not decision.project.title.strip():
+        raise RepairableTaskDecisionValidationError(
+            "create_project requires a non-empty project.title"
         )
 
 
@@ -1366,6 +1448,7 @@ def _apply_project(
     current_project = store.get_work_project(project.id, _db=_db)
     fields = project.model_fields_set - {"id"}
     if current_project is not None:
+        _reject_default_project_field_erasure(project, current_project, fields)
         final_owner = {
             "owner_user_id": (
                 project.owner_user_id
@@ -1386,6 +1469,57 @@ def _apply_project(
     values = _project_values(project, only_fields=fields)
     store.update_work_project(project.id, _db=_db, **values)
     return project.id
+
+
+def _reject_default_project_field_erasure(
+    project: TaskProjectPatch,
+    current_project: object,
+    fields: set[str],
+) -> None:
+    """Reject schema defaults that would overwrite meaningful durable metadata."""
+
+    defaults = TaskProjectPatch()
+    destructive_fields: list[str] = []
+    for field in sorted(fields & PROTECTED_PROJECT_FIELDS):
+        proposed = _comparable_project_value(getattr(project, field))
+        default = _comparable_project_value(getattr(defaults, field))
+        current = _stored_project_value(current_project, field)
+        if proposed == default and current != default and _project_value_has_content(current):
+            destructive_fields.append(field)
+    if destructive_fields:
+        raise RepairableTaskDecisionValidationError(
+            "update_project would erase protected project fields with schema defaults: "
+            + ", ".join(destructive_fields)
+        )
+
+
+def _stored_project_value(project: object, field: str) -> object:
+    value = getattr(project, PROJECT_STORAGE_FIELDS.get(field, field))
+    if field in PROJECT_STORAGE_FIELDS:
+        try:
+            value = json.loads(value or "null")
+        except (TypeError, json.JSONDecodeError):
+            return value
+    return _comparable_project_value(value)
+
+
+def _comparable_project_value(value: object) -> object:
+    if hasattr(value, "value"):
+        return getattr(value, "value")
+    if isinstance(value, list):
+        return [_comparable_project_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _comparable_project_value(item)
+            for key, item in value.items()
+        }
+    if hasattr(value, "model_dump"):
+        return _comparable_project_value(value.model_dump(mode="json"))
+    return value
+
+
+def _project_value_has_content(value: object) -> bool:
+    return value not in (None, "", [], {})
 
 
 def _project_values(project, only_fields: set[str] | None = None) -> dict[str, object]:

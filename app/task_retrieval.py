@@ -117,7 +117,9 @@ def retrieve_project_candidates(
     if not query_terms:
         return []
 
-    projects = store.list_work_projects(statuses=("active", "waiting"), limit=500)
+    # Candidate ranking must see the complete active corpus. A recency cap makes
+    # older valid projects impossible to match and encourages duplicate creates.
+    projects = store.list_work_projects(statuses=("active", "waiting"))
     if not projects:
         return []
 

@@ -7,6 +7,7 @@ import pytest
 from app.store import AutoReplyStore
 from app.agent_runtime_router import CodexCommandFactory, RoutedResultValidationError
 from app.task_agent import (
+    RepairableTaskDecisionValidationError,
     TaskAgentCodexRunner,
     TaskAgentRunner,
     apply_task_agent_decision,
@@ -18,7 +19,7 @@ from app.task_agent import (
     _task_result_validation_repair_prompt,
 )
 from app.leak_check import contains_credential, contains_local_runtime_leak
-from app.task_models import TaskAgentDecision, WorkItem
+from app.task_models import TaskAgentDecision, WorkItem, WorkItemSourceType
 
 
 def test_task_agent_parser_uses_valid_result_after_failed_tool_event():
@@ -389,6 +390,156 @@ def _work_item(project_name="售前知识库"):
             },
         }
     )
+
+
+def test_update_project_rejects_empty_defaults_that_would_erase_metadata(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = store.create_work_project(
+        title="融资 Demo 交付",
+        goal="完成可复跑演示",
+        background="已确认背景",
+        facts_json='[{"description":"fact","source":"source"}]',
+        source_conversations_json='[{"conversation_id":"cid"}]',
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "",
+                "goal": "",
+                "background": "",
+                "facts": [],
+                "source_conversations": [],
+                "memory_context": {
+                    "query": "融资 Demo 当前状态",
+                    "summary": "未发现新的完成证据。",
+                },
+            },
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(
+        RepairableTaskDecisionValidationError,
+        match="erase protected project fields",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            record_run=False,
+        )
+
+    restored = store.get_work_project(project_id)
+    assert restored is not None
+    assert restored.title == "融资 Demo 交付"
+    assert restored.goal == "完成可复跑演示"
+    assert restored.background == "已确认背景"
+    assert restored.facts_json == '[{"description":"fact","source":"source"}]'
+    assert restored.source_conversations_json == '[{"conversation_id":"cid"}]'
+
+
+def test_create_project_rejects_missing_title(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "  ",
+                "memory_context": {
+                    "query": "融资 Demo 当前状态",
+                    "summary": "未找到已有项目。",
+                },
+            },
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(
+        RepairableTaskDecisionValidationError,
+        match="create_project requires a non-empty project.title",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            record_run=False,
+        )
+
+    assert store.list_work_projects() == []
+
+
+def test_local_file_source_cannot_create_project(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    item = _low_confidence_minutes_work_item()
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "历史会议材料",
+                "memory_context": {
+                    "query": "历史会议材料",
+                    "summary": "未找到已有项目。",
+                },
+            },
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(
+        RepairableTaskDecisionValidationError,
+        match="local_file sources cannot create projects",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=item,
+            decision=decision,
+            record_run=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "source_type",
+    ["todo_completion_check", "follow_up_completion_check"],
+)
+def test_completion_check_without_lifecycle_transition_must_skip(
+    tmp_path,
+    source_type,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    item = _work_item()
+    item.source.type = WorkItemSourceType(source_type)
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "current_state": "仍未找到完成证据。",
+                "memory_context": {
+                    "query": "客户交付完成状态",
+                    "summary": "没有生命周期变化。",
+                },
+            },
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(
+        RepairableTaskDecisionValidationError,
+        match="completion check without a lifecycle transition must skip",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=item,
+            decision=decision,
+            record_run=False,
+        )
 
 
 def _low_confidence_minutes_work_item() -> WorkItem:
@@ -2797,10 +2948,12 @@ def test_service_does_not_rejudge_agent_owner_evidence_from_message_text(tmp_pat
         }
     )
 
+    work_item = _low_confidence_minutes_work_item()
+    work_item.source.type = WorkItemSourceType.AI_MINUTES
     project_id = apply_task_agent_decision(
         store,
         summary_input_id=0,
-        work_item=_low_confidence_minutes_work_item(),
+        work_item=work_item,
         decision=decision,
     )
 
@@ -4252,6 +4405,9 @@ def test_task_agent_prompt_discards_non_actionable_reference_material():
     assert "document, script, presentation" in prompt
     assert 'return action="skip"' in prompt
     assert "Never infer an owner from the author, speaker" in prompt
+    assert "local_file source may update a clearly matched existing project" in prompt
+    assert "may\n  not create a new project" in prompt
+    assert "completion_check that finds no TODO" in prompt
 
 
 def test_task_agent_prompt_does_not_inject_retrieved_business_examples():
