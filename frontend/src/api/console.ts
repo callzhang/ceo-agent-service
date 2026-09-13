@@ -148,11 +148,11 @@ export interface WorkerStatus {
   system_health: StatusSystemHealth;
   components: StatusComponent[];
   connectors: Record<string, { channel: string; state: string; reason_code: string; detail: string; commands: string[][] }>;
-  email: { status: string; updated_at: string; entries: Array<Record<string, string | number>> };
+  email: { status: string; updated_at: string; entries: Array<Record<string, string | number | null>> };
   wechat: { reader: { enabled: boolean; status: string; error: string }; sender: { enabled: boolean; status: string; error: string }; preflight: { status: string; error: string }; account: { ready: boolean; account_id: string } };
   queues: Array<{ name: string; table: string; counts: Record<string, number>; pending: number; processing: number; failed: number; retryable: number; latest_updated_at: string; latest_error: string }>;
   dispatcher_queues: StatusDispatcherQueue[];
-  attention_rows: Array<{ category: string; id: string; status: string; context: string; summary: string; updated_at: string; error: string; root_cause?: string; detail_url?: string }>;
+  attention_rows: Array<{ category: string; id: string; status: string; context: string; summary: string; updated_at: string; error: string; root_cause?: string | null; detail_url?: string | null }>;
   database: { path: string };
   summary: { queue_count: number; pending: number; processing: number; failed: number; retryable: number; attention: number };
 }
@@ -806,7 +806,11 @@ function emailHealth(value: unknown): boolean {
   return row !== null && strings(row, ["status", "updated_at"]) && Array.isArray(row.entries) && row.entries.every((value) => {
     const entry = exactRecord(value, ["scope", "status", "updated_at"], allowedEntry.slice(2, -1));
     return entry !== null && strings(entry, ["scope", "status", "updated_at"])
-      && Object.entries(entry).every(([key, item]) => key === "scope" || key === "status" || key === "updated_at" || key === "error_code" ? typeof item === "string" : Number.isInteger(item) && Number(item) >= 0);
+      && Object.entries(entry).every(([key, item]) => {
+        if (key === "scope" || key === "status" || key === "updated_at") return typeof item === "string";
+        if (key === "error_code") return item === null || typeof item === "string";
+        return item === null || (Number.isInteger(item) && Number(item) >= 0);
+      });
   });
 }
 
@@ -841,7 +845,7 @@ function dispatcherQueueStatus(value: unknown): value is StatusDispatcherQueue {
 function attentionRow(value: unknown): boolean {
   const row = exactRecord(value, ["category", "id", "status", "context", "summary", "updated_at", "error"], ["root_cause", "detail_url"]);
   return row !== null && strings(row, ["category", "id", "status", "context", "summary", "updated_at", "error"])
-    && ["root_cause", "detail_url"].every((key) => !(key in row) || typeof row[key] === "string");
+    && ["root_cause", "detail_url"].every((key) => !(key in row) || row[key] === null || typeof row[key] === "string");
 }
 
 function workerStatus(value: unknown): value is WorkerStatus {

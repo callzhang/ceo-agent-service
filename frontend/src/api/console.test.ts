@@ -86,6 +86,42 @@ describe("console API helpers", () => {
     }
   });
 
+  it("accepts explicit nulls for optional status fields", async () => {
+    const originalFetch = globalThis.fetch;
+    const payload = statusEnvelope();
+    (payload.item.email.entries as unknown[]).push({
+      scope: "account:dingtalk_primary",
+      status: "ready",
+      error_code: null,
+      accounts: null,
+      components: null,
+      failures: null,
+      persisted_count: 0,
+      task_count: null,
+      isolated_count: null,
+      superseded_count: null,
+      unresolved_count: null,
+      updated_at: "now",
+    });
+    (payload.item.attention_rows as unknown[]).push({
+      category: "Service error",
+      id: "1",
+      status: "failed",
+      context: "worker",
+      summary: "failed",
+      updated_at: "now",
+      error: "failed",
+      root_cause: null,
+      detail_url: null,
+    });
+    globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
+    try {
+      await expect(getStatus()).resolves.toEqual(payload);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("surfaces FastAPI detail messages for actionable validation errors", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response(

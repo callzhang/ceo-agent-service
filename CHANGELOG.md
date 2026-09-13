@@ -4,7 +4,10 @@
   value is `null`. The route previously excluded every `None` value during
   response serialization, so an empty dispatcher queue omitted its required
   `oldest_available_at` field and the strict frontend rejected the otherwise
-  valid HTTP 200 response as `invalid status response`.
+  valid HTTP 200 response as `invalid status response`. The frontend contract
+  now also accepts explicit `null` for the response model's optional email
+  health and Attention detail fields while continuing to reject unknown fields
+  and invalid non-null types.
 
 - 2026-09-12: an unsubscribe receipt now records the entry URL it was earned
   against (`email_unsubscribe_receipts.entry_url`, schema v37). Until now the
