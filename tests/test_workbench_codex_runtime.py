@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 import selectors
@@ -1345,6 +1346,11 @@ def test_owned_executor_supports_non_streaming_runtime_probe_calls(tmp_path: Pat
 
 
 def test_repeated_fast_exit_runs_do_not_leak_parent_file_descriptors(tmp_path: Path):
+    # This assertion is about descriptors owned by the executor, not delayed
+    # finalizers from an earlier pytest item.  Popen/pipe wrappers can be held
+    # briefly by cyclic objects in unrelated tests, so establish a deterministic
+    # collection boundary before both process-global measurements.
+    gc.collect()
     initial_fd_count = len(os.listdir("/dev/fd"))
 
     for _ in range(12):
@@ -1358,6 +1364,7 @@ def test_repeated_fast_exit_runs_do_not_leak_parent_file_descriptors(tmp_path: P
         )
         assert result.returncode == 0
 
+    gc.collect()
     assert len(os.listdir("/dev/fd")) <= initial_fd_count
 
 
