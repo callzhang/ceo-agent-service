@@ -1406,14 +1406,17 @@ class AgentOrchestrator:
         summary = code
         if code != f"{role.value}_retry_exhausted":
             summary = f"{code}; {role.value} retry attempts exhausted"
+        # Inner turn retries are only a transport/runtime budget. Preserve
+        # the persisted error's retryability so the task-level worker can
+        # apply the single exponential-backoff ceiling consistently.
         return OrchestrationResult(
-            status="failed_terminal",
+            status=_failure_status(underlying),
             final_run_id=latest.id,
             final_role=role,
             summary=summary,
             error=AgentError(
                 code=code,
-                retryable=False,
+                retryable=underlying.retryable,
                 authorization_required=underlying.authorization_required,
             ),
             feedback_cycles=self._feedback_cycles(task),
