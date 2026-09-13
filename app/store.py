@@ -3813,15 +3813,6 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table reply_tasks add column {column} {definition}"
                     )
-            agent_run_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(agent_runs)").fetchall()
-            }
-            if "tool_events_json" not in agent_run_columns:
-                db.execute(
-                    "alter table agent_runs add column "
-                    "tool_events_json text not null default '[]'"
-                )
             self._migrate_runtime_attempt_session_evidence(db)
             self._migrate_runtime_attempt_execution_state(db)
             self._migrate_agent_run_turn_identity(db)
