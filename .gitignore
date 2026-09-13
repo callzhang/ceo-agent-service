@@ -11,6 +11,7 @@
 !.env.example
 node_modules/
 .worktrees/
+.superpowers/
 .next/
 dist/
 app/static/workbench/
