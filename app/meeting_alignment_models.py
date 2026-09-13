@@ -293,6 +293,12 @@ class SensitivePrivateMessage(StrictModel):
 
 def _decision_schema_extra(schema: dict[str, Any]) -> None:
     schema["description"] = render_meeting_alignment_cross_field_rules()
+    # Defaults beside a $ref are rejected by the schema contract checker. The
+    # runtime model still supplies the low-risk default for internal callers;
+    # provider-facing prompts must explicitly emit the field.
+    risk_schema = schema.get("properties", {}).get("risk")
+    if isinstance(risk_schema, dict):
+        risk_schema.pop("default", None)
 
 
 class MeetingAlignmentDecision(StrictModel):

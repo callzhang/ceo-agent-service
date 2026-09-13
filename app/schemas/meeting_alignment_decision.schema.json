@@ -357,8 +357,7 @@
       "type": "string"
     },
     "risk": {
-      "$ref": "#/$defs/DecisionRisk",
-      "default": "low"
+      "$ref": "#/$defs/DecisionRisk"
     },
     "confidence": {
       "maximum": 1,
