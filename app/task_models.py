@@ -368,10 +368,28 @@ class TaskAgentDecision(StrictTaskModel):
     update_summary: str = ""
     merge_reason: str = ""
     memory_recall_used: bool = False
-    risk: DecisionRisk = DecisionRisk.LOW
-    confidence: float = 0.0
-    rule_coverage: float = Field(default=1.0, ge=0.0, le=1.0)
-    information_completeness: float = Field(default=1.0, ge=0.0, le=1.0)
+    risk: DecisionRisk = Field(
+        default=DecisionRisk.LOW,
+        description="Acting on an incorrect task decision is low, medium, or high risk.",
+    )
+    confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence in the decision, from 0 to 1.",
+    )
+    rule_coverage: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="How completely the applicable Skill rules cover this case.",
+    )
+    information_completeness: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="How complete the evidence needed for this decision is.",
+    )
 
     def decision_quality(self) -> DecisionQualityResult:
         """Classify this task decision with the shared result-quality rules."""

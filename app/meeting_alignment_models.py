@@ -299,6 +299,7 @@ def _decision_schema_extra(schema: dict[str, Any]) -> None:
     risk_schema = schema.get("properties", {}).get("risk")
     if isinstance(risk_schema, dict):
         risk_schema.pop("default", None)
+        risk_schema.pop("description", None)
 
 
 class MeetingAlignmentDecision(StrictModel):
@@ -365,10 +366,27 @@ class MeetingAlignmentDecision(StrictModel):
         )
     )
     audit_summary: str = Field(min_length=1)
-    risk: DecisionRisk = DecisionRisk.LOW
-    confidence: float = Field(ge=0, le=1)
-    rule_coverage: float = Field(default=1.0, ge=0, le=1)
-    information_completeness: float = Field(default=1.0, ge=0, le=1)
+    risk: DecisionRisk = Field(
+        default=DecisionRisk.LOW,
+        description="Acting on an incorrect meeting decision is low, medium, or high risk.",
+    )
+    confidence: float = Field(
+        ge=0,
+        le=1,
+        description="Confidence in the meeting decision, from 0 to 1.",
+    )
+    rule_coverage: float = Field(
+        default=1.0,
+        ge=0,
+        le=1,
+        description="How completely the meeting Skill rules cover this case.",
+    )
+    information_completeness: float = Field(
+        default=1.0,
+        ge=0,
+        le=1,
+        description="How complete the evidence needed for this decision is.",
+    )
 
     def decision_quality(self) -> DecisionQualityResult:
         """Classify this meeting decision with the shared result-quality rules."""
