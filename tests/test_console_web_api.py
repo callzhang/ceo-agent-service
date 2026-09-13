@@ -2096,6 +2096,7 @@ def test_spa_attention_reads_current_snapshot_after_status_cache_is_warm(monkeyp
             "summary": "database is locked",
             "updated_at": "2026-08-29 18:27:11",
             "error": "database is locked",
+            "root_cause": None,
             "detail_url": "/history/errors/12830",
         },
     ]
