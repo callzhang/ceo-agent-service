@@ -2815,6 +2815,39 @@ def test_immediate_write_transaction_retries_begin_without_repeating_body(
     assert len(store.list_errors()) == 1
 
 
+def test_set_service_state_retries_a_transient_write_lock(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "service-state-lock.sqlite3")
+    original_connect = store._connect
+    connect_attempts = 0
+
+    @contextmanager
+    def flaky_connect():
+        nonlocal connect_attempts
+        connect_attempts += 1
+        with original_connect() as db:
+            if connect_attempts == 1:
+
+                class WriteLockedConnection:
+                    def execute(self, sql, parameters=()):
+                        if sql.lstrip().lower().startswith("begin immediate"):
+                            return db.execute(sql, parameters)
+                        raise sqlite3.OperationalError("database is locked")
+
+                yield WriteLockedConnection()
+                return
+            yield db
+
+    monkeypatch.setattr(store, "_connect", flaky_connect)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _seconds: None)
+
+    store.set_service_state("component:email-worker", '{"status":"ready"}')
+
+    assert connect_attempts == 2
+    assert store.get_service_state("component:email-worker") == '{"status":"ready"}'
+
+
 def test_store_connections_close_after_context_exit(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

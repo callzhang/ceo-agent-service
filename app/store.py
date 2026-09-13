@@ -25351,17 +25351,32 @@ class AutoReplyStore:
         return "where " + " and ".join(filters), args
 
     def set_service_state(self, key: str, value: str) -> None:
-        with self._connect() as db:
-            db.execute(
-                """
-                insert into service_state (key, value, updated_at)
-                values (?, ?, current_timestamp)
-                on conflict(key) do update set
-                    value=excluded.value,
-                    updated_at=current_timestamp
-                """,
-                (key, value),
-            )
+        # Health and coordination state must use the same bounded lock retry as
+        # other short writes; a transient writer collision must not terminate
+        # a worker whose business queue is otherwise healthy.
+        for attempt in range(STORE_WRITE_LOCK_RETRY_ATTEMPTS):
+            try:
+                with self._connect() as db:
+                    db.execute("begin immediate")
+                    db.execute(
+                        """
+                        insert into service_state (key, value, updated_at)
+                        values (?, ?, current_timestamp)
+                        on conflict(key) do update set
+                            value=excluded.value,
+                            updated_at=current_timestamp
+                        """,
+                        (key, value),
+                    )
+                return
+            except sqlite3.OperationalError as exc:
+                if (
+                    not _is_sqlite_lock_error(exc)
+                    or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
+                ):
+                    raise
+                time.sleep(STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+        raise RuntimeError("service state write retry loop exhausted")
 
     def claim_weekly_okr_report_run(
         self,
