@@ -293,12 +293,19 @@ class SensitivePrivateMessage(StrictModel):
 
 def _decision_schema_extra(schema: dict[str, Any]) -> None:
     schema["description"] = render_meeting_alignment_cross_field_rules()
-    # Defaults beside a $ref are rejected by the schema contract checker. The
-    # runtime model still supplies the low-risk default for internal callers;
-    # provider-facing prompts must explicitly emit the field.
-    risk_schema = schema.get("properties", {}).get("risk")
+    properties = schema.get("properties", {})
+    if isinstance(properties, dict):
+        # OpenAI strict structured outputs require every declared property to
+        # appear in `required`. Pydantic defaults remain useful to internal and
+        # persisted legacy callers, but the provider must emit these fields.
+        schema["required"] = list(properties)
+        for property_schema in properties.values():
+            if isinstance(property_schema, dict):
+                property_schema.pop("default", None)
+
+    # A description beside a $ref is rejected by the provider schema checker.
+    risk_schema = properties.get("risk") if isinstance(properties, dict) else None
     if isinstance(risk_schema, dict):
-        risk_schema.pop("default", None)
         risk_schema.pop("description", None)
 
 

@@ -461,6 +461,31 @@ def test_structured_invalid_api_key_without_endpoint_has_provider_provenance(ada
     assert failure.code == "codex_provider_auth_failed"
 
 
+def test_structured_invalid_output_schema_is_a_result_contract_failure(adapter):
+    failure = adapter.classify_failure(
+        stderr="",
+        stdout=json.dumps(
+            {
+                "type": "turn.failed",
+                "error": {
+                    "message": (
+                        "Error code: 400 - invalid_json_schema: Invalid schema for "
+                        "response_format; required must include every key in "
+                        "properties. Missing risk."
+                    )
+                },
+            }
+        ),
+        returncode=1,
+    )
+
+    assert failure.failure_class.value == "result"
+    assert failure.code == "codex_output_schema_invalid"
+    assert failure.retryable_on_same_route is False
+    assert failure.failover_permitted is False
+    assert failure.route_pause_required is False
+
+
 @pytest.mark.parametrize(
     "stderr, code",
     [

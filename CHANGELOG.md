@@ -1,5 +1,12 @@
 # Changelog
 
+- 2026-09-13: meeting alignment's provider-facing response schema now marks
+  every declared top-level property as required and removes Pydantic defaults
+  from that schema while preserving those defaults for legacy persisted input.
+  Native Codex `invalid_json_schema` failures are also classified as the
+  explicit result-contract error `codex_output_schema_invalid` instead of the
+  generic `runtime_unclassified`, so the underlying local defect is visible.
+
 - 2026-09-13: meeting analysis now resolves a named calendar organizer through
   DingTalk's live organization directory before asking the Agent to choose its
   recipients. The verified user and open-DingTalk IDs are copied to the unique

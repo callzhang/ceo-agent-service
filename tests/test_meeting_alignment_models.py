@@ -626,6 +626,14 @@ def test_committed_schema_matches_the_decision_model():
     assert committed_schema == MeetingAlignmentDecision.model_json_schema()
 
 
+def test_provider_schema_requires_every_top_level_property():
+    schema = MeetingAlignmentDecision.model_json_schema()
+
+    assert schema["required"] == list(schema["properties"])
+    for field_name in ("risk", "rule_coverage", "information_completeness"):
+        assert "default" not in schema["properties"][field_name]
+
+
 def test_committed_schema_allows_null_target_for_delivery_retry():
     schema_path = (
         Path(__file__).resolve().parents[1]

@@ -367,7 +367,6 @@
       "type": "number"
     },
     "rule_coverage": {
-      "default": 1.0,
       "description": "How completely the meeting Skill rules cover this case.",
       "maximum": 1,
       "minimum": 0,
@@ -375,7 +374,6 @@
       "type": "number"
     },
     "information_completeness": {
-      "default": 1.0,
       "description": "How complete the evidence needed for this decision is.",
       "maximum": 1,
       "minimum": 0,
@@ -395,7 +393,10 @@
     "final_message",
     "sensitive_private_message",
     "audit_summary",
-    "confidence"
+    "risk",
+    "confidence",
+    "rule_coverage",
+    "information_completeness"
   ],
   "title": "MeetingAlignmentDecision",
   "type": "object"

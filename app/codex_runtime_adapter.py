@@ -207,6 +207,12 @@ class CodexRuntimeAdapter:
                 failover_permitted=True,
                 route_pause_required=True,
             )
+        if _is_invalid_output_schema(detail, structured_messages):
+            return RuntimeFailure(
+                failure_class=RuntimeFailureClass.RESULT,
+                code="codex_output_schema_invalid",
+                detail="Codex rejected the configured structured-output schema.",
+            )
         process_code = classify_codex_process_failure(detail, "")
         if process_code == CODEX_PROVIDER_AUTH_FAILED or _is_structured_invalid_api_key(
             structured_messages
@@ -361,6 +367,15 @@ def _event_error_messages(event: dict[str, object]) -> list[str]:
 def _is_structured_invalid_api_key(messages: list[str]) -> bool:
     detail = "\n".join(messages).casefold()
     return "incorrect api key provided" in detail and "invalid_api_key" in detail
+
+
+def _is_invalid_output_schema(detail: str, messages: list[str]) -> bool:
+    normalized = "\n".join((detail, *messages)).casefold()
+    return "invalid_json_schema" in normalized or (
+        "invalid schema for response_format" in normalized
+        and "required" in normalized
+        and "properties" in normalized
+    )
 
 
 def _is_chatgpt_oauth_model_unsupported(detail: str) -> bool:
