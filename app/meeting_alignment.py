@@ -28,6 +28,7 @@ from app.meeting_alignment_delivery import (
     MeetingDeliveryRetry,
     deliver_meeting_alignment,
     meeting_delivery_conversation_id,
+    resolve_meeting_creator_identity,
 )
 from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
@@ -821,6 +822,7 @@ def _analyze_meeting_job(
             calendar_evidence=evidence,
             creator=minutes_creator_from_list_item(payload.get("minutes_list_item", {})),
         )
+        source = resolve_meeting_creator_identity(source, dws)
     except (MeetingSourceIncomplete, DwsError) as exc:
         if isinstance(exc, DwsError) and _is_deleted_minutes_error(exc):
             store.update_meeting_alignment_job(
@@ -1212,6 +1214,7 @@ def _deliver_meeting_job(
             calendar_evidence=evidence,
             creator=minutes_creator_from_list_item(source_payload.get("minutes_list_item", {})),
         )
+        source = resolve_meeting_creator_identity(source, dws)
     except (MeetingSourceIncomplete, DwsError) as exc:
         _retry_or_fail(
             store,

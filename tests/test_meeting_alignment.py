@@ -1938,6 +1938,71 @@ def test_missing_calendar_organizer_identity_becomes_needs_human_without_send(
     assert dws.send_calls == []
 
 
+def test_calendar_organizer_identity_is_resolved_before_agent_decision(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    event = dws.calendar_pages[""]["events"][0]
+    event.organizer = "Mina Zou"
+    event.attendee_details[1] = DwsCalendarAttendee(display_name="Mina Zou")
+    dws.search_user_profiles = lambda query: (
+        [
+            DwsUserProfile(
+                user_id="u-mina",
+                name="Zou Jingwei",
+                nick="Mina Zou",
+                title="HRVP",
+                open_dingtalk_id="open-mina",
+            )
+        ]
+        if query == "Mina Zou"
+        else []
+    )
+    dws.verification_states = ["sent", "sent"]
+    job_id = seed_consumer_job(store, dws)
+    decision = MeetingAlignmentDecision.model_validate(
+        {
+            "action": "send",
+            "audience_scope": "business",
+            "trigger_reasons": ["meeting_summary"],
+            "topics": [],
+            "derek_viewpoint": None,
+            "key_questions": [],
+            "mention_names": [],
+            "target": {
+                "kind": "direct",
+                "conversation_id": "",
+                "direct_user_id": "u-mina",
+                "title": "Mina Zou",
+                "candidates": [],
+            },
+            "final_message": "Please follow up on the agreed meeting actions.",
+            "sensitive_private_message": {
+                "target": {
+                    "kind": "direct",
+                    "conversation_id": "",
+                    "direct_user_id": "u-mina",
+                    "title": "Mina Zou",
+                    "candidates": [],
+                },
+                "message": "Please handle the private personnel follow-up.",
+                "reason": "The meeting included personnel-sensitive discussion.",
+                "recipient_evidence": ["Mina Zou is the meeting HR owner."],
+            },
+            "audit_summary": "The meeting created business and personnel follow-up.",
+            "confidence": 0.95,
+        }
+    )
+    runner = FakeMeetingRunner(decision)
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "sent", job.error
+    assert runner.calls == 1
+    assert '"user_id": "u-mina"' in runner.prompts[0]
+    assert [call.get("user_id") for call in dws.send_calls] == ["u-mina", "u-mina"]
+
+
 def test_consumer_quarantines_corrupt_persisted_send_evidence(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()

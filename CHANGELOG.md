@@ -1,5 +1,12 @@
 # Changelog
 
+- 2026-09-13: meeting analysis now resolves a named calendar organizer through
+  DingTalk's live organization directory before asking the Agent to choose its
+  recipients. The verified user and open-DingTalk IDs are copied to the unique
+  matching attendee, so business-summary fallback and an HR-only private note
+  use the same identity. This closes the gap where delivery could resolve the
+  organizer but the earlier source-aware validation stopped at `needs_human`.
+
 - 2026-09-13: task project creation and repair are now source-aware. Automatic
   `local_file` inputs may update a clearly matched active project but cannot
   create one; no-change completion checks must skip; candidate ranking searches

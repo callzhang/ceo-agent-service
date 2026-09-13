@@ -94,6 +94,55 @@ class MeetingDeliveryDws(Protocol):
     ) -> dict[str, Any]: ...
 
 
+def resolve_meeting_creator_identity(
+    source: MeetingSource,
+    dws: MeetingDeliveryDws,
+) -> MeetingSource:
+    """Resolve a named calendar organizer before the agent chooses recipients."""
+    organizer = source.creator
+    if organizer is None or not organizer.name.strip():
+        return source
+    if organizer.user_id.strip() or organizer.open_dingtalk_id.strip():
+        return source
+
+    profile = _resolve_profile(organizer.name, organizer, dws, [])
+    if profile is None:
+        return source
+    user_id = profile.user_id.strip()
+    open_dingtalk_id = (profile.open_dingtalk_id or "").strip()
+    if not user_id and not open_dingtalk_id:
+        return source
+
+    resolved_organizer = organizer.model_copy(
+        update={
+            "user_id": user_id,
+            "open_dingtalk_id": open_dingtalk_id,
+        }
+    )
+    matching_indexes = [
+        index
+        for index, participant in enumerate(source.participants)
+        if _canonical(participant.name) == _canonical(organizer.name)
+    ]
+    participants = list(source.participants)
+    if len(matching_indexes) == 1:
+        index = matching_indexes[0]
+        participant = participants[index]
+        if not participant.user_id.strip() and not participant.open_dingtalk_id.strip():
+            participants[index] = participant.model_copy(
+                update={
+                    "user_id": user_id,
+                    "open_dingtalk_id": open_dingtalk_id,
+                }
+            )
+    return source.model_copy(
+        update={
+            "creator": resolved_organizer,
+            "participants": participants,
+        }
+    )
+
+
 def deliver_meeting_alignment(
     decision: MeetingAlignmentDecision,
     source: MeetingSource,
