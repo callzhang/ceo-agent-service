@@ -2124,6 +2124,39 @@ def test_spa_attention_reads_current_snapshot_after_status_cache_is_warm(monkeyp
     assert payload["items"][0]["records"][0]["id"] == "12831"
 
 
+def test_status_refresh_placeholder_uses_current_email_contract(monkeypatch, tmp_path: Path):
+    refresh_started = threading.Event()
+    release_refresh = threading.Event()
+
+    def blocked_status_refresh(*_args, **_kwargs):
+        refresh_started.set()
+        assert release_refresh.wait(timeout=2)
+        return {}
+
+    monkeypatch.setattr(
+        audit_web_module,
+        "build_worker_status_payload",
+        blocked_status_refresh,
+    )
+
+    try:
+        with _client(tmp_path, spa_enabled=True, asset=b"<!doctype html>") as client:
+            assert refresh_started.wait(timeout=1)
+            response = client.get("/api/console/status")
+
+            assert response.status_code == 200
+            assert response.json()["item"]["email"] == {
+                "status": "refreshing",
+                "updated_at": "",
+                "process": None,
+                "runtime_loops": [],
+                "accounts": [],
+                "checks": [],
+            }
+    finally:
+        release_refresh.set()
+
+
 def test_spa_attention_does_not_expose_empty_cold_cache(monkeypatch, tmp_path: Path):
     rows = [
         {
