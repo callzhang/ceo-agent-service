@@ -280,7 +280,7 @@ def _encode_task_agent_result(raw: str) -> str:
     decision = _parse_task_agent_decision(raw)
     encoded = json.dumps(
         {
-            "decision": decision.model_dump(mode="json"),
+            "decision": decision.model_dump(mode="json", exclude_unset=True),
             "audit_tool_events": audit_references_from_full_events(
                 extract_codex_audit_events(raw, limit=TASK_AGENT_AUDIT_EVENT_LIMIT),
                 limit=TASK_AGENT_AUDIT_EVENT_LIMIT,

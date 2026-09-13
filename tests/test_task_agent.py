@@ -5567,6 +5567,34 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
     )
 
 
+def test_task_agent_codex_runner_preserves_unset_project_patch_fields():
+    routed = FakeRoutedTaskExecution(
+        json.dumps(
+            {
+                "action": "update_project",
+                "project": {
+                    "id": 7,
+                    "current_state": "周报已生成。",
+                    "memory_context": _memory_context(),
+                },
+                "memory_recall_used": True,
+                "confidence": 0.9,
+            },
+            ensure_ascii=False,
+        )
+    )
+    runner = TaskAgentCodexRunner(routed_execution=routed)
+
+    decision = runner.decide(prompt="decide", workload_key="7")
+
+    assert decision.project is not None
+    assert decision.project.model_fields_set == {
+        "id",
+        "current_state",
+        "memory_context",
+    }
+
+
 def test_task_agent_codex_runner_requires_injected_execution():
     with pytest.raises(TypeError):
         TaskAgentCodexRunner()
