@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { EmailClassificationListParams } from "../api/console";
-const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "getEmailClassification", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
+const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "getEmailClassification", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
 vi.mock("../api/console", async importOriginal => ({ ...await importOriginal<object>(), ...api }));
 import { EmailPage } from "./EmailPage";
 const config = { category_key: "work", display_name: "工作", core_description: "工作定义", include: ["项目"], exclude: ["私人"], threshold: .9, actions: ["move"], action_parameters: {}, enabled: true, config_version: "c1", description_version: "d1", updated_at: "", bindings: [] };
@@ -67,8 +67,29 @@ it("opens readonly body and metadata drawer and restores focus without losing se
   const drawer=await screen.findByRole("dialog",{name:"邮件详情"});
   expect(await within(drawer).findByText(/完整正文/)).toHaveTextContent("> 引用邮件");
   expect(drawer).toHaveTextContent("a.pdf");expect(drawer).not.toHaveTextContent("SECRET");
-  expect(within(drawer).queryByRole("button",{name:/保存分类/})).not.toBeInTheDocument();
+  expect(within(drawer).getByRole("button",{name:"保存分类并继续"})).toBeInTheDocument();
   await user.keyboard("{Escape}");expect(trigger).toHaveFocus();expect(screen.getByLabelText("URL")).toHaveTextContent("selected=1");
+});
+it("reclassifies a processed message with its current ActionPlan and advances selection",async()=>{
+  const user=userEvent.setup();
+  const legalConfig={...config,category_key:"legal",display_name:"法务"};
+  api.listEmailConfigs.mockResolvedValue({items:[config,legalConfig]});
+  api.listEmailClassifications
+    .mockResolvedValueOnce({items:[{...row("1","processed"),current_action_plan_id:"plan-v1"},row("2","processed")],meta:{total:2,page:1,page_size:50,snapshot_at:""}})
+    .mockResolvedValueOnce({items:[row("2","processed")],meta:{total:1,page:1,page_size:50,snapshot_at:""}});
+  api.getEmailClassification.mockResolvedValue({item:{...row("1","processed"),category:"work",current_action_plan_id:"plan-v1",message_text:"完整正文",attachment_metadata:[]},observability:[]});
+  api.confirmEmailClassification.mockResolvedValue({ok:true,message:"已保存"});
+  show("/email?filter=processed&page=1&page_size=50&selected=1");
+
+  const drawer=await screen.findByRole("dialog",{name:"邮件详情"});
+  expect(drawer).toHaveTextContent("当前分类：工作");
+  expect(drawer).toHaveTextContent("plan-v1");
+  await user.click(within(drawer).getByRole("button",{name:"法务"}));
+  await user.click(within(drawer).getByRole("button",{name:"保存分类并继续"}));
+
+  expect(api.confirmEmailClassification).toHaveBeenCalledWith("1","legal",expect.any(String),"plan-v1");
+  await waitFor(()=>expect(screen.getByLabelText("URL")).toHaveTextContent("selected=2"));
+  expect(screen.getByRole("button",{name:"打开邮件 邮件2"})).toBeInTheDocument();
 });
 it("labels the pending decision bar for keyboard and assistive navigation",async()=>{
   const user=userEvent.setup();show("/email?filter=pending_feedback&selected=1");
@@ -274,6 +295,42 @@ it("renders training duration, coverage and safe parameters without inventing ab
   await user.click(await screen.findByRole("button",{name:"查看 training-v1"}));
   const training=await screen.findByRole("region",{name:"训练记录"});expect(training).toHaveTextContent("60000.0 ms");expect(training).toHaveTextContent("123 / 未测量");expect(training).toHaveTextContent("2 / 97");
   expect(screen.getByRole("region",{name:"训练参数"})).toHaveTextContent("20260905");expect(screen.getByRole("region",{name:"训练参数"})).toHaveTextContent("lbfgs");
+});
+it("selects only executable training sources and records a narrowed folder scope",async()=>{
+  const user=userEvent.setup();
+  api.listEmailLearning.mockResolvedValue({learning:learning({model_families:[{family:"embedding-mlp",display_name:"Embedding + MLP",supported:true,configured:true}],training_sources:[
+    {source:"agent_auto_label",category:"work",sample_count:12,supported:false,provenance:{classification_source:"agent"}},
+    {source:"folder_snapshot",category:"work",sample_count:12,supported:true,provenance:{snapshot_id:"snapshot-1"}},
+    {source:"folder_snapshot",category:"legal",sample_count:4,supported:true,provenance:{snapshot_id:"snapshot-1"}},
+  ]})});
+  api.requestEmailTraining.mockResolvedValue({ok:true,learning:{training_status:"running",training_run_id:"run-1",selection:{sources:["folder_snapshot"],categories:["work"]}}});
+  show("/email?tab=learning");
+  expect(await screen.findByRole("region",{name:"训练数据来源"})).toHaveTextContent("Agent 自动标注");
+  const source=screen.getByRole("checkbox",{name:"Agent 自动标注（暂不支持）"});expect(source).not.toBeChecked();expect(source).toBeDisabled();
+  const category=screen.getByRole("checkbox",{name:"legal"});expect(category).toBeChecked();await user.click(category);
+  await user.click(screen.getByRole("button",{name:"开始训练"}));
+  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]});
+  expect(await within(screen.getByRole("region",{name:"训练数据来源"})).findByRole("status")).toHaveTextContent("训练已提交");
+});
+it("shows model family support and submits the selected family",async()=>{
+  const user=userEvent.setup();
+  api.listEmailLearning.mockResolvedValue({learning:learning({
+    model_families:[
+      {family:"embedding-mlp",display_name:"Embedding + MLP",supported:true,configured:true},
+      {family:"tfidf-logistic-regression",display_name:"TF-IDF",supported:false,configured:true},
+      {family:"fasttext",display_name:"fastText",supported:false,configured:false},
+    ],
+    training_sources:[{source:"folder_snapshot",category:"work",sample_count:12,supported:true,provenance:{snapshot_id:"snapshot-1"}}],
+  })});
+  api.requestEmailTraining.mockResolvedValue({ok:true,learning:{training_status:"running",training_run_id:"run-family",selection:{sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]}}});
+  show("/email?tab=learning");
+  const region=await screen.findByRole("region",{name:"训练数据来源"});
+  expect(region).toHaveTextContent("模型家族");
+  expect(screen.getByRole("checkbox",{name:"Embedding + MLP"})).toBeChecked();
+  expect(screen.getByRole("checkbox",{name:"TF-IDF（暂不支持）"})).toBeDisabled();
+  expect(screen.getByRole("checkbox",{name:"fastText（暂不支持）"})).toBeDisabled();
+  await user.click(screen.getByRole("button",{name:"开始训练"}));
+  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]});
 });
 it("reuses a mode request ID on retry and prevents duplicate submissions",async()=>{
   const user=userEvent.setup(),pending=deferred<unknown>();api.saveEmailRuntimeMode.mockReturnValueOnce(pending.promise).mockRejectedValueOnce(new Error("重试失败"));show("/email?tab=learning");

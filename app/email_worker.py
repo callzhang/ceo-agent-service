@@ -3001,8 +3001,8 @@ def build_email_worker_dependencies(
 ) -> EmailWorkerBootstrap:
     from app.email_classifier_agent import (
         EmailClassifierAgent,
-        EmailClassifierRoutedBackend,
     )
+    from app.email_agent_api import EmailClassifierApiBackend
     from app.email_classifier_learning import EmailClassifierLearningService
     from app.email_description_optimizer import (
         DescriptionOptimizationOrchestrator,
@@ -3021,6 +3021,7 @@ def build_email_worker_dependencies(
         EmailClassificationTaskProducer,
     )
     from app.agent_runtime_production import build_production_routed_codex_execution
+    from app.agent_runtime_config import load_runtime_config
     from app.store import AutoReplyStore
 
     if training_snapshot_job_factory is None:
@@ -3112,15 +3113,25 @@ def build_email_worker_dependencies(
         _accounts: Sequence[Mapping[str, object]],
         active_model: object,
     ) -> EmailWorkerDependencies:
+        runtime_config = load_runtime_config(os.environ)
+        api_route = next(
+            (route for route in runtime_config.routes if route.name == "codex_api"),
+            None,
+        )
+        api_secret = runtime_config.secret_for("codex_api")
+        if api_route is None or api_secret is None:
+            raise ValueError(
+                "Email classification requires the codex_api runtime route and "
+                "CEO_CODEX_API_KEY; it will not fall back to Codex CLI"
+            )
         routed_classifier = EmailClassifierAgent(
-            EmailClassifierRoutedBackend(
-                build_production_routed_codex_execution(
-                    store=task_store,
-                    workspace=Path(settings.workspace),
-                    total_timeout_seconds=900.0,
-                    idle_timeout_seconds=120.0,
-                    codex_oauth_model=os.getenv("CEO_EMAIL_CLASSIFIER_MODEL"),
-                )
+            EmailClassifierApiBackend(
+                base_url=runtime_config.codex_api_base_url,
+                model=api_route.model,
+                api_key=api_secret.get_secret_value(),
+                recorder=lambda event: record_health(
+                    "component:email-agent-api", event
+                ),
             ),
             runtime_skill_snapshot=runtime_skill_snapshot,
             skill_name="ceo-email-classifier",

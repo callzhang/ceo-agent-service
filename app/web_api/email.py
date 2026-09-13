@@ -32,6 +32,7 @@ from app.email_classifier_contracts import (
     build_email_action_plan,
     validate_email_category_key,
 )
+from app.email_classifier_model_families import model_family_catalog
 from app.email_category_config import (
     EmailFolderBindingCoordinator,
     VerifiedEmailFolderBinding,
@@ -422,6 +423,11 @@ def _project_staged_model_evidence(
         "model_id": _safe_evidence_identifier(
             evidence["model_id"], "model_id", _MODEL_EVIDENCE_ID
         ),
+        "model_family": _safe_exact_evidence_value(
+            evidence.get("model_family", "embedding-mlp"),
+            "model_family",
+            "embedding-mlp",
+        ),
         "status": _safe_evidence_status(evidence.get("status")),
         "trained_at": _safe_evidence_timestamp(evidence.get("trained_at"), "trained_at"),
         "training_snapshot_id": _safe_evidence_identifier(
@@ -727,6 +733,22 @@ class EmailPromotionConfigPayload(BaseModel):
     category_validation_samples_min: int = Field(gt=0)
     p95_latency_max_ms: float = Field(gt=0)
     expected_current_version: str = Field(min_length=1)
+
+
+class EmailTrainingSelectionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    sources: list[str] = Field(min_length=1)
+    categories: list[str] = Field(min_length=1)
+    model_families: list[str] = Field(
+        default_factory=lambda: ["embedding-mlp"], min_length=1
+    )
+
+    @field_validator("sources", "categories", "model_families")
+    @classmethod
+    def validate_values(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() for item in value) or len(set(value)) != len(value):
+            raise ValueError("training selection values must be unique and non-blank")
+        return value
 
 
 class EmailRuntimeModePayload(BaseModel):
@@ -1272,15 +1294,75 @@ def register_email_routes(
         return response
 
     @app.post("/api/console/email/training")
-    def email_manual_training():
+    async def email_manual_training(request: Request):
         if email_learning_factory is None:
             return error_response(
                 "email_learning_unavailable",
                 "Email learning is unavailable",
                 503,
             )
-        result = email_learning_factory().request_manual_training()
+        raw_body = await request.body()
+        if not raw_body.strip():
+            body = None
+        else:
+            try:
+                body = json.loads(raw_body)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+            if not isinstance(body, dict):
+                return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+            if not body:
+                body = None
+        payload = None
+        if body is not None:
+            try:
+                payload = EmailTrainingSelectionPayload.model_validate(body)
+            except (ValueError, TypeError, ValidationError):
+                return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+        service = email_learning_factory()
+        request_selection = payload.model_dump() if payload is not None else None
+        try:
+            if payload is not None:
+                catalog = training_source_catalog(require_store())
+                family_catalog = {row["family"]: row for row in model_family_catalog()}
+                unknown_families = sorted(set(payload.model_families) - set(family_catalog))
+                unsupported_families = sorted(
+                    family for family in payload.model_families
+                    if family in family_catalog and family_catalog[family]["supported"] is not True
+                )
+                if unknown_families or unsupported_families:
+                    return error_response(
+                        "unsupported_model_family",
+                        "所选模型家族暂不支持训练，请只选择已接入 executor 的家族",
+                        400,
+                    )
+                if set(payload.sources) != {"folder_snapshot"}:
+                    return error_response(
+                        "unsupported_training_source",
+                        "当前只有邮件文件夹快照可以进入训练执行器；Agent 自动标注和用户反馈尚未接入训练输入",
+                        400,
+                    )
+                folder_rows = [
+                    row for row in catalog if row["source"] == "folder_snapshot"
+                ]
+                allowed_categories = {str(row["category"]) for row in folder_rows}
+                unknown_categories = sorted(set(payload.categories) - allowed_categories)
+                if unknown_categories:
+                    return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+                provenance = [
+                    row for row in folder_rows
+                    if row["source"] in payload.sources and row["category"] in payload.categories
+                ]
+                if not provenance:
+                    return error_response("invalid_training_selection", "所选训练范围没有可用样本", 400)
+                request_selection["provenance"] = provenance
+            result = (service.request_manual_training(selection=request_selection)
+                      if payload is not None else service.request_manual_training())
+        except ValueError:
+            return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
         run = result.training_run
+        if run is not None and getattr(run, "training_selection", None) is not None:
+            request_selection = run.training_selection
         return JSONResponse(
             {
                 "ok": True,
@@ -1289,11 +1371,79 @@ def register_email_routes(
                     "retrain_reason": result.decision.reason,
                     "pending_examples": result.decision.pending_examples,
                     "training_run_id": run.run_id if run else None,
-                    "training_status": run.status if run else None,
+                    "training_status": (run.status if run else
+                                         "recorded" if result.decision.reason == "training_selection_recorded"
+                                         else None),
+                    **({"selection": request_selection} if request_selection is not None else {}),
                 },
             },
-            status_code=202 if run else 200,
+            status_code=202 if payload is not None or run else 200,
         )
+
+    def training_source_catalog(email_store: EmailStore) -> list[dict[str, object]]:
+        rows: dict[tuple[str, str], dict[str, object]] = {}
+        list_feedback = getattr(email_store, "list_training_examples", None)
+        feedback_samples = (
+            list_feedback(include_inclusion=True)
+            if callable(list_feedback)
+            else []
+        )
+        for sample in feedback_samples:
+            category = str(sample.get("label") or "")
+            if category:
+                row = rows.setdefault(("user_feedback", category), {
+                    "source": "user_feedback", "category": category,
+                    "sample_count": 0, "supported": False, "_identities": [],
+                    "provenance": {"classification_source": "user"},
+                })
+                row["sample_count"] += 1
+                row["_identities"].append(str(sample.get("sample_digest") or sample.get("message_id") or sample.get("classification_id") or row["sample_count"]))
+        list_classifications = getattr(email_store, "list_classifications", None)
+        processed, _ = (
+            list_classifications(
+                status=EmailClassificationStatus.PROCESSED,
+                limit=100000,
+                offset=0,
+            )
+            if callable(list_classifications)
+            else ([], 0)
+        )
+        for sample in processed:
+            if sample.get("classification_source") != "agent":
+                continue
+            category = str(sample.get("confirmed_category") or sample.get("predicted_category") or "")
+            if category:
+                row = rows.setdefault(("agent_auto_label", category), {
+                    "source": "agent_auto_label", "category": category,
+                    "sample_count": 0, "supported": False, "_identities": [],
+                    "provenance": {"classification_source": "agent"},
+                })
+                row["sample_count"] += 1
+                row["_identities"].append(str(sample.get("id") or sample.get("message_id") or row["sample_count"]))
+        snapshot = email_store.latest_training_snapshot_state()
+        if snapshot:
+            for category, count in dict(snapshot.get("category_sample_counts") or {}).items():
+                rows[("folder_snapshot", str(category))] = {
+                    "source": "folder_snapshot", "category": str(category),
+                    "sample_count": int(count),
+                    "supported": True,
+                    "_identities": [str(snapshot.get("snapshot_sha") or snapshot.get("snapshot_id") or "")],
+                    "provenance": {"snapshot_id": snapshot.get("snapshot_id"),
+                                   "snapshot_digest": snapshot.get("snapshot_sha"),
+                                   "snapshot_version": snapshot.get("snapshot_version"),
+                                   "description_version": snapshot.get("description_version")},
+                }
+        result = []
+        for row in sorted(rows.values(), key=lambda row: (str(row["source"]), str(row["category"]))):
+            identities = sorted(str(value) for value in row.pop("_identities", []))
+            provenance = dict(row["provenance"])
+            provenance["sample_count"] = row["sample_count"]
+            provenance["dataset_digest"] = sha256(
+                json.dumps(identities, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            row["provenance"] = provenance
+            result.append(row)
+        return result
 
     def training_controls(service, email_store, staged_evidence, registry_issues):
         from app.email_description_optimizer import description_set_digest
@@ -1458,6 +1608,8 @@ def register_email_routes(
                 "active_model_id": active_model_id,
                 "active_mode": active_mode.value,
                 "pending_examples": pending_examples,
+                "training_sources": training_source_catalog(email_store),
+                "model_families": model_family_catalog(),
                 "last_trained_feedback_count": state.last_trained_feedback_count,
                 "last_trained_at": state.last_trained_at,
                 "last_feedback_at": state.last_feedback_at,

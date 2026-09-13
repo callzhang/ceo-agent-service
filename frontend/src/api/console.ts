@@ -363,6 +363,22 @@ export interface EmailLearningEvidence {
   models: EmailModelEvidence[];
   registry_issues: Array<{ model_id: string; integrity_status: "corrupt"; integrity_error: string }>;
   category_thresholds: Record<string, number>;
+  training_sources: EmailTrainingSource[];
+  model_families: EmailModelFamilyCapability[];
+}
+export interface EmailTrainingSource {
+  source: string;
+  category: string;
+  sample_count: number;
+  supported?: boolean;
+  provenance: Record<string, unknown>;
+}
+export interface EmailModelFamilyCapability {
+  family: string;
+  display_name: string;
+  supported: boolean;
+  configured: boolean;
+  reason?: string;
 }
 export interface EmailRuntime {
   mode: "agent_primary" | "model_primary";
@@ -380,6 +396,7 @@ export interface EmailPromotionConfig {
 }
 export interface EmailStagedModel {
   model_id: string;
+  model_family?: string;
   status: string;
   trained_at: string;
   metrics: {accuracy: number | null; macro_f1: number | null; categories: Record<string, Record<string, number | null>>; important?: Record<string, number | null>} | null;
@@ -688,6 +705,12 @@ export function listEmailLearning(signal?: AbortSignal) {
   return request<{ ok: boolean; learning: EmailLearningEvidence; meta: { snapshot_at: string } }>(
     "/api/console/email/learning",
     { signal },
+  );
+}
+
+export function requestEmailTraining(payload: {sources: string[]; categories: string[]; model_families: string[]}) {
+  return request<{ok: boolean; learning: {training_status: string; training_run_id: string | null; selection: typeof payload}}>(
+    "/api/console/email/training", {method: "POST", body: JSON.stringify(payload)},
   );
 }
 

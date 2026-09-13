@@ -170,6 +170,48 @@ def test_production_training_scope_reads_only_bound_categories_and_system_junk(
     assert fetched == ["work", "spam"]
 
 
+def test_new_unbound_provider_folder_is_not_a_reverse_category_creation_signal(
+    tmp_path,
+):
+    from app.email_training_observer import (
+        ProviderTrainingObservationJob,
+        provider_training_folder_is_relevant,
+    )
+
+    class Store(_Store):
+        def __init__(self):
+            super().__init__()
+            self.created_categories = []
+
+        def create_category_with_bindings(self, **kwargs):
+            self.created_categories.append(kwargs)
+            raise AssertionError("provider folders must not create categories")
+
+    class Source:
+        def list_folders(self):
+            return (
+                _folder("inbox", role=FolderRole.INBOX),
+                _folder("new-provider-folder", role=FolderRole.UNBOUND),
+            )
+
+        def fetch_uid_batch(self, *_args, **_kwargs):
+            raise AssertionError("unbound provider folders must not be read")
+
+        def logout(self):
+            return None
+
+    store = Store()
+    result = ProviderTrainingObservationJob(
+        state_path=tmp_path / "new-provider-folder.json",
+        source_factory=lambda _account: Source(),
+        email_store=store,
+        include_folder=provider_training_folder_is_relevant,
+    ).run_once(({"account_id": "account-1"},))
+
+    assert result.observations == ()
+    assert store.created_categories == []
+
+
 def test_uidvalidity_reset_is_bounded_and_replaces_old_folder_cache(tmp_path):
     from app.email_training_observer import ProviderTrainingObservationJob
 

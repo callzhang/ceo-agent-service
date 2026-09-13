@@ -903,3 +903,76 @@ def test_proposal_evaluation_does_not_advance_active_description_watermark(
     assert result.state.last_trained_snapshot_sha is None
     assert result.state.last_trained_description_version is None
     assert result.state.minimum_ready_snapshot_trained is False
+
+
+def test_selected_folder_categories_reach_the_staged_trainer(tmp_path, monkeypatch):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    error_state = registry.record_historical_systematic_error_state(
+        HistoricalSystematicErrorState(
+            unresolved=False,
+            source="operator-review",
+            reason="reviewed",
+            updated_at=NOW.isoformat(),
+        )
+    )
+    queued = TrainingSubprocessRun(
+        run_id="run-selected",
+        status="queued",
+        pid=0,
+        started_at=NOW.isoformat(),
+        updated_at=NOW.isoformat(),
+        snapshot_id="snapshot-1",
+        snapshot_sha="a" * 64,
+        description_version="description-set-sha256:" + "b" * 64,
+        unresolved_historical_systematic_error=False,
+        historical_systematic_error_state_sha256=error_state.state_sha256,
+        historical_systematic_error_source=error_state.source,
+        historical_systematic_error_reason=error_state.reason,
+        historical_systematic_error_updated_at=error_state.updated_at,
+        training_selection={
+            "sources": ["folder_snapshot"],
+            "categories": ["legal"],
+            "model_families": ["embedding-mlp"],
+            "provenance": [{"source": "folder_snapshot", "category": "legal"}],
+        },
+    )
+    controller = TrainingSubprocessController(registry, store_path=tmp_path / "db")
+    controller._save_run(queued)
+    observed = {}
+
+    class Store:
+        def __init__(self, _path):
+            pass
+
+        def list_category_configs(self):
+            return [{
+                "category_key": "work", "core_description": "Routine work.",
+                "include": ["Projects"], "exclude": ["Contracts"],
+                "description_version": "work-v1", "enabled": True,
+            }, {
+                "category_key": "legal", "core_description": "External legal matters.",
+                "include": ["Contracts"], "exclude": ["Routine"],
+                "description_version": "legal-v1", "enabled": True,
+            }]
+
+    monkeypatch.setattr(retrain_module, "EmailStore", Store)
+    monkeypatch.setattr(retrain_module, "EmbeddingCache", lambda *_a, **_k: object())
+    monkeypatch.setenv("CEO_EMAIL_EMBEDDING_DIMENSION", "2")
+    monkeypatch.setenv("CEO_EMAIL_EMBEDDING_REVISION", "gpu4-r1")
+    monkeypatch.setattr(
+        retrain_module,
+        "train_frozen_embedding_candidate",
+        lambda **kwargs: (
+            observed.update(kwargs)
+            or SimpleNamespace(model_id="email-embedding-mlp-selected")
+        ),
+    )
+
+    assert retrain_module._run_training_job(
+        db_path=tmp_path / "db",
+        registry_path=registry.root,
+        run_id=queued.run_id,
+        snapshot_id=queued.snapshot_id,
+        trained_at=NOW,
+    ) == 0
+    assert tuple(observed["descriptions"]) == ("legal",)

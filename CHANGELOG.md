@@ -668,6 +668,11 @@
   prose without any JSON object (`codex_result_missing`) gets the same
   correction block.
 
+- 2026-09-12: repair legacy `agent_runs` databases that are missing the
+  `tool_events_json` column before replaying persisted Agent events. The schema
+  manifest now detects the incomplete table and initialization restores the
+  empty-event default without affecting existing runs.
+
 - 2026-09-08: register the installed Fxiaoke `sharecrm` CLI in Settings →
   Connectors. The page now reports executable/authentication readiness, current
   CRM user, CLI version, and the read-only status check used by the service.

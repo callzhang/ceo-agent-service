@@ -98,3 +98,15 @@ def test_important_effective_is_independent_of_category_except_junk() -> None:
         provider_signals=provider_signal,
         model_important=True,
     )
+
+
+def test_standard_imap_star_and_provider_important_flags_form_one_union() -> None:
+    module = _important_module()
+
+    assert module.normalize_important_signals(
+        provider="imap",
+        raw_signal_names=("\\Flagged", "$Important"),
+    ) == module.ImportantSignals(
+        raw_signal_names=("\\Flagged", "$Important"),
+        provider_important=True,
+    )

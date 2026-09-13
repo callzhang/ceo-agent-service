@@ -14,6 +14,13 @@ from types import SimpleNamespace
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def configured_email_classifier_api(monkeypatch):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_api")
+    monkeypatch.setenv("CEO_CODEX_API_KEY", "test-email-api-key")
+    monkeypatch.setenv("CEO_CODEX_API_MODEL", "gpt-5.5")
+
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import DecisionOption, ProposedAction
 from app.email_classifier_contracts import (
@@ -3848,6 +3855,45 @@ def test_folder_materializer_binds_one_exact_existing_display_name() -> None:
     assert provider.created == []
 
 
+def test_folder_materializer_binds_each_enabled_account_independently() -> None:
+    providers = {
+        "primary": _FolderProvider(
+            [(ProviderFolder("work-primary", "工作", FolderRole.UNBOUND),)]
+        ),
+        "secondary": _FolderProvider(
+            [(), (ProviderFolder("work-secondary", "工作", FolderRole.UNBOUND),)]
+        ),
+    }
+    factory_calls: list[str] = []
+
+    def provider_factory(account):
+        account_id = str(account["account_id"])
+        factory_calls.append(account_id)
+        return providers[account_id]
+
+    coordinator = _module().ProviderFolderBindingCoordinator(
+        provider_factory,
+        now=lambda: "2026-09-08T10:00:00+00:00",
+    )
+
+    bindings = coordinator.create_and_verify_bindings(
+        category_key="work",
+        provider_folder_name="工作",
+        enabled_accounts=(
+            {"account_id": "primary"},
+            {"account_id": "secondary"},
+        ),
+    )
+
+    assert factory_calls == ["primary", "secondary"]
+    assert [(item.account_id, item.provider_folder_id) for item in bindings] == [
+        ("primary", "work-primary"),
+        ("secondary", "work-secondary"),
+    ]
+    assert providers["primary"].created == []
+    assert providers["secondary"].created == ["工作"]
+
+
 def test_folder_materializer_marks_duplicate_exact_names_ambiguous() -> None:
     provider = _FolderProvider(
         [
@@ -5875,18 +5921,23 @@ def test_email_dependency_builder_applies_classifier_model_override_only(
     )
 
     bootstrap = module.build_email_worker_dependencies(settings)
-    bootstrap.build_dependencies(
+    dependencies = bootstrap.build_dependencies(
         ({"account_id": "account-1", "enabled": True},),
         SimpleNamespace(
             loaded=SimpleNamespace(model_id="email-model:test", classifier=object()),
             tick=lambda: None,
         ),
     )
+    from app.email_agent_api import EmailClassifierApiBackend
+
+    assert isinstance(
+        dependencies.run_classification_once.args[1].backend,
+        EmailClassifierApiBackend,
+    )
     assert description_agents[0]({"candidate": "test"}) == {"candidate": "test"}
 
-    assert len(routed_calls) == 2
-    assert routed_calls[0]["codex_oauth_model"] == "gpt-5.6-luna"
-    assert "codex_oauth_model" not in routed_calls[1]
+    assert len(routed_calls) == 1
+    assert "codex_oauth_model" not in routed_calls[0]
 
 
 def test_worker_startup_isolates_legacy_before_agent_claim_and_starts_components(

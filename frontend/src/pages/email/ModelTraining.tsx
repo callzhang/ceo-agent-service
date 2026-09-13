@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { getEmailModelVersion, saveEmailPromotionConfig, saveEmailRuntimeMode, type EmailCategoryConfig, type EmailLearningEvidence, type EmailPromotionConfig, type EmailRuntime, type EmailStagedModel } from "../../api/console";
+import { getEmailModelVersion, requestEmailTraining, saveEmailPromotionConfig, saveEmailRuntimeMode, type EmailCategoryConfig, type EmailLearningEvidence, type EmailPromotionConfig, type EmailRuntime, type EmailStagedModel } from "../../api/console";
 import { EmailDrawer } from "./EmailDrawer";
 import { checkLabel, checkValue, errorMessage, localTime, measured, modeLabel, reasonLabel, statusLabel } from "./shared";
 import { modelMetric, trendPoints, type TrendMetric } from "./modelTrend";
@@ -17,9 +17,26 @@ export function ModelTraining({learning,configs,reload,runtimeVerified,onRuntime
   const [detail,setDetail]=useState<EmailStagedModel|null>(null);
   const [detailError,setDetailError]=useState("");
   const [retry,setRetry]=useState(0);
+  const [selectedSources,setSelectedSources]=useState<string[]>(()=>Array.from(new Set((learning.training_sources || []).filter(row=>row.supported!==false).map(row=>row.source))));
+  const [selectedCategories,setSelectedCategories]=useState<string[]>(()=>Array.from(new Set((learning.training_sources || []).filter(row=>row.supported!==false).map(row=>row.category))));
+  const [selectedModelFamilies,setSelectedModelFamilies]=useState<string[]>(()=>Array.from(new Set((learning.model_families || []).filter(row=>row.supported&&row.configured).map(row=>row.family))));
+  const [trainingRequest,setTrainingRequest]=useState("");
+  const [trainingBusy,setTrainingBusy]=useState(false);
   const lock=useRef(false);
   const requestId=useRef("");
   const models=learning.staged_models || [];
+  const sourceRows=learning.training_sources || [];
+  const supportedRows=sourceRows.filter(row=>row.supported!==false);
+  const sourceKeys=Array.from(new Set(sourceRows.map(row=>row.source)));
+  const categoryKeys=Array.from(new Set(supportedRows.map(row=>row.category)));
+  const modelFamilies=learning.model_families || [];
+  useEffect(()=>{setSelectedSources(Array.from(new Set(supportedRows.map(row=>row.source))));setSelectedCategories(categoryKeys);setSelectedModelFamilies(modelFamilies.filter(row=>row.supported&&row.configured).map(row=>row.family));},[learning.training_sources,learning.model_families]);
+  async function startTraining(){
+    setTrainingBusy(true);setTrainingRequest("");onBusy(true);
+    try { const result=await requestEmailTraining({sources:selectedSources,categories:selectedCategories,model_families:selectedModelFamilies}); setTrainingRequest(result.learning.training_status?"训练已提交，正在生成 staged 候选模型。":"训练请求已提交。"); }
+    catch(reason){setTrainingRequest(errorMessage(reason));}
+    finally{setTrainingBusy(false);onBusy(false);}
+  }
   useEffect(()=>{
     setDetail(null);setDetailError("");
     if(!selected)return;
@@ -75,6 +92,11 @@ export function ModelTraining({learning,configs,reload,runtimeVerified,onRuntime
     </>:<p role="alert">晋升配置暂不可用，请刷新重试。</p>}
     {!!learning.registry_issues?.length&&<p role="alert">模型 Registry 完整性异常：{learning.registry_issues.map(issue=>issue.model_id+"（"+issue.integrity_error+"）").join("；")}</p>}
     <ModelTrend models={models} config={learning.promotion_gate?.config}/>
+    <section aria-label="训练数据来源" className="email-training-sources"><h3>训练数据来源</h3><p className="muted">可执行来源默认全选。取消勾选只影响本次 staged 训练，不修改反馈记录或线上模型。</p>
+      <div className="email-source-columns"><fieldset><legend>来源</legend>{sourceKeys.map(source=>{const supported=sourceRows.filter(row=>row.source===source).every(row=>row.supported!==false);return <label key={source}><input type="checkbox" checked={selectedSources.includes(source)} disabled={!supported} onChange={event=>setSelectedSources(current=>event.target.checked?[...current,source]:current.filter(value=>value!==source))}/>{sourceLabel(source)}{!supported&&"（暂不支持）"}</label>})}{sourceRows.some(row=>row.supported===false)&&<p className="muted">Agent 自动标注、用户反馈尚未接入本次 staged 训练。</p>}</fieldset><fieldset><legend>类别</legend>{categoryKeys.map(category=><label key={category}><input type="checkbox" checked={selectedCategories.includes(category)} onChange={event=>setSelectedCategories(current=>event.target.checked?[...current,category]:current.filter(value=>value!==category))}/>{category}</label>)}</fieldset><fieldset><legend>模型家族</legend>{modelFamilies.map(row=><label key={row.family}><input type="checkbox" checked={selectedModelFamilies.includes(row.family)} disabled={!row.supported||!row.configured} onChange={event=>setSelectedModelFamilies(current=>event.target.checked?[...current,row.family]:current.filter(value=>value!==row.family))}/>{row.display_name}{(!row.supported||!row.configured)&&"（暂不支持）"}</label>)}</fieldset></div>
+      {sourceRows.length?<div className="responsive-table-wrap"><table className="settings-table" aria-label="训练数据来源明细"><thead><tr><th>来源</th><th>类别</th><th>样本数</th><th>数据版本 / 摘要</th></tr></thead><tbody>{sourceRows.map(row=><tr key={row.source+row.category}><td>{sourceLabel(row.source)}{row.supported===false?"（暂不支持）":""}</td><td>{row.category}</td><td>{row.sample_count}</td><td>{provenanceLabel(row.provenance)}</td></tr>)}</tbody></table></div>:<p>暂无可用训练数据来源。</p>}
+      <button className="primary-button" disabled={trainingBusy||!selectedSources.length||!selectedCategories.length||!selectedModelFamilies.length} onClick={()=>void startTraining()}>{trainingBusy?"正在记录训练请求…":"开始训练"}</button>{trainingRequest&&<p role="status">{trainingRequest}</p>}
+    </section>
     <h3>模型版本</h3>
     {!models.length&&!learning.models?.length?<p>暂无训练版本。</p>:<div className="responsive-table-wrap"><table className="settings-table email-model-table" aria-label="模型版本"><thead><tr><th>完整模型名与版本</th><th>状态</th><th>训练时间</th><th>样本数</th><th>Macro F1</th><th>端到端 P95</th><th>完整性</th><th>详情</th></tr></thead><tbody>
       {models.map(model=><tr key={model.model_id}><td>{model.model_id}</td><td>{statusLabel(model.status)}{runtime?.active_model_id===model.model_id?" · 主模型":""}</td><td>{localTime(model.trained_at)}</td><td>{model.training?.sample_count ?? (model.split_counts?model.split_counts.train+model.split_counts.validation+model.split_counts.test:"未测量")}</td><td>{measured(model.metrics?.macro_f1)}</td><td>{measured(model.end_to_end_latency_ms?.p95," ms")}</td><td>{integrityLabel(model.integrity_status,model.failure_reason)}</td><td><button className="compact-button" aria-label={"查看 "+model.model_id} onClick={()=>setSelected(model.model_id)}>查看</button></td></tr>)}
@@ -86,6 +108,9 @@ export function ModelTraining({learning,configs,reload,runtimeVerified,onRuntime
   </section>;
   function setLegacy(value:EmailLearningEvidence["models"][number]|null){setLegacyModel(value);}
 }
+
+function sourceLabel(value:string){return value==="agent_auto_label"?"Agent 自动标注":value==="user_feedback"?"用户反馈":value==="folder_snapshot"?"邮件文件夹快照":value;}
+function provenanceLabel(value:Record<string,unknown>){return String(value.snapshot_id || value.classification_source || "未提供");}
 
 const thresholdFields=[["macro_f1_min","Macro F1 最低值",0,1,"any"],["category_precision_min","每类别 Precision 最低值",0,1,"any"],["category_validation_samples_min","每类别独立验证样本数",1,undefined,1],["p95_latency_max_ms","端到端 P95 上限（ms）",0,undefined,"any"]] as const;
 function ThresholdEditor({config,reload,disabled,onBusy}: {config:EmailPromotionConfig;reload:RefreshLearning;disabled:boolean;onBusy:(busy:boolean)=>void}) {
@@ -133,7 +158,7 @@ function ModelDetails({model}: {model:EmailStagedModel}) {
       <div><dt>训练 / 验证 / 测试样本</dt><dd>{model.split_counts?.train ?? "未测量"} / {model.split_counts?.validation ?? "未测量"} / {model.split_counts?.test ?? "未测量"}</dd></div>
     </dl></section>
     <section aria-label="模型版本与评测"><h4>模型版本与评测</h4><dl className="detail-definition-list">{[
-      ["模型家族",model.compatibility?.head_format],["Embedding 版本",model.compatibility?.embedding_revision_reference],["描述版本",model.compatibility?.description_version],["输入 Schema",model.compatibility?.input_schema_version],["训练数据版本",model.training_snapshot_id],["评测方法",model.evaluation?.protocol],["测试集摘要",model.evaluation?.test_digest],["Artifact SHA-256",model.artifact_sha256]
+      ["模型家族",model.model_family || model.compatibility?.head_format],["Embedding 版本",model.compatibility?.embedding_revision_reference],["描述版本",model.compatibility?.description_version],["输入 Schema",model.compatibility?.input_schema_version],["训练数据版本",model.training_snapshot_id],["评测方法",model.evaluation?.protocol],["测试集摘要",model.evaluation?.test_digest],["Artifact SHA-256",model.artifact_sha256]
     ].map(([label,value])=><div key={String(label)}><dt>{String(label)}</dt><dd>{value==null?"未提供":String(value)}</dd></div>)}</dl></section>
     <section aria-label="训练参数"><h4>训练参数</h4><dl className="detail-definition-list">{[
       ["随机种子",model.parameters?.random_seed],["求解器",model.parameters?.solver],["最大迭代次数",model.parameters?.max_iter],["正则化系数",model.parameters?.regularization_alpha],["隐藏层",model.parameters?.hidden_layer_sizes],["描述权重 α",model.parameters?.alpha],["模型权重 β",model.parameters?.beta]
