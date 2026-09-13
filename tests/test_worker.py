@@ -548,6 +548,90 @@ def test_sent_reply_projection_accepts_stable_message_id_without_send_status():
     assert projection.reply_text == "来自 proposal 的群回复"
 
 
+def test_sent_reply_projection_accepts_delivery_status_and_sent_message_id():
+    task = SimpleNamespace(
+        channel="dingtalk", conversation_id="cid-1",
+        business_object_key="message:dingtalk:cid-1:trigger-1",
+    )
+    audit_result = AuditAgentResult.model_validate(
+        {
+            "outcome": "executed",
+            "risk": "medium",
+            "confidence": 0.98,
+            "rule_coverage": 0.99,
+            "information_completeness": 0.86,
+            "summary": "sent",
+            "proposal_revision": 0,
+            "feedback": None,
+            "external_result": {
+                "operation_id": "op-1",
+                "live_result_reference": {
+                    "action_identity": "reply-to-message",
+                    "delivery_status": "SUCCESS",
+                    "conversation_id": "cid-1",
+                    "referenced_message_id": "trigger-message",
+                    "sent_message_id": "sent-message",
+                    "readback_verified": True,
+                },
+            },
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        }
+    )
+    consumer_result = ConsumerAgentResult.model_validate(
+        {
+            "outcome": "proposal",
+            "summary": "reply",
+            "risk": "medium",
+            "confidence": 0.95,
+            "rule_coverage": 1.0,
+            "information_completeness": 0.8,
+            "proposal": {
+                "objective": "reply",
+                "actions": [
+                    {
+                        "description": "reply",
+                        "action_identity": "reply-to-message",
+                        "capability": "dingtalk-chat",
+                        "operation": "messages-reply",
+                        "target": {
+                            "conversation_id": "cid-1",
+                            "message_id": "trigger-message",
+                        },
+                        "payload": {"reply_text": "引用回复正文"},
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "",
+            },
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        }
+    )
+    result = OrchestrationResult(
+        status="executed",
+        final_run_id=1,
+        final_role=AgentRole.AUDIT,
+        summary="sent",
+        error=AgentError(code="", retryable=False, authorization_required=False),
+        feedback_cycles=0,
+        consumer_result=consumer_result,
+        audit_result=audit_result,
+    )
+
+    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(task, result)
+
+    assert projection is not None
+    assert projection.reply_text == "引用回复正文"
+    assert projection.provider_result["sent_message_id"] == "sent-message"
+
+
 def test_sent_reply_projection_accepts_reply_action_text():
     task = SimpleNamespace(
         channel="dingtalk", conversation_id="cid-1",

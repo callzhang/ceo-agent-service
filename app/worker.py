@@ -2568,10 +2568,16 @@ class DingTalkAutoReplyWorker:
             return None
         reference = audit_result.external_result.live_result_reference
         send_status = str(
-            reference.get("sendStatus") or reference.get("send_status") or ""
+            reference.get("delivery_status")
+            or reference.get("deliveryStatus")
+            or reference.get("sendStatus")
+            or reference.get("send_status")
+            or ""
         ).strip().lower()
         stable_message_id = str(
-            reference.get("message_id")
+            reference.get("sent_message_id")
+            or reference.get("sentMessageId")
+            or reference.get("message_id")
             or reference.get("messageId")
             or reference.get("openMessageId")
             or reference.get("open_message_id")
