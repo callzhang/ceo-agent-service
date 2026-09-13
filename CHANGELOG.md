@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-13: the React Status API now preserves required fields whose current
+  value is `null`. The route previously excluded every `None` value during
+  response serialization, so an empty dispatcher queue omitted its required
+  `oldest_available_at` field and the strict frontend rejected the otherwise
+  valid HTTP 200 response as `invalid status response`.
+
 - 2026-09-12: an unsubscribe receipt now records the entry URL it was earned
   against (`email_unsubscribe_receipts.entry_url`, schema v37). Until now the
   only durable trace was `entry_reference`, the sha256 of the private URL, and

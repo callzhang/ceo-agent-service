@@ -326,7 +326,6 @@ def register_console_routes(
     @app.get(
         "/api/console/status",
         response_model=StatusEnvelope,
-        response_model_exclude_none=True,
     )
     def console_status():
         item = WorkerStatus.model_validate(json_safe(status_payload_factory()))
