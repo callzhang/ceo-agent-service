@@ -56,9 +56,34 @@ def test_task_list_sorts_before_pagination(tmp_path: Path):
         page=1,
         page_size=10,
     )
-    assert next(item for item in untitled.items if item.id == untitled_id).title == (
-        f"Project {untitled_id}"
+    untitled_item = next(item for item in untitled.items if item.id == untitled_id)
+    assert untitled_item.title == f"[数据异常：标题缺失，Project {untitled_id}]"
+    assert untitled_item.integrity_issues == ["missing_title"]
+
+
+def test_task_list_excludes_archived_by_default_but_keeps_archive_filter(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    active_id = _create_project(store, "Active project")
+    archived_id = store.create_work_project(
+        title="Archived project",
+        category="dev",
+        status="archived",
+        priority="P2",
+        risk_level="low",
     )
+
+    default_response = task_list_response(store, page=1, page_size=10)
+    archived_response = task_list_response(
+        store,
+        page=1,
+        page_size=10,
+        task_state="archived",
+    )
+
+    assert [item.id for item in default_response.items] == [active_id]
+    assert "archived" in default_response.filters.task_states
+    assert [item.id for item in archived_response.items] == [archived_id]
+    assert archived_response.items[0].status == "archived"
 
 
 def test_task_list_uses_business_priority_order(tmp_path: Path):

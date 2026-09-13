@@ -46,6 +46,7 @@ class ConsoleTaskSummary(BaseModel):
     progress_ratio: int
     todo_count: int
     detail_url: str
+    integrity_issues: list[str] = Field(default_factory=list)
 
 
 class ConsoleFact(BaseModel):
@@ -529,7 +530,15 @@ def task_list_response(
                         "todo_count": int(built.get("todoCount", row["todo_count"])),
                     }
                 )
-        row["title"] = row["title"].strip() or f"Project {row['id']}"
+        integrity_issues: list[str] = []
+        if not normalize_display_value(project.title).strip():
+            integrity_issues.append("missing_title")
+            row["title"] = f"[数据异常：标题缺失，Project {row['id']}]"
+        else:
+            row["title"] = row["title"].strip()
+        row["integrity_issues"] = integrity_issues
+        if row["project_status"] == "archived":
+            row["status"] = "archived"
         if row["category"].strip():
             categories.add(row["category"])
         if row["status"].strip():
@@ -547,11 +556,24 @@ def task_list_response(
             continue
         if task_state.strip() and row["status"] != task_state.strip():
             continue
+        if not task_state.strip() and row["project_status"] == "archived":
+            continue
         rows.append(row)
     if sort == "project_asc":
-        rows.sort(key=lambda row: row["title"].casefold())
+        rows.sort(
+            key=lambda row: (
+                bool(row["integrity_issues"]),
+                row["title"].casefold(),
+            )
+        )
     elif sort == "project_desc":
-        rows.sort(key=lambda row: row["title"].casefold(), reverse=True)
+        rows.sort(
+            key=lambda row: (
+                not bool(row["integrity_issues"]),
+                row["title"].casefold(),
+            ),
+            reverse=True,
+        )
     elif sort == "priority_desc":
         priority_rank = {
             "p0": 60,

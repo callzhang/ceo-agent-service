@@ -356,6 +356,8 @@ def build_parser() -> argparse.ArgumentParser:
         "build-work-profile",
         "replay-recent-meetings",
         "repository-updater",
+        "repair-task-projects-plan",
+        "repair-task-projects-apply",
     ):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--db", default=os.getenv("CEO_WORKER_DB", str(defaults.db_path)))
@@ -479,6 +481,12 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--period-label", required=True)
         if command == "repository-updater":
             subparser.add_argument("--operation-id", required=True)
+        if command == "repair-task-projects-plan":
+            subparser.add_argument("--historical-db")
+            subparser.add_argument("--manifest", required=True)
+        if command == "repair-task-projects-apply":
+            subparser.add_argument("--manifest", required=True)
+            subparser.add_argument("--archive-limit", type=_non_negative_int)
         if command == "retry-work-summary-input":
             subparser.add_argument("--input-id", type=_positive_int, required=True)
         if command == "release-failed-email-unsubscribe":
@@ -4225,6 +4233,35 @@ def main() -> None:
             branch=settings.repository_upgrade_branch,
             database_path=settings.db_path,
         ).execute(operation)
+        print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
+    elif args.command == "repair-task-projects-plan":
+        from app.task_project_repair import build_repair_manifest, write_manifest
+
+        manifest = build_repair_manifest(
+            settings.db_path,
+            _expand_path_arg(args.historical_db) if args.historical_db else None,
+        )
+        write_manifest(manifest, _expand_path_arg(args.manifest))
+        print(
+            json.dumps(
+                {
+                    "manifest_id": manifest.manifest_id,
+                    "restorations": len(manifest.restorations),
+                    "archives": len(manifest.archives),
+                    "unresolved": len(manifest.unresolved_project_ids),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+    elif args.command == "repair-task-projects-apply":
+        from app.task_project_repair import apply_manifest, read_manifest
+
+        result = apply_manifest(
+            settings.db_path,
+            read_manifest(_expand_path_arg(args.manifest)),
+            archive_limit=args.archive_limit,
+        )
         print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
     elif args.command == "doctor-mcp":
         doctor_mcp_command(

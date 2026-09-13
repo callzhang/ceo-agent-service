@@ -1,5 +1,17 @@
 # Changelog
 
+- 2026-09-13: task project creation and repair are now source-aware. Automatic
+  `local_file` inputs may update a clearly matched active project but cannot
+  create one; no-change completion checks must skip; candidate ranking searches
+  the complete active/waiting project set instead of only the most recent 500.
+  Project updates reject schema-default values that would erase durable title,
+  ownership, goal, background, facts, or source metadata, and project creation
+  requires a non-empty title. The Tasks API hides archived projects by default,
+  labels unresolved blank titles as integrity failures, and keeps archived
+  projects available through its explicit filter. A fingerprinted, idempotent
+  repair manifest can restore traceable blank fields and archive only projects
+  backed exclusively by old local-file material with no TODO or follow-up.
+
 - 2026-09-13: the React Status API now preserves required fields whose current
   value is `null`. The route previously excluded every `None` value during
   response serialization, so an empty dispatcher queue omitted its required

@@ -87,7 +87,7 @@ function query(params: Record<string, string | number | undefined>) {
   return search.size ? `?${search.toString()}` : "";
 }
 
-export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; }
+export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; integrity_issues?: string[]; }
 export interface TaskFilters { categories: string[]; task_states: string[]; }
 export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
 export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
@@ -555,6 +555,9 @@ function mapTaskSummary(value: unknown): TaskSummary {
     todo_count: Number(row.todo_count || 0),
     state_summary: displayValue(row.current_state),
     next_summary: displayValue(row.next_step),
+    integrity_issues: Array.isArray(row.integrity_issues)
+      ? row.integrity_issues.map(displayValue).filter((item) => item !== "未提供")
+      : [],
   };
 }
 

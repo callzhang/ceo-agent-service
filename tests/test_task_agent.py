@@ -542,6 +542,40 @@ def test_completion_check_without_lifecycle_transition_must_skip(
         )
 
 
+def test_completion_check_cannot_change_durable_project_metadata(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    item = _work_item()
+    item.source.type = WorkItemSourceType.TODO_COMPLETION_CHECK
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "完成检查擅自改名",
+                "status": "waiting",
+                "memory_context": {
+                    "query": "客户交付完成状态",
+                    "summary": "发现等待状态。",
+                },
+            },
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(
+        RepairableTaskDecisionValidationError,
+        match="completion checks cannot change protected project fields: title",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=item,
+            decision=decision,
+            record_run=False,
+        )
+
+
 def _low_confidence_minutes_work_item() -> WorkItem:
     return WorkItem.model_validate(
         {

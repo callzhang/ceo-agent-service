@@ -1011,6 +1011,18 @@ def _validate_work_item_mutation_authority(
     if source_type not in completion_sources or decision.action == "skip":
         return
 
+    supplied_project_fields = (
+        set() if decision.project is None else decision.project.model_fields_set
+    )
+    prohibited_fields = sorted(
+        supplied_project_fields & (PROTECTED_PROJECT_FIELDS - {"status"})
+    )
+    if prohibited_fields:
+        raise RepairableTaskDecisionValidationError(
+            "completion checks cannot change protected project fields: "
+            + ", ".join(prohibited_fields)
+        )
+
     project_status_transition = bool(
         decision.project is not None
         and "status" in decision.project.model_fields_set

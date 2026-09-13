@@ -51,6 +51,35 @@ from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_models import TaskAgentDecision, WorkItem
 
 
+def test_task_project_repair_commands_parse_required_paths():
+    plan = build_parser().parse_args(
+        [
+            "repair-task-projects-plan",
+            "--db",
+            "/tmp/current.sqlite3",
+            "--historical-db",
+            "/tmp/historical.sqlite3",
+            "--manifest",
+            "/tmp/repair.json",
+        ]
+    )
+    apply = build_parser().parse_args(
+        [
+            "repair-task-projects-apply",
+            "--db",
+            "/tmp/current.sqlite3",
+            "--manifest",
+            "/tmp/repair.json",
+            "--archive-limit",
+            "10",
+        ]
+    )
+
+    assert plan.historical_db == "/tmp/historical.sqlite3"
+    assert plan.manifest == "/tmp/repair.json"
+    assert apply.archive_limit == 10
+
+
 def enqueue_trigger_task(
     store,
     *,

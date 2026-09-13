@@ -533,6 +533,17 @@ cd /path/to/ceo-agent-service
 # 扫描新增 AI 听记和 CEO_WORKSPACE 下的新增 Markdown/text 文件
 "$HOME/miniforge3/bin/ceo-agent" scan-task-sources
 
+# 只读生成 task project 修复清单；应用前必须先审阅 JSON 并备份数据库
+"$HOME/miniforge3/bin/python" -m app.cli repair-task-projects-plan \
+  --db /absolute/current.sqlite3 \
+  --historical-db /absolute/historical.sqlite3 \
+  --manifest /absolute/task-project-repair.json
+
+# 按数据库指纹和 expected old value 原子应用已审阅清单
+"$HOME/miniforge3/bin/python" -m app.cli repair-task-projects-apply \
+  --db /absolute/current.sqlite3 \
+  --manifest /absolute/task-project-repair.json
+
 # 扫描当前登录人的钉钉 OA 待审批
 "$HOME/miniforge3/bin/ceo-agent" scan-oa-approvals
 
@@ -540,7 +551,11 @@ cd /path/to/ceo-agent-service
 CEO_NOT_SEND_MESSAGE=1 "$HOME/miniforge3/bin/ceo-agent" daily-task-maintenance --not-send-message
 ```
 
-`scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。AI 听记通过当前 `dws` 登录态从最新页读取到已记录的时间边界；首次只建立最新页基线，后续在到达该边界时停止，不会为查找历史 ID 持续使用易失效分页游标。旧版仅含 ID 的状态会安全读取一页、处理该恢复窗口中未记录的条目，并建立时间边界。
+`scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。`local_file` Work Item 只能更新明确匹配的现有项目；没有可靠匹配时必须跳过，不能从历史文档自动新建项目。AI 听记通过当前 `dws` 登录态从最新页读取到已记录的时间边界；首次只建立最新页基线，后续在到达该边界时停止，不会为查找历史 ID 持续使用易失效分页游标。旧版仅含 ID 的状态会安全读取一页、处理该恢复窗口中未记录的条目，并建立时间边界。
+
+Task Agent 创建 project 时必须提供非空标题。更新采用受保护的稀疏语义：结构化输出里的空字符串、空数组或枚举默认值不能覆盖已有的标题、分类、owner、目标、背景、facts 或来源记录；需要有意清除这些字段时必须走单独、可审计的人工修复流程。项目匹配会遍历全部 active/waiting project，再只把最高分候选交给 Agent，避免旧项目因超过 500 条窗口而不可见。
+
+`repair-task-projects-plan` 不修改数据库。它只恢复当前为空且能由历史 task-agent 决策或指定历史快照追溯的字段，并只把“来源文件比入库时间早至少 14 天、所有业务更新均为 local_file、且没有 TODO/follow-up”的项目列为归档候选。`repair-task-projects-apply` 使用 manifest 中的数据库指纹与 expected old value 防止错库或并发覆盖，在同一事务中写入字段、归档状态和 `repair_task_projects` 审计 update；重复应用不会重复修改或重复写审计记录。生产执行前使用 SQLite 在线备份 API 创建并验证备份，不要在服务运行时直接复制 WAL 数据库文件。
 
 CEO reply agent 使用原生 `codex exec`，沿用启动服务的安装用户现有 `~/.codex` 配置、MCP、
 plugins、hooks、Skills 和认证状态。服务不会把 MCP transport、OAuth header、bearer token 或
