@@ -5773,6 +5773,93 @@ def test_process_work_item_repairs_a_second_repairable_rule(tmp_path, monkeypatc
     assert codex.calls == 3
 
 
+def test_process_work_item_repairs_project_patch_that_would_erase_metadata(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库",
+        category="sales",
+        tags_json='["customer"]',
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        related_people_json='[{"user_id":"reviewer-1","name":"Mina"}]',
+        goal="完成可复用知识库",
+        background="客户交付材料持续沉淀",
+    )
+    input_id, work_input = _claimed_work_input(store)
+    base = {
+        "action": "update_project",
+        "todo_changes": [],
+        "follow_up_drafts": [],
+        "follow_up_changes": [],
+        "update_summary": "记录本周 OKR 周报进展。",
+        "merge_reason": "周报属于现有项目。",
+        "memory_recall_used": True,
+        "confidence": 0.9,
+    }
+    first = {
+        **base,
+        "project": {
+            "id": project_id,
+            "title": "",
+            "category": "other",
+            "tags": [],
+            "owner_user_id": "",
+            "owner_name": "",
+            "related_people": [],
+            "goal": "",
+            "background": "",
+            "current_state": "周报已生成。",
+            "memory_context": _memory_context(),
+        },
+    }
+    second = {
+        **base,
+        "project": {
+            "id": project_id,
+            "current_state": "周报已生成。",
+            "memory_context": _memory_context(),
+        },
+    }
+    codex = _repair_codex([first, second])
+
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    project = store.get_work_project(project_id)
+    assert project is not None
+    assert project.title == "售前知识库"
+    assert project.category.value == "sales"
+    assert project.tags_json == '["customer"]'
+    assert project.owner_user_id == "owner-1"
+    assert project.owner_name == "Alex"
+    assert project.related_people_json == '[{"user_id":"reviewer-1","name":"Mina"}]'
+    assert project.goal == "完成可复用知识库"
+    assert project.background == "客户交付材料持续沉淀"
+    assert project.current_state == "周报已生成。"
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?", (input_id,)
+        ).fetchone()
+        runs = db.execute(
+            "select status, error from task_agent_runs where summary_input_id=? order by id",
+            (input_id,),
+        ).fetchall()
+    assert input_row == ("done", "")
+    assert runs == [
+        (
+            "failed",
+            "update_project would erase protected project fields with schema defaults: "
+            "background, category, goal, owner_name, owner_user_id, related_people, tags, title",
+        ),
+        ("completed", ""),
+    ]
+    assert codex.calls == 2
+    assert "omit every unchanged project field" in codex.prompts[1]
+
+
 def test_process_work_item_repair_exhaustion_is_typed_not_silent(tmp_path, monkeypatch):
     from app.task_agent import TaskDecisionRepairExhausted
 

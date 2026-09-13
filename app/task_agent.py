@@ -579,6 +579,11 @@ from the current candidate context or a successful current task-management
 read. If no such ID can be established, return skip; 不得改成 create_project
 to bypass the missing-ID error or create a possible duplicate project.
 
+For update_project, omit every unchanged project field from project. Do not
+repeat protected metadata with empty or schema-default values; absent fields
+preserve the current project value. Include only fields that this work item
+actually changes, plus id and the required memory_context.
+
 Previous rejected decision JSON:
 {decision.model_dump_json(indent=2)}
 """
@@ -700,6 +705,7 @@ def process_work_item(
                     decision,
                     now=now,
                 )
+                _validate_project_patch_against_store(store, decision)
                 break
             except RepairableTaskDecisionValidationError as exc:
                 if repair_round == TASK_DECISION_REPAIR_ROUNDS:
@@ -767,6 +773,7 @@ def process_work_item(
                 decision,
                 now=now,
             )
+            _validate_project_patch_against_store(store, decision)
             _validate_owner_changes(store, decision)
         with store.task_agent_domain_apply_transaction() as db:
             apply_task_agent_decision(
@@ -881,6 +888,7 @@ def apply_task_agent_decision(
         now=now,
     )
     _validate_work_item_mutation_authority(store, work_item, decision)
+    _validate_project_patch_against_store(store, decision, _db=_db)
     _validate_owner_changes(store, decision)
 
     if record_run:
@@ -1494,6 +1502,29 @@ def _apply_project(
     values = _project_values(project, only_fields=fields)
     store.update_work_project(project.id, _db=_db, **values)
     return project.id
+
+
+def _validate_project_patch_against_store(
+    store: AutoReplyStore,
+    decision: TaskAgentDecision,
+    *,
+    _db: sqlite3.Connection | None = None,
+) -> None:
+    project = decision.project
+    if (
+        decision.action != "update_project"
+        or project is None
+        or project.id is None
+    ):
+        return
+    current_project = store.get_work_project(project.id, _db=_db)
+    if current_project is None:
+        return
+    _reject_default_project_field_erasure(
+        project,
+        current_project,
+        project.model_fields_set - {"id"},
+    )
 
 
 def _reject_default_project_field_erasure(
