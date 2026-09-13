@@ -7893,7 +7893,10 @@ def test_backfill_oa_audit_metadata_recovers_completed_agent_scan_attempt(
         trigger_create_time="2026-08-06T05:41:00+00:00",
         trigger_sender="Derek OA",
         trigger_text="审批待办扫描",
-        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        oa_url=(
+            "https://aflow.dingtalk.com/dingtalk/mobile/query/formService"
+            "#/detail?procInstId=proc-1&taskId=task-1"
+        ),
     )
     attempt_id = store.record_reply_attempt(
         conversation_id="oa_pending_scan",
