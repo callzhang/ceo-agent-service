@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-13: the Tasks console now preserves its dense one-row filters on
+  wide screens and switches to a two-row filter layout from 721px through
+  1100px. The same breakpoint compacts every top-level navigation destination,
+  and the intentionally wide Sent TODOs table owns its horizontal scroll, so
+  1024px and tablet viewports no longer make the whole page scroll sideways.
+
 - 2026-09-13: the Responses API email classifier now publishes the shared
   health vocabulary (`ready`, `degraded`, `unavailable`) while retaining its
   per-request outcome as `request_status` (`success`, `retry`, `error`). The
