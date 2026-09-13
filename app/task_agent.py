@@ -880,7 +880,7 @@ def apply_task_agent_decision(
         decision,
         now=now,
     )
-    _validate_work_item_mutation_authority(work_item, decision)
+    _validate_work_item_mutation_authority(store, work_item, decision)
     _validate_owner_changes(store, decision)
 
     if record_run:
@@ -991,6 +991,7 @@ def apply_task_agent_decision(
 
 
 def _validate_work_item_mutation_authority(
+    store: AutoReplyStore,
     work_item: WorkItem,
     decision: TaskAgentDecision,
 ) -> None:
@@ -1014,13 +1015,25 @@ def _validate_work_item_mutation_authority(
     supplied_project_fields = (
         set() if decision.project is None else decision.project.model_fields_set
     )
-    prohibited_fields = sorted(
+    protected_fields = sorted(
         supplied_project_fields & (PROTECTED_PROJECT_FIELDS - {"status"})
     )
-    if prohibited_fields:
+    current_project = (
+        None
+        if decision.project is None or decision.project.id is None
+        else store.get_work_project(decision.project.id)
+    )
+    changed_protected_fields = [
+        field
+        for field in protected_fields
+        if current_project is None
+        or _comparable_project_value(getattr(decision.project, field))
+        != _stored_project_value(current_project, field)
+    ]
+    if changed_protected_fields:
         raise RepairableTaskDecisionValidationError(
             "completion checks cannot change protected project fields: "
-            + ", ".join(prohibited_fields)
+            + ", ".join(changed_protected_fields)
         )
 
     project_status_transition = bool(
