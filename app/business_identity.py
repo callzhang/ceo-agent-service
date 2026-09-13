@@ -7,7 +7,14 @@ from urllib.parse import parse_qs, urlsplit
 
 
 def oa_identifiers_from_url(url: str) -> tuple[str, str]:
-    query = parse_qs(urlsplit(url).query)
+    parsed = urlsplit(url)
+    query_parts = [parsed.query]
+    if parsed.fragment:
+        fragment_query = urlsplit(parsed.fragment).query
+        if not fragment_query and "=" in parsed.fragment:
+            fragment_query = parsed.fragment.lstrip("?")
+        query_parts.append(fragment_query)
+    query = parse_qs("&".join(part for part in query_parts if part))
     values = {
         "".join(key.replace("_", "").casefold().split()): value
         for key, value in query.items()

@@ -7898,6 +7898,11 @@ def test_backfill_oa_audit_metadata_recovers_completed_agent_scan_attempt(
             "#/detail?procInstId=proc-1&taskId=task-1"
         ),
     )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set oa_url='' where trigger_message_id=?",
+            (trigger_message_id,),
+        )
     attempt_id = store.record_reply_attempt(
         conversation_id="oa_pending_scan",
         conversation_title="审批待办",

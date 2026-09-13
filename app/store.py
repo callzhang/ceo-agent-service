@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import quote
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -40,7 +40,7 @@ from app.agent_cron.models import (
     ensure_utc_datetime,
     parse_utc_datetime,
 )
-from app.business_identity import reply_business_object_key
+from app.business_identity import oa_identifiers_from_url, reply_business_object_key
 from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
     classify_codex_process_failure,
@@ -20900,13 +20900,17 @@ class AutoReplyStore:
         with self._connect() as db:
             rows = db.execute(
                 """
-                select reply_attempts.id, reply_tasks.oa_url
+                select reply_attempts.id, reply_tasks.oa_url,
+                       reply_tasks.business_object_key
                 from reply_attempts
                 join reply_tasks on reply_tasks.conversation_id=reply_attempts.conversation_id
                     and reply_tasks.trigger_message_id=reply_attempts.trigger_message_id
                 where reply_attempts.action='agent_run'
                     and reply_attempts.oa_process_instance_id=''
-                    and reply_tasks.oa_url<>''
+                    and (
+                        reply_tasks.oa_url<>''
+                        or reply_tasks.business_object_key like 'oa:%'
+                    )
                 """
             ).fetchall()
             repaired = 0
@@ -20915,7 +20919,17 @@ class AutoReplyStore:
                     str(row["oa_url"] or "")
                 )
                 if not process_instance_id:
+                    business_key = str(row["business_object_key"] or "").strip()
+                    if business_key.startswith("oa:") and ":" in business_key[3:]:
+                        process_instance_id, task_id = business_key[3:].rsplit(":", 1)
+                if not process_instance_id:
                     continue
+                oa_url = str(row["oa_url"] or "").strip()
+                if not oa_url:
+                    oa_url = (
+                        "https://aflow.dingtalk.com/detail?"
+                        f"procInstId={quote(process_instance_id)}&taskId={quote(task_id)}"
+                    )
                 cursor = db.execute(
                     """
                     update reply_attempts
@@ -20927,7 +20941,7 @@ class AutoReplyStore:
                     (
                         process_instance_id,
                         task_id,
-                        str(row["oa_url"] or ""),
+                        oa_url,
                         int(row["id"]),
                     ),
                 )
@@ -20936,23 +20950,7 @@ class AutoReplyStore:
 
     @staticmethod
     def _oa_identifiers_from_url(url: str) -> tuple[str, str]:
-        parsed = urlsplit(url)
-        query_parts = [parsed.query]
-        if parsed.fragment:
-            fragment_query = urlsplit(parsed.fragment).query
-            if not fragment_query and "=" in parsed.fragment:
-                fragment_query = parsed.fragment.lstrip("?")
-            query_parts.append(fragment_query)
-        query = parse_qs("&".join(part for part in query_parts if part))
-        values = {
-            "".join(key.replace("_", "").casefold().split()): value
-            for key, value in query.items()
-        }
-        process_values = values.get("procinstid") or values.get("processinstanceid")
-        task_values = values.get("taskid")
-        process_instance_id = str(process_values[0]).strip() if process_values else ""
-        task_id = str(task_values[0]).strip() if task_values else ""
-        return process_instance_id, task_id
+        return oa_identifiers_from_url(url)
 
     def list_reply_attempts_for_codex_session(
         self, codex_session_id: str, limit: int | None = None
