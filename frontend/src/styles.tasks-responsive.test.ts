@@ -3,14 +3,21 @@ import { describe, expect, it } from "vitest";
 import workbenchStyles from "./styles.css?raw";
 
 function mediumStyles() {
-  const start = workbenchStyles.indexOf("@media (min-width: 721px) and (max-width: 1100px)");
-  const end = workbenchStyles.indexOf("@media (max-width: 720px)", start);
-  expect(start).toBeGreaterThanOrEqual(0);
-  expect(end).toBeGreaterThan(start);
-  return workbenchStyles.slice(start, end);
+  const blocks = workbenchStyles.match(
+    /@media \(min-width: 721px\) and \(max-width: 1100px\) \{[\s\S]*?^\}/gm,
+  );
+  expect(blocks?.length).toBeGreaterThan(0);
+  return blocks!.join("\n");
 }
 
 describe("Tasks responsive layout contract", () => {
+  it("lets the console grid and page shrink below their intrinsic content width", () => {
+    expect(workbenchStyles).toMatch(
+      /\.console-root\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,
+    );
+    expect(workbenchStyles).toMatch(/\.console-page\s*\{[^}]*min-width:\s*0;/);
+  });
+
   it("keeps wide filters dense and introduces the medium breakpoint before mobile", () => {
     expect(workbenchStyles).toMatch(
       /\.filter-bar\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto;/,
@@ -32,6 +39,9 @@ describe("Tasks responsive layout contract", () => {
 
   it("compacts every navigation destination without hiding one", () => {
     const styles = mediumStyles();
+    expect(workbenchStyles.lastIndexOf("@media (min-width: 721px) and (max-width: 1100px)")).toBeGreaterThan(
+      workbenchStyles.indexOf(".global-nav-item {"),
+    );
     expect(styles).toMatch(/\.global-brand\s*\{[^}]*min-width:\s*156px;/);
     expect(styles).toMatch(/\.global-nav-track\s*\{[^}]*gap:\s*4px;[^}]*padding:\s*8px 10px;/);
     expect(styles).toMatch(/\.global-nav-item\s*\{[^}]*min-width:\s*72px;[^}]*padding:\s*0 9px;/);

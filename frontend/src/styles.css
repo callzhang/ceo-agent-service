@@ -130,6 +130,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   height: 100vh;
   min-height: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--canvas);
 }
@@ -141,6 +142,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 
 .console-page {
   min-height: calc(100vh - 52px);
+  min-width: 0;
   padding: 28px;
 }
 
@@ -735,25 +737,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
     justify-content: flex-end;
   }
 
-  .global-brand {
-    min-width: 156px;
-    padding: 10px 14px;
-  }
-
-  .global-brand strong { font-size: 0.9rem; }
-  .global-brand small { font-size: 0.66rem; }
-
-  .global-nav-track {
-    gap: 4px;
-    padding: 8px 10px;
-  }
-
-  .global-nav-item {
-    min-width: 72px;
-    padding: 0 9px;
-    font-size: 12px;
-  }
-
   .sent-todos-table-wrap {
     max-width: 100%;
     overflow-x: auto;
@@ -927,6 +910,27 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 
 .global-nav-item:hover { color: var(--accent-hover); border-color: var(--accent); background: var(--accent-soft); }
 .global-nav-item.active { color: var(--on-accent); border-color: var(--accent); background: var(--accent); }
+
+@media (min-width: 721px) and (max-width: 1100px) {
+  .global-brand {
+    min-width: 156px;
+    padding: 10px 14px;
+  }
+
+  .global-brand strong { font-size: 0.9rem; }
+  .global-brand small { font-size: 0.66rem; }
+
+  .global-nav-track {
+    gap: 4px;
+    padding: 8px 10px;
+  }
+
+  .global-nav-item {
+    min-width: 72px;
+    padding: 0 9px;
+    font-size: 12px;
+  }
+}
 
 .workbench-shell {
   display: grid;
