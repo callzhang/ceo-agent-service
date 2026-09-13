@@ -142,8 +142,10 @@ business_object 1 ── 1 current reply_attempt
 ```
 
 OA 的稳定身份是 `process_instance_id + task_id`。同一 OA 从 webhook、pending scan、
-人工重试或服务恢复进入时追加 input 并复用同一 task；运行中收到新 input 时，在当前
-run 结束后提高 generation 并重新排队同一 task。
+用户人工反馈进入时追加 input 并复用同一 task、同一兼容 Consumer session，在当前 run
+结束后提高 generation 并重新排队同一 task。服务修复运行时、路由或本地执行环境时，虽仍
+复用同一 task 和业务对象，但必须创建新的 execution generation，并清除旧的持久化 session
+绑定，让新进程重新获得完整的运行时能力；这两类重跑都保留旧 run/session/provider 事实。
 
 评论通知只有 `process_instance_id` 时，运行时从事件正文提取该身份；若该实例只有一个已知
 节点，则归并到该节点。存在多个节点而事件没有 `task_id` 时不得猜测。
@@ -426,7 +428,7 @@ Consumer 或 Audit 在同一 proposal revision 内耗尽统一重试 ceiling 后
 - 回复队列的 `processing` 有双重恢复边界：十分钟没有当前 generation 的运行心跳会被恢复；即使运行持续续租，单次队列处理超过一小时也会被释放，进入既有重试或终态路径，避免反馈循环无限占用队列。
 - 重启时，未完成的 Agent turn 统一按 `failed` 重试；服务不创建 unknown 或独立状态核对队列，也不依据工具事件决定是否重放。下一次 Agent turn 按业务 Skill 读取当前外部状态，再自行判断后续动作。
 - 会议总结进入投递后复用同一个持久化投递键：钉钉发送使用由该键确定的 UUID，provider 成功返回会立刻写入同一键的回执。服务重启后，恢复的 worker 先复用回执；若进程恰在 provider 接收后中断，使用相同 UUID 继续投递，provider 的重复 UUID 回应视为原投递已送达，不能产生第二条群消息。
-- 这一恢复规则适用于所有任务：服务重启只释放已经停止的 worker 租约，保留同一任务的执行代次、已准备消息和外部回执；恢复 worker 从这些事实继续。只有用户明确发起重跑时才创建新的执行代次和新的投递身份。
+- 这一恢复规则适用于所有任务：普通服务重启只释放已经停止的 worker 租约，保留同一任务的执行代次、已准备消息和外部回执；恢复 worker 从这些事实继续。若运维明确完成了运行时/路由修复，则服务修复重试创建新的 execution generation 和新的 session 绑定，但仍复用同一业务对象及外部动作幂等事实；用户业务反馈重跑则按反馈闭环复用兼容 session。
 - 外部动作的 operation、target 和 provider result identifier（若 provider 返回）会保留用于去重；缺少标识属于 provider/Agent 失败，不转换为额外状态。
 - WeChat reader 由独立 launchd job 自动保持运行；worker 连续三次 IPC 超时后主动 kickstart 该 job，处理“进程仍在但 IPC 已卡住”的情况。worker 只恢复 reader 进程，不启动 WeChat 主应用，也不重放消息。
 - OKR 无头来源启动使用进程锁；并发调用者取得锁后必须再次读取共享缓存，复用前一个调用刚刷新的认证信息，不能重复启动浏览器或把正常刷新误报为锁超时。锁等待上限覆盖一次完整刷新周期；来源命令仍由上层超时终止脚本及其临时 headless Chrome 子进程，不能遗留后台浏览器。

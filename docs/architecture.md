@@ -494,7 +494,7 @@ launchd 和本地启动脚本都设置 `PYTHONDONTWRITEBYTECODE=1`。worker 与�
 跨 worker、审计页面和服务重启的竞争由 SQLite 会话锁、Agent run lease 和结果回读处理；
 同一会话顺序不依赖共享的进程级锁。
 
-服务重启时，未完成的 Agent turn 按普通失败重试；已完成 Agent 回合会从持久化结果继续。服务不创建独立的 unknown 或状态核对状态机，也不根据工具事件替 Agent 判断外部动作结果。下一次 Agent turn 按当前业务 Skill 读取外部状态，再决定是否继续。
+服务重启时，未完成的 Agent turn 按普通失败重试；已完成 Agent 回合会从持久化结果继续。普通重启保留同一任务的 execution generation、兼容 session 和外部回执；只有明确完成运行时、路由或本地环境修复后，服务修复重试才创建新的 execution generation/session 绑定。两者都不创建独立的 unknown 或状态核对状态机，也不根据工具事件替 Agent 判断外部动作结果。下一次 Agent turn 按当前业务 Skill 读取外部状态，再决定是否继续。
 
 ### Schema 初始化竞争
 

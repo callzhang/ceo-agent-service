@@ -1,7 +1,7 @@
 # Result Decision Quality and Human Escalation Design
 
 **日期：** 2026-09-10  
-**状态：** 已确认设计，待实现计划与代码实施
+**状态：** 核心逻辑已实现；关联运行恢复与全链路验收持续收口
 
 ## 目标
 
@@ -92,6 +92,12 @@ Consumer result
 
 `ask_back` 不是新的持久化终态。它沿用普通 proposal / Audit / provider 发送链路，发送成功后任务继续等待新输入；新输入通过同一业务对象映射为新 revision。`needs_human` 仍是可见的人工决策投影，直到用户选择并提交反馈。
 
+用户针对业务决策提交反馈时，继续复用同一业务对象、同一 `reply_attempt` 和兼容的
+Consumer session，只增加新的 revision。服务修复运行时、路由或本地执行环境时，不能把旧
+session 当作已经获得新能力；恢复策略应创建新的 `execution_generation`，并在需要时清除旧的
+持久化 session 绑定。两者都不能创建第二个业务对象，也不能覆盖旧 run、旧 session 或旧
+provider 事实。
+
 ## 契约与兼容迁移
 
 - Consumer 和 Audit 的 wire schema、JSON Schema、提示词和结果持久化校验必须同步增加两个数值字段。
@@ -99,6 +105,11 @@ Consumer result
 - 现有历史结果中的 `confidence` 保持可读，不回写历史 run，也不把旧结果重新解释为当前人工待办。
 - 当前投影只有在最新结果满足新判定规则时才显示为 `needs_human`；不满足门槛的旧投影按对应技术/领域错误修正为 `failed`，或重新进入 `ask_back` 流程。
 - 所有领域任务共享这套字段和阈值，不为邮件、OKR、OA 或会议增加专属例外。
+
+当前实现的共享入口是 `app.decision_quality.classify_decision_quality`；Consumer、Audit、
+持久化结果质量门和 Attention 投影必须引用同一判定，不得在领域模块中复制一套阈值。新领域
+接入时至少要增加一条“低信息走 ask-back、满足人工门槛才 needs_human、技术失败仍 failed”
+的契约测试，以及一条当前投影读回测试。
 
 ## 测试和验收
 
@@ -114,6 +125,7 @@ Consumer result
 8. `needs_human` 缺少 2–4 个互斥选项时拒绝；
 9. 邮件领域授权拒绝、登录失败、目标不匹配和授权证据不足保持失败；
 10. 当前 Attention/质量扫描只报告满足新门槛的当前投影，不报告历史误报。
+11. 服务修复重试使用新的 execution generation/session；用户反馈重跑仍复用兼容 session。
 
 验收还需要包含服务重启、健康检查、当前数据库投影读回，以及一条真实 `ask_back` 和一条真实 `needs_human` 的端到端证据。
 
