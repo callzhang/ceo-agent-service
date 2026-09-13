@@ -1,5 +1,12 @@
 # Changelog
 
+- 2026-09-13: the Responses API email classifier now publishes the shared
+  health vocabulary (`ready`, `degraded`, `unavailable`) while retaining its
+  per-request outcome as `request_status` (`success`, `retry`, `error`). The
+  Status page previously treated a successful `email-agent-api` observation as
+  unavailable because the health projection correctly rejected the operation-
+  outcome word `success` as an unknown health state.
+
 - 2026-09-13: service startup now closes weekly OKR analysis jobs whose
   technical runtime or result-validation failure has been replaced by a later
   successful analysis for the same manager. Result-contract failures join

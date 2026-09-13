@@ -59,6 +59,46 @@ def test_backend_posts_untrusted_prompt_and_extracts_responses_output_text():
     assert payload["text"]["format"]["strict"] is True
 
 
+def test_backend_records_success_with_the_shared_health_status_contract():
+    events = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"output_text": json.dumps(_result())},
+            request=request,
+        )
+
+    backend = EmailClassifierApiBackend(
+        base_url="https://api.example.test/v1",
+        model="gpt-test",
+        api_key="SECRET-KEY",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        recorder=events.append,
+    )
+
+    backend.classify(
+        prompt="bounded",
+        task_id="email-task-health",
+        allowed_category_keys=("work",),
+        unsubscribe_candidates=(),
+    )
+
+    assert events == [
+        {
+            "task_id": "email-task-health",
+            "model": "gpt-test",
+            "attempt": 1,
+            "latency_ms": events[0]["latency_ms"],
+            "input_tokens": None,
+            "output_tokens": None,
+            "status": "ready",
+            "request_status": "success",
+            "error_code": None,
+        }
+    ]
+
+
 def test_backend_extracts_standard_output_message_content_text():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -123,7 +163,8 @@ def test_backend_retries_5xx_then_succeeds():
         )
     )["category"] == "work"
     assert attempts == 2
-    assert [event["status"] for event in events] == ["retry", "success"]
+    assert [event["status"] for event in events] == ["degraded", "ready"]
+    assert [event["request_status"] for event in events] == ["retry", "success"]
 
 
 @pytest.mark.parametrize(
@@ -265,7 +306,8 @@ def test_backend_retries_timeout_with_bounded_attempts_and_records_sanitized_eve
     assert len(events) == 3
     assert events[-1]["task_id"] == "email-task-3"
     assert events[-1]["attempt"] == 3
-    assert events[-1]["status"] == "error"
+    assert events[-1]["status"] == "unavailable"
+    assert events[-1]["request_status"] == "error"
     assert "SECRET-KEY" not in repr(events)
     assert "PRIVATE EMAIL BODY" not in repr(events)
     assert "SECRET-KEY" not in str(exc_info.value)
@@ -298,7 +340,8 @@ def test_backend_does_not_retry_four_xx_and_records_token_counts():
             unsubscribe_candidates=(),
         )
 
-    assert events[0]["status"] == "error"
+    assert events[0]["status"] == "unavailable"
+    assert events[0]["request_status"] == "error"
     assert events[0]["error_code"] == "http_400"
     assert events[0]["input_tokens"] is None
     assert events[0]["output_tokens"] is None

@@ -132,9 +132,14 @@ class EmailClassifierApiBackend:
         attempt: int,
         started: float,
         usage: Mapping[str, object],
-        status: str,
+        request_status: str,
         error_code: str | None,
     ) -> None:
+        health_status = {
+            "success": "ready",
+            "retry": "degraded",
+            "error": "unavailable",
+        }[request_status]
         event = {
             "task_id": task_id,
             "model": self._model,
@@ -142,7 +147,8 @@ class EmailClassifierApiBackend:
             "latency_ms": round((time.monotonic() - started) * 1000),
             "input_tokens": usage.get("input_tokens"),
             "output_tokens": usage.get("output_tokens"),
-            "status": status,
+            "status": health_status,
+            "request_status": request_status,
             "error_code": error_code,
         }
         self._recorder(event)
