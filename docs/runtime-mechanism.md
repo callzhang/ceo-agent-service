@@ -503,6 +503,12 @@ DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 cla
 `operation`、`target`、provider 稳定结果标识。纯读取不需要 receipt；写入中断时由下一次 Agent turn
 按业务 Skill 读取目标状态，服务不启动专门的只读核对回合，也不因“未知工具”阻断执行。
 
+Agent 也不得用嵌套的 `codex mcp list` 或 `codex exec` 子进程结果判断当前父 Agent session 的
+MCP 是否注入；这类子进程只说明子 CLI 环境，不是当前 turn 的能力事实。需要 MCP 证据时必须在
+当前 Agent session 中直接调用对应 MCP 工具；如果直接调用或 provider 操作失败，才可以把该具体
+工具错误作为依赖失败返回。仅自报 `<server>_mcp_not_injected` 属于结果契约错误，会触发修正轮，
+不能终结业务任务。
+
 历史数据库升级时会移除 `agent_runs` 中的 `unknown`、`side_effect_state`、effect counter 和
 reconciliation 投影列；旧 `unknown` run 的当前状态迁移为 `failed`，并追加一条
 `legacy_unknown_migrated` state event 保存当时的原始错误。已有 session、runtime attempt、tool event、

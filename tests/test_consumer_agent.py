@@ -2884,6 +2884,13 @@ def test_consumer_cannot_report_a_page_it_never_opened() -> None:
         )
 
 
+def test_consumer_cannot_self_report_parent_mcp_injection_absent() -> None:
+    with pytest.raises(ResultParseError, match="parent Agent MCP"):
+        consumer_agent._parse_consumer_result(
+            _consumer_failure_wire("xiaoqing_interview_mcp_not_injected")
+        )
+
+
 def test_a_failure_the_consumer_turn_can_own_is_still_accepted() -> None:
     result = consumer_agent._parse_consumer_result(
         _consumer_failure_wire("email_provider_transient:TimeoutError")

@@ -108,6 +108,10 @@ Use the capabilities available to the calling agent to gather the evidence
 needed for the task. Return a single structured result. The application does
 not prescribe provider command names, MCP tools, shell syntax, or readback
 procedures; those belong to the runtime and the selected agent capability.
+Do not run nested `codex mcp list` or `codex exec` commands to decide whether
+this parent Agent session has MCP tools. If a required MCP server is needed,
+call that MCP tool directly from the current Agent session; report a dependency
+failure only when that direct tool call or provider operation fails.
 Do not stop at a generic read failure; carry the workflow through the documented
 operation and normal retry contract when the required information is available.
 Escalate only when the information required for the decision cannot be obtained
@@ -777,7 +781,19 @@ def _parse_consumer_result(raw: str):
             "no browser. Propose the authorized action, or fail with a code "
             "naming what this turn itself could not do."
         )
+    if _is_parent_mcp_inventory_failure(code):
+        raise ResultParseError(
+            f"error_code: {code} reports parent Agent MCP injection state. "
+            "Do not infer current-session MCP availability from nested shell "
+            "commands such as `codex mcp list`; call the required MCP tool "
+            "directly, or fail with the concrete provider or tool error from "
+            "that direct attempt."
+        )
     return result
+
+
+def _is_parent_mcp_inventory_failure(code: str) -> bool:
+    return code.endswith("_mcp_not_injected")
 
 
 def audit_developer_instructions(

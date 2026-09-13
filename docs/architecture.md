@@ -717,6 +717,11 @@ allowlist。安装用户配置中的 MCP 可能同时公开读写工具；servic
 Agent 不执行 `auth login`、`reset` 或 `logout`。某个 MCP 实际返回未授权时，
 任务如实记录该依赖不可用，不把认证失败伪装成材料缺失。
 
+Agent 不得把嵌套 shell 里的 `codex mcp list` 或 `codex exec` 结果当成当前父 Agent session 的
+MCP 注入证明。需要 Xiaoqing、Memory、Exa、Lark 等 MCP 时，Consumer/Audit 必须直接调用当前
+session 中的对应 MCP 工具；只有直接工具调用或 provider 操作失败，才形成可持久化依赖失败。
+`<server>_mcp_not_injected` 这种自报注入状态是 wire result 契约错误，进入修正轮而不是任务终态。
+
 ### Claude Runtime 路由
 
 Claude CLI 有两条并列路由，共用 `CEO_CLAUDE_MODEL`（默认 `sonnet`）和
