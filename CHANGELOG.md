@@ -1,5 +1,16 @@
 # Changelog
 
+- 2026-09-14: `同步会议结论与管理者视角` now refreshes one idempotent
+  `memory_write` import record for every delivered meeting. Each record combines
+  the delivered management conclusion with the optional archived AI summary;
+  it deliberately excludes raw transcripts and replaces the former duplicate
+  summary export.
+
+- 2026-09-14: The launchd service now reads the ignored local
+  `data/config/service-mcp.json` manifest. MCP enablement choices apply to the
+  next Agent turn after service reload and no longer belong in repository
+  history. Downloaded local files are ignored as well.
+
 - 2026-09-14: The scheduled-task list now grows naturally with the page on
   desktop and narrow layouts. It no longer uses a viewport-bound height or a
   nested scrollbar, so every task remains in the document flow and the browser

@@ -13974,6 +13974,20 @@ class AutoReplyStore:
                 return None
             return self._meeting_alignment_job_from_row(row)
 
+    def list_sent_meeting_alignment_jobs(self) -> list[MeetingAlignmentJob]:
+        """Return delivered meeting conclusions in stable chronological order."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from meeting_alignment_jobs
+                where status='sent'
+                  and trim(final_message) <> ''
+                order by datetime(ended_at), id
+                """
+            ).fetchall()
+        return [self._meeting_alignment_job_from_row(row) for row in rows]
+
     def claim_meeting_alignment_jobs(
         self,
         limit: int,

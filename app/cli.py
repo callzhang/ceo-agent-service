@@ -3134,13 +3134,29 @@ def scan_meetings_once_command(
     """Discover eligible meetings once; Cron owns when this command runs."""
     current = now or datetime.now().astimezone()
     _initialize_meeting_discovery_on_service_start(settings, now=current)
+    store = AutoReplyStore(settings.db_path)
     created = produce_meeting_alignment_jobs(
-        AutoReplyStore(settings.db_path),
+        store,
         _create_meeting_dws(settings),
         now=current,
         settle_seconds=600,
     )
-    print(f"scan-meetings-once queued={created}", flush=True)
+    from app.meeting_memory_export import (
+        export_sent_meeting_memory,
+        meeting_memory_export_path,
+    )
+
+    memory_export = export_sent_meeting_memory(
+        store.list_sent_meeting_alignment_jobs(),
+        archive_dir=settings.workspace / "AI听记",
+        output_path=meeting_memory_export_path(settings.workspace),
+    )
+    print(
+        "scan-meetings-once "
+        f"queued={created} memory_records={memory_export.records} "
+        f"minutes_attached={memory_export.summaries_attached}",
+        flush=True,
+    )
     return created
 
 

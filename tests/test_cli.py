@@ -6196,6 +6196,9 @@ def test_scan_meetings_once_command_writes_one_job_with_fixed_ten_minute_window(
     )
     assert job is not None
     assert job.eligible_at == "2026-09-08T19:50:00+08:00"
+    assert (
+        settings.workspace / "AI听记/.memory/meeting-alignment.jsonl"
+    ).read_text(encoding="utf-8") == ""
 
 
 def test_meeting_loops_skip_when_network_not_ready(monkeypatch, tmp_path):
