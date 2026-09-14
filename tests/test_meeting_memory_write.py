@@ -71,6 +71,7 @@ def test_meeting_memory_payload_contains_only_delivered_conclusion() -> None:
     payload = meeting_memory_payload(_sent_job())
 
     assert payload["created_at"] == "2026-09-14T09:30:00+08:00"
+    assert payload["source_description"] == "已发送钉钉会议对齐：经营复盘"
     assert "本周先完成客户验证" in payload["data"]
     assert "听记摘要" not in payload["data"]
     assert "这不是已发送文本" not in payload["data"]

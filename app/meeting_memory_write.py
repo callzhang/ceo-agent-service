@@ -31,7 +31,7 @@ def meeting_memory_payload(job: Any) -> dict[str, str]:
         ),
         "type": "text",
         "created_at": str(job.ended_at).strip() or str(job.updated_at).strip(),
-        "source_description": f"delivered DingTalk meeting alignment {meeting_id}",
+        "source_description": f"已发送钉钉会议对齐：{title}",
     }
 
 

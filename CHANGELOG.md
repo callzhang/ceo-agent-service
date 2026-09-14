@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-09-14: Delivered meeting-alignment records sent to Memory now use the
+  meeting's persisted title as their source title. The opaque DingTalk meeting
+  ID remains only in the durable payload key used for idempotency.
+
 - 2026-09-14: The Email unsubscribe drawer now links only verified matching
   Attempt records and can reveal a saved entry address only after an explicit
   request. Normal list and detail responses remain redacted; the dedicated
