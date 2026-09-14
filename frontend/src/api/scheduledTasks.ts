@@ -139,6 +139,12 @@ export interface ScheduledTaskRunPage {
   meta: { snapshot_at: string; page_size: number; next_cursor: string; has_more: boolean };
 }
 
+/** The immutable body an Agent will receive for one explicit $skill reference. */
+export interface ScheduledTaskSkillPreview {
+  name: string;
+  content: string;
+}
+
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -317,6 +323,20 @@ export async function getScheduledTaskOptions(signal?: AbortSignal): Promise<Sch
     || !Array.isArray(payload.service_command_options) || !payload.service_command_options.every(validServiceCommand)
     || !meta || typeof meta.snapshot_at !== "string") throw new Error("invalid scheduled task options response");
   return value as ScheduledTaskOptions;
+}
+
+export async function getScheduledTaskSkillPreview(ref: ScheduledTaskSkillRef, signal?: AbortSignal, expectedSha256?: string): Promise<ScheduledTaskSkillPreview> {
+  const path = ref.skill_source === "managed"
+    ? `/api/console/settings/managed-skill-revisions/${ref.managed_revision_id}`
+    : `/api/console/settings/skills/${encodeURIComponent(ref.skill_name)}`;
+  const value: unknown = await request(path, { signal });
+  const payload = record(value);
+  const validIdentity = ref.skill_source === "managed"
+    ? payload?.id === ref.managed_revision_id && payload.skill_id === ref.managed_skill_id
+    : payload?.name === ref.skill_name;
+  const validDigest = !expectedSha256 || payload?.sha256 === expectedSha256;
+  if (!payload || typeof payload.content !== "string" || !validIdentity || !validDigest) throw new Error("invalid scheduled task Skill preview response");
+  return { name: ref.skill_name, content: payload.content };
 }
 
 export async function createScheduledTask(payload: ScheduledTaskDraft) {

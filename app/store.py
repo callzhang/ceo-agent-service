@@ -5641,6 +5641,8 @@ class AutoReplyStore:
         seed_description: str = "",
         consumer_prompt: str = "",
         consumer_skill_refs: Sequence[ScheduledTaskSkillRef] = (),
+        legacy_consumer_prompt: str = "",
+        legacy_consumer_skill_refs: Sequence[ScheduledTaskSkillRef] = (),
         now: datetime | None = None,
     ) -> ScheduledTask | None:
         """Adopt a repository seed into a service-trigger workflow.
@@ -5663,6 +5665,9 @@ class AutoReplyStore:
         if not isinstance(consumer_prompt, str):
             raise ValueError("scheduled task consumer prompt must be text")
         consumer_prompt = consumer_prompt.strip()
+        if not isinstance(legacy_consumer_prompt, str):
+            raise ValueError("scheduled task legacy consumer prompt must be text")
+        legacy_consumer_prompt = legacy_consumer_prompt.strip()
         self._validate_scheduled_task_execution(
             command=command,
             prompt=consumer_prompt,
@@ -5689,9 +5694,35 @@ class AutoReplyStore:
             if current.deleted_at is not None:
                 return current
             same_command = current.command == command
+            current_consumer_skill_signature = tuple(
+                (
+                    ref.skill_source,
+                    ref.skill_name,
+                    ref.managed_skill_id,
+                    ref.managed_revision_id,
+                    ref.position,
+                )
+                for ref in current.skill_refs
+            )
+            legacy_consumer_skill_signature = tuple(
+                (
+                    ref.skill_source,
+                    ref.skill_name,
+                    ref.managed_skill_id,
+                    ref.managed_revision_id,
+                    ref.position,
+                )
+                for ref in legacy_consumer_skill_refs
+            )
+            legacy_consumer_config = (
+                same_command
+                and bool(legacy_consumer_prompt)
+                and current.prompt == legacy_consumer_prompt
+                and current_consumer_skill_signature == legacy_consumer_skill_signature
+            )
             preserve_consumer_config = same_command and bool(
                 current.prompt or current.skill_refs
-            )
+            ) and not legacy_consumer_config
             target_prompt = (
                 current.prompt if preserve_consumer_config else consumer_prompt
             )
@@ -5750,6 +5781,69 @@ class AutoReplyStore:
                 f"select {self._scheduled_task_columns()} "
                 "from scheduled_tasks where id=?",
                 (current.id,),
+            ).fetchone()
+            assert updated_row is not None
+            return self._scheduled_task_from_row(db, updated_row)
+
+    def upgrade_scheduled_task_default_copy(
+        self,
+        task_id: int,
+        *,
+        expected_version: int,
+        old_name: str,
+        old_description: str,
+        name: str,
+        description: str,
+        now: datetime | None = None,
+    ) -> ScheduledTask:
+        """Upgrade only individual label fields that still match old seed copy."""
+        if type(task_id) is not int or task_id <= 0:
+            raise ValueError("scheduled task id must be a positive integer")
+        expected_version = self._require_scheduled_task_version(expected_version)
+        old_name = self._require_scheduled_task_text(
+            old_name, field="old scheduled task name"
+        )
+        old_description = self._require_scheduled_task_text(
+            old_description, field="old scheduled task description"
+        )
+        name = self._require_scheduled_task_text(name, field="scheduled task name")
+        description = self._require_scheduled_task_text(
+            description, field="scheduled task description"
+        )
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc), field="scheduled task now"
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_columns()} from scheduled_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("scheduled task does not exist")
+            current = self._scheduled_task_from_row(db, row)
+            if current.version != expected_version:
+                raise ScheduledTaskVersionConflictError(
+                    "scheduled task version conflict"
+                )
+            if current.deleted_at is not None:
+                return current
+            target_name = name if current.name == old_name else current.name
+            target_description = (
+                description if current.description == old_description else current.description
+            )
+            if target_name == current.name and target_description == current.description:
+                return current
+            db.execute(
+                """
+                update scheduled_tasks
+                   set name=?, description=?, version=version + 1, updated_at=?
+                 where id=?
+                """,
+                (target_name, target_description, now_text, task_id),
+            )
+            updated_row = db.execute(
+                f"select {self._scheduled_task_columns()} from scheduled_tasks where id=?",
+                (task_id,),
             ).fetchone()
             assert updated_row is not None
             return self._scheduled_task_from_row(db, updated_row)

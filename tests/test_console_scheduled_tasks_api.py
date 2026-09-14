@@ -118,10 +118,15 @@ def _client(
         scheduled_task_wake_callback=lambda: wakes.append("wake"),
         scheduled_task_now=lambda: NOW,
     )
-    return TestClient(app), store, {
-        "skill_id": skill.id,
-        "revision_id": revision.id,
-    }, wakes
+    return (
+        TestClient(app),
+        store,
+        {
+            "skill_id": skill.id,
+            "revision_id": revision.id,
+        },
+        wakes,
+    )
 
 
 def _create_payload(ids: dict[str, int]) -> dict[str, object]:
@@ -451,7 +456,9 @@ def test_runtime_thinking_capability_is_explicit_and_enforced_without_fallback(
             json=update_with_thinking,
         )
 
-    assert options.json()["runtime_options"][0]["supported_thinking"] == supported_thinking
+    assert (
+        options.json()["runtime_options"][0]["supported_thinking"] == supported_thinking
+    )
     assert thinking.status_code == thinking_status
     assert empty.status_code == empty_status
     assert updated.status_code == (200 if thinking_status == 201 else 422)
@@ -692,7 +699,10 @@ def test_audit_app_mounts_cron_api_without_fabricating_process_snapshots(
 
     assert response.status_code == 200
     assert response.json()["runtime_options"][0]["available"] is False
-    assert response.json()["runtime_options"][0]["unavailable_reason"] == "snapshot_missing"
+    assert (
+        response.json()["runtime_options"][0]["unavailable_reason"]
+        == "snapshot_missing"
+    )
     revisions = [
         revision
         for skill in response.json()["managed_skill_options"]
@@ -700,9 +710,9 @@ def test_audit_app_mounts_cron_api_without_fabricating_process_snapshots(
     ]
     assert revisions
     assert all(revision["available"] is False for revision in revisions)
-    assert {
-        revision["unavailable_reason"] for revision in revisions
-    } == {"runtime_skill_snapshot_missing"}
+    assert {revision["unavailable_reason"] for revision in revisions} == {
+        "runtime_skill_snapshot_missing"
+    }
     dingtalk = response.json()["service_command_options"][0]
     assert dingtalk["consumer_prompt_enabled"] is True
     assert "downstream" not in dingtalk
@@ -781,7 +791,9 @@ def test_audit_app_reads_only_current_main_pid_runtime_and_skill_receipts(
     assert mismatched_skill["revisions"][0]["unavailable_reason"] == (
         "runtime_skill_snapshot_missing"
     )
-    assert stale.json()["runtime_options"][0]["unavailable_reason"] == "snapshot_expired"
+    assert (
+        stale.json()["runtime_options"][0]["unavailable_reason"] == "snapshot_expired"
+    )
 
 
 def _command_payload() -> dict[str, object]:
@@ -798,9 +810,7 @@ def _command_payload() -> dict[str, object]:
 def _consumer_command_payload(ids: dict[str, int]) -> dict[str, object]:
     return {
         **_command_payload(),
-        "prompt": (
-            "使用 $ceo-test 与 $dingtalk-chat 处理 Trigger 发现的真实消息。"
-        ),
+        "prompt": ("使用 $ceo-test 与 $dingtalk-chat 处理 Trigger 发现的真实消息。"),
         "skill_refs": _create_payload(ids)["skill_refs"],
     }
 
@@ -846,10 +856,14 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
     assert enabled.json()["item"]["enabled"] is True
     assert run.status_code == 201 and wakes == ["wake"]
     assert run.json()["item"]["snapshot"]["command"] == "sync-minutes-once"
-    assert detail.json()["item"]["recent_run"]["snapshot"]["command"] == "sync-minutes-once"
+    assert (
+        detail.json()["item"]["recent_run"]["snapshot"]["command"]
+        == "sync-minutes-once"
+    )
     catalog = options.json()["service_command_options"]
     assert [entry["name"] for entry in catalog] == [
         "produce-once",
+        "calendar-invites-once",
         "wechat-produce-once",
         "scan-meetings-once",
         "scan-oa-approvals",
@@ -859,17 +873,23 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "recover-recent-messages",
     ]
     assert [entry["display_name"] for entry in catalog] == [
-        "检查钉钉消息",
-        "检查微信消息",
-        "检查 DingTalk 会议",
-        "检查 DingTalk OA 审批",
-        "扫描工作来源",
-        "同步 AI 听记",
-        "生成 OKR 周报",
-        "恢复近期 DingTalk 消息",
+        "读取新钉钉消息",
+        "读取新日历邀请",
+        "读取新微信消息",
+        "读取已结束会议",
+        "读取待审批 OA",
+        "收集工作来源",
+        "同步听记到工作区",
+        "生成并发送 OKR 周报",
+        "补查近期钉钉消息",
     ]
     assert all(entry["description"].strip() for entry in catalog)
     assert all("downstream" not in entry for entry in catalog)
+    assert all(
+        term not in entry["description"]
+        for entry in catalog
+        for term in ("reply task", "Dispatcher", "Consumer")
+    )
     assert store.get_scheduled_task(task_id).command == "sync-minutes-once"
 
 
@@ -914,9 +934,9 @@ def test_service_trigger_rejects_skill_refs_not_extracted_from_prompt(
         response = client.post("/api/console/scheduled-tasks", json=payload)
 
     assert response.status_code == 422
-    assert "must exactly match $skill references in prompt" in response.json()[
-        "message"
-    ]
+    assert (
+        "must exactly match $skill references in prompt" in response.json()["message"]
+    )
 
 
 def test_service_command_task_rejects_agent_fields_and_unknown_commands(
@@ -932,7 +952,13 @@ def test_service_command_task_rejects_agent_fields_and_unknown_commands(
     with client:
         responses = [
             client.post("/api/console/scheduled-tasks", json=payload)
-            for payload in (mixed, with_runtime, with_refs, unknown, agent_without_runtime)
+            for payload in (
+                mixed,
+                with_runtime,
+                with_refs,
+                unknown,
+                agent_without_runtime,
+            )
         ]
 
     assert [response.status_code for response in responses] == [422] * 5
@@ -993,9 +1019,23 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
         payload = client.get("/api/console/scheduled-task-options").json()
 
     (
-        dingtalk, wechat, meeting, oa, work_sources, minutes, okr, recovery
-    ) = payload["service_command_options"]
+        dingtalk,
+        calendar_invites,
+        wechat,
+        meeting,
+        oa,
+        work_sources,
+        minutes,
+        okr,
+        recovery,
+    ) = payload[
+        "service_command_options"
+    ]
     assert (dingtalk["name"], dingtalk["channel"]) == ("produce-once", "dingtalk")
+    assert (calendar_invites["name"], calendar_invites["channel"]) == (
+        "calendar-invites-once",
+        "dingtalk",
+    )
     assert (wechat["name"], wechat["channel"]) == ("wechat-produce-once", "wechat")
     assert (meeting["name"], meeting["channel"]) == ("scan-meetings-once", "meeting")
     assert (oa["name"], oa["channel"]) == ("scan-oa-approvals", "dingtalk")
@@ -1003,12 +1043,17 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
         "scan-work-sources-once",
         "work_summary",
     )
-    assert (minutes["name"], minutes["channel"]) == ("sync-minutes-once", "work_summary")
+    assert (minutes["name"], minutes["channel"]) == (
+        "sync-minutes-once",
+        "work_summary",
+    )
     assert (recovery["name"], recovery["channel"]) == (
         "recover-recent-messages",
         "dingtalk",
     )
-    assert [entry["consumer_prompt_enabled"] for entry in payload["service_command_options"]] == [
-        True, True, True, True, True, False, False, True
-    ]
-    assert all("downstream" not in entry for entry in payload["service_command_options"])
+    assert [
+        entry["consumer_prompt_enabled"] for entry in payload["service_command_options"]
+    ] == [True, True, True, True, True, True, False, False, True]
+    assert all(
+        "downstream" not in entry for entry in payload["service_command_options"]
+    )

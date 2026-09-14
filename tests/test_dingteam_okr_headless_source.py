@@ -1,4 +1,7 @@
 from contextlib import contextmanager
+import os
+import signal
+import subprocess
 import time
 from pathlib import Path
 
@@ -530,3 +533,73 @@ def test_headless_browser_force_kills_chrome_after_bounded_shutdown_wait():
     kill_marker = "process.kill()"
 
     assert source.index(terminate_marker) < source.index(timeout_marker) < source.index(kill_marker)
+
+
+def test_bounded_source_kills_its_entire_worker_group_on_timeout(monkeypatch):
+    module = load_module()
+    command = ["python", "source.py", "--worker"]
+    signals = []
+
+    class TimedOutWorker:
+        pid = 43210
+        returncode = None
+
+        def communicate(self, *, timeout):
+            assert timeout == module.HEADLESS_SOURCE_TIMEOUT_SECONDS
+            raise subprocess.TimeoutExpired(command, timeout)
+
+        def wait(self, *, timeout=None):
+            if timeout == module.HEADLESS_SOURCE_SHUTDOWN_SECONDS:
+                raise subprocess.TimeoutExpired(command, timeout)
+            self.returncode = -signal.SIGKILL
+            return self.returncode
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "Popen",
+        lambda actual, **kwargs: (
+            signals.append(("spawn", actual, kwargs)) or TimedOutWorker()
+        ),
+    )
+    monkeypatch.setattr(
+        os,
+        "killpg",
+        lambda pid, sent_signal: signals.append(("signal", pid, sent_signal)),
+    )
+
+    with pytest.raises(RuntimeError, match="okr_headless_source_timeout"):
+        module._run_bounded_source(command)
+
+    assert signals[0][0] == "spawn"
+    assert signals[0][2]["start_new_session"] is True
+    assert signals[1:] == [
+        ("signal", 43210, signal.SIGTERM),
+        ("signal", 43210, signal.SIGKILL),
+    ]
+
+
+def test_bounded_source_surfaces_worker_failure_as_explicit_error(monkeypatch):
+    module = load_module()
+    signals = []
+
+    class FailedWorker:
+        pid = 43211
+        returncode = 1
+
+        def communicate(self, *, timeout):
+            return "", "okr_website_unavailable: did not render\n"
+
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: FailedWorker())
+    monkeypatch.setattr(
+        os,
+        "killpg",
+        lambda pid, sent_signal: signals.append((pid, sent_signal)),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="okr_headless_source_failed: okr_website_unavailable: did not render",
+    ):
+        module._run_bounded_source(["python", "source.py", "--worker"])
+
+    assert signals == [(43211, signal.SIGKILL)]

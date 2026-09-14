@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   createScheduledTask,
   deleteScheduledTask,
+  getScheduledTaskSkillPreview,
   getScheduledTaskOptions,
   listScheduledTaskRuns,
   listScheduledTasks,
@@ -27,6 +28,8 @@ type MutationState = "idle" | "saving";
 
 interface SkillChoice {
   key: string;
+  previewKey: string;
+  sha256: string;
   name: string;
   label: string;
   description: string;
@@ -88,6 +91,7 @@ function draftScheduleDescription(expression: string, timezone: string) {
   if (fields.length === 6) {
     const [seconds, minutes, hours, days, months, weekdays] = fields;
     if (seconds === "0" && minutes === "*" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = "每分钟执行";
+    else if (/^\d+$/.test(seconds) && minutes === "*" && hours === "*" && days === "*" && months === "*" && weekdays === "*" && Number(seconds) >= 1 && Number(seconds) <= 59) description = `每分钟第${Number(seconds)}秒执行`;
     else if (/^\*\/\d+$/.test(seconds) && minutes === "*" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = `每${Number(seconds.slice(2))}秒执行`;
     else if (seconds === "0" && minutes === "0" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = "每小时整点执行";
     else if (seconds === "0" && /^\d+$/.test(minutes) && hours === "*" && days === "*" && months === "*" && weekdays === "*" && Number(minutes) >= 0 && Number(minutes) <= 59) description = `每小时第${Number(minutes)}分钟执行`;
@@ -110,6 +114,8 @@ function skillChoices(options: ScheduledTaskOptions | null): SkillChoice[] {
   if (!options) return [];
   const managed = options.managed_skill_options.flatMap((skill: ManagedSkillOption) => skill.revisions.map((revision) => ({
     key: `managed:${skill.skill_id}:${revision.revision_id}`,
+    previewKey: `managed:${skill.skill_id}:${revision.revision_id}:${revision.sha256}`,
+    sha256: revision.sha256,
     name: skill.name,
     label: `${skill.display_name} · revision ${revision.revision_number}`,
     description: `${skill.name} · ${revision.source}`,
@@ -119,6 +125,8 @@ function skillChoices(options: ScheduledTaskOptions | null): SkillChoice[] {
   })));
   const operation = options.operation_skill_options.map((skill: OperationSkillOption) => ({
     key: `operation:${skill.name}`,
+    previewKey: `operation:${skill.name}:${skill.sha256}`,
+    sha256: skill.sha256,
     name: skill.name,
     label: skill.name,
     description: skill.content_summary,
@@ -207,6 +215,65 @@ function RunHistory({ runs, hasMore, loading, onMore, commandOptions }: { runs: 
   </section>;
 }
 
+function SkillReference({
+  ref,
+  label,
+  expectedSha256,
+  removable,
+  onRemove,
+}: {
+  ref: ScheduledTaskSkillRef;
+  label: string;
+  expectedSha256?: string;
+  removable?: boolean;
+  onRemove?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [content, setContent] = useState("");
+  const [previewError, setPreviewError] = useState("");
+  const [previewAttempt, setPreviewAttempt] = useState(0);
+  const previewId = `scheduled-task-skill-preview-${refKey(ref)}-${ref.position}`;
+
+  useEffect(() => {
+    if (!open || content) return;
+    const controller = new AbortController();
+    void getScheduledTaskSkillPreview(ref, controller.signal, expectedSha256)
+      .then((preview) => { if (!controller.signal.aborted) setContent(preview.content); })
+      .catch((reason) => { if (!controller.signal.aborted) setPreviewError(errorMessage(reason, "无法读取 Skill 正文")); });
+    return () => controller.abort();
+  }, [content, expectedSha256, open, previewAttempt, ref]);
+
+  function openPreview() {
+    setOpen((current) => {
+      if (current) return current;
+      setPreviewError("");
+      setPreviewAttempt((attempt) => attempt + 1);
+      return true;
+    });
+  }
+
+  return <span className={`scheduled-task-skill-reference${open ? " is-preview-open" : ""}`} onMouseEnter={openPreview} onMouseLeave={() => setOpen(false)} onFocus={openPreview} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
+    <button type="button" aria-label={removable ? `移除${label}` : `预览 ${label} Skill`} aria-description="悬停或聚焦可预览 Skill 正文" aria-controls={previewId} aria-expanded={open} onClick={onRemove}>
+      <span>{label}</span><small>{ref.skill_source === "managed" ? "Managed" : "Operation"}</small>{removable && <b aria-hidden="true">×</b>}
+    </button>
+    {open && <section id={previewId} role="region" tabIndex={0} aria-label={`${label} Skill 正文`} className="scheduled-task-skill-preview">{previewError ? <p>{previewError}</p> : content ? <pre>{content}</pre> : <p>正在读取 Skill 正文…</p>}</section>}
+  </span>;
+}
+
+function TaskReadOnlyDetail({ task, commandOption, choices }: { task: ScheduledTask; commandOption: ScheduledTaskOptions["service_command_options"][number] | undefined; choices: SkillChoice[] }) {
+  const promptLabel = task.command ? "Consumer Agent Prompt" : "Agent 执行提示词";
+  return <section className="scheduled-task-readonly" aria-label="定时任务详情">
+    <dl>
+      <div><dt>任务描述</dt><dd>{task.description}</dd></div>
+      <div><dt>执行计划</dt><dd>{task.schedule_description}</dd></div>
+      <div><dt>执行任务</dt><dd>{task.command ? commandOption?.display_name || task.command : "直接运行 Agent"}</dd></div>
+      {task.command && commandOption && <div><dt>任务说明</dt><dd>{commandOption.description}</dd></div>}
+    </dl>
+    {task.prompt && <section className="scheduled-task-readonly-prompt"><h3>{promptLabel}</h3><pre>{task.prompt}</pre></section>}
+    {task.skill_refs.length > 0 && <section className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>{task.command ? "Consumer Agent Skills" : "Agent Skills"}</h3><span>由 Prompt 中的 $skill 确定性提取</span></div><div className="scheduled-task-skill-chips">{task.skill_refs.map((ref) => { const choice = choices.find((item) => item.key === refKey(ref)); return <SkillReference key={`${refKey(ref)}:${ref.position}:${choice?.previewKey || ""}`} ref={ref} label={choice?.label || ref.skill_name} expectedSha256={choice?.sha256} />; })}</div></section>}
+  </section>;
+}
+
 export function ScheduledTasksPage() {
   const [searchParams] = useSearchParams();
   const requestedTaskId = Number(searchParams.get("id"));
@@ -214,6 +281,7 @@ export function ScheduledTasksPage() {
   const [options, setOptions] = useState<ScheduledTaskOptions | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ScheduledTaskDraft>(() => emptyDraft(null));
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [mutationState, setMutationState] = useState<MutationState>("idle");
@@ -285,7 +353,7 @@ export function ScheduledTasksPage() {
           : null)
         || taskResult.items[0]
         || null;
-      setSelectedId(nextSelected?.id || null); setCreating(false);
+      setSelectedId(nextSelected?.id || null); setCreating(false); setEditing(false);
       setDraft(nextSelected ? taskDraft(nextSelected) : emptyDraft(optionResult));
       setLoadState("ready");
     } catch (reason) {
@@ -319,13 +387,13 @@ export function ScheduledTasksPage() {
 
   function chooseTask(task: ScheduledTask) {
     contextGeneration.current += 1;
-    setSelectedId(task.id); setCreating(false); setDraft(taskDraft(task)); setError(""); setMessage(""); setConflict(false); setConfirmDelete(false); setSkillMenuOpen(false);
+    setSelectedId(task.id); setCreating(false); setEditing(false); setDraft(taskDraft(task)); setError(""); setMessage(""); setConflict(false); setConfirmDelete(false); setSkillMenuOpen(false);
     setMutationState("idle"); setHistoryLoading(false);
   }
 
   function beginCreate() {
     contextGeneration.current += 1;
-    setCreating(true); setSelectedId(null); setDraft(emptyDraft(options)); setError(""); setMessage(""); setConflict(false); setConfirmDelete(false); setSkillMenuOpen(false);
+    setCreating(true); setEditing(true); setSelectedId(null); setDraft(emptyDraft(options)); setError(""); setMessage(""); setConflict(false); setConfirmDelete(false); setSkillMenuOpen(false);
     setMutationState("idle"); setHistoryLoading(false);
   }
 
@@ -403,7 +471,7 @@ export function ScheduledTasksPage() {
         ? [...current.filter((item) => item.id !== result.item.id), result.item]
         : current.map((item) => item.id === result.item.id && result.item.version >= item.version ? result.item : item));
       if (generation !== contextGeneration.current) return;
-      setSelectedId(result.item.id); setCreating(false); setDraft(taskDraft(result.item)); setMessage(wasCreating ? "定时任务已创建" : "定时任务已保存");
+      setSelectedId(result.item.id); setCreating(false); setEditing(false); setDraft(taskDraft(result.item)); setMessage(wasCreating ? "定时任务已创建" : "定时任务已保存");
     } catch (reason) {
       if (generation !== contextGeneration.current) return;
       if (isConflict(reason)) { setConflict(true); setError("其他页面已更新这个任务。你的草稿仍保留，请重新加载最新版本后再确认修改。"); }
@@ -496,12 +564,12 @@ export function ScheduledTasksPage() {
         <div className="scheduled-task-pane-heading"><h2>任务</h2><span>{tasks.length}</span></div>
         {tasks.length ? <div className="scheduled-task-list">{tasks.map((task) => <TaskListItem key={task.id} task={task} selected={task.id === selectedId} onSelect={() => chooseTask(task)} />)}</div> : <div className="scheduled-task-empty"><strong>还没有定时任务</strong><p>新建后，系统会按 Cron 触发 Agent 执行。</p><button type="button" className="secondary-button" onClick={beginCreate}>创建第一个任务</button></div>}
       </section>
-      <section className="scheduled-task-detail" aria-label={creating ? "新建定时任务" : "定时任务编辑器"}>
+      <section className="scheduled-task-detail" aria-label={creating ? "新建定时任务" : editing ? "定时任务编辑器" : "定时任务详情"}>
         {(creating || selected) ? <>
-          <div className="scheduled-task-pane-heading"><div><h2>{creating ? "新建定时任务" : selected?.name}</h2>{selected && <small>版本 {selected.version}</small>}</div>{selected && <div className="scheduled-task-actions"><button type="button" className="secondary-button" disabled={mutationState === "saving" || (!selected.enabled && Boolean(runtimeBlockReason))} onClick={() => void toggleEnabled()}>{selected.enabled ? "暂停任务" : "启用任务"}</button><button type="button" className="secondary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)} onClick={() => void runNow()}>立即运行</button><button ref={deleteTriggerRef} type="button" className="danger-button" disabled={mutationState === "saving"} onClick={() => setConfirmDelete(true)}>删除任务</button></div>}</div>
+          <div className="scheduled-task-pane-heading"><div><h2>{creating ? "新建定时任务" : selected?.name}</h2>{selected && <small>版本 {selected.version}</small>}</div>{selected && <div className="scheduled-task-actions">{editing ? <button type="button" className="secondary-button" disabled={mutationState === "saving"} onClick={() => { setDraft(taskDraft(selected)); setEditing(false); setError(""); setConflict(false); setSkillMenuOpen(false); }}>取消编辑</button> : <><button type="button" className="primary-button" disabled={mutationState === "saving"} onClick={() => setEditing(true)}>编辑任务</button><button type="button" className="secondary-button" disabled={mutationState === "saving" || (!selected.enabled && Boolean(runtimeBlockReason))} onClick={() => void toggleEnabled()}>{selected.enabled ? "暂停任务" : "启用任务"}</button><button type="button" className="secondary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)} onClick={() => void runNow()}>立即运行</button><button ref={deleteTriggerRef} type="button" className="danger-button" disabled={mutationState === "saving"} onClick={() => setConfirmDelete(true)}>删除任务</button></>}</div>}</div>
           {confirmDelete && <div className="scheduled-task-delete-confirm" role="alertdialog" aria-modal="true" aria-label="确认删除定时任务" aria-describedby="scheduled-task-delete-description" onKeyDown={handleDeleteDialogKeyDown}><p id="scheduled-task-delete-description">删除后任务不会再触发，历史记录仍会保留。</p><div><button type="button" className="danger-button" onClick={() => void remove()}>确认删除</button><button ref={deleteCancelRef} type="button" className="secondary-button" onClick={() => setConfirmDelete(false)}>取消</button></div></div>}
           {error && <div className="scheduled-task-form-error" role="alert"><span>{error}</span>{conflict && <button type="button" className="secondary-button" onClick={() => void load()}>重新加载最新版本</button>}</div>}
-          <form className="scheduled-task-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+          {editing || creating ? <form className="scheduled-task-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
             <label><span>任务名称</span><input aria-label="任务名称" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} /></label>
             <label><span>任务描述</span><textarea aria-label="任务描述" rows={3} value={draft.description} onChange={(event) => updateDraft("description", event.target.value)} placeholder="说明这个定时任务负责什么；服务命令和 Agent 任务都需要填写。" /></label>
             <div className="scheduled-task-form-row"><label><span>Cron（秒 分 时 日 月 周）</span><input aria-label="Cron 表达式" value={draft.cron_expression} onChange={(event) => updateDraft("cron_expression", event.target.value)} /><small>计划预览：{draftScheduleDescription(draft.cron_expression, draft.timezone_name)}</small></label><label><span>时区</span><input aria-label="时区" value={draft.timezone_name} onChange={(event) => updateDraft("timezone_name", event.target.value)} /></label></div>
@@ -513,10 +581,10 @@ export function ScheduledTasksPage() {
             {consumerPromptTask && <><div className="scheduled-task-prompt-field"><label htmlFor="scheduled-task-prompt">{commandTask ? "Consumer Agent Prompt" : "Agent 执行提示词"}</label><textarea id="scheduled-task-prompt" aria-label={commandTask ? "Consumer Agent Prompt" : "Agent 执行提示词"} rows={7} value={draft.prompt} onChange={(event) => { updatePrompt(event.target.value); setSkillMenuOpen(activeSkillQuery(event.target.value) !== null); }} placeholder={commandTask ? "描述 Trigger 发现真实输入后 Consumer Agent 要完成什么；输入 $ 引用 Skill" : "描述 Agent 每次触发要完成什么；输入 $ 引用 Skill"} />
               {skillMenuOpen && query !== null && <section className="scheduled-task-suggestions" aria-label="Skill 建议">{suggestions.length ? suggestions.map((choice) => <button type="button" disabled={!choice.available} key={choice.key} onClick={() => selectSkill(choice)}><strong>{choice.label}</strong><small>{choice.description}{choice.available ? "" : ` · 不可用：${choice.unavailableReason}`}</small></button>) : <p>没有匹配的 Skill</p>}</section>}
             </div>
-            <div className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>{commandTask ? "Consumer Agent Skills" : "Agent Skills"}</h3><span>由 Prompt 中的 $skill 确定性提取</span></div>{draft.skill_refs.length ? <div className="scheduled-task-skill-chips">{draft.skill_refs.map((ref, index) => { const choice = choices.find((item) => item.key === refKey(ref)); const label = choice?.label || ref.skill_name; return <button type="button" key={`${refKey(ref)}:${index}`} aria-label={`移除${label}`} onClick={() => removeSkill(index)}><span>{label}</span><small>{ref.skill_source === "managed" ? "Managed" : "Operation"}</small><b aria-hidden="true">×</b></button>; })}</div> : <p className="scheduled-task-empty-copy">输入 <code>$</code> 搜索并选择至少一个 Skill。</p>}</div>
+            <div className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>{commandTask ? "Consumer Agent Skills" : "Agent Skills"}</h3><span>由 Prompt 中的 $skill 确定性提取</span></div>{draft.skill_refs.length ? <div className="scheduled-task-skill-chips">{draft.skill_refs.map((ref, index) => { const choice = choices.find((item) => item.key === refKey(ref)); const label = choice?.label || ref.skill_name; return <SkillReference key={`${refKey(ref)}:${index}:${choice?.previewKey || ""}`} ref={ref} label={label} expectedSha256={choice?.sha256} removable onRemove={() => removeSkill(index)} />; })}</div> : <p className="scheduled-task-empty-copy">输入 <code>$</code> 搜索并选择至少一个 Skill。</p>}</div>
             </>}
             <button type="submit" className="primary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)}>{mutationState === "saving" ? "保存中…" : creating ? "创建任务" : "保存更改"}</button>
-          </form>
+          </form> : <TaskReadOnlyDetail task={selected!} commandOption={options?.service_command_options.find((item) => item.name === selected?.command)} choices={choices} />}
           {!creating && <RunHistory runs={runs} hasMore={historyHasMore} loading={historyLoading} onMore={() => void loadMoreRuns()} commandOptions={options?.service_command_options || []} />}
         </> : <div className="scheduled-task-empty"><strong>选择或新建一个任务</strong><p>右侧会显示 Cron、Skills、Runtime 与运行记录。</p></div>}
       </section>

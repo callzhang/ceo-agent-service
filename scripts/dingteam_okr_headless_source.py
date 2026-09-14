@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import importlib.util
 import json
 import fcntl
+import signal
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 from contextlib import contextmanager
@@ -23,6 +26,10 @@ HEADLESS_LOCK_TIMEOUT_SECONDS = 130
 LOCAL_SSO_TIMEOUT_MS = 10_000
 LOCAL_SSO_DIALOG_DELAY_MS = 1_500
 LOCAL_SSO_CONFIRM_PROCESS_SECONDS = 40
+# Finish before DwsLiveOkrSource's 120-second outer timeout so this wrapper can
+# always reap its isolated Chromium process group itself.
+HEADLESS_SOURCE_TIMEOUT_SECONDS = 110
+HEADLESS_SOURCE_SHUTDOWN_SECONDS = 5
 LOCAL_SSO_CURRENT_PAGE = ".app-page.app-page-curr"
 LOCAL_SSO_DIRECT_BUTTON = (
     f"{LOCAL_SSO_CURRENT_PAGE} "
@@ -310,19 +317,80 @@ def _capture_stable_headless_headers() -> dict[str, str]:
     return _validate_captured_headers(captured)
 
 
+def _stop_process_group(process: subprocess.Popen[str]) -> None:
+    """Stop the isolated source worker and every Chromium child it started."""
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=HEADLESS_SOURCE_SHUTDOWN_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    process.wait()
+
+
+def _run_bounded_source(command: list[str]) -> str:
+    """Run one complete OKR read with a deadline and owned process group."""
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=HEADLESS_SOURCE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        _stop_process_group(process)
+        raise RuntimeError(
+            "okr_headless_source_timeout: Dingteam OKR read exceeded "
+            f"{HEADLESS_SOURCE_TIMEOUT_SECONDS} seconds"
+        ) from exc
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if process.returncode != 0:
+        detail = stderr.strip() or f"worker exited with code {process.returncode}"
+        raise RuntimeError(f"okr_headless_source_failed: {detail}")
+    if stderr:
+        sys.stderr.write(stderr)
+        sys.stderr.flush()
+    return stdout
+
+
+def _fetch_user_okr(*, user_id: str, period_label: str) -> int:
+    headers = _get_headless_headers()
+    result = browser.direct.fetch_with_headers(user_id, period_label, headers)
+    print(json.dumps(result, ensure_ascii=False), flush=True)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--user-id", required=True)
     parser.add_argument("--period-label", required=True)
+    parser.add_argument("--_bounded-worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    headers = _get_headless_headers()
-    result = browser.direct.fetch_with_headers(
+    if args._bounded_worker:
+        return _fetch_user_okr(user_id=args.user_id, period_label=args.period_label)
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--_bounded-worker",
+        "--user-id",
         args.user_id,
+        "--period-label",
         args.period_label,
-        headers,
-    )
-    print(json.dumps(result, ensure_ascii=False))
+    ]
+    sys.stdout.write(_run_bounded_source(command))
+    sys.stdout.flush()
     return 0
 
 

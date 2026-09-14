@@ -63,7 +63,10 @@ class ServiceCommandConsumerContext:
     def from_payload(cls, value: object) -> ServiceCommandConsumerContext | None:
         if value is None:
             return None
-        if not isinstance(value, dict) or value.get("schema") != "scheduled_consumer.v1":
+        if (
+            not isinstance(value, dict)
+            or value.get("schema") != "scheduled_consumer.v1"
+        ):
             raise ValueError("scheduled consumer context is invalid")
         task_id = value.get("scheduled_task_id")
         run_id = value.get("scheduled_task_run_id")
@@ -79,7 +82,9 @@ class ServiceCommandConsumerContext:
             or not prompt.strip()
             or not isinstance(skill_names, list)
             or not skill_names
-            or any(not isinstance(name, str) or not name.strip() for name in skill_names)
+            or any(
+                not isinstance(name, str) or not name.strip() for name in skill_names
+            )
             or not isinstance(skill_protocol, str)
             or not skill_protocol.strip()
         ):
@@ -93,8 +98,8 @@ class ServiceCommandConsumerContext:
         )
 
 
-_ACTIVE_CONSUMER_CONTEXT: ContextVar[ServiceCommandConsumerContext | None] = (
-    ContextVar("scheduled_service_command_consumer_context", default=None)
+_ACTIVE_CONSUMER_CONTEXT: ContextVar[ServiceCommandConsumerContext | None] = ContextVar(
+    "scheduled_service_command_consumer_context", default=None
 )
 
 
@@ -110,81 +115,64 @@ def consumer_skill_names_from_prompt(prompt: str) -> tuple[str, ...]:
 SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
     ServiceCommandOption(
         name="produce-once",
-        display_name="检查钉钉消息",
-        description=(
-            "增量读取 DingTalk 未读消息，去重后写入 reply task，"
-            "由统一 Dispatcher 继续消费。"
-        ),
+        display_name="读取新钉钉消息",
+        description="读取新的单聊和群聊 @ 消息；发现后由 Agent 根据最新上下文决定是否回复、表态、澄清或不处理。",
+        channel="dingtalk",
+        consumer_prompt_enabled=True,
+    ),
+    ServiceCommandOption(
+        name="calendar-invites-once",
+        display_name="读取新日历邀请",
+        description="读取新的钉钉日历邀请；由 Agent 核验邀请详情和日程冲突，决定接受、暂定、拒绝或向邀请人澄清。",
         channel="dingtalk",
         consumer_prompt_enabled=True,
     ),
     ServiceCommandOption(
         name="wechat-produce-once",
-        display_name="检查微信消息",
-        description=(
-            "读取已就绪微信账号的新消息，按已配置联系人和群@边界去重后写入 reply task；"
-            "Reader 不可用时只记录健康状态。"
-        ),
+        display_name="读取新微信消息",
+        description="读取已启用好友和群聊 @ 的新消息；仅按已配置范围和发送模式交由 Agent 判断是否回复。",
         channel="wechat",
         consumer_prompt_enabled=True,
     ),
     ServiceCommandOption(
         name="scan-meetings-once",
-        display_name="检查 DingTalk 会议",
-        description=(
-            "读取已结束且满足资料条件的 DingTalk 会议，去重后写入会议对齐队列；"
-            "由会议 Agent 处理真实会议。"
-        ),
+        display_name="读取已结束会议",
+        description="读取已结束且会议资料可用的钉钉会议；由 Agent 整理结论、分歧、行动项和必要的会后澄清。",
         channel="meeting",
         consumer_prompt_enabled=True,
     ),
     ServiceCommandOption(
         name="scan-oa-approvals",
-        display_name="检查 DingTalk OA 审批",
-        description=(
-            "增量读取待处理的 DingTalk OA 审批，去重后写入审批回复队列；"
-            "由 DingTalk Consumer 处理真实审批。"
-        ),
+        display_name="读取待审批 OA",
+        description="读取新的或有新处理记录的待审批 OA；由 Agent 审阅材料与审批流水，作出处理或评论补充要求。",
         channel="dingtalk",
         consumer_prompt_enabled=True,
     ),
     ServiceCommandOption(
         name="scan-work-sources-once",
-        display_name="扫描工作来源",
-        description=(
-            "扫描已配置的本地工作目录，去重后写入工作摘要队列；"
-            "由 Work Summary Consumer 处理真实来源。"
-        ),
+        display_name="收集工作来源",
+        description="扫描工作区中新建或修改的 Markdown、文本文件；由 Agent 识别值得持续跟进的承诺并更新工作事项。",
         channel="work_summary",
         consumer_prompt_enabled=True,
     ),
     ServiceCommandOption(
         name="sync-minutes-once",
-        display_name="同步 AI 听记",
-        description=(
-            "增量同步 DingTalk AI 听记的摘要、逐字稿和归档游标到本地工作区；"
-            "同步过程为确定性代码，不触发 Agent。"
-        ),
+        display_name="同步听记到工作区",
+        description="归档尚未归档且可访问的钉钉 AI 听记，把可用摘要和逐字稿保存到工作区；权限受限或内容不可读时保留同步状态。",
         channel="work_summary",
         consumer_prompt_enabled=False,
     ),
     ServiceCommandOption(
         name="weekly-okr-report",
-        display_name="生成 OKR 周报",
-        description=(
-            "读取管理者的实时 OKR、生成本周周报并发送；整轮读取会超过 Agent 的"
-            "空闲与总时长上限，因此只能以服务命令形式在本进程内执行。"
-        ),
+        display_name="生成并发送 OKR 周报",
+        description="读取所有管理者的实时 OKR，由 Agent 结合工作证据分析后生成周报，并发布到管理知识库和 CEO-2 管理群。",
         channel="dingtalk",
         consumer_prompt_enabled=False,
     ),
     ServiceCommandOption(
         name="recover-recent-messages",
-        display_name="恢复近期 DingTalk 消息",
-        description=(
-            "把 DingTalk 读取范围放宽到最近的单聊和被点名的会话，"
-            "找回快路径可能漏掉的消息，去重后写入 reply task。"
-        ),
+        display_name="补查近期钉钉消息",
+        description="扩大读取范围，找回常规检查可能遗漏的单聊、群聊 @ 消息和原地更新的日历邀请；发现后由 Agent 按对应规则处理。",
         channel="dingtalk",
         consumer_prompt_enabled=True,
     ),

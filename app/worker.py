@@ -479,6 +479,9 @@ DOWNLOADED_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 DWS_UPGRADE_CHECK_RESULT_STATE_KEY = "dws_upgrade_check_result"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
+CALENDAR_INVITE_FAST_PATH_CHECKED_AT_STATE_KEY = (
+    "calendar_invite_fast_path_checked_at"
+)
 ROBOT_DIRECT_MESSAGE_LOOKBACK = env_duration(
     "CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK",
     timedelta(hours=4),
@@ -984,13 +987,20 @@ class DingTalkAutoReplyWorker:
         return any(host == suffix or host.endswith(f".{suffix}") for suffix in suffixes)
 
     def produce_once(
-        self, max_tasks: int | None = None, *, recovery: bool = False
+        self,
+        max_tasks: int | None = None,
+        *,
+        recovery: bool = False,
+        calendar_only: bool | None = None,
     ) -> int:
         """Run one producer pass; ``recovery`` widens the read past unread state.
 
         The fast pass reads only what DingTalk reports as unread.  The recovery
         pass is its own scheduled service command, so the caller — not an
-        elapsed interval — decides which of the two runs.
+        elapsed interval — decides which of the two runs.  Scheduled calls set
+        ``calendar_only`` explicitly so calendar invitation cards use their own
+        Trigger. Recovery and the unqualified one-shot runner retain combined
+        message-and-calendar behavior.
         """
         if max_tasks == 0:
             return 0
@@ -1000,6 +1010,11 @@ class DingTalkAutoReplyWorker:
         self._maybe_upgrade_dws_once_per_day()
         self._maybe_refresh_org_cache_once_per_week()
         fast_path_checked_at = self._now().astimezone(timezone.utc)
+        fast_path_checked_at_state_key = (
+            CALENDAR_INVITE_FAST_PATH_CHECKED_AT_STATE_KEY
+            if calendar_only is True
+            else MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY
+        )
         queued_tasks = 0
         conversations = self._call_dws(
             "list_unread_conversations",
@@ -1012,7 +1027,10 @@ class DingTalkAutoReplyWorker:
         else:
             self._mark_dws_auth_healthy()
         if conversations and not recovery:
-            conversations = self._conversations_due_for_fast_path(conversations)
+            conversations = self._conversations_due_for_fast_path(
+                conversations,
+                state_key=fast_path_checked_at_state_key,
+            )
         unread_conversation_ids = {
             conversation.open_conversation_id for conversation in conversations
         }
@@ -1096,7 +1114,7 @@ class DingTalkAutoReplyWorker:
                 )
                 if max_tasks is not None and queued_tasks >= max_tasks:
                     self.store.set_service_state(
-                        MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
+                        fast_path_checked_at_state_key,
                         fast_path_checked_at.isoformat(),
                     )
                     return queued_tasks
@@ -1119,6 +1137,12 @@ class DingTalkAutoReplyWorker:
                 conversation,
                 candidate_source_messages,
             )
+            if calendar_only is not None and not recovery:
+                candidates = [
+                    message
+                    for message in candidates
+                    if self._is_calendar_message(message) is calendar_only
+                ]
             new_messages = [
                 message
                 for message in candidates
@@ -1164,17 +1188,21 @@ class DingTalkAutoReplyWorker:
                     ),
                     available_at=available_at,
                     error=error,
-                    replace_pending_single_chat=len(trigger_messages) == 1,
+                    replace_pending_single_chat=(
+                        len(trigger_messages) == 1
+                        and calendar_only is None
+                        and not recovery
+                    ),
                 ):
                     queued_tasks += 1
                 if max_tasks is not None and queued_tasks >= max_tasks:
                     self.store.set_service_state(
-                        MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
+                        fast_path_checked_at_state_key,
                         fast_path_checked_at.isoformat(),
                     )
                     return queued_tasks
         self.store.set_service_state(
-            MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
+            fast_path_checked_at_state_key,
             fast_path_checked_at.isoformat(),
         )
         return queued_tasks
@@ -1348,10 +1376,10 @@ class DingTalkAutoReplyWorker:
     def _conversations_updated_since_fast_path_check(
         self,
         conversations: list[DingTalkConversation],
+        *,
+        state_key: str = MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
     ) -> list[DingTalkConversation]:
-        checked_at = self._service_state_datetime(
-            MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY
-        )
+        checked_at = self._service_state_datetime(state_key)
         if checked_at is None:
             return conversations
         return [
@@ -1376,8 +1404,13 @@ class DingTalkAutoReplyWorker:
     def _conversations_due_for_fast_path(
         self,
         conversations: list[DingTalkConversation],
+        *,
+        state_key: str = MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
     ) -> list[DingTalkConversation]:
-        return self._conversations_updated_since_fast_path_check(conversations)
+        return self._conversations_updated_since_fast_path_check(
+            conversations,
+            state_key=state_key,
+        )
 
     @staticmethod
     def _is_dws_forbidden_read_error(exc: Exception) -> bool:

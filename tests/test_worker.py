@@ -2111,9 +2111,10 @@ def test_scheduled_service_trigger_persists_consumer_context_on_new_reply_task(
     registry = ServiceCommandRegistry(
         {
             option: (produce if option == "produce-once" else lambda: "unused")
-            for option in (
-                "produce-once",
-                "recover-recent-messages",
+                for option in (
+                    "produce-once",
+                    "calendar-invites-once",
+                    "recover-recent-messages",
                 "wechat-produce-once",
                 "scan-meetings-once",
                 "scan-oa-approvals",
@@ -3548,7 +3549,7 @@ def test_calendar_card_task_is_enriched_with_matching_pending_invite(
     search_start, search_end = worker._calendar_pending_invite_search_window(trigger)
     dws.calendar_events[f"{search_start}|{search_end}"] = [invite]
 
-    queued = worker.produce_once()
+    queued = worker.produce_once(calendar_only=True)
 
     tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
     assert queued == 1
@@ -3557,6 +3558,77 @@ def test_calendar_card_task_is_enriched_with_matching_pending_invite(
     merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
     assert merged.sender_open_dingtalk_id == "sender-1"
     assert merged.raw_payload == {}
+
+
+def test_calendar_invitation_trigger_isolated_from_general_message_producer(
+    tmp_path: Path, monkeypatch
+):
+    ordinary = message(
+        "请看一下这个客户问题",
+        message_id="msg-ordinary",
+        single_chat=True,
+    )
+    invitation = message(
+        "[日程] 客户方案评审",
+        message_id="msg-calendar-invite",
+        single_chat=True,
+        message_type="calendar",
+    )
+    source_conversation = conversation(single_chat=True).model_copy(
+        update={
+            "last_message_create_at": int(
+                (fixed_worker_now() - timedelta(seconds=30)).timestamp() * 1000
+            )
+        }
+    )
+    dws = FakeDws(
+        [source_conversation],
+        {"cid-1": [ordinary, invitation]},
+        unread_messages={"cid-1": [ordinary, invitation]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    assert worker.produce_once(calendar_only=False) == 1
+    [ordinary_task] = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert ordinary_task.trigger_message_id == "msg-ordinary"
+
+    assert worker.produce_once(calendar_only=True) == 1
+    task_ids = {
+        task.trigger_message_id
+        for task in worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    }
+    assert task_ids == {"msg-ordinary", "msg-calendar-invite"}
+
+
+def test_general_message_trigger_does_not_replace_pending_calendar_invitation(
+    tmp_path: Path, monkeypatch
+):
+    ordinary = message(
+        "请看一下这个客户问题",
+        message_id="msg-ordinary",
+        single_chat=True,
+    )
+    invitation = message(
+        "[日程] 客户方案评审",
+        message_id="msg-calendar-invite",
+        single_chat=True,
+        message_type="calendar",
+    )
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [ordinary, invitation]},
+        unread_messages={"cid-1": [ordinary, invitation]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    assert worker.produce_once(calendar_only=True) == 1
+    assert worker.produce_once(calendar_only=False) == 1
+
+    task_ids = {
+        task.trigger_message_id
+        for task in worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    }
+    assert task_ids == {"msg-ordinary", "msg-calendar-invite"}
 
 
 def test_producer_enriches_bare_calendar_card_task_with_invite_details(
@@ -3587,7 +3659,7 @@ def test_producer_enriches_bare_calendar_card_task_with_invite_details(
     ]
     dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
 
-    assert worker.produce_once() == 1
+    assert worker.produce_once(calendar_only=True) == 1
 
     tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
     assert [task.trigger_message_id for task in tasks] == ["msg-calendar-card"]
@@ -14167,6 +14239,59 @@ def test_single_chat_recovery_does_not_coalesce_across_current_user_context(
     assert [task.trigger_message_id for task in tasks] == [
         "msg-first-missed",
         "msg-second-missed",
+    ]
+
+
+def test_single_chat_recovery_keeps_unseen_message_and_calendar_invitation(
+    tmp_path: Path, monkeypatch
+):
+    seen_anchor = message("已经处理过", message_id="msg-seen-anchor", single_chat=True)
+    seen_anchor.create_time = "2026-05-13 16:50:00"
+    missed_message = message(
+        "需要跟进这个客户问题",
+        message_id="msg-missed-message",
+        single_chat=True,
+    )
+    missed_message.create_time = "2026-05-13 17:10:00"
+    current_user = principal_message(
+        "收到，我晚点确认",
+        message_id="msg-current-user-between",
+        create_time="2026-05-13 17:20:00",
+    )
+    calendar_invitation = message(
+        "[日程] 客户方案评审",
+        message_id="msg-missed-calendar-invitation",
+        single_chat=True,
+        message_type="calendar",
+    )
+    calendar_invitation.create_time = "2026-05-13 17:30:00"
+    dws = FakeDws(
+        [],
+        {
+            "cid-1": [
+                calendar_invitation,
+                current_user,
+                missed_message,
+                seen_anchor,
+            ]
+        },
+        unread_messages={"cid-1": []},
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
+        monkeypatch,
+    )
+    worker.store.upsert_conversation("cid-1", "韩露", True, None)
+    worker.store.mark_seen("msg-seen-anchor", "cid-1")
+
+    assert worker.produce_once(recovery=True, calendar_only=False) == 2
+
+    tasks = sorted(worker.store.list_reply_tasks(limit=10), key=lambda task: task.id)
+    assert [task.trigger_message_id for task in tasks] == [
+        "msg-missed-message",
+        "msg-missed-calendar-invitation",
     ]
 
 

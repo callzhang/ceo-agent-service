@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -13,6 +14,8 @@ WEEKLY_OKR_MIGRATION_KEY = "weekly-okr-report-sunday-v1"
 WEEKLY_OKR_SERVICE_COMMAND = "weekly-okr-report"
 DINGTALK_MESSAGE_MIGRATION_KEY = "dingtalk-message-check-v1"
 DINGTALK_MESSAGE_SERVICE_COMMAND = "produce-once"
+DINGTALK_CALENDAR_INVITE_MIGRATION_KEY = "dingtalk-calendar-invite-check-v1"
+DINGTALK_CALENDAR_INVITE_SERVICE_COMMAND = "calendar-invites-once"
 DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY = "dingtalk-message-recovery-v1"
 DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND = "recover-recent-messages"
 WECHAT_MESSAGE_MIGRATION_KEY = "wechat-message-check-v1"
@@ -24,7 +27,98 @@ DINGTALK_OA_SERVICE_COMMAND = "scan-oa-approvals"
 WORK_SOURCE_MIGRATION_KEY = "work-source-scan-daily-v1"
 WORK_SOURCE_SERVICE_COMMAND = "scan-work-sources-once"
 
-DINGTALK_MESSAGE_CONSUMER_PROMPT = (
+
+@dataclass(frozen=True)
+class ScheduledTaskDefaultCopy:
+    name: str
+    description: str
+    old_name: str
+    old_description: str
+
+
+SCHEDULED_TASK_DEFAULT_COPY = {
+    DINGTALK_MESSAGE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="处理新的钉钉消息",
+        description="发现新的单聊或群聊 @ 消息后，由 Agent 读取最新上下文，决定回复、表态、澄清或不处理。",
+        old_name="检查 DingTalk 消息",
+        old_description="增量检查 DingTalk 消息，并将新消息送入统一处理队列。",
+    ),
+    DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="补查遗漏的钉钉消息和日历更新",
+        description="扩大读取范围，找回常规检查遗漏的单聊、群聊 @ 消息和原地更新的日历邀请；发现后由 Agent 按对应的消息或日程规则处理。",
+        old_name="恢复近期 DingTalk 消息",
+        old_description="按较宽时间范围恢复近期 DingTalk 消息，补齐漏读记录及原地更新的待响应日程邀请。",
+    ),
+    DINGTALK_CALENDAR_INVITE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="处理新的钉钉日历邀请",
+        description="发现新的会议邀请后，由 Agent 读取最新邀请和日程冲突，决定接受、暂定、拒绝或向邀请人澄清；执行后核验日历状态。",
+        old_name="",
+        old_description="",
+    ),
+    DINGTALK_MEETING_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="同步会议结论与管理者视角",
+        description="会议结束且听记可用后，由 Agent 总结关键结论、分歧和行动项，确保管理者观点被准确传达；发现未对齐时发送会后澄清。",
+        old_name="检查 DingTalk 会议",
+        old_description="扫描已结束的 DingTalk 会议，并创建会议处理任务。",
+    ),
+    WECHAT_MESSAGE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="处理已授权会话的新微信消息",
+        description="发现已启用的好友新消息或群聊 @ 后，由 Agent 判断是否回复；仅按已配置范围和发送模式处理，不读取或回复其他会话。",
+        old_name="检查微信消息",
+        old_description="检查已配置微信会话的新消息，并创建后续处理任务。",
+    ),
+    DINGTALK_OA_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="审阅新的或有进展的钉钉 OA",
+        description="发现新的或有新处理记录的待审批 OA 后，由 Agent 读取完整材料与审批流水，判断同意、拒绝或评论补充要求，并在执行后核验结果。",
+        old_name="检查 DingTalk OA 审批",
+        old_description="检查待处理的 DingTalk OA 审批，并创建后续处理任务。",
+    ),
+    WORK_SOURCE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="整理工作区中的新工作记录",
+        description="发现工作区中新建或修改的 Markdown、文本文件后，由 Agent 判断其中是否有值得持续跟进的承诺，并按证据创建或更新项目、TODO 和跟进。",
+        old_name="每天扫描工作来源",
+        old_description="扫描日历、待办和其他工作来源，生成可处理的工作输入。",
+    ),
+    WEEKLY_OKR_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="生成并发送每周 OKR 管理周报",
+        description="读取所有管理者的实时 OKR，由 Agent 结合工作证据分析进展、风险、领导力和文化表现，生成周报并发布到管理知识库和 CEO-2 管理群。",
+        old_name="周日生成 OKR 周报",
+        old_description="读取管理者实时 OKR，生成本周管理进度周报。",
+    ),
+    MINUTES_SYNC_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="归档新增的钉钉 AI 听记",
+        description="发现尚未归档且可访问的钉钉 AI 听记后，读取可用的摘要和逐字稿并归档到工作区；权限受限或内容不可读时保留同步状态，待后续检查。",
+        old_name="每天同步 AI 听记",
+        old_description="同步 AI 听记的摘要、逐字稿和归档游标到工作区。",
+    ),
+}
+
+
+def _default_copy(migration_key: str) -> ScheduledTaskDefaultCopy:
+    return SCHEDULED_TASK_DEFAULT_COPY[migration_key]
+
+
+def _upgrade_default_copy(
+    store: AutoReplyStore,
+    task: ScheduledTask,
+    *,
+    now: datetime | None,
+) -> ScheduledTask:
+    copy = _default_copy(task.migration_key or "")
+    if not copy.old_name or not copy.old_description:
+        return task
+    return store.upgrade_scheduled_task_default_copy(
+        task.id,
+        expected_version=task.version,
+        old_name=copy.old_name,
+        old_description=copy.old_description,
+        name=copy.name,
+        description=copy.description,
+        now=now,
+    )
+
+
+DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT = (
     "使用 $ceo-message-triage 判断 Trigger 发现的真实 DingTalk 消息是否需要 CEO "
     "关注或回复；如果消息是日程邀请或原地更新的日程卡片，使用 "
     "$ceo-calendar-invite 处理。使用 $dingtalk-chat 读取所需消息上下文，并使用 "
@@ -32,6 +126,15 @@ DINGTALK_MESSAGE_CONSUMER_PROMPT = (
     "原地更新后的日程卡片是新的输入版本，更新前基于旧时段或旧冲突发送的澄清"
     "不构成精确重复，必须根据最新日程重新处置；"
     "不要新增复盘或摘要任务。"
+)
+DINGTALK_MESSAGE_CONSUMER_PROMPT = (
+    "使用 $ceo-message-triage 判断 Trigger 发现的真实 DingTalk 消息是否需要 CEO "
+    "关注或回复；使用 $dingtalk-chat 读取所需消息上下文；不要新增复盘或摘要任务。"
+)
+CALENDAR_INVITE_CONSUMER_PROMPT = (
+    "使用 $ceo-calendar-invite 处理 Trigger 发现的真实钉钉日历邀请；使用 "
+    "$dingtalk-calendar 读取最新邀请和冲突日程，并在需要向邀请人澄清时使用 "
+    "$dingtalk-chat。不要新增复盘或摘要任务。"
 )
 WECHAT_MESSAGE_CONSUMER_PROMPT = (
     "使用 $ceo-wechat 处理 Trigger 发现的真实微信消息，严格保留已配置联系人、"
@@ -62,7 +165,9 @@ def _consumer_skill_refs(
     for name in managed:
         skill = managed_options.get(name)
         revisions = tuple(
-            revision for revision in (skill.revisions if skill else ()) if revision.available
+            revision
+            for revision in (skill.revisions if skill else ())
+            if revision.available
         )
         if skill is None or not revisions:
             raise ValueError(f"scheduled consumer managed Skill unavailable: {name}")
@@ -103,6 +208,12 @@ def seed_scheduled_tasks(
 ) -> tuple[ScheduledTask, ...]:
     """Create repository-owned scheduled task defaults without overwriting edits."""
     dingtalk_message = _seed_dingtalk_message_task(
+        store=store,
+        options=options,
+        working_directory=working_directory,
+        now=now,
+    )
+    dingtalk_calendar_invite = _seed_dingtalk_calendar_invite_task(
         store=store,
         options=options,
         working_directory=working_directory,
@@ -150,15 +261,19 @@ def seed_scheduled_tasks(
         working_directory=working_directory,
         now=now,
     )
-    return (
-        dingtalk_message,
-        dingtalk_message_recovery,
-        dingtalk_meeting,
-        wechat,
-        oa,
-        work_sources,
-        weekly_okr,
-        minutes,
+    return tuple(
+        _upgrade_default_copy(store, task, now=now)
+        for task in (
+            dingtalk_message,
+            dingtalk_calendar_invite,
+            dingtalk_message_recovery,
+            dingtalk_meeting,
+            wechat,
+            oa,
+            work_sources,
+            weekly_okr,
+            minutes,
+        )
     )
 
 
@@ -178,27 +293,76 @@ def _seed_dingtalk_message_task(
     del working_directory
     skill_refs = _consumer_skill_refs(
         options,
-        managed=("ceo-message-triage", "ceo-calendar-invite"),
-        operation=("dingtalk-chat", "dingtalk-calendar"),
+        managed=("ceo-message-triage",),
+        operation=("dingtalk-chat",),
     )
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
         command=DINGTALK_MESSAGE_SERVICE_COMMAND,
         seed_enabled=True,
-        seed_description="增量检查 DingTalk 消息，并将新消息送入统一处理队列。",
+        seed_description=_default_copy(DINGTALK_MESSAGE_MIGRATION_KEY).description,
         consumer_prompt=DINGTALK_MESSAGE_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
+        legacy_consumer_prompt=DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT,
+        legacy_consumer_skill_refs=_consumer_skill_refs(
+            options,
+            managed=("ceo-message-triage", "ceo-calendar-invite"),
+            operation=("dingtalk-chat", "dingtalk-calendar"),
+        ),
         now=now,
     )
     if adopted is not None:
         return adopted
     return store.create_scheduled_task(
         migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
-        name="检查 DingTalk 消息",
-        description="增量检查 DingTalk 消息，并将新消息送入统一处理队列。",
+        name=_default_copy(DINGTALK_MESSAGE_MIGRATION_KEY).name,
+        description=_default_copy(DINGTALK_MESSAGE_MIGRATION_KEY).description,
         prompt=DINGTALK_MESSAGE_CONSUMER_PROMPT,
         command=DINGTALK_MESSAGE_SERVICE_COMMAND,
         cron_expression="0 * * * * *",
+        timezone_name="Asia/Shanghai",
+        skill_refs=skill_refs,
+        enabled=True,
+        now=now,
+    )
+
+
+def _seed_dingtalk_calendar_invite_task(
+    *,
+    store: AutoReplyStore,
+    options: ScheduledTaskOptionService,
+    working_directory: Path,
+    now: datetime | None,
+) -> ScheduledTask:
+    """Seed calendar invitation handling as a separate service Trigger."""
+    del working_directory
+    skill_refs = _consumer_skill_refs(
+        options,
+        managed=("ceo-calendar-invite",),
+        operation=("dingtalk-calendar", "dingtalk-chat"),
+    )
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key=DINGTALK_CALENDAR_INVITE_MIGRATION_KEY,
+        command=DINGTALK_CALENDAR_INVITE_SERVICE_COMMAND,
+        seed_enabled=True,
+        seed_description=_default_copy(
+            DINGTALK_CALENDAR_INVITE_MIGRATION_KEY
+        ).description,
+        consumer_prompt=CALENDAR_INVITE_CONSUMER_PROMPT,
+        consumer_skill_refs=skill_refs,
+        now=now,
+    )
+    if adopted is not None:
+        return adopted
+    return store.create_scheduled_task(
+        migration_key=DINGTALK_CALENDAR_INVITE_MIGRATION_KEY,
+        name=_default_copy(DINGTALK_CALENDAR_INVITE_MIGRATION_KEY).name,
+        description=_default_copy(
+            DINGTALK_CALENDAR_INVITE_MIGRATION_KEY
+        ).description,
+        prompt=CALENDAR_INVITE_CONSUMER_PROMPT,
+        command=DINGTALK_CALENDAR_INVITE_SERVICE_COMMAND,
+        cron_expression="10 * * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
         enabled=True,
@@ -228,11 +392,10 @@ def _seed_dingtalk_message_recovery_task(
         migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
         command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
         seed_enabled=True,
-        seed_description=(
-            "按较宽时间范围恢复近期 DingTalk 消息，补齐漏读记录及原地更新的"
-            "待响应日程邀请。"
-        ),
-        consumer_prompt=DINGTALK_MESSAGE_CONSUMER_PROMPT,
+        seed_description=_default_copy(
+            DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY
+        ).description,
+        consumer_prompt=DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
         now=now,
     )
@@ -240,12 +403,9 @@ def _seed_dingtalk_message_recovery_task(
         return adopted
     return store.create_scheduled_task(
         migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
-        name="恢复近期 DingTalk 消息",
-        description=(
-            "按较宽时间范围恢复近期 DingTalk 消息，补齐漏读记录及原地更新的"
-            "待响应日程邀请。"
-        ),
-        prompt=DINGTALK_MESSAGE_CONSUMER_PROMPT,
+        name=_default_copy(DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY).name,
+        description=_default_copy(DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY).description,
+        prompt=DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT,
         command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
         cron_expression="0 30 * * * *",
         timezone_name="Asia/Shanghai",
@@ -272,7 +432,7 @@ def _seed_dingtalk_meeting_task(
         migration_key=DINGTALK_MEETING_MIGRATION_KEY,
         command=DINGTALK_MEETING_SERVICE_COMMAND,
         seed_enabled=True,
-        seed_description="扫描已结束的 DingTalk 会议，并创建会议处理任务。",
+        seed_description=_default_copy(DINGTALK_MEETING_MIGRATION_KEY).description,
         consumer_prompt=MEETING_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
         now=now,
@@ -281,8 +441,8 @@ def _seed_dingtalk_meeting_task(
         return adopted
     return store.create_scheduled_task(
         migration_key=DINGTALK_MEETING_MIGRATION_KEY,
-        name="检查 DingTalk 会议",
-        description="扫描已结束的 DingTalk 会议，并创建会议处理任务。",
+        name=_default_copy(DINGTALK_MEETING_MIGRATION_KEY).name,
+        description=_default_copy(DINGTALK_MEETING_MIGRATION_KEY).description,
         prompt=MEETING_CONSUMER_PROMPT,
         command=DINGTALK_MEETING_SERVICE_COMMAND,
         cron_expression="0 * * * * *",
@@ -312,7 +472,7 @@ def _seed_wechat_task(
         migration_key=WECHAT_MESSAGE_MIGRATION_KEY,
         command=WECHAT_MESSAGE_SERVICE_COMMAND,
         seed_enabled=True,
-        seed_description="检查已配置微信会话的新消息，并创建后续处理任务。",
+        seed_description=_default_copy(WECHAT_MESSAGE_MIGRATION_KEY).description,
         consumer_prompt=WECHAT_MESSAGE_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
         now=now,
@@ -321,8 +481,8 @@ def _seed_wechat_task(
         return adopted
     return store.create_scheduled_task(
         migration_key=WECHAT_MESSAGE_MIGRATION_KEY,
-        name="检查微信消息",
-        description="检查已配置微信会话的新消息，并创建后续处理任务。",
+        name=_default_copy(WECHAT_MESSAGE_MIGRATION_KEY).name,
+        description=_default_copy(WECHAT_MESSAGE_MIGRATION_KEY).description,
         prompt=WECHAT_MESSAGE_CONSUMER_PROMPT,
         command=WECHAT_MESSAGE_SERVICE_COMMAND,
         cron_expression="*/15 * * * * *",
@@ -349,7 +509,7 @@ def _seed_oa_task(
         migration_key=DINGTALK_OA_MIGRATION_KEY,
         command=DINGTALK_OA_SERVICE_COMMAND,
         seed_enabled=True,
-        seed_description="检查待处理的 DingTalk OA 审批，并创建后续处理任务。",
+        seed_description=_default_copy(DINGTALK_OA_MIGRATION_KEY).description,
         consumer_prompt=OA_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
         now=now,
@@ -358,8 +518,8 @@ def _seed_oa_task(
         return adopted
     return store.create_scheduled_task(
         migration_key=DINGTALK_OA_MIGRATION_KEY,
-        name="检查 DingTalk OA 审批",
-        description="检查待处理的 DingTalk OA 审批，并创建后续处理任务。",
+        name=_default_copy(DINGTALK_OA_MIGRATION_KEY).name,
+        description=_default_copy(DINGTALK_OA_MIGRATION_KEY).description,
         prompt=OA_CONSUMER_PROMPT,
         command=DINGTALK_OA_SERVICE_COMMAND,
         cron_expression="0 0 * * * *",
@@ -383,7 +543,7 @@ def _seed_work_source_task(
         migration_key=WORK_SOURCE_MIGRATION_KEY,
         command=WORK_SOURCE_SERVICE_COMMAND,
         seed_enabled=True,
-        seed_description="扫描日历、待办和其他工作来源，生成可处理的工作输入。",
+        seed_description=_default_copy(WORK_SOURCE_MIGRATION_KEY).description,
         consumer_prompt=WORK_SOURCE_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
         now=now,
@@ -392,8 +552,8 @@ def _seed_work_source_task(
         return adopted
     return store.create_scheduled_task(
         migration_key=WORK_SOURCE_MIGRATION_KEY,
-        name="每天扫描工作来源",
-        description="扫描日历、待办和其他工作来源，生成可处理的工作输入。",
+        name=_default_copy(WORK_SOURCE_MIGRATION_KEY).name,
+        description=_default_copy(WORK_SOURCE_MIGRATION_KEY).description,
         prompt=WORK_SOURCE_CONSUMER_PROMPT,
         command=WORK_SOURCE_SERVICE_COMMAND,
         cron_expression="0 0 0 * * *",
@@ -413,27 +573,25 @@ def _seed_weekly_okr_task(
 ) -> ScheduledTask:
     """Seed the weekly OKR report as a deterministic service command.
 
-    It was an Agent task whose whole prompt was "run exactly one deterministic
-    command", and that command reads every manager's live OKR through a
-    headless browser.  One real run took over fifty minutes and produced no
-    output until the end, so the Agent runtime killed it at its 900-second
-    idle limit and the orphaned command kept running outside any run record.
-    No Agent timeout can hold this work, and there is no judgement in it.
+    The service command owns the long-running browser reads and invokes the
+    weekly-report Agent analysis inside the tracked service run. Keeping that
+    whole workflow in process gives it one durable run record and bounded
+    source/Agent timeouts instead of an untracked child command.
     """
     del options, working_directory
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=WEEKLY_OKR_MIGRATION_KEY,
         command=WEEKLY_OKR_SERVICE_COMMAND,
         seed_enabled=True,
-        seed_description="读取管理者实时 OKR，生成本周管理进度周报。",
+        seed_description=_default_copy(WEEKLY_OKR_MIGRATION_KEY).description,
         now=now,
     )
     if adopted is not None:
         return adopted
     return store.create_scheduled_task(
         migration_key=WEEKLY_OKR_MIGRATION_KEY,
-        name="周日生成 OKR 周报",
-        description="读取管理者实时 OKR，生成本周管理进度周报。",
+        name=_default_copy(WEEKLY_OKR_MIGRATION_KEY).name,
+        description=_default_copy(WEEKLY_OKR_MIGRATION_KEY).description,
         command=WEEKLY_OKR_SERVICE_COMMAND,
         cron_expression="0 0 18 * * 0",
         timezone_name="Asia/Shanghai",
@@ -455,15 +613,15 @@ def _seed_minutes_task(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
         command="sync-minutes-once",
         seed_enabled=True,
-        seed_description="同步 AI 听记的摘要、逐字稿和归档游标到工作区。",
+        seed_description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
         now=now,
     )
     if adopted is not None:
         return adopted
     return store.create_scheduled_task(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
-        name="每天同步 AI 听记",
-        description="同步 AI 听记的摘要、逐字稿和归档游标到工作区。",
+        name=_default_copy(MINUTES_SYNC_MIGRATION_KEY).name,
+        description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
         command="sync-minutes-once",
         cron_expression="0 0 20 * * *",
         timezone_name="Asia/Shanghai",

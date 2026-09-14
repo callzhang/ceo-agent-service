@@ -314,6 +314,7 @@ def build_parser() -> argparse.ArgumentParser:
         "service",
         "email-worker",
         "produce-once",
+        "calendar-invites-once",
         "recover-recent-messages",
         "produce",
         "consume-once",
@@ -916,19 +917,32 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
 
     def produce_once_command() -> str:
         with dingtalk_producer_lock:
-            queued = reply_worker.produce_once(max_tasks=settings.max_batches)
+            queued = reply_worker.produce_once(
+                max_tasks=settings.max_batches,
+                calendar_only=False,
+            )
         return f"produce-once queued={queued}"
+
+    def calendar_invites_once_command() -> str:
+        with dingtalk_producer_lock:
+            queued = reply_worker.produce_once(
+                max_tasks=settings.max_batches,
+                calendar_only=True,
+            )
+        return f"calendar-invites-once queued={queued}"
 
     def recover_recent_messages_command() -> str:
         with dingtalk_producer_lock:
             queued = reply_worker.produce_once(
-                recovery=True, max_tasks=settings.max_batches
+                recovery=True,
+                max_tasks=settings.max_batches,
             )
         return f"recover-recent-messages queued={queued}"
 
     return ServiceCommandRegistry(
         {
             "produce-once": produce_once_command,
+            "calendar-invites-once": calendar_invites_once_command,
             "recover-recent-messages": recover_recent_messages_command,
             "wechat-produce-once": WechatProduceOnceCommand(
                 store, restart_reader=_restart_wechat_reader_service
@@ -1372,7 +1386,10 @@ def run_once(settings: WorkerSettings) -> None:
 
 def produce_once(settings: WorkerSettings) -> int:
     try:
-        queued = create_worker(settings).produce_once(max_tasks=settings.max_batches)
+        queued = create_worker(settings).produce_once(
+            max_tasks=settings.max_batches,
+            calendar_only=False,
+        )
     except Exception as exc:
         _record_service_failure(settings, "producer", exc)
         raise
@@ -1380,11 +1397,26 @@ def produce_once(settings: WorkerSettings) -> int:
     return queued
 
 
+def calendar_invites_once(settings: WorkerSettings) -> int:
+    """Discover new DingTalk calendar invitation cards once."""
+    try:
+        queued = create_worker(settings).produce_once(
+            max_tasks=settings.max_batches,
+            calendar_only=True,
+        )
+    except Exception as exc:
+        _record_service_failure(settings, "calendar_invitation_producer", exc)
+        raise
+    print(f"calendar-invites-once queued={queued}", flush=True)
+    return queued
+
+
 def recover_recent_messages(settings: WorkerSettings) -> int:
     """Run the widened DingTalk read that the minute-by-minute check skips."""
     try:
         queued = create_worker(settings).produce_once(
-            recovery=True, max_tasks=settings.max_batches
+            max_tasks=settings.max_batches,
+            recovery=True,
         )
     except Exception as exc:
         _record_service_failure(settings, "producer", exc)
@@ -4119,6 +4151,8 @@ def main() -> None:
         run_email_worker(settings)
     elif args.command == "produce-once":
         produce_once(settings)
+    elif args.command == "calendar-invites-once":
+        calendar_invites_once(settings)
     elif args.command == "recover-recent-messages":
         recover_recent_messages(settings)
     elif args.command == "produce":

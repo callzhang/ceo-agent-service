@@ -591,6 +591,7 @@ def test_service_command_catalog_exposes_only_editable_trigger_metadata(
 
     assert [option.name for option in options] == [
         "produce-once",
+        "calendar-invites-once",
         "wechat-produce-once",
         "scan-meetings-once",
         "scan-oa-approvals",
@@ -601,6 +602,7 @@ def test_service_command_catalog_exposes_only_editable_trigger_metadata(
     ]
     assert all(option.description for option in options)
     assert [option.consumer_prompt_enabled for option in options] == [
+        True,
         True,
         True,
         True,

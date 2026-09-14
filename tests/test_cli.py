@@ -5012,8 +5012,8 @@ def test_produce_once_command_calls_worker_produce_once(monkeypatch, tmp_path):
     calls = []
 
     class FakeWorker:
-        def produce_once(self, max_tasks=None):
-            calls.append(max_tasks)
+        def produce_once(self, max_tasks=None, *, calendar_only=None):
+            calls.append((max_tasks, calendar_only))
             return 2
 
     monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
@@ -5028,14 +5028,14 @@ def test_produce_once_command_calls_worker_produce_once(monkeypatch, tmp_path):
     queued = cli.produce_once(settings)
 
     assert queued == 2
-    assert calls == [3]
+    assert calls == [(3, False)]
 
 
 def test_produce_once_records_and_notifies_top_level_failure(monkeypatch, tmp_path):
     notifications = []
 
     class FakeWorker:
-        def produce_once(self, max_tasks=None):
+        def produce_once(self, max_tasks=None, *, calendar_only=None):
             raise RuntimeError("dws not authenticated")
 
     monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
@@ -5072,8 +5072,8 @@ def test_recover_recent_messages_command_runs_the_widened_producer_pass(
     calls = []
 
     class FakeWorker:
-        def produce_once(self, max_tasks=None, *, recovery=False):
-            calls.append((max_tasks, recovery))
+        def produce_once(self, max_tasks=None, *, recovery=False, calendar_only=None):
+            calls.append((max_tasks, recovery, calendar_only))
             return 4
 
     monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
@@ -5088,11 +5088,39 @@ def test_recover_recent_messages_command_runs_the_widened_producer_pass(
     queued = cli.recover_recent_messages(settings)
 
     assert queued == 4
-    assert calls == [(3, True)]
+    assert calls == [(3, True, None)]
     assert capsys.readouterr().out == "recover-recent-messages queued=4\n"
     assert build_parser().parse_args(
         ["recover-recent-messages", "--db", str(tmp_path / "worker.sqlite3")]
     ).command == "recover-recent-messages"
+
+
+def test_calendar_invites_once_command_runs_only_calendar_invitation_producer(
+    monkeypatch, tmp_path, capsys
+):
+    calls = []
+
+    class FakeWorker:
+        def produce_once(self, max_tasks=None, *, recovery=False, calendar_only=False):
+            calls.append((max_tasks, recovery, calendar_only))
+            return 4
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        max_batches=3,
+    )
+
+    queued = cli.calendar_invites_once(settings)
+
+    assert queued == 4
+    assert calls == [(3, False, True)]
+    assert capsys.readouterr().out == "calendar-invites-once queued=4\n"
+    assert build_parser().parse_args(
+        ["calendar-invites-once", "--db", str(tmp_path / "worker.sqlite3")]
+    ).command == "calendar-invites-once"
 
 
 def test_recover_recent_messages_records_and_notifies_top_level_failure(
@@ -5101,7 +5129,7 @@ def test_recover_recent_messages_records_and_notifies_top_level_failure(
     notifications = []
 
     class FakeWorker:
-        def produce_once(self, max_tasks=None, *, recovery=False):
+        def produce_once(self, max_tasks=None, *, recovery=False, calendar_only=None):
             raise RuntimeError("dws not authenticated")
 
     monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
@@ -5142,7 +5170,7 @@ def test_dingtalk_message_and_recovery_commands_never_run_concurrently(
     release_first_pass = threading.Event()
 
     class Worker:
-        def produce_once(self, max_tasks=None, *, recovery=False):
+        def produce_once(self, max_tasks=None, *, recovery=False, calendar_only=None):
             label = "recovery" if recovery else "fast"
             events.append(f"start:{label}")
             if not recovery:
@@ -8134,8 +8162,8 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
     calls: list[object] = []
 
     class Worker:
-        def produce_once(self, max_tasks=None, *, recovery=False):
-            calls.append((max_tasks, recovery))
+        def produce_once(self, max_tasks=None, *, recovery=False, calendar_only=None):
+            calls.append((max_tasks, recovery, calendar_only))
             return 3
 
     store = AutoReplyStore(tmp_path / "registry.sqlite3")
@@ -8145,6 +8173,7 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
 
     assert set(registry._implementations) == {
         "produce-once",
+        "calendar-invites-once",
         "recover-recent-messages",
         "wechat-produce-once",
         "scan-meetings-once",
@@ -8154,10 +8183,11 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
         "weekly-okr-report",
     }
     assert registry.run("produce-once") == "produce-once queued=3"
+    assert registry.run("calendar-invites-once") == "calendar-invites-once queued=3"
     assert registry.run("recover-recent-messages") == (
         "recover-recent-messages queued=3"
     )
-    assert calls == [(7, False), (7, True)]
+    assert calls == [(7, False, False), (7, False, True), (7, True, None)]
     wechat = registry._implementations["wechat-produce-once"]
     assert isinstance(wechat, WechatProduceOnceCommand)
     assert wechat._restart_reader is cli._restart_wechat_reader_service

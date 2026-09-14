@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createScheduledTask,
   deleteScheduledTask,
+  getScheduledTaskSkillPreview,
   getScheduledTaskOptions,
   listScheduledTaskRuns,
   listScheduledTasks,
@@ -44,11 +45,11 @@ const validOptions = {
   runtime_options: [{ route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt", available: true, unavailable_reason: null, supported_thinking: ["low", "medium", "high", "xhigh"], capabilities: ["local_process_execution"] }],
   managed_skill_options: [{ skill_id: 2, name: "managed", display_name: "Managed", revisions: [{ revision_id: 3, revision_number: 1, sha256: "abc", source: "settings", available: true, unavailable_reason: null }] }],
   operation_skill_options: [{ name: "operation", source: "/skills/operation/SKILL.md", content_summary: "Operation", sha256: "def", available: true, unavailable_reason: null }],
-  service_command_options: [{ name: "produce-once", display_name: "检查钉钉消息", description: "增量读取 DingTalk 未读消息", channel: "dingtalk", consumer_prompt_enabled: true }],
+  service_command_options: [{ name: "produce-once", display_name: "读取新钉钉消息", description: "读取新的单聊和群聊 @ 消息", channel: "dingtalk", consumer_prompt_enabled: true }],
   meta: { snapshot_at: "now" },
 } as const;
 const commandTask = {
-  ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "使用 $dingtalk-chat 处理真实消息。", command: "produce-once",
+  ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "处理新的钉钉消息", description: "发现新的单聊或群聊 @ 消息后，由 Agent 读取最新上下文，决定回复、表态、澄清或不处理。", prompt: "使用 $dingtalk-chat 处理真实消息。", command: "produce-once",
   runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: task.skill_refs,
   recent_run: { ...validRun, id: 12, scheduled_task_id: 9, dispatch_status: "dispatched", execution_kind: "service_command", execution_id: "produce-once", dispatched_at: "2026-09-08T12:00:02Z", snapshot: { ...validRun.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "使用 $dingtalk-chat 处理真实消息。", command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: task.skill_refs } },
 } as const;
@@ -56,6 +57,33 @@ const commandTask = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("scheduled tasks API", () => {
+  it("loads the exact referenced Skill body from its managed revision or operation document", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 23, skill_id: 2, sha256: "managed-sha", content: "# Managed Skill\n\nExact revision body" }), { headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: "dingtalk-chat", sha256: "operation-sha", content: "# Operation Skill\n\nCurrent operation body" }), { headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(getScheduledTaskSkillPreview({ skill_source: "managed", skill_name: "ceo-minutes-sync", managed_skill_id: 2, managed_revision_id: 23, position: 0 }, undefined, "managed-sha"))
+      .resolves.toEqual({ name: "ceo-minutes-sync", content: "# Managed Skill\n\nExact revision body" });
+    await expect(getScheduledTaskSkillPreview({ skill_source: "operation", skill_name: "dingtalk-chat", managed_skill_id: null, managed_revision_id: null, position: 0 }, undefined, "operation-sha"))
+      .resolves.toEqual({ name: "dingtalk-chat", content: "# Operation Skill\n\nCurrent operation body" });
+
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/console/settings/managed-skill-revisions/23", expect.any(Object));
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/console/settings/skills/dingtalk-chat", expect.any(Object));
+  });
+
+  it.each([
+    ["managed revision identity", { id: 99, skill_id: 2, content: "wrong" }, { skill_source: "managed" as const, skill_name: "ceo-minutes-sync", managed_skill_id: 2, managed_revision_id: 23, position: 0 }],
+    ["managed skill identity", { id: 23, skill_id: 99, content: "wrong" }, { skill_source: "managed" as const, skill_name: "ceo-minutes-sync", managed_skill_id: 2, managed_revision_id: 23, position: 0 }],
+    ["operation name", { name: "lark-im", content: "wrong" }, { skill_source: "operation" as const, skill_name: "dingtalk-chat", managed_skill_id: null, managed_revision_id: null, position: 0 }],
+    ["expected digest", { name: "dingtalk-chat", sha256: "old", content: "wrong" }, { skill_source: "operation" as const, skill_name: "dingtalk-chat", managed_skill_id: null, managed_revision_id: null, position: 0 }],
+  ])("rejects a preview response with mismatched %s", async (_label, payload, ref) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json" } })));
+
+    await expect(getScheduledTaskSkillPreview(ref, undefined, _label === "expected digest" ? "current" : undefined))
+      .rejects.toThrow("invalid scheduled task Skill preview response");
+  });
+
   it("validates list and option responses instead of trusting malformed payloads", async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [task], meta: { total: 1, snapshot_at: "now" } }), { headers: { "Content-Type": "application/json" } }))
@@ -185,7 +213,7 @@ describe("service command tasks", () => {
   });
 
   it("accepts a WeChat command whose consumer loads no Skill and keeps its channel", async () => {
-    const wechat = { name: "wechat-produce-once", display_name: "检查微信消息", description: "读取微信消息", channel: "wechat", consumer_prompt_enabled: true };
+    const wechat = { name: "wechat-produce-once", display_name: "读取新微信消息", description: "读取微信消息", channel: "wechat", consumer_prompt_enabled: true };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...validOptions, service_command_options: [...validOptions.service_command_options, wechat] }), { headers: { "Content-Type": "application/json" } })));
 
     const catalog = (await getScheduledTaskOptions()).service_command_options;
@@ -195,7 +223,7 @@ describe("service command tasks", () => {
   });
 
   it("accepts a meeting command whose consumer exports no instruction constant", async () => {
-    const meeting = { name: "scan-meetings-once", display_name: "检查 DingTalk 会议", description: "读取已结束的会议", channel: "meeting", consumer_prompt_enabled: true };
+    const meeting = { name: "scan-meetings-once", display_name: "读取已结束会议", description: "读取已结束的会议", channel: "meeting", consumer_prompt_enabled: true };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...validOptions, service_command_options: [meeting] }), { headers: { "Content-Type": "application/json" } })));
 
     const catalog = (await getScheduledTaskOptions()).service_command_options;

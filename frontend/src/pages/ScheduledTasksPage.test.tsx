@@ -9,7 +9,7 @@ import type { ScheduledTask, ScheduledTaskRun } from "../api/scheduledTasks";
 const api = vi.hoisted(() => ({
   listScheduledTasks: vi.fn(), getScheduledTaskOptions: vi.fn(), createScheduledTask: vi.fn(),
   updateScheduledTask: vi.fn(), setScheduledTaskEnabled: vi.fn(), runScheduledTask: vi.fn(),
-  deleteScheduledTask: vi.fn(), listScheduledTaskRuns: vi.fn(),
+  deleteScheduledTask: vi.fn(), listScheduledTaskRuns: vi.fn(), getScheduledTaskSkillPreview: vi.fn(),
 }));
 vi.mock("../api/scheduledTasks", () => api);
 
@@ -48,17 +48,17 @@ const options = {
     { name: "lark-im", source: "/skills/lark-im/SKILL.md", content_summary: "读取飞书消息", sha256: "lark", available: false, unavailable_reason: "operation_skill_name_conflict" },
   ],
   service_command_options: [
-    { name: "produce-once", display_name: "检查钉钉消息", description: "增量读取 DingTalk 未读消息，去重后写入 reply task。", channel: "dingtalk" as const, consumer_prompt_enabled: true },
-    { name: "wechat-produce-once", display_name: "检查微信消息", description: "读取已就绪微信账号的新消息。", channel: "wechat" as const, consumer_prompt_enabled: true },
-    { name: "scan-meetings-once", display_name: "检查 DingTalk 会议", description: "读取已结束的 DingTalk 会议。", channel: "meeting" as const, consumer_prompt_enabled: true },
-    { name: "sync-minutes-once", display_name: "同步 AI 听记", description: "同步 AI 听记到本地归档。", channel: "work_summary" as const, consumer_prompt_enabled: false },
+    { name: "produce-once", display_name: "读取新钉钉消息", description: "读取新的单聊和群聊 @ 消息；发现后由 Agent 根据最新上下文决定是否回复、表态、澄清或不处理。", channel: "dingtalk" as const, consumer_prompt_enabled: true },
+    { name: "wechat-produce-once", display_name: "读取新微信消息", description: "读取已启用好友和群聊 @ 的新消息；仅按已配置范围和发送模式交由 Agent 判断是否回复。", channel: "wechat" as const, consumer_prompt_enabled: true },
+    { name: "scan-meetings-once", display_name: "读取已结束会议", description: "读取已结束且会议资料可用的钉钉会议；由 Agent 整理结论、分歧、行动项和必要的会后澄清。", channel: "meeting" as const, consumer_prompt_enabled: true },
+    { name: "sync-minutes-once", display_name: "同步听记到工作区", description: "归档尚未归档且可访问的钉钉 AI 听记，把可用摘要和逐字稿保存到工作区；权限受限或内容不可读时保留同步状态。", channel: "work_summary" as const, consumer_prompt_enabled: false },
   ],
   meta: { snapshot_at: "2026-09-08T12:00:00Z" },
 };
 const commandPrompt = "使用 $ceo-minutes-sync 与 $dingtalk-chat 处理 Trigger 发现的真实消息。";
 const commandRefs = [{ ...managedRef, position: 0 }, { ...operationRef, position: 1 }];
 const commandRun: ScheduledTaskRun = { ...run, id: 13, scheduled_task_id: 9, execution_kind: "service_command", execution_id: "produce-once", snapshot: { ...run.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: commandPrompt, command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: commandRefs } };
-const commandTask: TestTask = { ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: commandPrompt, command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: commandRefs, recent_run: commandRun };
+const commandTask: TestTask = { ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "处理新的钉钉消息", description: "发现新的单聊或群聊 @ 消息后，由 Agent 读取最新上下文，决定回复、表态、澄清或不处理。", prompt: commandPrompt, command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: commandRefs, recent_run: commandRun };
 
 function setup(items: TestTask[] = [task]) {
   api.listScheduledTasks.mockResolvedValue({ items, meta: { total: items.length, snapshot_at: "now" } });
@@ -69,11 +69,16 @@ function setup(items: TestTask[] = [task]) {
   api.setScheduledTaskEnabled.mockImplementation(async (_id, enabled) => ({ item: { ...task, enabled, version: 4 }, meta: { snapshot_at: "now" } }));
   api.runScheduledTask.mockResolvedValue({ item: { ...run, id: 12, event_id: "manual:12" }, meta: { snapshot_at: "now" } });
   api.deleteScheduledTask.mockResolvedValue({ item: { ...task, deleted_at: "now" }, meta: { snapshot_at: "now" } });
+  api.getScheduledTaskSkillPreview.mockResolvedValue({ name: "dingtalk-chat", content: "# 钉钉消息\n\n读取完整消息上下文。" });
 }
 
 beforeEach(() => { vi.clearAllMocks(); setup(); });
 
 function renderPage(entry = "/scheduled-tasks") { return render(<MemoryRouter initialEntries={[entry]}><ScheduledTasksPage /></MemoryRouter>); }
+
+async function editSelectedTask(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "编辑任务" }));
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -82,10 +87,110 @@ function deferred<T>() {
 }
 
 describe("ScheduledTasksPage", () => {
+  it("keeps a selected task in a readable view until Edit, then saves the real draft", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    expect((await screen.findAllByText("增量检查 DingTalk 消息并创建后续处理任务。")).length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText("任务名称")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "编辑任务" }));
+    const description = screen.getByLabelText("任务描述");
+    await user.clear(description);
+    await user.type(description, "仅处理新的钉钉消息。");
+    await user.click(screen.getByRole("button", { name: "保存更改" }));
+
+    expect(api.updateScheduledTask).toHaveBeenCalledWith(7, expect.objectContaining({
+      description: "仅处理新的钉钉消息。",
+      version: 3,
+    }));
+    expect(await screen.findByText("定时任务已保存")).toBeInTheDocument();
+    expect(screen.queryByLabelText("任务描述")).toBeNull();
+  });
+
+  it("previews the exact referenced Skill body on hover and keyboard focus", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const skill = await screen.findByRole("button", { name: /预览 dingtalk-chat Skill/ });
+
+    await user.hover(skill);
+    expect(skill).toHaveAttribute("aria-expanded", "true");
+    expect(skill).toHaveAttribute("aria-controls", expect.stringContaining("scheduled-task-skill-preview"));
+    expect(await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" })).toHaveTextContent("读取完整消息上下文");
+    expect(api.getScheduledTaskSkillPreview).toHaveBeenCalledWith(operationRef, expect.any(AbortSignal), "chat");
+    await user.unhover(skill);
+    expect(screen.queryByRole("region", { name: "dingtalk-chat Skill 正文" })).toBeNull();
+
+    skill.focus();
+    expect(await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" })).toBeInTheDocument();
+  });
+
+  it("retries a failed Skill preview on a later hover instead of latching the transient error", async () => {
+    const user = userEvent.setup();
+    api.getScheduledTaskSkillPreview
+      .mockRejectedValueOnce(new Error("读取暂时失败"))
+      .mockResolvedValueOnce({ name: "dingtalk-chat", content: "# 钉钉消息\n\n第二次读取成功。" });
+    renderPage();
+    const skill = await screen.findByRole("button", { name: /预览 dingtalk-chat Skill/ });
+
+    await user.hover(skill);
+    expect(await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" })).toHaveTextContent("读取暂时失败");
+    await user.unhover(skill);
+    await user.hover(skill);
+
+    expect(await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" })).toHaveTextContent("第二次读取成功");
+    expect(api.getScheduledTaskSkillPreview).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not reuse an operation Skill body after the task view is remounted", async () => {
+    const user = userEvent.setup();
+    api.getScheduledTaskSkillPreview
+      .mockResolvedValueOnce({ name: "dingtalk-chat", content: "# 钉钉消息\n\n旧版本。" })
+      .mockResolvedValueOnce({ name: "dingtalk-chat", content: "# 钉钉消息\n\n新版本。" });
+    const first = renderPage();
+    const firstSkill = await screen.findByRole("button", { name: /预览 dingtalk-chat Skill/ });
+    await user.hover(firstSkill);
+    expect(await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" })).toHaveTextContent("旧版本");
+    first.unmount();
+
+    renderPage();
+    const secondSkill = await screen.findByRole("button", { name: /预览 dingtalk-chat Skill/ });
+    await user.hover(secondSkill);
+    expect(await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" })).toHaveTextContent("新版本");
+    expect(api.getScheduledTaskSkillPreview).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses a focusable inline Skill preview so full content is not clipped by the task workspace", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const skill = await screen.findByRole("button", { name: /预览 dingtalk-chat Skill/ });
+
+    await user.hover(skill);
+    const preview = await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" });
+    expect(preview).toHaveAttribute("tabindex", "0");
+    preview.focus();
+    expect(preview).toHaveFocus();
+  });
+
+  it("does not offer pause, run, or delete while an unsaved edit draft is visible", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await editSelectedTask(user);
+
+    expect(screen.getByRole("button", { name: "取消编辑" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "暂停任务" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "立即运行" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "删除任务" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "取消编辑" }));
+    expect(screen.getByRole("button", { name: "暂停任务" })).toBeInTheDocument();
+  });
+
   it("selects the task named by the Attention deep link", async () => {
     setup([task, taskB]);
+    const user = userEvent.setup();
     renderPage("/scheduled-tasks?id=8");
 
+    await editSelectedTask(user);
     expect(await screen.findByLabelText("任务名称")).toHaveValue("检查飞书消息");
     expect(api.listScheduledTaskRuns).toHaveBeenCalledWith(8, "", expect.any(AbortSignal));
   });
@@ -98,9 +203,7 @@ describe("ScheduledTasksPage", () => {
     expect(within(list).getByText("每分钟执行 · Asia/Shanghai")).toBeInTheDocument();
     expect(within(list).getByText(/下次.*2026/)).toBeInTheDocument();
     expect(within(list).getByText(/最近.*dispatched/)).toBeInTheDocument();
-    expect(screen.getByLabelText("任务名称")).toHaveValue("检查钉钉消息");
-    expect(screen.getByText("codex_oauth · gpt-5.6-sol")).toBeInTheDocument();
-    expect(screen.getByText("claude_cloud · claude · 不可用：snapshot_missing")).toBeInTheDocument();
+    expect(screen.getByText("检查新的钉钉消息 $dingtalk-chat")).toBeInTheDocument();
     expect(screen.getAllByText("dingtalk-chat").length).toBeGreaterThan(0);
     expect(screen.queryByRole("region", { name: "Skill 建议" })).not.toBeInTheDocument();
   });
@@ -108,6 +211,7 @@ describe("ScheduledTasksPage", () => {
   it("selects Skills through $ suggestions without inferring extra refs from arbitrary text", async () => {
     const user = userEvent.setup();
     renderPage();
+    await editSelectedTask(user);
     const prompt = await screen.findByLabelText("Agent 执行提示词");
     await user.clear(prompt);
     await user.type(prompt, "同步听记 $ceo");
@@ -130,6 +234,7 @@ describe("ScheduledTasksPage", () => {
   it("keeps explicit $ tokens and structured refs synchronized in both edit directions", async () => {
     const user = userEvent.setup();
     renderPage();
+    await editSelectedTask(user);
     const prompt = await screen.findByLabelText("Agent 执行提示词");
 
     fireEvent.change(prompt, { target: { value: "只保留普通描述" } });
@@ -152,8 +257,7 @@ describe("ScheduledTasksPage", () => {
   it("creates, toggles, manually runs, and deletes with explicit confirmation", async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByLabelText("任务名称");
-    await user.click(screen.getByRole("button", { name: "新建任务" }));
+    await user.click(await screen.findByRole("button", { name: "新建任务" }));
     expect(screen.getByRole("heading", { name: "新建定时任务" })).toBeInTheDocument();
     await user.type(screen.getByLabelText("任务名称"), "飞书消息检查");
     await user.type(screen.getByLabelText("任务描述"), "检查飞书消息并创建处理任务。");
@@ -191,6 +295,7 @@ describe("ScheduledTasksPage", () => {
     const user = userEvent.setup();
     api.updateScheduledTask.mockRejectedValue(Object.assign(new Error("版本冲突"), { status: 409, code: "conflict" }));
     renderPage();
+    await editSelectedTask(user);
     const name = await screen.findByLabelText("任务名称");
     await user.clear(name); await user.type(name, "我的未保存修改");
     await user.click(screen.getByRole("button", { name: "保存更改" }));
@@ -228,7 +333,9 @@ describe("ScheduledTasksPage", () => {
         ? { ...runtime, available: false, unavailable_reason: "oauth_expired" }
         : runtime),
     });
+    const user = userEvent.setup();
     renderPage();
+    await editSelectedTask(user);
 
     expect(await screen.findByText("当前 Runtime 不可用：oauth_expired")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存更改" })).toBeDisabled();
@@ -238,6 +345,7 @@ describe("ScheduledTasksPage", () => {
   it("clears thinking when switching to a Runtime that does not support it", async () => {
     const user = userEvent.setup();
     renderPage();
+    await editSelectedTask(user);
     const runtime = await screen.findByLabelText("Runtime");
     expect(screen.getByLabelText("Reasoning")).toHaveValue("high");
 
@@ -253,7 +361,9 @@ describe("ScheduledTasksPage", () => {
 
   it("keeps Friday unavailable for a task that requires the local service surface", async () => {
     setup([{ ...task, required_runtime_capabilities: ["local_process_execution", "local_service_database_access", "local_workspace_access"] }]);
+    const user = userEvent.setup();
     renderPage();
+    await editSelectedTask(user);
 
     const runtime = await screen.findByLabelText("Runtime");
     expect(within(runtime).getByRole("option", { name: /friday_runtime.*缺少能力/ })).toBeDisabled();
@@ -267,11 +377,13 @@ describe("ScheduledTasksPage", () => {
       runtime_options: {},
       required_runtime_capabilities: ["local_process_execution", "local_service_database_access", "local_workspace_access"],
     }]);
+    const user = userEvent.setup();
     renderPage();
+    await editSelectedTask(user);
 
     expect(await screen.findByText(/当前 Runtime 缺少任务所需能力/)).toHaveTextContent("local_process_execution");
     expect(screen.getByRole("button", { name: "保存更改" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "立即运行" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "立即运行" })).toBeNull();
   });
 
   it("defaults a new draft from the first available Runtime capability", async () => {
@@ -296,10 +408,12 @@ describe("ScheduledTasksPage", () => {
     api.updateScheduledTask.mockReturnValueOnce(save.promise);
     api.setScheduledTaskEnabled.mockReturnValueOnce(toggle.promise);
     renderPage();
+    await editSelectedTask(user);
     await screen.findByLabelText("任务名称");
 
     await user.click(screen.getByRole("button", { name: "保存更改" }));
     await user.click(screen.getByRole("button", { name: /检查飞书消息/ }));
+    await editSelectedTask(user);
     expect(screen.getByLabelText("任务名称")).toHaveValue("检查飞书消息");
     expect(screen.getByRole("button", { name: "保存更改" })).toBeEnabled();
     await act(async () => save.resolve({ item: { ...task, name: "A 已保存" }, meta: { snapshot_at: "now" } }));
@@ -310,6 +424,7 @@ describe("ScheduledTasksPage", () => {
     await user.click(screen.getByRole("button", { name: /A 已保存/ }));
     await user.click(screen.getByRole("button", { name: "暂停任务" }));
     await user.click(screen.getByRole("button", { name: /检查飞书消息/ }));
+    await editSelectedTask(user);
     await act(async () => toggle.resolve({ item: { ...task, name: "A 已保存", enabled: false, version: 4 }, meta: { snapshot_at: "now" } }));
     expect(screen.getByLabelText("任务名称")).toHaveValue("检查飞书消息");
     expect(screen.getByRole("button", { name: /A 已保存已暂停/ })).toBeInTheDocument();
@@ -334,7 +449,7 @@ describe("ScheduledTasksPage", () => {
     await act(async () => more.resolve({ scheduled_task: task, items: [{ ...run, id: 10, execution_id: "stale-90" }], meta: { snapshot_at: "now", page_size: 20, next_cursor: "10", has_more: true } }));
     await act(async () => deletion.resolve({ item: { ...task, deleted_at: "now" }, meta: { snapshot_at: "now" } }));
 
-    expect(screen.getByLabelText("任务名称")).toHaveValue("检查飞书消息");
+    expect(screen.queryByLabelText("任务名称")).toBeNull();
     expect(screen.queryByText("reply_task #stale-90")).not.toBeInTheDocument();
     expect(screen.queryByText("定时任务已删除，历史记录仍保留")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /检查钉钉消息/ })).not.toBeInTheDocument();
@@ -358,6 +473,7 @@ describe("ScheduledTasksPage", () => {
     expect(dialog).not.toBeInTheDocument();
     expect(deleteTrigger).toHaveFocus();
 
+    await editSelectedTask(user);
     const prompt = screen.getByLabelText("Agent 执行提示词");
     await user.type(prompt, " $ceo");
     const suggestions = screen.getByRole("region", { name: "Skill 建议" });
@@ -403,6 +519,7 @@ describe("service command tasks", () => {
     setup([commandTask]);
     const user = userEvent.setup();
     renderPage("/scheduled-tasks?id=9");
+    await editSelectedTask(user);
 
     expect(await screen.findByLabelText("Consumer Agent Prompt")).toHaveValue(commandPrompt);
     expect(screen.getByText("每天听记同步 · revision 2")).toBeInTheDocument();
@@ -434,14 +551,15 @@ describe("service command tasks", () => {
     api.updateScheduledTask.mockImplementation(async (_id, draft) => ({ item: { ...commandTask, ...draft, version: 4 }, meta: { snapshot_at: "now" } }));
     const user = userEvent.setup();
     renderPage("/scheduled-tasks?id=9");
+    await editSelectedTask(user);
 
     expect(await screen.findByLabelText("服务命令")).toHaveValue("produce-once");
     expect(screen.getByLabelText("服务命令")).toHaveValue("produce-once");
     expect(screen.getByText("每分钟执行 · Asia/Shanghai")).toBeInTheDocument();
     expect(screen.getByText("计划预览：每分钟执行 · Asia/Shanghai")).toBeInTheDocument();
-    expect(screen.getByText("增量读取 DingTalk 未读消息，去重后写入 reply task。")).toBeInTheDocument();
+    expect(screen.getByText("读取新的单聊和群聊 @ 消息；发现后由 Agent 根据最新上下文决定是否回复、表态、澄清或不处理。")).toBeInTheDocument();
     expect(screen.queryByLabelText("Runtime")).toBeNull();
-    expect(screen.getByLabelText("任务描述")).toHaveValue("增量检查 DingTalk 消息并创建后续处理任务。");
+    expect(screen.getByLabelText("任务描述")).toHaveValue("发现新的单聊或群聊 @ 消息后，由 Agent 读取最新上下文，决定回复、表态、澄清或不处理。");
     expect(screen.queryByText("Agent Skills")).toBeNull();
     expect(screen.queryByLabelText("Consumer Agent Runtime")).toBeNull();
     expect(screen.queryByLabelText("Consumer Agent 自定义描述")).toBeNull();
@@ -451,12 +569,12 @@ describe("service command tasks", () => {
     expect(screen.queryByText(/角色边界/)).toBeNull();
     expect(screen.queryByText("Runtime 路由")).toBeNull();
     expect(screen.getByLabelText("服务命令")).toBeEnabled();
-    expect(screen.getAllByText("检查钉钉消息").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("处理新的钉钉消息").length).toBeGreaterThanOrEqual(1);
     expect(await screen.findByText("技术详情")).toBeInTheDocument();
     expect(screen.queryByText("技术详情：produce-once")).toBeNull();
     expect(screen.queryByText("service_command #produce-once")).toBeNull();
-    expect(screen.getByRole("button", { name: "暂停任务" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "立即运行" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "暂停任务" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "立即运行" })).toBeNull();
 
     await user.clear(screen.getByLabelText("Cron 表达式"));
     await user.type(screen.getByLabelText("Cron 表达式"), "0 30 * * * *");
@@ -468,17 +586,37 @@ describe("service command tasks", () => {
 
   it("hides Consumer Prompt for a deterministic command with no Agent consumer", async () => {
     setup([{ ...commandTask, id: 10, migration_key: null, name: "同步 AI 听记", command: "sync-minutes-once", prompt: "", skill_refs: [], recent_run: null }]);
+    const user = userEvent.setup();
     renderPage("/scheduled-tasks?id=10");
+    await editSelectedTask(user);
 
     expect(await screen.findByLabelText("服务命令")).toHaveValue("sync-minutes-once");
     expect(screen.queryByLabelText("Consumer Agent Prompt")).toBeNull();
     expect(screen.queryByText("Consumer Agent Skills")).toBeNull();
   });
 
+  it("describes a fixed second schedule without treating it as a custom Cron", async () => {
+    setup([commandTask]);
+    const user = userEvent.setup();
+    renderPage("/scheduled-tasks?id=9");
+    await editSelectedTask(user);
+
+    const expression = await screen.findByLabelText("Cron 表达式");
+    await user.clear(expression);
+    await user.type(expression, "10 * * * * *");
+    expect(screen.getByText("计划预览：每分钟第10秒执行 · Asia/Shanghai")).toBeInTheDocument();
+
+    await user.clear(expression);
+    await user.type(expression, "0 * * * * *");
+    expect(screen.getByText("计划预览：每分钟执行 · Asia/Shanghai")).toBeInTheDocument();
+  });
+
   it("keeps the execution type editable for a user-created command task", async () => {
     setup([{ ...commandTask, migration_key: null }]);
     api.listScheduledTaskRuns.mockResolvedValue({ scheduled_task: commandTask, items: [commandRun], meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false } });
+    const user = userEvent.setup();
     renderPage("/scheduled-tasks?id=9");
+    await editSelectedTask(user);
 
     expect(await screen.findByLabelText("服务命令")).toHaveValue("produce-once");
     expect(screen.getByLabelText("服务命令")).toBeEnabled();
@@ -488,6 +626,7 @@ describe("service command tasks", () => {
   it("shows the real task description for an Agent task without a fabricated system prompt", async () => {
     const user = userEvent.setup();
     renderPage();
+    await editSelectedTask(user);
 
     expect(await screen.findByLabelText("任务描述")).toHaveValue("增量检查 DingTalk 消息并创建后续处理任务。");
     expect(screen.getByText("任务描述")).toBeInTheDocument();
@@ -508,7 +647,9 @@ describe("service command tasks", () => {
 
   it("keeps the execution type editable for a repository managed Agent task", async () => {
     setup([{ ...task, migration_key: "dingtalk-agent-check-v1" }]);
+    const user = userEvent.setup();
     renderPage();
+    await editSelectedTask(user);
 
     expect(await screen.findByLabelText("任务描述")).toBeInTheDocument();
     expect(screen.getByLabelText("服务命令")).toBeEnabled();

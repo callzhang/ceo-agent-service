@@ -24,6 +24,13 @@ def cron_human_description(expression: str) -> str:
     if seconds == "0" and minutes == "*" and hours == "*" and days == months == weekdays == "*":
         return "每分钟执行"
 
+    if (
+        seconds.isdigit()
+        and 0 <= int(seconds) <= 59
+        and minutes == hours == days == months == weekdays == "*"
+    ):
+        return f"每分钟第{int(seconds)}秒执行"
+
     # In the six-field form the first field is seconds, so this is a seconds
     # interval (for example, */15 * * * * * means every fifteen seconds).
     if (
@@ -36,6 +43,14 @@ def cron_human_description(expression: str) -> str:
 
     if seconds == minutes == "0" and hours == "*" and days == months == weekdays == "*":
         return "每小时整点执行"
+
+    if (
+        seconds == "0"
+        and minutes.isdigit()
+        and 0 <= int(minutes) <= 59
+        and hours == days == months == weekdays == "*"
+    ):
+        return f"每小时第{int(minutes)}分钟执行"
 
     if (
         seconds == minutes == "0"
