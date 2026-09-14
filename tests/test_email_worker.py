@@ -4659,15 +4659,40 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
     )
     assert payload["unsubscribe_authentication"] == expected_authentication
 
+    # Providers may re-render a message after the task has been authorized.
+    # Reloading an existing task must retain its persisted opaque entry instead
+    # of trying to select a new entry from this changed representation.
+    reloaded_provider_message = {
+        **provider_message,
+        "listUnsubscribe": "",
+        "listUnsubscribePost": "",
+        "markdownBody": "Subscription content was refreshed by the provider.",
+        "textBody": "Subscription content was refreshed by the provider.",
+    }
+
     class Source:
+        def __init__(self, message):
+            self.message = message
+
         def fetch_uid_batch(self, *_args, **_kwargs):
-            return SimpleNamespace(uidvalidity=42, messages=(provider_message,))
+            return SimpleNamespace(
+                uidvalidity=42,
+                messages=(self.message,),
+            )
 
         def logout(self):
             return None
 
+    source_factory_calls = 0
+
     def source_factory(_account):
-        return Source()
+        nonlocal source_factory_calls
+        source_factory_calls += 1
+        return Source(
+            reloaded_provider_message
+            if source_factory_calls == 1
+            else provider_message
+        )
 
     context = module._load_email_task_context(
         email_store,

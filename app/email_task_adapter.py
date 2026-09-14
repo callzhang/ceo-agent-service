@@ -1595,6 +1595,51 @@ class EmailAgentTaskAdapter:
             )
         return tuple(routes)
 
+    def load_existing_task_context(
+        self,
+        task: ReplyTask,
+        task_input: EmailAgentTaskInput,
+    ) -> AgentTaskContext:
+        """Rebuild one existing task from its immutable, authorized payload.
+
+        Selecting a browser unsubscribe entry belongs to task creation.  A
+        later execution must retain that exact authorization even when the
+        provider re-renders the message body, otherwise an already recorded
+        terminal receipt cannot receive a new Consumer/Audit terminal run.
+        """
+        try:
+            payload = json.loads(task.trigger_message_json)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise EmailAgentTaskMetadataError(
+                "email task metadata is not valid JSON"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise EmailAgentTaskMetadataError("email task metadata is invalid")
+        if (
+            task.channel != "email"
+            or payload.get("schema") != _PAYLOAD_SCHEMA
+            or payload.get("action_type") != EmailAction.UNSUBSCRIBE.value
+            or payload.get("action_identity") != task.trigger_message_id
+            or not isinstance(payload.get("account_id"), str)
+            or not isinstance(payload.get("thread_identity"), str)
+            or task.conversation_id
+            != email_conversation_id(
+                payload["account_id"], payload["thread_identity"]
+            )
+            or payload.get("stable_message_identity")
+            != task_input.stable_message_identity
+            or payload.get("thread_identity") != task_input.thread_identity
+        ):
+            raise EmailAgentTaskMetadataError(
+                "email task metadata does not match durable task identity"
+            )
+        assert_safe_email_unsubscribe_metadata(payload)
+        return self._build_context(
+            task=task,
+            payload=payload,
+            task_input=task_input,
+        )
+
     @staticmethod
     def _safe_action_metadata(
         *,

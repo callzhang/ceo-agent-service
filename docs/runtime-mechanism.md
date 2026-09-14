@@ -326,6 +326,11 @@ image/content material，只包含文件名、MIME、字节大小、数量和 in
 Consumer→Audit 往返——退订在真实世界本来就是幂等的。同理，有浏览器步骤但没有 receipt
 不再升级为 needs_human，重跑一次即可。历史 run、session、step、receipt 和失败事实保持不可变。
 
+已经创建的退订任务重建上下文时，必须使用任务中保存的不可变、脱敏 ActionPlan 载荷；浏览器入口
+只在创建任务时从邮件正文中选择一次。Provider 后续重排正文、移除 header 或无法读取当前邮件时，
+不得重新选择入口并改变已有授权。已有终态 receipt 的新 Consumer/Audit 执行只读取该 receipt，
+形成新的明确成功 run，不重新打开浏览器或发送新的外部请求。
+
 冷启动期间，实时主路径是 Agent，且只处理服务观察到的未读 Inbox/未绑定来源邮件；Agent 不处理
 已读邮件，也不因分类而改成已读。冻结训练 snapshot 直接采用 provider 文件夹和 important 信号，
 训练与 shadow 评估均为离线、阶段性作业，不在收信路径实时训练或并行推理。某一类别满足

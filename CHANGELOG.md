@@ -1,5 +1,12 @@
 # Changelog
 
+- 2026-09-14: Email unsubscribe task reload now reconstructs an existing task
+  from its immutable, redacted ActionPlan payload rather than re-selecting a
+  browser entry from a provider's latest rendering. A provider body or header
+  change can no longer strand a task that already has a terminal receipt in a
+  failed state. The next Consumer/Audit generation reads the receipt and
+  records its own successful terminal run without reopening the browser.
+
 - 2026-09-14: The built-in hourly DingTalk OA workflow is now named
   `处理新的钉钉 OA 审批`, making the approval task directly discoverable in the
   scheduled-task list. Service startup upgrades only the untouched repository

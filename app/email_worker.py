@@ -2795,24 +2795,13 @@ def _load_email_task_context(
     source_factory: Callable[[Mapping[str, object]], object],
     task: object,
 ):
-    from app.email_classifier_contracts import EmailActionPlan
     from app.email_task_adapter import EmailAgentTaskAdapter
 
-    payload = json.loads(task.trigger_message_json)
-    classification = email_store.get_classification(int(payload["classification_id"]))
-    if classification is None or classification["action_plan"] is None:
-        raise EmailWorkerStartupError("email task action plan is unavailable")
     task_input = _load_email_task_input(email_store, source_factory, task)
-    routes = EmailAgentTaskAdapter(task_store, email_store).ensure_action_plan_tasks(
-        EmailActionPlan.model_validate_json(json.dumps(classification["action_plan"])),
+    return EmailAgentTaskAdapter(task_store, email_store).load_existing_task_context(
+        task,
         task_input,
     )
-    route = next(
-        (candidate for candidate in routes if candidate.task.id == task.id), None
-    )
-    if route is None:
-        raise EmailWorkerStartupError("email task route is unavailable")
-    return route.context
 
 
 def _decision_options_json(result: object) -> str:
