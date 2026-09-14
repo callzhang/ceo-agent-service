@@ -69,7 +69,8 @@ headless source 还会在调用 OKR API 前校验新捕获凭据的有效期；�
 
 ### Agent Cron 与统一 Dispatcher
 
-用户可见的定时任务是 `Cron + Agent 能力（结构化 Skill 引用）+ Runtime`。Scheduler 只计算
+用户可见的定时任务是 `任务描述 + Cron + Agent 能力（结构化 Skill 引用）+ Runtime`。任务描述是所有
+定时任务共有的可读用途说明；Agent 任务另有执行提示词，服务命令不把描述伪装成 Agent prompt。Scheduler 只计算
 当前时间之后的下一个触发点，并把一次触发保存为 `scheduled_task_run`；它不执行领域业务，
 也不把 Consumer/Audit 的完成或失败复制回调度记录。Dispatcher 先领取该 trigger，原子创建
 唯一的 `channel=scheduled` execution source，并在 trigger 上保存

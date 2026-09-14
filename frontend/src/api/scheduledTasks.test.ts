@@ -15,6 +15,7 @@ const task = {
   id: 7,
   migration_key: null,
   name: "检查钉钉消息",
+  description: "增量检查 DingTalk 消息并创建后续处理任务。",
   prompt: "检查新消息 $dingtalk-chat",
   command: "",
   cron_expression: "0 * * * * *",
@@ -37,7 +38,7 @@ const validRun = {
   id: 11, event_id: "manual:11", scheduled_task_id: 7, trigger_kind: "manual",
   scheduled_for: "2026-09-08T12:00:00Z", dispatch_status: "pending", skip_or_error_reason: "",
   execution_kind: "", execution_id: "", created_at: "2026-09-08T12:00:00Z", dispatched_at: null,
-  snapshot: { task_id: 7, task_version: 3, name: task.name, prompt: task.prompt, command: task.command, cron_expression: task.cron_expression, timezone_name: task.timezone_name, runtime_id: task.runtime_id, runtime_options: task.runtime_options, required_runtime_capabilities: task.required_runtime_capabilities, working_directory: task.working_directory, skill_refs: task.skill_refs },
+  snapshot: { task_id: 7, task_version: 3, name: task.name, description: task.description, prompt: task.prompt, command: task.command, cron_expression: task.cron_expression, timezone_name: task.timezone_name, runtime_id: task.runtime_id, runtime_options: task.runtime_options, required_runtime_capabilities: task.required_runtime_capabilities, working_directory: task.working_directory, skill_refs: task.skill_refs },
 } as const;
 const validOptions = {
   runtime_options: [{ route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt", available: true, unavailable_reason: null, supported_thinking: ["low", "medium", "high", "xhigh"], capabilities: ["local_process_execution"] }],
@@ -52,9 +53,9 @@ const validOptions = {
 } as const;
 const downstream = validOptions.service_command_options[0].downstream;
 const commandTask = {
-  ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "检查 DingTalk 消息", prompt: "", command: "produce-once",
+  ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "", command: "produce-once",
   runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: [],
-  recent_run: { ...validRun, id: 12, scheduled_task_id: 9, dispatch_status: "dispatched", execution_kind: "service_command", execution_id: "produce-once", dispatched_at: "2026-09-08T12:00:02Z", snapshot: { ...validRun.snapshot, task_id: 9, name: "检查 DingTalk 消息", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: [] } },
+  recent_run: { ...validRun, id: 12, scheduled_task_id: 9, dispatch_status: "dispatched", execution_kind: "service_command", execution_id: "produce-once", dispatched_at: "2026-09-08T12:00:02Z", snapshot: { ...validRun.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: [] } },
 } as const;
 
 afterEach(() => vi.unstubAllGlobals());
@@ -146,7 +147,7 @@ describe("scheduled tasks API", () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify({ item: task, meta: { snapshot_at: "now" } }), { headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetch);
     const draft = {
-      name: task.name, prompt: task.prompt, command: task.command, cron_expression: task.cron_expression,
+      name: task.name, description: task.description, prompt: task.prompt, command: task.command, cron_expression: task.cron_expression,
       timezone_name: task.timezone_name, runtime_id: task.runtime_id,
       runtime_options: task.runtime_options, working_directory: task.working_directory,
       required_runtime_capabilities: [...task.required_runtime_capabilities],

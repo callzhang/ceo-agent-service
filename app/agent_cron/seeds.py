@@ -119,6 +119,7 @@ def _seed_dingtalk_message_task(
     return store.create_scheduled_task(
         migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
         name="检查 DingTalk 消息",
+        description="增量检查 DingTalk 消息，并将新消息送入统一处理队列。",
         command=DINGTALK_MESSAGE_SERVICE_COMMAND,
         cron_expression="0 * * * * *",
         timezone_name="Asia/Shanghai",
@@ -151,6 +152,7 @@ def _seed_dingtalk_message_recovery_task(
     return store.create_scheduled_task(
         migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
         name="恢复近期 DingTalk 消息",
+        description="按较宽时间范围恢复近期 DingTalk 消息，补齐漏读记录。",
         command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
         cron_expression="0 30 * * * *",
         timezone_name="Asia/Shanghai",
@@ -178,6 +180,7 @@ def _seed_dingtalk_meeting_task(
     return store.create_scheduled_task(
         migration_key=DINGTALK_MEETING_MIGRATION_KEY,
         name="检查 DingTalk 会议",
+        description="扫描已结束的 DingTalk 会议，并创建会议处理任务。",
         command=DINGTALK_MEETING_SERVICE_COMMAND,
         cron_expression="0 * * * * *",
         timezone_name="Asia/Shanghai",
@@ -213,6 +216,7 @@ def _seed_wechat_task(
     return store.create_scheduled_task(
         migration_key=WECHAT_MESSAGE_MIGRATION_KEY,
         name="检查微信消息",
+        description="检查已配置微信会话的新消息，并创建后续处理任务。",
         command=WECHAT_MESSAGE_SERVICE_COMMAND,
         cron_expression="*/15 * * * * *",
         timezone_name="Asia/Shanghai",
@@ -240,6 +244,7 @@ def _seed_oa_task(
     return store.create_scheduled_task(
         migration_key=DINGTALK_OA_MIGRATION_KEY,
         name="检查 DingTalk OA 审批",
+        description="检查待处理的 DingTalk OA 审批，并创建后续处理任务。",
         command=DINGTALK_OA_SERVICE_COMMAND,
         cron_expression="0 0 * * * *",
         timezone_name="Asia/Shanghai",
@@ -267,6 +272,7 @@ def _seed_work_source_task(
     return store.create_scheduled_task(
         migration_key=WORK_SOURCE_MIGRATION_KEY,
         name="每天扫描工作来源",
+        description="扫描日历、待办和其他工作来源，生成可处理的工作输入。",
         command=WORK_SOURCE_SERVICE_COMMAND,
         cron_expression="0 0 0 * * *",
         timezone_name="Asia/Shanghai",
@@ -303,6 +309,7 @@ def _seed_weekly_okr_task(
     return store.create_scheduled_task(
         migration_key=WEEKLY_OKR_MIGRATION_KEY,
         name="周日生成 OKR 周报",
+        description="读取管理者实时 OKR，生成本周管理进度周报。",
         command=WEEKLY_OKR_SERVICE_COMMAND,
         cron_expression="0 0 18 * * 0",
         timezone_name="Asia/Shanghai",
@@ -331,6 +338,7 @@ def _seed_minutes_task(
     return store.create_scheduled_task(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
         name="每天同步 AI 听记",
+        description="同步 AI 听记的摘要、逐字稿和归档游标到工作区。",
         command="sync-minutes-once",
         cron_expression="0 0 20 * * *",
         timezone_name="Asia/Shanghai",

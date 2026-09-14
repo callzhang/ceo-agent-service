@@ -57,6 +57,7 @@ def _create_task(
     return store.create_scheduled_task(
         migration_key=migration_key,
         name="Daily minutes",
+        description="同步最新会议听记并写入工作区。",
         prompt="Sync the latest meeting minutes with $ceo-test.",
         cron_expression="0 0 20 * * *",
         timezone_name="Asia/Shanghai",
@@ -114,6 +115,7 @@ def test_create_and_read_task_preserves_structured_refs_and_utc_contract(
 
     assert task.id > 0
     assert task.version == 1
+    assert task.description == "同步最新会议听记并写入工作区。"
     assert task.created_at == NOW
     assert task.updated_at == NOW
     assert task.runtime_options == {
@@ -124,6 +126,35 @@ def test_create_and_read_task_preserves_structured_refs_and_utc_contract(
     assert task.skill_refs[0].skill_source == "managed"
     assert store.get_scheduled_task(task.id) == task
     assert store.list_scheduled_tasks() == (task,)
+
+
+def test_create_task_without_description_uses_name_as_nonempty_fallback(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "cron-description-fallback.sqlite3")
+    task = store.create_scheduled_task(
+        name="Command without legacy description",
+        command="produce-once",
+        cron_expression="0 * * * * *",
+        timezone_name="Asia/Shanghai",
+        now=NOW,
+    )
+
+    assert task.description == task.name
+
+
+def test_task_snapshot_preserves_description(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "cron-description.sqlite3")
+    task = _create_task(store)
+
+    run = store.create_scheduled_task_run(
+        task.id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+
+    assert run.snapshot.description == task.description
 
 
 def test_task_and_run_snapshot_preserve_required_runtime_capabilities(

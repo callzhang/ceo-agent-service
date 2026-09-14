@@ -183,6 +183,7 @@ class ScheduledTask:
     id: int
     migration_key: str | None
     name: str
+    description: str
     prompt: str
     command: str
     cron_expression: str
@@ -218,6 +219,7 @@ class ScheduledTaskSnapshot:
     task_id: int
     task_version: int
     name: str
+    description: str
     prompt: str
     command: str
     cron_expression: str
@@ -248,6 +250,7 @@ class ScheduledTaskSnapshot:
             task_id=task.id,
             task_version=task.version,
             name=task.name,
+            description=task.description,
             prompt=task.prompt,
             command=task.command,
             cron_expression=task.cron_expression,
@@ -266,6 +269,7 @@ class ScheduledTaskSnapshot:
             "task_id": self.task_id,
             "task_version": self.task_version,
             "name": self.name,
+            "description": self.description,
             "prompt": self.prompt,
             "command": self.command,
             "cron_expression": self.cron_expression,
@@ -295,6 +299,7 @@ class ScheduledTaskSnapshot:
             "task_id",
             "task_version",
             "name",
+            "description",
             "prompt",
             "command",
             "cron_expression",
@@ -316,6 +321,7 @@ class ScheduledTaskSnapshot:
             raise ValueError("scheduled task snapshot identity is invalid")
         text_fields = (
             "name",
+            "description",
             "prompt",
             "command",
             "cron_expression",
@@ -348,6 +354,7 @@ class ScheduledTaskSnapshot:
             task_id=payload["task_id"],
             task_version=payload["task_version"],
             name=payload["name"],
+            description=payload["description"],
             prompt=payload["prompt"],
             command=payload["command"],
             cron_expression=payload["cron_expression"],

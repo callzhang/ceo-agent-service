@@ -130,7 +130,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-11.3"
+STORE_SCHEMA_VERSION = "2026-09-13.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -231,6 +231,7 @@ STORE_SCHEMA_REMOVED_COLUMNS = {
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "scheduled_tasks": (
         "migration_key",
+        "description",
         "command",
         "runtime_options_json",
         "required_runtime_capabilities_json",
@@ -2201,6 +2202,7 @@ class AutoReplyStore:
                     id integer primary key autoincrement,
                     migration_key text,
                     name text not null,
+                    description text not null default '',
                     prompt text not null,
                     command text not null default '',
                     cron_expression text not null,
@@ -4507,6 +4509,15 @@ class AutoReplyStore:
                     "alter table scheduled_tasks add column "
                     "command text not null default ''"
                 )
+            if "description" not in scheduled_task_columns:
+                db.execute(
+                    "alter table scheduled_tasks add column "
+                    "description text not null default ''"
+                )
+            db.execute(
+                "update scheduled_tasks set description=coalesce(nullif(trim(prompt), ''), name) "
+                "where trim(description)=''"
+            )
             for snapshot_row in db.execute(
                 "select id, snapshot_json from scheduled_task_runs"
             ).fetchall():
@@ -4521,6 +4532,7 @@ class AutoReplyStore:
                 if not isinstance(snapshot_payload, dict):
                     continue
                 missing_snapshot_fields = {
+                    "description": str(snapshot_payload.get("name") or ""),
                     "required_runtime_capabilities": [],
                     "command": "",
                 }
@@ -5135,6 +5147,7 @@ class AutoReplyStore:
                 else None
             ),
             name=str(row["name"]),
+            description=str(row["description"] or row["name"]),
             prompt=str(row["prompt"]),
             command=str(row["command"]),
             cron_expression=str(row["cron_expression"]),
@@ -5164,7 +5177,7 @@ class AutoReplyStore:
     @staticmethod
     def _scheduled_task_columns() -> str:
         return (
-            "id, migration_key, name, prompt, command, cron_expression, timezone, "
+            "id, migration_key, name, description, prompt, command, cron_expression, timezone, "
             "runtime_id, runtime_options_json, working_directory, enabled, "
             "required_runtime_capabilities_json, "
             "version, created_at, updated_at, deleted_at"
@@ -5242,6 +5255,7 @@ class AutoReplyStore:
         self,
         *,
         name: str,
+        description: str = "",
         prompt: str = "",
         command: str = "",
         cron_expression: str,
@@ -5263,6 +5277,7 @@ class AutoReplyStore:
             timezone_name, field="scheduled task timezone"
         )
         for field_name, value in (
+            ("description", description),
             ("prompt", prompt),
             ("command", command),
             ("runtime", runtime_id),
@@ -5270,6 +5285,7 @@ class AutoReplyStore:
         ):
             if not isinstance(value, str):
                 raise ValueError(f"scheduled task {field_name} must be text")
+        description = description.strip() or name
         prompt, command, runtime_id = prompt.strip(), command.strip(), runtime_id.strip()
         if not isinstance(enabled, bool):
             raise ValueError("scheduled task enabled must be a boolean")
@@ -5312,15 +5328,16 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 insert into scheduled_tasks (
-                    migration_key, name, prompt, command, cron_expression, timezone,
+                    migration_key, name, description, prompt, command, cron_expression, timezone,
                     runtime_id, runtime_options_json, working_directory,
                     required_runtime_capabilities_json, enabled, version,
                     created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 """,
                 (
                     migration_key,
                     name,
+                    description,
                     prompt,
                     command,
                     cron_expression,
@@ -5450,6 +5467,7 @@ class AutoReplyStore:
         *,
         expected_version: int,
         name: str | None = None,
+        description: str | None = None,
         prompt: str | None = None,
         command: str | None = None,
         cron_expression: str | None = None,
@@ -5479,13 +5497,19 @@ class AutoReplyStore:
                 raise ScheduledTaskVersionConflictError(
                     "scheduled task version conflict"
                 )
+            next_name = (
+                self._require_scheduled_task_text(
+                    name, field="scheduled task name"
+                )
+                if name is not None
+                else current.name
+            )
             updates = {
-                "name": (
-                    self._require_scheduled_task_text(
-                        name, field="scheduled task name"
-                    )
-                    if name is not None
-                    else current.name
+                "name": next_name,
+                "description": (
+                    (description.strip() or next_name)
+                    if description is not None
+                    else current.description
                 ),
                 "prompt": prompt.strip() if prompt is not None else current.prompt,
                 "command": (
@@ -5555,7 +5579,7 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update scheduled_tasks
-                   set name=?, prompt=?, command=?, cron_expression=?, timezone=?,
+                   set name=?, description=?, prompt=?, command=?, cron_expression=?, timezone=?,
                        runtime_id=?, runtime_options_json=?, working_directory=?,
                        required_runtime_capabilities_json=?,
                        version=version + 1, updated_at=?
@@ -5563,6 +5587,7 @@ class AutoReplyStore:
                 """,
                 (
                     updates["name"],
+                    updates["description"],
                     updates["prompt"],
                     updates["command"],
                     updates["cron_expression"],

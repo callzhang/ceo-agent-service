@@ -137,6 +137,7 @@ def _client(
 def _create_payload(ids: dict[str, int]) -> dict[str, object]:
     return {
         "name": "检查钉钉消息",
+        "description": "检查新的钉钉消息并把需要处理的事项送入统一队列。",
         "prompt": "检查新的钉钉消息并处理需要 CEO 关注的内容。",
         "cron_expression": "0 * * * * *",
         "timezone_name": "Asia/Shanghai",
@@ -800,6 +801,7 @@ def test_audit_app_reads_only_current_main_pid_runtime_and_skill_receipts(
 def _command_payload() -> dict[str, object]:
     return {
         "name": "检查 DingTalk 消息",
+        "description": "增量检查 DingTalk 消息并创建后续处理任务。",
         "command": "produce-once",
         "cron_expression": "0 * * * * *",
         "timezone_name": "Asia/Shanghai",
@@ -830,6 +832,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         options = client.get("/api/console/scheduled-task-options")
 
     assert item["command"] == "produce-once"
+    assert item["description"] == "增量检查 DingTalk 消息并创建后续处理任务。"
     assert item["prompt"] == "" and item["runtime_id"] == ""
     assert item["skill_refs"] == [] and item["required_runtime_capabilities"] == []
     assert disabled.status_code == 200 and enabled.status_code == 200

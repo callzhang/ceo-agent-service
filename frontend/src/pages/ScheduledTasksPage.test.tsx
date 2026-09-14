@@ -20,10 +20,10 @@ const run = {
   id: 11, event_id: "manual:11", scheduled_task_id: 7, trigger_kind: "manual" as const,
   scheduled_for: "2026-09-08T12:00:00Z", dispatch_status: "dispatched", skip_or_error_reason: "",
   execution_kind: "reply_task", execution_id: "91", created_at: "2026-09-08T12:00:00Z", dispatched_at: "2026-09-08T12:00:01Z",
-  snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, required_runtime_capabilities: [], working_directory: "/tmp/ceo-agent", skill_refs: [operationRef] },
+  snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, required_runtime_capabilities: [], working_directory: "/tmp/ceo-agent", skill_refs: [operationRef] },
 };
 const task = {
-  id: 7, migration_key: null, name: "检查钉钉消息", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "",
+  id: 7, migration_key: null, name: "检查钉钉消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "",
   cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", schedule_description: "每分钟执行 · Asia/Shanghai",
   next_run_at: "2026-09-08T12:01:00Z", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const } as { thinking?: "low" | "medium" | "high" | "xhigh" },
   required_runtime_capabilities: [] as string[],
@@ -68,8 +68,8 @@ const options = {
   ],
   meta: { snapshot_at: "2026-09-08T12:00:00Z" },
 };
-const commandRun: typeof run = { ...run, id: 13, scheduled_task_id: 9, execution_kind: "service_command", execution_id: "produce-once", snapshot: { ...run.snapshot, task_id: 9, name: "检查 DingTalk 消息", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {} as typeof run.snapshot.runtime_options, working_directory: "", skill_refs: [] } };
-const commandTask: TestTask = { ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "检查 DingTalk 消息", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: [], recent_run: commandRun };
+const commandRun: typeof run = { ...run, id: 13, scheduled_task_id: 9, execution_kind: "service_command", execution_id: "produce-once", snapshot: { ...run.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {} as typeof run.snapshot.runtime_options, working_directory: "", skill_refs: [] } };
+const commandTask: TestTask = { ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: [], recent_run: commandRun };
 
 function setup(items: TestTask[] = [task]) {
   api.listScheduledTasks.mockResolvedValue({ items, meta: { total: items.length, snapshot_at: "now" } });
@@ -119,7 +119,7 @@ describe("ScheduledTasksPage", () => {
   it("selects Skills through $ suggestions without inferring extra refs from arbitrary text", async () => {
     const user = userEvent.setup();
     renderPage();
-    const prompt = await screen.findByLabelText("任务描述");
+    const prompt = await screen.findByLabelText("Agent 执行提示词");
     await user.clear(prompt);
     await user.type(prompt, "同步听记 $ceo");
     const suggestions = screen.getByRole("region", { name: "Skill 建议" });
@@ -141,7 +141,7 @@ describe("ScheduledTasksPage", () => {
   it("keeps explicit $ tokens and structured refs synchronized in both edit directions", async () => {
     const user = userEvent.setup();
     renderPage();
-    const prompt = await screen.findByLabelText("任务描述");
+    const prompt = await screen.findByLabelText("Agent 执行提示词");
 
     fireEvent.change(prompt, { target: { value: "只保留普通描述" } });
     expect(screen.queryByRole("button", { name: "移除dingtalk-chat" })).not.toBeInTheDocument();
@@ -167,7 +167,8 @@ describe("ScheduledTasksPage", () => {
     await user.click(screen.getByRole("button", { name: "新建任务" }));
     expect(screen.getByRole("heading", { name: "新建定时任务" })).toBeInTheDocument();
     await user.type(screen.getByLabelText("任务名称"), "飞书消息检查");
-    await user.type(screen.getByLabelText("任务描述"), "检查飞书消息 $dingtalk");
+    await user.type(screen.getByLabelText("任务描述"), "检查飞书消息并创建处理任务。");
+    await user.type(screen.getByLabelText("Agent 执行提示词"), "检查飞书消息 $dingtalk");
     await user.click(screen.getByRole("button", { name: /dingtalk-chat/ }));
     await user.click(screen.getByRole("button", { name: "创建任务" }));
     expect(api.createScheduledTask).toHaveBeenCalledWith(expect.objectContaining({ name: "飞书消息检查", skill_refs: [operationRef] }));
@@ -368,7 +369,7 @@ describe("ScheduledTasksPage", () => {
     expect(dialog).not.toBeInTheDocument();
     expect(deleteTrigger).toHaveFocus();
 
-    const prompt = screen.getByLabelText("任务描述");
+    const prompt = screen.getByLabelText("Agent 执行提示词");
     await user.type(prompt, " $ceo");
     const suggestions = screen.getByRole("region", { name: "Skill 建议" });
     const suggestion = within(suggestions).getByRole("button", { name: /每天听记同步.*revision 2/ });
@@ -422,7 +423,7 @@ describe("service command tasks", () => {
     expect(screen.getByText("计划预览：每分钟执行 · Asia/Shanghai")).toBeInTheDocument();
     expect(screen.getByText("增量读取 DingTalk 未读消息，去重后写入 reply task。")).toBeInTheDocument();
     expect(screen.queryByLabelText("Runtime")).toBeNull();
-    expect(screen.queryByLabelText("任务描述")).toBeNull();
+    expect(screen.getByLabelText("任务描述")).toHaveValue("增量检查 DingTalk 消息并创建后续处理任务。");
     expect(screen.queryByText("Agent Skills")).toBeNull();
     expect(screen.queryByLabelText("Consumer Agent Runtime")).toBeNull();
     expect(screen.queryByLabelText("Consumer Agent 自定义描述")).toBeNull();
@@ -518,9 +519,10 @@ describe("service command tasks", () => {
     const user = userEvent.setup();
     renderPage();
 
-    expect(await screen.findByLabelText("任务描述")).toHaveValue("检查新的钉钉消息 $dingtalk-chat");
+    expect(await screen.findByLabelText("任务描述")).toHaveValue("增量检查 DingTalk 消息并创建后续处理任务。");
     expect(screen.getByText("任务描述")).toBeInTheDocument();
-    expect(screen.getByLabelText("任务描述")).toHaveAttribute("placeholder", expect.stringContaining("$"));
+    expect(screen.getByLabelText("Agent 执行提示词")).toHaveValue("检查新的钉钉消息 $dingtalk-chat");
+    expect(screen.getByLabelText("Agent 执行提示词")).toHaveAttribute("placeholder", expect.stringContaining("$"));
     expect(screen.getByLabelText("Runtime")).toBeInTheDocument();
     expect(screen.getByText("Agent Skills")).toBeInTheDocument();
     expect(screen.getByLabelText("服务命令")).toBeEnabled();

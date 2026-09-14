@@ -60,6 +60,7 @@ class ScheduledTaskCreatePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     name: str = Field(min_length=1)
+    description: str = ""
     prompt: str = ""
     command: str = ""
     cron_expression: str = Field(min_length=1)
@@ -160,6 +161,7 @@ def _run_payload(run: ScheduledTaskRun) -> dict[str, object]:
             "task_id": run.snapshot.task_id,
             "task_version": run.snapshot.task_version,
             "name": run.snapshot.name,
+            "description": run.snapshot.description,
             "prompt": run.snapshot.prompt,
             "command": run.snapshot.command,
             "cron_expression": run.snapshot.cron_expression,
@@ -188,6 +190,7 @@ def _task_payload(
         "id": task.id,
         "migration_key": task.migration_key,
         "name": task.name,
+        "description": task.description,
         "prompt": task.prompt,
         "command": task.command,
         "cron_expression": task.cron_expression,
@@ -352,6 +355,7 @@ def register_scheduled_task_routes(
             _validate_choices(payload, option_service_factory())
             task = store_factory().create_scheduled_task(
                 name=payload.name,
+                description=payload.description,
                 prompt=payload.prompt,
                 command=payload.command,
                 cron_expression=schedule.expression,
@@ -425,6 +429,7 @@ def register_scheduled_task_routes(
                 task_id,
                 expected_version=payload.version,
                 name=payload.name,
+                description=payload.description,
                 prompt=payload.prompt,
                 command=payload.command,
                 cron_expression=schedule.expression,

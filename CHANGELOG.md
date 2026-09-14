@@ -1,5 +1,7 @@
 # Changelog
 
+- 2026-09-13: 每个 Agent Cron 任务现在都保存并展示必填的任务描述；服务命令任务也有独立的可读说明，Agent 执行提示词继续单独保存。旧任务和历史运行快照在迁移时按已有 Prompt 或任务名称补齐描述。
+
 - 2026-09-13: the Tasks console now preserves its dense one-row filters on
   wide screens and switches to a two-row filter layout from 721px through
   1100px. The same breakpoint compacts every top-level navigation destination,

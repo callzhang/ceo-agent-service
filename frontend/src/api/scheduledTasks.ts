@@ -25,6 +25,7 @@ export type ScheduledTaskSkillRef = ManagedScheduledTaskSkillRef | OperationSche
 
 export interface ScheduledTaskDraft {
   name: string;
+  description: string;
   prompt: string;
   /** Nonempty means the task runs this service command in-process instead of an Agent. */
   command: string;
@@ -225,7 +226,7 @@ function validRun(value: unknown): value is ScheduledTaskRun {
     && typeof item.execution_id === "string" && typeof item.created_at === "string"
     && nullableString(item.dispatched_at)
     && positiveInteger(snapshot.task_id) && positiveInteger(snapshot.task_version)
-    && typeof snapshot.name === "string" && typeof snapshot.prompt === "string"
+    && typeof snapshot.name === "string" && typeof snapshot.description === "string" && typeof snapshot.prompt === "string"
     && typeof snapshot.command === "string"
     && typeof snapshot.cron_expression === "string" && typeof snapshot.timezone_name === "string"
     && typeof snapshot.runtime_id === "string" && validRuntimeOptions(snapshot.runtime_options)
@@ -236,7 +237,7 @@ function validRun(value: unknown): value is ScheduledTaskRun {
 function validTask(value: unknown): value is ScheduledTask {
   const item = record(value);
   return Boolean(item && positiveInteger(item.id) && nullableString(item.migration_key)
-    && typeof item.name === "string" && typeof item.prompt === "string"
+    && typeof item.name === "string" && typeof item.description === "string" && Boolean(item.description.trim()) && typeof item.prompt === "string"
     && typeof item.command === "string"
     && typeof item.cron_expression === "string" && typeof item.timezone_name === "string"
     && typeof item.schedule_description === "string" && nullableString(item.next_run_at)
