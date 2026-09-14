@@ -2850,7 +2850,13 @@ def _is_retryable_browser_failure(result: object) -> bool:
     return code.partition(":")[0] in TRANSIENT_BROWSER_ERROR_CODES
 
 
-def _finalize_email_task(store: object, task: object, result: object) -> None:
+def _finalize_email_task(
+    store: object,
+    task: object,
+    result: object,
+    *,
+    direct_unsubscribe_runner: Callable[[int], Mapping[str, object]] | None = None,
+) -> None:
     from app.email_unsubscribe_audit import (
         AuditedUnsubscribeTerminalState,
         audited_unsubscribe_route_refusal,
@@ -2917,11 +2923,9 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
         # the call at all, the audited tool never ran, so there is no receipt
         # to read and the Audit model's invented error code is all that is
         # left - and it reads like a decision to refuse the unsubscribe when
-        # nothing decided anything. Retry instead, because the call goes
-        # through on a route whose provider places it. Only once the retries
-        # are spent is this a real boundary, and then it belongs to a person:
-        # every route declining our own audited tool is a capability the
-        # service does not currently have.
+        # nothing decided anything. Production runs the same task-bound,
+        # receipt-persisting operation directly; the historical retry ladder
+        # remains only for callers that did not supply that service runner.
         refusal = audited_unsubscribe_route_refusal(run)
         if refusal:
             _LOGGER.info(
@@ -2929,13 +2933,40 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
                 task.id,
                 refusal,
             )
+            direct_result = (
+                None
+                if direct_unsubscribe_runner is None
+                else direct_unsubscribe_runner(task.id)
+            )
+            if direct_result is not None:
+                direct_status = str(direct_result.get("status") or "")
+                direct_outcome = str(direct_result.get("outcome") or "")
+                if direct_status == "done":
+                    if direct_outcome == "done":
+                        task_status, send_status = status_map["executed"]
+                    else:
+                        task_status, send_status = status_map["no_action"]
+                    error = ""
+                else:
+                    direct_error = direct_result.get("error")
+                    direct_error_code = (
+                        str(direct_error.get("code") or "")
+                        if isinstance(direct_error, Mapping)
+                        else ""
+                    )
+                    task_status, send_status = status_map["failed_terminal"]
+                    error = direct_error_code or direct_outcome or refusal
             # Counted in the task's own error, not in task.attempts: a
             # deferral hands the attempt budget back by design, so claim's +1
             # and defer_reply_task's -1 cancel and attempts never advances.
             # Keying the ladder on it left every refused task looping forever
             # instead of ever reaching a person.
-            refusals = _route_refusal_count(str(getattr(task, "error", "") or "")) + 1
-            if refusals < ROUTE_REFUSED_UNSUBSCRIBE_RETRIES:
+            elif (
+                refusals := _route_refusal_count(
+                    str(getattr(task, "error", "") or "")
+                )
+                + 1
+            ) < ROUTE_REFUSED_UNSUBSCRIBE_RETRIES:
                 task_status, send_status = status_map["failed_retryable"]
                 error = f"{ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:{refusals}"
             else:
@@ -3713,7 +3744,14 @@ def build_email_worker_dependencies(
                 task_store,
                 source_factory,
             ),
-            finalize_task=partial(_finalize_email_task, task_store),
+            finalize_task=partial(
+                _finalize_email_task,
+                task_store,
+                direct_unsubscribe_runner=partial(
+                    run_email_unsubscribe,
+                    Path(settings.db_path),
+                ),
+            ),
             training_tick=training_tick,
             record_health=record_health,
             email_store=email_store,

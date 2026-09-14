@@ -8723,6 +8723,67 @@ def test_route_refusing_the_call_is_retried_not_closed_as_a_decision():
     assert "task_status" not in captured
 
 
+def test_route_refusal_runs_service_owned_direct_unsubscribe_once():
+    module = _module()
+    task = SimpleNamespace(
+        id=9,
+        attempts=1,
+        error="",
+        execution_generation="generation-9",
+        conversation_id="conversation-9",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="trigger-9",
+        trigger_sender="sender@example.com",
+        trigger_text="unsubscribe",
+    )
+    run = SimpleNamespace(
+        id=90,
+        codex_session_id="",
+        transcript_start_line=0,
+        transcript_end_line=0,
+        tool_events=[_route_refused_tool_event()],
+    )
+    captured = {}
+    direct_calls = []
+
+    class Store:
+        def get_agent_run(self, _run_id):
+            return run
+
+        def finalize_orchestrated_reply_task(self, **kwargs):
+            captured.update(kwargs)
+
+        def defer_reply_task(self, *_args, **_kwargs):
+            pytest.fail("a route-level refusal must not defer an authorized action")
+
+    module._finalize_email_task(
+        Store(),
+        task,
+        SimpleNamespace(
+            status="failed_terminal",
+            final_run_id=90,
+            summary="email_unsubscribe_risk_rejected",
+            error=SimpleNamespace(
+                code="email_unsubscribe_risk_rejected",
+                authorization_required=True,
+            ),
+        ),
+        direct_unsubscribe_runner=lambda task_id: (
+            direct_calls.append(task_id)
+            or {
+                "status": "done",
+                "outcome": "done",
+                "receipt_id": "unsubscribe-receipt:test",
+            }
+        ),
+    )
+
+    assert direct_calls == [9]
+    assert captured["task_status"] == "done"
+    assert captured["send_status"] == "completed"
+    assert captured["task_error"] == ""
+
+
 def test_every_route_refusing_the_call_is_a_plain_failure_not_a_question():
     """An email needs_human card is a question nobody can answer.
 
