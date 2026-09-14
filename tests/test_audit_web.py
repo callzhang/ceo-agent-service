@@ -383,6 +383,40 @@ def test_attempt_detail_marks_missing_linked_consumer_result_unavailable(tmp_pat
     assert "未找到当前 Attempt 关联的 Consumer run" in detail
 
 
+def test_attempt_detail_rejects_non_consumer_audit_parent(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task)
+    first_audit = _complete_audit_run(store, task, consumer)
+    revised_consumer = _complete_consumer_run(
+        store,
+        task,
+        proposal_revision=1,
+        parent_agent_run_id=first_audit.id,
+        owner="wrong-parent-role-consumer",
+    )
+    terminal_audit = _complete_audit_run(
+        store,
+        task,
+        revised_consumer,
+        proposal_revision=1,
+        owner="wrong-parent-role-audit",
+    )
+    attempt_id = _finalize_consumer_result_attempt(store, task, terminal_audit)
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update agent_runs set parent_agent_run_id=? where id=?",
+            (first_audit.id, terminal_audit.id),
+        )
+
+    status, detail = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    _assert_consumer_result_fields_unavailable(detail)
+    assert "未找到当前 Attempt 关联的 Consumer run" in detail
+    assert "82%" not in detail
+
+
 def test_attempt_detail_marks_malformed_consumer_result_unavailable(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _consumer_result_task(store)
@@ -441,6 +475,48 @@ def test_attempt_detail_renders_failed_consumer_result_safe_detail_and_unavailab
     assert "Source read failed" in detail
     _assert_consumer_result_fields_unavailable(detail)
     assert "raw-failed-marker" not in detail
+
+
+def test_attempt_detail_hides_nested_failed_consumer_error_values(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="nested-failed-consumer-result",
+    ).run
+    consumer = store.fail_agent_run(
+        consumer.id,
+        {
+            "detail": {"nested_marker": "must-not-render"},
+            "code": ["nested-code-marker"],
+        },
+        owner="nested-failed-consumer-result",
+    )
+    attempt_id = _finalize_consumer_result_attempt(
+        store,
+        task,
+        consumer,
+        task_status="failed",
+        send_status="failed",
+        send_error="consumer_source_failed",
+    )
+
+    status, detail = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    _assert_consumer_result_fields_unavailable(detail)
+    assert "Consumer 运行失败" in detail
+    error_cell = (
+        '<div class="attempt-detail-label">Consumer error</div>'
+        '<div class="attempt-detail-value">Consumer 运行失败</div>'
+    )
+    assert error_cell in detail
 
 
 def test_attempt_detail_keeps_old_consumer_result_while_current_generation_runs(

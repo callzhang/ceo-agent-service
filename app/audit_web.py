@@ -11260,10 +11260,11 @@ def _linked_consumer_run(
         return terminal_run
     if terminal_run.role is not AgentRole.AUDIT or terminal_run.parent_agent_run_id is None:
         return None
-    return next(
+    parent = next(
         (run for run in agent_runs if run.id == terminal_run.parent_agent_run_id),
         None,
     )
+    return parent if parent is not None and parent.role is AgentRole.CONSUMER else None
 
 
 def _consumer_result_error(run: AgentRun | None) -> str:
@@ -11275,9 +11276,10 @@ def _consumer_result_error(run: AgentRun | None) -> str:
         except json.JSONDecodeError:
             error = {}
         if isinstance(error, dict):
-            detail = str(error.get("detail") or error.get("code") or "").strip()
-            if detail:
-                return safe_observability_error(detail, limit=180)
+            for key in ("detail", "code"):
+                value = error.get(key)
+                if isinstance(value, str) and value.strip():
+                    return safe_observability_error(value.strip(), limit=180)
         return "Consumer 运行失败"
     if not run.final_result_json.strip():
         return "Consumer 未保存最终结果"
