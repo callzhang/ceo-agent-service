@@ -1509,8 +1509,9 @@ def _handle_unresolvable_unsubscribe_selection(
             str(getattr(task, "trigger_message_id", "") or "")
         )
         if receipt is not None:
-            task_store.complete_reply_task(
+            task_store.fail_reply_task(
                 task.id,
+                "email_unsubscribe_receipt_requires_successful_run",
                 expected_execution_generation=task.execution_generation,
             )
             return

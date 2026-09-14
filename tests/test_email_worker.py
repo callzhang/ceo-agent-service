@@ -5477,7 +5477,7 @@ def test_unresolvable_unsubscribe_selection_is_retried_before_it_is_believed():
     assert available_at
 
 
-def test_unresolvable_selection_closes_immediately_when_receipt_already_exists():
+def test_unresolvable_selection_receipt_never_completes_without_an_agent_run():
     module = _module()
     task = _unresolvable_selection_task()
     store = _UnresolvableSelectionStore(task)
@@ -5499,9 +5499,11 @@ def test_unresolvable_selection_closes_immediately_when_receipt_already_exists()
         email_store=email_store,
     )
 
-    assert store.completed == [(77, "generation-7")]
+    assert store.completed == []
     assert store.deferred == []
-    assert store.failed == []
+    assert store.failed == [
+        (77, "email_unsubscribe_receipt_requires_successful_run")
+    ]
     assert store.errors == []
 
 
