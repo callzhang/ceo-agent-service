@@ -87,6 +87,18 @@ def test_message_text_redacts_quota_access_tokens():
     assert text.count("TOKEN") >= 2
 
 
+def test_message_text_bounds_body_to_the_first_2048_characters():
+    retained = "开头分类信号" + ("甲" * (2048 - len("开头分类信号")))
+    omitted = "此处不应进入模型输入"
+
+    text = email_message_to_text(
+        {"subject": "主题", "textBody": retained + omitted}
+    )
+
+    assert "开头" in text
+    assert "此处" not in text
+
+
 def test_legacy_artifact_with_old_category_labels_loads_and_predicts(tmp_path: Path):
     texts = ["urgent approval", "urgent contract", "project plan", "team meeting"]
     labels = ["important", "important", "work", "work"]

@@ -1311,6 +1311,10 @@ def test_model_training_metrics_preserve_missing_values_and_comparability():
     from app.web_api.email import _project_staged_model_evidence
     evidence = _valid_model_detail_evidence()
     old = _project_staged_model_evidence(evidence)
+    evidence["compatibility"]["input_schema_version"] = "email-folder-model-input-v3"
+    current_schema = _project_staged_model_evidence(evidence)
+    assert current_schema["compatibility"]["input_schema_version"] == "email-folder-model-input-v3"
+    evidence["compatibility"]["input_schema_version"] = "email-folder-model-input-v2"
     assert old["metrics"]["macro_f1"] is None
     assert old["end_to_end_latency_ms"] is None
     evidence["metrics"]["categories"]["legal"].update(precision=.97, recall=.95, f1=.96, support=25)

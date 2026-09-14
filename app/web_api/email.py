@@ -160,6 +160,14 @@ def _safe_exact_evidence_value(value: object, field: str, expected: str) -> str:
     return expected
 
 
+def _safe_model_input_schema_version(value: object) -> str:
+    """Project either immutable, published input schema without conflating them."""
+
+    if value not in {"email-folder-model-input-v2", "email-folder-model-input-v3"}:
+        raise ValueError("input_schema_version is invalid")
+    return str(value)
+
+
 def _safe_external_reference(value: object, field: str, placeholder: str) -> str:
     if not isinstance(value, str) or not value or len(value) > 512:
         raise ValueError(f"{field} is invalid")
@@ -246,10 +254,8 @@ def _project_staged_model_evidence(
             "description_version",
             _DESCRIPTION_EVIDENCE_VERSION,
         ),
-        "input_schema_version": _safe_exact_evidence_value(
-            maturity.compatibility.input_schema_version,
-            "input_schema_version",
-            "email-folder-model-input-v2",
+        "input_schema_version": _safe_model_input_schema_version(
+            maturity.compatibility.input_schema_version
         ),
         "embedding_model_reference": _safe_external_reference(
             maturity.compatibility.embedding_model_id,

@@ -56,8 +56,7 @@ def email_message_to_text(message: Mapping[str, object]) -> str:
         exact_sender = hashlib.sha256(raw_sender.strip().lower().encode("utf-8")).hexdigest()[:16]
     subject = _clean(message.get("subject"))
     body = _clean(message.get("markdownBody") or message.get("textBody"))
-    if len(body) > 12000:
-        body = body[:8000] + " " + body[-4000:]
+    body = body[:2048]
     return " ".join(
         (
             f"__from_domain__{sender_domain}",
