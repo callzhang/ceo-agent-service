@@ -250,9 +250,38 @@ def test_attempt_detail_renders_linked_consumer_result(tmp_path: Path):
     audit = _complete_audit_run(store, task, consumer)
     attempt_id = _finalize_consumer_result_attempt(store, task, audit)
 
+    before_render = {
+        "attempt_count": len(store.list_reply_attempts()),
+        "task": store.get_reply_task(task.id),
+        "consumer": store.get_agent_run(consumer.id),
+        "terminal": store.get_agent_run(audit.id),
+        "run_states": [
+            (run.id, run.status)
+            for run in store.list_agent_runs_for_task_generation(
+                task.id,
+                task.execution_generation,
+            )
+        ],
+    }
+
     status, detail = render_attempt_detail(store, attempt_id)
 
+    after_render = {
+        "attempt_count": len(store.list_reply_attempts()),
+        "task": store.get_reply_task(task.id),
+        "consumer": store.get_agent_run(consumer.id),
+        "terminal": store.get_agent_run(audit.id),
+        "run_states": [
+            (run.id, run.status)
+            for run in store.list_agent_runs_for_task_generation(
+                task.id,
+                task.execution_generation,
+            )
+        ],
+    }
+
     assert status == 200
+    assert after_render == before_render
     assert "Consumer 执行结果" in detail
     assert "confidence" in detail and "82%" in detail
     assert "information_completeness" in detail and "75%" in detail
@@ -316,6 +345,25 @@ def test_attempt_detail_renders_direct_terminal_consumer_result(tmp_path: Path):
     assert "medium" in detail
 
 
+def test_attempt_detail_marks_missing_linked_consumer_result_unavailable(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task)
+    audit = _complete_audit_run(store, task, consumer)
+    attempt_id = _finalize_consumer_result_attempt(store, task, audit)
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update agent_runs set parent_agent_run_id=null where id=?",
+            (audit.id,),
+        )
+
+    status, detail = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert detail.count(">—<") >= 4
+    assert "未找到当前 Attempt 关联的 Consumer run" in detail
+
+
 def test_attempt_detail_marks_malformed_consumer_result_unavailable(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _consumer_result_task(store)
@@ -324,7 +372,7 @@ def test_attempt_detail_marks_malformed_consumer_result_unavailable(tmp_path: Pa
     with store._immediate_write_transaction() as db:
         db.execute(
             "update agent_runs set final_result_json=? where id=?",
-            ('{"outcome":"proposal"}', consumer.id),
+            ('{"outcome":"proposal","raw_marker":"raw-malformed-marker"}', consumer.id),
         )
 
     status, detail = render_attempt_detail(store, attempt_id)
@@ -332,6 +380,7 @@ def test_attempt_detail_marks_malformed_consumer_result_unavailable(tmp_path: Pa
     assert status == 200
     assert detail.count(">—<") >= 4
     assert "Consumer 结果不符合当前契约" in detail
+    assert "raw-malformed-marker" not in detail
 
 
 def test_attempt_detail_renders_failed_consumer_result_safe_detail_and_unavailable_values(
@@ -351,7 +400,11 @@ def test_attempt_detail_renders_failed_consumer_result_safe_detail_and_unavailab
     ).run
     consumer = store.fail_agent_run(
         consumer.id,
-        {"code": "consumer_source_failed", "detail": "Source read failed"},
+        {
+            "code": "consumer_source_failed",
+            "detail": "Source read failed",
+            "raw_only_marker": "raw-failed-marker",
+        },
         owner="failed-consumer-result",
     )
     attempt_id = _finalize_consumer_result_attempt(
@@ -368,7 +421,7 @@ def test_attempt_detail_renders_failed_consumer_result_safe_detail_and_unavailab
     assert status == 200
     assert "Source read failed" in detail
     assert detail.count(">—<") >= 4
-    assert '{"code": "consumer_source_failed", "detail": "Source read failed"}' not in detail
+    assert "raw-failed-marker" not in detail
 
 
 def test_attempt_detail_keeps_old_consumer_result_while_current_generation_runs(
@@ -387,6 +440,8 @@ def test_attempt_detail_keeps_old_consumer_result_while_current_generation_runs(
     _, pending_detail = render_attempt_detail(store, attempt_id)
     assert "新 Consumer run" in pending_detail
     assert "等待中" in pending_detail
+    assert "82%" in pending_detail
+    assert pending_detail.count("Consumer 执行结果") == 1
 
     current_task = store.claim_reply_task(task.id)
     assert current_task is not None
@@ -407,6 +462,7 @@ def test_attempt_detail_keeps_old_consumer_result_while_current_generation_runs(
     assert "新 Consumer run" in running_detail
     assert "运行中" in running_detail
     assert "82%" in running_detail
+    assert running_detail.count("Consumer 执行结果") == 1
 
 
 @pytest.fixture(autouse=True)
