@@ -1491,6 +1491,8 @@ def _handle_unresolvable_unsubscribe_selection(
     task_store: object,
     task: object,
     exc: BaseException,
+    *,
+    email_store: object | None = None,
 ) -> None:
     """Re-read the message a few times, then close the task as a skip.
 
@@ -1502,6 +1504,16 @@ def _handle_unresolvable_unsubscribe_selection(
     leaving the row failed makes the queue read as broken while inviting reruns
     that can only reach the same conclusion.
     """
+    if email_store is not None:
+        receipt = email_store.get_email_unsubscribe_receipt(
+            str(getattr(task, "trigger_message_id", "") or "")
+        )
+        if receipt is not None:
+            task_store.complete_reply_task(
+                task.id,
+                expected_execution_generation=task.execution_generation,
+            )
+            return
     _LOGGER.info(
         "email task %s cannot resolve its authorized unsubscribe entry: %s",
         task.id,
@@ -1649,7 +1661,12 @@ def run_email_agent_task_loop(
                 # so this is a skip, not a failure. It is retried a few times
                 # first, because an unreadable message looks exactly the same
                 # from here as a link that is really gone.
-                _handle_unresolvable_unsubscribe_selection(task_store, task, exc)
+                _handle_unresolvable_unsubscribe_selection(
+                    task_store,
+                    task,
+                    exc,
+                    email_store=email_store,
+                )
                 continue
             except Exception as exc:  # noqa: BLE001 - isolate one Email task
                 failures += 1

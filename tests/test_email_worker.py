@@ -5477,6 +5477,34 @@ def test_unresolvable_unsubscribe_selection_is_retried_before_it_is_believed():
     assert available_at
 
 
+def test_unresolvable_selection_closes_immediately_when_receipt_already_exists():
+    module = _module()
+    task = _unresolvable_selection_task()
+    store = _UnresolvableSelectionStore(task)
+    email_store = SimpleNamespace(
+        get_email_unsubscribe_receipt=lambda action_identity: (
+            {"outcome": "skipped_no_reliable_entry"}
+            if action_identity == task.trigger_message_id
+            else None
+        )
+    )
+
+    module.run_email_agent_task_loop(
+        store,
+        SimpleNamespace(process=lambda *_a, **_k: pytest.fail("task executed")),
+        load_task_context=_raise_unresolvable_selection,
+        finalize_task=lambda *_a: pytest.fail("task finalized"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+        email_store=email_store,
+    )
+
+    assert store.completed == [(77, "generation-7")]
+    assert store.deferred == []
+    assert store.failed == []
+    assert store.errors == []
+
+
 def test_unresolvable_unsubscribe_selection_ends_as_a_skip_not_a_failure():
     """The authorization names one entry; a rerun can only reach the same end.
 

@@ -23,6 +23,9 @@
   before the MCP server executes it, the service now invokes the same
   task-bound, idempotent direct operation itself. This removes an extra runtime
   behavior-review gate without broadening the durable ActionPlan.
+  An unsubscribe task whose page receipt is already persisted also closes
+  immediately when a later provider reread cannot resolve the original entry;
+  receipt-backed terminal work no longer loops through candidate rechecks.
 
 - 2026-09-14: Audit now treats its approval of a typed, Skill-covered
   service-triggered action as the execution confirmation. Provider
