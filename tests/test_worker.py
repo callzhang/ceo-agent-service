@@ -14012,7 +14012,7 @@ def test_single_chat_recovery_requeues_revised_pending_calendar_card(
         task_id,
         expected_execution_generation=claimed.execution_generation,
     )
-    worker.store.mark_seen(original.open_message_id, "cid-1")
+    assert not worker.store.has_seen(original.open_message_id)
     before = worker.store.get_reply_task(task_id)
     assert before is not None and before.status == "done"
 

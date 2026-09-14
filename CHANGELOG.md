@@ -4,9 +4,12 @@
   revision even when DingTalk reuses the original message ID. If the rendered
   card changed and the live event is still active and awaiting the current
   user's response, the existing business task receives a new input version and
-  is requeued exactly once. DingTalk message Trigger tasks now bind the calendar
-  invite policy and calendar operation Skills explicitly; ordinary seen
-  messages remain deduplicated.
+  is requeued exactly once. Recovery identifies prior processing from the
+  existing business task rather than the `seen_messages` skip ledger, because
+  successfully queued messages are deduplicated by their business key and do
+  not enter that ledger. DingTalk message Trigger tasks now bind the calendar
+  invite policy and calendar operation Skills explicitly; ordinary messages
+  remain deduplicated.
 
 - 2026-09-13: 每个 Agent Cron 任务现在都保存并展示必填的任务描述；服务命令任务也有独立的可读说明，Agent 执行提示词继续单独保存。旧任务和历史运行快照在迁移时按已有 Prompt 或任务名称补齐描述。
 

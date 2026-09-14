@@ -1310,8 +1310,7 @@ class DingTalkAutoReplyWorker:
                 continue
             checked_message_ids.add(message.open_message_id)
             if (
-                not self.store.has_seen(message.open_message_id)
-                or not self._is_calendar_message(message)
+                not self._is_calendar_message(message)
                 or self._is_current_user_message_for_candidate_filter(message)
             ):
                 continue
