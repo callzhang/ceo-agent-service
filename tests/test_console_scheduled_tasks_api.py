@@ -985,7 +985,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "wechat-produce-once",
         "scan-meetings-once",
         "scan-oa-approvals",
-        "scan-work-sources-once",
+        "scan-meeting-todos-once",
         "sync-minutes-once",
         "weekly-okr-report",
         "recover-recent-messages",
@@ -996,7 +996,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "读取新微信消息",
         "读取已结束会议",
         "读取待审批 OA",
-        "收集工作来源",
+        "读取会议行动项",
         "同步听记到工作区",
         "生成并发送 OKR 周报",
         "补查近期钉钉消息",
@@ -1158,7 +1158,7 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
     assert (meeting["name"], meeting["channel"]) == ("scan-meetings-once", "meeting")
     assert (oa["name"], oa["channel"]) == ("scan-oa-approvals", "dingtalk")
     assert (work_sources["name"], work_sources["channel"]) == (
-        "scan-work-sources-once",
+        "scan-meeting-todos-once",
         "work_summary",
     )
     assert (minutes["name"], minutes["channel"]) == (

@@ -2118,7 +2118,7 @@ def test_scheduled_service_trigger_persists_consumer_context_on_new_reply_task(
                 "wechat-produce-once",
                 "scan-meetings-once",
                 "scan-oa-approvals",
-                "scan-work-sources-once",
+                "scan-meeting-todos-once",
                 "sync-minutes-once",
                 "weekly-okr-report",
             )

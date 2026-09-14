@@ -595,7 +595,7 @@ def test_service_command_catalog_exposes_only_editable_trigger_metadata(
         "wechat-produce-once",
         "scan-meetings-once",
         "scan-oa-approvals",
-        "scan-work-sources-once",
+        "scan-meeting-todos-once",
         "sync-minutes-once",
         "weekly-okr-report",
         "recover-recent-messages",

@@ -14,6 +14,7 @@ from app.skill_features import FeatureRegistry
 
 LOCAL_FILE_SCANNER = "local_files"
 AI_MINUTES_SCANNER = "ai_minutes"
+MEETING_TODO_SCANNER = "meeting_todos"
 OA_PENDING_SCANNER = "oa_pending"
 DEFAULT_LOCAL_FILE_EXCLUDE_PARTS = {
     "__pycache__",
@@ -317,6 +318,190 @@ def scan_ai_minutes(
         last_success_at=_utc_now(),
         cursor_json=json.dumps(cursor_state, sort_keys=True),
         last_error="",
+    )
+    return count
+
+
+def _minutes_id(minutes: dict[str, Any]) -> str:
+    return str(
+        minutes.get("taskUuid")
+        or minutes.get("minutesId")
+        or minutes.get("id")
+        or minutes.get("task_uuid")
+        or minutes.get("uuid")
+        or ""
+    ).strip()
+
+
+def _minutes_todo_actions(payload: Any) -> list[Any] | None:
+    """Return the explicit action-item collection from supported DWS shapes.
+
+    ``None`` means the payload did not contain a recognized collection. This is
+    deliberately different from an explicit empty list: an unknown response
+    must be retried instead of being recorded as a meeting with no Todo.
+    """
+    if not isinstance(payload, dict):
+        return None
+    for key in ("actions", "actionItems", "action_items", "todos"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    for key in ("result", "data"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            actions = _minutes_todo_actions(nested)
+            if actions is not None:
+                return actions
+    return None
+
+
+def _canonical_minutes_todos_payload(
+    *,
+    minutes: dict[str, Any],
+    todos_payload: dict[str, Any],
+    actions: list[Any],
+) -> tuple[str, str]:
+    payload = {
+        "meeting": minutes,
+        "todos": todos_payload,
+    }
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    canonical_actions = json.dumps(
+        actions,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return canonical, hashlib.sha256(canonical_actions.encode("utf-8")).hexdigest()
+
+
+def scan_meeting_todos(
+    store: AutoReplyStore,
+    dws,
+    *,
+    max_new_items: int | None = None,
+    feature_registry: FeatureRegistry | None = None,
+) -> int:
+    """Queue new or revised DingTalk meeting Todos for the Tasks consumer."""
+    if not (feature_registry or FeatureRegistry()).feature_enabled("work_tracking"):
+        return 0
+    list_minutes = getattr(dws, "list_minutes", None)
+    get_minutes_todos = getattr(dws, "get_minutes_todos", None)
+    if list_minutes is None or get_minutes_todos is None:
+        missing = (
+            "list_minutes" if list_minutes is None else "get_minutes_todos"
+        )
+        store.set_daily_scan_state(
+            MEETING_TODO_SCANNER,
+            last_success_at="",
+            cursor_json="{}",
+            last_error=f"dws {missing} unavailable",
+        )
+        return 0
+
+    state = store.get_daily_scan_state(MEETING_TODO_SCANNER) or {}
+    raw_cursor = state.get("cursor_json") or "{}"
+    try:
+        cursor = json.loads(raw_cursor)
+    except json.JSONDecodeError:
+        cursor = {}
+        raw_cursor = "{}"
+    previous_digests = {
+        str(key): str(value)
+        for key, value in dict(cursor.get("todo_digests") or {}).items()
+    }
+    todo_digests = dict(previous_digests)
+
+    try:
+        minutes_items = [
+            item for item in list_minutes() if isinstance(item, dict)
+        ]
+    except Exception as exc:
+        store.set_daily_scan_state(
+            MEETING_TODO_SCANNER,
+            last_success_at=state.get("last_success_at") or "",
+            cursor_json=raw_cursor,
+            last_error=str(exc),
+        )
+        return 0
+
+    scheduled_consumer = current_service_command_consumer_context()
+    errors: list[str] = []
+    count = 0
+    for minutes in minutes_items:
+        minutes_id = _minutes_id(minutes)
+        if not minutes_id:
+            continue
+        try:
+            todos_payload = get_minutes_todos(minutes_id)
+        except Exception as exc:
+            errors.append(f"{minutes_id}: {exc}")
+            continue
+        actions = _minutes_todo_actions(todos_payload)
+        if actions is None:
+            errors.append(f"{minutes_id}: unrecognized minutes todos response")
+            continue
+        canonical, digest = _canonical_minutes_todos_payload(
+            minutes=minutes,
+            todos_payload=todos_payload,
+            actions=actions,
+        )
+        if previous_digests.get(minutes_id) == digest:
+            continue
+        if not actions:
+            todo_digests[minutes_id] = digest
+            continue
+        if max_new_items is not None and count >= max_new_items:
+            continue
+
+        title = str(minutes.get("title") or f"AI minutes {minutes_id}").strip()
+        source_ref = f"{minutes_id}#todos-sha256={digest}"
+        item = WorkItem.model_validate(
+            {
+                "source": {
+                    "type": "ai_minutes",
+                    "ref": source_ref,
+                    "title": f"{title}行动项",
+                    "created_at": _minutes_item_time(minutes),
+                },
+                "summary": canonical,
+                "project_name": title,
+                "context": {
+                    "sender": "",
+                    "participants": [],
+                    "source_conversation_kind": "minutes",
+                    "source_conversation_title": title,
+                },
+                "scheduled_consumer": (
+                    scheduled_consumer.to_payload() if scheduled_consumer else {}
+                ),
+            }
+        )
+        store.enqueue_work_summary_input(
+            source_type=item.source.type.value,
+            source_ref=item.source.ref,
+            payload_json=item.model_dump_json(),
+        )
+        todo_digests[minutes_id] = digest
+        count += 1
+
+    last_success_at = (
+        (state.get("last_success_at") or "") if errors else _utc_now()
+    )
+    store.set_daily_scan_state(
+        MEETING_TODO_SCANNER,
+        last_success_at=last_success_at,
+        cursor_json=json.dumps(
+            {"todo_digests": todo_digests},
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        last_error="; ".join(errors),
     )
     return count
 

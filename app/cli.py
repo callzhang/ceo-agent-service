@@ -334,7 +334,7 @@ def build_parser() -> argparse.ArgumentParser:
         "weekly-okr-report",
         "refresh-okr-archive",
         "scan-task-sources",
-        "scan-work-sources-once",
+        "scan-meeting-todos-once",
         "sync-minutes-once",
         "scan-meetings-once",
         "scan-oa-approvals",
@@ -958,9 +958,9 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
                 "scan-oa-approvals "
                 f"queued={scan_oa_approvals_command(settings, max_new_items=settings.max_batches)}"
             ),
-            "scan-work-sources-once": lambda: (
-                "scan-work-sources-once "
-                f"queued={scan_work_sources_once_command(settings, max_new_items=settings.max_batches)}"
+            "scan-meeting-todos-once": lambda: (
+                "scan-meeting-todos-once "
+                f"queued={scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)}"
             ),
             "sync-minutes-once": lambda: (
                 "sync-minutes-once "
@@ -2086,21 +2086,29 @@ def scan_task_sources_command(
     return total
 
 
-def scan_work_sources_once_command(
+def scan_meeting_todos_once_command(
     settings: WorkerSettings,
     *,
     max_new_items: int | None = None,
 ) -> int:
-    """Scan only local workspace files for new work-summary inputs."""
-    from app.task_scanners import scan_local_workspace_files
+    """Read meeting Todos and queue new revisions for the Tasks consumer."""
+    from app.task_scanners import MEETING_TODO_SCANNER, scan_meeting_todos
 
     store = AutoReplyStore(settings.db_path)
-    queued = scan_local_workspace_files(
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+    )
+    queued = scan_meeting_todos(
         store,
-        workspace=settings.workspace,
+        dws,
         max_new_items=max_new_items,
     )
-    print(f"scan-work-sources-once queued={queued}", flush=True)
+    scan_state = store.get_daily_scan_state(MEETING_TODO_SCANNER) or {}
+    if scan_error := str(scan_state.get("last_error") or "").strip():
+        raise RuntimeError(f"scan-meeting-todos-once incomplete: {scan_error}")
+    print(f"scan-meeting-todos-once queued={queued}", flush=True)
     return queued
 
 
@@ -4247,8 +4255,8 @@ def main() -> None:
         )
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
-    elif args.command == "scan-work-sources-once":
-        scan_work_sources_once_command(settings, max_new_items=settings.max_batches)
+    elif args.command == "scan-meeting-todos-once":
+        scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)
     elif args.command == "sync-minutes-once":
         sync_minutes_once_command(settings, max_new_items=settings.max_batches)
     elif args.command == "scan-meetings-once":

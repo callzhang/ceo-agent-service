@@ -174,8 +174,8 @@ READABLE_BUILTIN_COPY = {
         "发现新的或有新处理记录的待审批 OA 后，由 Agent 读取完整材料与审批流水，判断同意、拒绝或评论补充要求，并在执行后核验结果。",
     ),
     "work-source-scan-daily-v1": (
-        "整理工作区中的新工作记录",
-        "发现工作区中新建或修改的 Markdown、文本文件后，由 Agent 判断其中是否有值得持续跟进的承诺，并按证据创建或更新项目、TODO 和跟进。",
+        "将会议行动项整理到 Tasks",
+        "发现钉钉会议中新增或修改的行动项后，由 Agent 核验任务内容、负责人证据、截止时间和现有 Tasks，创建或更新需要持续跟进的任务；不因参会或发言推断负责人。",
     ),
     "weekly-okr-report-sunday-v1": (
         "生成并发送每周 OKR 管理周报",
@@ -809,7 +809,7 @@ def test_every_fixed_discovery_check_is_a_service_command(
         "dingtalk-meeting-check-v1": "scan-meetings-once",
         "wechat-message-check-v1": "wechat-produce-once",
         "dingtalk-oa-check-v1": "scan-oa-approvals",
-        "work-source-scan-daily-v1": "scan-work-sources-once",
+        "work-source-scan-daily-v1": "scan-meeting-todos-once",
     }
     expected_skills = {
         "dingtalk-message-check-v1": [
@@ -834,7 +834,11 @@ def test_every_fixed_discovery_check_is_a_service_command(
         ],
         "wechat-message-check-v1": ["ceo-wechat"],
         "dingtalk-oa-check-v1": ["dingtalk-oa-approval"],
-        "work-source-scan-daily-v1": ["ceo-work-tracking"],
+        "work-source-scan-daily-v1": [
+            "ceo-meeting-work",
+            "ceo-work-tracking",
+            "dingtalk-minutes",
+        ],
     }
     for migration_key, command in expected_commands.items():
         task = _task_by_key(tasks, migration_key)
@@ -1023,14 +1027,65 @@ def test_seed_creates_daily_work_source_scan(tmp_path: Path) -> None:
         "work-source-scan-daily-v1"
     ]
     assert task.cron_expression == "0 0 0 * * *"
-    assert task.command == "scan-work-sources-once"
+    assert task.command == "scan-meeting-todos-once"
+    assert "$ceo-meeting-work" in task.prompt
     assert "$ceo-work-tracking" in task.prompt
     assert task.runtime_id == ""
     assert task.runtime_options == {}
     assert task.required_runtime_capabilities == ()
     assert task.working_directory == ""
-    assert [ref.skill_name for ref in task.skill_refs] == ["ceo-work-tracking"]
+    assert [ref.skill_name for ref in task.skill_refs] == [
+        "ceo-meeting-work",
+        "ceo-work-tracking",
+        "dingtalk-minutes",
+    ]
     assert task.enabled is True
+
+
+def test_reseed_migrates_workspace_scan_to_meeting_todos_in_place(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "work-source-migration.sqlite3")
+    original = store.create_scheduled_task(
+        migration_key="work-source-scan-daily-v1",
+        name="整理工作区中的新工作记录",
+        description="发现工作区中新建或修改的 Markdown、文本文件后，由 Agent 判断其中是否有值得持续跟进的承诺，并按证据创建或更新项目、TODO 和跟进。",
+        prompt="",
+        command="scan-work-sources-once",
+        cron_expression="0 15 1 * * *",
+        timezone_name="Asia/Shanghai",
+        enabled=True,
+        now=NOW,
+    )
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes={"codex_oauth"},
+        operation_skills=("dingtalk-minutes",),
+    )
+
+    migrated = _task_by_key(
+        seed_scheduled_tasks(
+            store=store,
+            options=options,
+            working_directory=tmp_path,
+            now=NOW + timedelta(minutes=1),
+        ),
+        "work-source-scan-daily-v1",
+    )
+
+    assert migrated.id == original.id
+    assert migrated.name == "将会议行动项整理到 Tasks"
+    assert migrated.description == READABLE_BUILTIN_COPY[
+        "work-source-scan-daily-v1"
+    ][1]
+    assert migrated.command == "scan-meeting-todos-once"
+    assert migrated.cron_expression == "0 15 1 * * *"
+    assert [ref.skill_name for ref in migrated.skill_refs] == [
+        "ceo-meeting-work",
+        "ceo-work-tracking",
+        "dingtalk-minutes",
+    ]
 
 
 def test_seed_creates_hourly_recent_message_recovery_at_half_past(
@@ -1152,7 +1207,7 @@ def test_non_wechat_seed_commands_are_registered_one_shot_cli_entries(
         "dingtalk-message-recovery-v1": "recover-recent-messages",
         "dingtalk-meeting-check-v1": "scan-meetings-once",
         "dingtalk-oa-check-v1": "scan-oa-approvals",
-        "work-source-scan-daily-v1": "scan-work-sources-once",
+        "work-source-scan-daily-v1": "scan-meeting-todos-once",
         "weekly-okr-report-sunday-v1": "weekly-okr-report",
     }
 
@@ -1252,8 +1307,8 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
                 "scan-oa-approvals": (
                     lambda: produced.append("scan-oa-approvals") or "queued=0"
                 ),
-                "scan-work-sources-once": (
-                    lambda: produced.append("scan-work-sources-once") or "queued=0"
+                "scan-meeting-todos-once": (
+                    lambda: produced.append("scan-meeting-todos-once") or "queued=0"
                 ),
                 "sync-minutes-once": (
                     lambda: produced.append("sync-minutes-once") or "queued=0"
@@ -1278,9 +1333,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         "calendar-invites-once",
         "produce-once",
         "recover-recent-messages",
+        "scan-meeting-todos-once",
         "scan-meetings-once",
         "scan-oa-approvals",
-        "scan-work-sources-once",
         "sync-minutes-once",
         "wechat-produce-once",
         "weekly-okr-report",

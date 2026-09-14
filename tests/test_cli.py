@@ -1071,10 +1071,10 @@ def test_parser_supports_scan_oa_approvals():
     assert args.oa_pending_scan_lookback_days == 3
 
 
-def test_parser_supports_scan_work_sources_once():
-    args = build_parser().parse_args(["scan-work-sources-once", "--workspace", "/tmp/w"])
+def test_parser_supports_scan_meeting_todos_once():
+    args = build_parser().parse_args(["scan-meeting-todos-once", "--workspace", "/tmp/w"])
 
-    assert args.command == "scan-work-sources-once"
+    assert args.command == "scan-meeting-todos-once"
     assert args.workspace == "/tmp/w"
 
 
@@ -3809,6 +3809,62 @@ def test_scan_task_sources_command_scans_local_and_minutes(
     )
 
 
+def test_scan_meeting_todos_once_command_reads_todos_and_honors_limit(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    from app.cli import scan_meeting_todos_once_command
+
+    calls = []
+
+    def fake_scan(store, dws, *, max_new_items=None):
+        calls.append((store.path, type(dws).__name__, max_new_items))
+        return 2
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr("app.task_scanners.scan_meeting_todos", fake_scan)
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+    db_path = tmp_path / "task.sqlite3"
+
+    queued = scan_meeting_todos_once_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path),
+        max_new_items=4,
+    )
+
+    assert queued == 2
+    assert calls == [(db_path, "FakeDwsClient", 4)]
+    assert capsys.readouterr().out == "scan-meeting-todos-once queued=2\n"
+
+
+def test_scan_meeting_todos_once_command_fails_when_any_todo_read_is_incomplete(
+    tmp_path,
+    monkeypatch,
+):
+    from app.cli import scan_meeting_todos_once_command
+
+    def fake_scan(store, dws, *, max_new_items=None):
+        store.set_daily_scan_state(
+            "meeting_todos",
+            last_success_at="2026-09-14T00:00:00+00:00",
+            cursor_json="{}",
+            last_error="minutes-1: todo read failed",
+        )
+        return 0
+
+    monkeypatch.setattr("app.task_scanners.scan_meeting_todos", fake_scan)
+    monkeypatch.setattr(cli, "DwsClient", lambda **kwargs: object())
+
+    with pytest.raises(RuntimeError, match="minutes-1: todo read failed"):
+        scan_meeting_todos_once_command(
+            WorkerSettings(db_path=tmp_path / "task.sqlite3", workspace=tmp_path),
+            max_new_items=4,
+        )
+
+
 def test_parser_supports_single_service_command(monkeypatch):
     monkeypatch.setenv("CEO_CONSUMER_WORKERS", "2")
     parser = build_parser()
@@ -4627,7 +4683,7 @@ def test_main_dispatches_email_worker_with_shared_settings(monkeypatch, tmp_path
 @pytest.mark.parametrize(
     ("command", "function_name"),
     [
-        ("scan-work-sources-once", "scan_work_sources_once_command"),
+        ("scan-meeting-todos-once", "scan_meeting_todos_once_command"),
         ("sync-minutes-once", "sync_minutes_once_command"),
         ("scan-oa-approvals", "scan_oa_approvals_command"),
     ],
@@ -8195,7 +8251,7 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
         "wechat-produce-once",
         "scan-meetings-once",
         "scan-oa-approvals",
-        "scan-work-sources-once",
+        "scan-meeting-todos-once",
         "sync-minutes-once",
         "weekly-okr-report",
     }

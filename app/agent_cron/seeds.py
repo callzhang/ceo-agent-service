@@ -24,8 +24,8 @@ DINGTALK_MEETING_MIGRATION_KEY = "dingtalk-meeting-check-v1"
 DINGTALK_MEETING_SERVICE_COMMAND = "scan-meetings-once"
 DINGTALK_OA_MIGRATION_KEY = "dingtalk-oa-check-v1"
 DINGTALK_OA_SERVICE_COMMAND = "scan-oa-approvals"
-WORK_SOURCE_MIGRATION_KEY = "work-source-scan-daily-v1"
-WORK_SOURCE_SERVICE_COMMAND = "scan-work-sources-once"
+MEETING_TODO_MIGRATION_KEY = "work-source-scan-daily-v1"
+MEETING_TODO_SERVICE_COMMAND = "scan-meeting-todos-once"
 
 
 @dataclass(frozen=True)
@@ -73,11 +73,11 @@ SCHEDULED_TASK_DEFAULT_COPY = {
         old_name="审阅新的或有进展的钉钉 OA",
         old_description="发现新的或有新处理记录的待审批 OA 后，由 Agent 读取完整材料与审批流水，判断同意、拒绝或评论补充要求，并在执行后核验结果。",
     ),
-    WORK_SOURCE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
-        name="整理工作区中的新工作记录",
-        description="发现工作区中新建或修改的 Markdown、文本文件后，由 Agent 判断其中是否有值得持续跟进的承诺，并按证据创建或更新项目、TODO 和跟进。",
-        old_name="每天扫描工作来源",
-        old_description="扫描日历、待办和其他工作来源，生成可处理的工作输入。",
+    MEETING_TODO_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="将会议行动项整理到 Tasks",
+        description="发现钉钉会议中新增或修改的行动项后，由 Agent 核验任务内容、负责人证据、截止时间和现有 Tasks，创建或更新需要持续跟进的任务；不因参会或发言推断负责人。",
+        old_name="整理工作区中的新工作记录",
+        old_description="发现工作区中新建或修改的 Markdown、文本文件后，由 Agent 判断其中是否有值得持续跟进的承诺，并按证据创建或更新项目、TODO 和跟进。",
     ),
     WEEKLY_OKR_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="生成并发送每周 OKR 管理周报",
@@ -148,9 +148,11 @@ OA_CONSUMER_PROMPT = (
     "使用 $dingtalk-oa-approval 处理 Trigger 发现的真实 DingTalk OA 待审批事项，"
     "沿用现有审批判断、回复与投递边界。"
 )
-WORK_SOURCE_CONSUMER_PROMPT = (
-    "使用 $ceo-work-tracking 处理 Trigger 发现的真实工作来源，只更新已有工作记录或"
-    "创建有明确证据的新工作项。"
+MEETING_TODO_CONSUMER_PROMPT = (
+    "使用 $ceo-meeting-work 核验 Trigger 提供的真实会议行动项证据，再使用 "
+    "$ceo-work-tracking 检查现有 Tasks 并创建或更新需要持续跟进的任务；按需使用 "
+    "$dingtalk-minutes 读取会议 Todo 的最新状态。负责人、截止时间和完成标准必须有"
+    "明确证据，不因参会或发言推断负责人。"
 )
 
 
@@ -243,7 +245,7 @@ def seed_scheduled_tasks(
         working_directory=working_directory,
         now=now,
     )
-    work_sources = _seed_work_source_task(
+    meeting_todos = _seed_meeting_todo_task(
         store=store,
         options=options,
         working_directory=working_directory,
@@ -270,7 +272,7 @@ def seed_scheduled_tasks(
             dingtalk_meeting,
             wechat,
             oa,
-            work_sources,
+            meeting_todos,
             weekly_okr,
             minutes,
         )
@@ -530,7 +532,7 @@ def _seed_oa_task(
     )
 
 
-def _seed_work_source_task(
+def _seed_meeting_todo_task(
     *,
     store: AutoReplyStore,
     options: ScheduledTaskOptionService,
@@ -538,24 +540,28 @@ def _seed_work_source_task(
     now: datetime | None,
 ) -> ScheduledTask:
     del working_directory
-    skill_refs = _consumer_skill_refs(options, managed=("ceo-work-tracking",))
+    skill_refs = _consumer_skill_refs(
+        options,
+        managed=("ceo-meeting-work", "ceo-work-tracking"),
+        operation=("dingtalk-minutes",),
+    )
     adopted = store.adopt_scheduled_task_service_command(
-        migration_key=WORK_SOURCE_MIGRATION_KEY,
-        command=WORK_SOURCE_SERVICE_COMMAND,
+        migration_key=MEETING_TODO_MIGRATION_KEY,
+        command=MEETING_TODO_SERVICE_COMMAND,
         seed_enabled=True,
-        seed_description=_default_copy(WORK_SOURCE_MIGRATION_KEY).description,
-        consumer_prompt=WORK_SOURCE_CONSUMER_PROMPT,
+        seed_description=_default_copy(MEETING_TODO_MIGRATION_KEY).description,
+        consumer_prompt=MEETING_TODO_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
         now=now,
     )
     if adopted is not None:
         return adopted
     return store.create_scheduled_task(
-        migration_key=WORK_SOURCE_MIGRATION_KEY,
-        name=_default_copy(WORK_SOURCE_MIGRATION_KEY).name,
-        description=_default_copy(WORK_SOURCE_MIGRATION_KEY).description,
-        prompt=WORK_SOURCE_CONSUMER_PROMPT,
-        command=WORK_SOURCE_SERVICE_COMMAND,
+        migration_key=MEETING_TODO_MIGRATION_KEY,
+        name=_default_copy(MEETING_TODO_MIGRATION_KEY).name,
+        description=_default_copy(MEETING_TODO_MIGRATION_KEY).description,
+        prompt=MEETING_TODO_CONSUMER_PROMPT,
+        command=MEETING_TODO_SERVICE_COMMAND,
         cron_expression="0 0 0 * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,

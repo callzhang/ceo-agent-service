@@ -13,6 +13,7 @@ from app.skill_features import FeatureRegistry
 from app.store import AutoReplyStore
 from app.task_scanners import (
     scan_ai_minutes,
+    scan_meeting_todos,
     scan_local_workspace_files,
     scan_pending_oa_approvals,
 )
@@ -75,10 +76,14 @@ def test_scan_local_files_only_under_workspace(tmp_path):
     assert str(outside) not in claimed[0].payload_json
 
 
-def test_scan_local_files_carries_scheduled_consumer_context(tmp_path):
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    (workspace / "management.md").write_text("P1 项目需要跟进", encoding="utf-8")
+def test_scan_meeting_todos_carries_scheduled_consumer_context(tmp_path):
+    class FakeDws:
+        def list_minutes(self):
+            return [{"taskUuid": "minutes-1", "title": "产品会"}]
+
+        def get_minutes_todos(self, task_uuid):
+            return {"result": {"actions": ['{"value":"确认发布范围"}']}}
+
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     context = ServiceCommandConsumerContext(
         scheduled_task_id=7,
@@ -88,16 +93,12 @@ def test_scan_local_files_carries_scheduled_consumer_context(tmp_path):
         skill_protocol="# Targeted Work Tracking Skill",
     )
     implementations = {option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS}
-    implementations["scan-work-sources-once"] = lambda: str(
-        scan_local_workspace_files(
-            store,
-            workspace=workspace,
-            enqueue_existing_on_first_scan=True,
-        )
+    implementations["scan-meeting-todos-once"] = lambda: str(
+        scan_meeting_todos(store, FakeDws())
     )
 
     ServiceCommandRegistry(implementations).run(
-        "scan-work-sources-once",
+        "scan-meeting-todos-once",
         consumer_context=context,
     )
 
@@ -703,6 +704,124 @@ def test_scan_ai_minutes_records_adapter_errors(tmp_path):
     state = store.get_daily_scan_state("ai_minutes")
     assert state is not None
     assert state["last_error"] == "auth expired"
+
+
+def test_scan_meeting_todos_enqueues_only_meetings_with_action_items(tmp_path):
+    class FakeDws:
+        def list_minutes(self):
+            return [
+                {
+                    "taskUuid": "minutes-1",
+                    "title": "产品周会",
+                    "createdAt": "2026-09-14T09:00:00+08:00",
+                },
+                {
+                    "taskUuid": "minutes-2",
+                    "title": "无行动项会议",
+                    "createdAt": "2026-09-14T10:00:00+08:00",
+                },
+            ]
+
+        def get_minutes_todos(self, task_uuid):
+            if task_uuid == "minutes-1":
+                return {
+                    "result": {
+                        "actions": [
+                            '{"value":"Alex 在周五前确认上线范围"}'
+                        ]
+                    }
+                }
+            return {"result": {"actions": []}}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_meeting_todos(store, FakeDws()) == 1
+
+    claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(claimed) == 1
+    assert claimed[0].source_type == "ai_minutes"
+    assert claimed[0].source_ref.startswith("minutes-1#todos-sha256=")
+    payload = json.loads(claimed[0].payload_json)
+    assert payload["source"]["title"] == "产品周会行动项"
+    assert "Alex 在周五前确认上线范围" in payload["summary"]
+    assert payload["context"]["source_conversation_kind"] == "minutes"
+
+
+def test_scan_meeting_todos_requeues_only_when_todos_change(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.actions = ['{"value":"第一版行动项"}']
+            self.title = "经营会"
+            self.request_id = "request-1"
+
+        def list_minutes(self):
+            return [{"taskUuid": "minutes-1", "title": self.title}]
+
+        def get_minutes_todos(self, task_uuid):
+            assert task_uuid == "minutes-1"
+            return {
+                "request_id": self.request_id,
+                "result": {"actions": self.actions},
+            }
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_meeting_todos(store, dws) == 1
+    first = store.claim_work_summary_inputs(limit=10)
+    assert len(first) == 1
+    store.mark_work_summary_input_done(first[0].id)
+
+    assert scan_meeting_todos(store, dws) == 0
+    assert store.claim_work_summary_inputs(limit=10) == []
+
+    dws.title = "经营会（标题已修订）"
+    dws.request_id = "request-2"
+    assert scan_meeting_todos(store, dws) == 0
+    assert store.claim_work_summary_inputs(limit=10) == []
+
+    dws.actions = ['{"value":"第二版行动项"}']
+    assert scan_meeting_todos(store, dws) == 1
+    second = store.claim_work_summary_inputs(limit=10)
+    assert len(second) == 1
+    assert second[0].source_ref != first[0].source_ref
+    assert "第二版行动项" in second[0].payload_json
+
+
+def test_scan_meeting_todos_does_not_advance_failed_or_deferred_items(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.fail_first = True
+
+        def list_minutes(self):
+            return [
+                {"taskUuid": "minutes-1", "title": "读取失败"},
+                {"taskUuid": "minutes-2", "title": "超过本轮上限"},
+            ]
+
+        def get_minutes_todos(self, task_uuid):
+            if task_uuid == "minutes-1" and self.fail_first:
+                raise RuntimeError("todo read failed")
+            return {"result": {"actions": [f'{{"value":"{task_uuid}"}}']}}
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_meeting_todos(store, dws, max_new_items=1) == 1
+    state = store.get_daily_scan_state("meeting_todos")
+    assert state is not None
+    assert "minutes-1: todo read failed" in state["last_error"]
+
+    first = store.claim_work_summary_inputs(limit=10)
+    assert len(first) == 1
+    assert first[0].source_ref.startswith("minutes-2#todos-sha256=")
+    store.mark_work_summary_input_done(first[0].id)
+
+    dws.fail_first = False
+    assert scan_meeting_todos(store, dws, max_new_items=1) == 1
+    second = store.claim_work_summary_inputs(limit=10)
+    assert len(second) == 1
+    assert second[0].source_ref.startswith("minutes-1#todos-sha256=")
 
 
 def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):

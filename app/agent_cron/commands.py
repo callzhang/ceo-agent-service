@@ -149,9 +149,9 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
         consumer_prompt_enabled=True,
     ),
     ServiceCommandOption(
-        name="scan-work-sources-once",
-        display_name="收集工作来源",
-        description="扫描工作区中新建或修改的 Markdown、文本文件；由 Agent 识别值得持续跟进的承诺并更新工作事项。",
+        name="scan-meeting-todos-once",
+        display_name="读取会议行动项",
+        description="读取钉钉会议中新增或修改的行动项；由 Agent 核验证据，并在 Tasks 中创建或更新需要持续跟进的任务。",
         channel="work_summary",
         consumer_prompt_enabled=True,
     ),

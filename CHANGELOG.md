@@ -1,5 +1,14 @@
 # Changelog
 
+- 2026-09-14: The former `整理工作区中的新工作记录` Cron now appears as
+  `将会议行动项整理到 Tasks`. Its deterministic Trigger reads explicit
+  DingTalk meeting Todo collections instead of Markdown or text files, queues
+  only non-empty new or revised Todo payloads, and keeps failed or deferred
+  reads retryable. The targeted Consumer now loads `ceo-meeting-work`,
+  `ceo-work-tracking`, and `dingtalk-minutes` so it can verify the meeting
+  evidence and create or update Tasks without inferring ownership from meeting
+  attendance.
+
 - 2026-09-14: `同步会议结论与管理者视角` now records each delivered DingTalk
   alignment summary directly through Memory Connector. The durable queue is
   keyed by meeting ID and its text is exactly the sent `final_message` with

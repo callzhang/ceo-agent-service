@@ -133,7 +133,7 @@ def commands(produce_once=lambda: "produce-once queued=0"):
         "wechat-produce-once": lambda: "wechat produce-once queued=0",
         "scan-meetings-once": lambda: "scan-meetings-once queued=0",
         "scan-oa-approvals": lambda: "scan-oa-approvals queued=0",
-        "scan-work-sources-once": lambda: "scan-work-sources-once queued=0",
+        "scan-meeting-todos-once": lambda: "scan-meeting-todos-once queued=0",
         "sync-minutes-once": lambda: "sync-minutes-once queued=0",
         "weekly-okr-report": lambda: "weekly-okr-report status=sent",
     })

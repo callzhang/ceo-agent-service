@@ -121,7 +121,7 @@ def test_scheduled_trigger_persists_consumer_prompt_and_skills(
                 "wechat-produce-once",
                 "scan-meetings-once",
                 "scan-oa-approvals",
-                "scan-work-sources-once",
+                "scan-meeting-todos-once",
                 "sync-minutes-once",
                 "weekly-okr-report",
             )
