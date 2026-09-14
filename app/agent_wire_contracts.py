@@ -22,6 +22,15 @@ from app.agent_contracts import (
 from app.agent_result import ResultParseError, parse_typed_agent_result
 
 
+_RUNTIME_RETRYABLE_DEPENDENCY_ERRORS = frozenset(
+    {
+        "dependency_read_unavailable",
+        "xiaoqing_interview_mcp_not_injected",
+        "xiaoqing_interview_unavailable",
+    }
+)
+
+
 class _WireBase(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -42,9 +51,14 @@ class _WireBase(BaseModel):
         return RiskLevel(value) if isinstance(value, str) else value
 
     def error_payload(self) -> dict[str, object]:
+        error_code = self.error_code or ""
         return {
-            "code": self.error_code or "",
-            "retryable": self.error_retryable,
+            "code": error_code,
+            # Runtime dependency availability is observed, not decided by the
+            # model. Keep these failures on the worker's shared backoff path
+            # even when a turn incorrectly reports them as terminal.
+            "retryable": self.error_retryable
+            or error_code in _RUNTIME_RETRYABLE_DEPENDENCY_ERRORS,
             "authorization_required": self.error_authorization_required,
         }
 

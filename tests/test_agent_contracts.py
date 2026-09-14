@@ -1155,6 +1155,72 @@ def test_audit_wire_result_preserves_nested_result_fields():
     assert result.decision_options[0].key == "A"
 
 
+@pytest.mark.parametrize(
+    "error_code",
+    (
+        "dependency_read_unavailable",
+        "xiaoqing_interview_mcp_not_injected",
+        "xiaoqing_interview_unavailable",
+    ),
+)
+def test_audit_wire_result_normalizes_transient_dependency_failures_as_retryable(
+    error_code: str,
+):
+    result = AuditAgentWireResult.model_validate(
+        {
+            "outcome": "failed",
+            "summary": "The live dependency could not be read.",
+            "proposal_revision": 0,
+            "feedback": None,
+            "external_result": None,
+            "decision_options": [],
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "error_code": error_code,
+            "error_retryable": False,
+            "error_authorization_required": False,
+        }
+    ).to_result()
+
+    assert result.error.retryable is True
+
+
+def test_consumer_wire_result_normalizes_dependency_read_failure_as_retryable():
+    result = ConsumerAgentWireResult.model_validate(
+        _consumer_wire_payload(
+            outcome="failed",
+            error_code="dependency_read_unavailable",
+            error_retryable=False,
+        )
+    ).to_result()
+
+    assert result.error.retryable is True
+
+
+def test_wire_result_does_not_make_business_failure_retryable():
+    result = AuditAgentWireResult.model_validate(
+        {
+            "outcome": "failed",
+            "summary": "The business request is invalid.",
+            "proposal_revision": 0,
+            "feedback": None,
+            "external_result": None,
+            "decision_options": [],
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "error_code": "invalid_business_request",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        }
+    ).to_result()
+
+    assert result.error.retryable is False
+
+
 def test_audit_wire_result_preserves_revision_feedback_fields():
     result = AuditAgentWireResult.model_validate(
         {
