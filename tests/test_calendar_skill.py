@@ -55,6 +55,7 @@ def test_calendar_skill_defines_complete_read_and_decision_workflow():
         "rereads the live event state",
         "already-applied exact response",
         "already-sent exact clarification",
+        "A clarification sent before the invitation's latest update is stale",
         "Reuse confirmed facts",
     ):
         assert required in text

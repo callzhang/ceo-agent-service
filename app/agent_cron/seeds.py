@@ -29,6 +29,8 @@ DINGTALK_MESSAGE_CONSUMER_PROMPT = (
     "关注或回复；如果消息是日程邀请或原地更新的日程卡片，使用 "
     "$ceo-calendar-invite 处理。使用 $dingtalk-chat 读取所需消息上下文，并使用 "
     "$dingtalk-calendar 核验最新日程状态；"
+    "原地更新后的日程卡片是新的输入版本，更新前基于旧时段或旧冲突发送的澄清"
+    "不构成精确重复，必须根据最新日程重新处置；"
     "不要新增复盘或摘要任务。"
 )
 WECHAT_MESSAGE_CONSUMER_PROMPT = (

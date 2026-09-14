@@ -46,3 +46,9 @@ For a silent meeting or asynchronous review, read and process every linked mater
 ## Audit B
 
 Before execution, Audit B rereads the live event state and the applicable Skills. Suppress only an already-applied exact response or an already-sent exact clarification. A different response or corrected question is new work and requires the normal review, execution, and live verification.
+
+A clarification sent before the invitation's latest update is stale unless its
+exact time, conflict, requested contribution, and question still match the live
+event. Reassess the updated invitation from current facts; when clarification
+is still required, send the corrected factual question instead of suppressing
+it as a duplicate.
