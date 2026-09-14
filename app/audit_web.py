@@ -8050,6 +8050,19 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         attempt.trigger_message_id,
         channel=attempt.channel,
     )
+    current_agent_runs = agent_runs
+    if (
+        reply_task is not None
+        and reply_task.execution_generation
+        and (
+            terminal_run is None
+            or reply_task.execution_generation != terminal_run.execution_generation
+        )
+    ):
+        current_agent_runs = store.list_agent_runs_for_task_generation(
+            reply_task.id,
+            reply_task.execution_generation,
+        )
     later_terminal_attempt = _later_terminal_attempt(store, attempt)
     display_attempt = attempt
     if later_terminal_attempt is not None and attempt.send_status == "needs_human":
@@ -8075,6 +8088,8 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             attention,
             reply_task,
             [item for run in agent_runs for item in store.list_agent_runtime_attempts(run.id)],
+            terminal_run=terminal_run,
+            current_agent_runs=current_agent_runs,
             historical_resolution=later_terminal_attempt,
         ),
         active_nav="history",
@@ -11235,6 +11250,90 @@ def _positive_int_query(request: Request, name: str, *, default: int) -> int:
     return value if value > 0 else default
 
 
+def _linked_consumer_run(
+    terminal_run: AgentRun | None,
+    agent_runs: list[AgentRun],
+) -> AgentRun | None:
+    if terminal_run is None:
+        return None
+    if terminal_run.role is AgentRole.CONSUMER:
+        return terminal_run
+    if terminal_run.role is not AgentRole.AUDIT or terminal_run.parent_agent_run_id is None:
+        return None
+    return next(
+        (run for run in agent_runs if run.id == terminal_run.parent_agent_run_id),
+        None,
+    )
+
+
+def _consumer_result_error(run: AgentRun | None) -> str:
+    if run is None:
+        return "未找到当前 Attempt 关联的 Consumer run"
+    if run.status == "failed":
+        try:
+            error = json.loads(run.structured_error_json or "{}")
+        except json.JSONDecodeError:
+            error = {}
+        if isinstance(error, dict):
+            detail = str(error.get("detail") or error.get("code") or "").strip()
+            if detail:
+                return safe_observability_error(detail, limit=180)
+        return "Consumer 运行失败"
+    if not run.final_result_json.strip():
+        return "Consumer 未保存最终结果"
+    return "Consumer 结果不符合当前契约"
+
+
+def _consumer_result_fields(
+    terminal_run: AgentRun | None,
+    agent_runs: list[AgentRun],
+    current_agent_runs: list[AgentRun],
+    reply_task: ReplyTask | None,
+) -> list[tuple[str, str]]:
+    consumer = _linked_consumer_run(terminal_run, agent_runs)
+    labels = ("confidence", "information_completeness", "rule_coverage", "risk")
+    fields = [("Consumer 执行结果", f"run #{consumer.id}" if consumer else "—")]
+    try:
+        result = (
+            ConsumerAgentResult.model_validate_json(consumer.final_result_json)
+            if consumer is not None and consumer.status != "failed"
+            else None
+        )
+    except ValueError:
+        result = None
+    if result is None:
+        fields.extend((label, "—") for label in labels)
+        fields.append(("Consumer error", _consumer_result_error(consumer)))
+    else:
+        fields.extend(
+            (
+                ("confidence", f"{result.confidence:.0%}"),
+                (
+                    "information_completeness",
+                    f"{result.information_completeness:.0%}",
+                ),
+                ("rule_coverage", f"{result.rule_coverage:.0%}"),
+                ("risk", result.risk.value),
+            )
+        )
+    active = next(
+        (
+            run
+            for run in reversed(current_agent_runs)
+            if run.role is AgentRole.CONSUMER
+            and run.id != (consumer.id if consumer else 0)
+            and run.status in {"pending", "running"}
+        ),
+        None,
+    )
+    if active is not None:
+        state = "等待中" if active.status == "pending" else "运行中"
+        fields.append((f"新 Consumer run #{active.id}", state))
+    elif reply_task is not None and reply_task.status == "pending":
+        fields.append(("新 Consumer run", "等待中"))
+    return fields
+
+
 def _attempt_detail_body(
     attempt: ReplyAttempt,
     sent_reply: SentReply | None,
@@ -11244,6 +11343,8 @@ def _attempt_detail_body(
     attention: HistoryAttention | None = None,
     reply_task: ReplyTask | None = None,
     runtime_attempts: list[object] | None = None,
+    terminal_run: AgentRun | None = None,
+    current_agent_runs: list[AgentRun] | None = None,
     historical_resolution: ReplyAttempt | None = None,
 ) -> str:
     agent_runs = agent_runs or []
@@ -11278,6 +11379,14 @@ def _attempt_detail_body(
     )
     if revision_count:
         fields.append(("revisions", f"{revision_count} revisions"))
+    fields.extend(
+        _consumer_result_fields(
+            terminal_run,
+            agent_runs,
+            current_agent_runs or [],
+            reply_task,
+        )
+    )
     orchestration_links = _orchestration_session_links(attempt.id, agent_runs)
     return _agent_detail_body(
         title_label="群名",
