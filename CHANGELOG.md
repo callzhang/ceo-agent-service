@@ -1,8 +1,9 @@
 # Changelog
 
-- 2026-09-14: Delivered meeting-alignment records sent to Memory now use the
-  meeting's persisted title as their source title. The opaque DingTalk meeting
-  ID remains only in the durable payload key used for idempotency.
+- 2026-09-14: Memory entries created from delivered meeting conclusions now use
+  the first substantive conclusion sentence as their title. The DingTalk
+  meeting ID has moved to trailing lookup metadata and can no longer become
+  the entry title.
 
 - 2026-09-14: The Email unsubscribe drawer now links only verified matching
   Attempt records and can reveal a saved entry address only after an explicit

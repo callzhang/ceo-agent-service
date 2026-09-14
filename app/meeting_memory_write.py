@@ -12,6 +12,32 @@ from app.store import AutoReplyStore, MeetingMemoryWriteEvent
 
 MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS = 60.0
 MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS = 15 * 60
+MEETING_MEMORY_TITLE_LIMIT = 80
+
+
+def _meeting_memory_content_title(final_message: str) -> str:
+    """Return the first substantive conclusion line as the Memory entry title."""
+    for line in final_message.splitlines():
+        candidate = line.strip()
+        if not candidate or candidate.startswith("【") or candidate.endswith(("：", ":")):
+            continue
+        while candidate.startswith("@"):
+            _, separator, remainder = candidate.partition(" ")
+            if not separator:
+                break
+            candidate = remainder.lstrip()
+        ordinal, separator, remainder = candidate.partition(". ")
+        if separator and ordinal.isdecimal():
+            candidate = remainder
+        for sentence_end in ("。", "！", "？", "!", "?"):
+            sentence, separator, _ = candidate.partition(sentence_end)
+            if separator:
+                candidate = sentence
+                break
+        candidate = candidate.rstrip("。！？!?：: ")
+        if candidate:
+            return candidate[:MEETING_MEMORY_TITLE_LIMIT]
+    return "会议结论"
 
 
 def meeting_memory_payload(job: Any) -> dict[str, str]:
@@ -21,16 +47,16 @@ def meeting_memory_payload(job: Any) -> dict[str, str]:
     meeting_id = str(job.meeting_id).strip()
     if not meeting_id:
         raise ValueError("meeting Memory payload requires meeting_id")
-    title = str(job.title).strip() or "未命名会议"
+    content_title = _meeting_memory_content_title(str(job.final_message))
     return {
         "data": (
-            f"[meeting-alignment:{meeting_id}]\n"
-            f"会议：{title}\n\n"
-            f"{str(job.final_message).strip()}"
+            f"{content_title}\n\n"
+            f"{str(job.final_message).strip()}\n\n"
+            f"[meeting-alignment:{meeting_id}]"
         ),
         "type": "text",
         "created_at": str(job.ended_at).strip() or str(job.updated_at).strip(),
-        "source_description": f"已发送钉钉会议对齐：{title}",
+        "source_description": content_title,
     }
 
 
