@@ -1,7 +1,6 @@
 """Persist delivered DingTalk meeting-alignment conclusions to Memory."""
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -39,11 +38,7 @@ def enqueue_sent_meeting_memory_writes(store: AutoReplyStore) -> int:
     """Create one idempotent Memory-delivery record for each sent meeting."""
     created = 0
     for job in store.list_sent_meeting_alignment_jobs():
-        payload = meeting_memory_payload(job)
-        if store.create_meeting_memory_write_event(
-            job.id,
-            payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True),
-        ):
+        if store.create_meeting_memory_write_event(job.id):
             created += 1
     return created
 
@@ -84,9 +79,7 @@ def _process_event(
     now: datetime,
 ) -> None:
     try:
-        payload = json.loads(event.payload_json)
-        if not isinstance(payload, dict):
-            raise ValueError("meeting Memory payload must be an object")
+        payload = meeting_memory_payload(store.get_meeting_alignment_job(event.meeting_job_id))
         result = execute_codex_memory_write(
             workspace=workspace,
             store=store,
@@ -117,7 +110,7 @@ def _process_event(
                 event.id,
                 error=f"{exc.source_code}: {exc}",
             )
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (TypeError, ValueError) as exc:
         store.fail_meeting_memory_write_event(event.id, error=str(exc))
     else:
         store.complete_meeting_memory_write_event(

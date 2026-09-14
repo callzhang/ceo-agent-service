@@ -130,7 +130,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-14.3"
+STORE_SCHEMA_VERSION = "2026-09-14.4"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -851,7 +851,6 @@ class MeetingMemoryWriteEvent(BaseModel):
     id: int
     meeting_job_id: int
     execution_generation: str
-    payload_json: str
     status: str
     attempts: int
     available_at: str
@@ -3854,6 +3853,10 @@ class AutoReplyStore:
                 "update meeting_memory_write_events "
                 "set execution_generation='migrated-' || id "
                 "where trim(execution_generation)=''"
+            )
+            db.execute(
+                "update meeting_memory_write_events set payload_json='{}' "
+                "where payload_json<>'{}'"
             )
             for column, definition in (
                 ("trigger_message_json", "text not null default '{}'"),
@@ -14099,8 +14102,6 @@ class AutoReplyStore:
     def create_meeting_memory_write_event(
         self,
         meeting_job_id: int,
-        *,
-        payload_json: str,
     ) -> bool:
         """Queue one Memory write for an already delivered conclusion.
 
@@ -14128,7 +14129,7 @@ class AutoReplyStore:
                 values (?, ?, ?)
                 on conflict(meeting_job_id) do nothing
                 """,
-                (meeting_job_id, uuid4().hex, payload_json),
+                (meeting_job_id, uuid4().hex, "{}"),
             )
         return cursor.rowcount == 1
 

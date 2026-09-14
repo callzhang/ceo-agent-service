@@ -9035,7 +9035,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-14.3"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-14.4"
     assert {
         "lease_owner",
         "lease_expires_at",
@@ -9077,6 +9077,47 @@ def test_current_schema_sentinel_migrates_missing_meeting_memory_write_table(
         ).fetchone()["value"]
     assert table is not None
     assert version == store_module.STORE_SCHEMA_VERSION
+    assert upgraded._schema_is_current() is True
+
+
+def test_schema_upgrade_removes_meeting_memory_payload_copies(tmp_path: Path) -> None:
+    db_path = tmp_path / "meeting-memory-payload-removal.sqlite3"
+    store = AutoReplyStore(db_path)
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-memory-payload-removal",
+        title="Meeting",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-09-14T09:30:00+00:00",
+        eligible_at="2026-09-14T09:40:00+00:00",
+        status="sent",
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="sent",
+        final_message="Delivered conclusion",
+    )
+    assert store.create_meeting_memory_write_event(job_id) is True
+
+    with store._connect() as db:
+        db.execute(
+            "update meeting_memory_write_events set payload_json=? where meeting_job_id=?",
+            ('{"data":"delivered conclusion copy"}', job_id),
+        )
+        db.execute(
+            "update service_state set value=? where key=?",
+            ("2026-09-14.3", store_module.STORE_SCHEMA_VERSION_KEY),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+
+    with upgraded._connect() as db:
+        payload_json = db.execute(
+            "select payload_json from meeting_memory_write_events where meeting_job_id=?",
+            (job_id,),
+        ).fetchone()["payload_json"]
+    assert payload_json == "{}"
     assert upgraded._schema_is_current() is True
 
 

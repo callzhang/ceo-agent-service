@@ -91,7 +91,7 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
     assert event is not None
     assert event["status"] == "pending"
     assert event["execution_generation"]
-    assert "听记摘要" not in event["payload_json"]
+    assert event["payload_json"] == "{}"
 
     routed = _FakeRoutedExecution()
     processed = process_meeting_memory_writes(
