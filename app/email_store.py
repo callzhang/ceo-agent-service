@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.message import Message
 from email.parser import Parser
 from email.utils import getaddresses
 from hashlib import sha256
@@ -61,6 +62,7 @@ from app.email_category_config import (
     legacy_config_row,
     validate_category_descriptions,
 )
+from app.email_html_text import html_to_text
 from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
@@ -115,6 +117,17 @@ _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _RUNTIME_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 _MAX_PROVIDER_IDENTIFIER_BYTES = 256
 _MAX_UNSUBSCRIBE_RESULT_TEXT_BYTES = 16 * 1024
+
+
+def _display_message_body(message: Message) -> str:
+    payload = message.get_payload()
+    if not isinstance(payload, str):
+        return ""
+    if message.get_content_type() == "text/html":
+        return html_to_text(payload)
+    return payload
+
+
 _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = """
     select effects.action_identity as effect_action_identity,
            effects.effect_digest as effect_digest,
@@ -12063,7 +12076,7 @@ class EmailStore:
         for row in rows:
             message = Parser().parsestr(row["message_text"] or "")
             item = self._classification_evidence_row(row)
-            item["message_text"] = message.get_payload()
+            item["message_text"] = _display_message_body(message)
             items.append(item)
         return items, total
 
@@ -12140,7 +12153,7 @@ class EmailStore:
         for row in rows:
             message = Parser().parsestr(row["message_text"] or "")
             item = self._classification_evidence_row(row)
-            item["message_text"] = message.get_payload()
+            item["message_text"] = _display_message_body(message)
             items.append(item)
         return items, total
 
@@ -12319,7 +12332,7 @@ class EmailStore:
         message = Parser().parsestr(row["message_text"] or "")
         return {
             **self._classification_evidence_row(row),
-            "message_text": message.get_payload(),
+            "message_text": _display_message_body(message),
             "cc": message.get("Cc", ""),
             "recipients": [
                 address for _, address in getaddresses(message.get_all("To", []))

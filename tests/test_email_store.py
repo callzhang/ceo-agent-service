@@ -915,6 +915,7 @@ def _persist_scan(
     store: EmailStore,
     classification: EmailClassification,
     *,
+    normalized_text: str = "__subject__need a decision",
     cursor_uidvalidity: int | None = None,
     cursor_last_seen_uid: int | None = None,
     expected_cursor_uidvalidity: int | None = None,
@@ -930,7 +931,7 @@ def _persist_scan(
         sender="sender@example.com",
         recipients=("recipient@example.com",),
         subject="Need a decision",
-        normalized_text="__subject__need a decision",
+        normalized_text=normalized_text,
         preview="Please review",
         attachment_metadata=(
             EmailAttachmentMetadata(
@@ -947,6 +948,37 @@ def _persist_scan(
         cursor_last_success_at="2026-08-29T16:00:00+00:00",
         **cursor_expectation,
     )
+
+
+def test_classification_body_display_removes_html_style_payload(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "html-display.sqlite3")
+    classification = _classification(status=EmailClassificationStatus.PENDING_FEEDBACK)
+    _persist_scan(
+        store,
+        classification,
+        normalized_text=(
+            "From: sender@example.com\n"
+            "Subject: HTML newsletter\n"
+            "Content-Type: text/html; charset=utf-8\n\n"
+            "<html><head><style>@font-face { src: url(font.woff2); }</style>"
+            "</head><body><p>Hello <strong>world</strong>.</p>"
+            "<p>Keep this original message.</p></body></html>"
+        ),
+    )
+
+    rows, total = store.list_classifications(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        limit=20,
+        offset=0,
+    )
+    detail = store.get_classification(classification.classification_id)
+
+    assert total == 1
+    assert rows[0]["message_text"] == "Hello world. Keep this original message."
+    assert detail is not None
+    assert detail["message_text"] == "Hello world. Keep this original message."
 
 
 def test_persist_scan_result_stores_thread_reference_metadata(tmp_path: Path):

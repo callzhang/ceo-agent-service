@@ -8,7 +8,6 @@ import email
 import email.header
 import email.policy
 import email.utils
-import html.parser
 import imaplib
 import json
 import quopri
@@ -28,6 +27,7 @@ from app.email_imap_mailbox import (
     parse_imap_fetch_flags,
 )
 from app.email_important import ImportantSignals, normalize_important_signals
+from app.email_html_text import html_to_text
 from app.email_provider_folders import ProviderFolder
 from app.email_unsubscribe import (
     ConnectedMailboxOtp,
@@ -42,18 +42,6 @@ _HEADER_FETCH = (
     "IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST AUTO-SUBMITTED)])"
 )
 _MAX_TEXT_FETCH_BYTES = 64 * 1024
-
-
-class _HTMLTextExtractor(html.parser.HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        self.parts.append(data)
-
-    def text(self) -> str:
-        return re.sub(r"\s+", " ", " ".join(self.parts)).strip()
 
 
 @dataclass(frozen=True)
@@ -513,7 +501,7 @@ class ImapReadonlyAdapter:
                 if part.mime_type == "text/html" and decoded.strip():
                     html_parts.append(decoded)
                     text = (
-                        _html_to_text(decoded)
+                        html_to_text(decoded)
                         if part.section in selected_text_sections
                         else ""
                     )
@@ -1061,7 +1049,7 @@ def _bodystructure_attachment_metadata(
 
 def _decode_fetched_text(payload: bytes, part: _BodyPart) -> str:
     value = _decode_fetched_content(payload, part)
-    return _html_to_text(value) if part.mime_type == "text/html" else value
+    return html_to_text(value) if part.mime_type == "text/html" else value
 
 
 def _decode_fetched_content(payload: bytes, part: _BodyPart) -> str:
@@ -1094,7 +1082,7 @@ def _message_body(message: email.message.Message) -> str:
         if content_type == "text/plain":
             return _decode_part(message).strip()
         if content_type == "text/html":
-            return _html_to_text(_decode_part(message))
+            return html_to_text(_decode_part(message))
         return ""
     children = list(message.iter_parts())
     if message.get_content_subtype().lower() == "alternative":
@@ -1302,13 +1290,6 @@ def _decode_part(part: email.message.Message) -> str:
     else:
         value = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
     return value.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _html_to_text(value: str) -> str:
-    parser = _HTMLTextExtractor()
-    parser.feed(value)
-    parser.close()
-    return parser.text()
 
 
 def _decode_header(value: object) -> str:
