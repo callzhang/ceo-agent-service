@@ -3311,6 +3311,43 @@ def run_meeting_delivery_loop(
         sleep(10)
 
 
+def run_meeting_memory_write_loop(
+    settings: WorkerSettings,
+    *,
+    sleep: Callable[[int], None] = time.sleep,
+    network_ready: Callable[[], bool] = _macos_wifi_connected,
+) -> None:
+    """Persist sent meeting-alignment conclusions through the live Memory route."""
+    from app.agent_runtime_production import (
+        build_production_routed_codex_execution,
+    )
+
+    store = AutoReplyStore(settings.db_path)
+    routed_execution = build_production_routed_codex_execution(
+        store=store,
+        workspace=settings.workspace,
+        total_timeout_seconds=settings.codex_timeout_seconds,
+        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+    )
+    while True:
+        if not settings.dry_run and network_ready():
+            try:
+                process_meeting_memory_writes(
+                    store,
+                    workspace=settings.workspace,
+                    routed_execution=routed_execution,
+                    now=datetime.now().astimezone(),
+                    limit=1,
+                )
+                store.resolve_unresolved_errors_by_kind(
+                    "meeting_memory_write",
+                    resolution="recovered by later Memory write cycle",
+                )
+            except Exception as exc:
+                store.record_error("", "", "meeting_memory_write", str(exc))
+        sleep(10)
+
+
 def replay_recent_meetings_command(
     settings: WorkerSettings,
     *,
@@ -3698,6 +3735,13 @@ def run_service(
         (
             "meeting-delivery",
             lambda: run_meeting_delivery_loop(
+                settings,
+                network_ready=dependency_gate.ready,
+            ),
+        ),
+        (
+            "meeting-memory-write",
+            lambda: run_meeting_memory_write_loop(
                 settings,
                 network_ready=dependency_gate.ready,
             ),

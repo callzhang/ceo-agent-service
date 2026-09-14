@@ -6547,6 +6547,49 @@ def test_meeting_delivery_loop_resolves_service_error_after_successful_cycle(
     ]
 
 
+def test_meeting_memory_write_loop_processes_sent_conclusions(
+    monkeypatch, tmp_path
+):
+    class StopLoop(Exception):
+        pass
+
+    calls = []
+
+    class FakeStore:
+        def resolve_unresolved_errors_by_kind(self, kind, *, resolution):
+            calls.append(("resolve", kind, resolution))
+
+        def record_error(self, *_args):
+            raise AssertionError("Memory write loop unexpectedly failed")
+
+    store = FakeStore()
+    routed_execution = object()
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: store)
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **kwargs: calls.append(("build", kwargs)) or routed_execution,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_meeting_memory_writes",
+        lambda received_store, *, workspace, routed_execution, now, limit: calls.append(
+            ("process", received_store, workspace, routed_execution, now, limit)
+        ),
+    )
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_memory_write_loop(
+            WorkerSettings(db_path=tmp_path / "worker.sqlite3", workspace=tmp_path),
+            sleep=lambda _seconds: (_ for _ in ()).throw(StopLoop()),
+            network_ready=lambda: True,
+        )
+
+    assert calls[0][0] == "build"
+    assert calls[1][:4] == ("process", store, tmp_path, routed_execution)
+    assert calls[1][4].utcoffset() is not None
+    assert calls[1][5] == 1
+
+
 def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_path):
     calls = []
 
@@ -7366,6 +7409,14 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         )
         or stop("meeting-delivery"),
     )
+    monkeypatch.setattr(
+        cli,
+        "run_meeting_memory_write_loop",
+        lambda settings, network_ready=None: calls.append(
+            ("meeting-memory-write", network_ready is gate.ready)
+        )
+        or stop("meeting-memory-write"),
+    )
     monkeypatch.setattr(cli, "run_follow_up_delivery_loop", follow_up_delivery_loop)
     monkeypatch.setattr(cli, "run_oa_pending_scan_loop", oa_pending_scan_loop)
     monkeypatch.setattr(
@@ -7407,6 +7458,8 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         ("task-maintenance", True),
         ("start", "ceo-agent-service-meeting-delivery", True),
         ("meeting-delivery", True),
+        ("start", "ceo-agent-service-meeting-memory-write", True),
+        ("meeting-memory-write", True),
         ("start", "ceo-agent-service-follow-up-delivery", True),
         ("follow-up-delivery", True),
         ("wait",),
@@ -7417,9 +7470,10 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         ("agent-cron-dispatcher", "stop agent-cron-dispatcher"),
         ("task-maintenance", "stop task-maintenance"),
         ("meeting-delivery", "stop meeting-delivery"),
+        ("meeting-memory-write", "stop meeting-memory-write"),
         ("follow-up-delivery", "stop follow-up-delivery"),
     ]
-    assert exits == [1, 1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1, 1]
 
 
 def test_service_component_failure_persists_scheduler_error_health(
