@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import threading
@@ -124,6 +125,20 @@ def _consumer_result_payload(
         "rule_coverage": rule_coverage,
         "information_completeness": information_completeness,
     }
+
+
+def _assert_consumer_result_fields_unavailable(html: str) -> None:
+    for label in (
+        "confidence",
+        "information_completeness",
+        "rule_coverage",
+        "risk",
+    ):
+        assert re.search(
+            rf'<div class="attempt-detail-label">{label}</div>\s*'
+            r'<div class="attempt-detail-value">—</div>',
+            html,
+        ), f"{label} must render an unavailable value in its own grid cell"
 
 
 def _consumer_result_task(store: AutoReplyStore):
@@ -360,7 +375,7 @@ def test_attempt_detail_marks_missing_linked_consumer_result_unavailable(tmp_pat
     status, detail = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert detail.count(">—<") >= 4
+    _assert_consumer_result_fields_unavailable(detail)
     assert "未找到当前 Attempt 关联的 Consumer run" in detail
 
 
@@ -378,7 +393,7 @@ def test_attempt_detail_marks_malformed_consumer_result_unavailable(tmp_path: Pa
     status, detail = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert detail.count(">—<") >= 4
+    _assert_consumer_result_fields_unavailable(detail)
     assert "Consumer 结果不符合当前契约" in detail
     assert "raw-malformed-marker" not in detail
 
@@ -420,7 +435,7 @@ def test_attempt_detail_renders_failed_consumer_result_safe_detail_and_unavailab
 
     assert status == 200
     assert "Source read failed" in detail
-    assert detail.count(">—<") >= 4
+    _assert_consumer_result_fields_unavailable(detail)
     assert "raw-failed-marker" not in detail
 
 
@@ -437,6 +452,14 @@ def test_attempt_detail_keeps_old_consumer_result_while_current_generation_runs(
     assert status == 303
     assert headers["Location"] == f"/attempts/{attempt_id}"
     assert html == ""
+    requeued_task = store.get_reply_task(task.id)
+    assert requeued_task is not None
+    assert requeued_task.status == "pending"
+    pending_runs = store.list_agent_runs_for_task_generation(
+        requeued_task.id,
+        requeued_task.execution_generation,
+    )
+    assert not [run for run in pending_runs if run.role is AgentRole.CONSUMER]
     _, pending_detail = render_attempt_detail(store, attempt_id)
     assert "新 Consumer run" in pending_detail
     assert "等待中" in pending_detail
@@ -445,7 +468,7 @@ def test_attempt_detail_keeps_old_consumer_result_while_current_generation_runs(
 
     current_task = store.claim_reply_task(task.id)
     assert current_task is not None
-    store.claim_agent_run(
+    running_consumer = store.claim_agent_run(
         current_task.id,
         current_task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -454,6 +477,16 @@ def test_attempt_detail_keeps_old_consumer_result_while_current_generation_runs(
         parent_agent_run_id=None,
         operation_id="",
         owner="current-consumer-result",
+    ).run
+    current_runs = store.list_agent_runs_for_task_generation(
+        current_task.id,
+        current_task.execution_generation,
+    )
+    assert any(
+        run.id == running_consumer.id
+        and run.role is AgentRole.CONSUMER
+        and run.status == "running"
+        for run in current_runs
     )
 
     status, running_detail = render_attempt_detail(store, attempt_id)
