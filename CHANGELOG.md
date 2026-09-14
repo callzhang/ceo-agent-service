@@ -1,5 +1,13 @@
 # Changelog
 
+- 2026-09-14: Dispatcher due-time selection now parses `available_at` as a
+  SQLite timestamp for Reply and Work Summary queues. Retries stored as ISO
+  8601 timestamps with a timezone offset can no longer remain pending after
+  their due time because of a lexical `T` versus space comparison. Future
+  follow-up drafts keep their current `pending` status but enter the History
+  activity chart at their scheduled time, rather than when a planning refresh
+  last touched the draft.
+
 - 2026-09-14: Email unsubscribe task reload now reconstructs an existing task
   from its immutable, redacted ActionPlan payload rather than re-selecting a
   browser entry from a provider's latest rendering. A provider body or header

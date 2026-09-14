@@ -237,6 +237,7 @@ function SkillReference({
   const [previewStyle, setPreviewStyle] = useState<CSSProperties>({ position: "fixed" });
   const triggerRef = useRef<HTMLSpanElement>(null);
   const previewRef = useRef<HTMLElement>(null);
+  const closeTimerRef = useRef<number | null>(null);
   const previewId = `scheduled-task-skill-preview-${refKey(ref)}-${ref.position}`;
 
   useEffect(() => {
@@ -247,6 +248,10 @@ function SkillReference({
       .catch((reason) => { if (!controller.signal.aborted) setPreviewError(errorMessage(reason, "无法读取 Skill 正文")); });
     return () => controller.abort();
   }, [content, expectedSha256, open, previewAttempt, ref]);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+  }, []);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -280,6 +285,10 @@ function SkillReference({
   }, [content, open, previewError]);
 
   function openPreview() {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
     setOpen((current) => {
       if (current) return current;
       setPreviewError("");
@@ -292,12 +301,20 @@ function SkillReference({
     return relatedTarget instanceof Node && Boolean(container?.contains(relatedTarget));
   }
 
+  function scheduleClose() {
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      setOpen(false);
+    }, 120);
+  }
+
   function closeFromTrigger(event: MouseEvent<HTMLSpanElement> | FocusEvent<HTMLSpanElement>) {
-    if (!containsRelatedTarget(previewRef.current, event.relatedTarget)) setOpen(false);
+    if (!containsRelatedTarget(previewRef.current, event.relatedTarget)) scheduleClose();
   }
 
   function closeFromPreview(event: MouseEvent<HTMLElement> | FocusEvent<HTMLElement>) {
-    if (!containsRelatedTarget(triggerRef.current, event.relatedTarget)) setOpen(false);
+    if (!containsRelatedTarget(triggerRef.current, event.relatedTarget)) scheduleClose();
   }
 
   return <span ref={triggerRef} className="scheduled-task-skill-reference" onMouseEnter={openPreview} onMouseLeave={closeFromTrigger} onFocus={openPreview} onBlur={closeFromTrigger}>

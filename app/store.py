@@ -21134,7 +21134,12 @@ class AutoReplyStore:
                     drafts.todo_id as todo_id,
                     drafts.id as follow_up_id,
                     'dingtalk' as channel,
-                    coalesce(nullif(drafts.sent_at, ''), nullif(drafts.updated_at, ''), drafts.created_at) as created_at,
+                    case
+                        when drafts.status in ('draft', 'approved')
+                             and nullif(drafts.scheduled_at, '') is not null
+                        then drafts.scheduled_at
+                        else coalesce(nullif(drafts.sent_at, ''), nullif(drafts.updated_at, ''), drafts.created_at)
+                    end as created_at,
                     iif(?1, projects.title || ' ' || projects.category || ' ' ||
                     projects.owner_name || ' ' || projects.goal || ' ' ||
                     projects.background || ' ' || projects.current_state || ' ' ||
@@ -21762,7 +21767,7 @@ class AutoReplyStore:
                 select *
                 from work_summary_inputs
                 where status='pending'
-                  and (available_at='' or available_at <= {now_expression})
+                  and (available_at='' or datetime(available_at) <= datetime({now_expression}))
                 order by id
                 limit ?
                 """,

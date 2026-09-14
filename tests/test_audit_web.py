@@ -1970,6 +1970,31 @@ def test_history_chart_uses_only_lifecycle_statuses(tmp_path: Path):
     assert sum(sum(series["data"]) for series in payload["series"]) == 8
 
 
+def test_history_chart_waits_for_future_follow_up_schedule(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    project_id = store.create_work_project(
+        title="Future follow-up",
+        category="product",
+        priority="P1",
+        risk_level="low",
+        owner_name="Derek",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        title="Confirm release readiness",
+        target_kind="direct",
+        question_text="Confirm the scheduled milestone.",
+        scheduled_at=(now + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"),
+        status="draft",
+    )
+
+    payload = audit_web_module._history_chart_payload(store, now=now)
+
+    assert payload["total"] == 0
+    assert payload["series"] == []
+
+
 def test_history_chart_does_not_replace_old_failed_status_with_historical(
     tmp_path: Path,
 ):

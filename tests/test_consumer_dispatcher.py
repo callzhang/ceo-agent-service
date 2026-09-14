@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event, Lock, Thread, enumerate as enumerate_threads
 from types import SimpleNamespace
@@ -808,6 +808,69 @@ def test_work_summary_claim_uses_dispatcher_time_for_due_boundary(tmp_path: Path
         )
         is not None
     )
+
+
+def test_reply_dispatcher_claims_due_iso8601_available_at(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _reply(store)
+    task = store.claim_reply_tasks(limit=1)[0]
+    due_iso8601 = (NOW - timedelta(minutes=1)).astimezone(
+        timezone(timedelta(hours=-7))
+    ).isoformat()
+    store.defer_reply_task(
+        task.id,
+        "retryable_test_failure",
+        expected_execution_generation=task.execution_generation,
+        available_at=due_iso8601,
+    )
+    adapter = ReplyQueueAdapter(store, owner_alive=lambda _pid: False)
+
+    assert adapter.metrics(NOW).due == 1
+    claimed = adapter.claim(
+        NOW, owner="dispatcher-a", owner_pid=101, lease=timedelta(minutes=5)
+    )
+    assert claimed is not None
+    assert claimed.source_id == str(task.id)
+
+
+def test_work_summary_dispatcher_claims_due_iso8601_available_at(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    input_id = _work_summary(store)
+    assert store.claim_work_summary_inputs(limit=1)[0].id == input_id
+    due_iso8601 = (NOW - timedelta(minutes=1)).astimezone(
+        timezone(timedelta(hours=-7))
+    ).isoformat()
+    store.schedule_work_summary_input_retry(
+        input_id, "retryable_test_failure", available_at=due_iso8601
+    )
+    adapter = WorkSummaryQueueAdapter(store, owner_alive=lambda _pid: False)
+
+    assert adapter.metrics(NOW).due == 1
+    claimed = adapter.claim(
+        NOW, owner="dispatcher-a", owner_pid=101, lease=timedelta(minutes=5)
+    )
+    assert claimed is not None
+    assert claimed.source_id == str(input_id)
+
+
+def test_work_summary_store_claims_due_iso8601_available_at(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    input_id = _work_summary(store)
+    assert store.claim_work_summary_inputs(limit=1)[0].id == input_id
+    due_iso8601 = (NOW - timedelta(minutes=1)).astimezone(
+        timezone(timedelta(hours=-7))
+    ).isoformat()
+    store.schedule_work_summary_input_retry(
+        input_id, "retryable_test_failure", available_at=due_iso8601
+    )
+
+    claimed = store.claim_work_summary_inputs(
+        limit=1, now=NOW.strftime("%Y-%m-%d %H:%M:%S")
+    )
+
+    assert [item.id for item in claimed] == [input_id]
 
 
 def test_release_returns_each_claim_to_its_fact_table_without_copying_payload(

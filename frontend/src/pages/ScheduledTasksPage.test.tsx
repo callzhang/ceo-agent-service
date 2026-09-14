@@ -142,7 +142,7 @@ describe("ScheduledTasksPage", () => {
     expect(await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" })).toHaveTextContent("读取完整消息上下文");
     expect(api.getScheduledTaskSkillPreview).toHaveBeenCalledWith(operationRef, expect.any(AbortSignal), "chat");
     await user.unhover(skill);
-    expect(screen.queryByRole("region", { name: "dingtalk-chat Skill 正文" })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("region", { name: "dingtalk-chat Skill 正文" })).toBeNull());
 
     skill.focus();
     expect(await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" })).toBeInTheDocument();
@@ -160,6 +160,11 @@ describe("ScheduledTasksPage", () => {
     expect(preview).toHaveClass("scheduled-task-skill-preview");
     expect(preview).toHaveStyle({ position: "fixed" });
     expect(workbenchStyles).not.toMatch(/\.scheduled-task-skill-reference\.is-preview-open\s*\{[^}]*flex:\s*1\s+0\s+100%/);
+
+    await user.hover(preview);
+    expect(screen.getByRole("region", { name: "dingtalk-chat Skill 正文" })).toBeInTheDocument();
+    await user.unhover(preview);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "dingtalk-chat Skill 正文" })).toBeNull());
   });
 
   it("retries a failed Skill preview on a later hover instead of latching the transient error", async () => {
@@ -173,6 +178,7 @@ describe("ScheduledTasksPage", () => {
     await user.hover(skill);
     expect(await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" })).toHaveTextContent("读取暂时失败");
     await user.unhover(skill);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "dingtalk-chat Skill 正文" })).toBeNull());
     await user.hover(skill);
 
     expect(await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" })).toHaveTextContent("第二次读取成功");
