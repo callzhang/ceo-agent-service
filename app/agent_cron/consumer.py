@@ -109,7 +109,11 @@ class ScheduledTaskTriggerConsumer:
         """
         command = run.snapshot.command
         try:
-            summary = self._commands.run(command)
+            consumer_context = self._builder.build_consumer_context(run)
+            summary = self._commands.run(
+                command,
+                consumer_context=consumer_context,
+            )
         except Exception as exc:  # noqa: BLE001 - the trigger records this failure fact
             reason = f"{SERVICE_COMMAND_FAILED}: {exc}"
             failed_at = self._now().astimezone(UTC)

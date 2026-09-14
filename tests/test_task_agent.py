@@ -4352,6 +4352,28 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
     assert '"summary":' in prompt
 
 
+def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():
+    payload = _work_item().model_dump(mode="json")
+    payload["scheduled_consumer"] = {
+        "schema": "scheduled_consumer.v1",
+        "scheduled_task_id": 7,
+        "scheduled_task_run_id": 11,
+        "prompt": "只处理 $ceo-work-tracking 能确认的真实工作项。",
+        "skill_names": ["ceo-work-tracking"],
+        "skill_protocol": "# Targeted Work Tracking Skill",
+    }
+
+    prompt = build_task_agent_prompt(
+        WorkItem.model_validate(payload),
+        "无候选项目",
+    )
+
+    assert "## Scheduled Consumer Prompt" in prompt
+    assert "只处理 $ceo-work-tracking 能确认的真实工作项。" in prompt
+    assert "# Targeted Work Tracking Skill" in prompt
+    assert "# CEO Work Tracking" not in prompt
+
+
 def test_task_agent_prompts_require_stable_follow_up_participants():
     prompt = build_task_agent_prompt(_work_item(), "无候选项目")
     rejected = TaskAgentDecision.model_validate(

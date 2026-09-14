@@ -80,6 +80,7 @@ class WechatReplyProducer:
                 if not is_reply_candidate(message, scope, self_user_id=self.self_user_id):
                     continue
                 available_at = ""
+                trigger_message_json = self._trigger_message_json(message)
                 if message.conversation_type == "direct":
                     available_at = (
                         datetime.fromisoformat(message.sent_at)
@@ -91,7 +92,7 @@ class WechatReplyProducer:
                         trigger_create_time=message.sent_at,
                         trigger_sender=message.sender_display_name,
                         trigger_text=message.text,
-                        trigger_message_json=message.model_dump_json(),
+                        trigger_message_json=trigger_message_json,
                         available_at=available_at,
                         channel="wechat",
                     ):
@@ -106,7 +107,7 @@ class WechatReplyProducer:
                     trigger_create_time=message.sent_at,
                     trigger_sender=message.sender_display_name,
                     trigger_text=message.text,
-                    trigger_message_json=message.model_dump_json(),
+                    trigger_message_json=trigger_message_json,
                     available_at=available_at,
                 ):
                     enqueued += 1
@@ -116,3 +117,12 @@ class WechatReplyProducer:
                     new_messages[-1].sent_at,
                 )
         return enqueued
+
+    @staticmethod
+    def _trigger_message_json(message: WechatMessage) -> str:
+        from app.agent_cron.commands import current_service_command_consumer_context
+
+        context = current_service_command_consumer_context()
+        return message.model_copy(
+            update={"scheduled_consumer": context.to_payload() if context else {}}
+        ).model_dump_json()

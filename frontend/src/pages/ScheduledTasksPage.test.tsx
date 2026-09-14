@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import workbenchStyles from "../styles.css?raw";
+import type { ScheduledTask, ScheduledTaskRun } from "../api/scheduledTasks";
 
 const api = vi.hoisted(() => ({
   listScheduledTasks: vi.fn(), getScheduledTaskOptions: vi.fn(), createScheduledTask: vi.fn(),
@@ -16,13 +17,13 @@ import { ScheduledTasksPage } from "./ScheduledTasksPage";
 
 const operationRef = { skill_source: "operation" as const, skill_name: "dingtalk-chat", managed_skill_id: null, managed_revision_id: null, position: 0 };
 const managedRef = { skill_source: "managed" as const, skill_name: "ceo-minutes-sync", managed_skill_id: 2, managed_revision_id: 23, position: 1 };
-const run = {
+const run: ScheduledTaskRun = {
   id: 11, event_id: "manual:11", scheduled_task_id: 7, trigger_kind: "manual" as const,
   scheduled_for: "2026-09-08T12:00:00Z", dispatch_status: "dispatched", skip_or_error_reason: "",
   execution_kind: "reply_task", execution_id: "91", created_at: "2026-09-08T12:00:00Z", dispatched_at: "2026-09-08T12:00:01Z",
   snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, required_runtime_capabilities: [], working_directory: "/tmp/ceo-agent", skill_refs: [operationRef] },
 };
-const task = {
+const task: ScheduledTask = {
   id: 7, migration_key: null, name: "检查钉钉消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "",
   cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", schedule_description: "每分钟执行 · Asia/Shanghai",
   next_run_at: "2026-09-08T12:01:00Z", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const } as { thinking?: "low" | "medium" | "high" | "xhigh" },
@@ -30,7 +31,7 @@ const task = {
   working_directory: "/tmp/ceo-agent", enabled: true, version: 3, skill_refs: [operationRef], recent_run: run,
   created_at: "2026-09-08T10:00:00Z", updated_at: "2026-09-08T11:00:00Z", deleted_at: null,
 };
-type TestTask = Omit<typeof task, "recent_run" | "deleted_at" | "migration_key"> & { recent_run: typeof run | null; deleted_at: string | null; migration_key: string | null };
+type TestTask = ScheduledTask;
 const taskB: TestTask = { ...task, id: 8, name: "检查飞书消息", prompt: "检查飞书消息 $dingtalk-chat", version: 5, recent_run: null };
 const options = {
   runtime_options: [
@@ -47,29 +48,17 @@ const options = {
     { name: "lark-im", source: "/skills/lark-im/SKILL.md", content_summary: "读取飞书消息", sha256: "lark", available: false, unavailable_reason: "operation_skill_name_conflict" },
   ],
   service_command_options: [
-    { name: "produce-once", display_name: "检查钉钉消息", description: "增量读取 DingTalk 未读消息，去重后写入 reply task。", channel: "dingtalk" as const, downstream: {
-      channel: "dingtalk" as const, consumer_runners: ["ConsumerAgentRunner", "AuditAgentRunner"], instructions: "You are Consumer Agent A. Understand the supplied task.", required_capabilities: [],
-      loads_skills: true, skills: [{ name: "ceo-minutes-sync", revision_id: 23, revision_number: 2 }], skills_from_runtime_snapshot: true,
-      runtime_routes: [
-        { route_name: "codex_oauth", model: "gpt-5.6-sol", available: true as const, unavailable_reason: null },
-        { route_name: "claude_cloud", model: "claude", available: false as const, unavailable_reason: "snapshot_missing" },
-      ],
-    } },
-    { name: "wechat-produce-once", display_name: "检查微信消息", description: "读取已就绪微信账号的新消息。", channel: "wechat" as const, downstream: {
-      channel: "wechat" as const, consumer_runners: ["WechatDecisionRunner"], instructions: "- This is a selected personal WeChat conversation.", required_capabilities: ["structured_output"],
-      loads_skills: false, skills: [], skills_from_runtime_snapshot: false,
-      runtime_routes: [{ route_name: "codex_oauth", model: "gpt-5.6-sol", available: true as const, unavailable_reason: null }],
-    } },
-    { name: "scan-meetings-once", display_name: "检查 DingTalk 会议", description: "读取已结束的 DingTalk 会议。", channel: "meeting" as const, downstream: {
-      channel: "meeting" as const, consumer_runners: ["MeetingAlignmentCodexRunner"], instructions: null, required_capabilities: ["local_schema_validation", "structured_output"],
-      loads_skills: false, skills: [], skills_from_runtime_snapshot: false,
-      runtime_routes: [{ route_name: "codex_oauth", model: "gpt-5.6-sol", available: true as const, unavailable_reason: null }],
-    } },
+    { name: "produce-once", display_name: "检查钉钉消息", description: "增量读取 DingTalk 未读消息，去重后写入 reply task。", channel: "dingtalk" as const, consumer_prompt_enabled: true },
+    { name: "wechat-produce-once", display_name: "检查微信消息", description: "读取已就绪微信账号的新消息。", channel: "wechat" as const, consumer_prompt_enabled: true },
+    { name: "scan-meetings-once", display_name: "检查 DingTalk 会议", description: "读取已结束的 DingTalk 会议。", channel: "meeting" as const, consumer_prompt_enabled: true },
+    { name: "sync-minutes-once", display_name: "同步 AI 听记", description: "同步 AI 听记到本地归档。", channel: "work_summary" as const, consumer_prompt_enabled: false },
   ],
   meta: { snapshot_at: "2026-09-08T12:00:00Z" },
 };
-const commandRun: typeof run = { ...run, id: 13, scheduled_task_id: 9, execution_kind: "service_command", execution_id: "produce-once", snapshot: { ...run.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {} as typeof run.snapshot.runtime_options, working_directory: "", skill_refs: [] } };
-const commandTask: TestTask = { ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: [], recent_run: commandRun };
+const commandPrompt = "使用 $ceo-minutes-sync 与 $dingtalk-chat 处理 Trigger 发现的真实消息。";
+const commandRefs = [{ ...managedRef, position: 0 }, { ...operationRef, position: 1 }];
+const commandRun: ScheduledTaskRun = { ...run, id: 13, scheduled_task_id: 9, execution_kind: "service_command", execution_id: "produce-once", snapshot: { ...run.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: commandPrompt, command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: commandRefs } };
+const commandTask: TestTask = { ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: commandPrompt, command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: commandRefs, recent_run: commandRun };
 
 function setup(items: TestTask[] = [task]) {
   api.listScheduledTasks.mockResolvedValue({ items, meta: { total: items.length, snapshot_at: "now" } });
@@ -410,7 +399,36 @@ describe("ScheduledTasksPage", () => {
 });
 
 describe("service command tasks", () => {
-  it("edits only name, Cron, and timezone for a service command task and shows its readable name", async () => {
+  it("edits the Consumer Prompt and execution command without showing Settings-owned runtime details", async () => {
+    setup([commandTask]);
+    const user = userEvent.setup();
+    renderPage("/scheduled-tasks?id=9");
+
+    expect(await screen.findByLabelText("Consumer Agent Prompt")).toHaveValue(commandPrompt);
+    expect(screen.getByText("每天听记同步 · revision 2")).toBeInTheDocument();
+    expect(screen.getByText("dingtalk-chat")).toBeInTheDocument();
+    expect(screen.queryByText("lark-im")).toBeNull();
+    expect(screen.queryByRole("region", { name: "下游 consumer" })).toBeNull();
+    expect(screen.queryByText("Runtime 路由")).toBeNull();
+    expect(screen.queryByText(/角色边界/)).toBeNull();
+    expect(screen.getByLabelText("服务命令")).toBeEnabled();
+
+    await user.selectOptions(screen.getByLabelText("服务命令"), "wechat-produce-once");
+    await user.click(screen.getByRole("button", { name: "保存更改" }));
+
+    await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(
+      9,
+      expect.objectContaining({
+        command: "wechat-produce-once",
+        prompt: commandPrompt,
+        skill_refs: commandRefs,
+        runtime_id: "",
+        version: 3,
+      }),
+    ));
+  });
+
+  it("shows a readable service task without Settings-owned runtime details", async () => {
     setup([commandTask]);
     api.listScheduledTaskRuns.mockResolvedValue({ scheduled_task: commandTask, items: [commandRun], meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false } });
     api.updateScheduledTask.mockImplementation(async (_id, draft) => ({ item: { ...commandTask, ...draft, version: 4 }, meta: { snapshot_at: "now" } }));
@@ -429,25 +447,10 @@ describe("service command tasks", () => {
     expect(screen.queryByLabelText("Consumer Agent 自定义描述")).toBeNull();
     expect(screen.queryByText("Consumer Agent 系统提示词")).toBeNull();
     expect(screen.queryByText("从提示词提取的 Skills")).toBeNull();
-    const downstream = screen.getByRole("region", { name: "下游 consumer" });
-    expect(within(downstream).getByText("dingtalk")).toBeInTheDocument();
-    expect(within(downstream).getByText("ConsumerAgentRunner → AuditAgentRunner")).toBeInTheDocument();
-    expect(within(downstream).getByText("无额外要求")).toBeInTheDocument();
-    expect(within(downstream).getByText("角色边界（服务常量；运行时另拼接能力说明、Skill 协议与工作画像，并替换负责人称呼）")).toBeInTheDocument();
-    expect(within(downstream).queryByText(/完整|系统提示词/)).toBeNull();
-    expect(downstream.querySelector("details > pre")).toHaveTextContent("You are Consumer Agent A. Understand the supplied task.");
-    expect(within(downstream).getByText("ceo-minutes-sync")).toBeInTheDocument();
-    expect(within(downstream).getByText("revision 2")).toBeInTheDocument();
-    expect(within(downstream).getByText("来源：进程 Runtime Skill 快照（精确 revision）")).toBeInTheDocument();
-    expect(within(downstream).getByText("codex_oauth · gpt-5.6-sol")).toBeInTheDocument();
-    expect(within(downstream).getByText("claude_cloud · claude · 不可用：snapshot_missing")).toBeInTheDocument();
-    expect(within(downstream).getByText(/通过 Runtime 路由器.*按上方所需能力计算/)).toBeInTheDocument();
-    expect(within(downstream).queryAllByRole("textbox")).toHaveLength(0);
-    expect(within(downstream).queryAllByRole("combobox")).toHaveLength(0);
-    expect(within(downstream).queryAllByRole("button")).toHaveLength(0);
-    expect(downstream.querySelector("input, textarea, select, [contenteditable]")).toBeNull();
-    expect(screen.getByLabelText("服务命令")).toBeDisabled();
-    expect(screen.getByText("内置任务的执行类型由仓库维护，不能修改。")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "下游 consumer" })).toBeNull();
+    expect(screen.queryByText(/角色边界/)).toBeNull();
+    expect(screen.queryByText("Runtime 路由")).toBeNull();
+    expect(screen.getByLabelText("服务命令")).toBeEnabled();
     expect(screen.getAllByText("检查钉钉消息").length).toBeGreaterThanOrEqual(1);
     expect(await screen.findByText("技术详情")).toBeInTheDocument();
     expect(screen.queryByText("技术详情：produce-once")).toBeNull();
@@ -460,49 +463,16 @@ describe("service command tasks", () => {
     expect(screen.getByText("计划预览：每小时第30分钟执行 · Asia/Shanghai")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "保存更改" }));
 
-    await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(9, expect.objectContaining({ command: "produce-once", cron_expression: "0 30 * * * *", prompt: "", runtime_id: "", skill_refs: [], version: 3 })));
+    await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(9, expect.objectContaining({ command: "produce-once", cron_expression: "0 30 * * * *", prompt: commandPrompt, runtime_id: "", skill_refs: commandRefs, version: 3 })));
   });
 
-  it("states that the WeChat command's decision runner loads no Skill", async () => {
-    setup([{ ...commandTask, id: 10, migration_key: null, name: "检查微信消息", command: "wechat-produce-once", recent_run: null }]);
+  it("hides Consumer Prompt for a deterministic command with no Agent consumer", async () => {
+    setup([{ ...commandTask, id: 10, migration_key: null, name: "同步 AI 听记", command: "sync-minutes-once", prompt: "", skill_refs: [], recent_run: null }]);
     renderPage("/scheduled-tasks?id=10");
 
-    expect(await screen.findByLabelText("服务命令")).toHaveValue("wechat-produce-once");
-    const downstream = screen.getByRole("region", { name: "下游 consumer" });
-    expect(within(downstream).getByText("wechat")).toBeInTheDocument();
-    expect(within(downstream).getByText("WechatDecisionRunner")).toBeInTheDocument();
-    expect(within(downstream).getByText("structured_output")).toBeInTheDocument();
-    expect(within(downstream).getByText("回合指令（服务常量；运行时另拼接处理时间、对话上下文与触发消息）")).toBeInTheDocument();
-    expect(downstream.querySelector("details > pre")).toHaveTextContent("This is a selected personal WeChat conversation.");
-    expect(within(downstream).getByText("不加载 Skill")).toBeInTheDocument();
-    expect(within(downstream).queryByText(/来源：/)).toBeNull();
-    expect(downstream.querySelector(".scheduled-task-skill-chips")).toBeNull();
-    expect(within(downstream).getByText("codex_oauth · gpt-5.6-sol")).toBeInTheDocument();
-  });
-
-  it("omits the instruction block for a consumer that exports no instruction constant", async () => {
-    setup([{ ...commandTask, id: 11, migration_key: null, name: "检查 DingTalk 会议", command: "scan-meetings-once", recent_run: null }]);
-    renderPage("/scheduled-tasks?id=11");
-
-    expect(await screen.findByLabelText("服务命令")).toHaveValue("scan-meetings-once");
-    const downstream = screen.getByRole("region", { name: "下游 consumer" });
-    expect(within(downstream).getByText("MeetingAlignmentCodexRunner")).toBeInTheDocument();
-    expect(within(downstream).getByText("local_schema_validation、structured_output")).toBeInTheDocument();
-    expect(downstream.querySelector("details")).toBeNull();
-    expect(within(downstream).queryByText(/服务常量/)).toBeNull();
-  });
-
-  it("names the installed business Skill catalog when the process has no runtime Skill snapshot", async () => {
-    const [dingtalk, wechat] = options.service_command_options;
-    setup([commandTask]);
-    api.getScheduledTaskOptions.mockResolvedValueOnce({ ...options, service_command_options: [{ ...dingtalk, downstream: { ...dingtalk.downstream, skills: [{ name: "ceo-minutes-sync", revision_id: null, revision_number: null }], skills_from_runtime_snapshot: false } }, wechat] });
-    renderPage("/scheduled-tasks?id=9");
-
-    expect(await screen.findByLabelText("服务命令")).toHaveValue("produce-once");
-    const downstream = screen.getByRole("region", { name: "下游 consumer" });
-    expect(within(downstream).getByText("ceo-minutes-sync")).toBeInTheDocument();
-    expect(within(downstream).queryByText(/revision/)).toBeNull();
-    expect(within(downstream).getByText("来源：已安装业务 Skill 目录（当前进程没有 Runtime Skill 快照）")).toBeInTheDocument();
+    expect(await screen.findByLabelText("服务命令")).toHaveValue("sync-minutes-once");
+    expect(screen.queryByLabelText("Consumer Agent Prompt")).toBeNull();
+    expect(screen.queryByText("Consumer Agent Skills")).toBeNull();
   });
 
   it("keeps the execution type editable for a user-created command task", async () => {
@@ -536,12 +506,12 @@ describe("service command tasks", () => {
     expect(screen.queryByText("内置任务的执行类型由仓库维护，不能修改。")).toBeNull();
   });
 
-  it("locks the execution type of a repository managed Agent task", async () => {
+  it("keeps the execution type editable for a repository managed Agent task", async () => {
     setup([{ ...task, migration_key: "dingtalk-agent-check-v1" }]);
     renderPage();
 
     expect(await screen.findByLabelText("任务描述")).toBeInTheDocument();
-    expect(screen.getByLabelText("服务命令")).toBeDisabled();
-    expect(screen.getByText("内置任务的执行类型由仓库维护，不能修改。")).toBeInTheDocument();
+    expect(screen.getByLabelText("服务命令")).toBeEnabled();
+    expect(screen.queryByText("内置任务的执行类型由仓库维护，不能修改。")).toBeNull();
   });
 });

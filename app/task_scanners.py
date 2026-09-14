@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from app.agent_cron.commands import current_service_command_consumer_context
 from app.dingtalk_models import DingTalkMessage
 from app.store import AutoReplyStore
 from app.task_models import WorkItem
@@ -113,6 +114,7 @@ def scan_local_workspace_files(
         dict(previous_path_refs) if max_new_items is not None else {}
     )
     count = 0
+    scheduled_consumer = current_service_command_consumer_context()
 
     for path in sorted(workspace.rglob("*")):
         if not path.is_file():
@@ -167,6 +169,9 @@ def scan_local_workspace_files(
                     "source_conversation_kind": "file",
                     "source_conversation_title": resolved.name,
                 },
+                "scheduled_consumer": (
+                    scheduled_consumer.to_payload() if scheduled_consumer else {}
+                ),
             }
         )
         store.enqueue_work_summary_input(

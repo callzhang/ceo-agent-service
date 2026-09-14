@@ -167,6 +167,19 @@ class WechatReplyConsumer:
             context,
             current_time=self.now_provider().isoformat(),
         )
+        from app.agent_cron.commands import ServiceCommandConsumerContext
+
+        scheduled_consumer = ServiceCommandConsumerContext.from_payload(
+            trigger.scheduled_consumer or None
+        )
+        if scheduled_consumer is not None:
+            prompt = (
+                "## Scheduled Consumer Prompt\n"
+                f"{scheduled_consumer.prompt}\n\n"
+                "## Scheduled Consumer Skills\n"
+                f"{scheduled_consumer.skill_protocol}\n\n"
+                f"{prompt}"
+            )
         self.store.mark_wechat_read_only_decision_started(
             task.id,
             expected_execution_generation=task.execution_generation,

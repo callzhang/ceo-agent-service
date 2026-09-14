@@ -4,6 +4,11 @@ from datetime import datetime, timedelta
 import pytest
 
 import app.meeting_alignment as meeting_alignment
+from app.agent_cron.commands import (
+    SERVICE_COMMAND_OPTIONS,
+    ServiceCommandConsumerContext,
+    ServiceCommandRegistry,
+)
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.agent_runtime_router import RoutedCodexExecutionError
 from app.dws_client import (
@@ -45,6 +50,30 @@ def test_producer_does_not_create_new_job_when_feature_disabled(tmp_path):
         == 0
     )
     assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+
+
+def test_meeting_producer_carries_scheduled_consumer_context(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    context = ServiceCommandConsumerContext(
+        scheduled_task_id=3,
+        scheduled_task_run_id=5,
+        prompt="使用 $ceo-meeting-work 处理真实会议。",
+        skill_names=("ceo-meeting-work",),
+        skill_protocol="# Targeted Meeting Skill",
+    )
+    implementations = {option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS}
+    implementations["scan-meetings-once"] = lambda: str(
+        produce_meeting_alignment_jobs(store, FakeDws(), now=NOW)
+    )
+
+    ServiceCommandRegistry(implementations).run(
+        "scan-meetings-once",
+        consumer_context=context,
+    )
+
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    assert json.loads(job.source_json)["scheduled_consumer"] == context.to_payload()
 
 
 def test_disabled_feature_still_processes_existing_meeting_job(tmp_path, monkeypatch):

@@ -174,6 +174,33 @@ class CapturingExecutor:
         return ProcessRunResult(0, self.stdout, "")
 
 
+def test_consumer_uses_scheduled_prompt_and_targeted_skill_protocol(
+    store, task, context
+):
+    scheduled_context = replace(
+        context,
+        consumer_prompt="SCHEDULED CONSUMER PROMPT",
+        skill_protocol_override="TARGETED SKILL PROTOCOL",
+    )
+    executor = CapturingExecutor(_result_jsonl())
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(
+        task,
+        scheduled_context,
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+
+    assert "SCHEDULED CONSUMER PROMPT" in executor.prompts[0]
+    command_text = "\n".join(executor.commands[0])
+    assert "TARGETED SKILL PROTOCOL" in command_text
+    assert "Installed Business Skills" not in command_text
+
+
 class FailingExecutor(CapturingExecutor):
     def __init__(self, stdout: str, *, stderr: str = "") -> None:
         super().__init__(stdout)

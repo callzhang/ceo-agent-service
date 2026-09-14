@@ -97,7 +97,14 @@ def _options(
         if (revision := store.get_managed_skill_revision(binding.revision_id)) is not None
     )
     operation_root = tmp_path / "operation-skills"
-    for name in operation_skills:
+    required_operation_skills = {
+        "dingtalk-chat",
+        "dingtalk-minutes",
+        "dingtalk-calendar",
+        "dingtalk-oa-approval",
+        *operation_skills,
+    }
+    for name in required_operation_skills:
         path = operation_root / name / "SKILL.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
@@ -252,7 +259,10 @@ def test_reseeding_preserves_user_edits_when_adopting_a_legacy_fixed_check(
     )
 
     assert repeated.name == original.name
-    assert repeated.prompt == ""
+    assert "$dingtalk-oa-approval" in repeated.prompt
+    assert [ref.skill_name for ref in repeated.skill_refs] == [
+        "dingtalk-oa-approval"
+    ]
     assert repeated.runtime_id == ""
     assert repeated.command == "scan-oa-approvals"
     assert repeated.enabled is False
@@ -373,7 +383,12 @@ def test_seed_creates_dingtalk_message_check_every_minute(tmp_path: Path) -> Non
     assert task.timezone_name == "Asia/Shanghai"
     assert task.command == "produce-once"
     assert task.enabled is True
-    assert task.prompt == "" and task.runtime_id == "" and task.skill_refs == ()
+    assert "$ceo-message-triage" in task.prompt and "$dingtalk-chat" in task.prompt
+    assert task.runtime_id == ""
+    assert [ref.skill_name for ref in task.skill_refs] == [
+        "ceo-message-triage",
+        "dingtalk-chat",
+    ]
     assert task.runtime_options == {} and task.required_runtime_capabilities == ()
     assert task.working_directory == ""
 
@@ -429,7 +444,12 @@ def test_startup_seed_moves_legacy_agent_message_check_to_the_service_command(
     assert seeded.id == legacy.id
     assert seeded.version == legacy.version + 1
     assert seeded.command == "produce-once"
-    assert seeded.prompt == "" and seeded.runtime_id == "" and seeded.skill_refs == ()
+    assert "$ceo-message-triage" in seeded.prompt and "$dingtalk-chat" in seeded.prompt
+    assert seeded.runtime_id == ""
+    assert [ref.skill_name for ref in seeded.skill_refs] == [
+        "ceo-message-triage",
+        "dingtalk-chat",
+    ]
     assert seeded.required_runtime_capabilities == ()
     assert seeded.working_directory == ""
     assert seeded.name == legacy.name
@@ -498,12 +518,18 @@ def test_seed_creates_meeting_check_with_fixed_ten_minute_eligibility(
     assert task.name == "检查 DingTalk 会议"
     assert task.cron_expression == "0 * * * * *"
     assert task.command == "scan-meetings-once"
-    assert task.prompt == ""
+    assert "$ceo-meeting-work" in task.prompt
+    assert "$dingtalk-minutes" in task.prompt
+    assert "$dingtalk-calendar" in task.prompt
     assert task.runtime_id == ""
     assert task.runtime_options == {}
     assert task.required_runtime_capabilities == ()
     assert task.working_directory == ""
-    assert task.skill_refs == ()
+    assert [ref.skill_name for ref in task.skill_refs] == [
+        "ceo-meeting-work",
+        "dingtalk-minutes",
+        "dingtalk-calendar",
+    ]
     assert task.enabled is True
 
 
@@ -533,15 +559,25 @@ def test_every_fixed_discovery_check_is_a_service_command(
         "dingtalk-oa-check-v1": "scan-oa-approvals",
         "work-source-scan-daily-v1": "scan-work-sources-once",
     }
+    expected_skills = {
+        "dingtalk-message-check-v1": ["ceo-message-triage", "dingtalk-chat"],
+        "dingtalk-message-recovery-v1": ["ceo-message-triage", "dingtalk-chat"],
+        "dingtalk-meeting-check-v1": [
+            "ceo-meeting-work", "dingtalk-minutes", "dingtalk-calendar"
+        ],
+        "wechat-message-check-v1": ["ceo-wechat"],
+        "dingtalk-oa-check-v1": ["dingtalk-oa-approval"],
+        "work-source-scan-daily-v1": ["ceo-work-tracking"],
+    }
     for migration_key, command in expected_commands.items():
         task = _task_by_key(tasks, migration_key)
         assert task.command == command
-        assert task.prompt == ""
+        assert task.prompt
         assert task.runtime_id == ""
         assert task.runtime_options == {}
         assert task.required_runtime_capabilities == ()
         assert task.working_directory == ""
-        assert task.skill_refs == ()
+        assert [ref.skill_name for ref in task.skill_refs] == expected_skills[migration_key]
         assert task.enabled is True
 
     # Every seeded task is a service command, the weekly OKR report included:
@@ -575,7 +611,8 @@ def test_seed_creates_wechat_existing_producer_every_fifteen_seconds(
     assert task.timezone_name == "Asia/Shanghai"
     assert task.command == "wechat-produce-once"
     assert task.enabled is True
-    assert task.prompt == "" and task.runtime_id == "" and task.skill_refs == ()
+    assert "$ceo-wechat" in task.prompt and task.runtime_id == ""
+    assert [ref.skill_name for ref in task.skill_refs] == ["ceo-wechat"]
     assert task.runtime_options == {} and task.required_runtime_capabilities == ()
 
 
@@ -633,12 +670,14 @@ def test_seed_creates_hourly_oa_check_with_real_operation_skill(
     assert task.name == "检查 DingTalk OA 审批"
     assert task.cron_expression == "0 0 * * * *"
     assert task.command == "scan-oa-approvals"
-    assert task.prompt == ""
+    assert "$dingtalk-oa-approval" in task.prompt
     assert task.runtime_id == ""
     assert task.runtime_options == {}
     assert task.required_runtime_capabilities == ()
     assert task.working_directory == ""
-    assert task.skill_refs == ()
+    assert [ref.skill_name for ref in task.skill_refs] == [
+        "dingtalk-oa-approval"
+    ]
     assert task.enabled is True
 
 
@@ -662,12 +701,12 @@ def test_seed_creates_daily_work_source_scan(tmp_path: Path) -> None:
     assert task.name == "每天扫描工作来源"
     assert task.cron_expression == "0 0 0 * * *"
     assert task.command == "scan-work-sources-once"
-    assert task.prompt == ""
+    assert "$ceo-work-tracking" in task.prompt
     assert task.runtime_id == ""
     assert task.runtime_options == {}
     assert task.required_runtime_capabilities == ()
     assert task.working_directory == ""
-    assert task.skill_refs == ()
+    assert [ref.skill_name for ref in task.skill_refs] == ["ceo-work-tracking"]
     assert task.enabled is True
 
 
@@ -695,8 +734,12 @@ def test_seed_creates_hourly_recent_message_recovery_at_half_past(
     assert task.cron_expression == "0 30 * * * *"
     assert task.timezone_name == "Asia/Shanghai"
     assert task.enabled is True
-    # A service command task carries no Agent configuration.
-    assert task.prompt == "" and task.runtime_id == "" and task.skill_refs == ()
+    assert "$ceo-message-triage" in task.prompt and "$dingtalk-chat" in task.prompt
+    assert task.runtime_id == ""
+    assert [ref.skill_name for ref in task.skill_refs] == [
+        "ceo-message-triage",
+        "dingtalk-chat",
+    ]
 
 
 def test_seed_creates_sunday_evening_weekly_okr_task(tmp_path: Path) -> None:
@@ -967,8 +1010,9 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
     for task in tasks:
         assert task.command, task.migration_key
         assert task.enabled is True
-        assert task.prompt == ""
+        if task.command in {"sync-minutes-once", "weekly-okr-report"}:
+            assert task.prompt == "" and task.skill_refs == ()
+        else:
+            assert task.prompt and task.skill_refs
         assert task.runtime_id == ""
         assert store.list_scheduled_task_runs(task.id) == ()
-
-

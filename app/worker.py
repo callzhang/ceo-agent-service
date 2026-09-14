@@ -2730,6 +2730,14 @@ class DingTalkAutoReplyWorker:
             trigger=trigger,
             raw_payload=dict(trigger.raw_payload),
         )
+        from app.agent_cron.commands import (
+            SERVICE_COMMAND_CONSUMER_CONTEXT_KEY,
+            ServiceCommandConsumerContext,
+        )
+
+        scheduled_consumer = ServiceCommandConsumerContext.from_payload(
+            trigger_raw_payload.pop(SERVICE_COMMAND_CONSUMER_CONTEXT_KEY, None)
+        )
         return AgentTaskContext(
             task_id=task.id,
             channel=task.channel,
@@ -2751,6 +2759,10 @@ class DingTalkAutoReplyWorker:
             image_paths=tuple(str(path.resolve()) for path in image_paths),
             image_sha256s=tuple(
                 hashlib.sha256(path.read_bytes()).hexdigest() for path in image_paths
+            ),
+            consumer_prompt=(scheduled_consumer.prompt if scheduled_consumer else ""),
+            skill_protocol_override=(
+                scheduled_consumer.skill_protocol if scheduled_consumer else None
             ),
         )
 
@@ -3368,6 +3380,7 @@ class DingTalkAutoReplyWorker:
                 trigger.open_message_id,
             )
             return False
+        trigger_message_json = self._scheduled_trigger_message_json(trigger)
         if conversation.single_chat and replace_pending_single_chat:
             updated = self.store.replace_pending_single_chat_reply_task_trigger(
                 conversation_id=conversation.open_conversation_id,
@@ -3375,7 +3388,7 @@ class DingTalkAutoReplyWorker:
                 trigger_create_time=trigger.create_time,
                 trigger_sender=trigger.sender_name,
                 trigger_text=trigger.content,
-                trigger_message_json=trigger.model_dump_json(),
+                trigger_message_json=trigger_message_json,
                 available_at=available_at,
                 error=error,
                 channel="dingtalk",
@@ -3390,7 +3403,7 @@ class DingTalkAutoReplyWorker:
             trigger_create_time=trigger.create_time,
             trigger_sender=trigger.sender_name,
             trigger_text=trigger.content,
-            trigger_message_json=trigger.model_dump_json(),
+            trigger_message_json=trigger_message_json,
             available_at=available_at,
             error=error,
             channel="dingtalk",
@@ -3401,10 +3414,30 @@ class DingTalkAutoReplyWorker:
             conversation.open_conversation_id,
             trigger.open_message_id,
             trigger_text=trigger.content,
-            trigger_message_json=trigger.model_dump_json(),
+            trigger_message_json=trigger_message_json,
             channel="dingtalk",
         )
         return updated > 0
+
+    @staticmethod
+    def _scheduled_trigger_message_json(trigger: DingTalkMessage) -> str:
+        from app.agent_cron.commands import (
+            SERVICE_COMMAND_CONSUMER_CONTEXT_KEY,
+            current_service_command_consumer_context,
+        )
+
+        payload = trigger.model_dump(mode="json")
+        raw_payload = dict(payload.get("raw_payload") or {})
+        # Provider input cannot author this service-reserved field. A normal
+        # non-Cron producer removes it instead of trusting it.
+        raw_payload.pop(SERVICE_COMMAND_CONSUMER_CONTEXT_KEY, None)
+        consumer_context = current_service_command_consumer_context()
+        if consumer_context is not None:
+            raw_payload[SERVICE_COMMAND_CONSUMER_CONTEXT_KEY] = (
+                consumer_context.to_payload()
+            )
+        payload["raw_payload"] = raw_payload
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
     def _reply_task_trigger_messages(
         self,

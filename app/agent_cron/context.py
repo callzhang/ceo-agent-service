@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.agent_context import AgentTaskContext
+from app.agent_cron.commands import ServiceCommandConsumerContext
 from app.agent_cron.models import ScheduledTaskRun
 from app.agent_runtime_contracts import RuntimeKind, RuntimeRoute
 from app.managed_skills import ManagedSkillRevision
@@ -138,45 +139,25 @@ class ScheduledAgentContextBuilder:
     def __init__(self, options: ScheduledContextOptions) -> None:
         self._options = options
 
-    def build(
-        self, run: ScheduledTaskRun, *, reply_task_id: int
-    ) -> ScheduledAgentContext:
+    def build_consumer_context(
+        self, run: ScheduledTaskRun
+    ) -> ServiceCommandConsumerContext | None:
         snapshot = run.snapshot
-        route = self._options.resolve_runtime_route(
-            snapshot.runtime_id,
-            required_capabilities=frozenset(
-                snapshot.required_runtime_capabilities
-            ),
+        if not snapshot.prompt and not snapshot.skill_refs:
+            return None
+        protocols, _skill_facts = self._materialize_skills(snapshot.skill_refs)
+        return ServiceCommandConsumerContext(
+            scheduled_task_id=snapshot.task_id,
+            scheduled_task_run_id=run.id,
+            prompt=snapshot.prompt,
+            skill_names=tuple(ref.skill_name for ref in snapshot.skill_refs),
+            skill_protocol="\n\n".join(protocols),
         )
-        runtime_options = snapshot.runtime_options
-        model = runtime_options.get("model")
-        if model is not None:
-            if not isinstance(model, str) or not model.strip():
-                raise ValueError("scheduled task runtime model must be nonempty")
-            route = route.model_copy(update={"model": model.strip()})
-        effort = runtime_options.get(
-            "reasoning_effort", runtime_options.get("thinking", "")
-        )
-        if not isinstance(effort, str):
-            raise ValueError("scheduled task reasoning effort must be text")
-        if effort.strip() and route.runtime_kind is not RuntimeKind.CODEX_CLI:
-            raise ValueError(
-                f"scheduled task runtime {route.runtime_kind.value} "
-                "does not support reasoning effort"
-            )
-        unknown = set(runtime_options) - {"model", "reasoning_effort", "thinking"}
-        if unknown:
-            raise ValueError(
-                "scheduled task runtime options are unsupported: "
-                + ", ".join(sorted(unknown))
-            )
-        workspace = Path(snapshot.working_directory).expanduser().resolve()
-        if not workspace.is_dir():
-            raise ValueError("scheduled task working directory is unavailable")
 
+    def _materialize_skills(self, refs):
         protocols: list[str] = []
         skill_facts: list[dict[str, object]] = []
-        for ref in snapshot.skill_refs:
+        for ref in refs:
             if ref.skill_source == "managed":
                 assert ref.managed_skill_id is not None
                 assert ref.managed_revision_id is not None
@@ -215,6 +196,45 @@ class ScheduledAgentContextBuilder:
                         "sha256": document.sha256,
                     }
                 )
+        return protocols, skill_facts
+
+    def build(
+        self, run: ScheduledTaskRun, *, reply_task_id: int
+    ) -> ScheduledAgentContext:
+        snapshot = run.snapshot
+        route = self._options.resolve_runtime_route(
+            snapshot.runtime_id,
+            required_capabilities=frozenset(
+                snapshot.required_runtime_capabilities
+            ),
+        )
+        runtime_options = snapshot.runtime_options
+        model = runtime_options.get("model")
+        if model is not None:
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError("scheduled task runtime model must be nonempty")
+            route = route.model_copy(update={"model": model.strip()})
+        effort = runtime_options.get(
+            "reasoning_effort", runtime_options.get("thinking", "")
+        )
+        if not isinstance(effort, str):
+            raise ValueError("scheduled task reasoning effort must be text")
+        if effort.strip() and route.runtime_kind is not RuntimeKind.CODEX_CLI:
+            raise ValueError(
+                f"scheduled task runtime {route.runtime_kind.value} "
+                "does not support reasoning effort"
+            )
+        unknown = set(runtime_options) - {"model", "reasoning_effort", "thinking"}
+        if unknown:
+            raise ValueError(
+                "scheduled task runtime options are unsupported: "
+                + ", ".join(sorted(unknown))
+            )
+        workspace = Path(snapshot.working_directory).expanduser().resolve()
+        if not workspace.is_dir():
+            raise ValueError("scheduled task working directory is unavailable")
+
+        protocols, skill_facts = self._materialize_skills(snapshot.skill_refs)
 
         context = AgentTaskContext(
             task_id=reply_task_id,

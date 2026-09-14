@@ -313,6 +313,20 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "群内所有人员都必须属于本次会议参会人" not in prompt
     assert "业务承接证据" in prompt
     assert "内容优先于参会人数" in prompt
+
+
+def test_prompt_contains_scheduled_consumer_prompt_and_targeted_skills():
+    prompt = build_meeting_alignment_prompt(
+        source(),
+        work_profile="重视端到端结果",
+        work_profile_source="/configured/work_profile.md",
+        consumer_prompt="使用 $ceo-meeting-work 处理真实会议。",
+        skill_protocol="# Targeted Meeting Skill",
+    )
+
+    assert "## Scheduled Consumer Prompt" in prompt
+    assert "使用 $ceo-meeting-work 处理真实会议。" in prompt
+    assert "# Targeted Meeting Skill" in prompt
     assert "audience_scope=business" in prompt
     assert "target.kind=group" in prompt
     assert "audience_scope=personal" in prompt

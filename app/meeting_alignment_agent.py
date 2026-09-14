@@ -99,12 +99,16 @@ class MeetingAlignmentAgent:
         *,
         similar_sessions: list[CodexSessionSearchResult] | None = None,
         run_id: int | None = None,
+        consumer_prompt: str = "",
+        skill_protocol: str = "",
     ) -> MeetingAlignmentDecision:
         prompt = build_meeting_alignment_prompt(
             source,
             work_profile=work_profile_instruction(),
             work_profile_source=str(work_profile_path()),
             similar_sessions=similar_sessions or [],
+            consumer_prompt=consumer_prompt,
+            skill_protocol=skill_protocol,
         )
         for repair_attempt in range(MEETING_SOURCE_TARGET_REPAIR_LIMIT + 1):
             decision = (
@@ -332,6 +336,8 @@ def build_meeting_alignment_prompt(
     work_profile: str,
     work_profile_source: str,
     similar_sessions: list[CodexSessionSearchResult] | None = None,
+    consumer_prompt: str = "",
+    skill_protocol: str = "",
 ) -> str:
     source_json = json.dumps(
         source.model_dump(mode="json"), ensure_ascii=False, indent=2
@@ -346,8 +352,18 @@ def build_meeting_alignment_prompt(
 - 没有实质观点分歧时，仍须发送简短的会议结论、已确认事项和下一步；不得因议题平稳而跳过。"""
 
     similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
+    scheduled_consumer_block = ""
+    if consumer_prompt.strip() or skill_protocol.strip():
+        scheduled_consumer_block = f"""## Scheduled Consumer Prompt
+{consumer_prompt.strip()}
+
+## Scheduled Consumer Skills
+{skill_protocol.strip()}
+"""
 
     return f"""你是 Meeting Alignment Agent。你分析已经结束的会议，但不直接发送消息。
+
+{scheduled_consumer_block}
 
 触发边界：
 - 每场会议均须发送一条总结。出现实质观点分歧，或 {principal_display_name()} 的观点在后续讨论中没有被完整还原时，重点说明对齐或待决事项；没有分歧时，简洁归纳已确认事项和下一步。

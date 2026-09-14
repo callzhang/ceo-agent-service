@@ -471,9 +471,14 @@ class ConsumerAgentRunner:
         parent_agent_run_id: int | None,
         feedback: AuditFeedback | None,
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
+        context_skill_protocol = (
+            context.skill_protocol_override
+            if context.skill_protocol_override is not None
+            else self.skill_protocol_override
+        )
         contract_hash = consumer_wire_contract_hash(
             self.runtime_skill_snapshot,
-            skill_protocol_override=self.skill_protocol_override,
+            skill_protocol_override=context_skill_protocol,
         )
         route_sessions = self._consumer_route_sessions(
             task.conversation_id, contract_hash
@@ -557,7 +562,15 @@ class ConsumerAgentRunner:
 
         result = process.execute(
                 run=claim.run,
-                prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries. The proposal must match the supplied JSON Schema exactly.\n\n" + context.render(
+                prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries. The proposal must match the supplied JSON Schema exactly.\n\n"
+                + (
+                    "## Scheduled Consumer Prompt\n"
+                    + context.consumer_prompt
+                    + "\n\n"
+                    if context.consumer_prompt
+                    else ""
+                )
+                + context.render(
                     proposal_revision=proposal_revision,
                     feedback=feedback,
                 ) + continuation_prompt,
@@ -565,8 +578,8 @@ class ConsumerAgentRunner:
                 developer_instructions=consumer_developer_instructions(
                     skill_protocol="\n\n".join(
                         part for part in (
-                            self.skill_protocol_override
-                            if self.skill_protocol_override is not None
+                            context_skill_protocol
+                            if context_skill_protocol is not None
                             else (
                                 self.runtime_skill_snapshot.protocol()
                                 if self.runtime_skill_snapshot is not None

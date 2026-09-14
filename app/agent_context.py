@@ -96,6 +96,8 @@ class AgentTaskContext:
     required_proposal_action: dict[str, object] = field(default_factory=dict)
     image_paths: tuple[str, ...] = ()
     image_sha256s: tuple[str, ...] = ()
+    consumer_prompt: str = ""
+    skill_protocol_override: str | None = None
 
     @property
     def unresolved_image_count(self) -> int:

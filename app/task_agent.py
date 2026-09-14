@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
+from app.agent_cron.commands import ServiceCommandConsumerContext
 from app.agent_runtime_router import (
     CodexCommandFactory,
     BACKGROUND_AGENT_RUNTIME_BOUNDARY,
@@ -356,7 +357,20 @@ def build_task_agent_prompt(
     memory_issue: str = "",
     current_time: str = "",
 ) -> str:
-    skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
+    scheduled_consumer = ServiceCommandConsumerContext.from_payload(
+        work_item.scheduled_consumer or None
+    )
+    skill_text = (
+        scheduled_consumer.skill_protocol
+        if scheduled_consumer is not None
+        else load_skill_text([WORK_TRACKING_SKILL_PATH])
+    )
+    scheduled_consumer_prompt = (
+        "## Scheduled Consumer Prompt\n"
+        f"{scheduled_consumer.prompt}\n"
+        if scheduled_consumer is not None
+        else ""
+    )
     work_item_json = json.dumps(
         work_item.model_dump(mode="json"),
         ensure_ascii=False,
@@ -379,6 +393,8 @@ Current execution time: {effective_current_time}
 Any follow_up_change.next_due_at must be strictly later than this execution
 time and must satisfy the documented local work-hours constraint. Do not reuse
 the source creation time or an earlier scheduled time as a future deadline.
+
+{scheduled_consumer_prompt}
 
 {skill_text}
 

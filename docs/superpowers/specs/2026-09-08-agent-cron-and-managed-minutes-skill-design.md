@@ -10,7 +10,7 @@
 ```text
 定时任务 = Cron + 执行形式
   执行形式 = Agent 任务（Skills + Runtime + 任务描述）
-           | 服务命令任务（服务命令目录中的一个确定性命令，进程内执行，不经过 Agent）
+           | 服务 Trigger 工作流（确定性命令 + 可选 Consumer Prompt/Skills）
 ```
 
 Agent 任务适合需要判断的检查；服务命令任务适合确定性的发现或同步工作，例如钉钉与微信消息的
@@ -30,8 +30,9 @@ Agent 任务适合需要判断的检查；服务命令任务适合确定性的�
    执行形式（Agent 任务、服务命令任务），都有 Cron、时区、启停、手动运行和运行历史。
 4. Settings 不提供 Agent Cron 页面，managed Skill 定义也不增加 `trigger: cron`。
 5. Agent 任务配置任务描述、Cron、时区、Skill 引用和 Runtime；Runtime 选项来自当前 Agent Runtime
-   配置，不写死 CEO Agent、Codex 或 Claude 枚举。服务命令任务只配置名称、Cron、时区、启停和
-   命令；命令来自服务命令目录，页面不得为它显示假的 Runtime、提示词或 Skill 控件。
+   配置，不写死 CEO Agent、Codex 或 Claude 枚举。服务 Trigger 的命令来自可编辑下拉目录；若命令
+   会产生业务输入，还配置 Consumer Prompt，并由 Prompt 中的 `$skill` 确定性形成精确 Skill 引用。
+   页面不重复显示 Settings 已拥有的 Runtime 路由或角色边界。
 6. DingTalk 消息、会议、WeChat 消息、OA、听记、Lark 等主动检查均通过 Agent Cron 表达；没有 Cron 的 Connector 不会主动发起业务检查。
 7. Consumer 队列检查是常驻内部逻辑。一个 Dispatcher 统一发现可执行输入，再按输入类型交给不同 Consumer；用户不配置 Consumer 轮询频率。
 8. 投递、外部效果确认、Consumer → Audit → feedback → revision 和任务恢复继续属于内部任务生命周期。
@@ -44,8 +45,9 @@ Agent 任务适合需要判断的检查；服务命令任务适合确定性的�
     provider 暂时不可用导致的路由暂停（过载、传输断连）只体现为运行记录和路由暂停状态，不按
     每次触发写 Attention，以免一次外部故障在每个任务上刷出成串错误。
 14. 托管 Skill 绑定精确 revision，不自动升级到新 revision。
-15. 服务命令任务在 Dispatcher 领取 trigger 后直接在服务进程内执行，不创建 reply task、agent run
-    或 reply_attempt；命令必须幂等。仓库 seed 的服务命令任务不能通过 API 改成别的命令。
+15. 服务命令任务在 Dispatcher 领取 trigger 后直接在服务进程内执行；命令必须幂等。纯确定性命令
+    直接结束；producer 命令只在发现真实业务输入时创建相应队列项，并把本轮 Consumer Prompt 与
+    精确 Skill 快照传给下游 Agent。仓库 seed 与用户任务的命令都可通过同一编辑下拉修改。
 
 ## 范围
 
@@ -117,13 +119,10 @@ Settings 删除或不新增以下内容：
 - 可读的下一次运行时间；
 - 最近运行状态和运行历史；服务命令的运行记录显示命令的可读名称。
 
-服务命令任务的页面只显示命令及其说明，并以只读方式展示它发现的消息在下游如何被处理：
-通道、真实的 consumer 执行器名称、consumer 的角色边界文本（来自服务常量，不是运行时拼接后的
-完整提示词）、consumer 实际加载的 Skill（来自当前进程的 runtime Skill 快照，或已安装的业务
-Skill 目录；微信 consumer 不加载 Skill）、consumer 要求的 Runtime 能力与各路由的可用性。这些
-信息全部由 `scheduled-task-options` 从服务状态计算，不在任务上配置，也不显示任何编辑控件。
-
-任务描述使用与 Agent Composer 一致的交互，支持通过 `$` 搜索和引用 Skill。页面同时以独立标签显示已解析的 Skill，避免只依赖正文中的字符串。
+服务命令任务的页面显示可编辑命令及其说明。会产生业务输入的 Trigger 同时显示可编辑的
+`Consumer Agent Prompt` 和由 Prompt 中 `$skill` 确定性提取的任务级 Skill 标签；不会调用 Agent 的
+纯确定性命令不显示这两项。Runtime 路由、角色边界和全局 Skill 列表属于 Settings 或服务内部实现，
+不在定时任务页面或服务命令目录响应中重复展示。
 
 ## Connector、Skill、Runtime 与 Cron 的边界
 
@@ -158,10 +157,10 @@ Runtime 决定由哪个 Agent 执行任务。可选项完全来自 Settings → 
 ### 服务命令
 
 服务命令是服务自身的一个确定性操作，与对应的 `app.cli` / `app.wechat.cli` 子命令做同一件事。
-命令目录是唯一的名字来源（当前：`produce-once` 钉钉消息增量读取、`wechat-produce-once`
-微信消息增量读取），服务启动时必须把目录里每个名字绑定到进程内实现。命令不拥有 Cron，也不
-经过 Runtime、Skill、Consumer 或 Audit。Reader 或账号不可用属于该通道的健康事实，由命令自己
-按原内部循环的语义报告（只记一次、成功后恢复），不是 trigger 失败。
+命令目录是唯一的名字来源，服务启动时必须把目录里每个名字绑定到进程内实现。命令自身不经过
+Agent Runtime；但 producer 发现真实输入后，队列项携带定时任务运行时冻结的 Consumer Prompt 与
+精确 Skill 内容，下游 Consumer Agent 按该上下文执行。Reader 或账号不可用属于该通道的健康事实，
+由命令自己按原内部循环的语义报告（只记一次、成功后恢复），不是虚构一条 Agent 消息。
 
 ### Cron
 
@@ -182,7 +181,8 @@ Cron 只决定何时为一个已保存任务创建新的执行输入。首版使
 - `id`
 - `migration_key`：可空；系统迁移任务使用稳定键防止重复创建
 - `name`
-- `prompt`：Agent 任务的任务描述；服务命令任务为空
+- `prompt`：Agent 任务的执行提示词；会触发 Consumer Agent 的服务命令保存 Consumer Prompt；
+  纯确定性服务命令为空
 - `command`：服务命令任务的命令名；Agent 任务为空。一个任务只能是其中一种
 - `cron_expression`
 - `timezone`
@@ -204,7 +204,9 @@ Cron 只决定何时为一个已保存任务创建新的执行输入。首版使
 - `managed_revision_id`：仅托管 Skill，必须是精确 revision
 - `position`
 
-不得仅从 Prompt 中正则提取 `$skill` 作为执行依据。Prompt 中的显示引用与结构化引用由编辑器一起维护，后端以结构化引用为准。
+编辑器从 Prompt 中按出现顺序确定性提取 `$skill` 并同步结构化引用；后端要求两者名称与顺序完全
+一致。运行时使用冻结的结构化引用解析精确 managed revision 或 operation Skill 内容，同时保留
+Prompt 原文中的语义位置。
 
 ### `scheduled_task_runs`
 
@@ -234,11 +236,13 @@ Cron 只决定何时为一个已保存任务创建新的执行输入。首版使
 1. Scheduler 读取启用任务及其下一未来触发点。
 2. 到期时原子创建 `scheduled_task_run`。
 3. 校验同一任务没有未结束的关联执行。
-4. Agent 任务校验绑定的 Runtime 和 Skill revision 仍可用；服务命令任务校验命令仍在目录中。
+4. Agent 任务校验绑定的 Runtime 和 Skill revision 仍可用；服务命令任务校验命令仍在目录中，
+   producer 命令还校验 Consumer Prompt 与 `$skill` 引用一致且可用。
 5. `ScheduledTaskQueueAdapter` 将这条 `pending` run 暴露给内部 Dispatcher。
 6. Dispatcher 原子领取 run。Agent 任务：创建唯一的 `channel=scheduled` 执行输入并写入
    `execution_kind=reply_task + execution_id`，交给 Scheduled Agent Consumer。服务命令任务：在同一
-   claim 内直接运行命令，成功后写入 `execution_kind=service_command + 命令名` 并标记 `dispatched`；
+   claim 内直接运行命令；如果发现真实输入，写入对应业务队列，并把 Consumer Prompt、Skill 名称及
+   精确 Skill 协议快照一同持久化。成功后写入 `execution_kind=service_command + 命令名` 并标记 `dispatched`；
    命令抛错时 trigger 记 `failed`，原因 `scheduled_task_service_command_failed: <原因>` 进入 Attention。
 7. 下一次触发点只按 Cron 和时区计算。已完成的服务命令执行由构造保证终态；命令仍在运行时
    trigger 保持 `pending`，同一任务不会并行跑第二次。
@@ -370,13 +374,13 @@ Cron：北京时间每天 20:00
 
 | 任务 | 迁移默认计划 | 执行形式 | 主要 Skill |
 | --- | --- | --- | --- |
-| 检查 DingTalk 消息 | 每分钟 | 服务命令 `produce-once` | 无；发现的消息由 reply consumer 处理 |
-| 恢复近期 DingTalk 消息 | 每小时 `:30` | 服务命令 `recover-recent-messages` | 无；与上一行共用 producer，只是放宽读取范围 |
-| 检查新增会议 | 每分钟 | 服务命令 `scan-meetings-once` | 无；发现的会议由 meeting consumer 处理 |
-| 检查 WeChat 消息 | 每 15 秒；上一轮未结束时跳过本轮 | 服务命令 `wechat-produce-once` | 无；发现的消息由 wechat reply consumer 处理 |
+| 检查 DingTalk 消息 | 每分钟 | 服务命令 `produce-once` | `$ceo-message-triage`、`$dingtalk-chat` |
+| 恢复近期 DingTalk 消息 | 每小时 `:30` | 服务命令 `recover-recent-messages` | `$ceo-message-triage`、`$dingtalk-chat` |
+| 检查新增会议 | 每分钟 | 服务命令 `scan-meetings-once` | `$ceo-meeting-work`、`$dingtalk-minutes`、`$dingtalk-calendar` |
+| 检查 WeChat 消息 | 每 15 秒；上一轮未结束时跳过本轮 | 服务命令 `wechat-produce-once` | `$ceo-wechat` |
 | 同步 AI 听记 | 北京时间每天 20:00 | 服务命令 `sync-minutes-once` | 无；同步过程确定性完成 |
-| 检查 DingTalk OA | 每小时 | 服务命令 `scan-oa-approvals` | 无；发现的审批由 OA consumer 处理 |
-| 扫描工作来源 | 每天 | 服务命令 `scan-work-sources-once` | 无；发现的工作项由 work-summary consumer 处理 |
+| 检查 DingTalk OA | 每小时 | 服务命令 `scan-oa-approvals` | `$dingtalk-oa-approval` |
+| 扫描工作来源 | 每天 | 服务命令 `scan-work-sources-once` | `$ceo-work-tracking` |
 | 每周 OKR 汇总 | 北京时间周日 18:00 | 服务命令 `weekly-okr-report` | 无；命令自身完成读取、分析与发送 |
 
 八项全部以服务命令形式 seed，没有 Agent 形式的种子任务。
@@ -413,8 +417,9 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 - 任务列表显示最近实际结果、下一触发点和 Attention 原因。
 - 每次 run 显示实际 Runtime、模型、Skill revision、计划时间、派发时间和关联任务；服务命令的
   run 显示命令可读名称，技术标识折叠显示。
-- 服务命令不产生 reply_attempt，因此消息历史里不出现定时检查记录；命令失败通过 trigger 的
-  `failed` 和 Attention 可见，通道级健康（例如微信 Reader）通过健康组件可见。
+- 空检查不会产生 reply_attempt，因此消息历史里不出现定时检查记录；producer 发现真实消息后才由
+  对应 Consumer 创建正常业务尝试。命令失败通过 trigger 的 `failed` 和 Attention 可见，通道级健康
+  （例如微信 Reader）通过健康组件可见。
 - Dispatcher 暴露各 Queue Adapter 的待处理数量、最老等待时间、运行中数量和最近错误。
 - 空队列不创建用户可见运行记录。
 - 外部读取失败保留提供者返回的可诊断分类，但不泄露凭据。
@@ -425,7 +430,8 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 ### Scheduler 与存储
 
 - 六段 Cron、时区、夏令时、非法表达式、下一未来触发点和可读计划描述。
-- 服务命令任务：不能同时携带 Agent 字段；快照包含命令；命令不在目录中时跳过并进入 Attention；
+- 服务命令任务：不能携带任务级 Runtime 字段；producer 的 Consumer Prompt 与 `$skill` 结构化引用
+  必须成对且完全一致；快照包含命令、Prompt 与精确 Skill；命令不在目录中时跳过并进入 Attention；
   已完成的命令执行终态；seed 原地转换与启用规则；schema 版本升级补齐旧库的 `command` 列和快照。
 - 服务停机后不补跑。
 - 同一 `scheduled_for` 的原子去重。
@@ -437,8 +443,9 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 
 ### Dispatcher
 
-- 服务命令在 trigger claim 内执行：成功链接 `service_command`，失败记 `failed` 并进入 Attention，
-  不创建 reply task、agent run 或 reply_attempt；微信命令的 Reader 健康语义（只记一次、成功后恢复）。
+- 服务命令在 trigger claim 内执行：成功链接 `service_command`，失败记 `failed` 并进入 Attention；
+  producer 仅在发现真实输入时创建业务队列项，并把 Consumer Prompt 与精确 Skill 协议带给对应
+  DingTalk、WeChat、Meeting 或 Work Summary Consumer；纯确定性命令不创建 Agent 输入。
 - 多个 Queue Adapter 的公平领取和原子 claim。
 - 长任务不阻塞队列检查。
 - 同一任务不会被两个 Consumer 领取。
@@ -459,9 +466,9 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
 ### API 与 UI
 
 - 顶部导航、任务列表、创建/编辑、启停、手动运行、删除和历史。
-- 执行类型选择：服务命令任务只显示命令和说明；seed 任务的命令不可改；`scheduled-task-options`
-  返回服务命令目录。
-- `$` Skill 选择与后端结构化引用一致。
+- 执行任务选择：服务命令目录为可编辑下拉，seed 与用户任务一致；`scheduled-task-options` 只返回
+  命令名、可读名称、说明、通道及是否需要 Consumer Prompt，不返回 Runtime 路由或角色边界。
+- producer 的 Consumer Prompt 支持 `$` Skill 选择，前后端均校验提取顺序与结构化引用完全一致。
 - Runtime 选项随 Settings 配置变化；不可用项显示原因。
 - 暗色模式正文、辅助文字、输入框、禁用状态和错误提示达到清晰可读的对比度。
 - 窄窗口为单列布局，没有横向挤压和重叠操作。
@@ -509,3 +516,7 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
   只有 1200 秒），任务记为 `codex_process_failed`，而被杀的只是 Agent，命令本身脱离运行记录
   继续执行。判断标准未变，只是这条任务的真实耗时证明了它不可能在 Agent 形式下完成。
   随之删除 seed 中只服务于 Agent 形式的 Runtime 选择、Skill 引用与一次性命令拼装逻辑。
+- 2026-09-13：服务命令明确为 Trigger 工作流。会产生真实业务输入的命令保存可编辑 Consumer Prompt，
+  Prompt 中 `$skill` 与结构化精确 Skill 引用确定性一致，并随队列项传给 DingTalk、WeChat、Meeting、
+  OA 与 Work Summary Consumer。定时任务 UI 和选项目录移除全局 Skill、Runtime 路由和角色边界展示；
+  执行任务下拉对 seed 和用户任务均可编辑。纯确定性的听记同步与 OKR 周报不显示 Consumer Prompt。

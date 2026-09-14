@@ -5194,21 +5194,34 @@ class AutoReplyStore:
         working_directory: str,
         skill_refs: Sequence[ScheduledTaskSkillRef],
     ) -> None:
-        """A task runs either one service command or one Agent prompt, never both."""
+        """Keep trigger execution separate from its downstream Agent instructions."""
         if command:
-            agent_fields = (
-                prompt,
+            runtime_fields = (
                 runtime_id,
                 working_directory,
                 runtime_options_json != "{}",
                 required_runtime_capabilities_json != "[]",
-                tuple(skill_refs),
             )
-            if any(agent_fields):
+            if any(runtime_fields):
                 raise ValueError(
-                    "service command scheduled task must not carry Agent "
-                    "prompt, runtime, working directory, or Skill refs"
+                    "service command scheduled task must not carry runtime "
+                    "or working directory settings"
                 )
+            if bool(prompt) != bool(skill_refs):
+                raise ValueError(
+                    "service command scheduled task must carry its consumer "
+                    "prompt and Skill refs together"
+                )
+            if skill_refs:
+                from app.agent_cron.commands import consumer_skill_names_from_prompt
+
+                if consumer_skill_names_from_prompt(prompt) != tuple(
+                    ref.skill_name for ref in skill_refs
+                ):
+                    raise ValueError(
+                        "service command scheduled task Skill refs must exactly "
+                        "match $skill references in prompt"
+                    )
             return
         if not prompt:
             raise ValueError("scheduled task prompt must be nonempty")
@@ -5620,22 +5633,39 @@ class AutoReplyStore:
         migration_key: str,
         command: str,
         seed_enabled: bool,
+        seed_description: str = "",
+        consumer_prompt: str = "",
+        consumer_skill_refs: Sequence[ScheduledTaskSkillRef] = (),
         now: datetime | None = None,
     ) -> ScheduledTask | None:
-        """Move a repository seed from its Agent prompt to one service command.
+        """Adopt a repository seed into a service-trigger workflow.
 
-        Name, Cron, and timezone are the user's and stay as they are; the Agent
-        prompt, runtime, Skill refs, and working directory are replaced by the
-        command because the seed no longer has an Agent form. A seed nobody has
-        edited (version 1) takes the command form's ``seed_enabled`` state,
-        because its current state was the Agent seed's own availability
-        decision; an edited task keeps the state the user chose.
+        Name, Cron, and timezone remain user-owned. Runtime and working directory
+        fields are cleared; commands with an Agent consumer receive their default
+        prompt and exact Skill refs only when no consumer config exists yet. A
+        seed nobody edited (version 1) takes ``seed_enabled``; an edited task
+        keeps the state the user chose.
         """
         migration_key = self._require_scheduled_task_text(
             migration_key, field="scheduled task migration key"
         )
         command = self._require_scheduled_task_text(
             command, field="scheduled task command"
+        )
+        if not isinstance(seed_description, str):
+            raise ValueError("scheduled task seed description must be text")
+        seed_description = seed_description.strip()
+        if not isinstance(consumer_prompt, str):
+            raise ValueError("scheduled task consumer prompt must be text")
+        consumer_prompt = consumer_prompt.strip()
+        self._validate_scheduled_task_execution(
+            command=command,
+            prompt=consumer_prompt,
+            runtime_id="",
+            runtime_options_json="{}",
+            required_runtime_capabilities_json="[]",
+            working_directory="",
+            skill_refs=consumer_skill_refs,
         )
         if not isinstance(seed_enabled, bool):
             raise ValueError("scheduled task seed enabled must be a boolean")
@@ -5651,23 +5681,66 @@ class AutoReplyStore:
             if row is None:
                 return None
             current = self._scheduled_task_from_row(db, row)
-            if current.deleted_at is not None or current.command == command:
+            if current.deleted_at is not None:
                 return current
+            same_command = current.command == command
+            preserve_consumer_config = same_command and bool(
+                current.prompt or current.skill_refs
+            )
+            target_prompt = (
+                current.prompt if preserve_consumer_config else consumer_prompt
+            )
+            target_skill_refs = (
+                current.skill_refs
+                if preserve_consumer_config
+                else tuple(consumer_skill_refs)
+            )
+            target_description = (
+                seed_description
+                if seed_description and current.description.strip() == current.name.strip()
+                else current.description
+            )
+            if (
+                same_command
+                and target_prompt == current.prompt
+                and tuple(target_skill_refs) == current.skill_refs
+                and target_description == current.description
+            ):
+                return current
+            validated_refs = self._validate_scheduled_task_skill_refs(
+                db,
+                target_skill_refs,
+                scheduled_task_id=current.id,
+            )
+            self._validate_scheduled_task_execution(
+                command=command,
+                prompt=target_prompt,
+                runtime_id="",
+                runtime_options_json="{}",
+                required_runtime_capabilities_json="[]",
+                working_directory="",
+                skill_refs=validated_refs,
+            )
             enabled = seed_enabled if current.version == 1 else current.enabled
             db.execute(
                 """
                 update scheduled_tasks
-                   set command=?, prompt='', runtime_id='', runtime_options_json='{}',
+                   set description=?, command=?, prompt=?,
+                       runtime_id='', runtime_options_json='{}',
                        required_runtime_capabilities_json='[]', working_directory='',
                        enabled=?, version=version + 1, updated_at=?
                  where id=?
                 """,
-                (command, int(enabled), now_text, current.id),
+                (
+                    target_description,
+                    command,
+                    target_prompt,
+                    int(enabled),
+                    now_text,
+                    current.id,
+                ),
             )
-            db.execute(
-                "delete from scheduled_task_skill_refs where scheduled_task_id=?",
-                (current.id,),
-            )
+            self._replace_scheduled_task_skill_refs(db, current.id, validated_refs)
             updated_row = db.execute(
                 f"select {self._scheduled_task_columns()} "
                 "from scheduled_tasks where id=?",

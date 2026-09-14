@@ -3,6 +3,11 @@ import os
 from pathlib import Path
 from datetime import datetime
 
+from app.agent_cron.commands import (
+    SERVICE_COMMAND_OPTIONS,
+    ServiceCommandConsumerContext,
+    ServiceCommandRegistry,
+)
 from app.dws_client import DwsOaApprovalCandidate
 from app.skill_features import FeatureRegistry
 from app.store import AutoReplyStore
@@ -68,6 +73,37 @@ def test_scan_local_files_only_under_workspace(tmp_path):
     assert len(claimed) == 1
     assert str(inside) in claimed[0].source_ref
     assert str(outside) not in claimed[0].payload_json
+
+
+def test_scan_local_files_carries_scheduled_consumer_context(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "management.md").write_text("P1 项目需要跟进", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    context = ServiceCommandConsumerContext(
+        scheduled_task_id=7,
+        scheduled_task_run_id=11,
+        prompt="使用 $ceo-work-tracking 处理真实工作来源。",
+        skill_names=("ceo-work-tracking",),
+        skill_protocol="# Targeted Work Tracking Skill",
+    )
+    implementations = {option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS}
+    implementations["scan-work-sources-once"] = lambda: str(
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+        )
+    )
+
+    ServiceCommandRegistry(implementations).run(
+        "scan-work-sources-once",
+        consumer_context=context,
+    )
+
+    [claimed] = store.claim_work_summary_inputs(limit=10)
+    payload = json.loads(claimed.payload_json)
+    assert payload["scheduled_consumer"] == context.to_payload()
 
 
 def test_scan_local_files_rejects_workspace_outside_root(tmp_path):

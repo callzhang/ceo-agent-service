@@ -1,8 +1,13 @@
 from datetime import datetime, timedelta
+import json
 
 import pytest
 
 from app.store import AutoReplyStore
+from app.agent_cron.commands import (
+    ServiceCommandConsumerContext,
+    ServiceCommandRegistry,
+)
 from app.skill_features import FeatureRegistry
 from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
 from app.wechat.producer import WechatReplyProducer, is_reply_candidate
@@ -93,6 +98,40 @@ def test_selected_group_requires_structured_self_mention(producer, reader, store
     assert producer.run_once() == 1
     tasks = store.list_reply_tasks(channel="wechat")
     assert [t.trigger_message_id for t in tasks] == ["m2"]
+
+
+def test_scheduled_trigger_persists_consumer_prompt_and_skills(
+    producer, reader, store
+):
+    reader.messages = [direct_message("d1", text="hello")]
+    context = ServiceCommandConsumerContext(
+        scheduled_task_id=3,
+        scheduled_task_run_id=8,
+        prompt="使用 $ceo-wechat 处理真实微信消息。",
+        skill_names=("ceo-wechat",),
+        skill_protocol="TARGETED WECHAT SKILL",
+    )
+    registry = ServiceCommandRegistry(
+        {
+            name: (producer.run_once if name == "wechat-produce-once" else lambda: 0)
+            for name in (
+                "produce-once",
+                "recover-recent-messages",
+                "wechat-produce-once",
+                "scan-meetings-once",
+                "scan-oa-approvals",
+                "scan-work-sources-once",
+                "sync-minutes-once",
+                "weekly-okr-report",
+            )
+        }
+    )
+
+    registry.run("wechat-produce-once", consumer_context=context)
+
+    [task] = store.list_reply_tasks(channel="wechat")
+    payload = json.loads(task.trigger_message_json)
+    assert payload["scheduled_consumer"] == context.to_payload()
 
 
 def test_direct_messages_coalesce_during_the_five_minute_settle_window(producer, reader, store):

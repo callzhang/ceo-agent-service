@@ -20,8 +20,6 @@ import {
   type ScheduledTaskRun,
   type ScheduledTaskSkillRef,
   type RuntimeOption,
-  type ServiceCommandChannel,
-  type ServiceCommandDownstream,
 } from "../api/scheduledTasks";
 
 type LoadState = "loading" | "ready" | "error";
@@ -193,35 +191,6 @@ function TaskListItem({ task, selected, onSelect }: { task: ScheduledTask; selec
   </button>;
 }
 
-/** What the runtime composes around the consumer's instruction constant, so the block never reads as the full rendered prompt. Channels whose consumer exposes no such constant send `instructions: null` and get no block. */
-const DOWNSTREAM_INSTRUCTION_CAPTIONS: Partial<Record<ServiceCommandChannel, string>> = {
-  dingtalk: "角色边界（服务常量；运行时另拼接能力说明、Skill 协议与工作画像，并替换负责人称呼）",
-  wechat: "回合指令（服务常量；运行时另拼接处理时间、对话上下文与触发消息）",
-};
-
-function CommandDownstream({ downstream }: { downstream: ServiceCommandDownstream }) {
-  const instructionCaption = DOWNSTREAM_INSTRUCTION_CAPTIONS[downstream.channel];
-  return <section className="scheduled-task-skill-block scheduled-task-downstream" aria-label="下游 consumer">
-    <div className="scheduled-task-section-heading"><h3>下游 consumer</h3><span>只读 · 来自服务当前状态</span></div>
-    <dl>
-      <div><dt>渠道</dt><dd>{downstream.channel}</dd></div>
-      <div><dt>Consumer</dt><dd>{downstream.consumer_runners.join(" → ")}</dd></div>
-      <div><dt>所需能力</dt><dd>{downstream.required_capabilities.length > 0 ? downstream.required_capabilities.join("、") : "无额外要求"}</dd></div>
-    </dl>
-    {downstream.instructions !== null && instructionCaption !== undefined && <details><summary>{instructionCaption}</summary><pre>{downstream.instructions}</pre></details>}
-    <div><h4>Skills</h4>
-      {downstream.loads_skills ? <>
-        {downstream.skills.length > 0 && <div className="scheduled-task-skill-chips">{downstream.skills.map((skill) => <span key={skill.name}><span>{skill.name}</span>{skill.revision_number !== null && <small>revision {skill.revision_number}</small>}</span>)}</div>}
-        <small>{downstream.skills_from_runtime_snapshot ? "来源：进程 Runtime Skill 快照（精确 revision）" : "来源：已安装业务 Skill 目录（当前进程没有 Runtime Skill 快照）"}</small>
-      </> : <small>不加载 Skill</small>}
-    </div>
-    <div><h4>Runtime 路由</h4>
-      <ul>{downstream.runtime_routes.map((route) => <li key={route.route_name}>{route.route_name} · {route.model}{route.available ? "" : ` · 不可用：${route.unavailable_reason}`}</li>)}</ul>
-      <small>reply consumer 通过 Runtime 路由器在这些路由中选择；可用性按上方所需能力计算，不读取任务级 Runtime 设置。</small>
-    </div>
-  </section>;
-}
-
 function RunHistory({ runs, hasMore, loading, onMore, commandOptions }: { runs: ScheduledTaskRun[]; hasMore: boolean; loading: boolean; onMore: () => void; commandOptions: ScheduledTaskOptions["service_command_options"] }) {
   return <section className="scheduled-task-history" aria-labelledby="scheduled-task-history-title">
     <div className="scheduled-task-section-heading"><h3 id="scheduled-task-history-title">运行记录</h3><span>{runs.length} 条</span></div>
@@ -271,7 +240,7 @@ export function ScheduledTasksPage() {
   const selectedMissingCapabilities = missingCapabilities(selectedRuntime);
   const commandTask = Boolean(draft.command);
   const commandOption = options?.service_command_options.find((item) => item.name === draft.command);
-  const commandLocked = Boolean(selected?.migration_key);
+  const consumerPromptTask = !commandTask || Boolean(commandOption?.consumer_prompt_enabled);
   const runtimeBlockReason = commandTask || !options ? "" : draft.runtime_id
     ? !selectedRuntime
       ? "当前 Runtime 已不在配置中，请选择其他可用 Runtime。"
@@ -289,15 +258,17 @@ export function ScheduledTasksPage() {
   const suggestions = !skillMenuOpen || query === null ? [] : choices.filter((choice) => choice.name.toLocaleLowerCase().includes(query.query) || choice.label.toLocaleLowerCase().includes(query.query));
 
   function selectCommand(command: string) {
+    const nextCommand = options?.service_command_options.find((item) => item.name === command);
+    const keepConsumerConfig = !command || Boolean(nextCommand?.consumer_prompt_enabled);
     setDraft((current) => ({
       ...current,
       command,
-      prompt: command ? "" : current.prompt,
+      prompt: keepConsumerConfig ? current.prompt : "",
       runtime_id: command ? "" : current.runtime_id,
       runtime_options: command ? {} : current.runtime_options,
       required_runtime_capabilities: command ? [] : current.required_runtime_capabilities,
       working_directory: "",
-      skill_refs: command ? [] : current.skill_refs,
+      skill_refs: keepConsumerConfig ? current.skill_refs : [],
     }));
   }
 
@@ -412,7 +383,10 @@ export function ScheduledTasksPage() {
     if (!draft.name.trim() || !draft.description.trim() || !draft.cron_expression.trim() || !draft.timezone_name.trim()) {
       setError("请填写名称、任务描述、Cron 和时区。"); return;
     }
-    if (!commandTask && (!draft.prompt.trim() || !draft.runtime_id || draft.skill_refs.length === 0)) {
+    if (consumerPromptTask && (!draft.prompt.trim() || draft.skill_refs.length === 0)) {
+      setError(commandTask ? "请填写 Consumer Agent Prompt，并至少引用一个 Skill。" : "请填写任务描述、Agent 执行提示词、Runtime，并至少选择一个 Skill。"); return;
+    }
+    if (!commandTask && !draft.runtime_id) {
       setError("请填写任务描述、Agent 执行提示词、Runtime，并至少选择一个 Skill。"); return;
     }
     const generation = contextGeneration.current;
@@ -531,14 +505,15 @@ export function ScheduledTasksPage() {
             <label><span>任务名称</span><input aria-label="任务名称" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} /></label>
             <label><span>任务描述</span><textarea aria-label="任务描述" rows={3} value={draft.description} onChange={(event) => updateDraft("description", event.target.value)} placeholder="说明这个定时任务负责什么；服务命令和 Agent 任务都需要填写。" /></label>
             <div className="scheduled-task-form-row"><label><span>Cron（秒 分 时 日 月 周）</span><input aria-label="Cron 表达式" value={draft.cron_expression} onChange={(event) => updateDraft("cron_expression", event.target.value)} /><small>计划预览：{draftScheduleDescription(draft.cron_expression, draft.timezone_name)}</small></label><label><span>时区</span><input aria-label="时区" value={draft.timezone_name} onChange={(event) => updateDraft("timezone_name", event.target.value)} /></label></div>
-            <div className="scheduled-task-command-field"><label><span>执行类型</span><select aria-label="服务命令" value={draft.command} disabled={commandLocked} onChange={(event) => selectCommand(event.target.value)}><option value="">Agent 任务（使用下方提示词）</option>{options?.service_command_options.map((option) => <option key={option.name} value={option.name}>{option.display_name}</option>)}</select></label>{commandLocked && <small>内置任务的执行类型由仓库维护，不能修改。</small>}{commandTask && <small>{commandOption?.description || "由服务进程直接执行的确定性命令，不经过 Agent、Runtime 或 Skill。"}</small>}</div>
-            {commandTask ? commandOption && <CommandDownstream downstream={commandOption.downstream} /> : <>
+            <div className="scheduled-task-command-field"><label><span>执行任务</span><select aria-label="服务命令" value={draft.command} onChange={(event) => selectCommand(event.target.value)}><option value="">直接运行 Agent</option>{options?.service_command_options.map((option) => <option key={option.name} value={option.name}>{option.display_name}</option>)}</select></label>{commandTask && <small>{commandOption?.description || "由服务进程执行固定 Trigger；发现真实输入后交给 Consumer Agent。"}</small>}</div>
+            {!commandTask && <>
             <div className="scheduled-task-form-row"><label><span>Runtime</span><select aria-label="Runtime" value={draft.runtime_id} disabled={!hasAvailableRuntime} onChange={(event) => selectRuntime(event.target.value)}>{!draft.runtime_id && <option value="">暂无可用 Runtime</option>}{draft.runtime_id && !selectedRuntime && <option value={draft.runtime_id} disabled>{draft.runtime_id} · 已不在配置中</option>}{options?.runtime_options.map((runtime) => { const missing = missingCapabilities(runtime); return <option key={runtime.route_name} value={runtime.route_name} disabled={!runtimeCanExecuteDraft(runtime)}>{runtime.route_name} · {runtime.model}{!runtime.available ? ` · 不可用：${runtime.unavailable_reason}` : missing.length ? ` · 缺少能力：${missing.join("、")}` : ""}</option>; })}</select>{runtimeBlockReason && <small className="field-error">{runtimeBlockReason}</small>}</label>{selectedRuntime?.supported_thinking.length ? <label><span>Reasoning</span><select aria-label="Reasoning" value={draft.runtime_options.thinking || ""} onChange={(event) => updateDraft("runtime_options", { thinking: event.target.value as ScheduledTaskDraft["runtime_options"]["thinking"] })}>{selectedRuntime.supported_thinking.map((thinking) => <option key={thinking} value={thinking}>{thinking}</option>)}</select></label> : null}</div>
             <p className="scheduled-task-inherited-setting">工作目录：使用 Settings 中配置的服务工作区（无需在定时任务中重复配置）。</p>
-            <div className="scheduled-task-prompt-field"><label htmlFor="scheduled-task-prompt">Agent 执行提示词</label><textarea id="scheduled-task-prompt" aria-label="Agent 执行提示词" rows={7} value={draft.prompt} onChange={(event) => { updatePrompt(event.target.value); setSkillMenuOpen(activeSkillQuery(event.target.value) !== null); }} placeholder="描述 Agent 每次触发要完成什么；输入 $ 引用 Skill" />
+            </>}
+            {consumerPromptTask && <><div className="scheduled-task-prompt-field"><label htmlFor="scheduled-task-prompt">{commandTask ? "Consumer Agent Prompt" : "Agent 执行提示词"}</label><textarea id="scheduled-task-prompt" aria-label={commandTask ? "Consumer Agent Prompt" : "Agent 执行提示词"} rows={7} value={draft.prompt} onChange={(event) => { updatePrompt(event.target.value); setSkillMenuOpen(activeSkillQuery(event.target.value) !== null); }} placeholder={commandTask ? "描述 Trigger 发现真实输入后 Consumer Agent 要完成什么；输入 $ 引用 Skill" : "描述 Agent 每次触发要完成什么；输入 $ 引用 Skill"} />
               {skillMenuOpen && query !== null && <section className="scheduled-task-suggestions" aria-label="Skill 建议">{suggestions.length ? suggestions.map((choice) => <button type="button" disabled={!choice.available} key={choice.key} onClick={() => selectSkill(choice)}><strong>{choice.label}</strong><small>{choice.description}{choice.available ? "" : ` · 不可用：${choice.unavailableReason}`}</small></button>) : <p>没有匹配的 Skill</p>}</section>}
             </div>
-            <div className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>Agent Skills</h3><span>由结构化引用执行，不从描述文字推断</span></div>{draft.skill_refs.length ? <div className="scheduled-task-skill-chips">{draft.skill_refs.map((ref, index) => { const choice = choices.find((item) => item.key === refKey(ref)); const label = choice?.label || ref.skill_name; return <button type="button" key={`${refKey(ref)}:${index}`} aria-label={`移除${label}`} onClick={() => removeSkill(index)}><span>{label}</span><small>{ref.skill_source === "managed" ? "Managed" : "Operation"}</small><b aria-hidden="true">×</b></button>; })}</div> : <p className="scheduled-task-empty-copy">输入 <code>$</code> 搜索并选择至少一个 Skill。</p>}</div>
+            <div className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>{commandTask ? "Consumer Agent Skills" : "Agent Skills"}</h3><span>由 Prompt 中的 $skill 确定性提取</span></div>{draft.skill_refs.length ? <div className="scheduled-task-skill-chips">{draft.skill_refs.map((ref, index) => { const choice = choices.find((item) => item.key === refKey(ref)); const label = choice?.label || ref.skill_name; return <button type="button" key={`${refKey(ref)}:${index}`} aria-label={`移除${label}`} onClick={() => removeSkill(index)}><span>{label}</span><small>{ref.skill_source === "managed" ? "Managed" : "Operation"}</small><b aria-hidden="true">×</b></button>; })}</div> : <p className="scheduled-task-empty-copy">输入 <code>$</code> 搜索并选择至少一个 Skill。</p>}</div>
             </>}
             <button type="submit" className="primary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)}>{mutationState === "saving" ? "保存中…" : creating ? "创建任务" : "保存更改"}</button>
           </form>

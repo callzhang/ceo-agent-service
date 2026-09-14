@@ -44,18 +44,13 @@ const validOptions = {
   runtime_options: [{ route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt", available: true, unavailable_reason: null, supported_thinking: ["low", "medium", "high", "xhigh"], capabilities: ["local_process_execution"] }],
   managed_skill_options: [{ skill_id: 2, name: "managed", display_name: "Managed", revisions: [{ revision_id: 3, revision_number: 1, sha256: "abc", source: "settings", available: true, unavailable_reason: null }] }],
   operation_skill_options: [{ name: "operation", source: "/skills/operation/SKILL.md", content_summary: "Operation", sha256: "def", available: true, unavailable_reason: null }],
-  service_command_options: [{ name: "produce-once", display_name: "检查钉钉消息", description: "增量读取 DingTalk 未读消息", channel: "dingtalk", downstream: {
-    channel: "dingtalk", consumer_runners: ["ConsumerAgentRunner", "AuditAgentRunner"], instructions: "You are Consumer Agent A.", required_capabilities: [],
-    loads_skills: true, skills: [{ name: "managed", revision_id: 3, revision_number: 1 }], skills_from_runtime_snapshot: true,
-    runtime_routes: [{ route_name: "codex_oauth", model: "gpt", available: true, unavailable_reason: null }],
-  } }],
+  service_command_options: [{ name: "produce-once", display_name: "检查钉钉消息", description: "增量读取 DingTalk 未读消息", channel: "dingtalk", consumer_prompt_enabled: true }],
   meta: { snapshot_at: "now" },
 } as const;
-const downstream = validOptions.service_command_options[0].downstream;
 const commandTask = {
-  ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "", command: "produce-once",
-  runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: [],
-  recent_run: { ...validRun, id: 12, scheduled_task_id: 9, dispatch_status: "dispatched", execution_kind: "service_command", execution_id: "produce-once", dispatched_at: "2026-09-08T12:00:02Z", snapshot: { ...validRun.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "", command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: [] } },
+  ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "使用 $dingtalk-chat 处理真实消息。", command: "produce-once",
+  runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: task.skill_refs,
+  recent_run: { ...validRun, id: 12, scheduled_task_id: 9, dispatch_status: "dispatched", execution_kind: "service_command", execution_id: "produce-once", dispatched_at: "2026-09-08T12:00:02Z", snapshot: { ...validRun.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "使用 $dingtalk-chat 处理真实消息。", command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: task.skill_refs } },
 } as const;
 
 afterEach(() => vi.unstubAllGlobals());
@@ -90,9 +85,9 @@ describe("scheduled tasks API", () => {
     ["fractional snapshot task id", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, task_id: 1.5 } } }],
     ["negative snapshot version", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, task_version: -1 } } }],
     ["empty task refs", { ...task, skill_refs: [] }],
-    ["command task carrying refs", { ...commandTask, skill_refs: task.skill_refs }],
+    ["command refs without prompt", { ...commandTask, prompt: "" }],
     ["command missing", { ...task, command: undefined }],
-    ["command snapshot carrying refs", { ...commandTask, recent_run: { ...commandTask.recent_run, snapshot: { ...commandTask.recent_run.snapshot, skill_refs: task.skill_refs } } }],
+    ["command snapshot refs without prompt", { ...commandTask, recent_run: { ...commandTask.recent_run, snapshot: { ...commandTask.recent_run.snapshot, prompt: "" } } }],
     ["empty snapshot refs", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, skill_refs: [] } } }],
     ["duplicate ref positions", { ...task, skill_refs: [task.skill_refs[0], { ...task.skill_refs[0], skill_name: "lark-im", position: 0 }] }],
     ["skipped ref position", { ...task, skill_refs: [task.skill_refs[0], { ...task.skill_refs[0], skill_name: "lark-im", position: 2 }] }],
@@ -179,7 +174,7 @@ describe("scheduled tasks API", () => {
 });
 
 describe("service command tasks", () => {
-  it("accepts a command task without Runtime or Skill refs and its command execution reference", async () => {
+  it("accepts a command task with a targeted Consumer Prompt", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [commandTask], meta: { total: 1, snapshot_at: "now" } }), { headers: { "Content-Type": "application/json" } })));
 
     const listed = (await listScheduledTasks()).items[0];
@@ -190,40 +185,28 @@ describe("service command tasks", () => {
   });
 
   it("accepts a WeChat command whose consumer loads no Skill and keeps its channel", async () => {
-    const wechat = { name: "wechat-produce-once", display_name: "检查微信消息", description: "读取微信消息", channel: "wechat", downstream: { ...downstream, channel: "wechat", consumer_runners: ["WechatDecisionRunner"], instructions: "- This is a selected personal WeChat conversation.", required_capabilities: ["structured_output"], loads_skills: false, skills: [], skills_from_runtime_snapshot: false } };
+    const wechat = { name: "wechat-produce-once", display_name: "检查微信消息", description: "读取微信消息", channel: "wechat", consumer_prompt_enabled: true };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...validOptions, service_command_options: [...validOptions.service_command_options, wechat] }), { headers: { "Content-Type": "application/json" } })));
 
     const catalog = (await getScheduledTaskOptions()).service_command_options;
 
     expect(catalog.map((option) => option.channel)).toEqual(["dingtalk", "wechat"]);
-    expect(catalog[1].downstream.loads_skills).toBe(false);
-    expect(catalog[1].downstream.required_capabilities).toEqual(["structured_output"]);
+    expect(catalog[1].consumer_prompt_enabled).toBe(true);
   });
 
   it("accepts a meeting command whose consumer exports no instruction constant", async () => {
-    const meeting = { name: "scan-meetings-once", display_name: "检查 DingTalk 会议", description: "读取已结束的会议", channel: "meeting", downstream: { ...downstream, channel: "meeting", consumer_runners: ["MeetingAlignmentCodexRunner"], instructions: null, required_capabilities: ["local_schema_validation", "structured_output"], loads_skills: false, skills: [], skills_from_runtime_snapshot: false } };
+    const meeting = { name: "scan-meetings-once", display_name: "检查 DingTalk 会议", description: "读取已结束的会议", channel: "meeting", consumer_prompt_enabled: true };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...validOptions, service_command_options: [meeting] }), { headers: { "Content-Type": "application/json" } })));
 
     const catalog = (await getScheduledTaskOptions()).service_command_options;
 
-    expect(catalog[0].downstream.instructions).toBeNull();
+    expect(catalog[0].consumer_prompt_enabled).toBe(true);
   });
 
   it.each([
-    ["missing downstream", { downstream: undefined }],
     ["unknown channel", { channel: "email" }],
-    ["downstream channel drifting from the command channel", { downstream: { ...downstream, channel: "wechat" } }],
-    ["no consumer runner", { downstream: { ...downstream, consumer_runners: [] } }],
-    ["blank consumer runner", { downstream: { ...downstream, consumer_runners: [" "] } }],
-    ["blank instructions", { downstream: { ...downstream, instructions: "" } }],
-    ["non-string instructions", { downstream: { ...downstream, instructions: 7 } }],
-    ["unsorted required capabilities", { downstream: { ...downstream, required_capabilities: ["structured_output", "image_input"] } }],
-    ["non-boolean Skill loading flag", { downstream: { ...downstream, loads_skills: "yes" } }],
-    ["snapshot Skill without an exact revision", { downstream: { ...downstream, skills: [{ name: "managed", revision_id: null, revision_number: null }] } }],
-    ["catalog Skill carrying a revision", { downstream: { ...downstream, skills_from_runtime_snapshot: false } }],
-    ["Skills listed although the consumer loads none", { downstream: { ...downstream, loads_skills: false } }],
-    ["snapshot flag set although the consumer loads none", { downstream: { ...downstream, loads_skills: false, skills: [], skills_from_runtime_snapshot: true } }],
-    ["unavailable route without a reason", { downstream: { ...downstream, runtime_routes: [{ route_name: "codex_oauth", model: "gpt", available: false, unavailable_reason: null }] } }],
+    ["missing Consumer Prompt flag", { consumer_prompt_enabled: undefined }],
+    ["non-boolean Consumer Prompt flag", { consumer_prompt_enabled: "yes" }],
   ])("rejects a service command with %s", async (_label, patch) => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...validOptions, service_command_options: [{ ...validOptions.service_command_options[0], ...patch }] }), { headers: { "Content-Type": "application/json" } })));
 

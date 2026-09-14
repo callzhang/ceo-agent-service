@@ -15,6 +15,10 @@ import pytest
 from pydantic import BaseModel, Field
 
 from app.agent_context import AgentTaskContext
+from app.agent_cron.commands import (
+    ServiceCommandConsumerContext,
+    ServiceCommandRegistry,
+)
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_orchestrator import OrchestrationResult
 from app.agent_envelope import AgentEnvelope
@@ -2052,6 +2056,47 @@ def test_disabled_message_triage_skips_new_dingtalk_task(tmp_path, monkeypatch):
 
     assert worker._enqueue_reply_task(conversation(), message("请跟进")) is False
     assert worker.store.count_reply_tasks(channel="dingtalk") == 0
+
+
+def test_scheduled_service_trigger_persists_consumer_context_on_new_reply_task(
+    tmp_path, monkeypatch
+):
+    dws = FakeDws([], {})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    context = ServiceCommandConsumerContext(
+        scheduled_task_id=7,
+        scheduled_task_run_id=11,
+        prompt="使用 $ceo-message-triage 处理真实消息。",
+        skill_names=("ceo-message-triage",),
+        skill_protocol="TARGETED SKILL PROTOCOL",
+    )
+    def produce():
+        return (
+            "queued=1"
+            if worker._enqueue_reply_task(conversation(), message("请跟进"))
+            else "queued=0"
+        )
+    registry = ServiceCommandRegistry(
+        {
+            option: (produce if option == "produce-once" else lambda: "unused")
+            for option in (
+                "produce-once",
+                "recover-recent-messages",
+                "wechat-produce-once",
+                "scan-meetings-once",
+                "scan-oa-approvals",
+                "scan-work-sources-once",
+                "sync-minutes-once",
+                "weekly-okr-report",
+            )
+        }
+    )
+
+    registry.run("produce-once", consumer_context=context)
+
+    [task] = worker.store.list_reply_tasks(channel="dingtalk")
+    payload = json.loads(task.trigger_message_json)
+    assert payload["raw_payload"]["scheduled_consumer"] == context.to_payload()
 
 
 def test_disabled_calendar_invite_leaves_new_calendar_task_uncreated(tmp_path, monkeypatch):

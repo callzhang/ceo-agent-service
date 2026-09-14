@@ -17,6 +17,7 @@ from app.agent_cron.models import (
     ScheduledTaskSkillRef,
     ScheduledTaskVersionConflictError,
 )
+from app.agent_cron.commands import consumer_skill_names_from_prompt
 from app.agent_cron.options import ScheduledTaskOptionService
 from app.agent_cron.schedule import CronSchedule
 from app.store import AutoReplyStore
@@ -55,7 +56,7 @@ class ScheduledTaskRuntimeOptionsPayload(BaseModel):
 
 
 class ScheduledTaskCreatePayload(BaseModel):
-    """One task runs either a service command or an Agent prompt, never both."""
+    """A service command may also configure its downstream Consumer Agent."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -78,16 +79,26 @@ class ScheduledTaskCreatePayload(BaseModel):
     def validate_execution_form(self) -> "ScheduledTaskCreatePayload":
         if self.command.strip():
             if (
-                self.prompt.strip()
-                or self.runtime_id.strip()
+                self.runtime_id.strip()
                 or self.runtime_options.thinking is not None
                 or self.required_runtime_capabilities
                 or self.working_directory.strip()
-                or self.skill_refs
             ):
                 raise ValueError(
-                    "service command task must not carry prompt, runtime, "
-                    "working directory, or Skill refs"
+                    "service command task must not carry runtime or working "
+                    "directory settings"
+                )
+            if bool(self.prompt.strip()) != bool(self.skill_refs):
+                raise ValueError(
+                    "service command task must carry its consumer prompt and "
+                    "Skill refs together"
+                )
+            if self.skill_refs and consumer_skill_names_from_prompt(
+                self.prompt
+            ) != tuple(ref.skill_name for ref in self.skill_refs):
+                raise ValueError(
+                    "service command Skill refs must exactly match $skill "
+                    "references in prompt"
                 )
             return self
         if not self.prompt.strip():
@@ -243,22 +254,30 @@ def _validate_choices(
     service: ScheduledTaskOptionService,
 ) -> None:
     if payload.command.strip():
-        service.resolve_service_command(payload.command.strip())
-        return
-    runtime_options = {
-        option.route_name: option for option in service.list_runtime_options()
-    }
-    service.validate_runtime_capabilities(
-        payload.runtime_id,
-        required_capabilities=frozenset(
-            payload.required_runtime_capabilities
-        ),
-    )
-    thinking = payload.runtime_options.thinking
-    if thinking is not None and thinking not in runtime_options[payload.runtime_id].supported_thinking:
-        raise ValueError(
-            f"runtime route {payload.runtime_id}: thinking_not_supported"
+        command = service.resolve_service_command(payload.command.strip())
+        has_consumer_config = bool(payload.prompt.strip() or payload.skill_refs)
+        if command.consumer_prompt_enabled and not has_consumer_config:
+            raise ValueError("service command requires a Consumer Agent prompt")
+        if not command.consumer_prompt_enabled and has_consumer_config:
+            raise ValueError("service command has no downstream Consumer Agent")
+    else:
+        runtime_options = {
+            option.route_name: option for option in service.list_runtime_options()
+        }
+        service.validate_runtime_capabilities(
+            payload.runtime_id,
+            required_capabilities=frozenset(
+                payload.required_runtime_capabilities
+            ),
         )
+        thinking = payload.runtime_options.thinking
+        if (
+            thinking is not None
+            and thinking not in runtime_options[payload.runtime_id].supported_thinking
+        ):
+            raise ValueError(
+                f"runtime route {payload.runtime_id}: thinking_not_supported"
+            )
 
     managed_options = {
         (skill.skill_id, skill.name, revision.revision_id)
@@ -398,25 +417,6 @@ def register_scheduled_task_routes(
             return _error(
                 "validation_error",
                 "use the enable or disable endpoint to change enabled state",
-                422,
-            )
-        if (
-            current.migration_key is not None
-            and tuple(payload.required_runtime_capabilities)
-            != current.required_runtime_capabilities
-        ):
-            return _error(
-                "validation_error",
-                "repository managed task runtime requirements are immutable",
-                422,
-            )
-        if (
-            current.migration_key is not None
-            and payload.command.strip() != current.command
-        ):
-            return _error(
-                "validation_error",
-                "repository managed task service command is immutable",
                 422,
             )
         try:

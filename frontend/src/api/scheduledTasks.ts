@@ -115,37 +115,12 @@ export type OperationSkillOption = OperationSkillOptionBase & Availability;
 
 export type ServiceCommandChannel = "dingtalk" | "wechat" | "meeting" | "work_summary";
 
-export interface ServiceCommandDownstreamSkill {
-  name: string;
-  /** Set only when the process runtime Skill snapshot supplied the Skill. */
-  revision_id: number | null;
-  revision_number: number | null;
-}
-
-export type ServiceCommandDownstreamRoute = { route_name: string; model: string } & Availability;
-
-/** What the reply consumer really runs for tasks this command produces, read from live service state. */
-export interface ServiceCommandDownstream {
-  channel: ServiceCommandChannel;
-  /** Runner class names in execution order. */
-  consumer_runners: string[];
-  /** The consumer's own instruction constant, or null when that consumer exposes none. */
-  instructions: string | null;
-  /** The consumer's baseline runtime requirement that decided `runtime_routes` availability. */
-  required_capabilities: string[];
-  loads_skills: boolean;
-  skills: ServiceCommandDownstreamSkill[];
-  /** True when the process runtime Skill snapshot supplied `skills`, false when the installed business Skill catalog did. */
-  skills_from_runtime_snapshot: boolean;
-  runtime_routes: ServiceCommandDownstreamRoute[];
-}
-
 export interface ServiceCommandOption {
   name: string;
   display_name: string;
   description: string;
   channel: ServiceCommandChannel;
-  downstream: ServiceCommandDownstream;
+  consumer_prompt_enabled: boolean;
 }
 
 export interface ScheduledTaskOptions {
@@ -209,8 +184,19 @@ function validSkillRef(value: unknown): value is ScheduledTaskSkillRef {
 function validSkillRefs(value: unknown, command: unknown): value is ScheduledTaskSkillRef[] {
   if (typeof command !== "string") return false;
   return Array.isArray(value)
-    && (command ? value.length === 0 : value.length > 0)
     && value.every((ref, position) => validSkillRef(ref) && ref.position === position);
+}
+
+function validPromptSkillRefs(prompt: unknown, command: unknown, refs: unknown): boolean {
+  if (typeof prompt !== "string" || typeof command !== "string" || !validSkillRefs(refs, command)) return false;
+  if (!command) return Boolean(prompt.trim()) && refs.length > 0;
+  if (Boolean(prompt.trim()) !== Boolean(refs.length)) return false;
+  if (!refs.length) return true;
+  const names = [...prompt.matchAll(/\$([A-Za-z0-9][A-Za-z0-9_-]*)/g)]
+    .map((match) => match[1])
+    .filter((name, index, all) => all.indexOf(name) === index);
+  return names.length === refs.length
+    && names.every((name, index) => name === refs[index].skill_name);
 }
 
 function validRun(value: unknown): value is ScheduledTaskRun {
@@ -231,7 +217,8 @@ function validRun(value: unknown): value is ScheduledTaskRun {
     && typeof snapshot.cron_expression === "string" && typeof snapshot.timezone_name === "string"
     && typeof snapshot.runtime_id === "string" && validRuntimeOptions(snapshot.runtime_options)
     && validStringSet(snapshot.required_runtime_capabilities)
-    && typeof snapshot.working_directory === "string" && validSkillRefs(snapshot.skill_refs, snapshot.command));
+    && typeof snapshot.working_directory === "string"
+    && validPromptSkillRefs(snapshot.prompt, snapshot.command, snapshot.skill_refs));
 }
 
 function validTask(value: unknown): value is ScheduledTask {
@@ -244,7 +231,7 @@ function validTask(value: unknown): value is ScheduledTask {
     && typeof item.runtime_id === "string" && validRuntimeOptions(item.runtime_options)
     && validStringSet(item.required_runtime_capabilities)
     && typeof item.working_directory === "string" && typeof item.enabled === "boolean"
-    && positiveInteger(item.version) && validSkillRefs(item.skill_refs, item.command)
+    && positiveInteger(item.version) && validPromptSkillRefs(item.prompt, item.command, item.skill_refs)
     && (item.recent_run === null || validRun(item.recent_run))
     && typeof item.created_at === "string" && typeof item.updated_at === "string" && nullableString(item.deleted_at));
 }
@@ -296,41 +283,13 @@ function validChannel(value: unknown): value is ServiceCommandChannel {
     || value === "work_summary";
 }
 
-function validDownstreamSkill(value: unknown, fromRuntimeSnapshot: boolean): value is ServiceCommandDownstreamSkill {
-  const item = record(value);
-  if (!item || typeof item.name !== "string" || !item.name.trim()) return false;
-  return fromRuntimeSnapshot
-    ? positiveInteger(item.revision_id) && positiveInteger(item.revision_number)
-    : item.revision_id === null && item.revision_number === null;
-}
-
-function validDownstreamRoute(value: unknown): value is ServiceCommandDownstreamRoute {
-  const item = record(value);
-  return Boolean(item && typeof item.route_name === "string" && Boolean(item.route_name.trim())
-    && typeof item.model === "string" && validAvailability(item));
-}
-
-function validDownstream(value: unknown, channel: ServiceCommandChannel): value is ServiceCommandDownstream {
-  const item = record(value);
-  const loadsSkills = item?.loads_skills;
-  const fromRuntimeSnapshot = item?.skills_from_runtime_snapshot;
-  if (!item || item.channel !== channel || typeof loadsSkills !== "boolean" || typeof fromRuntimeSnapshot !== "boolean") return false;
-  return Array.isArray(item.consumer_runners) && item.consumer_runners.length > 0
-    && item.consumer_runners.every((runner) => typeof runner === "string" && Boolean(runner.trim()))
-    && (item.instructions === null
-      || (typeof item.instructions === "string" && Boolean(item.instructions.trim())))
-    && validStringSet(item.required_capabilities)
-    && Array.isArray(item.skills) && item.skills.every((skill) => validDownstreamSkill(skill, fromRuntimeSnapshot))
-    && (loadsSkills || (item.skills.length === 0 && !fromRuntimeSnapshot))
-    && Array.isArray(item.runtime_routes) && item.runtime_routes.every(validDownstreamRoute);
-}
-
 function validServiceCommand(value: unknown): value is ServiceCommandOption {
   const item = record(value);
   return Boolean(item && typeof item.name === "string" && Boolean(item.name.trim())
     && typeof item.display_name === "string" && Boolean(item.display_name.trim())
     && typeof item.description === "string" && Boolean(item.description.trim())
-    && validChannel(item.channel) && validDownstream(item.downstream, item.channel));
+    && typeof item.consumer_prompt_enabled === "boolean"
+    && validChannel(item.channel));
 }
 
 function validOperationSkill(value: unknown): value is OperationSkillOption {

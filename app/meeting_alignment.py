@@ -5,6 +5,11 @@ from typing import Any, Callable, Protocol
 
 from pydantic import ValidationError
 
+from app.agent_cron.commands import (
+    SERVICE_COMMAND_CONSUMER_CONTEXT_KEY,
+    ServiceCommandConsumerContext,
+    current_service_command_consumer_context,
+)
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.agent_runtime_router import RoutedCodexExecutionError
 from app.codex_capacity import (
@@ -862,12 +867,27 @@ def _analyze_meeting_job(
         isinstance(previous_error, dict)
         and previous_error.get("kind") == "codex_capacity_pause"
     )
+    try:
+        scheduled_consumer = ServiceCommandConsumerContext.from_payload(
+            payload.get(SERVICE_COMMAND_CONSUMER_CONTEXT_KEY)
+        )
+    except ValueError as exc:
+        _fail_job(store, job.id, "meeting_source", exc)
+        return
     run_id = store.begin_meeting_alignment_run(job.id)
     try:
         decision = agent.decide(
             source,
             similar_sessions=similar_sessions,
             run_id=run_id,
+            consumer_prompt=(
+                scheduled_consumer.prompt if scheduled_consumer is not None else ""
+            ),
+            skill_protocol=(
+                scheduled_consumer.skill_protocol
+                if scheduled_consumer is not None
+                else ""
+            ),
         )
     except MeetingOrganizerIdentityError as exc:
         if exc.decision is not None:
@@ -1864,14 +1884,18 @@ def _source_json(
     info: dict[str, Any],
     evidence: CalendarMeetingEvidence,
 ) -> str:
+    scheduled_consumer = current_service_command_consumer_context()
+    payload: dict[str, object] = {
+        "calendar_evidence": evidence.model_dump(mode="json"),
+        "discovery": metadata,
+        "meeting_id": meeting_id,
+        "minutes_info": info,
+        "minutes_list_item": list_item,
+    }
+    if scheduled_consumer is not None:
+        payload[SERVICE_COMMAND_CONSUMER_CONTEXT_KEY] = scheduled_consumer.to_payload()
     return json.dumps(
-        {
-            "calendar_evidence": evidence.model_dump(mode="json"),
-            "discovery": metadata,
-            "meeting_id": meeting_id,
-            "minutes_info": info,
-            "minutes_list_item": list_item,
-        },
+        payload,
         ensure_ascii=False,
         sort_keys=True,
     )

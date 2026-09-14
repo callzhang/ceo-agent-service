@@ -68,6 +68,7 @@ class WechatMessage(BaseModel):
     text: str = ""
     mentioned_user_ids: frozenset[str] = Field(default_factory=frozenset)
     source_version: str
+    scheduled_consumer: dict[str, object] = Field(default_factory=dict)
 
     def mentions_user(self, user_id: str) -> bool:
         return bool(user_id) and user_id in self.mentioned_user_ids

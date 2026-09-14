@@ -260,6 +260,7 @@ class WorkItem(BaseModel):
     project_name: str = ""
     context: WorkItemContext
     task_signals: WorkItemTaskSignals = Field(default_factory=WorkItemTaskSignals)
+    scheduled_consumer: dict[str, object] = Field(default_factory=dict)
 
 
 class ProjectFact(StrictTaskModel):

@@ -17,20 +17,10 @@ from app.agent_runtime_contracts import (
     PROBE_VERIFIED_RUNTIME_CAPABILITIES,
     RuntimeCapabilitySnapshot,
 )
-from app.audit_agent import AuditAgentRunner
-from app.business_skills import installed_business_skill_catalog
-from app.codex_decision import DECISION_RUNTIME_CAPABILITIES
-from app.consumer_agent import (
-    CONSUMER_BASE_RUNTIME_CAPABILITIES,
-    CONSUMER_ROLE_BOUNDARY,
-    ConsumerAgentRunner,
-)
 from app.managed_skills import RuntimeSkillSnapshot
 from app.skill_files import SkillFileService
 from app.store import AutoReplyStore
 from app.web_api.registration import register_console_routes
-from app.wechat.decision_runner import WechatDecisionRunner
-from app.wechat.prompt import WECHAT_TURN_INSTRUCTIONS
 
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
@@ -713,13 +703,9 @@ def test_audit_app_mounts_cron_api_without_fabricating_process_snapshots(
     assert {
         revision["unavailable_reason"] for revision in revisions
     } == {"runtime_skill_snapshot_missing"}
-    dingtalk = response.json()["service_command_options"][0]["downstream"]
-    assert dingtalk["loads_skills"] is True
-    assert dingtalk["skills_from_runtime_snapshot"] is False
-    assert [skill["name"] for skill in dingtalk["skills"]] == [
-        entry.name for entry in installed_business_skill_catalog()
-    ]
-    assert dingtalk["runtime_routes"][0]["unavailable_reason"] == "snapshot_missing"
+    dingtalk = response.json()["service_command_options"][0]
+    assert dingtalk["consumer_prompt_enabled"] is True
+    assert "downstream" not in dingtalk
 
 
 def test_audit_app_reads_only_current_main_pid_runtime_and_skill_receipts(
@@ -809,13 +795,34 @@ def _command_payload() -> dict[str, object]:
     }
 
 
+def _consumer_command_payload(ids: dict[str, int]) -> dict[str, object]:
+    return {
+        **_command_payload(),
+        "prompt": (
+            "使用 $ceo-test 与 $dingtalk-chat 处理 Trigger 发现的真实消息。"
+        ),
+        "skill_refs": _create_payload(ids)["skill_refs"],
+    }
+
+
+def _pure_command_payload() -> dict[str, object]:
+    return {
+        **_command_payload(),
+        "name": "同步 AI 听记",
+        "description": "同步 AI 听记到本地归档。",
+        "command": "sync-minutes-once",
+    }
+
+
 def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
     tmp_path: Path,
 ) -> None:
     client, store, _ids, wakes = _client(tmp_path, include_runtime_snapshot=False)
 
     with client:
-        created = client.post("/api/console/scheduled-tasks", json=_command_payload())
+        created = client.post(
+            "/api/console/scheduled-tasks", json=_pure_command_payload()
+        )
         assert created.status_code == 201, created.json()
         item = created.json()["item"]
         task_id = item["id"]
@@ -831,15 +838,15 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         detail = client.get(f"/api/console/scheduled-tasks/{task_id}")
         options = client.get("/api/console/scheduled-task-options")
 
-    assert item["command"] == "produce-once"
-    assert item["description"] == "增量检查 DingTalk 消息并创建后续处理任务。"
+    assert item["command"] == "sync-minutes-once"
+    assert item["description"] == "同步 AI 听记到本地归档。"
     assert item["prompt"] == "" and item["runtime_id"] == ""
     assert item["skill_refs"] == [] and item["required_runtime_capabilities"] == []
     assert disabled.status_code == 200 and enabled.status_code == 200
     assert enabled.json()["item"]["enabled"] is True
     assert run.status_code == 201 and wakes == ["wake"]
-    assert run.json()["item"]["snapshot"]["command"] == "produce-once"
-    assert detail.json()["item"]["recent_run"]["snapshot"]["command"] == "produce-once"
+    assert run.json()["item"]["snapshot"]["command"] == "sync-minutes-once"
+    assert detail.json()["item"]["recent_run"]["snapshot"]["command"] == "sync-minutes-once"
     catalog = options.json()["service_command_options"]
     assert [entry["name"] for entry in catalog] == [
         "produce-once",
@@ -862,7 +869,54 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "恢复近期 DingTalk 消息",
     ]
     assert all(entry["description"].strip() for entry in catalog)
-    assert store.get_scheduled_task(task_id).command == "produce-once"
+    assert all("downstream" not in entry for entry in catalog)
+    assert store.get_scheduled_task(task_id).command == "sync-minutes-once"
+
+
+def test_service_trigger_persists_consumer_prompt_and_exact_skill_refs(
+    tmp_path: Path,
+) -> None:
+    client, store, ids, _wakes = _client(tmp_path)
+
+    with client:
+        created = client.post(
+            "/api/console/scheduled-tasks",
+            json=_consumer_command_payload(ids),
+        )
+
+    assert created.status_code == 201, created.json()
+    item = created.json()["item"]
+    assert item["command"] == "produce-once"
+    assert item["prompt"] == (
+        "使用 $ceo-test 与 $dingtalk-chat 处理 Trigger 发现的真实消息。"
+    )
+    assert [ref["skill_name"] for ref in item["skill_refs"]] == [
+        "ceo-test",
+        "dingtalk-chat",
+    ]
+    persisted = store.get_scheduled_task(item["id"])
+    assert persisted is not None
+    assert persisted.prompt == item["prompt"]
+    assert [ref.skill_name for ref in persisted.skill_refs] == [
+        "ceo-test",
+        "dingtalk-chat",
+    ]
+
+
+def test_service_trigger_rejects_skill_refs_not_extracted_from_prompt(
+    tmp_path: Path,
+) -> None:
+    client, _store, ids, _wakes = _client(tmp_path)
+    payload = _consumer_command_payload(ids)
+    payload["prompt"] = "只使用 $ceo-test 处理真实消息。"
+
+    with client:
+        response = client.post("/api/console/scheduled-tasks", json=payload)
+
+    assert response.status_code == 422
+    assert "must exactly match $skill references in prompt" in response.json()[
+        "message"
+    ]
 
 
 def test_service_command_task_rejects_agent_fields_and_unknown_commands(
@@ -883,12 +937,12 @@ def test_service_command_task_rejects_agent_fields_and_unknown_commands(
 
     assert [response.status_code for response in responses] == [422] * 5
     assert all(response.json()["code"] == "validation_error" for response in responses)
-    assert "must not carry" in responses[0].json()["message"]
+    assert "must carry its consumer prompt" in responses[0].json()["message"]
     assert "service_command_not_registered" in responses[3].json()["message"]
     assert "runtime must be nonempty" in responses[4].json()["message"]
 
 
-def test_repository_seeded_service_command_is_immutable_through_the_api(
+def test_repository_seeded_execution_task_is_editable_through_the_api(
     tmp_path: Path,
 ) -> None:
     client, store, ids, _wakes = _client(tmp_path)
@@ -902,7 +956,7 @@ def test_repository_seeded_service_command_is_immutable_through_the_api(
         now=NOW,
     )
     renamed = {
-        **_command_payload(),
+        **_consumer_command_payload(ids),
         "name": "每两分钟检查消息",
         "cron_expression": "0 */2 * * * *",
         "version": seeded.version,
@@ -917,7 +971,7 @@ def test_repository_seeded_service_command_is_immutable_through_the_api(
 
     with client:
         accepted = client.put(f"/api/console/scheduled-tasks/{seeded.id}", json=renamed)
-        rejected = client.put(
+        switched_response = client.put(
             f"/api/console/scheduled-tasks/{seeded.id}",
             json={**switched, "version": accepted.json()["item"]["version"]},
         )
@@ -925,11 +979,12 @@ def test_repository_seeded_service_command_is_immutable_through_the_api(
     assert accepted.status_code == 200, accepted.json()
     assert accepted.json()["item"]["name"] == "每两分钟检查消息"
     assert accepted.json()["item"]["command"] == "produce-once"
-    assert rejected.status_code == 422
-    assert "service command is immutable" in rejected.json()["message"]
+    assert switched_response.status_code == 200, switched_response.json()
+    assert switched_response.json()["item"]["command"] == ""
+    assert switched_response.json()["item"]["prompt"] == "改成 Agent"
 
 
-def test_service_command_catalog_exposes_the_live_downstream_consumer(
+def test_service_command_catalog_omits_runtime_and_role_boundary_details(
     tmp_path: Path,
 ) -> None:
     client, _store, ids, _wakes = _client(tmp_path)
@@ -940,68 +995,20 @@ def test_service_command_catalog_exposes_the_live_downstream_consumer(
     (
         dingtalk, wechat, meeting, oa, work_sources, minutes, okr, recovery
     ) = payload["service_command_options"]
-    routes = [
-        {
-            "route_name": option["route_name"],
-            "model": option["model"],
-            "available": option["available"],
-            "unavailable_reason": option["unavailable_reason"],
-        }
-        for option in payload["runtime_options"]
-    ]
-    assert routes == [
-        {
-            "route_name": "codex_oauth",
-            "model": "gpt-5.6-sol",
-            "available": True,
-            "unavailable_reason": None,
-        }
-    ]
     assert (dingtalk["name"], dingtalk["channel"]) == ("produce-once", "dingtalk")
-    assert dingtalk["downstream"] == {
-        "channel": "dingtalk",
-        "consumer_runners": [ConsumerAgentRunner.__name__, AuditAgentRunner.__name__],
-        "instructions": CONSUMER_ROLE_BOUNDARY,
-        "required_capabilities": sorted(CONSUMER_BASE_RUNTIME_CAPABILITIES),
-        "loads_skills": True,
-        "skills": [
-            {"name": "ceo-test", "revision_id": ids["revision_id"], "revision_number": 1}
-        ],
-        "skills_from_runtime_snapshot": True,
-        "runtime_routes": routes,
-    }
     assert (wechat["name"], wechat["channel"]) == ("wechat-produce-once", "wechat")
-    assert wechat["downstream"] == {
-        "channel": "wechat",
-        "consumer_runners": [WechatDecisionRunner.__name__],
-        "instructions": WECHAT_TURN_INSTRUCTIONS,
-        "required_capabilities": sorted(DECISION_RUNTIME_CAPABILITIES),
-        "loads_skills": False,
-        "skills": [],
-        "skills_from_runtime_snapshot": False,
-        "runtime_routes": routes,
-    }
     assert (meeting["name"], meeting["channel"]) == ("scan-meetings-once", "meeting")
-    assert meeting["downstream"]["consumer_runners"] == ["MeetingAlignmentCodexRunner"]
-    assert meeting["downstream"]["loads_skills"] is False
-    assert meeting["downstream"]["skills"] == []
-    assert meeting["downstream"]["instructions"] is None
-    assert meeting["downstream"]["instructions"] is None
     assert (oa["name"], oa["channel"]) == ("scan-oa-approvals", "dingtalk")
-    assert oa["downstream"]["consumer_runners"] == [
-        ConsumerAgentRunner.__name__,
-        AuditAgentRunner.__name__,
-    ]
     assert (work_sources["name"], work_sources["channel"]) == (
         "scan-work-sources-once",
         "work_summary",
     )
-    assert work_sources["downstream"]["consumer_runners"] == ["TaskAgentRunner"]
-    assert work_sources["downstream"]["loads_skills"] is False
-    assert work_sources["downstream"]["instructions"] is None
     assert (minutes["name"], minutes["channel"]) == ("sync-minutes-once", "work_summary")
     assert (recovery["name"], recovery["channel"]) == (
         "recover-recent-messages",
         "dingtalk",
     )
-    assert recovery["downstream"] == dingtalk["downstream"]
+    assert [entry["consumer_prompt_enabled"] for entry in payload["service_command_options"]] == [
+        True, True, True, True, True, False, False, True
+    ]
+    assert all("downstream" not in entry for entry in payload["service_command_options"])

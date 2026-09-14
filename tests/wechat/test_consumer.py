@@ -7,6 +7,7 @@ from app.dingtalk_models import CodexAction, CodexDecision
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.wechat.consumer import WechatReplyConsumer, WechatTaskProcessingError
 from app.wechat.models import WechatAccount
+from app.wechat.models import WechatMessage
 
 
 class FakeCodexRunner:
@@ -62,6 +63,54 @@ def test_send_reply_creates_ready_delivery(fake_codex, consumer, store):
     assert attempt is not None
     assert attempt.send_status == "pending"
     assert "memory_recall" in fake_codex.prompts[0]
+
+
+def test_consumer_applies_scheduled_prompt_and_targeted_skill_protocol(
+    store, fake_codex, account
+):
+    trigger = WechatMessage(
+        account_id="acct-1",
+        conversation_id="u9",
+        message_id="m-scheduled",
+        sender_id="u9",
+        sender_display_name="Alex",
+        conversation_type="direct",
+        direction="inbound",
+        sent_at="2026-07-17T10:00:00",
+        kind="text",
+        text="下午能给结论吗",
+        source_version="4.1.10",
+        scheduled_consumer={
+            "schema": "scheduled_consumer.v1",
+            "scheduled_task_id": 3,
+            "scheduled_task_run_id": 8,
+            "prompt": "SCHEDULED WECHAT PROMPT",
+            "skill_names": ["ceo-wechat"],
+            "skill_protocol": "TARGETED WECHAT SKILL",
+        },
+    )
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="u9",
+        conversation_title="Alex",
+        single_chat=True,
+        trigger_message_id=trigger.message_id,
+        trigger_create_time=trigger.sent_at,
+        trigger_sender=trigger.sender_display_name,
+        trigger_text=trigger.text,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    consumer = WechatReplyConsumer(
+        store, fake_codex, reader=None, account=account
+    )
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.NO_REPLY,
+        audit_summary="无需回复",
+    )
+
+    assert consumer.run_once(limit=1) == 1
+    assert "SCHEDULED WECHAT PROMPT" in fake_codex.prompts[0]
+    assert "TARGETED WECHAT SKILL" in fake_codex.prompts[0]
 
 
 def test_no_reply_completes_without_delivery(fake_codex, consumer, store):

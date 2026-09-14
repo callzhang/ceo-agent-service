@@ -1047,20 +1047,25 @@ def test_command_task_round_trips_and_rejects_mixed_execution_forms(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "command-task.sqlite3")
+    consumer_ref = _managed_ref(store, skill_name="ceo-message-triage")
 
     task = store.create_scheduled_task(
         name="Producer",
         command=" produce-once ",
+        prompt="使用 $ceo-message-triage 处理 Trigger 发现的真实消息。",
         cron_expression="0 * * * * *",
         timezone_name="Asia/Shanghai",
+        skill_refs=(consumer_ref,),
         enabled=True,
         now=NOW,
     )
 
     assert task.command == "produce-once"
-    assert task.prompt == "" and task.runtime_id == ""
+    assert task.prompt == "使用 $ceo-message-triage 处理 Trigger 发现的真实消息。"
+    assert task.runtime_id == ""
     assert task.runtime_options == {} and task.required_runtime_capabilities == ()
-    assert task.working_directory == "" and task.skill_refs == ()
+    assert task.working_directory == ""
+    assert [ref.skill_name for ref in task.skill_refs] == ["ceo-message-triage"]
     run = store.create_scheduled_task_run(
         task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
     )
@@ -1068,14 +1073,14 @@ def test_command_task_round_trips_and_rejects_mixed_execution_forms(
     assert json.loads(run.snapshot.to_json())["command"] == "produce-once"
     assert ScheduledTaskSnapshot.from_json(run.snapshot.to_json()) == run.snapshot
 
-    with pytest.raises(ValueError, match="must not carry Agent"):
-        store.create_scheduled_task(
-            name="Mixed", command="produce-once", prompt="also an Agent prompt",
-            cron_expression="0 * * * * *", timezone_name="UTC", now=NOW,
-        )
-    with pytest.raises(ValueError, match="must not carry Agent"):
+    with pytest.raises(ValueError, match="must not carry runtime"):
         store.create_scheduled_task(
             name="Mixed", command="produce-once", runtime_id="codex_oauth",
+            cron_expression="0 * * * * *", timezone_name="UTC", now=NOW,
+        )
+    with pytest.raises(ValueError, match="prompt and Skill refs together"):
+        store.create_scheduled_task(
+            name="Missing refs", command="produce-once", prompt="consumer prompt",
             cron_expression="0 * * * * *", timezone_name="UTC", now=NOW,
         )
     with pytest.raises(ValueError, match="prompt must be nonempty"):
@@ -1088,11 +1093,14 @@ def test_command_task_round_trips_and_rejects_mixed_execution_forms(
             name="Agent", prompt="Do the thing",
             cron_expression="0 * * * * *", timezone_name="UTC", now=NOW,
         )
-    with pytest.raises(ValueError, match="must not carry Agent"):
-        store.update_scheduled_task(
-            task.id, expected_version=task.version, prompt="now an Agent", now=NOW
-        )
-    assert store.get_scheduled_task(task.id).version == task.version
+    updated = store.update_scheduled_task(
+        task.id,
+        expected_version=task.version,
+        prompt="更新后的 Consumer Prompt 使用 $ceo-message-triage。",
+        now=NOW,
+    )
+    assert updated.version == task.version + 1
+    assert updated.prompt == "更新后的 Consumer Prompt 使用 $ceo-message-triage。"
 
 
 def test_previous_scheduled_tasks_gain_empty_command(tmp_path: Path) -> None:
@@ -1242,6 +1250,50 @@ def test_adopting_a_service_command_moves_the_seed_in_place_once(
     assert store.adopt_scheduled_task_service_command(
         migration_key="deleted-v1", command="produce-once", seed_enabled=True, now=NOW
     ) == deleted
+
+
+def test_adopting_service_command_backfills_only_placeholder_description(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "adopt-description.sqlite3")
+    placeholder = store.create_scheduled_task(
+        migration_key="placeholder-v1",
+        name="检查消息",
+        command="sync-minutes-once",
+        cron_expression="0 * * * * *",
+        timezone_name="UTC",
+        now=NOW,
+    )
+    custom = store.create_scheduled_task(
+        migration_key="custom-v1",
+        name="同步听记",
+        description="这是用户写过的说明。",
+        command="sync-minutes-once",
+        cron_expression="0 * * * * *",
+        timezone_name="UTC",
+        now=NOW,
+    )
+
+    backfilled = store.adopt_scheduled_task_service_command(
+        migration_key="placeholder-v1",
+        command="sync-minutes-once",
+        seed_enabled=True,
+        seed_description="增量同步听记到本地归档。",
+        now=NOW + timedelta(minutes=1),
+    )
+    preserved = store.adopt_scheduled_task_service_command(
+        migration_key="custom-v1",
+        command="sync-minutes-once",
+        seed_enabled=True,
+        seed_description="仓库默认说明。",
+        now=NOW + timedelta(minutes=1),
+    )
+
+    assert backfilled is not None
+    assert backfilled.id == placeholder.id
+    assert backfilled.description == "增量同步听记到本地归档。"
+    assert backfilled.version == placeholder.version + 1
+    assert preserved == custom
 
 
 def test_corrupt_run_snapshot_neither_crashes_startup_nor_loops_migration(

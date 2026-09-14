@@ -384,6 +384,64 @@ def test_command_trigger_runs_in_process_and_never_creates_an_agent_input(tmp_pa
     ) is None
 
 
+def test_command_trigger_passes_only_snapshot_consumer_prompt_and_skills(tmp_path):
+    store, agent_run, options = fixture(tmp_path)
+    snapshot = agent_run.snapshot
+    command_refs = tuple(
+        ScheduledTaskSkillRef(
+            skill_source=ref.skill_source,
+            skill_name=ref.skill_name,
+            managed_skill_id=ref.managed_skill_id,
+            managed_revision_id=ref.managed_revision_id,
+            position=ref.position,
+        )
+        for ref in snapshot.skill_refs
+    )
+    command_task = store.create_scheduled_task(
+        name="Producer",
+        command="produce-once",
+        prompt=(
+            "使用 $managed-check 与 $operation-check 处理 Trigger 发现的真实输入。"
+        ),
+        cron_expression="0 * * * * *",
+        timezone_name="UTC",
+        skill_refs=command_refs,
+        enabled=True,
+        now=NOW,
+    )
+    run = store.create_scheduled_task_run(
+        command_task.id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+    earlier_adapter = ScheduledTaskQueueAdapter(
+        store, owner_alive=lambda _pid: False
+    )
+    _earlier_envelope, earlier_guard = claim(
+        earlier_adapter, agent_run.id, "earlier-trigger"
+    )
+    earlier_guard.finish_source(NOW, status="skipped", reason="test setup")
+
+    class CapturingCommands:
+        context = None
+
+        def run(self, name, *, consumer_context):
+            assert name == "produce-once"
+            self.context = consumer_context
+            return "produce-once queued=1"
+
+    registry = CapturingCommands()
+    persisted = dispatch(store, run, options, registry=registry)
+
+    assert persisted.dispatch_status == "dispatched"
+    assert registry.context is not None
+    assert registry.context.prompt == command_task.prompt
+    assert registry.context.skill_names == ("managed-check", "operation-check")
+    assert "EXACT MANAGED BODY" in registry.context.skill_protocol
+    assert "EXACT OPERATION BODY" in registry.context.skill_protocol
+
+
 def test_command_trigger_failure_ends_the_trigger_and_raises_attention(tmp_path):
     store = AutoReplyStore(tmp_path / "command-failed.sqlite3")
     run = command_task_run(store)
