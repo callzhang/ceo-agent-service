@@ -777,7 +777,7 @@ def test_completed_message_delivery_projection_repair_is_idempotent(tmp_path: Pa
         assert db.execute("select count(*) from sent_reply_observers").fetchone()[0] == 1
 
 
-def test_completed_delivery_projection_repair_finds_sent_message_id_receipts(
+def test_completed_delivery_projection_repair_recovers_single_action_identity(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -836,7 +836,6 @@ def test_completed_delivery_projection_repair_finds_sent_message_id_receipts(
             "external_result": {
                 "operation_id": "provider-1",
                 "live_result_reference": {
-                    "action_identity": "reply-result",
                     "conversation_id": "source-conversation",
                     "referenced_message_id": "trigger-message",
                     "delivery_status": "SUCCESS",
@@ -857,6 +856,7 @@ def test_completed_delivery_projection_repair_finds_sent_message_id_receipts(
     assert sent is not None
     assert sent.agent_run_id == audit.id
     assert "sent-message" in sent.send_result_json
+    assert sent.external_action_key
 
 
 def explicit_agent_result(

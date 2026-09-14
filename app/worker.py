@@ -2585,22 +2585,34 @@ class DingTalkAutoReplyWorker:
         ).strip()
         if send_status not in {"success", "sent"} and not stable_message_id:
             return None
-        action_identity = str(reference.get("action_identity") or "").strip()
-        if not action_identity or result.consumer_result is None:
+        if result.consumer_result is None:
             return None
         proposal = result.consumer_result.proposal
         if proposal is None:
             return None
-        matching_actions = [
-            action for action in proposal.actions
-            if action.action_identity == action_identity
-        ]
-        if len(matching_actions) != 1:
-            return None
-        action = matching_actions[0]
+        action_identity = str(reference.get("action_identity") or "").strip()
+        if action_identity:
+            matching_actions = [
+                (index, action)
+                for index, action in enumerate(proposal.actions)
+                if action.action_identity == action_identity
+            ]
+            if len(matching_actions) != 1:
+                return None
+            action_index, action = matching_actions[0]
+        else:
+            # A provider result with a stable sent-message identity is enough
+            # to prove delivery. When the proposal contains exactly one
+            # action, its persisted identity is the only possible owner of
+            # that result; recover it instead of dropping the History
+            # projection because the Audit model omitted a redundant field.
+            if len(proposal.actions) != 1:
+                return None
+            action_index, action = 0, proposal.actions[0]
+            action_identity = action.action_identity
         expected = expected_external_action(
             action,
-            action_index=0,
+            action_index=action_index,
             business_object_key=task.business_object_key,
         )
         external_key = expected.get("external_action_key")

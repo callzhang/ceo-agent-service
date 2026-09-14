@@ -15942,10 +15942,22 @@ class AutoReplyStore:
                   and json_valid(audit.final_result_json)
                   and json_valid(consumer.final_result_json)
                   and json_extract(audit.final_result_json, '$.outcome')='executed'
-                  and trim(coalesce(json_extract(
-                      audit.final_result_json,
-                      '$.external_result.live_result_reference.action_identity'
-                  ), ''))<>''
+                  and (
+                      trim(coalesce(json_extract(
+                          audit.final_result_json,
+                          '$.external_result.live_result_reference.action_identity'
+                      ), ''))<>''
+                      or (
+                          json_type(
+                              consumer.final_result_json,
+                              '$.proposal.actions'
+                          )='array'
+                          and json_array_length(json_extract(
+                              consumer.final_result_json,
+                              '$.proposal.actions'
+                          ))=1
+                      )
+                  )
                   and (
                       trim(coalesce(json_extract(
                           audit.final_result_json,
