@@ -15996,7 +15996,10 @@ class AutoReplyStore:
                       select 1 from sent_reply_observers observer
                       where observer.agent_run_id=audit.id
                   )
-                order by audit.id asc
+                -- Repair the newest successful deliveries first. A bounded
+                -- batch of old, non-reconstructable rows must not starve a
+                -- current delivery projection indefinitely.
+                order by audit.id desc
                 limit ?
                 """,
                 (limit,),

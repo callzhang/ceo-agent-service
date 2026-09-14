@@ -761,10 +761,42 @@ def test_completed_message_delivery_projection_repair_is_idempotent(tmp_path: Pa
     store.complete_agent_run(
         audit.id, audit_result.model_dump(mode="json"), owner="audit"
     )
+
+    store.enqueue_reply_task(
+        conversation_id="newer-conversation",
+        conversation_title="Newer",
+        single_chat=False,
+        trigger_message_id="newer-trigger",
+        trigger_create_time="2026-09-07 10:01:00",
+        trigger_sender="Derek",
+        trigger_text="请再次引用回复",
+    )
+    newer_task = store.claim_reply_tasks(limit=1)[0]
+    newer_consumer = store.claim_agent_run(
+        newer_task.id, newer_task.execution_generation,
+        role=AgentRole.CONSUMER, proposal_revision=0, turn_attempt=0,
+        parent_agent_run_id=None, operation_id="", owner="consumer",
+    ).run
+    store.complete_agent_run(
+        newer_consumer.id,
+        consumer_result.model_dump(mode="json"),
+        owner="consumer",
+    )
+    newer_audit = store.claim_agent_run(
+        newer_task.id, newer_task.execution_generation,
+        role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0,
+        parent_agent_run_id=newer_consumer.id, operation_id="audit-2", owner="audit",
+    ).run
+    store.complete_agent_run(
+        newer_audit.id, audit_result.model_dump(mode="json"), owner="audit"
+    )
+
+    candidates = store.list_completed_audit_runs_missing_delivery_projection(limit=1)
+    assert [candidate.id for candidate in candidates] == [newer_audit.id]
     worker = object.__new__(DingTalkAutoReplyWorker)
     worker.store = store
 
-    assert worker._repair_completed_message_delivery_projections() == 1
+    assert worker._repair_completed_message_delivery_projections() == 2
     assert worker._repair_completed_message_delivery_projections() == 0
     sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
     assert sent is not None
@@ -772,9 +804,9 @@ def test_completed_message_delivery_projection_repair_is_idempotent(tmp_path: Pa
     assert sent.agent_run_id == audit.id
     assert sent.external_action_key
     with store._connect() as db:
-        assert db.execute("select count(*) from external_action_results").fetchone()[0] == 1
-        assert db.execute("select count(*) from sent_replies").fetchone()[0] == 1
-        assert db.execute("select count(*) from sent_reply_observers").fetchone()[0] == 1
+        assert db.execute("select count(*) from external_action_results").fetchone()[0] == 2
+        assert db.execute("select count(*) from sent_replies").fetchone()[0] == 2
+        assert db.execute("select count(*) from sent_reply_observers").fetchone()[0] == 2
 
 
 def test_completed_delivery_projection_repair_recovers_single_action_identity(
