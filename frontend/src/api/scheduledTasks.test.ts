@@ -195,11 +195,13 @@ describe("scheduled tasks API", () => {
   it("runs manually and paginates history with the opaque cursor", async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ item: validRun, meta: { snapshot_at: "now" } }), { status: 201, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ scheduled_task: task, items: [validRun], meta: { snapshot_at: "now", page_size: 20, next_cursor: "11", has_more: true } }), { headers: { "Content-Type": "application/json" } }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ scheduled_task: task, items: [validRun], latest_attempt_run: validRun, meta: { snapshot_at: "now", page_size: 20, next_cursor: "11", has_more: true } }), { headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetch);
 
     expect((await runScheduledTask(7)).item.id).toBe(11);
-    expect((await listScheduledTaskRuns(7, "25")).meta.next_cursor).toBe("11");
+    const history = await listScheduledTaskRuns(7, "25");
+    expect(history.meta.next_cursor).toBe("11");
+    expect(history.latest_attempt_run?.id).toBe(11);
     expect(fetch).toHaveBeenLastCalledWith("/api/console/scheduled-tasks/7/runs?cursor=25&page_size=20", expect.any(Object));
   });
 });

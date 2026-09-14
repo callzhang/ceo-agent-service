@@ -6637,6 +6637,39 @@ class AutoReplyStore:
             )
         return {run_id: tuple(attempts) for run_id, attempts in grouped.items()}
 
+    def latest_scheduled_task_run_with_attempt(
+        self,
+        task_id: int,
+    ) -> ScheduledTaskRun | None:
+        """Return the newest Trigger that produced a persisted Agent Attempt."""
+
+        if type(task_id) is not int or task_id <= 0:
+            raise ValueError("scheduled task id must be a positive integer")
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select run.*
+                  from reply_task_inputs as inputs
+                  join json_tree(
+                      case when json_valid(inputs.trigger_message_json)
+                           then inputs.trigger_message_json else '{}' end
+                  ) as lineage
+                  join scheduled_task_runs as run
+                    on run.id=cast(lineage.value as integer)
+                  join reply_attempts as attempts
+                    on attempts.channel=inputs.channel
+                   and attempts.conversation_id=inputs.conversation_id
+                   and attempts.trigger_message_id=inputs.trigger_message_id
+                 where lineage.key='scheduled_task_run_id'
+                   and lineage.type='integer'
+                   and run.scheduled_task_id=?
+                 order by inputs.id desc, attempts.id desc
+                 limit 1
+                """,
+                (task_id,),
+            ).fetchone()
+        return self._scheduled_task_run_from_row(row) if row is not None else None
+
     @staticmethod
     def _runtime_capability_state_key(route_name: str) -> str:
         if not isinstance(route_name, str) or not route_name.strip():

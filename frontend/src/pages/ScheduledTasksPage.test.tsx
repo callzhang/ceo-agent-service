@@ -111,6 +111,49 @@ describe("ScheduledTasksPage", () => {
     expect(screen.getByText("未产生 Attempt")).toBeInTheDocument();
   });
 
+  it("coalesces no-attempt Cron checks and keeps the latest effective Trigger visible", async () => {
+    const latestAttemptRun = {
+      ...commandRun,
+      id: 8,
+      trigger_kind: "scheduled" as const,
+      scheduled_for: "2026-09-08T11:55:00Z",
+      attempts: [{ id: 8840, status: "completed" }],
+    };
+    const noAttemptChecks = [14, 13, 12].map((id) => ({
+      ...commandRun,
+      id,
+      trigger_kind: "scheduled" as const,
+      scheduled_for: `2026-09-08T12:${String(id).padStart(2, "0")}:00Z`,
+      attempts: [],
+    }));
+    const overlapSkips = [11, 10].map((id) => ({
+      ...commandRun,
+      id,
+      trigger_kind: "scheduled" as const,
+      scheduled_for: `2026-09-08T12:${String(id).padStart(2, "0")}:00Z`,
+      dispatch_status: "skipped" as const,
+      skip_or_error_reason: "scheduled_task_previous_execution_active",
+      execution_kind: "",
+      execution_id: "",
+      attempts: [],
+    }));
+    setup([commandTask]);
+    api.listScheduledTaskRuns.mockResolvedValue({
+      scheduled_task: commandTask,
+      items: [...noAttemptChecks, ...overlapSkips],
+      latest_attempt_run: latestAttemptRun,
+      meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false },
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("3 次检查未触发 Agent")).toBeInTheDocument();
+    expect(screen.getByText("上一轮运行期间跳过 2 个定时点")).toBeInTheDocument();
+    expect(screen.getByText("最近一次触发 Agent")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Attempt #8840" })).toHaveAttribute("href", "/attempts/8840");
+    expect(screen.queryByText("scheduled_task_previous_execution_active")).not.toBeInTheDocument();
+  });
+
   it("keeps a selected task in a readable view until Edit, then saves the real draft", async () => {
     const user = userEvent.setup();
     renderPage();

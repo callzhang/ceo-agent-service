@@ -10,6 +10,15 @@
   address response is non-cacheable and refuses incomplete or mismatched
   receipt/task/ActionPlan lineage.
 
+- 2026-09-14: Agent Cron history now folds consecutive successful service
+  checks that produced no Agent Attempt and consecutive
+  `scheduled_task_previous_execution_active` skips into compact summary rows.
+  The API also returns the latest Trigger that actually produced an Attempt,
+  even when it is older than the current history page, so the UI keeps its
+  Attempt detail link visible. The scheduled Dispatcher queue treats overlap
+  skips as normal control flow and clears an older execution error after a
+  later successful dispatch.
+
 - 2026-09-14: The former `整理工作区中的新工作记录` Cron now appears as
   `将会议行动项整理到 Tasks`. Its deterministic Trigger reads explicit
   DingTalk meeting Todo collections instead of Markdown or text files, queues

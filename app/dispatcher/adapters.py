@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from app.agent_cron.models import ensure_utc_datetime
+from app.agent_cron.scheduler import PREVIOUS_EXECUTION_ACTIVE
 from app.dispatcher.models import (
     DispatchEnvelope,
     QueueMetrics,
@@ -109,12 +110,9 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 "and (lease_owner='' or lease_expires_at<=?)",
                 (now_text, now_text),
             ).fetchone()[0]
-            latest_error = _latest_claim_error(db, self.name) or _latest_error(
-                db,
-                table="scheduled_task_runs",
-                column="skip_or_error_reason",
-                order_by="id desc",
-            )
+            latest_error = _latest_claim_error(
+                db, self.name
+            ) or _latest_scheduled_error(db)
         return QueueMetrics(
             pending=int(pending),
             due=int(due),
@@ -1550,6 +1548,19 @@ def _latest_claim_error(db: sqlite3.Connection, adapter_name: str) -> str:
         (adapter_name,),
     ).fetchone()
     return "" if row is None else str(row[0])
+
+
+def _latest_scheduled_error(db: sqlite3.Connection) -> str:
+    row = db.execute(
+        "select dispatch_status, skip_or_error_reason from scheduled_task_runs "
+        "where dispatch_status='dispatched' or ("
+        "trim(skip_or_error_reason)<>'' and skip_or_error_reason<>?) "
+        "order by id desc limit 1",
+        (PREVIOUS_EXECUTION_ACTIVE,),
+    ).fetchone()
+    if row is None or str(row["dispatch_status"]) == "dispatched":
+        return ""
+    return str(row["skip_or_error_reason"] or "")
 
 
 def _latest_error(

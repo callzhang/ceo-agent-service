@@ -576,8 +576,14 @@ def register_scheduled_task_routes(
         )
         has_more = len(page) > page_size
         runs = page[:page_size]
+        latest_attempt_run = store_factory().latest_scheduled_task_run_with_attempt(
+            task_id
+        )
+        run_ids = [run.id for run in runs]
+        if latest_attempt_run is not None and latest_attempt_run.id not in run_ids:
+            run_ids.append(latest_attempt_run.id)
         attempts_by_run = store_factory().list_scheduled_task_run_attempts(
-            [run.id for run in runs]
+            run_ids
         )
         return {
             "scheduled_task": rendered_task(task, latest_run(task.id)),
@@ -585,6 +591,14 @@ def register_scheduled_task_routes(
                 _run_payload(run, attempts=attempts_by_run.get(run.id, ()))
                 for run in runs
             ],
+            "latest_attempt_run": (
+                None
+                if latest_attempt_run is None
+                else _run_payload(
+                    latest_attempt_run,
+                    attempts=attempts_by_run.get(latest_attempt_run.id, ()),
+                )
+            ),
             "meta": {
                 "snapshot_at": snapshot_at(),
                 "page_size": page_size,

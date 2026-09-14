@@ -1730,6 +1730,79 @@ def test_dispatcher_claims_scheduled_source_only_when_worker_capacity_is_availab
     assert dispatcher.dispatch_available(NOW + timedelta(seconds=2), limit=2) == 1
 
 
+def test_scheduled_metrics_exclude_previous_execution_skip_from_latest_error(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    run = _scheduled_run(store)
+    with store._connect() as db:
+        db.execute(
+            "update scheduled_task_runs set dispatch_status='failed', "
+            "skip_or_error_reason='real scheduler failure' where id=?",
+            (run.id,),
+        )
+    task_id = run.scheduled_task_id
+    skipped = store.create_scheduled_task_run(
+        task_id,
+        trigger_kind="scheduled",
+        scheduled_for=NOW + timedelta(minutes=1),
+        now=NOW + timedelta(minutes=1),
+    )
+    with store._connect() as db:
+        db.execute(
+            "update scheduled_task_runs set dispatch_status='skipped', "
+            "skip_or_error_reason='scheduled_task_previous_execution_active' "
+            "where id=?",
+            (skipped.id,),
+        )
+
+    metrics = ScheduledTaskQueueAdapter(store).metrics(NOW + timedelta(minutes=2))
+
+    assert metrics.latest_error == "real scheduler failure"
+
+
+def test_scheduled_metrics_clear_latest_error_after_a_recovered_dispatch(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    failed = _scheduled_run(store)
+    task_id = failed.scheduled_task_id
+    recovered = store.create_scheduled_task_run(
+        task_id,
+        trigger_kind="scheduled",
+        scheduled_for=NOW + timedelta(minutes=1),
+        now=NOW + timedelta(minutes=1),
+    )
+    overlap = store.create_scheduled_task_run(
+        task_id,
+        trigger_kind="scheduled",
+        scheduled_for=NOW + timedelta(minutes=2),
+        now=NOW + timedelta(minutes=2),
+    )
+    with store._connect() as db:
+        db.execute(
+            "update scheduled_task_runs set dispatch_status='failed', "
+            "skip_or_error_reason='real scheduler failure' where id=?",
+            (failed.id,),
+        )
+        db.execute(
+            "update scheduled_task_runs set dispatch_status='dispatched', "
+            "execution_kind='service_command', execution_id='produce-once' "
+            "where id=?",
+            (recovered.id,),
+        )
+        db.execute(
+            "update scheduled_task_runs set dispatch_status='skipped', "
+            "skip_or_error_reason='scheduled_task_previous_execution_active' "
+            "where id=?",
+            (overlap.id,),
+        )
+
+    metrics = ScheduledTaskQueueAdapter(store).metrics(NOW + timedelta(minutes=3))
+
+    assert metrics.latest_error == ""
+
+
 def test_dispatcher_heartbeats_in_flight_scheduled_claim_across_two_dispatchers(
     tmp_path: Path,
 ):

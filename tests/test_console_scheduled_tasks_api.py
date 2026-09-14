@@ -777,6 +777,68 @@ def test_run_history_links_trigger_outputs_to_reply_attempts(tmp_path: Path) -> 
     ]
 
 
+def test_run_history_keeps_latest_attempt_visible_beyond_raw_page(
+    tmp_path: Path,
+) -> None:
+    client, store, ids, _wakes = _client(tmp_path)
+    created = client.post("/api/console/scheduled-tasks", json=_create_payload(ids))
+    task_id = created.json()["item"]["id"]
+    effective = store.create_scheduled_task_run(
+        task_id,
+        trigger_kind="scheduled",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+    store.enqueue_reply_task(
+        channel="dingtalk",
+        conversation_id="conversation-effective",
+        conversation_title="Effective conversation",
+        single_chat=True,
+        trigger_message_id="message-effective",
+        trigger_create_time=NOW.isoformat(),
+        trigger_sender="Sender",
+        trigger_text="Effective input",
+        trigger_message_json=json.dumps(
+            {
+                "scheduled_consumer": {
+                    "schema": "scheduled_consumer.v1",
+                    "scheduled_task_run_id": effective.id,
+                }
+            }
+        ),
+    )
+    attempt_id = store.record_reply_attempt(
+        channel="dingtalk",
+        conversation_id="conversation-effective",
+        conversation_title="Effective conversation",
+        trigger_message_id="message-effective",
+        trigger_sender="Sender",
+        trigger_text="Effective input",
+        action="none",
+        sensitivity_kind="general",
+        send_status="skipped",
+    )
+    newest = store.create_scheduled_task_run(
+        task_id,
+        trigger_kind="scheduled",
+        scheduled_for=NOW + timedelta(minutes=1),
+        now=NOW + timedelta(minutes=1),
+    )
+
+    with client:
+        response = client.get(
+            f"/api/console/scheduled-tasks/{task_id}/runs",
+            params={"page_size": 1},
+        )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [newest.id]
+    assert response.json()["latest_attempt_run"]["id"] == effective.id
+    assert response.json()["latest_attempt_run"]["attempts"] == [
+        {"id": attempt_id, "status": "skipped"}
+    ]
+
+
 def test_update_maps_concurrent_soft_delete_to_not_found(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

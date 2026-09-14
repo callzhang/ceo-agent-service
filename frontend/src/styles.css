@@ -1627,6 +1627,7 @@ h1, h2, h3, p { margin-top: 0; }
 .scheduled-task-history li { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
 .scheduled-task-history li div { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 0 auto; }
 .scheduled-task-history li div span, .scheduled-task-history li small, .scheduled-task-history li > span { color: var(--ink-soft); font-size: .72rem; }
+.scheduled-task-history li div .scheduled-task-effective-trigger { padding: 2px 6px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-weight: 750; white-space: nowrap; }
 .scheduled-task-history li small, .scheduled-task-history li > span, .scheduled-task-history li p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scheduled-task-history li small { flex: 0 0 auto; }
 .scheduled-task-history li > span { flex: 0 1 auto; }

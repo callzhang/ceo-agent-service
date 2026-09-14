@@ -137,6 +137,7 @@ interface TaskList { items: ScheduledTask[]; meta: { total: number; snapshot_at:
 export interface ScheduledTaskRunPage {
   scheduled_task: ScheduledTask;
   items: ScheduledTaskRun[];
+  latest_attempt_run: ScheduledTaskRun | null;
   meta: { snapshot_at: string; page_size: number; next_cursor: string; has_more: boolean };
 }
 
@@ -372,6 +373,7 @@ export async function listScheduledTaskRuns(taskId: number, cursor = "", signal?
   const value: unknown = await request(`/api/console/scheduled-tasks/${taskId}/runs?${query}`, { signal });
   const payload = record(value); const meta = record(payload?.meta);
   if (!payload || !validTask(payload.scheduled_task) || !Array.isArray(payload.items) || !payload.items.every(validRun)
+    || !(payload.latest_attempt_run === null || validRun(payload.latest_attempt_run))
     || !meta || typeof meta.snapshot_at !== "string" || typeof meta.page_size !== "number"
     || typeof meta.next_cursor !== "string" || typeof meta.has_more !== "boolean") throw new Error("invalid scheduled task runs response");
   return value as ScheduledTaskRunPage;

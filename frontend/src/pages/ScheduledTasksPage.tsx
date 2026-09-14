@@ -210,18 +210,49 @@ function TaskListItem({ task, selected, onSelect }: { task: ScheduledTask; selec
   </button>;
 }
 
-function RunHistory({ runs, hasMore, loading, onMore, commandOptions }: { runs: ScheduledTaskRun[]; hasMore: boolean; loading: boolean; onMore: () => void; commandOptions: ScheduledTaskOptions["service_command_options"] }) {
+const PREVIOUS_EXECUTION_ACTIVE = "scheduled_task_previous_execution_active";
+type RunHistoryGroupKind = "service_check" | "previous_execution_active";
+interface RunHistoryEntry { run: ScheduledTaskRun; oldest: ScheduledTaskRun; count: number; kind: RunHistoryGroupKind | null; latestAttempt: boolean; }
+
+function runHistoryGroupKind(run: ScheduledTaskRun): RunHistoryGroupKind | null {
+  if (run.trigger_kind !== "scheduled" || run.attempts.length > 0) return null;
+  if (run.dispatch_status === "skipped" && run.skip_or_error_reason === PREVIOUS_EXECUTION_ACTIVE) return "previous_execution_active";
+  if (run.dispatch_status === "dispatched" && run.execution_kind === "service_command") return "service_check";
+  return null;
+}
+
+function coalescedRunHistory(runs: ScheduledTaskRun[], latestAttemptRun: ScheduledTaskRun | null): RunHistoryEntry[] {
+  const unique = new Map(runs.map((run) => [run.id, run]));
+  if (latestAttemptRun) unique.set(latestAttemptRun.id, latestAttemptRun);
+  const ordered = [...unique.values()].sort((left, right) => right.id - left.id);
+  return ordered.reduce<RunHistoryEntry[]>((entries, run) => {
+    const kind = runHistoryGroupKind(run);
+    const previous = entries[entries.length - 1];
+    if (kind && previous?.kind === kind) {
+      previous.count += 1;
+      previous.oldest = run;
+      return entries;
+    }
+    entries.push({ run, oldest: run, count: 1, kind, latestAttempt: latestAttemptRun?.id === run.id });
+    return entries;
+  }, []);
+}
+
+function RunHistory({ runs, latestAttemptRun, hasMore, loading, onMore, commandOptions }: { runs: ScheduledTaskRun[]; latestAttemptRun: ScheduledTaskRun | null; hasMore: boolean; loading: boolean; onMore: () => void; commandOptions: ScheduledTaskOptions["service_command_options"] }) {
+  const entries = coalescedRunHistory(runs, latestAttemptRun);
   return <section className="scheduled-task-history" aria-labelledby="scheduled-task-history-title">
-    <div className="scheduled-task-section-heading"><h3 id="scheduled-task-history-title">运行记录</h3><span>{runs.length} 条</span></div>
-    {runs.length === 0 ? <p className="scheduled-task-empty-copy">尚无运行记录。</p> : <ol>{runs.map((run) => <li key={run.id}>
-      <div><strong>{run.trigger_kind === "manual" ? "手动运行" : "定时触发"}</strong><span>{run.dispatch_status}</span></div>
-      <small>{timeLabel(run.scheduled_for)}</small>
-      <span className="scheduled-task-attempt-links"><span>Trigger #{run.id}</span><span aria-hidden="true">→</span>{run.attempts.length > 0 ? run.attempts.map((attempt) => <Link key={attempt.id} to={`/attempts/${attempt.id}`} title={attempt.status}>Attempt #{attempt.id}</Link>) : <span>未产生 Attempt</span>}</span>
-      {run.execution_kind === "service_command" && run.execution_id ? (() => {
-        const command = commandOptions.find((option) => option.name === run.execution_id);
-        return <span className="scheduled-task-command"><span>{command?.display_name || "服务命令"}</span><details><summary>技术详情</summary><small>{run.execution_id}</small></details></span>;
-      })() : run.execution_kind && run.execution_id && <span>{run.execution_kind} #{run.execution_id}</span>}
-      {run.skip_or_error_reason && <p>{run.skip_or_error_reason}</p>}
+    <div className="scheduled-task-section-heading"><h3 id="scheduled-task-history-title">运行记录</h3><span>{entries.length} 条</span></div>
+    {entries.length === 0 ? <p className="scheduled-task-empty-copy">尚无运行记录。</p> : <ol>{entries.map((entry) => <li key={`${entry.kind || "run"}:${entry.run.id}`}>
+      <div><strong>{entry.run.trigger_kind === "manual" ? "手动运行" : "定时触发"}</strong><span>{entry.kind ? "已合并" : entry.run.dispatch_status}</span>{entry.latestAttempt && <span className="scheduled-task-effective-trigger">最近一次触发 Agent</span>}</div>
+      <small>{entry.count > 1 ? `${timeLabel(entry.oldest.scheduled_for)} – ${timeLabel(entry.run.scheduled_for)}` : timeLabel(entry.run.scheduled_for)}</small>
+      {entry.kind === "service_check" ? <span className="scheduled-task-attempt-links">{entry.count} 次检查未触发 Agent</span>
+        : entry.kind === "previous_execution_active" ? <span className="scheduled-task-attempt-links">上一轮运行期间跳过 {entry.count} 个定时点</span>
+          : <span className="scheduled-task-attempt-links"><span>Trigger #{entry.run.id}</span><span aria-hidden="true">→</span>{entry.run.attempts.length > 0 ? entry.run.attempts.map((attempt) => <Link key={attempt.id} to={`/attempts/${attempt.id}`} title={attempt.status}>Attempt #{attempt.id}</Link>) : <span>未产生 Attempt</span>}</span>}
+      {entry.run.execution_kind === "service_command" && entry.run.execution_id ? (() => {
+        const command = commandOptions.find((option) => option.name === entry.run.execution_id);
+        return <span className="scheduled-task-command"><span>{command?.display_name || "服务命令"}</span><details><summary>技术详情</summary><small>{entry.run.execution_id}</small></details></span>;
+      })() : entry.run.execution_kind && entry.run.execution_id && <span>{entry.run.execution_kind} #{entry.run.execution_id}</span>}
+      {entry.run.skip_or_error_reason && entry.kind === null && <p>{entry.run.skip_or_error_reason}</p>}
     </li>)}</ol>}
     {hasMore && <button type="button" className="secondary-button" disabled={loading} onClick={onMore}>{loading ? "加载中…" : "加载更多运行记录"}</button>}
   </section>;
@@ -365,6 +396,7 @@ export function ScheduledTasksPage() {
   const [conflict, setConflict] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [runs, setRuns] = useState<ScheduledTaskRun[]>([]);
+  const [latestAttemptRun, setLatestAttemptRun] = useState<ScheduledTaskRun | null>(null);
   const [historyCursor, setHistoryCursor] = useState("");
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -447,14 +479,14 @@ export function ScheduledTasksPage() {
   }, [confirmDelete]);
 
   useEffect(() => {
-    if (!selectedId || creating) { setRuns([]); setHistoryCursor(""); setHistoryHasMore(false); return; }
+    if (!selectedId || creating) { setRuns([]); setLatestAttemptRun(null); setHistoryCursor(""); setHistoryHasMore(false); return; }
     const controller = new AbortController();
     const generation = contextGeneration.current;
     setHistoryLoading(true);
     void listScheduledTaskRuns(selectedId, "", controller.signal).then((page) => {
       if (controller.signal.aborted || generation !== contextGeneration.current) return;
-      if (page.scheduled_task.id !== selectedId || page.items.some((run) => run.scheduled_task_id !== selectedId)) return;
-      setRuns(page.items); setHistoryCursor(page.meta.next_cursor); setHistoryHasMore(page.meta.has_more);
+      if (page.scheduled_task.id !== selectedId || page.items.some((run) => run.scheduled_task_id !== selectedId) || (page.latest_attempt_run && page.latest_attempt_run.scheduled_task_id !== selectedId)) return;
+      setRuns(page.items); setLatestAttemptRun(page.latest_attempt_run || null); setHistoryCursor(page.meta.next_cursor); setHistoryHasMore(page.meta.has_more);
     }).catch((reason) => { if (!controller.signal.aborted && generation === contextGeneration.current) setError(errorMessage(reason, "运行记录加载失败")); })
       .finally(() => { if (!controller.signal.aborted && generation === contextGeneration.current) setHistoryLoading(false); });
     return () => controller.abort();
@@ -609,7 +641,7 @@ export function ScheduledTasksPage() {
     const taskId = selected.id;
     const cursor = historyCursor;
     setHistoryLoading(true);
-    try { const page = await listScheduledTaskRuns(taskId, cursor); if (page.scheduled_task.id !== taskId || page.items.some((run) => run.scheduled_task_id !== taskId)) throw new Error("运行记录响应与请求不匹配"); if (generation === contextGeneration.current) { setRuns((current) => [...current, ...page.items]); setHistoryCursor(page.meta.next_cursor); setHistoryHasMore(page.meta.has_more); } }
+    try { const page = await listScheduledTaskRuns(taskId, cursor); if (page.scheduled_task.id !== taskId || page.items.some((run) => run.scheduled_task_id !== taskId) || (page.latest_attempt_run && page.latest_attempt_run.scheduled_task_id !== taskId)) throw new Error("运行记录响应与请求不匹配"); if (generation === contextGeneration.current) { setRuns((current) => [...current, ...page.items]); setLatestAttemptRun(page.latest_attempt_run || null); setHistoryCursor(page.meta.next_cursor); setHistoryHasMore(page.meta.has_more); } }
     catch (reason) { if (generation === contextGeneration.current) setError(errorMessage(reason, "运行记录加载失败")); }
     finally { if (generation === contextGeneration.current) setHistoryLoading(false); }
   }
@@ -660,7 +692,7 @@ export function ScheduledTasksPage() {
             </>}
             <button type="submit" className="primary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)}>{mutationState === "saving" ? "保存中…" : creating ? "创建任务" : "保存更改"}</button>
           </form> : <TaskReadOnlyDetail task={selected!} commandOption={options?.service_command_options.find((item) => item.name === selected?.command)} choices={choices} />}
-          {!creating && <RunHistory runs={runs} hasMore={historyHasMore} loading={historyLoading} onMore={() => void loadMoreRuns()} commandOptions={options?.service_command_options || []} />}
+          {!creating && <RunHistory runs={runs} latestAttemptRun={latestAttemptRun} hasMore={historyHasMore} loading={historyLoading} onMore={() => void loadMoreRuns()} commandOptions={options?.service_command_options || []} />}
         </> : <div className="scheduled-task-empty"><strong>选择或新建一个任务</strong><p>右侧会显示 Cron、Skills、Runtime 与运行记录。</p></div>}
       </section>
     </div>
