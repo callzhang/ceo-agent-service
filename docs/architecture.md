@@ -739,6 +739,10 @@ Claude CLI 有两条并列路由，共用 `CEO_CLAUDE_MODEL`（默认 `sonnet`�
 | `claude_oauth` | 本机 `claude` CLI 的登录态（订阅） | 不使用 `--bare`，不设置 `ANTHROPIC_API_KEY` 和 `CLAUDE_CONFIG_DIR` |
 | `claude_api` | `CEO_CLAUDE_API_KEY` | 使用 `--bare`，凭据只进子进程环境，配置目录指向服务自有临时目录 |
 
+服务自有临时目录统一创建在当前运行用户的 `~/.claude/ceo-agent-claude-*`，不在
+`CEO_WORKSPACE` 指向的业务资料目录中创建运行文件。服务进程退出时由临时目录对象回收；异常
+终止遗留的同名前缀空目录可以在确认无进程占用后清理。
+
 `--bare` 规定 Anthropic 认证只能来自 `ANTHROPIC_API_KEY`，因此订阅路由必须去掉它，改由
 CLI 自己解析本机登录态；`CLAUDE_CODE_SIMPLE=1` 与 `--bare` 等价，同样不可用于该路由。
 `--safe-mode` 虽然能屏蔽个人配置，但会连同 `--mcp-config` 显式传入的服务 MCP 一起停用，

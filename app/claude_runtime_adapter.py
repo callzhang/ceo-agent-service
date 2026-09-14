@@ -115,8 +115,10 @@ class ClaudeRuntimeAdapter:
         self.config = config
         self.claude_bin = claude_bin
         self._service_mcp_servers = service_mcp_servers
+        claude_home = Path.home() / ".claude"
+        claude_home.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._runtime_root = tempfile.TemporaryDirectory(
-            prefix="ceo-agent-claude-", dir=workspace
+            prefix="ceo-agent-claude-", dir=claude_home
         )
         self._mcp_proxy = ClaudeMcpCredentialProxyManager(
             root=Path(self._runtime_root.name)

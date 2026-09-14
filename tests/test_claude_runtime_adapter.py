@@ -268,13 +268,35 @@ def test_claude_child_receives_only_configured_anthropic_credential(
     env = adapter.build_env(route)
 
     assert env["ANTHROPIC_API_KEY"] == "anthropic-secret"
-    assert env["CLAUDE_CONFIG_DIR"].startswith(str(adapter.workspace))
+    assert env["CLAUDE_CONFIG_DIR"] == adapter._runtime_root.name
     assert "OPENAI_API_KEY" not in env
     assert "CODEX_API_KEY" not in env
     assert "CEO_CODEX_API_KEY" not in env
     assert "ANTHROPIC_AUTH_TOKEN" not in env
     assert "CEO_CLAUDE_API_KEY" not in env
     assert "UNRELATED_SERVICE_TOKEN" not in env
+
+
+def test_claude_runtime_root_is_created_under_user_claude_directory(
+    tmp_path, config, monkeypatch
+):
+    user_home = tmp_path / "home"
+    workspace = tmp_path / "business-workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
+
+    runtime_adapter = ClaudeRuntimeAdapter(
+        workspace=workspace,
+        config=config,
+        claude_bin="claude-test",
+    )
+    try:
+        runtime_root = Path(runtime_adapter._runtime_root.name)
+        assert runtime_root.parent == user_home / ".claude"
+        assert not tuple(workspace.glob("ceo-agent-claude-*"))
+    finally:
+        runtime_adapter._mcp_proxy.close()
+        runtime_adapter._runtime_root.cleanup()
 
 
 def test_claude_adapter_rejects_unconfigured_or_codex_route(adapter, config):
