@@ -4,6 +4,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -515,7 +516,7 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert 'id="history-event-chart"' in html
     assert "echarts@5" in html
     assert "historyEventChartData" in html
-    assert '"name": "💬 Sent"' in html
+    assert '"name": "Done"' in html
     assert f"/attempts/{attempt_id}" in html
     assert (
         f'<article class="attempt-item history-kind-reply" role="link" tabindex="0" '
@@ -1513,7 +1514,7 @@ def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
 
     chart = audit_web_module._history_chart_payload(store)
     assert chart["total"] == 1
-    assert {series["name"] for series in chart["series"]} == {"💬 Sent"}
+    assert {series["name"] for series in chart["series"]} == {"Done"}
 
     missing_session_status, missing_session_html = render_codex_session_detail(
         "meeting-session-history-1",
@@ -1887,7 +1888,7 @@ def test_history_default_pagination_url_omits_object_type(tmp_path: Path):
     assert "object_type=" not in toolbar_html
 
 
-def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
+def test_history_chart_projects_terminal_actions_as_lifecycle_results(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_reply_attempt(
         conversation_id="cid-reacted",
@@ -1927,11 +1928,75 @@ def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
     payload = audit_web_module._history_chart_payload(store)
     series_names = {series["name"] for series in payload["series"]}
 
-    assert "🙂 Reacted" in series_names
-    assert "🧾 Returned" in series_names
-    assert "💬 Blocked" in series_names
-    assert "💬 Failed" not in series_names
-    assert "💬 Processing" not in series_names
+    assert series_names == {"Done", "Failed"}
+
+
+def test_history_chart_uses_only_lifecycle_statuses(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for index, send_status in enumerate(
+        (
+            "completed",
+            "sent",
+            "reacted",
+            "skipped",
+            "pending",
+            "processing",
+            "failed",
+            "needs_human",
+        )
+    ):
+        store.record_reply_attempt(
+            conversation_id=f"cid-lifecycle-{index}",
+            conversation_title="Lifecycle status",
+            trigger_message_id=f"msg-lifecycle-{index}",
+            trigger_sender="System",
+            trigger_text="Project the current lifecycle status.",
+            action="agent_run",
+            sensitivity_kind="general",
+            send_status=send_status,
+        )
+
+    payload = audit_web_module._history_chart_payload(store)
+    series_names = {series["name"] for series in payload["series"]}
+
+    assert series_names == {
+        "Pending",
+        "Running",
+        "Done",
+        "Skipped",
+        "Failed",
+        "Needs human",
+    }
+    assert sum(sum(series["data"]) for series in payload["series"]) == 8
+
+
+def test_history_chart_does_not_replace_old_failed_status_with_historical(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-old-failed",
+        conversation_title="Old failure",
+        trigger_message_id="msg-old-failed",
+        trigger_sender="System",
+        trigger_text="Keep the task result separate from system health.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    old_created_at = (datetime.now(timezone.utc) - timedelta(hours=6)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    with sqlite3.connect(store.path) as conn:
+        conn.execute(
+            "update reply_attempts set created_at=? where id=?",
+            (old_created_at, attempt_id),
+        )
+
+    payload = audit_web_module._history_chart_payload(store)
+    series_names = {series["name"] for series in payload["series"]}
+
+    assert series_names == {"Failed"}
 
 
 def test_history_chart_shows_provider_capacity_wait_without_failed_red_series(
@@ -1969,8 +2034,7 @@ def test_history_chart_shows_provider_capacity_wait_without_failed_red_series(
     payload = audit_web_module._history_chart_payload(store)
     series_names = {series["name"] for series in payload["series"]}
 
-    assert "⏳ Provider recovery" in series_names
-    assert "💬 Failed" not in series_names
+    assert series_names == {"Pending"}
 
 
 def test_history_chart_marks_failed_reply_recovered_after_task_completion(
@@ -2005,8 +2069,7 @@ def test_history_chart_marks_failed_reply_recovered_after_task_completion(
     payload = audit_web_module._history_chart_payload(store)
     series_names = {series["name"] for series in payload["series"]}
 
-    assert "↻ Recovered" in series_names
-    assert "💬 Failed" not in series_names
+    assert series_names == {"Done"}
 
 
 def test_history_chart_keeps_failed_attempt_visible_after_later_attempt(tmp_path: Path):
@@ -2036,8 +2099,7 @@ def test_history_chart_keeps_failed_attempt_visible_after_later_attempt(tmp_path
     series_names = {series["name"] for series in payload["series"]}
 
     assert failed_id
-    assert "↻ Recovered" not in series_names
-    assert "💬 Failed" in series_names
+    assert series_names == {"Done", "Failed"}
 
 
 def test_history_chart_keeps_retry_event_distinct_from_current_processing(
@@ -2068,9 +2130,7 @@ def test_history_chart_keeps_retry_event_distinct_from_current_processing(
     payload = audit_web_module._history_chart_payload(store)
     series_names = {series["name"] for series in payload["series"]}
 
-    assert "↻ Retrying" in series_names
-    assert "💬 Processing" not in series_names
-    assert "💬 Failed" not in series_names
+    assert series_names == {"Running"}
 
 
 def test_history_chart_marks_recovered_meeting_retries_without_failed_red_series(
@@ -2107,8 +2167,7 @@ def test_history_chart_marks_recovered_meeting_retries_without_failed_red_series
     payload = audit_web_module._history_chart_payload(store)
     series_names = {series["name"] for series in payload["series"]}
 
-    assert "↻ Recovered" in series_names
-    assert "💬 Failed" not in series_names
+    assert series_names == {"Done"}
 
 
 def test_table_toolbar_uses_fixed_alignment_metrics(tmp_path: Path):

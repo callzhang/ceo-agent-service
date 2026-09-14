@@ -782,33 +782,39 @@ DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
 DEFAULT_HISTORY_CHART_CACHE_TTL_SECONDS = 5.0
 DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS = 10.0
 HISTORY_CHART_COLORS = {
-    "💬 Sent": "#00b48a",
-    "💬 Skipped": "#a8a8aa",
-    "↻ Recovered": "#00a889",
-    "◌ Historical": "#a8a8aa",
-    "⏳ Provider recovery": "#c37d0d",
-    "💬 Blocked": "#c37d0d",
-    "↻ Retrying": "#3772cf",
-    "⚙️ Execution started": "#3772cf",
-    "⚙️ Task activity": "#3772cf",
-    "💬 Commented": "#3772cf",
-    "🙂 Reacted": "#6f8fdd",
-    "💬 Failed": "#d45656",
-    "💬 Dry run": "#c37d0d",
-    "✅ Task updated": "#00b48a",
-    "📌 Follow-up sent": "#00b48a",
-    "📌 Follow-up skipped": "#a8a8aa",
-    "📌 Follow-up failed": "#d45656",
-    "📌 Follow-up pending": "#3772cf",
-    "📆 Calendar": "#6f8fdd",
-    "📆 Accepted": "#00b48a",
-    "📆 Tentative": "#c37d0d",
-    "📆 Declined": "#d45656",
-    "🧾 Approved": "#00b48a",
-    "🧾 Commented": "#3772cf",
-    "🧾 Returned": "#c37d0d",
-    "🧾 Rejected": "#d45656",
+    "Pending": "#99610d",
+    "Running": "#237fc2",
+    "Done": "#176b50",
+    "Skipped": "#64748b",
+    "Failed": "#a43a34",
+    "Needs human": "#7b61a8",
 }
+HISTORY_CHART_PENDING_STATUSES = frozenset(
+    {"decision_selected", "draft", "pending", "ready_to_send", "retry", "waiting"}
+)
+HISTORY_CHART_RUNNING_STATUSES = frozenset(
+    {"preparing", "processing", "running", "sending"}
+)
+HISTORY_CHART_DONE_STATUSES = frozenset(
+    {
+        "accepted",
+        "calendar",
+        "commented",
+        "completed",
+        "document",
+        "done",
+        "reacted",
+        "recovered",
+        "sent",
+        "updated",
+    }
+)
+HISTORY_CHART_SKIPPED_STATUSES = frozenset(
+    {"cancelled", "no_action", "skipped"}
+)
+HISTORY_CHART_FAILED_STATUSES = frozenset(
+    {"blocked", "dry_run", "failed", "pending_reconciliation"}
+)
 
 
 class _RecentHtmlCache:
@@ -5033,64 +5039,29 @@ def _parse_utc_timestamp(value: str) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _history_lifecycle_label(status: str) -> str:
+    normalized = status.strip().lower()
+    if normalized in HISTORY_CHART_PENDING_STATUSES:
+        return "Pending"
+    if not normalized or normalized in HISTORY_CHART_RUNNING_STATUSES:
+        return "Running"
+    if normalized in HISTORY_CHART_DONE_STATUSES:
+        return "Done"
+    if normalized in HISTORY_CHART_SKIPPED_STATUSES:
+        return "Skipped"
+    if normalized == "needs_human":
+        return "Needs human"
+    if normalized in HISTORY_CHART_FAILED_STATUSES:
+        return "Failed"
+    return "Failed"
+
+
 def _history_event_label(attempt: ReplyAttempt) -> str:
-    calendar_status = attempt.calendar_response_status.strip().lower()
-    if calendar_status == "accepted":
-        return "📆 Accepted"
-    if calendar_status == "tentative":
-        return "📆 Tentative"
-    if calendar_status == "declined":
-        return "📆 Declined"
-
-    oa_action = attempt.oa_action.strip()
-    oa_action_state = _action_state_class(oa_action)
-    if oa_action_state == "action-state-approved":
-        return "🧾 Approved"
-    if oa_action_state == "action-state-commented":
-        return "🧾 Commented"
-    if oa_action_state == "action-state-returned":
-        return "🧾 Returned"
-    if oa_action_state == "action-state-rejected":
-        return "🧾 Rejected"
-
-    status = attempt.send_status.strip().lower()
-    if status == "sent":
-        return "💬 Sent"
-    if status == "skipped":
-        return "💬 Skipped"
-    if status == "blocked":
-        return "💬 Blocked"
-    if status == "failed":
-        return "💬 Failed"
-    if status == "dry_run":
-        return "💬 Dry run"
-    if status == "reacted":
-        return "🙂 Reacted"
-    if status == "commented":
-        return "💬 Commented"
-    if status == "calendar":
-        return "📆 Calendar"
-    return "⚙️ Execution started"
+    return _history_lifecycle_label(attempt.send_status)
 
 
 def _history_item_event_label(item) -> str:
-    if item.kind == "task":
-        action = item.action.strip().lower()
-        status = item.status.strip().lower()
-        if action.startswith("follow_up_"):
-            if status == "sent":
-                return "📌 Follow-up sent"
-            if status == "skipped":
-                return "📌 Follow-up skipped"
-            if status == "failed":
-                return "📌 Follow-up failed"
-            return "📌 Follow-up pending"
-        return "✅ Task updated"
-    return {
-        "sent": "💬 Sent",
-        "skipped": "💬 Skipped",
-        "failed": "💬 Failed",
-    }.get(item.status, "⚙️ Task activity")
+    return _history_lifecycle_label(item.status)
 
 
 def _history_chart_payload(
@@ -5127,21 +5098,18 @@ def _history_chart_payload(
         if bucket_index is None:
             continue
         event_label = _history_event_label(attempt)
-        if attempt.send_status in {"failed", "blocked", "needs_human"}:
-            if created_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW:
-                event_label = "◌ Historical"
-        if attempt.send_status == "failed" and event_label == "💬 Failed":
+        if attempt.send_status == "failed" and event_label == "Failed":
             task = store.get_reply_task_for_message(
                 attempt.conversation_id,
                 attempt.trigger_message_id,
                 channel=attempt.channel,
             )
             if task is not None and task.status == "pending" and is_codex_provider_recovery_code(task.error):
-                event_label = "⏳ Provider recovery"
+                event_label = "Pending"
             elif task is not None and task.status == "done":
-                event_label = "↻ Recovered"
+                event_label = "Done"
             elif task is not None and task.status == "processing":
-                event_label = "↻ Retrying"
+                event_label = "Running"
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     recovered_meeting_run_ids = store.recovered_meeting_alignment_run_ids_since(
         since_utc
@@ -5163,7 +5131,7 @@ def _history_chart_payload(
         if bucket_index is None:
             continue
         if item.kind == "meeting" and item.source_id in recovered_meeting_run_ids:
-            event_label = "↻ Recovered"
+            event_label = "Done"
         else:
             event_label = _history_item_event_label(item)
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1

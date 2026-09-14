@@ -1,5 +1,13 @@
 # Changelog
 
+- 2026-09-14: History's activity chart now uses one lifecycle-status dimension:
+  `Pending`, `Running`, `Done`, `Skipped`, `Failed`, and `Needs human`.
+  Successful message, reaction, calendar, approval, meeting, task, and follow-up
+  actions all project to `Done`; their object and action types remain available
+  in History details. Record age no longer rewrites a failed item as
+  `Historical`, so the four-hour service-health observation window cannot alter
+  an individual item's status.
+
 - 2026-09-14: Email classification now gives Responses API calls a 120-second
   request budget instead of the HTTP client's five-second default. Retryable
   classifier and expired-lease failures remain in the same durable task with
