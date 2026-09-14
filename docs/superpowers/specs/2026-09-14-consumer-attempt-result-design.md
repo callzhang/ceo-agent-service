@@ -108,4 +108,4 @@ Attempt 的终结 run 可能是 Consumer 本身，也可能是 Audit。Audit 的
 
 ## 实现影响
 
-预期实现集中在 Attempt 详情的读取/呈现层及其测试。Store 只提供现有读取接口；不会有 schema、运行时、路由或服务重启需求，除非实际实现发现当前读取接口无法表达该已批准的数据选择规则。
+预期实现集中在 Attempt 详情的读取/呈现层及其测试。Store 只提供现有读取接口；不会有 schema、路由或任务生命周期改动。由于主服务不会热加载 Python 代码，运行时代码提交后仍须按仓库规则重启 `com.ceo-agent-service.main` 并核验新进程和队列状态。
