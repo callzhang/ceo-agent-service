@@ -113,6 +113,10 @@ def _submit_local_dingtalk_account(page) -> None:
     direct_login.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
     direct_login.click(timeout=LOCAL_SSO_TIMEOUT_MS)
 
+    page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
+    if _is_dingtalk_login_url(getattr(page, "url", "")):
+        _confirm_local_dingtalk_login()
+
     try:
         corp = page.locator(LOCAL_SSO_CORP_ITEM).filter(
             has_text=LOCAL_SSO_CORP_NAME
