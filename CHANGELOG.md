@@ -1,10 +1,12 @@
 # Changelog
 
-- 2026-09-14: `同步会议结论与管理者视角` now refreshes one idempotent
-  `memory_write` import record for every delivered meeting. Each record combines
-  the delivered management conclusion with the optional archived AI summary;
-  it deliberately excludes raw transcripts and replaces the former duplicate
-  summary export.
+- 2026-09-14: `同步会议结论与管理者视角` now records each delivered DingTalk
+  alignment summary directly through Memory Connector. The durable queue is
+  keyed by meeting ID and its text is exactly the sent `final_message` with
+  meeting identity; it no longer scans local AI minutes, writes JSONL files, or
+  appends a transcript, an AI summary, or unsent internal decision material.
+  Memory delivery has its own retry and audit state, so an already sent meeting
+  remains terminal even if the connector is temporarily unavailable.
 
 - 2026-09-14: The launchd service now reads the ignored local
   `data/config/service-mcp.json` manifest. MCP enablement choices apply to the

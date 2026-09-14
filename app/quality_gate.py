@@ -785,6 +785,13 @@ def _check_external_delivery_queues(
          ("pending", "sending", "ready_to_send"),
          "and lower(coalesce(error, '')) != 'user_rejected'"),
         ("memory_write_events", "status", ("failed",), ("pending", "processing"), ""),
+        (
+            "meeting_memory_write_events",
+            "status",
+            ("failed",),
+            ("pending",),
+            "",
+        ),
     ):
         if source == "work_todo_dingtalk_links":
             failed = _count(

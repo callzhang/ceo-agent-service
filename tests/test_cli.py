@@ -6114,6 +6114,13 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
             )
         ),
     )
+    monkeypatch.setattr(
+        cli,
+        "process_meeting_memory_writes",
+        lambda received_store, *, workspace, routed_execution, now, limit: calls.append(
+            ("write-meeting-memory", received_store, workspace, routed_execution, now, limit)
+        ),
+    )
 
     def sleep(seconds):
         calls.append(("sleep", seconds))
@@ -6159,7 +6166,11 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     assert calls[5][4].utcoffset() is not None
     assert calls[5][5:7] == (4, True)
     assert calls[5][7] is not None
-    assert calls[6] == ("sleep", 10)
+    assert calls[6][:3] == ("write-meeting-memory", store, settings.workspace)
+    assert calls[6][3] is routed_execution
+    assert calls[6][4].utcoffset() is not None
+    assert calls[6][5] == 1
+    assert calls[7] == ("sleep", 10)
 
 
 def test_scan_meetings_once_command_writes_one_job_with_fixed_ten_minute_window(
@@ -6196,9 +6207,11 @@ def test_scan_meetings_once_command_writes_one_job_with_fixed_ten_minute_window(
     )
     assert job is not None
     assert job.eligible_at == "2026-09-08T19:50:00+08:00"
-    assert (
-        settings.workspace / "AI听记/.memory/meeting-alignment.jsonl"
-    ).read_text(encoding="utf-8") == ""
+    with AutoReplyStore(db_path)._connect() as db:
+        memory_events = db.execute(
+            "select count(*) from meeting_memory_write_events"
+        ).fetchone()[0]
+    assert memory_events == 0
 
 
 def test_meeting_loops_skip_when_network_not_ready(monkeypatch, tmp_path):
@@ -6270,6 +6283,7 @@ def test_meeting_consumer_does_not_preflight_codex_auth(monkeypatch, tmp_path):
         "consume_meeting_alignment_jobs",
         lambda *args, **kwargs: calls.append("consume-meeting"),
     )
+    monkeypatch.setattr(cli, "process_meeting_memory_writes", lambda *args, **kwargs: None)
     with pytest.raises(StopLoop):
         cli.run_meeting_consumer_loop(
             settings,

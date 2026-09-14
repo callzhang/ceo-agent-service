@@ -843,6 +843,21 @@ class MemoryWriteEvent(BaseModel):
     updated_at: str
 
 
+class MeetingMemoryWriteEvent(BaseModel):
+    """One durable Memory delivery for one already-sent meeting conclusion."""
+
+    id: int
+    meeting_job_id: int
+    payload_json: str
+    status: str
+    attempts: int
+    available_at: str
+    error: str
+    memory_id: str
+    created_at: str
+    updated_at: str
+
+
 class FeedbackEvent(BaseModel):
     key: str
     feedback_token: str
@@ -2605,6 +2620,21 @@ class AutoReplyStore:
                     on memory_write_events(attempt_id, id);
                 create index if not exists idx_memory_write_events_status
                     on memory_write_events(status, updated_at);
+                create table if not exists meeting_memory_write_events (
+                    id integer primary key autoincrement,
+                    meeting_job_id integer not null unique,
+                    payload_json text not null,
+                    status text not null default 'pending',
+                    attempts integer not null default 0,
+                    available_at text not null default '',
+                    error text not null default '',
+                    memory_id text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(meeting_job_id) references meeting_alignment_jobs(id)
+                );
+                create index if not exists idx_meeting_memory_write_events_due
+                    on meeting_memory_write_events(status, available_at, id);
                 create table if not exists reply_tasks (
                     id integer primary key autoincrement,
                     channel text not null default 'dingtalk',
@@ -9044,6 +9074,7 @@ class AutoReplyStore:
             if (
                 source not in {
                     "memory_write_event",
+                    "meeting_memory_write_event",
                     "wechat_memory_candidate",
                     "wechat_memory_import_job",
                 }
@@ -9111,6 +9142,10 @@ class AutoReplyStore:
                 "memory_write_event": (
                     "select 1 from memory_write_events where id=? "
                     "and status in ('pending', 'failed')"
+                ),
+                "meeting_memory_write_event": (
+                    "select 1 from meeting_memory_write_events where id=? "
+                    "and status='pending'"
                 ),
                 "wechat_memory_candidate": (
                     "select 1 from wechat_memory_candidates where id=? "
@@ -13987,6 +14022,123 @@ class AutoReplyStore:
                 """
             ).fetchall()
         return [self._meeting_alignment_job_from_row(row) for row in rows]
+
+    @staticmethod
+    def _meeting_memory_write_event_from_row(
+        row: sqlite3.Row,
+    ) -> MeetingMemoryWriteEvent:
+        return MeetingMemoryWriteEvent.model_validate(dict(row))
+
+    def create_meeting_memory_write_event(
+        self,
+        meeting_job_id: int,
+        *,
+        payload_json: str,
+    ) -> bool:
+        """Queue one Memory write for an already delivered conclusion.
+
+        The unique meeting-job key deliberately keeps Memory delivery separate
+        from the meeting's terminal send state while making restarts idempotent.
+        """
+        with self._connect() as db:
+            parent = db.execute(
+                """
+                select 1
+                from meeting_alignment_jobs
+                where id=? and status='sent' and trim(final_message)<>''
+                """,
+                (meeting_job_id,),
+            ).fetchone()
+            if parent is None:
+                raise ValueError(
+                    "meeting Memory write requires a sent conclusion"
+                )
+            cursor = db.execute(
+                """
+                insert into meeting_memory_write_events (
+                    meeting_job_id, payload_json
+                )
+                values (?, ?)
+                on conflict(meeting_job_id) do nothing
+                """,
+                (meeting_job_id, payload_json),
+            )
+        return cursor.rowcount == 1
+
+    def list_due_meeting_memory_write_events(
+        self,
+        *,
+        now: str,
+        limit: int,
+    ) -> list[MeetingMemoryWriteEvent]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from meeting_memory_write_events
+                where status='pending'
+                  and (available_at='' or datetime(available_at)<=datetime(?))
+                order by id
+                limit ?
+                """,
+                (now, limit),
+            ).fetchall()
+        return [self._meeting_memory_write_event_from_row(row) for row in rows]
+
+    def complete_meeting_memory_write_event(
+        self,
+        event_id: int,
+        *,
+        memory_id: str,
+    ) -> None:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update meeting_memory_write_events
+                set status='done', attempts=attempts+1, available_at='',
+                    error='', memory_id=?, updated_at=current_timestamp
+                where id=? and status='pending'
+                """,
+                (memory_id, event_id),
+            )
+        if cursor.rowcount != 1:
+            raise ValueError("meeting Memory write event is not pending")
+
+    def retry_meeting_memory_write_event(
+        self,
+        event_id: int,
+        *,
+        error: str,
+        available_at: str,
+    ) -> None:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update meeting_memory_write_events
+                set attempts=attempts+1, available_at=?, error=?,
+                    updated_at=current_timestamp
+                where id=? and status='pending'
+                """,
+                (available_at, error[:500], event_id),
+            )
+        if cursor.rowcount != 1:
+            raise ValueError("meeting Memory write event is not pending")
+
+    def fail_meeting_memory_write_event(self, event_id: int, *, error: str) -> None:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update meeting_memory_write_events
+                set status='failed', attempts=attempts+1, available_at='',
+                    error=?, updated_at=current_timestamp
+                where id=? and status='pending'
+                """,
+                (error[:500], event_id),
+            )
+        if cursor.rowcount != 1:
+            raise ValueError("meeting Memory write event is not pending")
 
     def claim_meeting_alignment_jobs(
         self,

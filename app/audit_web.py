@@ -2467,6 +2467,13 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
         ("Meeting jobs", "meeting_alignment_jobs", "status", "updated_at", "error"),
         ("OKR reviews", "okr_review_requests", "status", "updated_at", "error"),
         ("Memory writes", "memory_write_events", "status", "updated_at", "last_error"),
+        (
+            "Meeting Memory writes",
+            "meeting_memory_write_events",
+            "status",
+            "updated_at",
+            "error",
+        ),
         ("DingTalk Todos", "work_todo_dingtalk_links", "status", "updated_at", "last_error"),
         ("WeChat deliveries", "wechat_deliveries", "status", "updated_at", "error"),
     ]

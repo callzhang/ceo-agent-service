@@ -75,6 +75,10 @@ from app.meeting_alignment import (
     recover_meeting_alignment_jobs,
 )
 from app.meeting_alignment_agent import MeetingAlignmentCodexRunner
+from app.meeting_memory_write import (
+    enqueue_sent_meeting_memory_writes,
+    process_meeting_memory_writes,
+)
 from app.org_cache import (
     CachedDwsClient,
     CachedOrgDirectory,
@@ -3141,20 +3145,10 @@ def scan_meetings_once_command(
         now=current,
         settle_seconds=600,
     )
-    from app.meeting_memory_export import (
-        export_sent_meeting_memory,
-        meeting_memory_export_path,
-    )
-
-    memory_export = export_sent_meeting_memory(
-        store.list_sent_meeting_alignment_jobs(),
-        archive_dir=settings.workspace / "AI听记",
-        output_path=meeting_memory_export_path(settings.workspace),
-    )
+    memory_writes_queued = enqueue_sent_meeting_memory_writes(store)
     print(
         "scan-meetings-once "
-        f"queued={created} memory_records={memory_export.records} "
-        f"minutes_attached={memory_export.summaries_attached}",
+        f"queued={created} memory_writes_queued={memory_writes_queued}",
         flush=True,
     )
     return created
@@ -3252,6 +3246,14 @@ def run_meeting_consumer_loop(
                 deliver=not settings.dry_run,
                 embedding_client=embedding_client,
             )
+            if not settings.dry_run and max_tasks != 0:
+                process_meeting_memory_writes(
+                    store,
+                    workspace=settings.workspace,
+                    routed_execution=routed_execution,
+                    now=datetime.now().astimezone(),
+                    limit=1,
+                )
             consecutive_sqlite_lock_failures = 0
         except Exception as exc:
             if isinstance(exc, sqlite3.OperationalError) and (

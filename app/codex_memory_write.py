@@ -77,7 +77,52 @@ def run_codex_memory_write(
     timeout_seconds: int = 1200,
     idle_timeout_seconds: int = 900,
 ) -> MemoryWriteResult:
-    del source_description
+    result = execute_codex_memory_write(
+        workspace=workspace,
+        store=store,
+        workload_key=f"memory_write_event:{event_id}",
+        data=data,
+        type=type,
+        created_at=created_at,
+        source_description=source_description,
+        codex_bin=codex_bin,
+        routed_execution=routed_execution,
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+    )
+    with store._connect() as db:
+        cursor = db.execute(
+            """
+            update memory_write_events
+            set status='written', memory_episode_id=?, last_error='',
+                updated_at=current_timestamp
+            where id=? and status in ('pending', 'failed', 'written')
+            """,
+            (result.episode_uuid, event_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("memory write event is not eligible")
+    return result
+
+
+def execute_codex_memory_write(
+    *,
+    workspace: Path,
+    store: AutoReplyStore,
+    workload_key: str,
+    data: str,
+    type: Literal["text", "message"],
+    created_at: str,
+    source_description: str,
+    codex_bin: str = "codex",
+    routed_execution: RoutedCodexExecution | None = None,
+    timeout_seconds: int = 1200,
+    idle_timeout_seconds: int = 900,
+) -> MemoryWriteResult:
+    """Persist one stable Memory payload through the routed runtime."""
+    source_description = source_description.strip()
+    if not source_description:
+        raise ValueError("memory write source_description is required")
     routed_execution = routed_execution or build_production_routed_codex_execution(
         store=store,
         workspace=workspace,
@@ -87,6 +132,7 @@ def run_codex_memory_write(
     )
     prompt = (
         "Use the available memory connector to persist the following input. "
+        f"The source is {source_description}. "
         "Return the final typed result with status, memory_id, retryable, "
         "source_code, and detail. Preserve any provider error code and diagnostic "
         "in source_code and detail.\n"
@@ -98,7 +144,7 @@ def run_codex_memory_write(
     try:
         routed_result = routed_execution.execute(
             workload_kind="memory",
-            workload_key=f"memory_write_event:{event_id}",
+            workload_key=workload_key,
             prompt=prompt,
             command_factory=CodexCommandFactory.standard(
                 developer_instructions=(
@@ -115,20 +161,7 @@ def run_codex_memory_write(
         )
     except RoutedCodexExecutionError as exc:
         raise _failure_from_routed_error(exc) from exc
-    result = memory_result_from_typed_output(routed_result.value)
-    with store._connect() as db:
-        cursor = db.execute(
-            """
-            update memory_write_events
-            set status='written', memory_episode_id=?, last_error='',
-                updated_at=current_timestamp
-            where id=? and status in ('pending', 'failed', 'written')
-            """,
-            (result.episode_uuid, event_id),
-        )
-        if cursor.rowcount != 1:
-            raise ValueError("memory write event is not eligible")
-    return result
+    return memory_result_from_typed_output(routed_result.value)
 
 
 def memory_result_from_typed_output(raw: str) -> MemoryWriteResult:

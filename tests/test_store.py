@@ -427,12 +427,23 @@ def _seed_runtime_operation_parent(
             source, _, source_id = workload_key.partition(":")
             table_name = {
                 "memory_write_event": "memory_write_events",
+                "meeting_memory_write_event": "meeting_memory_write_events",
                 "wechat_memory_candidate": "wechat_memory_candidates",
                 "wechat_memory_import_job": "wechat_memory_import_jobs",
             }[source]
             if table_name == "memory_write_events":
                 db.execute("insert into reply_attempts (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, action, sensitivity_kind, final_reply_text, permission_action, permission_reason, send_status) values (1, 'cid', 'title', 'msg', 'sender', 'text', 'none', 'none', '', 'none', '', 'pending')")
                 db.execute("insert into memory_write_events (id, attempt_id, event_type, payload_json) values (?, 1, 'test', '{}')", (int(source_id),))
+            elif table_name == "meeting_memory_write_events":
+                db.execute(
+                    "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
+                    "values (1, 'meeting-memory-parent', 'sent', 'sent summary')"
+                )
+                db.execute(
+                    "insert into meeting_memory_write_events "
+                    "(id, meeting_job_id, payload_json) values (?, 1, '{}')",
+                    (int(source_id),),
+                )
             elif table_name == "wechat_memory_candidates":
                 db.execute("insert into wechat_memory_candidates (id, import_run_id, account_id, statement, category, confidence, sensitivity, status, memory_write_status) values (?, 'import', 'account', 'statement', 'fact', 1, 'low', 'approved', 'writing')", (int(source_id),))
             else:
@@ -940,6 +951,7 @@ def test_runtime_attempt_upgrade_replaces_pretrim_session_evidence_triggers(
         ("task", "15:memory_backfill"),
         ("weekly_okr", "2026-08-16:manager-1:" + "a" * 64),
         ("memory", "memory_write_event:16"),
+        ("memory", "meeting_memory_write_event:16"),
         ("memory", "wechat_memory_import_job:17"),
         ("email_classification", "email-classification:" + "a" * 64),
         (
@@ -1007,6 +1019,7 @@ def test_runtime_operation_attempts_are_listed_only_for_exact_workload(tmp_path:
         ("weekly_okr", "not-a-stable-key"),
         ("memory", "memory-16"),
         ("memory", "memory_write_event:999"),
+        ("memory", "meeting_memory_write_event:999"),
         ("memory", "wechat_memory_import_job:999"),
         ("email_classification", "email-classification:not-a-digest"),
         (
@@ -1038,11 +1051,15 @@ def test_runtime_attempt_memory_keys_are_source_qualified_and_collision_free(
 ):
     store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
     _seed_runtime_operation_parent(store, "memory", "memory_write_event:1")
+    _seed_runtime_operation_parent(store, "memory", "meeting_memory_write_event:1")
     _seed_runtime_operation_parent(store, "memory", "wechat_memory_candidate:1")
     _seed_runtime_operation_parent(store, "memory", "wechat_memory_import_job:1")
 
     event_attempt = store.claim_runtime_operation_attempt(
         "memory", "memory_write_event:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+    meeting_attempt = store.claim_runtime_operation_attempt(
+        "memory", "meeting_memory_write_event:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
     )
     candidate_attempt = store.claim_runtime_operation_attempt(
         "memory", "wechat_memory_candidate:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
@@ -1053,11 +1070,13 @@ def test_runtime_attempt_memory_keys_are_source_qualified_and_collision_free(
 
     assert len({
         event_attempt.workload_key,
+        meeting_attempt.workload_key,
         candidate_attempt.workload_key,
         import_attempt.workload_key,
-    }) == 3
+    }) == 4
     assert {
         event_attempt.attempt_number,
+        meeting_attempt.attempt_number,
         candidate_attempt.attempt_number,
         import_attempt.attempt_number,
     } == {1}
