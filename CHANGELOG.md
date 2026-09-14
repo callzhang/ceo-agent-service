@@ -5,6 +5,10 @@
   meeting ID has moved to trailing lookup metadata and can no longer become
   the entry title.
 
+- 2026-09-14: Successful Memory write receipts now retain their optional
+  provider code and explanatory detail. Verified writes are completed rather
+  than being misclassified as parse failures and retried.
+
 - 2026-09-14: The Email unsubscribe drawer now links only verified matching
   Attempt records and can reveal a saved entry address only after an explicit
   request. Normal list and detail responses remain redacted; the dedicated

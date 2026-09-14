@@ -8,7 +8,7 @@
     "status": {"type": "string", "enum": ["success", "failed"]},
     "memory_id": {"type": ["string", "null"]},
     "retryable": {"type": "boolean"},
-    "source_code": {"type": "string"},
+    "source_code": {"type": ["string", "null"]},
     "detail": {"type": "string"}
   }
 }

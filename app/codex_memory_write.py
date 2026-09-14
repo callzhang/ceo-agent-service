@@ -43,7 +43,7 @@ class MemoryWriteTypedResult(BaseModel):
     status: Literal["success", "failed"]
     memory_id: str | None = None
     retryable: bool
-    source_code: str
+    source_code: str | None = None
     detail: str
 
     @model_validator(mode="after")
@@ -51,8 +51,8 @@ class MemoryWriteTypedResult(BaseModel):
         if self.status == "success":
             if not str(self.memory_id or "").strip():
                 raise ValueError("successful memory write requires memory_id")
-            if self.retryable or self.source_code.strip() or self.detail.strip():
-                raise ValueError("successful memory write cannot contain failure fields")
+            if self.retryable:
+                raise ValueError("successful memory write cannot be retryable")
         elif str(self.memory_id or "").strip():
             raise ValueError("failed memory write cannot contain memory_id")
         return self

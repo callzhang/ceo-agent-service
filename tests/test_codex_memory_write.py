@@ -132,6 +132,22 @@ def test_memory_write_typed_result_accepts_code_fenced_runtime_message() -> None
     assert result.episode_uuid == "episode-3"
 
 
+def test_memory_write_typed_result_accepts_null_unused_success_code() -> None:
+    raw = json.dumps(
+        {
+            "status": "success",
+            "memory_id": "episode-4",
+            "retryable": False,
+            "source_code": None,
+            "detail": "Persisted through the memory provider.",
+        }
+    )
+
+    result = memory_result_from_typed_output(raw)
+
+    assert result.episode_uuid == "episode-4"
+
+
 def test_memory_write_typed_failure_preserves_provider_error() -> None:
     raw = json.dumps(
         {
