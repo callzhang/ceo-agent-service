@@ -7900,6 +7900,45 @@ def test_worker_attention_excludes_pending_and_processing_reply_and_meeting_rows
     assert all(row["id"] != str(meeting_id) for row in rows)
 
 
+def test_worker_attention_includes_failed_meeting_memory_writes(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-memory-attention",
+        title="Leadership alignment",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-09-14T09:30:00+00:00",
+        eligible_at="2026-09-14T09:40:00+00:00",
+        status="sent",
+    )
+    store.update_meeting_alignment_job(
+        meeting_id,
+        status="sent",
+        final_message="Delivered conclusion",
+    )
+    assert store.create_meeting_memory_write_event(meeting_id) is True
+    with store._connect() as db:
+        event_id = int(
+            db.execute(
+                "select id from meeting_memory_write_events where meeting_job_id=?",
+                (meeting_id,),
+            ).fetchone()["id"]
+        )
+    store.fail_meeting_memory_write_event(event_id, error="provider unavailable")
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    row = next(
+        row
+        for row in rows
+        if row.get("root_cause") == "meeting_memory_write_failed"
+    )
+    assert row["id"] == f"meeting-memory-{event_id}"
+    assert row["status"] == "failed"
+    assert row["context"] == "Meeting Memory: Leadership alignment"
+    assert row["error"] == "provider unavailable"
+
+
 def test_worker_attention_uses_local_file_title_as_work_item_context(
     tmp_path: Path,
 ):

@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-14: Attention now includes failed meeting-to-Memory deliveries as
+  service errors. Pending and active Memory deliveries remain outside
+  Attention, while each failed delivery identifies its delivered meeting and
+  retains the concrete provider or runtime error.
+
 - 2026-09-14: Memory entries created from delivered meeting conclusions now use
   the first substantive conclusion sentence as their title. The DingTalk
   meeting ID has moved to trailing lookup metadata and can no longer become

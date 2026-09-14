@@ -3249,6 +3249,40 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "error": str(row["error"] or ""),
                     }
                 )
+        if (
+            _sqlite_table_exists(db, "meeting_memory_write_events")
+            and _sqlite_table_exists(db, "meeting_alignment_jobs")
+        ):
+            meeting_memory_sql = """
+                select events.id, events.status,
+                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as context,
+                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as summary,
+                       events.updated_at, events.error
+                from meeting_memory_write_events as events
+                join meeting_alignment_jobs as jobs on jobs.id=events.meeting_job_id
+                where lower(events.status)='failed'
+                order by events.updated_at desc, events.id desc
+            """
+            meeting_memory_params: tuple[object, ...] = ()
+            if limit is not None:
+                meeting_memory_sql += " limit ?"
+                meeting_memory_params = (limit,)
+            for row in db.execute(meeting_memory_sql, meeting_memory_params).fetchall():
+                rows.append(
+                    {
+                        "category": "Service error",
+                        "id": f"meeting-memory-{row['id']}",
+                        "status": str(row["status"] or ""),
+                        "context": f"Meeting Memory: {str(row['context'] or '')}",
+                        "root_cause": "meeting_memory_write_failed",
+                        "summary": (
+                            "Memory write for delivered meeting conclusion: "
+                            f"{str(row['summary'] or '')}"
+                        ),
+                        "updated_at": str(row["updated_at"] or ""),
+                        "error": str(row["error"] or ""),
+                    }
+                )
         if _sqlite_table_exists(db, "errors"):
             recovered_statuses = tuple(RECOVERED_REPLY_ATTEMPT_STATUSES)
             recovered_placeholders = ",".join("?" for _ in recovered_statuses)
