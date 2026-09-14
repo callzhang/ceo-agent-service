@@ -567,6 +567,20 @@ def test_model_input_preserves_quoted_reply_body_and_approved_headers():
     }
 
 
+def test_model_input_bounds_body_to_the_first_2048_characters():
+    retained = "开头分类信号" + ("甲" * (2048 - len("开头分类信号")))
+    omitted = "此处不应进入模型输入"
+    snapshot = _snapshot(
+        [_message("bounded-body", body=retained + omitted)],
+        proposed_splits={"bounded-body": "train"},
+    )
+
+    payload = json.loads(snapshot.observations[0].normalized_model_input)
+
+    assert payload["body"] == retained
+    assert omitted not in snapshot.observations[0].normalized_model_input
+
+
 def test_published_snapshot_never_persists_private_unsubscribe_value(tmp_path):
     private_token = "private-token-A-1234"
     private_url = f"https://unsubscribe.example.test/remove?token={private_token}"

@@ -6,8 +6,8 @@ from typing import Final
 
 
 MODEL_FAMILY_CATALOG: Final[tuple[dict[str, object], ...]] = (
-    {"family": "tfidf-logistic-regression", "display_name": "TF-IDF", "supported": False, "configured": False, "reason": "当前 durable staged controller 尚未接入 TF-IDF executor"},
-    {"family": "fasttext", "display_name": "fastText", "supported": False, "configured": False, "reason": "当前没有 fastText executor"},
+    {"family": "tfidf-logistic-regression", "display_name": "TF-IDF", "supported": True, "configured": True, "reason": "已接入 durable staged controller"},
+    {"family": "fasttext", "display_name": "fastText", "supported": True, "configured": True, "reason": "已接入 durable staged controller"},
     {"family": "embedding-mlp", "display_name": "Embedding + MLP", "supported": True, "configured": True, "reason": "当前 durable staged controller 已接入 Embedding + MLP executor"},
 )
 MODEL_FAMILY_BY_KEY: Final[dict[str, dict[str, object]]] = {str(row["family"]): dict(row) for row in MODEL_FAMILY_CATALOG}

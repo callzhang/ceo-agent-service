@@ -31,7 +31,7 @@ it("uses one shared all-status list, 50 default, URL pagination and page sizes",
   expect(screen.getByLabelText("URL")).toHaveTextContent("page=2");
   expect(screen.getByRole("tab",{name:"邮件分类"})).toHaveAttribute("aria-selected","true");
 });
-it("filters the shared list by all, pending feedback, or processed and preserves filter URL state", async()=>{
+it("filters the shared list by all, pending feedback, processed, or unsubscribe and preserves filter URL state", async()=>{
   const user=userEvent.setup();show("/email?filter=all&page=2&page_size=20&selected=1");
   await screen.findByRole("button",{name:"打开邮件 邮件1"});
   expect(screen.getByRole("button",{name:"全部"})).toHaveAttribute("aria-pressed","true");
@@ -43,6 +43,10 @@ it("filters the shared list by all, pending feedback, or processed and preserves
   expect(screen.getByLabelText("URL")).toHaveTextContent("selected=1");
   await user.click(screen.getByRole("button",{name:"已处理"}));
   await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("processed",{page:1,page_size:20},expect.any(AbortSignal)));
+  await user.click(screen.getByRole("button",{name:"退订"}));
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("unsubscribe",{page:1,page_size:20},expect.any(AbortSignal)));
+  expect(screen.getByText("显示已入队、处理中和已完成的退订任务；打开邮件可查看执行证据。")).toBeInTheDocument();
+  expect(screen.queryByRole("form",{name:"分类确认"})).not.toBeInTheDocument();
 });
 it("renders the original body prefix in the shared row and never uses preview as its body", async()=>{
   show();
@@ -306,7 +310,7 @@ it("selects only executable training sources and records a narrowed folder scope
   api.requestEmailTraining.mockResolvedValue({ok:true,learning:{training_status:"running",training_run_id:"run-1",selection:{sources:["folder_snapshot"],categories:["work"]}}});
   show("/email?tab=learning");
   expect(await screen.findByRole("region",{name:"训练数据来源"})).toHaveTextContent("Agent 自动标注");
-  const source=screen.getByRole("checkbox",{name:"Agent 自动标注（暂不支持）"});expect(source).not.toBeChecked();expect(source).toBeDisabled();
+  const source=screen.getByRole("checkbox",{name:"Agent 自动标注（当前不可用）"});expect(source).not.toBeChecked();expect(source).toBeDisabled();
   const category=screen.getByRole("checkbox",{name:"legal"});expect(category).toBeChecked();await user.click(category);
   await user.click(screen.getByRole("button",{name:"开始训练"}));
   expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]});
@@ -327,8 +331,8 @@ it("shows model family support and submits the selected family",async()=>{
   const region=await screen.findByRole("region",{name:"训练数据来源"});
   expect(region).toHaveTextContent("模型家族");
   expect(screen.getByRole("checkbox",{name:"Embedding + MLP"})).toBeChecked();
-  expect(screen.getByRole("checkbox",{name:"TF-IDF（暂不支持）"})).toBeDisabled();
-  expect(screen.getByRole("checkbox",{name:"fastText（暂不支持）"})).toBeDisabled();
+  expect(screen.getByRole("checkbox",{name:"TF-IDF（当前不可用）"})).toBeDisabled();
+  expect(screen.getByRole("checkbox",{name:"fastText（当前不可用）"})).toBeDisabled();
   await user.click(screen.getByRole("button",{name:"开始训练"}));
   expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]});
 });

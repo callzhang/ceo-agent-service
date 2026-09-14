@@ -11,7 +11,7 @@ import tempfile
 import uuid
 from hashlib import sha256
 
-from app.email_classifier_contracts import EmailCategory
+from app.email_classifier_contracts import EmailCategory, EmailClassificationStatus
 from app.email_classifier_model_families import validate_model_families
 from app.email_classifier_retrain import (
     AutoRetrainResult,
@@ -69,10 +69,13 @@ def _selection_provenance(
     sources: list[str],
     categories: list[str],
 ) -> dict[str, object]:
-    if sources != ["folder_snapshot"]:
-        raise UnsupportedTrainingSelection(
-            "only folder_snapshot training data is currently executable"
-        )
+    supported_sources = {
+        "folder_snapshot",
+        "agent_auto_label",
+        "user_feedback",
+    }
+    if not set(sources) <= supported_sources:
+        raise UnsupportedTrainingSelection("unknown training selection source")
     state = store.latest_training_snapshot_state()
     if state is None:
         raise ValueError("folder training snapshot is unavailable")
@@ -88,31 +91,82 @@ def _selection_provenance(
     }
     if not set(categories) <= available:
         raise ValueError("training selection category is unavailable")
+    if not set(categories) <= available:
+        raise ValueError("training selection category is unavailable")
+
+    # Folder placement is the label authority.  Agent and user records only
+    # select which already-frozen observations participate; their historical
+    # labels never replace the current folder label in the snapshot.
+    snapshot_category_by_identity = {
+        str(row["stable_message_identity"]): str(row["category_key"])
+        for row in rows
+        if row["category_key"] is not None
+    }
+    selected_by_source: dict[str, set[str]] = {source: set() for source in sources}
+    if "folder_snapshot" in selected_by_source:
+        selected_by_source["folder_snapshot"] = {
+            identity
+            for identity, category in snapshot_category_by_identity.items()
+            if category in categories
+        }
+    if "user_feedback" in selected_by_source:
+        selected_by_source["user_feedback"] = {
+            str(sample["message_id"])
+            for sample in store.list_training_examples(include_inclusion=True)
+            if str(sample.get("message_id") or "") in snapshot_category_by_identity
+            and snapshot_category_by_identity[str(sample["message_id"])] in categories
+        }
+    if "agent_auto_label" in selected_by_source:
+        classifications, _ = store.list_classifications(
+            status=EmailClassificationStatus.PROCESSED, limit=100_000, offset=0
+        )
+        selected_by_source["agent_auto_label"] = {
+            str(item["stable_message_identity"])
+            for item in classifications
+            if item.get("classification_source") == "agent"
+            and str(item.get("stable_message_identity") or "")
+            in snapshot_category_by_identity
+            and snapshot_category_by_identity[str(item["stable_message_identity"])]
+            in categories
+        }
     provenance: list[dict[str, object]] = []
-    for category in categories:
-        identities = sorted(
-            str(row["stable_message_identity"])
-            for row in rows
-            if row["category_key"] == category
-        )
-        digest = sha256(
-            json.dumps(identities, ensure_ascii=False, separators=(",", ":")).encode(
-                "utf-8"
+    for source in sources:
+        for category in categories:
+            identities = sorted(
+                identity
+                for identity in selected_by_source[source]
+                if snapshot_category_by_identity[identity] == category
             )
-        ).hexdigest()
-        provenance.append(
-            {
-                "source": "folder_snapshot",
-                "category": category,
-                "sample_count": len(identities),
-                "snapshot_id": snapshot_id,
-                "snapshot_digest": state["snapshot_sha"],
-                "snapshot_version": state["snapshot_version"],
-                "description_version": state["description_version"],
-                "dataset_digest": digest,
-            }
-        )
-    return {"sources": sources, "categories": categories, "provenance": provenance}
+            digest = sha256(
+                json.dumps(identities, ensure_ascii=False, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            ).hexdigest()
+            provenance.append(
+                {
+                    "source": source,
+                    "category": category,
+                    "sample_count": len(identities),
+                    "snapshot_id": snapshot_id,
+                    "snapshot_digest": state["snapshot_sha"],
+                    "snapshot_version": state["snapshot_version"],
+                    "description_version": state["description_version"],
+                    "dataset_digest": digest,
+                }
+            )
+    selected_identities = sorted(
+        set().union(*selected_by_source.values()) if selected_by_source else set()
+    )
+    if not selected_identities:
+        raise ValueError("training selection has no frozen snapshot samples")
+    return {
+        "sources": sources,
+        "categories": categories,
+        "provenance": provenance,
+        # The run file is private durable execution evidence.  This list is
+        # intentionally removed from the console response below.
+        "selected_message_identities": selected_identities,
+    }
 
 
 class EmailClassifierLearningService:

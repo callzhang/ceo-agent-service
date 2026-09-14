@@ -22,12 +22,15 @@ from app.email_classifier_contracts import (
     validate_email_category_key,
 )
 from app.email_classifier_model import CpuTfidfLogisticClassifier
+from app.email_fasttext_model import FastTextEmailClassifier
 
 
 ModelStatus = Literal["candidate", "active", "previous", "rejected", "failed"]
 MODEL_STATUSES = frozenset(get_args(ModelStatus))
 MODEL_FAMILY = "tfidf-logistic-regression"
 MODEL_ID_PREFIX = "email-tfidf-lr-"
+FASTTEXT_MODEL_FAMILY = "fasttext"
+FASTTEXT_MODEL_ID_PREFIX = "email-fasttext-"
 EMBEDDING_MODEL_ID_PREFIX = "email-embedding-mlp-"
 MAX_CPU_P95_MS = 100.0
 _PROCESS_LOCK = threading.RLock()
@@ -346,6 +349,14 @@ def build_embedding_model_id(*, trained_at: datetime, artifact_sha256: str) -> s
     return f"{EMBEDDING_MODEL_ID_PREFIX}{timestamp}-{digest[:8]}"
 
 
+def build_fasttext_model_id(*, trained_at: datetime, artifact_sha256: str) -> str:
+    if trained_at.tzinfo is None or trained_at.utcoffset() is None:
+        raise ValueError("trained_at must be timezone-aware")
+    digest = _digest(artifact_sha256)
+    timestamp = trained_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{FASTTEXT_MODEL_ID_PREFIX}{timestamp}-{digest[:8]}"
+
+
 @dataclass(frozen=True)
 class EmailModelMetadata:
     model_id: str
@@ -373,10 +384,12 @@ class EmailModelMetadata:
     failure_reason: str
 
     def __post_init__(self) -> None:
-        if not self.model_id.startswith(MODEL_ID_PREFIX):
+        expected_prefix = {
+            MODEL_FAMILY: MODEL_ID_PREFIX,
+            FASTTEXT_MODEL_FAMILY: FASTTEXT_MODEL_ID_PREFIX,
+        }.get(self.model_family)
+        if expected_prefix is None or not self.model_id.startswith(expected_prefix):
             raise ValueError("invalid email model_id")
-        if self.model_family != MODEL_FAMILY:
-            raise ValueError("unsupported email model family")
         _digest(self.artifact_sha256)
         for value in (
             self.trained_at,
@@ -775,7 +788,11 @@ class EmailModelRegistry:
                 "candidate artifact digest does not match metadata"
             )
         trained_at = _timestamp(metadata.trained_at)
-        expected_id = build_model_id(trained_at=trained_at, artifact_sha256=digest)
+        expected_id = (
+            build_model_id(trained_at=trained_at, artifact_sha256=digest)
+            if metadata.model_family == MODEL_FAMILY
+            else build_fasttext_model_id(trained_at=trained_at, artifact_sha256=digest)
+        )
         if metadata.model_id != expected_id:
             raise ModelRegistryError(
                 "candidate model_id does not match final artifact digest"
@@ -1078,12 +1095,16 @@ class EmailModelRegistry:
             reverse=True,
         )
 
-    def load_classifier(self, model_id: str) -> CpuTfidfLogisticClassifier:
+    def load_classifier(self, model_id: str) -> CpuTfidfLogisticClassifier | FastTextEmailClassifier:
         record = self.get_model(model_id)
         if _sha256_file(record.artifact_path) != record.metadata.artifact_sha256:
             raise ModelRegistryError("model artifact digest verification failed")
         try:
-            classifier = CpuTfidfLogisticClassifier.load(record.artifact_path)
+            classifier = (
+                CpuTfidfLogisticClassifier.load(record.artifact_path)
+                if record.metadata.model_family == MODEL_FAMILY
+                else FastTextEmailClassifier.load(record.artifact_path)
+            )
         except Exception as exc:
             raise ModelRegistryError("model artifact cannot be loaded") from exc
         classifier.model_version = model_id
@@ -1396,7 +1417,7 @@ def _digest(value: str) -> str:
 
 def _model_id(value: object) -> str:
     result = _text(value, "model_id")
-    if not result.startswith(MODEL_ID_PREFIX) or Path(result).name != result:
+    if not result.startswith((MODEL_ID_PREFIX, FASTTEXT_MODEL_ID_PREFIX)) or Path(result).name != result:
         raise ModelRegistryError("invalid model_id path component")
     return result
 

@@ -24,12 +24,9 @@ from app.email_important import ImportantSignals, important_effective
 from app.email_provider_folders import FolderRole, ProviderFolder
 
 
-MODEL_INPUT_SCHEMA_VERSION = "email-folder-model-input-v2"
+MODEL_INPUT_SCHEMA_VERSION = "email-folder-model-input-v3"
 TRAINING_SNAPSHOT_VERSION = "email-folder-training-snapshot-v1"
-MAX_BODY_CHARACTERS = 32_000
-_BODY_HEAD_CHARACTERS = 24_000
-_BODY_TAIL_CHARACTERS = MAX_BODY_CHARACTERS - _BODY_HEAD_CHARACTERS
-_BODY_TRUNCATION_MARKER = "\n[...bounded-body-truncation...]\n"
+MAX_BODY_CHARACTERS = 2_048
 _APPROVED_HEADERS = frozenset(
     {
         "message-id",
@@ -932,13 +929,7 @@ def _attachments(value: object) -> list[dict[str, object]]:
 
 def _bounded_body(value: object) -> str:
     body = _normalized_text(value, "body", preserve_lines=True)
-    if len(body) <= MAX_BODY_CHARACTERS:
-        return body
-    return (
-        body[:_BODY_HEAD_CHARACTERS]
-        + _BODY_TRUNCATION_MARKER
-        + body[-_BODY_TAIL_CHARACTERS:]
-    )
+    return body[:MAX_BODY_CHARACTERS]
 
 
 def _subject_template(value: str) -> str:

@@ -931,9 +931,10 @@ def test_selected_folder_categories_reach_the_staged_trainer(tmp_path, monkeypat
         historical_systematic_error_updated_at=error_state.updated_at,
         training_selection={
             "sources": ["folder_snapshot"],
-            "categories": ["legal"],
-            "model_families": ["embedding-mlp"],
-            "provenance": [{"source": "folder_snapshot", "category": "legal"}],
+                "categories": ["legal"],
+                "model_families": ["embedding-mlp"],
+                "selected_message_identities": ["selected-legal-message"],
+                "provenance": [{"source": "folder_snapshot", "category": "legal"}],
         },
     )
     controller = TrainingSubprocessController(registry, store_path=tmp_path / "db")

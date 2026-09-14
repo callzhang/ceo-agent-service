@@ -12067,6 +12067,83 @@ class EmailStore:
             items.append(item)
         return items, total
 
+    def list_unsubscribe_classifications(
+        self, *, limit: int, offset: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        """List every email with a durable unsubscribe lifecycle record.
+
+        A claim exists once Audit has accepted an effect; a receipt exists for
+        a terminal outcome.  Queued email tasks are included when the shared
+        task tables are available, so the Console can expose work before Audit
+        reaches the browser phase.
+        """
+        if limit <= 0 or offset < 0:
+            raise ValueError("unsubscribe list pagination is invalid")
+        with self._connect() as db:
+            task_tables = {
+                str(row["name"])
+                for row in db.execute(
+                    "select name from sqlite_master where type='table' "
+                    "and name in ('reply_tasks', 'agent_runs')"
+                ).fetchall()
+            }
+            task_clause = ""
+            if task_tables == {"reply_tasks", "agent_runs"}:
+                task_clause = """
+                    or exists (
+                        select 1 from reply_tasks as tasks
+                        where tasks.channel='email'
+                          and json_valid(tasks.trigger_message_json)
+                          and json_extract(
+                                tasks.trigger_message_json,
+                                '$.classification_id'
+                              )=classifications.id
+                          and json_extract(
+                                tasks.trigger_message_json,
+                                '$.action_type'
+                              )='unsubscribe'
+                    )
+                """
+            where = """
+                exists (
+                    select 1 from email_unsubscribe_claims as claims
+                    where claims.classification_id=classifications.id
+                )
+                or exists (
+                    select 1 from email_unsubscribe_receipts as receipts
+                    where receipts.classification_id=classifications.id
+                )
+            """ + task_clause
+            total = int(
+                db.execute(
+                    "select count(*) from email_classifications as classifications "
+                    f"where {where}"
+                ).fetchone()[0]
+            )
+            rows = db.execute(
+                """
+                select classifications.*, messages.normalized_text as message_text,
+                       messages.attachment_metadata_json
+                           as message_attachment_metadata_json
+                from email_classifications as classifications
+                left join email_messages as messages
+                  on messages.account_id=classifications.account_id
+                 and messages.stable_message_identity=
+                     classifications.stable_message_identity
+                where """ + where + """
+                order by classifications.updated_at desc, classifications.id desc
+                limit ? offset ?
+                """,
+                (limit, offset),
+            ).fetchall()
+        items = []
+        for row in rows:
+            message = Parser().parsestr(row["message_text"] or "")
+            item = self._classification_evidence_row(row)
+            item["message_text"] = message.get_payload()
+            items.append(item)
+        return items, total
+
     @staticmethod
     def _email_context_message_row(row: sqlite3.Row) -> dict[str, Any]:
         return {

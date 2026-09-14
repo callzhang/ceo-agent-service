@@ -160,6 +160,14 @@ def _safe_exact_evidence_value(value: object, field: str, expected: str) -> str:
     return expected
 
 
+def _safe_model_input_schema_version(value: object) -> str:
+    """Project either immutable, published input schema without conflating them."""
+
+    if value not in {"email-folder-model-input-v2", "email-folder-model-input-v3"}:
+        raise ValueError("input_schema_version is invalid")
+    return str(value)
+
+
 def _safe_external_reference(value: object, field: str, placeholder: str) -> str:
     if not isinstance(value, str) or not value or len(value) > 512:
         raise ValueError(f"{field} is invalid")
@@ -246,10 +254,8 @@ def _project_staged_model_evidence(
             "description_version",
             _DESCRIPTION_EVIDENCE_VERSION,
         ),
-        "input_schema_version": _safe_exact_evidence_value(
-            maturity.compatibility.input_schema_version,
-            "input_schema_version",
-            "email-folder-model-input-v2",
+        "input_schema_version": _safe_model_input_schema_version(
+            maturity.compatibility.input_schema_version
         ),
         "embedding_model_reference": _safe_external_reference(
             maturity.compatibility.embedding_model_id,
@@ -1117,7 +1123,12 @@ def register_email_routes(
         page_size: int = Query(default=20, ge=1, le=100),
     ):
         email_store = require_store()
-        if status == "all":
+        if status == "unsubscribe":
+            rows, total = email_store.list_unsubscribe_classifications(
+                limit=page_size,
+                offset=(page - 1) * page_size,
+            )
+        elif status == "all":
             fetch_limit = page * page_size
             pending_rows, pending_total = email_store.list_classifications(
                 status=EmailClassificationStatus.PENDING_FEEDBACK,
@@ -1143,7 +1154,7 @@ def register_email_routes(
                     {
                         "ok": False,
                         "code": "invalid_email_status",
-                        "message": "status must be all, processed or pending_feedback",
+                        "message": "status must be all, unsubscribe, processed or pending_feedback",
                         "details": {},
                     },
                     status_code=400,
@@ -1336,21 +1347,28 @@ def register_email_routes(
                         "所选模型家族暂不支持训练，请只选择已接入 executor 的家族",
                         400,
                     )
-                if set(payload.sources) != {"folder_snapshot"}:
+                supported_sources = {
+                    str(row["source"])
+                    for row in catalog
+                    if row["supported"] is True
+                }
+                if not set(payload.sources) <= supported_sources:
                     return error_response(
                         "unsupported_training_source",
-                        "当前只有邮件文件夹快照可以进入训练执行器；Agent 自动标注和用户反馈尚未接入训练输入",
+                        "所选训练数据来源暂不可用",
                         400,
                     )
-                folder_rows = [
-                    row for row in catalog if row["source"] == "folder_snapshot"
-                ]
-                allowed_categories = {str(row["category"]) for row in folder_rows}
+                allowed_categories = {
+                    str(row["category"])
+                    for row in catalog
+                    if row["source"] in payload.sources
+                    and row["supported"] is True
+                }
                 unknown_categories = sorted(set(payload.categories) - allowed_categories)
                 if unknown_categories:
                     return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
                 provenance = [
-                    row for row in folder_rows
+                    row for row in catalog
                     if row["source"] in payload.sources and row["category"] in payload.categories
                 ]
                 if not provenance:
@@ -1362,7 +1380,7 @@ def register_email_routes(
             return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
         run = result.training_run
         if run is not None and getattr(run, "training_selection", None) is not None:
-            request_selection = run.training_selection
+            request_selection = _public_training_selection(run.training_selection)
         return JSONResponse(
             {
                 "ok": True,
@@ -1380,8 +1398,34 @@ def register_email_routes(
             status_code=202 if payload is not None or run else 200,
         )
 
+    def _public_training_selection(selection: object) -> dict[str, object] | None:
+        if not isinstance(selection, dict):
+            return None
+        return {
+            key: value
+            for key, value in selection.items()
+            if key != "selected_message_identities"
+        }
+
     def training_source_catalog(email_store: EmailStore) -> list[dict[str, object]]:
         rows: dict[tuple[str, str], dict[str, object]] = {}
+        snapshot = email_store.latest_training_snapshot_state()
+        get_snapshot = getattr(email_store, "get_training_snapshot", None)
+        snapshot_data = (
+            get_snapshot(str(snapshot["snapshot_id"]))
+            if snapshot and callable(get_snapshot)
+            else None
+        )
+        frozen_rows = (
+            snapshot_data["observations"]
+            if snapshot_data is not None
+            else ()
+        )
+        frozen_category_by_identity = {
+            str(item["stable_message_identity"]): str(item["category_key"])
+            for item in frozen_rows
+            if item.get("category_key") is not None
+        }
         list_feedback = getattr(email_store, "list_training_examples", None)
         feedback_samples = (
             list_feedback(include_inclusion=True)
@@ -1389,15 +1433,16 @@ def register_email_routes(
             else []
         )
         for sample in feedback_samples:
-            category = str(sample.get("label") or "")
+            identity = str(sample.get("message_id") or "")
+            category = frozen_category_by_identity.get(identity, "")
             if category:
                 row = rows.setdefault(("user_feedback", category), {
                     "source": "user_feedback", "category": category,
-                    "sample_count": 0, "supported": False, "_identities": [],
+                    "sample_count": 0, "supported": True, "_identities": [],
                     "provenance": {"classification_source": "user"},
                 })
                 row["sample_count"] += 1
-                row["_identities"].append(str(sample.get("sample_digest") or sample.get("message_id") or sample.get("classification_id") or row["sample_count"]))
+                row["_identities"].append(identity)
         list_classifications = getattr(email_store, "list_classifications", None)
         processed, _ = (
             list_classifications(
@@ -1411,16 +1456,16 @@ def register_email_routes(
         for sample in processed:
             if sample.get("classification_source") != "agent":
                 continue
-            category = str(sample.get("confirmed_category") or sample.get("predicted_category") or "")
+            identity = str(sample.get("stable_message_identity") or "")
+            category = frozen_category_by_identity.get(identity, "")
             if category:
                 row = rows.setdefault(("agent_auto_label", category), {
                     "source": "agent_auto_label", "category": category,
-                    "sample_count": 0, "supported": False, "_identities": [],
+                    "sample_count": 0, "supported": True, "_identities": [],
                     "provenance": {"classification_source": "agent"},
                 })
                 row["sample_count"] += 1
-                row["_identities"].append(str(sample.get("id") or sample.get("message_id") or row["sample_count"]))
-        snapshot = email_store.latest_training_snapshot_state()
+                row["_identities"].append(identity)
         if snapshot:
             for category, count in dict(snapshot.get("category_sample_counts") or {}).items():
                 rows[("folder_snapshot", str(category))] = {

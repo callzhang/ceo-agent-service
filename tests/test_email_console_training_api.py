@@ -47,7 +47,7 @@ def test_learning_exposes_training_source_provenance_and_selection_is_executable
         {"message_id": "user-2", "label": "work", "confirmed_at": "2026-09-12T00:00:01Z", "included_in_model_id": None},
     ])
     monkeypatch.setattr(store, "list_classifications", lambda **_: ([
-        {"id": 2, "classification_source": "agent", "predicted_category": "legal",
+        {"id": 2, "stable_message_identity": "agent-1", "classification_source": "agent", "predicted_category": "legal",
          "confirmed_category": "legal", "status": "processed"},
     ], 1))
     monkeypatch.setattr(store, "latest_training_snapshot_state", lambda: {
@@ -57,18 +57,29 @@ def test_learning_exposes_training_source_provenance_and_selection_is_executable
         "input_schema_version": "email-folder-model-input-v2", "sample_count": 3,
         "group_count": 2, "category_sample_counts": {"work": 2, "legal": 1},
     })
+    monkeypatch.setattr(store, "get_training_snapshot", lambda _snapshot_id: {
+        "observations": [
+            {"stable_message_identity": "user-1", "category_key": "work"},
+            {"stable_message_identity": "user-2", "category_key": "work"},
+            {"stable_message_identity": "agent-1", "category_key": "legal"},
+        ],
+    })
     learning = client.get("/api/console/email/learning").json()["learning"]
     rows = learning["training_sources"]
     assert {row["source"] for row in rows} == {"user_feedback", "agent_auto_label", "folder_snapshot"}
+    assert all(row["supported"] is True for row in rows)
     assert all(row["provenance"] for row in rows)
     assert next(row["sample_count"] for row in rows if row["source"] == "user_feedback" and row["category"] == "work") == 2
     response = client.post("/api/console/email/training", json={
-        "sources": ["folder_snapshot"],
+        "sources": ["agent_auto_label", "folder_snapshot", "user_feedback"],
         "categories": ["legal", "work"],
         "model_families": ["embedding-mlp"],
     })
     assert response.status_code == 202
     assert response.json()["learning"]["training_status"] == "recorded"
+    assert response.json()["learning"]["selection"]["sources"] == [
+        "agent_auto_label", "folder_snapshot", "user_feedback"
+    ]
     assert response.json()["learning"]["selection"]["categories"] == ["legal", "work"]
     assert all(
         row["provenance"]["dataset_digest"]
@@ -115,29 +126,42 @@ def test_learning_exposes_model_family_support_and_persists_selection(tmp_path, 
     learning = client.get("/api/console/email/learning").json()["learning"]
     families = {row["family"]: row for row in learning["model_families"]}
     assert families["embedding-mlp"]["supported"] is True
-    assert families["tfidf-logistic-regression"]["supported"] is False
-    assert families["fasttext"]["supported"] is False
+    assert families["tfidf-logistic-regression"]["supported"] is True
+    assert families["fasttext"]["supported"] is True
 
     response = client.post("/api/console/email/training", json={
         "sources": ["folder_snapshot"],
         "categories": ["work"],
-        "model_families": ["embedding-mlp"],
+        "model_families": ["embedding-mlp", "fasttext", "tfidf-logistic-regression"],
     })
     assert response.status_code == 202
-    assert captured["selection"]["model_families"] == ["embedding-mlp"]
-    assert response.json()["learning"]["selection"]["model_families"] == ["embedding-mlp"]
+    assert captured["selection"]["model_families"] == ["embedding-mlp", "fasttext", "tfidf-logistic-regression"]
+    assert response.json()["learning"]["selection"]["model_families"] == ["embedding-mlp", "fasttext", "tfidf-logistic-regression"]
 
 
 @pytest.mark.parametrize("family", ["tfidf-logistic-regression", "fasttext"])
-def test_training_rejects_model_family_without_staged_executor(tmp_path, family):
-    client, _store, _registry = client_for(tmp_path)
+def test_training_accepts_each_supported_model_family(tmp_path, family):
+    client, store, _registry = client_for(tmp_path)
+    store.latest_training_snapshot_state = lambda: {
+        "snapshot_id": "email-folder-training-snapshot-1",
+        "snapshot_sha": "a" * 64,
+        "snapshot_version": "snapshot-v1",
+        "description_version": "description-v1",
+        "category_sample_counts": {"work": 2},
+    }
+    store.get_training_snapshot = lambda _snapshot_id: {
+        "observations": [
+            {"category_key": "work", "stable_message_identity": "m1"},
+            {"category_key": "work", "stable_message_identity": "m2"},
+        ]
+    }
     response = client.post("/api/console/email/training", json={
         "sources": ["folder_snapshot"],
         "categories": ["work"],
         "model_families": [family],
     })
-    assert response.status_code == 400
-    assert response.json()["code"] == "unsupported_model_family"
+    assert response.status_code == 202
+    assert response.json()["learning"]["selection"]["model_families"] == [family]
 
 
 def test_training_selection_rejects_unknown_values_and_malformed_json(tmp_path, monkeypatch):

@@ -35,9 +35,11 @@ from app.email_description_optimizer import (
 )
 from app.email_model_registry import (
     MODEL_FAMILY,
+    FASTTEXT_MODEL_FAMILY,
     EmailModelMetadata,
     EmailModelRegistry,
     build_model_id,
+    build_fasttext_model_id,
     build_embedding_model_id,
     CandidateCompatibility,
     CandidateMaturityEvidence,
@@ -65,6 +67,104 @@ class FrozenEmbeddingCandidateResult:
     maturity: CandidateMaturityEvidence
 
 
+@dataclass(frozen=True)
+class FrozenClassicCandidateResult:
+    model_id: str
+    model_family: str
+    training_count: int
+    validation_count: int
+    test_count: int
+
+
+def train_frozen_classic_candidate(
+    *, store: EmailStore, snapshot_id: str, registry: EmailModelRegistry,
+    categories: Sequence[str], model_family: str, trained_at: datetime,
+    selected_message_identities: Sequence[str] | None = None,
+) -> FrozenClassicCandidateResult:
+    """Stage a TF-IDF or fastText candidate from the same frozen split.
+
+    These candidates are intentionally registry-only experiment artifacts: they
+    never write the online embedding activation manifest.
+    """
+    snapshot = store.get_training_snapshot(snapshot_id)
+    if snapshot is None:
+        raise TrainingNotReady("frozen training snapshot does not exist")
+    allowed = None if selected_message_identities is None else frozenset(selected_message_identities)
+    rows = tuple(
+        row for row in snapshot["observations"]
+        if row["category_key"] in categories
+        and (allowed is None or str(row["stable_message_identity"]) in allowed)
+    )
+    if not rows or {str(row["category_key"]) for row in rows} != set(categories):
+        raise TrainingNotReady("selected frozen rows do not cover every category")
+    splits = {name: tuple(row for row in rows if row["split"] == name) for name in ("train", "validation", "test")}
+    if any(not values or {str(row["category_key"]) for row in values} != set(categories) for values in splits.values()):
+        raise TrainingNotReady("selected frozen rows do not cover every split and category")
+    def texts(values: Sequence[Mapping[str, object]]) -> list[str]:
+        return [str(row["normalized_model_input"]) for row in values]
+
+    def labels(values: Sequence[Mapping[str, object]]) -> list[str]:
+        return [str(row["category_key"]) for row in values]
+    if model_family == MODEL_FAMILY:
+        classifier = CpuTfidfLogisticClassifier(c=.25, model_version="candidate")
+        feature_version = CpuTfidfLogisticClassifier.FEATURE_VERSION
+    elif model_family == FASTTEXT_MODEL_FAMILY:
+        from app.email_fasttext_model import FastTextEmailClassifier
+        classifier = FastTextEmailClassifier(model_version="candidate")
+        feature_version = FastTextEmailClassifier.FEATURE_VERSION
+    else:
+        raise ValueError("unsupported classic model family")
+    started = datetime.now(timezone.utc)
+    classifier.fit(texts(splits["train"]), labels(splits["train"]), **(
+        {"enabled_category_keys": tuple(categories)} if model_family == MODEL_FAMILY else {}
+    ))
+    validation_predictions = [classifier.predict(text) for text in texts(splits["validation"])]
+    expected_validation = labels(splits["validation"])
+    requirements = _default_requirements(sorted(categories))
+    per_category = evaluate_category_validation(expected_validation, validation_predictions, requirements)
+    readiness = assess_examples_readiness(
+        [{"label": str(row["category_key"])} for row in rows], minimum_examples=1, minimum_per_category=1
+    )
+    assessment = assess_candidate(readiness, validation_score=float(accuracy_score(expected_validation, [item.label for item in validation_predictions])), validation_method="time-ordered-holdout", per_category=per_category, category_requirements=requirements)
+    test_predictions = [classifier.predict(text) for text in texts(splits["test"])]
+    expected_test = labels(splits["test"])
+    accuracy = float(accuracy_score(expected_test, [item.label for item in test_predictions]))
+    _, _, f1s, _ = precision_recall_fscore_support(expected_test, [item.label for item in test_predictions], labels=sorted(categories), zero_division=0)
+    p50, p95 = _prediction_latency(classifier, texts(splits["test"]))
+    with tempfile.TemporaryDirectory(dir=registry.root) as directory:
+        artifact = Path(directory) / "candidate.model"
+        classifier.save(artifact)
+        digest = sha256(artifact.read_bytes()).hexdigest()
+        model_id = (build_model_id if model_family == MODEL_FAMILY else build_fasttext_model_id)(trained_at=trained_at, artifact_sha256=digest)
+        metadata = EmailModelMetadata(
+            model_id=model_id, parent_model_id=None, model_family=model_family,
+            tokenizer_version="jieba-default-v1", feature_version=feature_version,
+            training_dataset_version="frozen-snapshot-sha256:" + str(snapshot["snapshot_digest"]),
+            trained_at=trained_at.astimezone(timezone.utc).isoformat(), training_started_at=started.isoformat(), training_finished_at=datetime.now(timezone.utc).isoformat(),
+            sample_count=len(rows), new_sample_count=len(rows),
+            category_counts=Counter(labels(rows)), account_counts=Counter(str(row["account_id"]) for row in rows),
+            validation_method="time-ordered-holdout", accuracy=accuracy, macro_f1=float(np.mean(f1s)),
+            per_category_metrics={label: {
+                "precision": per_category[EmailCategory(label)].validated_precision,
+                "recall": per_category[EmailCategory(label)].validated_recall,
+                "f1": per_category[EmailCategory(label)].validated_f1,
+                "validation_sample_count": per_category[EmailCategory(label)].validation_positive_support,
+                "validation_positive_support": per_category[EmailCategory(label)].validation_positive_support,
+                "automatic_candidate_count": per_category[EmailCategory(label)].automatic_candidate_count,
+                "evaluated_threshold": per_category[EmailCategory(label)].evaluated_threshold,
+                "configured_threshold": assessment.categories[EmailCategory(label)].configured_threshold,
+                "minimum_precision": requirements[EmailCategory(label)].minimum_precision,
+                "minimum_validation_samples": requirements[EmailCategory(label)].minimum_validation_samples,
+                "auto_action_eligible": assessment.categories[EmailCategory(label)].auto_action_eligible,
+                "eligibility_reason": assessment.categories[EmailCategory(label)].reason,
+            } for label in sorted(categories)}, prediction_latency_p50_ms=float(p50), prediction_latency_p95_ms=float(p95), artifact_sha256=digest,
+            status="candidate", promotion_reason="staged_experiment_not_activated", failure_reason="",
+        )
+        parity_texts = tuple(texts(splits["test"]))
+        registry.stage_candidate(artifact, metadata, parity_texts=parity_texts, expected_labels=tuple(classifier.predict(text).label for text in parity_texts))
+    return FrozenClassicCandidateResult(model_id, model_family, len(splits["train"]), len(splits["validation"]), len(splits["test"]))
+
+
 def train_frozen_embedding_candidate(
     *,
     store: EmailStore,
@@ -81,6 +181,7 @@ def train_frozen_embedding_candidate(
     expected_description_version: str | None = None,
     description_overlay: DescriptionSetOverlay | None = None,
     benchmark_candidate: Callable[[object, Sequence[Mapping[str, object]]], Mapping[str, object]] | None = None,
+    selected_message_identities: Sequence[str] | None = None,
 ) -> FrozenEmbeddingCandidateResult:
     """Train both heads from one frozen Task 5 split and only stage evidence."""
 
@@ -128,9 +229,22 @@ def train_frozen_embedding_candidate(
         and description_version != expected_description_version
     ):
         raise TrainingNotReady("description version changed before training")
-    all_rows = tuple(snapshot["observations"])
+    allowed_identities: frozenset[str] | None = None
+    if selected_message_identities is not None:
+        if not selected_message_identities or any(
+            not isinstance(identity, str) or not identity.strip()
+            for identity in selected_message_identities
+        ):
+            raise TrainingNotReady("selected training identities are invalid")
+        allowed_identities = frozenset(selected_message_identities)
+    all_rows = tuple(
+        row
+        for row in snapshot["observations"]
+        if allowed_identities is None
+        or str(row["stable_message_identity"]) in allowed_identities
+    )
     rows = tuple(
-        row for row in snapshot["observations"] if row["category_key"] in descriptions
+        row for row in all_rows if row["category_key"] in descriptions
     )
     if {str(row["category_key"]) for row in rows} != set(categories):
         raise TrainingNotReady("snapshot categories do not match enabled descriptions")
