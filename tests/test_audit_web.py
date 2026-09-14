@@ -267,8 +267,10 @@ def test_attempt_detail_renders_linked_consumer_result(tmp_path: Path):
 
     before_render = {
         "attempt_count": len(store.list_reply_attempts()),
+        "attempt": store.get_reply_attempt(attempt_id),
         "task": store.get_reply_task(task.id),
         "consumer": store.get_agent_run(consumer.id),
+        "consumer_runtime_attempts": store.list_agent_runtime_attempts(consumer.id),
         "terminal": store.get_agent_run(audit.id),
         "run_states": [
             (run.id, run.status)
@@ -283,8 +285,10 @@ def test_attempt_detail_renders_linked_consumer_result(tmp_path: Path):
 
     after_render = {
         "attempt_count": len(store.list_reply_attempts()),
+        "attempt": store.get_reply_attempt(attempt_id),
         "task": store.get_reply_task(task.id),
         "consumer": store.get_agent_run(consumer.id),
+        "consumer_runtime_attempts": store.list_agent_runtime_attempts(consumer.id),
         "terminal": store.get_agent_run(audit.id),
         "run_states": [
             (run.id, run.status)
