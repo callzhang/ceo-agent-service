@@ -8934,6 +8934,11 @@ def _finalize_audited_unsubscribe(module, result, tool_events, *, task_id=383232
     )
     run = SimpleNamespace(
         id=result.final_run_id,
+        status=(
+            "failed"
+            if result.status in {"failed_retryable", "failed_terminal"}
+            else "completed"
+        ),
         codex_session_id="",
         transcript_start_line=0,
         transcript_end_line=0,
@@ -8956,7 +8961,7 @@ def _finalize_audited_unsubscribe(module, result, tool_events, *, task_id=383232
     return captured
 
 
-def test_audited_unsubscribe_login_skip_is_closed_as_no_action():
+def test_audited_unsubscribe_receipt_does_not_override_a_failed_audit_run():
     module = _module()
     # Live task 383232: the audited tool returned a terminal skip receipt and
     # the Audit model reported failed/login_required for it anyway.
@@ -8973,13 +8978,17 @@ def test_audited_unsubscribe_login_skip_is_closed_as_no_action():
         [_audited_unsubscribe_tool_event("skipped_login_required")],
     )
 
-    assert captured["task_status"] == "done"
-    assert captured["send_status"] == "skipped"
-    assert captured["send_error"] == ""
-    assert captured["task_error"] == ""
+    # The receipt proves the browser action's result, but it does not make the
+    # Audit run successful after the run itself failed validation. A later
+    # generation must produce an explicit successful terminal run before this
+    # task can be marked done.
+    assert captured["task_status"] == "failed"
+    assert captured["send_status"] == "failed"
+    assert captured["send_error"] == "login_required"
+    assert captured["task_error"] == "login_required"
 
 
-def test_audited_unsubscribe_retryable_login_skip_is_not_deferred():
+def test_audited_unsubscribe_retryable_login_receipt_keeps_retry_pending():
     module = _module()
     # Live task 383234, Audit run 16936: the same skip receipt after the model
     # called the terminal tool a second time. The domain rejection claimed an
@@ -9005,16 +9014,15 @@ def test_audited_unsubscribe_retryable_login_skip_is_not_deferred():
         task_id=383234,
     )
 
-    assert "deferred" not in captured
-    assert captured["task_status"] == "done"
-    assert captured["send_status"] == "skipped"
-    assert captured["send_error"] == ""
+    # A retryable final run is not rewritten to done by its receipt. The
+    # standard bounded retry path remains the current state.
+    assert captured["deferred"] is True
 
 
 @pytest.mark.parametrize(
     "outcome", ["skipped_no_reliable_entry", "already_unsubscribed"]
 )
-def test_audited_unsubscribe_no_work_skip_is_closed_as_no_action(outcome):
+def test_audited_unsubscribe_no_work_receipt_keeps_failed_audit_visible(outcome):
     module = _module()
     result = SimpleNamespace(
         status="failed_terminal",
@@ -9029,10 +9037,10 @@ def test_audited_unsubscribe_no_work_skip_is_closed_as_no_action(outcome):
         [_audited_unsubscribe_tool_event(outcome)],
     )
 
-    assert captured["task_status"] == "done"
-    assert captured["send_status"] == "skipped"
-    assert captured["send_error"] == ""
-    assert captured["task_error"] == ""
+    assert captured["task_status"] == "failed"
+    assert captured["send_status"] == "failed"
+    assert captured["send_error"] == "unsubscribe_entry_missing"
+    assert captured["task_error"] == "unsubscribe_entry_missing"
 
 
 def test_audited_unsubscribe_skip_never_overrides_a_management_decision():
@@ -9061,7 +9069,7 @@ def test_audited_unsubscribe_skip_never_overrides_a_management_decision():
     assert captured["send_error"] == "email_unsubscribe_target_sensitive"
 
 
-def test_audited_unsubscribe_skip_closes_a_bare_authorization_failure():
+def test_audited_unsubscribe_receipt_keeps_bare_authorization_failure_failed():
     module = _module()
     result = SimpleNamespace(
         status="failed_terminal",
@@ -9079,9 +9087,9 @@ def test_audited_unsubscribe_skip_closes_a_bare_authorization_failure():
         [_audited_unsubscribe_tool_event("skipped_no_reliable_entry")],
     )
 
-    assert captured["task_status"] == "done"
-    assert captured["send_status"] == "skipped"
-    assert captured["send_error"] == ""
+    assert captured["task_status"] == "failed"
+    assert captured["send_status"] == "failed"
+    assert captured["send_error"] == "authorization_required"
 
 
 def test_audited_unsubscribe_browser_failure_remains_failed():

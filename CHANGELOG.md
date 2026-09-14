@@ -1,5 +1,13 @@
 # Changelog
 
+- 2026-09-14: Reply History no longer lets a `reply_task=done` queue envelope
+  overwrite a failed Agent run. For Consumer/Audit work, the final run in the
+  current execution generation is authoritative: a durable provider receipt
+  prevents duplicate external work but cannot transform a failed Audit run
+  into `Done`. Receipt-backed work must complete a fresh generation before it
+  closes successfully; genuine pending and processing tasks continue to show
+  their live queue state.
+
 - 2026-09-14: History's activity chart now uses one lifecycle-status dimension:
   `Pending`, `Running`, `Done`, `Skipped`, `Failed`, and `Needs human`.
   Successful message, reaction, calendar, approval, meeting, task, and follow-up

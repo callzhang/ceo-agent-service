@@ -2913,21 +2913,17 @@ def _finalize_email_task(
     # nothing that warrants a question. The receipt is the fence; without one,
     # the right move is to run it again.
     run = store.get_agent_run(result.final_run_id) if result.final_run_id else None
-    # A terminal unsubscribe skip is a lifecycle outcome, not a technical
-    # failure: the receipt the audited tool persisted decides where the task
-    # ends, never the error code the Audit model chose for an operation the
-    # service is not allowed to complete. A login, CAPTCHA or payment wall is
-    # handed to the user in the browser session that is already open; a missing
-    # entry or an already unsubscribed address leaves nothing to do. A result
-    # that already reached a person - a management decision or the generic
-    # authorization boundary above - keeps its own state and code: the receipt
-    # only replaces the state derived from the model's failure report.
+    # A receipt records the browser action, while the Agent run records whether
+    # Consumer/Audit completed its own work. They are separate facts. A failed
+    # Audit run cannot become a successful task merely because its browser call
+    # left a receipt; a fresh generation must finish with a successful terminal
+    # run before the task can be closed.
     skip = (
         None
         if run is None or send_status == "needs_human"
         else audited_unsubscribe_skip_receipt(run)
     )
-    if skip is not None:
+    if skip is not None and run.status == "completed":
         outcome, terminal_state = skip
         if terminal_state is AuditedUnsubscribeTerminalState.HANDOFF:
             task_status, send_status = status_map["needs_human"]

@@ -2037,7 +2037,7 @@ def test_history_chart_shows_provider_capacity_wait_without_failed_red_series(
     assert series_names == {"Pending"}
 
 
-def test_history_chart_marks_failed_reply_recovered_after_task_completion(
+def test_history_chart_does_not_reclassify_failed_reply_without_a_current_success_run(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2069,7 +2069,10 @@ def test_history_chart_marks_failed_reply_recovered_after_task_completion(
     payload = audit_web_module._history_chart_payload(store)
     series_names = {series["name"] for series in payload["series"]}
 
-    assert series_names == {"Done"}
+    # A reply-task status is only the queue envelope.  It is not evidence that
+    # this attempt acquired a successful terminal Agent run, so it must not
+    # erase the failed attempt from History.
+    assert series_names == {"Failed"}
 
 
 def test_history_chart_keeps_failed_attempt_visible_after_later_attempt(tmp_path: Path):

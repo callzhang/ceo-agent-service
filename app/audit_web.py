@@ -5104,10 +5104,8 @@ def _history_chart_payload(
                 attempt.trigger_message_id,
                 channel=attempt.channel,
             )
-            if task is not None and task.status == "pending" and is_codex_provider_recovery_code(task.error):
+            if task is not None and task.status == "pending":
                 event_label = "Pending"
-            elif task is not None and task.status == "done":
-                event_label = "Done"
             elif task is not None and task.status == "processing":
                 event_label = "Running"
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
