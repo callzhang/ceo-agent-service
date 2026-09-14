@@ -288,6 +288,30 @@ def test_scheduled_task_crud_returns_derived_schedule_and_exact_refs(
     assert updated.json()["item"]["next_run_at"] == "2026-09-08T12:00:30Z"
 
 
+def test_scheduled_task_operation_skill_preview_uses_the_execution_catalog(
+    tmp_path: Path,
+) -> None:
+    client, _store, _ids, _wakes = _client(tmp_path)
+
+    with client:
+        preview = client.get(
+            "/api/console/scheduled-task-operation-skills/dingtalk-chat"
+        )
+        missing = client.get(
+            "/api/console/scheduled-task-operation-skills/not-installed"
+        )
+
+    assert preview.status_code == 200
+    assert preview.json()["name"] == "dingtalk-chat"
+    assert preview.json()["content"] == (
+        "---\nname: dingtalk-chat\ndescription: Read DingTalk messages\n"
+        "---\n# Chat\n"
+    )
+    assert preview.json()["sha256"]
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "not_found"
+
+
 def test_scheduled_task_version_conflicts_are_409_for_mutations(tmp_path: Path) -> None:
     client, _store, ids, _wakes = _client(tmp_path)
 

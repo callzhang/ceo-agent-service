@@ -334,7 +334,7 @@ export async function getScheduledTaskOptions(signal?: AbortSignal): Promise<Sch
 export async function getScheduledTaskSkillPreview(ref: ScheduledTaskSkillRef, signal?: AbortSignal, expectedSha256?: string): Promise<ScheduledTaskSkillPreview> {
   const path = ref.skill_source === "managed"
     ? `/api/console/settings/managed-skill-revisions/${ref.managed_revision_id}`
-    : `/api/console/settings/skills/${encodeURIComponent(ref.skill_name)}`;
+    : `/api/console/scheduled-task-operation-skills/${encodeURIComponent(ref.skill_name)}`;
   const value: unknown = await request(path, { signal });
   const payload = record(value);
   const validIdentity = ref.skill_source === "managed"

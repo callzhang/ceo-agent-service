@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 
 import {
@@ -233,6 +234,9 @@ function SkillReference({
   const [content, setContent] = useState("");
   const [previewError, setPreviewError] = useState("");
   const [previewAttempt, setPreviewAttempt] = useState(0);
+  const [previewStyle, setPreviewStyle] = useState<CSSProperties>({ position: "fixed" });
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const previewRef = useRef<HTMLElement>(null);
   const previewId = `scheduled-task-skill-preview-${refKey(ref)}-${ref.position}`;
 
   useEffect(() => {
@@ -244,6 +248,37 @@ function SkillReference({
     return () => controller.abort();
   }, [content, expectedSha256, open, previewAttempt, ref]);
 
+  useLayoutEffect(() => {
+    if (!open) return;
+    function positionPreview() {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const gap = 8;
+      const viewportPadding = 16;
+      const width = Math.max(0, Math.min(680, window.innerWidth - viewportPadding * 2));
+      const left = Math.min(
+        Math.max(viewportPadding, rect.left),
+        Math.max(viewportPadding, window.innerWidth - width - viewportPadding),
+      );
+      const availableBelow = window.innerHeight - rect.bottom - gap - viewportPadding;
+      const availableAbove = rect.top - gap - viewportPadding;
+      const placeAbove = availableBelow < 180 && availableAbove > availableBelow;
+      const maxHeight = Math.max(80, Math.min(360, placeAbove ? availableAbove : availableBelow));
+      const top = placeAbove
+        ? Math.max(viewportPadding, rect.top - gap - maxHeight)
+        : Math.max(viewportPadding, rect.bottom + gap);
+      setPreviewStyle({ position: "fixed", top, left, width, maxHeight });
+    }
+    positionPreview();
+    window.addEventListener("resize", positionPreview);
+    window.addEventListener("scroll", positionPreview, true);
+    return () => {
+      window.removeEventListener("resize", positionPreview);
+      window.removeEventListener("scroll", positionPreview, true);
+    };
+  }, [content, open, previewError]);
+
   function openPreview() {
     setOpen((current) => {
       if (current) return current;
@@ -253,11 +288,23 @@ function SkillReference({
     });
   }
 
-  return <span className={`scheduled-task-skill-reference${open ? " is-preview-open" : ""}`} onMouseEnter={openPreview} onMouseLeave={() => setOpen(false)} onFocus={openPreview} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
+  function containsRelatedTarget(container: HTMLElement | null, relatedTarget: EventTarget | null) {
+    return relatedTarget instanceof Node && Boolean(container?.contains(relatedTarget));
+  }
+
+  function closeFromTrigger(event: MouseEvent<HTMLSpanElement> | FocusEvent<HTMLSpanElement>) {
+    if (!containsRelatedTarget(previewRef.current, event.relatedTarget)) setOpen(false);
+  }
+
+  function closeFromPreview(event: MouseEvent<HTMLElement> | FocusEvent<HTMLElement>) {
+    if (!containsRelatedTarget(triggerRef.current, event.relatedTarget)) setOpen(false);
+  }
+
+  return <span ref={triggerRef} className="scheduled-task-skill-reference" onMouseEnter={openPreview} onMouseLeave={closeFromTrigger} onFocus={openPreview} onBlur={closeFromTrigger}>
     <button type="button" aria-label={removable ? `移除${label}` : `预览 ${label} Skill`} aria-description="悬停或聚焦可预览 Skill 正文" aria-controls={previewId} aria-expanded={open} onClick={onRemove}>
       <span>{label}</span><small>{ref.skill_source === "managed" ? "Managed" : "Operation"}</small>{removable && <b aria-hidden="true">×</b>}
     </button>
-    {open && <section id={previewId} role="region" tabIndex={0} aria-label={`${label} Skill 正文`} className="scheduled-task-skill-preview">{previewError ? <p>{previewError}</p> : content ? <pre>{content}</pre> : <p>正在读取 Skill 正文…</p>}</section>}
+    {open && createPortal(<section ref={previewRef} id={previewId} role="region" tabIndex={0} aria-label={`${label} Skill 正文`} className="scheduled-task-skill-preview" style={previewStyle} onMouseEnter={openPreview} onMouseLeave={closeFromPreview} onFocus={openPreview} onBlur={closeFromPreview}>{previewError ? <p>{previewError}</p> : content ? <pre>{content}</pre> : <p>正在读取 Skill 正文…</p>}</section>, document.body)}
   </span>;
 }
 

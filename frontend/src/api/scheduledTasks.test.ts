@@ -70,7 +70,7 @@ describe("scheduled tasks API", () => {
       .resolves.toEqual({ name: "dingtalk-chat", content: "# Operation Skill\n\nCurrent operation body" });
 
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/console/settings/managed-skill-revisions/23", expect.any(Object));
-    expect(fetch).toHaveBeenNthCalledWith(2, "/api/console/settings/skills/dingtalk-chat", expect.any(Object));
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/console/scheduled-task-operation-skills/dingtalk-chat", expect.any(Object));
   });
 
   it.each([

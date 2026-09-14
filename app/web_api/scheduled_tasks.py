@@ -611,3 +611,20 @@ def register_scheduled_task_routes(
             ),
             "meta": {"snapshot_at": snapshot_at()},
         }
+
+    @app.get(
+        "/api/console/scheduled-task-operation-skills/{skill_name}",
+        response_model=None,
+    )
+    def scheduled_task_operation_skill(
+        skill_name: str,
+    ) -> dict[str, object] | JSONResponse:
+        try:
+            document = option_service_factory().resolve_operation_skill(skill_name)
+        except ValueError:
+            return _error("not_found", "Skill not found", 404)
+        return {
+            "name": document.name,
+            "content": document.content,
+            "sha256": document.sha256,
+        }

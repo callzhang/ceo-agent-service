@@ -148,6 +148,20 @@ describe("ScheduledTasksPage", () => {
     expect(await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" })).toBeInTheDocument();
   });
 
+  it("renders the Skill preview in a viewport overlay instead of expanding the task detail", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const skill = await screen.findByRole("button", { name: /预览 dingtalk-chat Skill/ });
+
+    await user.hover(skill);
+    const preview = await screen.findByRole("region", { name: "dingtalk-chat Skill 正文" });
+
+    expect(preview.parentElement).toBe(document.body);
+    expect(preview).toHaveClass("scheduled-task-skill-preview");
+    expect(preview).toHaveStyle({ position: "fixed" });
+    expect(workbenchStyles).not.toMatch(/\.scheduled-task-skill-reference\.is-preview-open\s*\{[^}]*flex:\s*1\s+0\s+100%/);
+  });
+
   it("retries a failed Skill preview on a later hover instead of latching the transient error", async () => {
     const user = userEvent.setup();
     api.getScheduledTaskSkillPreview
