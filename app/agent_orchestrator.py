@@ -30,6 +30,7 @@ from app.email_unsubscribe_continuation import (
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
 MAX_TURNS_PER_PROCESS = 32
+MAX_CONTENT_FEEDBACK_CYCLES = 3
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
 _DOMAIN_SNAPSHOT_INVALID = object()
 
@@ -432,6 +433,22 @@ class AgentOrchestrator:
         by_revision: dict[int, list[AgentRun]] = {}
         for run in runs:
             by_revision.setdefault(run.proposal_revision, []).append(run)
+        if feedback_cycles > MAX_CONTENT_FEEDBACK_CYCLES:
+            latest_feedback_run = next(
+                (
+                    run
+                    for run in reversed(runs)
+                    if run.role is AgentRole.AUDIT
+                    and run.status == "completed"
+                    and self._is_completed_feedback_run(run)
+                ),
+                None,
+            )
+            if latest_feedback_run is not None:
+                return self._feedback_exhausted(
+                    latest_feedback_run,
+                    feedback_cycles,
+                )
         highest_materialized_revision = max(
             (run.proposal_revision for run in runs if run.role is AgentRole.CONSUMER),
             default=0,
@@ -1282,6 +1299,29 @@ class AgentOrchestrator:
                 task.id,
                 task.execution_generation,
             )
+        )
+
+    @staticmethod
+    def _is_completed_feedback_run(run: AgentRun) -> bool:
+        try:
+            return _audit_result(run).outcome is AuditOutcome.FEEDBACK_PROVIDED
+        except (ResultParseError, ValueError):
+            return False
+
+    @staticmethod
+    def _feedback_exhausted(
+        run: AgentRun,
+        feedback_cycles: int,
+    ) -> OrchestrationResult:
+        error = AgentError(
+            code="audit_revision_exhausted",
+            retryable=False,
+        )
+        return _audit_terminal(
+            "failed_terminal",
+            run,
+            _failed_audit_result(run, AuditOutcome.FAILED, error),
+            feedback_cycles,
         )
 
     @staticmethod

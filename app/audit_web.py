@@ -101,11 +101,7 @@ from app.config import (
     work_profile_path,
     workspace_path,
 )
-from app.quality_gate import (
-    _service_generated_needs_human_classification,
-    _structured_needs_human_classification,
-    scan_hourly_quality,
-)
+from app.quality_gate import scan_hourly_quality
 from app.embedding import EmbeddingClient
 from app.history import safe_observability_error
 from app.history_actions import (
@@ -3253,104 +3249,6 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
 
-        # A completed reply task can still be waiting for a Derek decision:
-        # ``needs_human`` is the terminal projection of the agent run, while
-        # the task itself is already closed.  The store's generic unresolved
-        # problem query intentionally omits closed tasks, so read this
-        # business decision projection directly and apply the same structured
-        # quality gate used by system health.  Invalid or low-information
-        # projections remain out of Attention and are handled as repair/ask-
-        # back cases instead.
-        if _sqlite_table_exists(db, "reply_attempts") and _sqlite_table_exists(db, "agent_runs"):
-            needs_human_rows = db.execute(
-                """
-                select a.id, a.channel, a.conversation_title, a.trigger_text,
-                       a.updated_at, a.send_error, a.human_decision_options_json,
-                       r.final_result_json
-                from reply_attempts a
-                left join agent_runs r on r.id=a.agent_run_id
-                where lower(a.send_status)='needs_human'
-                  and coalesce(a.reviewed_at, '')=''
-                  and not exists (
-                      select 1
-                      from reply_tasks historical_task
-                      join business_object_tasks current_business_object
-                        on current_business_object.business_object_key=historical_task.business_object_key
-                      where historical_task.channel=a.channel
-                        and historical_task.conversation_id=a.conversation_id
-                        and historical_task.trigger_message_id=a.trigger_message_id
-                        and current_business_object.reply_task_id<>historical_task.id
-                  )
-                  and not exists (
-                      select 1 from reply_tasks active_task
-                      where active_task.channel=a.channel
-                        and active_task.conversation_id=a.conversation_id
-                        and active_task.trigger_message_id=a.trigger_message_id
-                        and lower(active_task.status) in ('pending', 'processing')
-                  )
-                  and a.id=(
-                      select max(latest.id)
-                      from reply_attempts latest
-                      where latest.channel=a.channel
-                        and latest.conversation_id=a.conversation_id
-                        and latest.trigger_message_id=a.trigger_message_id
-                  )
-                order by a.updated_at desc, a.id desc
-                """
-            ).fetchall()
-            for row in needs_human_rows:
-                service_generated_error = ""
-                classification = _structured_needs_human_classification(row["final_result_json"])
-                if classification == "invalid":
-                    classification = _service_generated_needs_human_classification(
-                        row["final_result_json"],
-                        row["send_error"],
-                        row["human_decision_options_json"],
-                    )
-                    if classification == "needs_human":
-                        service_generated_error = str(row["send_error"] or "")
-                if classification != "needs_human":
-                    continue
-                result = {}
-                try:
-                    result = json.loads(str(row["final_result_json"] or ""))
-                except (TypeError, json.JSONDecodeError):
-                    result = {}
-                # Service-generated boundaries are deliberately allowed to
-                # have no persisted Agent result.  Mirror the quality gate's
-                # synthetic values so the projection remains renderable.
-                if not isinstance(result, dict) or not result:
-                    result = {"risk": "high", "confidence": 0.0, "rule_coverage": 1.0}
-                risk = str(result.get("risk") or "high")
-                confidence = result.get("confidence")
-                rule_coverage = result.get("rule_coverage")
-                if service_generated_error == "audit_revision_exhausted":
-                    root_cause = (
-                        "旧运行达到审计修订上限；"
-                        "需授权按已保存的审计意见重试外部写入"
-                    )
-                elif risk == "high" and isinstance(confidence, (int, float)) and confidence < 0.5:
-                    root_cause = f"高风险且置信度低（{confidence:.2f}）"
-                else:
-                    coverage = (
-                        float(rule_coverage)
-                        if isinstance(rule_coverage, (int, float))
-                        else 0.0
-                    )
-                    root_cause = f"规则覆盖率低（{coverage:.2f}）"
-                rows.append(
-                    {
-                        "category": "Reply decision",
-                        "id": str(row["id"]),
-                        "status": "needs_human",
-                        "context": str(row["conversation_title"] or row["channel"] or ""),
-                        "root_cause": root_cause,
-                        "summary": str(row["trigger_text"] or "需要 Derek 决策"),
-                        "updated_at": str(row["updated_at"] or ""),
-                        "error": str(row["send_error"] or "需要 Derek 决策"),
-                        "detail_url": f"/attempts/{int(row['id'])}",
-                    }
-                )
     for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
         send_status = str(attempt["send_status"] or "").casefold()
         # Attention is the service-error surface. A genuine business decision

@@ -20,7 +20,7 @@ def store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "orchestrator.sqlite3")
 
 
-def test_fourth_feedback_is_applied_before_audit_executes(store):
+def test_fourth_feedback_is_a_terminal_technical_failure(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -28,7 +28,6 @@ def test_fourth_feedback_is_applied_before_audit_executes(store):
         _consumer_result("proposal", "candidate-1"),
         _consumer_result("proposal", "candidate-2"),
         _consumer_result("proposal", "candidate-3"),
-        _consumer_result("proposal", "candidate-4"),
     )
     audit = ScriptedAudit(
         store,
@@ -36,7 +35,6 @@ def test_fourth_feedback_is_applied_before_audit_executes(store):
         _audit_result("feedback_provided", 1),
         _audit_result("feedback_provided", 2),
         _audit_result("feedback_provided", 3),
-        _audit_result("executed", 4),
     )
 
     result = _process(
@@ -44,7 +42,8 @@ def test_fourth_feedback_is_applied_before_audit_executes(store):
     )
 
     assert isinstance(result, OrchestrationResult)
-    assert result.status == "executed"
+    assert result.status == "failed_terminal"
     assert result.feedback_cycles == 4
+    assert result.error.code == "audit_revision_exhausted"
     assert result.audit_result is not None
-    assert result.audit_result.outcome.value == "executed"
+    assert result.audit_result.outcome.value == "failed"

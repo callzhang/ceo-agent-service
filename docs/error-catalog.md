@@ -52,7 +52,7 @@ projection。对具有 `business_object_key` 的任务，当前状态由 `busine
 | `consumer_retry_exhausted` | Consumer 已达到重试上限 | 终态失败 |
 | `audit_retry_deferred` | Audit 尚未达到下一次重试时间 | 调度等待 |
 | `audit_retry_exhausted` | Audit 已达到重试上限 | 终态失败 |
-| `audit_revision_exhausted` | 内容反馈周期已达到上限 | 按当前规则进入 `needs_human` |
+| `audit_revision_exhausted` | 内容反馈周期已达到上限 | 技术性终态失败，不升级为人工业务决策 |
 
 ## 任务、租约与恢复
 

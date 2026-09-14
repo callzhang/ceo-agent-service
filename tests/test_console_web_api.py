@@ -2277,11 +2277,10 @@ def test_queue_attention_rows_renders_service_generated_needs_human_without_run(
 
     rows = audit_web_module._queue_attention_rows(store)
 
-    decision = next(row for row in rows if row["id"] == str(attempt_id))
-    assert decision["root_cause"] == "高风险且置信度低（0.00）"
+    assert not any(row["id"] == str(attempt_id) for row in rows)
 
 
-def test_queue_attention_rows_explains_legacy_audit_revision_authorization(tmp_path: Path):
+def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="audit-revision-conversation",
@@ -2352,13 +2351,10 @@ def test_queue_attention_rows_explains_legacy_audit_revision_authorization(tmp_p
 
     rows = audit_web_module._queue_attention_rows(store)
 
-    decision = next(row for row in rows if row["id"] == str(attempt_id))
-    assert decision["root_cause"] == (
-        "旧运行达到审计修订上限；需授权按已保存的审计意见重试外部写入"
-    )
+    assert not any(row["id"] == str(attempt_id) for row in rows)
 
 
-def test_queue_attention_rows_includes_actionable_structured_needs_human_attempts(tmp_path: Path):
+def test_queue_attention_rows_excludes_actionable_structured_needs_human_attempts(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="needs-human-conversation",
@@ -2408,11 +2404,7 @@ def test_queue_attention_rows_includes_actionable_structured_needs_human_attempt
 
     rows = audit_web_module._queue_attention_rows(store)
 
-    decision = next(row for row in rows if row["id"] == str(attempt_id))
-    assert decision["category"] == "Reply decision"
-    assert decision["status"] == "needs_human"
-    assert decision["root_cause"] == "高风险且置信度低（0.20）"
-    assert decision["detail_url"] == f"/attempts/{attempt_id}"
+    assert not any(row["id"] == str(attempt_id) for row in rows)
 
 
 def test_console_error_detail_returns_error_record(tmp_path: Path):

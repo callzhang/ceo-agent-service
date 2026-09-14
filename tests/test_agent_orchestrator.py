@@ -1722,13 +1722,13 @@ def test_domain_continuations_do_not_consume_content_feedback_cycles(store):
     ]
 
 
-def test_feedback_continues_after_three_cycles_following_domain_continuation(store):
+def test_fourth_feedback_fails_after_domain_continuation(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
         *(
             _consumer_result("proposal", f"candidate-{revision}")
-            for revision in range(6)
+            for revision in range(5)
         ),
     )
     audit = ScriptedAudit(
@@ -1738,7 +1738,6 @@ def test_feedback_continues_after_three_cycles_following_domain_continuation(sto
         _audit_result("revision_required", 2),
         _audit_result("revision_required", 3),
         _audit_result("revision_required", 4),
-        _audit_result("executed", 5),
     )
     orchestrator = AgentOrchestrator(
         store=store,
@@ -1753,12 +1752,13 @@ def test_feedback_continues_after_three_cycles_following_domain_continuation(sto
         refresh_context=lambda: _domain_context(task),
     )
 
-    assert result.status == "executed"
+    assert result.status == "failed_terminal"
     assert result.feedback_cycles == 4
+    assert result.error.code == "audit_revision_exhausted"
     assert orchestrator._feedback_cycles(task) == 4
 
 
-def test_restart_continues_with_consumer_materialized_after_four_feedback_cycles(store):
+def test_restart_rejects_consumer_materialized_after_four_feedback_cycles(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -1820,8 +1820,9 @@ def test_restart_continues_with_consumer_materialized_after_four_feedback_cycles
 
     recovered = orchestrator._derive_state(task)
 
-    assert isinstance(recovered, _NextAudit)
-    assert recovered.proposal_revision == 4
+    assert isinstance(recovered, OrchestrationResult)
+    assert recovered.status == "failed_terminal"
+    assert recovered.error.code == "audit_revision_exhausted"
 
 
 def test_restart_rejects_orphan_consumer_when_continuation_disappears(store):
@@ -2640,7 +2641,7 @@ def test_newer_context_stale_candidate_is_revised_without_write(store):
     assert audit_run is not None and audit_run.status == "completed"
 
 
-def test_fourth_revision_request_is_applied_and_reaudited(store):
+def test_fourth_revision_request_is_a_terminal_technical_failure(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -2648,7 +2649,6 @@ def test_fourth_revision_request_is_applied_and_reaudited(store):
         _consumer_result("proposal", "candidate-1"),
         _consumer_result("proposal", "candidate-2"),
         _consumer_result("proposal", "candidate-3"),
-        _consumer_result("proposal", "candidate-4"),
     )
     audit = ScriptedAudit(
         store,
@@ -2656,17 +2656,16 @@ def test_fourth_revision_request_is_applied_and_reaudited(store):
         _audit_result("revision_required", 1),
         _audit_result("revision_required", 2),
         _audit_result("revision_required", 3),
-        _audit_result("executed", 4),
     )
 
     result = _process(
         AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
     )
 
-    assert result.status == "executed"
+    assert result.status == "failed_terminal"
     assert result.feedback_cycles == 4
-    assert len(consumer.calls) == 5
-    assert consumer.calls[-1]["feedback"] is not None
+    assert result.error.code == "audit_revision_exhausted"
+    assert len(consumer.calls) == 4
     latest_audit = max(
         (
             run
@@ -2679,7 +2678,7 @@ def test_fourth_revision_request_is_applied_and_reaudited(store):
         key=lambda run: run.id,
     )
     assert result.final_run_id == latest_audit.id
-    assert latest_audit.proposal_revision == 4
+    assert latest_audit.proposal_revision == 3
 
 
 def test_authorization_wait_defers_without_consuming_feedback_cycle(store):

@@ -10,7 +10,7 @@ import pytest
 
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
-from app.agent_orchestrator import AgentOrchestrator, MAX_TURNS_PER_PROCESS
+from app.agent_orchestrator import AgentOrchestrator, MAX_CONTENT_FEEDBACK_CYCLES
 from app.agent_turn_runner import AgentTurnRunResult
 from app.store import AgentRole, AutoReplyStore
 from tests.support.audit_sink_mcp import AuditSink
@@ -290,17 +290,16 @@ def test_eval_cases_traverse_orchestration_with_exactly_the_expected_write(case:
             else []
         )
         return
-    # Repeated technical revision feedback remains machine-actionable. The
-    # global turn limit bounds a non-converging pair without inventing a human
-    # business decision.
-    assert result.status == "failed_retryable"
-    assert result.error.code == "agent_turn_limit_reached"
-    assert result.feedback_cycles == MAX_TURNS_PER_PROCESS // 2
+    # Repeated technical revision feedback remains a technical failure. It
+    # must not be converted into a human business decision.
+    assert result.status == "failed_terminal"
+    assert result.error.code == "audit_revision_exhausted"
+    assert result.feedback_cycles == MAX_CONTENT_FEEDBACK_CYCLES + 1
     assert sink.row_count(f"agent-task:{task.id}:{task.execution_generation}:proposal:0") == 0
     expected_oa_reads = (
         [
             f"agent-task:{task.id}:{task.execution_generation}:proposal:{revision}"
-            for revision in range(MAX_TURNS_PER_PROCESS // 2)
+            for revision in range(MAX_CONTENT_FEEDBACK_CYCLES + 1)
         ]
         if case.requires_oa_live_detail
         else []
