@@ -7714,6 +7714,38 @@ def test_direct_action_drain_stops_at_time_bound():
     assert calls == ["action"]
 
 
+def test_classifier_drain_has_independent_longer_budget_than_provider_actions():
+    module = _module()
+    classifications = []
+    clock = [0.0]
+
+    def run_classification_once():
+        classifications.append("classification")
+        clock[0] += 3.0
+        return SimpleNamespace(status="done")
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 0},
+        run_direct_actions_once=lambda: None,
+        run_classification_once=run_classification_once,
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+        classification_max_actions=3,
+        classification_time_budget_seconds=120.0,
+        direct_action_max_actions=100,
+        direct_action_time_budget_seconds=2.0,
+        monotonic=lambda: clock[0],
+    )
+
+    assert classifications == [
+        "classification",
+        "classification",
+        "classification",
+    ]
+
+
 def test_scan_config_uses_active_model_category_eligibility():
     module = _module()
     contracts = import_module("app.email_classifier_contracts")

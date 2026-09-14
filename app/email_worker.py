@@ -50,6 +50,8 @@ ROUTE_REFUSED_UNSUBSCRIBE_ERROR = "email_unsubscribe_route_refused"
 TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES = 4
 DIRECT_ACTION_DRAIN_MAX_ACTIONS = 25
 DIRECT_ACTION_DRAIN_MAX_SECONDS = 2.0
+CLASSIFICATION_DRAIN_MAX_ACTIONS = 25
+CLASSIFICATION_DRAIN_MAX_SECONDS = 120.0
 
 
 def _agent_classification_action_plan(
@@ -1248,6 +1250,8 @@ def run_scan_and_direct_actions_loop(
     component_ready: Callable[[str], object] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     max_cycles: int | None = None,
+    classification_max_actions: int = CLASSIFICATION_DRAIN_MAX_ACTIONS,
+    classification_time_budget_seconds: float = CLASSIFICATION_DRAIN_MAX_SECONDS,
     direct_action_max_actions: int = DIRECT_ACTION_DRAIN_MAX_ACTIONS,
     direct_action_time_budget_seconds: float = DIRECT_ACTION_DRAIN_MAX_SECONDS,
     monotonic: Callable[[], float] = time.monotonic,
@@ -1285,8 +1289,8 @@ def run_scan_and_direct_actions_loop(
             try:
                 _drain_direct_actions(
                     run_classification_once,
-                    max_actions=direct_action_max_actions,
-                    time_budget_seconds=direct_action_time_budget_seconds,
+                    max_actions=classification_max_actions,
+                    time_budget_seconds=classification_time_budget_seconds,
                     monotonic=monotonic,
                 )
             except Exception as exc:  # noqa: BLE001 - keep scan cadence alive

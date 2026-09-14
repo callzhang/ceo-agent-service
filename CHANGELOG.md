@@ -6,7 +6,10 @@
   shared exponential backoff capped at 15 minutes, while non-retryable failures
   remain explicit. The classifier queue is now included in Status, Attention,
   and the hourly quality gate so these failures cannot be hidden by aggregate
-  Email worker health.
+  Email worker health. Classification recovery also has its own 25-task,
+  120-second drain budget instead of sharing the provider-action two-second
+  budget, so a slow classifier call cannot reduce recovery to one task per
+  scan interval.
 
 - 2026-09-14: Audit now treats its approval of a typed, Skill-covered
   service-triggered action as the execution confirmation. Provider
