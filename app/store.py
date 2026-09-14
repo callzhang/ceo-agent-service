@@ -21594,21 +21594,6 @@ class AutoReplyStore:
                 values (?, ?, ?)
                 on conflict(source_type, source_ref) do update set
                     payload_json=excluded.payload_json,
-                    status=case
-                        when work_summary_inputs.status in ('failed', 'skipped')
-                            then 'pending'
-                        else work_summary_inputs.status
-                    end,
-                    error=case
-                        when work_summary_inputs.status in ('failed', 'skipped')
-                            then ''
-                        else work_summary_inputs.error
-                    end,
-                    available_at=case
-                        when work_summary_inputs.status in ('failed', 'skipped')
-                            then ''
-                        else work_summary_inputs.available_at
-                    end,
                     updated_at=current_timestamp
                 """,
                 (source_type, source_ref, payload_json),

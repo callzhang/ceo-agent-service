@@ -350,6 +350,44 @@ def test_enqueue_and_claim_work_summary_input(tmp_path: Path):
     assert row == ("done",)
 
 
+@pytest.mark.parametrize("terminal_status", ["failed", "skipped"])
+def test_duplicate_work_summary_input_does_not_reopen_terminal_status(
+    tmp_path: Path,
+    terminal_status: str,
+):
+    store = _store(tmp_path)
+    payload_json = _work_item().model_dump_json()
+    input_id = store.enqueue_work_summary_input("reply_attempt", "1", payload_json)
+
+    if terminal_status == "failed":
+        store.mark_work_summary_input_failed(input_id, "provider unavailable")
+    else:
+        store.mark_work_summary_input_skipped(input_id, "no lifecycle transition")
+
+    duplicate_id = store.enqueue_work_summary_input(
+        "reply_attempt",
+        "1",
+        _work_item()
+        .model_copy(update={"summary": "Updated source snapshot"})
+        .model_dump_json(),
+    )
+
+    assert duplicate_id == input_id
+    assert store.claim_work_summary_inputs(limit=1) == []
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        row = db.execute(
+            "select status, attempts, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert row == (
+        terminal_status,
+        0,
+        "provider unavailable"
+        if terminal_status == "failed"
+        else "no lifecycle transition",
+    )
+
+
 def test_todo_evidence_candidate_dedupes_and_marks_decision(tmp_path: Path):
     store = _store(tmp_path)
     project_id = store.create_work_project(
