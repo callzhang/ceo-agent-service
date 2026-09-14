@@ -12045,6 +12045,7 @@ class EmailStore:
             rows = db.execute(
                 """
                 select classifications.*,
+                       messages.normalized_text as message_text,
                        messages.attachment_metadata_json
                            as message_attachment_metadata_json
                 from email_classifications as classifications
@@ -12058,7 +12059,13 @@ class EmailStore:
                 """,
                 (status.value, limit, offset),
             ).fetchall()
-        return [self._classification_evidence_row(row) for row in rows], total
+        items = []
+        for row in rows:
+            message = Parser().parsestr(row["message_text"] or "")
+            item = self._classification_evidence_row(row)
+            item["message_text"] = message.get_payload()
+            items.append(item)
+        return items, total
 
     @staticmethod
     def _email_context_message_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -12232,7 +12239,7 @@ class EmailStore:
             ).fetchone()
         if row is None:
             return None
-        message = Parser().parsestr(row["message_text"] or "", headersonly=True)
+        message = Parser().parsestr(row["message_text"] or "")
         return {
             **self._classification_evidence_row(row),
             "message_text": message.get_payload(),

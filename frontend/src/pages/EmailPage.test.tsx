@@ -50,14 +50,14 @@ it("renders the original body prefix in the shared row and never uses preview as
   expect(trigger).toHaveTextContent("原始邮件正文前段 1");
   expect(trigger).not.toHaveTextContent("生成的摘要不应出现在列表");
 });
-it("requests the unified all status and keeps message text out of list items",async()=>{
+it("maps persisted original text from the unified list response",async()=>{
   const params: EmailClassificationListParams = { page: 1, page_size: 20 };
   const actual=await vi.importActual<typeof import("../api/console")>("../api/console");
-  const fetchMock=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({items:[{id:"8423079112545370123",category:"work",classification_source:"agent",status:"pending_feedback",preview:"摘要"}],meta:{page:1,page_size:20,total:1,next_cursor:"",has_more:false,snapshot_at:""}}),{status:200,headers:{"Content-Type":"application/json"}}));
+  const fetchMock=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({items:[{id:"8423079112545370123",category:"work",classification_source:"agent",status:"pending_feedback",preview:"摘要",message_text:"邮件原文"}],meta:{page:1,page_size:20,total:1,next_cursor:"",has_more:false,snapshot_at:""}}),{status:200,headers:{"Content-Type":"application/json"}}));
   const result=await actual.listEmailClassifications("all",params);
   expect(fetchMock).toHaveBeenCalledWith("/api/console/email/classifications?status=all&page=1&page_size=20",expect.objectContaining({signal:undefined}));
   expect(result.items[0].id).toBe("8423079112545370123");
-  expect(result.items[0]).not.toHaveProperty("message_text");
+  expect(result.items[0]).toHaveProperty("message_text","邮件原文");
   expect(result.items[0].category).toBe("work");
   expect(result.items[0].classification_source).toBe("agent");
   fetchMock.mockRestore();

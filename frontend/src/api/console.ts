@@ -503,6 +503,7 @@ function mapEmailClassification(value: unknown, includeBody = false): EmailClass
     sender: emailText(row.sender),
     subject: emailText(row.subject),
     preview: emailText(row.preview),
+    message_text: emailText(row.message_text),
     important: typeof row.important === "boolean" ? row.important : null,
     provider_classification: isRecord(row.provider_classification) ? row.provider_classification as unknown as EmailProviderClassification : null,
     description_version: emailText(row.description_version),

@@ -692,7 +692,7 @@ def test_email_learning_registry_issues_never_echo_corrupt_model_id(
     ]
 
 
-def test_email_classification_list_excludes_body_and_detail_exposes_persisted_text(
+def test_email_classification_list_and_detail_expose_persisted_text(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "classification-attachment-metadata.sqlite3"
@@ -761,9 +761,11 @@ def test_email_classification_list_excludes_body_and_detail_exposes_persisted_te
     assert detailed.json()["item"]["message_text"] == (
         "正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容"
     )
+    assert listed.json()["items"][0]["message_text"] == (
+        "正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容"
+    )
     assert detailed.json()["item"]["cc"] == "copy@example.com"
     assert detailed.json()["item"]["recipients"] == ["recipient@example.com"]
-    assert "message_text" not in listed.json()["items"][0]
     for response_item in (listed.json()["items"][0], detailed.json()["item"]):
         assert all(
             set(attachment) == {"filename", "mime_type", "size_bytes", "inline"}
@@ -771,7 +773,7 @@ def test_email_classification_list_excludes_body_and_detail_exposes_persisted_te
         )
 
 
-def test_email_classification_list_all_unifies_statuses_without_body(
+def test_email_classification_list_all_unifies_statuses_with_persisted_body(
     tmp_path: Path,
 ) -> None:
     store = EmailStore(tmp_path / "classification-all.sqlite3")
@@ -843,7 +845,7 @@ def test_email_classification_list_all_unifies_statuses_without_body(
     assert {item["category"] for item in payload["items"]} == {"work", "legal"}
     assert {item["classification_source"] for item in payload["items"]} == {"model"}
     assert all(isinstance(item["id"], str) for item in payload["items"])
-    assert all("message_text" not in item for item in payload["items"])
+    assert {item["message_text"] for item in payload["items"]} == {"正文 101", "正文 102"}
 
 
 def test_email_classification_detail_projects_observability(tmp_path: Path) -> None:
