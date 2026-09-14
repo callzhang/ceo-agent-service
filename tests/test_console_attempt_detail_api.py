@@ -114,14 +114,16 @@ def _complete_consumer_run(
     *,
     owner: str,
     payload: dict[str, object] | None = None,
+    proposal_revision: int = 0,
+    parent_agent_run_id: int | None = None,
 ):
     run = store.claim_agent_run(
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
-        proposal_revision=0,
+        proposal_revision=proposal_revision,
         turn_attempt=0,
-        parent_agent_run_id=None,
+        parent_agent_run_id=parent_agent_run_id,
         operation_id="",
         owner=owner,
     ).run
@@ -406,6 +408,19 @@ def test_attempt_detail_api_projects_exact_audit_linked_consumer_result_read_onl
     task = _consumer_result_task(store)
     consumer = _complete_consumer_run(store, task, owner="consumer-api")
     audit = _complete_audit_run(store, task, consumer, owner="audit-api")
+    _complete_consumer_run(
+        store,
+        task,
+        owner="later-consumer-api",
+        proposal_revision=1,
+        parent_agent_run_id=audit.id,
+        payload=_consumer_result_payload(
+            confidence=0.10,
+            information_completeness=0.20,
+            rule_coverage=0.30,
+            risk="high",
+        ),
+    )
     attempt_id = _finalize_consumer_result_attempt(store, task, audit)
     before = {
         "attempt": store.get_reply_attempt(attempt_id),
@@ -485,6 +500,29 @@ def test_attempt_detail_api_marks_unavailable_consumer_result_per_field(
     assert result["risk"] == "—"
     assert result["error_reason"] == expected_error
     assert "raw-malformed-marker" not in json.dumps(result)
+
+
+def test_attempt_detail_api_marks_completed_consumer_without_result_unavailable(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="missing-result-api")
+    with store._immediate_write_transaction() as db:
+        db.execute("update agent_runs set final_result_json='' where id=?", (consumer.id,))
+    attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
+
+    _, item = build_attempt_detail(store, attempt_id)
+
+    assert item is not None
+    assert item["consumer_result"] == {
+        "confidence": "—",
+        "information_completeness": "—",
+        "rule_coverage": "—",
+        "risk": "—",
+        "error_reason": "Consumer 未保存最终结果",
+        "current_run": None,
+    }
 
 
 def test_attempt_detail_api_marks_missing_linked_consumer_result_unavailable(
