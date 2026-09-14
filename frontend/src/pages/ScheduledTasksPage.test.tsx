@@ -549,6 +549,15 @@ describe("ScheduledTasksPage", () => {
     style.remove();
   });
 
+  it("lets the task list grow with the page instead of creating an inner scroll area", () => {
+    const listRules = [...workbenchStyles.matchAll(/\.scheduled-task-list\s*\{([^}]*)\}/g)]
+      .map((match) => match[1]);
+
+    expect(listRules.length).toBeGreaterThan(0);
+    expect(listRules.every((rule) => !/max-height\s*:/.test(rule))).toBe(true);
+    expect(listRules.every((rule) => !/overflow(?:-y)?\s*:/.test(rule))).toBe(true);
+  });
+
   it("keeps controls, Skill suggestions, and history readable around 390px", () => {
     expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*760px\)[\s\S]*?\.scheduled-tasks-page\s*\{[^}]*max-width:\s*100vw;[^}]*padding:\s*16px\s+12px\s+28px;[^}]*\}/);
     expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*760px\)[\s\S]*?\.scheduled-tasks-page\s+\.console-page-header\s+\.muted\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*\}/);

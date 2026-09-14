@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-14: The scheduled-task list now grows naturally with the page on
+  desktop and narrow layouts. It no longer uses a viewport-bound height or a
+  nested scrollbar, so every task remains in the document flow and the browser
+  owns vertical scrolling.
+
 - 2026-09-14: Six-field Cron expressions with a minute interval, such as
   `0 */10 * * * *`, now display `每10分钟执行` both while editing and after
   saving instead of falling back to `按自定义计划执行`.
