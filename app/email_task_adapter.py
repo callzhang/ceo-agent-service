@@ -27,6 +27,10 @@ from app.email_classifier_contracts import (
 )
 from app.email_store import EmailStore, is_valid_unsubscribe_opaque_reference
 from app.email_reply_delivery import EmailReplyEffect, email_action_identity
+from app.external_retry import (
+    DEFAULT_MAX_RETRY_DELAY_SECONDS,
+    retry_delay_seconds,
+)
 from app.email_unsubscribe import (
     EmailUnsubscribeContinuation,
     EmailUnsubscribeEffect,
@@ -255,14 +259,18 @@ class EmailClassificationTaskAdapter:
         *,
         now=lambda: datetime.now(timezone.utc),
         lease_seconds: int = 1_200,
-        max_attempts: int = 3,
         retry_base_seconds: int = 2,
+        retry_max_delay_seconds: int = DEFAULT_MAX_RETRY_DELAY_SECONDS,
     ):
+        if retry_base_seconds < 0:
+            raise ValueError("retry_base_seconds must not be negative")
+        if retry_max_delay_seconds < 0:
+            raise ValueError("retry_max_delay_seconds must not be negative")
         self.email_store = email_store
         self._now = now
         self.lease_seconds = lease_seconds
-        self.max_attempts = max_attempts
         self.retry_base_seconds = retry_base_seconds
+        self.retry_max_delay_seconds = retry_max_delay_seconds
 
     def ensure_task(
         self, task_input: EmailClassificationTaskInput
@@ -358,11 +366,11 @@ class EmailClassificationTaskAdapter:
             row = db.execute(
                 """
                 select * from email_agent_classification_tasks
-                where status='pending' and attempt_count < ?
+                where status='pending'
                   and (available_at='' or available_at <= ?)
                 order by created_at, task_id limit 1
                 """,
-                (self.max_attempts, now),
+                (now,),
             ).fetchone()
             if row is None:
                 return None
@@ -385,27 +393,30 @@ class EmailClassificationTaskAdapter:
         return self._row(claimed)
 
     def _expire_running_claims(self, db: sqlite3.Connection, *, now: str) -> int:
-        exhausted = db.execute(
+        expired = db.execute(
             """
-            update email_agent_classification_tasks
-            set status='failed', owner='', lease_expires_at='', available_at='',
-                error='classification task lease expired after final attempt',
-                updated_at=?
+            select task_id
+            from email_agent_classification_tasks
             where status='running' and lease_expires_at <= ?
-              and attempt_count >= ?
             """,
-            (now, now, self.max_attempts),
-        ).rowcount
-        retryable = db.execute(
-            """
-            update email_agent_classification_tasks
-            set status='pending', owner='', lease_expires_at='', updated_at=?
-            where status='running' and lease_expires_at <= ?
-              and attempt_count < ?
-            """,
-            (now, now, self.max_attempts),
-        ).rowcount
-        return exhausted + retryable
+            (now,),
+        ).fetchall()
+        for row in expired:
+            db.execute(
+                """
+                update email_agent_classification_tasks
+                set status='pending', owner='', lease_expires_at='',
+                    available_at=?, error='classification task lease expired',
+                    updated_at=?
+                where task_id=? and status='running'
+                """,
+                (
+                    now,
+                    now,
+                    row["task_id"],
+                ),
+            )
+        return len(expired)
 
     def complete(
         self, task: EmailClassificationTask, result: Mapping[str, object]
@@ -415,15 +426,8 @@ class EmailClassificationTaskAdapter:
     def fail(
         self, task: EmailClassificationTask, *, error: str, retryable: bool
     ) -> None:
-        retryable = retryable and task.attempt_count < self.max_attempts
         available_at = (
-            self._timestamp(
-                self._now()
-                + timedelta(
-                    seconds=self.retry_base_seconds
-                    * (2 ** max(task.attempt_count - 1, 0))
-                )
-            )
+            self._retry_available_at(task.attempt_count)
             if retryable
             else ""
         )
@@ -434,6 +438,17 @@ class EmailClassificationTaskAdapter:
             error=error,
             available_at=available_at,
         )
+
+    def _retry_available_at(
+        self,
+        attempt_count: int,
+    ) -> str:
+        delay = retry_delay_seconds(
+            self.retry_base_seconds,
+            max(attempt_count - 1, 0),
+            max_delay_seconds=self.retry_max_delay_seconds,
+        )
+        return self._timestamp(self._now() + timedelta(seconds=delay))
 
     def _finish(
         self,

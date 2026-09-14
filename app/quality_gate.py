@@ -39,6 +39,7 @@ REQUIRED_SOURCES = (
     "wechat_read_state",
     "errors",
 )
+OPTIONAL_QUEUE_SOURCES = ("email_agent_classification_tasks",)
 
 REPLY_PROCESSING_STALE_SECONDS = 30 * 60
 WORK_ITEM_PROCESSING_STALE_SECONDS = 21 * 60
@@ -112,7 +113,10 @@ def scan_hourly_quality(
             for row in db.execute("select name from sqlite_master where type='table'")
         }
         missing = tuple(source for source in REQUIRED_SOURCES if source not in existing)
-        checked = tuple(source for source in REQUIRED_SOURCES if source in existing)
+        checked = (
+            *(source for source in REQUIRED_SOURCES if source in existing),
+            *(source for source in OPTIONAL_QUEUE_SOURCES if source in existing),
+        )
         if missing:
             return QualityGateReport(
                 checked_at=now_text,
@@ -144,6 +148,8 @@ def scan_hourly_quality(
         _check_reply_attempts(db, checked_now, violations, attention)
         _check_agent_runs(db, checked_now, violations, attention)
         _check_work_items(db, checked_now, violations, attention)
+        if "email_agent_classification_tasks" in existing:
+            _check_email_classification_tasks(db, checked_now, violations)
         _check_follow_ups(db, checked_now, violations, attention)
         _check_meetings(db, checked_now, violations, attention)
         _check_okr_reviews(db, checked_now, violations, attention)
@@ -648,6 +654,56 @@ def _check_work_items(
     _add(attention, source="work_summary_inputs", code="active", count=_count(
         db, "select count(*) from work_summary_inputs where lower(status) in ('pending','processing')"
     ), severity="info", detail="work item is queued or processing")
+
+
+def _check_email_classification_tasks(
+    db: sqlite3.Connection,
+    now: datetime,
+    violations: list[QualityIssue],
+) -> None:
+    _add(
+        violations,
+        source="email_agent_classification_tasks",
+        code="failed",
+        count=_count(
+            db,
+            "select count(*) from email_agent_classification_tasks where lower(status)='failed'",
+        ),
+        severity="error",
+        detail="email classification reached a non-retryable failure",
+    )
+    _add(
+        violations,
+        source="email_agent_classification_tasks",
+        code="running_stale",
+        count=_count(
+            db,
+            """select count(*) from email_agent_classification_tasks
+               where lower(status)='running'
+                 and datetime(updated_at) < datetime(?)""",
+            (_cutoff(now, WORK_ITEM_PROCESSING_STALE_SECONDS),),
+        ),
+        severity="error",
+        detail="email classification exceeded its execution lease",
+    )
+    _add(
+        violations,
+        source="email_agent_classification_tasks",
+        code="pending_stale",
+        count=_count(
+            db,
+            """select count(*) from email_agent_classification_tasks
+               where lower(status)='pending'
+                 and (available_at='' or datetime(available_at) <= datetime(?))
+                 and datetime(updated_at) < datetime(?)""",
+            (
+                now.isoformat(),
+                _cutoff(now, WORK_ITEM_PROCESSING_STALE_SECONDS),
+            ),
+        ),
+        severity="error",
+        detail="email classification remained due without being claimed",
+    )
 
 
 def _check_follow_ups(

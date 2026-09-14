@@ -38,6 +38,12 @@ pending -> running -> done
 
 ## 功能机制开关与任务生产
 
+邮件分类使用独立的 `email_agent_classification_tasks` 持久化队列。Responses API
+请求允许正常的模型响应时间；临时网络、超时和租约中断不进入终态 `failed`，而是在同一
+任务上按共享指数退避重试，重试间隔最多 15 分钟。只有输入、契约或持久化冲突等不可重试
+错误进入 `failed`。Status、Attention 和每小时 quality gate 都必须覆盖该队列，不能只用
+Email worker 的汇总健康状态代替任务状态。
+
 `Settings -> Skills` 的开关位于任务生产边界。功能与业务 Skill 的多对多关系由
 `data/config/skill-features.json` 声明，运行时开关由 `data/config/skill-state.json`
 持久化；每次生产检查都会读取最新状态，因此常驻 worker 不需要因开关变更而重启。

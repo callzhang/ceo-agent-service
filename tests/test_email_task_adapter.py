@@ -946,7 +946,7 @@ def test_fast_restart_reclaims_claim_when_lease_expires_during_normal_polling(
         original.complete(first, {"decision_status": "processed"})
 
 
-def test_final_attempt_crash_becomes_terminal_when_lease_expires(
+def test_expired_classifier_claim_returns_to_retry_queue_without_terminal_failure(
     tmp_path: Path,
 ):
     now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
@@ -954,31 +954,27 @@ def test_final_attempt_crash_becomes_terminal_when_lease_expires(
         _email_store(tmp_path),
         now=lambda: now[0],
         lease_seconds=60,
-        max_attempts=2,
-        retry_base_seconds=1,
+        retry_base_seconds=10,
+        retry_max_delay_seconds=15,
     )
     task = adapter.ensure_task(_classification_input(uid=145))
-    first = adapter.claim_next(owner="worker-first-attempt")
-    assert first is not None
-    adapter.fail(first, error="ConnectionError:offline", retryable=True)
+    claimed = adapter.claim_next(owner="worker-before-crash")
+    assert claimed is not None
 
-    now[0] = datetime(2026, 9, 8, 0, 0, 2, tzinfo=timezone.utc)
-    final = adapter.claim_next(owner="worker-final-attempt")
-    assert final is not None
-    assert final.attempt_count == 2
+    now[0] = datetime(2026, 9, 8, 0, 1, 1, tzinfo=timezone.utc)
+    assert adapter.recover_running_tasks() == 1
+    waiting = adapter.get_task(task.task_id)
+    assert waiting is not None
+    assert waiting.status == "pending"
+    assert waiting.error == "classification task lease expired"
+    assert waiting.available_at == "2026-09-08T00:01:01.000000+00:00"
 
-    now[0] = datetime(2026, 9, 8, 0, 1, 3, tzinfo=timezone.utc)
-    assert adapter.claim_next(owner="worker-after-final-crash") is None
-
-    terminal = adapter.get_task(task.task_id)
-    assert terminal is not None
-    assert terminal.status == "failed"
-    assert terminal.attempt_count == 2
-    assert terminal.owner == ""
-    assert terminal.lease_expires_at == ""
-    assert terminal.error == "classification task lease expired after final attempt"
+    now[0] = datetime(2026, 9, 8, 0, 1, 12, tzinfo=timezone.utc)
+    replacement = adapter.claim_next(owner="worker-after-crash")
+    assert replacement is not None
+    assert replacement.attempt_count == 2
     with pytest.raises(ValueError, match="lease changed"):
-        adapter.complete(final, {"decision_status": "processed"})
+        adapter.complete(claimed, {"decision_status": "processed"})
 
 
 def test_default_classifier_lease_outlasts_maximum_agent_turn(tmp_path: Path):
@@ -987,13 +983,13 @@ def test_default_classifier_lease_outlasts_maximum_agent_turn(tmp_path: Path):
     assert adapter.lease_seconds > 900
 
 
-def test_classifier_retry_is_bounded_and_backed_off(tmp_path: Path):
+def test_classifier_retry_uses_shared_capped_backoff_until_success(tmp_path: Path):
     now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
     adapter = EmailClassificationTaskAdapter(
         _email_store(tmp_path),
         now=lambda: now[0],
-        max_attempts=2,
         retry_base_seconds=10,
+        retry_max_delay_seconds=15,
     )
     adapter.ensure_task(_classification_input(uid=143))
     first = adapter.claim_next(owner="worker")
@@ -1004,7 +1000,16 @@ def test_classifier_retry_is_bounded_and_backed_off(tmp_path: Path):
     second = adapter.claim_next(owner="worker")
     assert second is not None
     adapter.fail(second, error="ConnectionError:offline", retryable=True)
-    assert adapter.get_task(second.task_id).status == "failed"
+    waiting = adapter.get_task(second.task_id)
+    assert waiting is not None
+    assert waiting.status == "pending"
+    assert waiting.available_at == "2026-09-08T00:00:26.000000+00:00"
+
+    now[0] = datetime(2026, 9, 8, 0, 0, 27, tzinfo=timezone.utc)
+    third = adapter.claim_next(owner="worker")
+    assert third is not None
+    adapter.complete(third, {"decision_status": "processed"})
+    assert adapter.get_task(third.task_id).status == "done"
 
 
 def test_classification_task_bootstrap_recovers_crash_interrupted_claim(tmp_path: Path):

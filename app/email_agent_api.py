@@ -8,6 +8,7 @@ import time
 import httpx
 
 from app.email_classifier_agent import validate_agent_classification_result
+from app.external_retry import retry_delay_seconds
 
 
 class EmailClassifierApiError(RuntimeError):
@@ -23,15 +24,18 @@ class EmailClassifierApiBackend:
         api_key: str,
         client: httpx.Client | None = None,
         max_retries: int = 2,
+        request_timeout_seconds: float = 120.0,
         sleeper: Callable[[float], None] = time.sleep,
         recorder: Callable[[Mapping[str, object]], None] | None = None,
     ) -> None:
         if max_retries < 0:
             raise ValueError("max_retries must be non-negative")
+        if request_timeout_seconds <= 0:
+            raise ValueError("request_timeout_seconds must be positive")
         self._url = base_url.rstrip("/") + "/responses"
         self._model = model
         self._api_key = api_key
-        self._client = client or httpx.Client()
+        self._client = client or httpx.Client(timeout=request_timeout_seconds)
         self._max_retries = max_retries
         self._sleeper = sleeper
         self._recorder = recorder or (lambda _event: None)
@@ -85,7 +89,7 @@ class EmailClassifierApiBackend:
                     retryable = response.status_code >= 500
                     if retryable and attempt <= self._max_retries:
                         self._event(task_id, attempt, started, usage, "retry", f"http_{response.status_code}")
-                        self._sleeper(0.1 * (2 ** (attempt - 1)))
+                        self._sleeper(retry_delay_seconds(1.0, attempt - 1))
                         continue
                     code = f"http_{response.status_code}"
                     self._event(task_id, attempt, started, usage, "error", code)
@@ -116,7 +120,7 @@ class EmailClassifierApiBackend:
                 code = "timeout" if isinstance(exc, httpx.TimeoutException) else "request_error"
                 if attempt <= self._max_retries:
                     self._event(task_id, attempt, started, {}, "retry", code)
-                    self._sleeper(0.1 * (2 ** (attempt - 1)))
+                    self._sleeper(retry_delay_seconds(1.0, attempt - 1))
                     continue
                 self._event(task_id, attempt, started, {}, "error", code)
                 raise EmailClassifierApiError(f"retryable email classifier API error ({code})") from None

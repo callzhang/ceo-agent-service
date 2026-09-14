@@ -2456,6 +2456,7 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
         ("Reply tasks", "reply_tasks", "status", "updated_at", "error"),
         ("Reply attempts", "reply_attempts", "send_status", "updated_at", "send_error"),
         ("Work items", "work_summary_inputs", "status", "updated_at", "error"),
+        ("Email classifications", "email_agent_classification_tasks", "status", "updated_at", "error"),
         ("Follow-ups", "follow_up_drafts", "status", "updated_at", "suppressed_reason"),
         ("Meeting jobs", "meeting_alignment_jobs", "status", "updated_at", "error"),
         ("OKR reviews", "okr_review_requests", "status", "updated_at", "error"),
@@ -2486,7 +2487,7 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
                     "table": table,
                     "counts": counts,
                     "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
-                    "processing": _queue_count_for(counts, {"processing", "sending"}),
+                    "processing": _queue_count_for(counts, {"processing", "running", "sending"}),
                     "failed": max(0, raw_failed - retryable),
                     "retryable": retryable,
                     "latest_updated_at": _queue_latest_value(db, table, updated_column),
@@ -3198,6 +3199,39 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "status": str(row["status"] or ""),
                         "context": str(row["context"] or ""),
                         "summary": summary,
+                        "updated_at": str(row["updated_at"] or ""),
+                        "error": str(row["error"] or ""),
+                    }
+                )
+        if _sqlite_table_exists(db, "email_agent_classification_tasks"):
+            email_task_sql = """
+                select task_id as id, status,
+                       coalesce(
+                           nullif(json_extract(input_json, '$.message.sender.email'), ''),
+                           nullif(json_extract(input_json, '$.message.sender.name'), ''),
+                           'Email classification'
+                       ) as context,
+                       coalesce(
+                           nullif(json_extract(input_json, '$.message.subject'), ''),
+                           stable_message_identity
+                       ) as summary,
+                       updated_at, error
+                from email_agent_classification_tasks
+                where lower(status)='failed'
+                order by updated_at desc, task_id desc
+            """
+            email_task_params: tuple[object, ...] = ()
+            if limit is not None:
+                email_task_sql += " limit ?"
+                email_task_params = (limit,)
+            for row in db.execute(email_task_sql, email_task_params).fetchall():
+                rows.append(
+                    {
+                        "category": "Email classification",
+                        "id": str(row["id"]),
+                        "status": str(row["status"] or ""),
+                        "context": str(row["context"] or ""),
+                        "summary": str(row["summary"] or ""),
                         "updated_at": str(row["updated_at"] or ""),
                         "error": str(row["error"] or ""),
                     }

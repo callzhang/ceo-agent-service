@@ -1,5 +1,13 @@
 # Changelog
 
+- 2026-09-14: Email classification now gives Responses API calls a 120-second
+  request budget instead of the HTTP client's five-second default. Retryable
+  classifier and expired-lease failures remain in the same durable task with
+  shared exponential backoff capped at 15 minutes, while non-retryable failures
+  remain explicit. The classifier queue is now included in Status, Attention,
+  and the hourly quality gate so these failures cannot be hidden by aggregate
+  Email worker health.
+
 - 2026-09-14: Audit now treats its approval of a typed, Skill-covered
   service-triggered action as the execution confirmation. Provider
   non-interactive confirmation flags acknowledge that reviewed action instead

@@ -8,6 +8,7 @@ from app.quality_gate import (
     write_hourly_quality_state,
 )
 from app.cli import WorkerSettings, quality_check_command
+from app.email_store import EmailStore
 from app.store import AutoReplyStore
 
 
@@ -209,6 +210,7 @@ def test_required_live_channels_skips_unused_lark_but_includes_referenced_lark(
 
 def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
+    EmailStore(store.path)
     stale = (NOW - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
     _insert_reply_task(store, status="processing", updated_at=stale)
     with store._connect() as db:
@@ -229,6 +231,16 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
             (stale,),
         )
         db.execute(
+            """insert into email_agent_classification_tasks (
+                   task_id, channel, stable_message_identity, status, input_json,
+                   error, updated_at
+               ) values (
+                   'email-classification:failed', 'email', 'account:inbox:1',
+                   'failed', '{}', 'invalid classification input', ?
+               )""",
+            (stale,),
+        )
+        db.execute(
             """insert into errors (
                    conversation_id, message_id, kind, detail, created_at
                ) values (
@@ -245,6 +257,7 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
         ("meeting_alignment_jobs", "failed"),
         ("follow_up_drafts", "scheduled_overdue"),
         ("work_summary_inputs", "failed"),
+        ("email_agent_classification_tasks", "failed"),
         ("errors", "recent_error"),
     }
 

@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.audit_web as audit_web_module
+from app.email_store import EmailStore
 from app.audit_web import (
     create_audit_app,
     create_default_audit_app,
@@ -10105,6 +10106,7 @@ def test_render_workers_page_shows_service_and_queue_status(
         },
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    EmailStore(store.path)
     project_id = store.create_work_project(
         title="客户交付",
         category="projects",
@@ -10149,6 +10151,17 @@ def test_render_workers_page_shows_service_and_queue_status(
         status="failed",
         last_error="code=TOKEN_VERIFIED_FAILED",
     )
+    with store._connect() as db:
+        db.execute(
+            """insert into email_agent_classification_tasks (
+                   task_id, channel, stable_message_identity, status, input_json,
+                   error, updated_at
+               ) values (
+                   'email-classification:failed', 'email', 'account:inbox:1',
+                   'failed', '{"message":{"subject":"Quarterly renewal"}}',
+                   'invalid classification input', '2026-07-01 17:00:00'
+               )"""
+        )
 
     payload = build_worker_status_payload(store)
     html = render_workers_page(store)
@@ -10158,6 +10171,17 @@ def test_render_workers_page_shows_service_and_queue_status(
     assert payload["summary"]["failed"] >= 1
     assert payload["summary"]["retryable"] >= 1
     assert any(queue["name"] == "Work items" for queue in payload["queues"])
+    classifier_queue = next(
+        queue
+        for queue in payload["queues"]
+        if queue["name"] == "Email classifications"
+    )
+    assert classifier_queue["failed"] == 1
+    assert any(
+        row["category"] == "Email classification"
+        and row["error"] == "invalid classification input"
+        for row in payload["attention_rows"]
+    )
     assert any(queue["name"] == "Follow-ups" for queue in payload["queues"])
     assert "Workers" in html
     assert "Queues" in html
