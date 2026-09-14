@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-14: The Email unsubscribe drawer now links only verified matching
+  Attempt records and can reveal a saved entry address only after an explicit
+  request. Normal list and detail responses remain redacted; the dedicated
+  address response is non-cacheable and refuses incomplete or mismatched
+  receipt/task/ActionPlan lineage.
+
 - 2026-09-14: The former `整理工作区中的新工作记录` Cron now appears as
   `将会议行动项整理到 Tasks`. Its deterministic Trigger reads explicit
   DingTalk meeting Todo collections instead of Markdown or text files, queues

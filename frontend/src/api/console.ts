@@ -258,6 +258,7 @@ export interface EmailObservabilityEvent {
   task_status?: string;
   consumer_run_ids?: number[];
   audit_run_ids?: number[];
+  attempt_ids?: number[];
   status: string;
   attempt_count?: number;
   provider_operation?: string;
@@ -668,6 +669,16 @@ export function getEmailClassification(id: string, signal?: AbortSignal) {
       provider_classification: isRecord(payload.provider_classification) ? payload.provider_classification as unknown as EmailProviderClassification : null,
       meta: asRecord(payload.meta) as { snapshot_at: string },
     } satisfies EmailClassificationDetail;
+  });
+}
+
+export function getEmailUnsubscribeEntryUrl(id: string, signal?: AbortSignal) {
+  return request<unknown>(`/api/console/email/classifications/${id}/unsubscribe-entry`, { signal }).then((value) => {
+    const payload = asRecord(value);
+    if (payload.ok !== true || typeof payload.entry_url !== "string" || !payload.entry_url) {
+      throw new Error("invalid unsubscribe entry response");
+    }
+    return payload.entry_url;
   });
 }
 

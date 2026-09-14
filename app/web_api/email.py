@@ -1199,6 +1199,20 @@ def register_email_routes(
             "meta": meta(),
         }
 
+    @app.get("/api/console/email/classifications/{classification_id}/unsubscribe-entry")
+    def email_unsubscribe_entry(classification_id: int):
+        entry_url = require_store().get_email_unsubscribe_entry_url(classification_id)
+        if entry_url is None:
+            return error_response(
+                "unsubscribe_entry_unavailable",
+                "Unsubscribe entry is unavailable for this email",
+                404,
+            )
+        return JSONResponse(
+            {"ok": True, "entry_url": entry_url},
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.post("/api/console/email/classifications/{classification_id}/feedback")
     async def email_classification_feedback(classification_id: int, request: Request):
         email_store = require_store()

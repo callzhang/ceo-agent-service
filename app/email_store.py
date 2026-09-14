@@ -2209,12 +2209,34 @@ def _audited_unsubscribe_lineage(
     if run_chain is None:
         return None
     consumer_run_ids, audit_run_ids = run_chain
+    has_attempts = db.execute(
+        "select 1 from sqlite_master where type='table' and name='reply_attempts'"
+    ).fetchone()
+    attempt_ids = (
+        [
+            int(row["id"])
+            for row in db.execute(
+                """
+                select id
+                from reply_attempts
+                where channel='email'
+                  and conversation_id=?
+                  and trigger_message_id=?
+                order by id
+                """,
+                (expected_conversation_id, receipt["action_identity"]),
+            ).fetchall()
+        ]
+        if has_attempts is not None
+        else []
+    )
     return {
         "lifecycle_version": "email_unsubscribe_audited_v2",
         "task_id": task_id,
         "task_status": str(lineage["task_status"]),
         "consumer_run_ids": consumer_run_ids,
         "audit_run_ids": audit_run_ids,
+        "attempt_ids": attempt_ids,
     }
 
 
@@ -12354,6 +12376,65 @@ class EmailStore:
             self.get_classification_by_stable_identity(stable_message_identity)
             is not None
         )
+
+    def get_email_unsubscribe_entry_url(self, classification_id: int) -> str | None:
+        """Return one terminal unsubscribe entry URL after full lineage validation."""
+
+        _require_positive_int(classification_id, field="classification_id")
+        with self._connect() as db:
+            generic_tables = {
+                str(row["name"])
+                for row in db.execute(
+                    """
+                    select name from sqlite_master
+                    where type='table' and name in ('reply_tasks', 'agent_runs')
+                    """
+                ).fetchall()
+            }
+            if generic_tables != {"reply_tasks", "agent_runs"}:
+                return None
+            classification = db.execute(
+                """
+                select classifications.id, classifications.account_id,
+                       classifications.stable_message_identity,
+                       classifications.current_action_plan_id,
+                       messages.thread_identity as message_thread_identity
+                from email_classifications as classifications
+                join email_messages as messages
+                  on messages.account_id=classifications.account_id
+                 and messages.stable_message_identity=
+                     classifications.stable_message_identity
+                where classifications.id=?
+                """,
+                (classification_id,),
+            ).fetchone()
+            if classification is None:
+                return None
+            receipts = db.execute(
+                """
+                select action_identity, effect_digest, action_plan_id,
+                       action_plan_version, classification_id, account_id,
+                       stable_message_identity, thread_identity, entry_reference,
+                       entry_url
+                from email_unsubscribe_receipts
+                where classification_id=? and trim(entry_url) != ''
+                order by created_at desc, action_identity desc
+                """,
+                (classification_id,),
+            ).fetchall()
+            for receipt in receipts:
+                if _audited_unsubscribe_lineage(
+                    db, receipt=receipt, classification=classification
+                ) is None:
+                    continue
+                try:
+                    return _validate_unsubscribe_entry_url(
+                        receipt["entry_url"],
+                        entry_reference=receipt["entry_reference"],
+                    )
+                except ValueError:
+                    continue
+        return None
 
     def stable_classification_uids(
         self, *, account_id: str, folder: str, uidvalidity: int

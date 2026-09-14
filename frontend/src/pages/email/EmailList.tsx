@@ -115,7 +115,7 @@ export function EmailList({configs, onBusy}: {configs:EmailCategoryConfig[]; onB
         <ProcessedClassificationEvidence row={detail.item}/>
         {(detail.provider_classification || detail.item.provider_classification)&&<section aria-label="邮箱观察事实"><h3>邮箱观察事实</h3><p>已观察到的文件夹与 Star / Flag 状态：</p><pre>{JSON.stringify(detail.provider_classification || detail.item.provider_classification,null,2)}</pre></section>}
         <section className="email-candidate-distribution" aria-label="候选分布"><h3>候选分布</h3><div className="email-probability-bar" aria-hidden="true">{Object.entries(detail.item.probabilities).sort(([,a],[,b])=>b-a).map(([key,value])=><span key={key} data-category={key} style={{flexGrow:Math.max(0,value)}} />)}</div><div className="email-probability-legend">{Object.entries(detail.item.probabilities).sort(([,a],[,b])=>b-a).map(([key,value])=><span key={key}><i data-category={key}/>{label(key)} {measured(value)}</span>)}</div><p className="muted">模型置信度：{measured(detail.item.confidence)} · 间隔：{measured(detail.item.margin)}</p></section>
-        <ObservabilityDetails events={detail.observability}/>
+        <ObservabilityDetails events={detail.observability} classificationId={detail.item.id}/>
         </div>
         {filter!=="unsubscribe"&&(detail.item.status==="pending_feedback"||detail.item.status==="processed")&&<form aria-label="分类确认" className="email-drawer-footer" onSubmit={event=>{event.preventDefault();void save();}}>
           <p>{detail.item.status==="pending_feedback"?"建议":"当前分类"}：{label(detail.item.category)} · {measured(detail.item.confidence)}，请选择类别后保存。</p>

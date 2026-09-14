@@ -1828,6 +1828,17 @@ def _audited_email_detail_fixture(
     )
     task = task_store.claim_reply_task(task.id)
     assert task is not None
+    attempt_id = task_store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=action_identity,
+        trigger_sender="newsletter@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+        action="unsubscribe",
+        sensitivity_kind="email",
+        send_status="done",
+        channel="email",
+    )
     consumer = task_store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -1853,11 +1864,15 @@ def _audited_email_detail_fixture(
         operation_id="audit-observability-1",
         owner="audit-observability-owner",
     ).run
+    entry_url = "https://news.example.com/unsubscribe?token=fixture-entry"
+    entry_reference = "unsubscribe-entry:" + sha256(
+        entry_url.encode("utf-8")
+    ).hexdigest()
     operations = (
         {
             "operation_reference": "step-observability-1",
             "kind": "open_entry",
-            "target_reference": "unsubscribe-entry:observability-1",
+            "target_reference": entry_reference,
         },
     )
     binding = {
@@ -1868,7 +1883,7 @@ def _audited_email_detail_fixture(
         "account_id": account_id,
         "stable_message_identity": stable_message_identity,
         "thread_identity": thread_identity,
-        "entry_reference": "unsubscribe-entry:observability-1",
+        "entry_reference": entry_reference,
         "operations": operations,
     }
     effect_digest = email_unsubscribe_effect_digest(**binding)
@@ -1891,6 +1906,7 @@ def _audited_email_detail_fixture(
     receipt = email_store.persist_email_unsubscribe_terminal(
         **binding,
         effect_digest=effect_digest,
+        entry_url=entry_url,
         outcome="done",
         receipt_id="provider-receipt:observability-41",
         evidence="terminal-page:unsubscribed",
@@ -1941,6 +1957,17 @@ def _audited_email_detail_fixture(
         operation_id="",
         owner="unrelated-owner",
     ).run
+    unrelated_attempt_id = task_store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title="Unrelated attempt",
+        trigger_message_id="unrelated-trigger",
+        trigger_sender="someone@example.com",
+        trigger_text="Unrelated",
+        action="none",
+        sensitivity_kind="email",
+        send_status="done",
+        channel="email",
+    )
 
     app = FastAPI()
     register_email_routes(app, lambda: email_store)
@@ -1958,10 +1985,14 @@ def _audited_email_detail_fixture(
         effect_digest=effect_digest,
         task_payload=task_payload,
         task=task,
+        attempt_id=attempt_id,
         consumer=consumer,
         audit=audit,
         receipt=receipt,
         unrelated_run=unrelated_run,
+        unrelated_attempt_id=unrelated_attempt_id,
+        entry_reference=entry_reference,
+        entry_url=entry_url,
         private_markers=private_markers,
     )
 
@@ -1996,6 +2027,7 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
         "task_status": "done",
         "consumer_run_ids": [fixture.consumer.id],
         "audit_run_ids": [fixture.audit.id],
+        "attempt_ids": [fixture.attempt_id],
         "status": "done",
         "receipt_id": "provider-receipt:observability-41",
         "result_text": "You have been unsubscribed",
@@ -2014,6 +2046,8 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
     assert "result_text_digest" not in event
     serialized = json.dumps(event, sort_keys=True)
     assert fixture.unrelated_run.id not in event["consumer_run_ids"]
+    assert fixture.unrelated_attempt_id not in event["attempt_ids"]
+    assert fixture.entry_url not in serialized
     assert all(marker not in serialized for marker in fixture.private_markers)
     assert all(
         str(value) not in serialized for value in fixture.private_markers.values()
@@ -2028,6 +2062,35 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
 
     _assert_no_audited_lineage(legacy_event)
     assert fixture.unrelated_run.id not in legacy_event["consumer_run_ids"]
+
+
+def test_email_unsubscribe_entry_url_requires_explicit_verified_receipt(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+
+    response = fixture.client.get(
+        f"/api/console/email/classifications/{fixture.classification_id}/unsubscribe-entry"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"ok": True, "entry_url": fixture.entry_url}
+
+    with sqlite3.connect(fixture.database) as db:
+        db.execute(
+            "update email_unsubscribe_receipts set entry_url='' where action_identity=?",
+            (fixture.action_identity,),
+        )
+
+    unavailable = fixture.client.get(
+        f"/api/console/email/classifications/{fixture.classification_id}/unsubscribe-entry"
+    )
+
+    assert unavailable.status_code == 404
+    assert unavailable.json()["code"] == "unsubscribe_entry_unavailable"
+    assert fixture.entry_url not in unavailable.text
+    assert "fixture-entry" not in unavailable.text
 
 
 def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
@@ -2102,12 +2165,12 @@ def test_email_detail_projects_safe_unsubscribe_continuation_state(
         account_id=fixture.account_id,
         stable_message_identity=fixture.stable_message_identity,
         thread_identity=fixture.thread_identity,
-        entry_reference="unsubscribe-entry:observability-1",
+        entry_reference=fixture.entry_reference,
         operations=(
             {
                 "operation_reference": "step-observability-1",
                 "kind": "open_entry",
-                "target_reference": "unsubscribe-entry:observability-1",
+                "target_reference": fixture.entry_reference,
             },
         ),
         controls=(

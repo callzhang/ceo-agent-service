@@ -20,6 +20,9 @@
 .email-drawer-content { min-width: 0; overflow-wrap: anywhere; }
 .email-body-text, .email-detail-drawer pre, .email-config-editor pre, .email-training pre { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; max-width: 100%; }
 .email-body-text { line-height: 1.72; font-size: 14px; }
+.email-unsubscribe-attempts, .email-unsubscribe-entry { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
+.email-unsubscribe-entry input { flex: 1 1 260px; min-width: 0; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.email-unsubscribe-attempts a { font-size: 13px; }
 .email-candidate-distribution { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
 .email-candidate-distribution h3 { margin: 0 0 10px; }
 .email-probability-bar { display: flex; gap: 2px; height: 10px; overflow: hidden; border-radius: 999px; background: var(--surface-muted); }

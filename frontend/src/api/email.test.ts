@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from "vitest";
-import {createEmailCategory,getEmailClassification,getEmailModelVersion,listEmailClassifications,requestEmailTraining,saveEmailConfig,saveEmailPromotionConfig,saveEmailRuntimeMode} from "./console";
+import {createEmailCategory,getEmailClassification,getEmailModelVersion,getEmailUnsubscribeEntryUrl,listEmailClassifications,requestEmailTraining,saveEmailConfig,saveEmailPromotionConfig,saveEmailRuntimeMode} from "./console";
 afterEach(()=>vi.unstubAllGlobals());
 function reply(value:unknown){return new Response(JSON.stringify(value),{status:200});}
 it("preserves nullable importance, provider truth, quoted text and large string IDs",async()=>{
@@ -14,6 +14,13 @@ it("preserves nullable importance, provider truth, quoted text and large string 
   expect(detail.provider_classification?.category_key).toBe("legal");
   expect(JSON.stringify(detail.item.attachment_metadata)).not.toContain("PRIVATE");
   expect(fetch.mock.calls[1][0]).toBe("/api/console/email/classifications/"+id);
+});
+it("loads an unsubscribe entry only from the explicit selected-email endpoint",async()=>{
+  const controller=new AbortController(),id="8423079112545370123";
+  const fetch=vi.fn().mockResolvedValue(reply({ok:true,entry_url:"https://example.test/unsubscribe?token=fixture"}));
+  vi.stubGlobal("fetch",fetch);
+  await expect(getEmailUnsubscribeEntryUrl(id,controller.signal)).resolves.toBe("https://example.test/unsubscribe?token=fixture");
+  expect(fetch).toHaveBeenCalledWith(`/api/console/email/classifications/${id}/unsubscribe-entry`,expect.objectContaining({signal:controller.signal}));
 });
 it("sends exact versioned JSON commands to config and training endpoints",async()=>{
   const fetch=vi.fn().mockImplementation(async()=>reply({ok:true}));vi.stubGlobal("fetch",fetch);

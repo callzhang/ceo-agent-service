@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { EmailClassificationListParams } from "../api/console";
-const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "getEmailClassification", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
+const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "getEmailClassification", "getEmailUnsubscribeEntryUrl", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
 vi.mock("../api/console", async importOriginal => ({ ...await importOriginal<object>(), ...api }));
 import { EmailPage } from "./EmailPage";
 const config = { category_key: "work", display_name: "工作", core_description: "工作定义", include: ["项目"], exclude: ["私人"], threshold: .9, actions: ["move"], action_parameters: {}, enabled: true, config_version: "c1", description_version: "d1", updated_at: "", bindings: [] };
@@ -213,15 +213,22 @@ it("returns to a legal previous page after removing the last item",async()=>{
   await user.click(await screen.findByRole("button",{name:"工作"}));await user.click(screen.getByRole("button",{name:"保存分类并继续"}));
   await waitFor(()=>expect(screen.getByLabelText("URL")).toHaveTextContent("page=1"));
 });
-it("preserves provider observations, unknown important state and rich action evidence",async()=>{
+it("reveals unsubscribe evidence only on demand and links the verified Attempt",async()=>{
   const user=userEvent.setup();
   api.listEmailClassifications.mockResolvedValue({items:[{...row("1"),important:null,provider_classification:{state:"categorized",category_key:"legal",important:null}}],meta:{page:1,page_size:50,total:1}});
-  api.getEmailClassification.mockResolvedValue({item:{...row("1"),message_text:"正文",recipients:["legal@example.com"],cc:"cc@example.com",description_version:"desc-v7",action_plan:{action_plan_id:"plan-full-id",action_plan_version:7,actions:["move","unsubscribe"]}},provider_classification:{state:"categorized",category_key:"legal",important:null,observed_at:"2026-09-08T00:00:00Z"},observability:[{kind:"unsubscribe",status:"done",lifecycle_version:"email_unsubscribe_audited_v2",result_text:"退订成功",task_id:42,task_status:"done",consumer_run_ids:[101],audit_run_ids:[102],receipt_id:"receipt-2",observation_digest:"digest-2",evidence:"最终结果页：已成功退订",steps:[{sequence:1,operation:"open_entry",state:"done",reference:"receipt-2"}]}]});
+  api.getEmailClassification.mockResolvedValue({item:{...row("1"),message_text:"正文",recipients:["legal@example.com"],cc:"cc@example.com",description_version:"desc-v7",action_plan:{action_plan_id:"plan-full-id",action_plan_version:7,actions:["move","unsubscribe"]}},provider_classification:{state:"categorized",category_key:"legal",important:null,observed_at:"2026-09-08T00:00:00Z"},observability:[{kind:"unsubscribe",status:"done",lifecycle_version:"email_unsubscribe_audited_v2",result_text:"退订成功",task_id:42,task_status:"done",consumer_run_ids:[101],audit_run_ids:[102],attempt_ids:[9205],receipt_id:"receipt-2",observation_digest:"digest-2",evidence:"最终结果页：已成功退订",steps:[{sequence:1,operation:"open_entry",state:"done",reference:"receipt-2"}]}]});
+  api.getEmailUnsubscribeEntryUrl.mockResolvedValue("https://example.test/unsubscribe?token=fixture");
   show();await user.click(await screen.findByRole("button",{name:"打开邮件 邮件1"}));
   const drawer=await screen.findByRole("dialog");
   expect(await within(drawer).findByText("退订成功")).toBeInTheDocument();
   expect(drawer).toHaveTextContent("plan-full-id");expect(drawer).toHaveTextContent("版本 7");expect(drawer).toHaveTextContent("desc-v7");
   expect(drawer).toHaveTextContent("Consumer run：101");expect(drawer).toHaveTextContent("Audit run：102");expect(drawer).toHaveTextContent("receipt-2");expect(drawer).toHaveTextContent("digest-2");
+  expect(within(drawer).getByRole("link",{name:"打开 Attempt #9205"})).toHaveAttribute("href","/attempts/9205");
+  expect(api.getEmailUnsubscribeEntryUrl).not.toHaveBeenCalled();
+  await user.click(within(drawer).getByRole("button",{name:"显示完整地址"}));
+  expect(api.getEmailUnsubscribeEntryUrl).toHaveBeenCalledWith("1",expect.any(AbortSignal));
+  expect(await within(drawer).findByDisplayValue("https://example.test/unsubscribe?token=fixture")).toBeInTheDocument();
+  expect(within(drawer).getByRole("button",{name:"复制地址"})).toBeInTheDocument();
   expect(within(drawer).getByRole("region",{name:"邮箱观察事实"})).toHaveTextContent("legal");
   expect(screen.getAllByLabelText("重要状态未知").length).toBeGreaterThan(0);
 });

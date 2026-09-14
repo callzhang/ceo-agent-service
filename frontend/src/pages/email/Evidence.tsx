@@ -1,4 +1,6 @@
-import type { EmailClassificationItem, EmailObservabilityEvent } from "../../api/console";
+import { Link } from "react-router-dom";
+import { useState } from "react";
+import { getEmailUnsubscribeEntryUrl, type EmailClassificationItem, type EmailObservabilityEvent } from "../../api/console";
 import { localTime } from "./shared";
 function actionPlanEvidence(row: EmailClassificationItem) {
   const plan = row.action_plan;
@@ -31,7 +33,36 @@ function observabilityLabel(event: EmailObservabilityEvent) {
   return event.operation || "邮箱动作";
 }
 
-export function ObservabilityDetails({ events }: { events: EmailObservabilityEvent[] }) {
+function UnsubscribeEvidence({ event, classificationId }: { event: EmailObservabilityEvent; classificationId: string }) {
+  const [entryUrl, setEntryUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  async function reveal() {
+    if (loading || entryUrl) return;
+    setLoading(true);
+    setError("");
+    try {
+      setEntryUrl(await getEmailUnsubscribeEntryUrl(classificationId, new AbortController().signal));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "退订入口暂不可用");
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function copy() {
+    await navigator.clipboard?.writeText(entryUrl);
+  }
+  return <>
+    {!!event.attempt_ids?.length && <div className="email-unsubscribe-attempts"><strong>处理记录</strong>{event.attempt_ids.map(id => <Link key={id} to={`/attempts/${id}`}>打开 Attempt #{id}</Link>)}</div>}
+    <div className="email-unsubscribe-entry">
+      <strong>退订入口</strong>
+      {!entryUrl ? <button type="button" onClick={()=>void reveal()} disabled={loading}>{loading ? "正在读取地址…" : "显示完整地址"}</button> : <><input aria-label="退订入口地址" readOnly value={entryUrl}/><button type="button" onClick={()=>void copy()}>复制地址</button></>}
+      {error && <p role="alert">{error}</p>}
+    </div>
+  </>;
+}
+
+export function ObservabilityDetails({ events, classificationId }: { events: EmailObservabilityEvent[]; classificationId: string }) {
   if (!events.length) return <p className="muted">暂无外部处理记录。</p>;
   return <div className="email-observability-list">
     {events.map((event, index) => {
@@ -50,6 +81,7 @@ export function ObservabilityDetails({ events }: { events: EmailObservabilityEve
           {event.receipt_id && <><dt>Receipt</dt><dd>{event.receipt_id}</dd></>}
           {event.observation_digest && <><dt>观察摘要</dt><dd>{event.observation_digest}</dd></>}
         </dl>
+        <UnsubscribeEvidence event={event} classificationId={classificationId}/>
         {!!event.steps?.length && <div><h4>退订步骤</h4><ol>{event.steps.map((step) => <li key={`${step.sequence}-${step.reference}`}>{step.operation}：{step.state}（{step.reference}）</li>)}</ol></div>}
       </> : <>
         {event.summary && <p>{event.summary}</p>}
@@ -59,5 +91,4 @@ export function ObservabilityDetails({ events }: { events: EmailObservabilityEve
     </article>})}
   </div>;
 }
-
 
