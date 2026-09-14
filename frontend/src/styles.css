@@ -1631,6 +1631,13 @@ h1, h2, h3, p { margin-top: 0; }
 .scheduled-task-history li small, .scheduled-task-history li > span, .scheduled-task-history li p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scheduled-task-history li small { flex: 0 0 auto; }
 .scheduled-task-history li > span { flex: 0 1 auto; }
+.scheduled-task-history .scheduled-task-attempt-links { display: inline-flex; align-items: center; gap: 5px; min-width: 0; flex: 1 1 auto; }
+.scheduled-task-history .scheduled-task-attempt-links a { color: var(--accent); font-size: .72rem; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.scheduled-task-history .scheduled-task-attempt-links a:hover { text-decoration: underline; }
+.scheduled-task-history .scheduled-task-command { display: inline-flex; align-items: center; gap: 5px; min-width: 0; flex: 0 1 130px; }
+.scheduled-task-history .scheduled-task-command > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-history .scheduled-task-command details { flex: 0 0 auto; }
+.scheduled-task-history .scheduled-task-command summary { white-space: nowrap; }
 .scheduled-task-history li p { flex: 1 1 auto; min-width: 0; margin: 0; color: var(--danger); font-size: .72rem; }
 .scheduled-task-history li p { grid-column: 1 / -1; margin: 0; color: var(--danger); font-size: .75rem; }
 .scheduled-task-empty { display: grid; justify-items: start; gap: 8px; padding: 24px 18px; color: var(--ink-soft); }

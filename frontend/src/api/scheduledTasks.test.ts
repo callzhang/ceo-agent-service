@@ -39,6 +39,7 @@ const validRun = {
   id: 11, event_id: "manual:11", scheduled_task_id: 7, trigger_kind: "manual",
   scheduled_for: "2026-09-08T12:00:00Z", dispatch_status: "pending", skip_or_error_reason: "",
   execution_kind: "", execution_id: "", created_at: "2026-09-08T12:00:00Z", dispatched_at: null,
+  attempts: [],
   snapshot: { task_id: 7, task_version: 3, name: task.name, description: task.description, prompt: task.prompt, command: task.command, cron_expression: task.cron_expression, timezone_name: task.timezone_name, runtime_id: task.runtime_id, runtime_options: task.runtime_options, required_runtime_capabilities: task.required_runtime_capabilities, working_directory: task.working_directory, skill_refs: task.skill_refs },
 } as const;
 const validOptions = {
@@ -108,6 +109,8 @@ describe("scheduled tasks API", () => {
     ["fractional task version", { ...task, version: 1.5 }],
     ["zero run id", { ...task, recent_run: { ...validRun, id: 0 } }],
     ["fractional run id", { ...task, recent_run: { ...validRun, id: 1.5 } }],
+    ["invalid Attempt link", { ...task, recent_run: { ...validRun, attempts: [{ id: 0, status: "completed" }] } }],
+    ["blank Attempt status", { ...task, recent_run: { ...validRun, attempts: [{ id: 1, status: "" }] } }],
     ["negative run task id", { ...task, recent_run: { ...validRun, scheduled_task_id: -1 } }],
     ["zero snapshot task id", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, task_id: 0 } } }],
     ["fractional snapshot task id", { ...task, recent_run: { ...validRun, snapshot: { ...validRun.snapshot, task_id: 1.5 } } }],

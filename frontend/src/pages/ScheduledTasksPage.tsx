@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import {
   createScheduledTask,
@@ -205,9 +205,10 @@ function RunHistory({ runs, hasMore, loading, onMore, commandOptions }: { runs: 
     {runs.length === 0 ? <p className="scheduled-task-empty-copy">尚无运行记录。</p> : <ol>{runs.map((run) => <li key={run.id}>
       <div><strong>{run.trigger_kind === "manual" ? "手动运行" : "定时触发"}</strong><span>{run.dispatch_status}</span></div>
       <small>{timeLabel(run.scheduled_for)}</small>
+      <span className="scheduled-task-attempt-links"><span>Trigger #{run.id}</span><span aria-hidden="true">→</span>{run.attempts.length > 0 ? run.attempts.map((attempt) => <Link key={attempt.id} to={`/attempts/${attempt.id}`} title={attempt.status}>Attempt #{attempt.id}</Link>) : <span>未产生 Attempt</span>}</span>
       {run.execution_kind === "service_command" && run.execution_id ? (() => {
         const command = commandOptions.find((option) => option.name === run.execution_id);
-        return <span>{command?.display_name || "服务命令"}<details><summary>技术详情</summary><small>{run.execution_id}</small></details></span>;
+        return <span className="scheduled-task-command"><span>{command?.display_name || "服务命令"}</span><details><summary>技术详情</summary><small>{run.execution_id}</small></details></span>;
       })() : run.execution_kind && run.execution_id && <span>{run.execution_kind} #{run.execution_id}</span>}
       {run.skip_or_error_reason && <p>{run.skip_or_error_reason}</p>}
     </li>)}</ol>}

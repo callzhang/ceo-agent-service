@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import json
 import os
 from pathlib import Path
 
@@ -657,6 +658,99 @@ def test_runs_are_bounded_and_cursor_paginated_newest_first(tmp_path: Path) -> N
     assert [item["id"] for item in second.json()["items"]] == [1]
     assert second.json()["meta"]["has_more"] is False
     assert second.json()["meta"]["next_cursor"] == ""
+
+
+def test_run_history_links_trigger_outputs_to_reply_attempts(tmp_path: Path) -> None:
+    client, store, ids, _wakes = _client(tmp_path)
+    created = client.post("/api/console/scheduled-tasks", json=_create_payload(ids))
+    task_id = created.json()["item"]["id"]
+    run = store.create_scheduled_task_run(
+        task_id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+    lineage = json.dumps(
+        {
+            "raw_payload": {
+                "scheduled_consumer": {
+                    "schema": "scheduled_consumer.v1",
+                    "scheduled_task_run_id": run.id,
+                }
+            }
+        }
+    )
+    store.enqueue_reply_task(
+        channel="dingtalk",
+        conversation_id="conversation-1",
+        conversation_title="Conversation",
+        single_chat=True,
+        trigger_message_id="message-1",
+        trigger_create_time=NOW.isoformat(),
+        trigger_sender="Sender",
+        trigger_text="First input",
+        trigger_message_json=lineage,
+    )
+    first_attempt = store.record_reply_attempt(
+        channel="dingtalk",
+        conversation_id="conversation-1",
+        conversation_title="Conversation",
+        trigger_message_id="message-1",
+        trigger_sender="Sender",
+        trigger_text="First input",
+        action="none",
+        sensitivity_kind="general",
+        send_status="skipped",
+    )
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="conversation-2",
+        conversation_title="Conversation 2",
+        single_chat=True,
+        trigger_message_id="message-2",
+        trigger_create_time=NOW.isoformat(),
+        trigger_sender="Sender 2",
+        trigger_text="Second input",
+        trigger_message_json=json.dumps(
+            {
+                "scheduled_consumer": {
+                    "schema": "scheduled_consumer.v1",
+                    "scheduled_task_run_id": run.id,
+                }
+            }
+        ),
+    )
+    second_attempt = store.record_reply_attempt(
+        channel="wechat",
+        conversation_id="conversation-2",
+        conversation_title="Conversation 2",
+        trigger_message_id="message-2",
+        trigger_sender="Sender 2",
+        trigger_text="Second input",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="completed",
+    )
+    store.record_reply_attempt(
+        channel="dingtalk",
+        conversation_id="unrelated",
+        conversation_title="Unrelated",
+        trigger_message_id="unrelated-message",
+        trigger_sender="Other",
+        trigger_text="Unrelated input",
+        action="none",
+        sensitivity_kind="general",
+        send_status="skipped",
+    )
+
+    with client:
+        response = client.get(f"/api/console/scheduled-tasks/{task_id}/runs")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["attempts"] == [
+        {"id": second_attempt, "status": "completed"},
+        {"id": first_attempt, "status": "skipped"},
+    ]
 
 
 def test_update_maps_concurrent_soft_delete_to_not_found(

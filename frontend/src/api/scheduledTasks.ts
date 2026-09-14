@@ -56,6 +56,7 @@ export interface ScheduledTaskRun {
   execution_id: string;
   created_at: string;
   dispatched_at: string | null;
+  attempts: Array<{ id: number; status: string }>;
   snapshot: ScheduledTaskSnapshot;
 }
 
@@ -217,6 +218,11 @@ function validRun(value: unknown): value is ScheduledTaskRun {
     && typeof item.skip_or_error_reason === "string" && typeof item.execution_kind === "string"
     && typeof item.execution_id === "string" && typeof item.created_at === "string"
     && nullableString(item.dispatched_at)
+    && Array.isArray(item.attempts)
+    && item.attempts.every((attempt) => {
+      const value = record(attempt);
+      return Boolean(value && positiveInteger(value.id) && typeof value.status === "string" && Boolean(value.status.trim()));
+    })
     && positiveInteger(snapshot.task_id) && positiveInteger(snapshot.task_version)
     && typeof snapshot.name === "string" && typeof snapshot.description === "string" && typeof snapshot.prompt === "string"
     && typeof snapshot.command === "string"

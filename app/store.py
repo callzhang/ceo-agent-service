@@ -6543,6 +6543,50 @@ class AutoReplyStore:
             ).fetchall()
         return tuple(self._scheduled_task_run_from_row(row) for row in rows)
 
+    def list_scheduled_task_run_attempts(
+        self,
+        run_ids: Sequence[int],
+    ) -> dict[int, tuple[tuple[int, str], ...]]:
+        """Return reply Attempt ids and states produced from each Trigger run."""
+
+        normalized_ids = tuple(run_ids)
+        if any(type(run_id) is not int or run_id <= 0 for run_id in normalized_ids):
+            raise ValueError("scheduled task run ids must be positive integers")
+        if not normalized_ids:
+            return {}
+        placeholders = ",".join("?" for _ in normalized_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select distinct
+                       cast(lineage.value as integer) as scheduled_task_run_id,
+                       attempts.id as attempt_id,
+                       attempts.send_status as attempt_status
+                  from reply_task_inputs as inputs
+                  join json_tree(
+                      case when json_valid(inputs.trigger_message_json)
+                           then inputs.trigger_message_json else '{{}}' end
+                  ) as lineage
+                  join reply_attempts as attempts
+                    on attempts.channel=inputs.channel
+                   and attempts.conversation_id=inputs.conversation_id
+                   and attempts.trigger_message_id=inputs.trigger_message_id
+                 where lineage.key='scheduled_task_run_id'
+                   and lineage.type='integer'
+                   and cast(lineage.value as integer) in ({placeholders})
+                 order by scheduled_task_run_id, attempt_id desc
+                """,
+                normalized_ids,
+            ).fetchall()
+        grouped: dict[int, list[tuple[int, str]]] = {
+            run_id: [] for run_id in normalized_ids
+        }
+        for row in rows:
+            grouped[int(row["scheduled_task_run_id"])].append(
+                (int(row["attempt_id"]), str(row["attempt_status"]))
+            )
+        return {run_id: tuple(attempts) for run_id, attempts in grouped.items()}
+
     @staticmethod
     def _runtime_capability_state_key(route_name: str) -> str:
         if not isinstance(route_name, str) or not route_name.strip():

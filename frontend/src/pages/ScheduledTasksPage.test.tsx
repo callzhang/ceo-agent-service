@@ -21,6 +21,7 @@ const run: ScheduledTaskRun = {
   id: 11, event_id: "manual:11", scheduled_task_id: 7, trigger_kind: "manual" as const,
   scheduled_for: "2026-09-08T12:00:00Z", dispatch_status: "dispatched", skip_or_error_reason: "",
   execution_kind: "reply_task", execution_id: "91", created_at: "2026-09-08T12:00:00Z", dispatched_at: "2026-09-08T12:00:01Z",
+  attempts: [],
   snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, required_runtime_capabilities: [], working_directory: "/tmp/ceo-agent", skill_refs: [operationRef] },
 };
 const task: ScheduledTask = {
@@ -87,6 +88,29 @@ function deferred<T>() {
 }
 
 describe("ScheduledTasksPage", () => {
+  it("links each Trigger run to its Attempt detail while keeping the row compact", async () => {
+    setup();
+    api.listScheduledTaskRuns.mockResolvedValue({
+      scheduled_task: task,
+      items: [{ ...run, attempts: [{ id: 8840, status: "completed" }, { id: 8841, status: "skipped" }] }],
+      meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false },
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("Trigger #11")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Attempt #8840" })).toHaveAttribute("href", "/attempts/8840");
+    expect(screen.getByRole("link", { name: "Attempt #8841" })).toHaveAttribute("href", "/attempts/8841");
+    expect(screen.getByText("→")).toBeInTheDocument();
+  });
+
+  it("states when a Trigger did not produce an Attempt", async () => {
+    renderPage();
+
+    expect(await screen.findByText("Trigger #11")).toBeInTheDocument();
+    expect(screen.getByText("未产生 Attempt")).toBeInTheDocument();
+  });
+
   it("keeps a selected task in a readable view until Edit, then saves the real draft", async () => {
     const user = userEvent.setup();
     renderPage();
@@ -571,6 +595,7 @@ describe("service command tasks", () => {
     expect(screen.getByLabelText("服务命令")).toBeEnabled();
     expect(screen.getAllByText("处理新的钉钉消息").length).toBeGreaterThanOrEqual(1);
     expect(await screen.findByText("技术详情")).toBeInTheDocument();
+    expect(screen.getByText("技术详情").closest(".scheduled-task-command")).not.toBeNull();
     expect(screen.queryByText("技术详情：produce-once")).toBeNull();
     expect(screen.queryByText("service_command #produce-once")).toBeNull();
     expect(screen.queryByRole("button", { name: "暂停任务" })).toBeNull();

@@ -155,7 +155,11 @@ def _skill_ref_payload(ref: ScheduledTaskSkillRef) -> dict[str, object]:
     }
 
 
-def _run_payload(run: ScheduledTaskRun) -> dict[str, object]:
+def _run_payload(
+    run: ScheduledTaskRun,
+    *,
+    attempts: tuple[tuple[int, str], ...] = (),
+) -> dict[str, object]:
     return {
         "id": run.id,
         "event_id": run.event_id,
@@ -168,6 +172,10 @@ def _run_payload(run: ScheduledTaskRun) -> dict[str, object]:
         "execution_id": run.execution_id,
         "created_at": _utc_text(run.created_at),
         "dispatched_at": _utc_text(run.dispatched_at),
+        "attempts": [
+            {"id": attempt_id, "status": status}
+            for attempt_id, status in attempts
+        ],
         "snapshot": {
             "task_id": run.snapshot.task_id,
             "task_version": run.snapshot.task_version,
@@ -568,9 +576,15 @@ def register_scheduled_task_routes(
         )
         has_more = len(page) > page_size
         runs = page[:page_size]
+        attempts_by_run = store_factory().list_scheduled_task_run_attempts(
+            [run.id for run in runs]
+        )
         return {
             "scheduled_task": rendered_task(task, latest_run(task.id)),
-            "items": [_run_payload(run) for run in runs],
+            "items": [
+                _run_payload(run, attempts=attempts_by_run.get(run.id, ()))
+                for run in runs
+            ],
             "meta": {
                 "snapshot_at": snapshot_at(),
                 "page_size": page_size,
