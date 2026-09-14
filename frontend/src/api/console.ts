@@ -222,7 +222,7 @@ export interface EmailClassificationItem {
   created_at: string;
   updated_at: string;
 }
-export type EmailClassificationStatus = "all" | "pending_feedback" | "processed";
+export type EmailClassificationStatus = "all" | "pending_feedback" | "processed" | "unsubscribe";
 export interface EmailClassificationListParams {
   page?: number;
   page_size?: number;

@@ -90,6 +90,31 @@ def test_email_large_classification_id_round_trips_as_text(tmp_path: Path):
     assert store.get_classification(identity)["classification_source"] == "user"
 
 
+def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path):
+    store = EmailStore(tmp_path / "unsubscribe-filter.sqlite3")
+    store.list_unsubscribe_classifications = lambda *, limit, offset: ([{
+        "id": 47, "category": "junk", "sender": "newsletter@example.com",
+        "subject": "Weekly newsletter", "status": "processed",
+        "classification_source": "agent", "updated_at": "2026-09-14T12:00:00+00:00",
+    }], 1)
+    app = FastAPI()
+    register_email_routes(app, lambda: store)
+
+    response = TestClient(app).get(
+        "/api/console/email/classifications?status=unsubscribe&page=1&page_size=20"
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["meta"]["total"] == 1
+    assert response.json()["items"] == [{
+        "id": "47", "category": "junk", "sender": "newsletter@example.com",
+        "subject": "Weekly newsletter", "status": "processed",
+        "classification_source": "agent", "updated_at": "2026-09-14T12:00:00+00:00",
+        "important": None,
+        "provider_classification": {"state": "unavailable", "reason": "classification_missing"},
+    }]
+
+
 class _ZeroTimeoutEmailStore(EmailStore):
     def _open_connection(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=0)

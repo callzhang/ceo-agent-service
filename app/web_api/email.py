@@ -1123,7 +1123,12 @@ def register_email_routes(
         page_size: int = Query(default=20, ge=1, le=100),
     ):
         email_store = require_store()
-        if status == "all":
+        if status == "unsubscribe":
+            rows, total = email_store.list_unsubscribe_classifications(
+                limit=page_size,
+                offset=(page - 1) * page_size,
+            )
+        elif status == "all":
             fetch_limit = page * page_size
             pending_rows, pending_total = email_store.list_classifications(
                 status=EmailClassificationStatus.PENDING_FEEDBACK,
@@ -1149,7 +1154,7 @@ def register_email_routes(
                     {
                         "ok": False,
                         "code": "invalid_email_status",
-                        "message": "status must be all, processed or pending_feedback",
+                        "message": "status must be all, unsubscribe, processed or pending_feedback",
                         "details": {},
                     },
                     status_code=400,

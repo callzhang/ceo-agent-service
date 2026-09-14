@@ -1469,6 +1469,25 @@ def _persist_unsubscribe_result_fixture(
     return store, authorization, receipt
 
 
+def test_list_unsubscribe_classifications_projects_durable_claims(tmp_path: Path):
+    store = EmailStore(tmp_path / "unsubscribe-list.sqlite3")
+    authorization = _unsubscribe_authorization(store)
+
+    claim = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    assert claim is not None and claim["acquired"] is True
+
+    rows, total = store.list_unsubscribe_classifications(limit=20, offset=0)
+
+    assert total == 1
+    assert [row["id"] for row in rows] == [authorization["classification_id"]]
+    assert rows[0]["message_text"]
+    with pytest.raises(ValueError, match="pagination"):
+        store.list_unsubscribe_classifications(limit=0, offset=0)
+
+
 def _downgrade_email_database_to_v16(database: Path) -> None:
     """Recreate the exact parent-v16 receipt shape from a current fixture."""
 
