@@ -844,6 +844,7 @@ def run_email_classification_task_once(
         return outcome
     except Exception as exc:
         from pydantic import ValidationError
+        from app.email_agent_api import EmailClassifierApiError
         from app.email_store import (
             EmailClassificationConflict,
             EmailClassificationIdentityCollision,
@@ -858,6 +859,8 @@ def run_email_classification_task_once(
                 EmailClassificationIdentityCollision,
             ),
         ) or (isinstance(exc, ValueError) and not isinstance(exc, ConnectionError))
+        if isinstance(exc, EmailClassifierApiError):
+            permanent = not exc.retryable
         adapter.fail(
             task,
             error=f"{type(exc).__name__}:{exc}",

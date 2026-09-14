@@ -254,8 +254,9 @@ def test_backend_sanitizes_malformed_response_errors(response_json):
     assert "sensitive raw" not in repr(events)
 
 
-def test_backend_rejects_invalid_result_and_does_not_retry_validation_errors():
+def test_backend_retries_invalid_result_with_shared_bounded_backoff():
     calls = []
+    sleeps = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
@@ -270,7 +271,7 @@ def test_backend_rejects_invalid_result_and_does_not_retry_validation_errors():
         model="gpt-test",
         api_key="SECRET-KEY",
         client=httpx.Client(transport=httpx.MockTransport(handler)),
-        sleeper=lambda _seconds: None,
+        sleeper=sleeps.append,
     )
 
     with pytest.raises(EmailClassifierApiError, match="invalid_classification"):
@@ -280,7 +281,8 @@ def test_backend_rejects_invalid_result_and_does_not_retry_validation_errors():
             allowed_category_keys=("work", "junk"),
             unsubscribe_candidates=(),
         )
-    assert len(calls) == 1
+    assert len(calls) == 3
+    assert sleeps == [1.0, 2.0]
 
 
 def test_backend_retries_timeout_with_bounded_attempts_and_records_sanitized_event():

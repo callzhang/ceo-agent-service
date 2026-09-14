@@ -9,7 +9,10 @@
   Email worker health. Classification recovery also has its own 25-task,
   120-second drain budget instead of sharing the provider-action two-second
   budget, so a slow classifier call cannot reduce recovery to one task per
-  scan interval.
+  scan interval. Semantically invalid model output now uses the same bounded
+  immediate retry schedule before returning to durable capped backoff, while
+  genuine non-retryable API failures remain terminal through an explicit error
+  classification instead of being accidentally requeued.
 
 - 2026-09-14: Audit now treats its approval of a typed, Skill-covered
   service-triggered action as the execution confirmation. Provider

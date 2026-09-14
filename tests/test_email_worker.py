@@ -3035,6 +3035,54 @@ def test_classification_worker_persists_certain_decision_and_direct_plan(tmp_pat
     assert classification["status"] == "processed"
 
 
+def test_classification_worker_keeps_retryable_api_failure_pending(tmp_path):
+    from app.email_agent_api import EmailClassifierApiError
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    email_store = EmailStore(tmp_path / "classification-retry.sqlite3")
+    adapter = EmailClassificationTaskAdapter(email_store, retry_base_seconds=0)
+    task = adapter.ensure_task(_classification_task_input())
+
+    def fail_retryably(*_args, **_kwargs):
+        raise EmailClassifierApiError("sanitized retryable failure", retryable=True)
+
+    with pytest.raises(EmailClassifierApiError):
+        _module().run_email_classification_task_once(
+            adapter,
+            SimpleNamespace(classify=fail_retryably),
+            email_store,
+            owner="email-worker:retryable-api",
+            provider_readback=_classification_provider_readback,
+            action_task_producer=_forbid_action_task_production(),
+        )
+
+    assert adapter.get_task(task.task_id).status == "pending"
+
+
+def test_classification_worker_terminalizes_non_retryable_api_failure(tmp_path):
+    from app.email_agent_api import EmailClassifierApiError
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    email_store = EmailStore(tmp_path / "classification-terminal.sqlite3")
+    adapter = EmailClassificationTaskAdapter(email_store)
+    task = adapter.ensure_task(_classification_task_input())
+
+    def fail_permanently(*_args, **_kwargs):
+        raise EmailClassifierApiError("sanitized permanent failure", retryable=False)
+
+    with pytest.raises(EmailClassifierApiError):
+        _module().run_email_classification_task_once(
+            adapter,
+            SimpleNamespace(classify=fail_permanently),
+            email_store,
+            owner="email-worker:non-retryable-api",
+            provider_readback=_classification_provider_readback,
+            action_task_producer=_forbid_action_task_production(),
+        )
+
+    assert adapter.get_task(task.task_id).status == "failed"
+
+
 def test_classification_worker_persists_only_redacted_model_features(tmp_path):
     from app.email_classifier_agent import AgentClassificationResult
     from app.email_task_adapter import EmailClassificationTaskAdapter

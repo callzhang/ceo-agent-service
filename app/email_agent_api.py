@@ -14,6 +14,10 @@ from app.external_retry import retry_delay_seconds
 class EmailClassifierApiError(RuntimeError):
     """A sanitized, classified failure from the email classifier API."""
 
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
 
 class EmailClassifierApiBackend:
     def __init__(
@@ -94,7 +98,10 @@ class EmailClassifierApiBackend:
                     code = f"http_{response.status_code}"
                     self._event(task_id, attempt, started, usage, "error", code)
                     kind = "retryable" if retryable else "non-retryable"
-                    raise EmailClassifierApiError(f"{kind} email classifier API error ({code})")
+                    raise EmailClassifierApiError(
+                        f"{kind} email classifier API error ({code})",
+                        retryable=retryable,
+                    )
                 try:
                     raw = _response_text(response)
                     validated = validate_agent_classification_result(
@@ -103,6 +110,17 @@ class EmailClassifierApiBackend:
                         unsubscribe_candidates=unsubscribe_candidates,
                     )
                 except (TypeError, ValueError):
+                    if attempt <= self._max_retries:
+                        self._event(
+                            task_id,
+                            attempt,
+                            started,
+                            usage,
+                            "retry",
+                            "invalid_classification",
+                        )
+                        self._sleeper(retry_delay_seconds(1.0, attempt - 1))
+                        continue
                     self._event(
                         task_id,
                         attempt,
@@ -112,7 +130,8 @@ class EmailClassifierApiBackend:
                         "invalid_classification",
                     )
                     raise EmailClassifierApiError(
-                        "non-retryable email classifier API error (invalid_classification)"
+                        "retryable email classifier API error (invalid_classification)",
+                        retryable=True,
                     ) from None
                 self._event(task_id, attempt, started, usage, "success", None)
                 return validated.model_dump_json()
@@ -123,7 +142,10 @@ class EmailClassifierApiBackend:
                     self._sleeper(retry_delay_seconds(1.0, attempt - 1))
                     continue
                 self._event(task_id, attempt, started, {}, "error", code)
-                raise EmailClassifierApiError(f"retryable email classifier API error ({code})") from None
+                raise EmailClassifierApiError(
+                    f"retryable email classifier API error ({code})",
+                    retryable=True,
+                ) from None
             except ValueError:
                 self._event(task_id, attempt, started, {}, "error", "invalid_classification")
                 raise
