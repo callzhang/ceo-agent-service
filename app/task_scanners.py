@@ -419,7 +419,7 @@ def scan_meeting_todos(
 
     try:
         minutes_items = [
-            item for item in list_minutes() if isinstance(item, dict)
+            item for item in list_minutes(limit=50) if isinstance(item, dict)
         ]
     except Exception as exc:
         store.set_daily_scan_state(

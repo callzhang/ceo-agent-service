@@ -78,7 +78,11 @@ def test_scan_local_files_only_under_workspace(tmp_path):
 
 def test_scan_meeting_todos_carries_scheduled_consumer_context(tmp_path):
     class FakeDws:
-        def list_minutes(self):
+        def __init__(self):
+            self.list_limits = []
+
+        def list_minutes(self, *, limit):
+            self.list_limits.append(limit)
             return [{"taskUuid": "minutes-1", "title": "产品会"}]
 
         def get_minutes_todos(self, task_uuid):
@@ -93,8 +97,9 @@ def test_scan_meeting_todos_carries_scheduled_consumer_context(tmp_path):
         skill_protocol="# Targeted Work Tracking Skill",
     )
     implementations = {option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS}
+    dws = FakeDws()
     implementations["scan-meeting-todos-once"] = lambda: str(
-        scan_meeting_todos(store, FakeDws())
+        scan_meeting_todos(store, dws)
     )
 
     ServiceCommandRegistry(implementations).run(
@@ -105,6 +110,7 @@ def test_scan_meeting_todos_carries_scheduled_consumer_context(tmp_path):
     [claimed] = store.claim_work_summary_inputs(limit=10)
     payload = json.loads(claimed.payload_json)
     assert payload["scheduled_consumer"] == context.to_payload()
+    assert dws.list_limits == [50]
 
 
 def test_scan_local_files_rejects_workspace_outside_root(tmp_path):
@@ -708,7 +714,8 @@ def test_scan_ai_minutes_records_adapter_errors(tmp_path):
 
 def test_scan_meeting_todos_enqueues_only_meetings_with_action_items(tmp_path):
     class FakeDws:
-        def list_minutes(self):
+        def list_minutes(self, *, limit):
+            assert limit == 50
             return [
                 {
                     "taskUuid": "minutes-1",
@@ -754,7 +761,8 @@ def test_scan_meeting_todos_requeues_only_when_todos_change(tmp_path):
             self.title = "经营会"
             self.request_id = "request-1"
 
-        def list_minutes(self):
+        def list_minutes(self, *, limit):
+            assert limit == 50
             return [{"taskUuid": "minutes-1", "title": self.title}]
 
         def get_minutes_todos(self, task_uuid):
@@ -793,7 +801,8 @@ def test_scan_meeting_todos_does_not_advance_failed_or_deferred_items(tmp_path):
         def __init__(self):
             self.fail_first = True
 
-        def list_minutes(self):
+        def list_minutes(self, *, limit):
+            assert limit == 50
             return [
                 {"taskUuid": "minutes-1", "title": "读取失败"},
                 {"taskUuid": "minutes-2", "title": "超过本轮上限"},
