@@ -24,9 +24,9 @@ WRITE_SCHEMA_PATH = (
     / "wechat_memory_write_result.schema.json"
 )
 MEMORY_ID_CODEC = RoutedResultCodec.text(schema_id="wechat_memory_write.result.v2")
-MEMORY_WRITE_CAPABILITIES = frozenset(
-    {"structured_output", "mcp:memory_connector:memory_write"}
-)
+# The concrete typed write verifies the connector. A no-tools health probe
+# cannot prove MCP tool availability without turning the probe into a write.
+MEMORY_WRITE_CAPABILITIES = frozenset({"structured_output"})
 
 
 class CodexMemoryWriteBackend:

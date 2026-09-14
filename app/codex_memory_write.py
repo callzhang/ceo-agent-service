@@ -23,9 +23,10 @@ WRITE_SCHEMA_PATH = (
     / "wechat_memory_write_result.schema.json"
 )
 MEMORY_WRITE_RESULT_CODEC = RoutedResultCodec.text(schema_id="memory_write.result.v2")
-MEMORY_WRITE_CAPABILITIES = frozenset(
-    {"structured_output", "mcp:memory_connector:memory_write"}
-)
+# The health probe deliberately makes no MCP calls, so MCP tool availability
+# cannot be a route-selection requirement. The typed write result below is the
+# actual connector verification and carries retryable provider failures.
+MEMORY_WRITE_CAPABILITIES = frozenset({"structured_output"})
 
 
 @dataclass(frozen=True)
