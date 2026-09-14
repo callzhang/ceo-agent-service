@@ -26,6 +26,9 @@
   An unsubscribe task whose page receipt is already persisted also closes
   immediately when a later provider reread cannot resolve the original entry;
   receipt-backed terminal work no longer loops through candidate rechecks.
+  Deterministic provider actions now likewise use a 120-second drain window;
+  ordinary IMAP connection latency no longer reduces approved move, flag, or
+  trash recovery to one action per minute.
 
 - 2026-09-14: Audit now treats its approval of a typed, Skill-covered
   service-triggered action as the execution confirmation. Provider

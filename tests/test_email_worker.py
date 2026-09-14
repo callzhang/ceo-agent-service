@@ -7749,6 +7749,30 @@ def test_direct_action_drain_processes_multiple_actions_but_stops_at_count_bound
     assert calls == ["action", "action", "action"]
 
 
+def test_provider_action_default_budget_handles_normal_imap_latency():
+    module = _module()
+    calls = []
+    clock = [0.0]
+
+    def run_direct_action():
+        calls.append("action")
+        clock[0] += 3.0
+        return SimpleNamespace(status="done")
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 0},
+        run_direct_actions_once=run_direct_action,
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+        direct_action_max_actions=3,
+        monotonic=lambda: clock[0],
+    )
+
+    assert calls == ["action", "action", "action"]
+
+
 def test_direct_action_drain_stops_on_empty_queue_without_busy_loop():
     module = _module()
     calls = []
