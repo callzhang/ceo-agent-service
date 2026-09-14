@@ -453,6 +453,26 @@ def test_attempt_detail_api_projects_exact_audit_linked_consumer_result_read_onl
     }
 
 
+def test_attempt_detail_api_projects_direct_terminal_consumer_result(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="direct-consumer-api")
+    attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    assert item["consumer_result"] == {
+        "confidence": "82%",
+        "information_completeness": "75%",
+        "rule_coverage": "100%",
+        "risk": "medium",
+        "error_reason": "",
+        "current_run": None,
+    }
+
+
 @pytest.mark.parametrize(
     ("stored_result", "failure", "expected_error"),
     [
