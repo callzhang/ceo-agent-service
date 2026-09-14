@@ -493,6 +493,7 @@ def test_attempt_detail_keeps_old_consumer_result_while_current_generation_runs(
 
     assert status == 200
     assert "新 Consumer run" in running_detail
+    assert f"新 Consumer run #{running_consumer.id}" in running_detail
     assert "运行中" in running_detail
     assert "82%" in running_detail
     assert running_detail.count("Consumer 执行结果") == 1
