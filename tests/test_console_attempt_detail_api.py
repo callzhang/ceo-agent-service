@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from app.store import AutoReplyStore
+from app.audit_web import handle_rerun_attempt_post
+from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import build_attempt_detail
 
 
@@ -40,6 +41,143 @@ TRIGGER_PAYLOAD = {
     "stable_message_identity": "mailbox:message-id:<msg@host>",
     "action_parameters": {"candidate_source": "body_html_https"},
 }
+
+
+def _consumer_result_payload(
+    *,
+    confidence: float = 0.82,
+    information_completeness: float = 0.75,
+    rule_coverage: float = 1.0,
+    risk: str = "medium",
+) -> dict[str, object]:
+    return {
+        "outcome": "proposal",
+        "summary": "Publish the reviewed update.",
+        "proposal": {
+            "objective": "Publish the reviewed update.",
+            "actions": [
+                {
+                    "description": "Publish the update.",
+                    "action_identity": "publish-reviewed-update",
+                    "capability": "dingtalk-chat",
+                    "operation": "send_to_group",
+                    "target": {"conversation_id": "cid-consumer-api-result"},
+                    "payload": {"text": "Reviewed update"},
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "The update is ready to publish.",
+        },
+        "decision_options": [],
+        "error": {
+            "code": "",
+            "retryable": False,
+            "authorization_required": False,
+        },
+        "risk": risk,
+        "confidence": confidence,
+        "rule_coverage": rule_coverage,
+        "information_completeness": information_completeness,
+    }
+
+
+def _consumer_result_task(store: AutoReplyStore):
+    assert store.enqueue_reply_task(
+        conversation_id="cid-consumer-api-result",
+        conversation_title="Consumer API result",
+        single_chat=False,
+        trigger_message_id="msg-consumer-api-result",
+        trigger_create_time="2026-09-14 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="Publish the reviewed update.",
+        trigger_message_json=json.dumps(
+            {
+                "open_conversation_id": "cid-consumer-api-result",
+                "open_message_id": "msg-consumer-api-result",
+                "conversation_title": "Consumer API result",
+                "single_chat": False,
+                "sender_name": "Mina",
+                "create_time": "2026-09-14 09:00:00",
+                "content": "Publish the reviewed update.",
+            }
+        ),
+        execution_generation="consumer-api-result-generation",
+    )
+    task = store.claim_reply_task(1)
+    assert task is not None
+    return task
+
+
+def _complete_consumer_run(
+    store: AutoReplyStore,
+    task,
+    *,
+    owner: str,
+    payload: dict[str, object] | None = None,
+):
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner=owner,
+    ).run
+    return store.complete_agent_run(
+        run.id, payload or _consumer_result_payload(), owner=owner
+    )
+
+
+def _complete_audit_run(store: AutoReplyStore, task, consumer, *, owner: str):
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id=f"audit-{owner}",
+        owner=owner,
+    ).run
+    return store.complete_agent_run(
+        run.id,
+        {
+            "outcome": "executed",
+            "summary": "The reviewed update was published.",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+        },
+        owner=owner,
+    )
+
+
+def _finalize_consumer_result_attempt(store: AutoReplyStore, task, terminal_run) -> int:
+    return store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=terminal_run.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="The reviewed update was published.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="The reviewed update was published.",
+        send_status="completed",
+        send_error="",
+        channel="dingtalk",
+    )
 
 
 class _FakeEmailStore:
@@ -259,3 +397,168 @@ def test_codex_session_roles_resolve_both_transcripts_of_one_attempt(tmp_path: P
     # left the Consumer transcript with no business record at all.
     assert consumer == [{"id": attempt_id, "status": "skipped", "role": "consumer"}]
     assert audit == [{"id": attempt_id, "status": "skipped", "role": "audit"}]
+
+
+def test_attempt_detail_api_projects_exact_audit_linked_consumer_result_read_only(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="consumer-api")
+    audit = _complete_audit_run(store, task, consumer, owner="audit-api")
+    attempt_id = _finalize_consumer_result_attempt(store, task, audit)
+    before = {
+        "attempt": store.get_reply_attempt(attempt_id),
+        "task": store.get_reply_task(task.id),
+        "consumer": store.get_agent_run(consumer.id),
+        "audit": store.get_agent_run(audit.id),
+        "runs": store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation
+        ),
+    }
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    assert store.get_reply_attempt(attempt_id) == before["attempt"]
+    assert store.get_reply_task(task.id) == before["task"]
+    assert store.get_agent_run(consumer.id) == before["consumer"]
+    assert store.get_agent_run(audit.id) == before["audit"]
+    assert store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation
+    ) == before["runs"]
+    assert item["consumer_result"] == {
+        "run_id": consumer.id,
+        "confidence": "82%",
+        "information_completeness": "75%",
+        "rule_coverage": "100%",
+        "risk": "medium",
+        "error": "",
+        "active_run": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("stored_result", "failure", "expected_error"),
+    [
+        ({"outcome": "proposal", "raw_marker": "raw-malformed-marker"}, None, "Consumer 结果不符合当前契约"),
+        (None, {"code": "consumer_source_failed", "detail": "Source read failed"}, "Source read failed"),
+    ],
+)
+def test_attempt_detail_api_marks_unavailable_consumer_result_per_field(
+    tmp_path: Path,
+    stored_result: dict[str, object] | None,
+    failure: dict[str, str] | None,
+    expected_error: str,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    if failure is None:
+        consumer = _complete_consumer_run(store, task, owner="malformed-api")
+        with store._immediate_write_transaction() as db:
+            db.execute(
+                "update agent_runs set final_result_json=? where id=?",
+                (json.dumps(stored_result), consumer.id),
+            )
+    else:
+        claimed = store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=None,
+            operation_id="",
+            owner="failed-api",
+        ).run
+        consumer = store.fail_agent_run(claimed.id, failure, owner="failed-api")
+    attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    result = item["consumer_result"]
+    assert result["run_id"] == consumer.id
+    assert result["confidence"] == "—"
+    assert result["information_completeness"] == "—"
+    assert result["rule_coverage"] == "—"
+    assert result["risk"] == "—"
+    assert result["error"] == expected_error
+    assert "raw-malformed-marker" not in json.dumps(result)
+
+
+def test_attempt_detail_api_marks_missing_linked_consumer_result_unavailable(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="missing-consumer-api")
+    audit = _complete_audit_run(store, task, consumer, owner="missing-audit-api")
+    attempt_id = _finalize_consumer_result_attempt(store, task, audit)
+    with store._immediate_write_transaction() as db:
+        db.execute("update agent_runs set parent_agent_run_id=null where id=?", (audit.id,))
+
+    _, item = build_attempt_detail(store, attempt_id)
+
+    assert item is not None
+    assert item["consumer_result"] == {
+        "run_id": None,
+        "confidence": "—",
+        "information_completeness": "—",
+        "rule_coverage": "—",
+        "risk": "—",
+        "error": "未找到当前 Attempt 关联的 Consumer run",
+        "active_run": None,
+    }
+
+
+def test_attempt_detail_api_keeps_old_metrics_while_current_generation_is_pending_then_running(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="completed-api")
+    attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
+
+    status, _, _ = handle_rerun_attempt_post(store, attempt_id)
+    assert status == 303
+    _, pending = build_attempt_detail(store, attempt_id)
+
+    assert pending is not None
+    assert pending["consumer_result"] == {
+        "run_id": consumer.id,
+        "confidence": "82%",
+        "information_completeness": "75%",
+        "rule_coverage": "100%",
+        "risk": "medium",
+        "error": "",
+        "active_run": {"run_id": None, "status": "pending"},
+    }
+
+    current_task = store.claim_reply_task(task.id)
+    assert current_task is not None
+    running = store.claim_agent_run(
+        current_task.id,
+        current_task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="running-api",
+    ).run
+
+    _, running_detail = build_attempt_detail(store, attempt_id)
+
+    assert running_detail is not None
+    assert running_detail["consumer_result"] == {
+        "run_id": consumer.id,
+        "confidence": "82%",
+        "information_completeness": "75%",
+        "rule_coverage": "100%",
+        "risk": "medium",
+        "error": "",
+        "active_run": {"run_id": running.id, "status": "running"},
+    }
