@@ -656,6 +656,19 @@ describe("service command tasks", () => {
     expect(screen.getByText("计划预览：每分钟执行 · Asia/Shanghai")).toBeInTheDocument();
   });
 
+  it("describes a minute interval while editing instead of calling it custom", async () => {
+    setup([commandTask]);
+    const user = userEvent.setup();
+    renderPage("/scheduled-tasks?id=9");
+    await editSelectedTask(user);
+
+    const expression = await screen.findByLabelText("Cron 表达式");
+    await user.clear(expression);
+    await user.type(expression, "0 */10 * * * *");
+
+    expect(screen.getByText("计划预览：每10分钟执行 · Asia/Shanghai")).toBeInTheDocument();
+  });
+
   it("keeps the execution type editable for a user-created command task", async () => {
     setup([{ ...commandTask, migration_key: null }]);
     api.listScheduledTaskRuns.mockResolvedValue({ scheduled_task: commandTask, items: [commandRun], meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false } });

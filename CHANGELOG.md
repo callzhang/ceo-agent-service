@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-09-14: Six-field Cron expressions with a minute interval, such as
+  `0 */10 * * * *`, now display `每10分钟执行` both while editing and after
+  saving instead of falling back to `按自定义计划执行`.
+
 - 2026-09-14: Dispatcher due-time selection now parses `available_at` as a
   SQLite timestamp for Reply and Work Summary queues. Retries stored as ISO
   8601 timestamps with a timezone offset can no longer remain pending after

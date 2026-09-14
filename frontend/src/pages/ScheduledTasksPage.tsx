@@ -86,14 +86,24 @@ function timeLabel(value: string | null) {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function boundedCronStep(field: string, maximum: number) {
+  const parts = field.split("/");
+  if (parts.length !== 2 || parts[0] !== "*" || !/^\d+$/.test(parts[1])) return null;
+  const interval = Number(parts[1]);
+  return interval >= 1 && interval <= maximum ? interval : null;
+}
+
 function draftScheduleDescription(expression: string, timezone: string) {
   const fields = expression.trim().split(/\s+/);
   let description = "按自定义计划执行";
   if (fields.length === 6) {
     const [seconds, minutes, hours, days, months, weekdays] = fields;
+    const secondInterval = boundedCronStep(seconds, 59);
+    const minuteInterval = boundedCronStep(minutes, 59);
     if (seconds === "0" && minutes === "*" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = "每分钟执行";
     else if (/^\d+$/.test(seconds) && minutes === "*" && hours === "*" && days === "*" && months === "*" && weekdays === "*" && Number(seconds) >= 1 && Number(seconds) <= 59) description = `每分钟第${Number(seconds)}秒执行`;
-    else if (/^\*\/\d+$/.test(seconds) && minutes === "*" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = `每${Number(seconds.slice(2))}秒执行`;
+    else if (secondInterval !== null && minutes === "*" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = `每${secondInterval}秒执行`;
+    else if (seconds === "0" && minuteInterval !== null && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = `每${minuteInterval}分钟执行`;
     else if (seconds === "0" && minutes === "0" && hours === "*" && days === "*" && months === "*" && weekdays === "*") description = "每小时整点执行";
     else if (seconds === "0" && /^\d+$/.test(minutes) && hours === "*" && days === "*" && months === "*" && weekdays === "*" && Number(minutes) >= 0 && Number(minutes) <= 59) description = `每小时第${Number(minutes)}分钟执行`;
     else if (seconds === "0" && minutes === "0" && /^\d+$/.test(hours) && days === "*" && months === "*" && weekdays === "*") description = `每天${Number(hours).toString().padStart(2, "0")}:00执行`;

@@ -10,6 +10,14 @@ from croniter import CroniterBadCronError, CroniterBadDateError, croniter
 _WEEKDAYS = ("日", "一", "二", "三", "四", "五", "六")
 
 
+def _bounded_step(field: str, maximum: int) -> int | None:
+    prefix, separator, value = field.partition("/")
+    if prefix != "*" or separator != "/" or not value.isdigit():
+        return None
+    interval = int(value)
+    return interval if 1 <= interval <= maximum else None
+
+
 def cron_human_description(expression: str) -> str:
     """Return a short Chinese description for the supported common Cron forms.
 
@@ -21,6 +29,8 @@ def cron_human_description(expression: str) -> str:
         return "按自定义计划执行"
 
     seconds, minutes, hours, days, months, weekdays = fields
+    second_interval = _bounded_step(seconds, 59)
+    minute_interval = _bounded_step(minutes, 59)
     if seconds == "0" and minutes == "*" and hours == "*" and days == months == weekdays == "*":
         return "每分钟执行"
 
@@ -34,12 +44,17 @@ def cron_human_description(expression: str) -> str:
     # In the six-field form the first field is seconds, so this is a seconds
     # interval (for example, */15 * * * * * means every fifteen seconds).
     if (
-        seconds.startswith("*/")
-        and seconds[2:].isdigit()
-        and int(seconds[2:]) > 0
+        second_interval is not None
         and minutes == hours == days == months == weekdays == "*"
     ):
-        return f"每{int(seconds[2:])}秒执行"
+        return f"每{second_interval}秒执行"
+
+    if (
+        seconds == "0"
+        and minute_interval is not None
+        and hours == days == months == weekdays == "*"
+    ):
+        return f"每{minute_interval}分钟执行"
 
     if seconds == minutes == "0" and hours == "*" and days == months == weekdays == "*":
         return "每小时整点执行"
