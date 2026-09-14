@@ -130,7 +130,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-14.2"
+STORE_SCHEMA_VERSION = "2026-09-14.3"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -314,6 +314,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "finished_at",
         "updated_at",
     ),
+    "meeting_memory_write_events": ("execution_generation",),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_feedback_processing_round_integer_v2_insert",
@@ -849,6 +850,7 @@ class MeetingMemoryWriteEvent(BaseModel):
 
     id: int
     meeting_job_id: int
+    execution_generation: str
     payload_json: str
     status: str
     attempts: int
@@ -2624,6 +2626,7 @@ class AutoReplyStore:
                 create table if not exists meeting_memory_write_events (
                     id integer primary key autoincrement,
                     meeting_job_id integer not null unique,
+                    execution_generation text not null,
                     payload_json text not null,
                     status text not null default 'pending',
                     attempts integer not null default 0,
@@ -3836,6 +3839,22 @@ class AutoReplyStore:
                         "alter table meeting_alignment_jobs add column "
                         f"{column} {definition}"
                     )
+            meeting_memory_write_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(meeting_memory_write_events)"
+                ).fetchall()
+            }
+            if "execution_generation" not in meeting_memory_write_columns:
+                db.execute(
+                    "alter table meeting_memory_write_events add column "
+                    "execution_generation text not null default ''"
+                )
+            db.execute(
+                "update meeting_memory_write_events "
+                "set execution_generation='migrated-' || id "
+                "where trim(execution_generation)=''"
+            )
             for column, definition in (
                 ("trigger_message_json", "text not null default '{}'"),
                 ("available_at", "text not null default ''"),
@@ -9071,7 +9090,8 @@ class AutoReplyStore:
                     "workbench workload key must name a persisted turn"
                 ) from exc
         else:
-            source, separator, source_id = workload_key.partition(":")
+            source, separator, source_key = workload_key.partition(":")
+            source_id, generation_separator, execution_generation = source_key.partition(":")
             if (
                 source not in {
                     "memory_write_event",
@@ -9084,6 +9104,14 @@ class AutoReplyStore:
                 or int(source_id) <= 0
             ):
                 raise ValueError("memory workload key must name a persisted source row")
+            if source == "meeting_memory_write_event" and (
+                not generation_separator or not execution_generation.strip()
+            ):
+                raise ValueError(
+                    "meeting Memory workload key must include an execution generation"
+                )
+            if source != "meeting_memory_write_event" and generation_separator:
+                raise ValueError("memory workload key has an unsupported suffix")
         return workload_kind, workload_key
 
     @staticmethod
@@ -9138,7 +9166,8 @@ class AutoReplyStore:
             query = "select 1 from workbench_turns where id=? and status='running'"
             args = (workload_key,)
         else:
-            source, _, row_id = workload_key.partition(":")
+            source, _, source_key = workload_key.partition(":")
+            row_id, _, execution_generation = source_key.partition(":")
             query = {
                 "memory_write_event": (
                     "select 1 from memory_write_events where id=? "
@@ -9146,7 +9175,7 @@ class AutoReplyStore:
                 ),
                 "meeting_memory_write_event": (
                     "select 1 from meeting_memory_write_events where id=? "
-                    "and status='pending'"
+                    "and status='pending' and execution_generation=?"
                 ),
                 "wechat_memory_candidate": (
                     "select 1 from wechat_memory_candidates where id=? "
@@ -9157,7 +9186,11 @@ class AutoReplyStore:
                     "where id=? and status='running'"
                 ),
             }[source]
-            args = (int(row_id),)
+            args = (
+                (int(row_id), execution_generation)
+                if source == "meeting_memory_write_event"
+                else (int(row_id),)
+            )
         return db.execute(query, args).fetchone() is not None
 
     @staticmethod
@@ -14057,12 +14090,12 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 insert into meeting_memory_write_events (
-                    meeting_job_id, payload_json
+                    meeting_job_id, execution_generation, payload_json
                 )
-                values (?, ?)
+                values (?, ?, ?)
                 on conflict(meeting_job_id) do nothing
                 """,
-                (meeting_job_id, payload_json),
+                (meeting_job_id, uuid4().hex, payload_json),
             )
         return cursor.rowcount == 1
 
@@ -14156,7 +14189,8 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update meeting_memory_write_events as events
-                set status='pending', available_at='', error=?, updated_at=current_timestamp
+                set status='pending', available_at='', error=?,
+                    execution_generation=?, updated_at=current_timestamp
                 where events.id=? and events.status='failed'
                   and exists (
                     select 1
@@ -14166,7 +14200,7 @@ class AutoReplyStore:
                       and trim(jobs.final_message)<>''
                   )
                 """,
-                (reason[:500], event_id),
+                (reason[:500], uuid4().hex, event_id),
             )
         return cursor.rowcount == 1
 

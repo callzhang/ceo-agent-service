@@ -90,7 +90,10 @@ def _process_event(
         result = execute_codex_memory_write(
             workspace=workspace,
             store=store,
-            workload_key=f"meeting_memory_write_event:{event.id}",
+            workload_key=(
+                f"meeting_memory_write_event:{event.id}:"
+                f"{event.execution_generation}"
+            ),
             data=_required_payload_text(payload, "data"),
             type=_payload_type(payload),
             created_at=_required_payload_text(payload, "created_at"),

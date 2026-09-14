@@ -90,6 +90,7 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
         ).fetchone()
     assert event is not None
     assert event["status"] == "pending"
+    assert event["execution_generation"]
     assert "听记摘要" not in event["payload_json"]
 
     routed = _FakeRoutedExecution()
@@ -102,7 +103,8 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
 
     assert processed == 1
     assert routed.calls[0]["workload_key"] == (
-        f"meeting_memory_write_event:{event['id']}"
+        f"meeting_memory_write_event:{event['id']}:"
+        f"{event['execution_generation']}"
     )
     with store._connect() as db:
         written = db.execute(
@@ -123,12 +125,14 @@ def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
     job_id = _store_sent_job(store)
     assert enqueue_sent_meeting_memory_writes(store) == 1
     with store._connect() as db:
-        event_id = int(
-            db.execute(
-                "select id from meeting_memory_write_events where meeting_job_id=?",
-                (job_id,),
-            ).fetchone()["id"]
-        )
+        created_event = db.execute(
+            "select id, execution_generation from meeting_memory_write_events "
+            "where meeting_job_id=?",
+            (job_id,),
+        ).fetchone()
+    assert created_event is not None
+    event_id = int(created_event["id"])
+    original_generation = str(created_event["execution_generation"])
 
     store.fail_meeting_memory_write_event(event_id, error="provider configuration failed")
 
@@ -142,12 +146,13 @@ def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
     )
     with store._connect() as db:
         event = db.execute(
-            "select status, attempts, error, available_at from meeting_memory_write_events where id=?",
+            "select status, attempts, error, available_at, execution_generation "
+            "from meeting_memory_write_events where id=?",
             (event_id,),
         ).fetchone()
-    assert dict(event) == {
-        "status": "pending",
-        "attempts": 1,
-        "error": "provider configuration repaired",
-        "available_at": "",
-    }
+    assert event["status"] == "pending"
+    assert event["attempts"] == 1
+    assert event["error"] == "provider configuration repaired"
+    assert event["available_at"] == ""
+    assert event["execution_generation"]
+    assert event["execution_generation"] != original_generation

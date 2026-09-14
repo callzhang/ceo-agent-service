@@ -424,7 +424,8 @@ def _seed_runtime_operation_parent(
                 (week_end, manager_user_id, source_digest),
             )
         elif workload_kind == "memory":
-            source, _, source_id = workload_key.partition(":")
+            source, _, source_key = workload_key.partition(":")
+            source_id, _, execution_generation = source_key.partition(":")
             table_name = {
                 "memory_write_event": "memory_write_events",
                 "meeting_memory_write_event": "meeting_memory_write_events",
@@ -441,8 +442,9 @@ def _seed_runtime_operation_parent(
                 )
                 db.execute(
                     "insert into meeting_memory_write_events "
-                    "(id, meeting_job_id, payload_json) values (?, 1, '{}')",
-                    (int(source_id),),
+                    "(id, meeting_job_id, execution_generation, payload_json) "
+                    "values (?, 1, ?, '{}')",
+                    (int(source_id), execution_generation),
                 )
             elif table_name == "wechat_memory_candidates":
                 db.execute("insert into wechat_memory_candidates (id, import_run_id, account_id, statement, category, confidence, sensitivity, status, memory_write_status) values (?, 'import', 'account', 'statement', 'fact', 1, 'low', 'approved', 'writing')", (int(source_id),))
@@ -951,7 +953,7 @@ def test_runtime_attempt_upgrade_replaces_pretrim_session_evidence_triggers(
         ("task", "15:memory_backfill"),
         ("weekly_okr", "2026-08-16:manager-1:" + "a" * 64),
         ("memory", "memory_write_event:16"),
-        ("memory", "meeting_memory_write_event:16"),
+        ("memory", "meeting_memory_write_event:16:generation-16"),
         ("memory", "wechat_memory_import_job:17"),
         ("email_classification", "email-classification:" + "a" * 64),
         (
@@ -1020,6 +1022,7 @@ def test_runtime_operation_attempts_are_listed_only_for_exact_workload(tmp_path:
         ("memory", "memory-16"),
         ("memory", "memory_write_event:999"),
         ("memory", "meeting_memory_write_event:999"),
+        ("memory", "meeting_memory_write_event:999:missing-generation"),
         ("memory", "wechat_memory_import_job:999"),
         ("email_classification", "email-classification:not-a-digest"),
         (
@@ -1051,7 +1054,9 @@ def test_runtime_attempt_memory_keys_are_source_qualified_and_collision_free(
 ):
     store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
     _seed_runtime_operation_parent(store, "memory", "memory_write_event:1")
-    _seed_runtime_operation_parent(store, "memory", "meeting_memory_write_event:1")
+    _seed_runtime_operation_parent(
+        store, "memory", "meeting_memory_write_event:1:generation-1"
+    )
     _seed_runtime_operation_parent(store, "memory", "wechat_memory_candidate:1")
     _seed_runtime_operation_parent(store, "memory", "wechat_memory_import_job:1")
 
@@ -1059,7 +1064,7 @@ def test_runtime_attempt_memory_keys_are_source_qualified_and_collision_free(
         "memory", "memory_write_event:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
     )
     meeting_attempt = store.claim_runtime_operation_attempt(
-        "memory", "meeting_memory_write_event:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+        "memory", "meeting_memory_write_event:1:generation-1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
     )
     candidate_attempt = store.claim_runtime_operation_attempt(
         "memory", "wechat_memory_candidate:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
@@ -9030,7 +9035,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-14.2"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-14.3"
     assert {
         "lease_owner",
         "lease_expires_at",
