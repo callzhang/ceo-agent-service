@@ -21,11 +21,29 @@ Use the supplied exact event command first. Read the title, time, organizer, att
 - Accept when the principal's decision or customer, product, personnel, or cross-team input has clear value.
 - Tentatively hold when the meeting is relevant but confirmation is premature.
 - Decline when the event is only broadcast or synchronization and the principal's input is not needed.
+- A personal `Blocked` or sleep hold is a hard boundary. Never accept or tentatively accept an overlapping meeting.
+- Convert the invitation start time to the principal's local timezone. If it starts after 23:00 and overlaps any active occupied event, decline the new invitation directly and notify the verified new inviter that a conflicting local-night commitment prevents attendance; do not compare meeting importance.
+- When two meetings overlap, compare their purpose, urgency, required participants, ownership, and the principal's required contribution from live event details. Do not decide from a title alone.
+- If the existing meeting is more important, keep it, decline the new invitation, and notify the verified new inviter with the concrete conflict reason.
+- If the new meeting is more important, accept it, decline the existing meeting, and notify the verified existing inviter with the concrete conflict reason.
+- If the available facts cannot establish which meeting is more important, do not accept or decline either one. Notify the verified new inviter about the conflict and ask them to coordinate with the existing inviter or provide the missing importance reason; then reassess from the new facts.
 - A missing description alone is not a reason to clarify. Decide from the other confirmed facts when they establish the value.
+- When a clear-value event is already accepted by the principal, do not issue a
+  duplicate calendar response. Keep the decision meaning as
+  `accept_already_confirmed`: the principal's participation is valuable, the
+  live event is already accepted, and no additional calendar write is needed.
+- A chat message that reports or requests attendance is not automatically a
+  broadcast. First check whether it changes the time, responsibility, required
+  input, or referenced material. If it only confirms an already accepted event,
+  no chat response is required by this Skill. If it contains a new explicit
+  request for attendance or contribution, evaluate a brief acknowledgment under
+  `dingtalk-chat`; do not describe the outcome as though the principal need not
+  attend.
 
 | Case | Decision | Clarification | Required handling |
 |---|---|---|---|
 | `clear_value` | `accept` | `no` | Propose acceptance. |
+| `clear_value_already_accepted` | `accept_already_confirmed` | `no` | Reread the live event, preserve the accepted state, and perform no duplicate calendar write. |
 | `worth_holding_but_uncertain` | `tentative` | `no` | Propose a tentative hold. |
 | `no_principal_input_needed` | `decline` | `no` | Propose decline. |
 | `missing_attendance_value` | `clarify_inviter` | `yes` | Ask what decision or input is required. |
@@ -52,3 +70,8 @@ exact time, conflict, requested contribution, and question still match the live
 event. Reassess the updated invitation from current facts; when clarification
 is still required, send the corrected factual question instead of suppressing
 it as a duplicate.
+
+For `accept_already_confirmed`, Audit B must verify the event identity,
+organizer, time, attendance value, principal's accepted response, and absence of
+new conflicts or changed contribution requirements. The result is a verified
+no-op for the calendar surface, not a decision that attendance is unnecessary.

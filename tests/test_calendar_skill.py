@@ -45,6 +45,8 @@ def test_calendar_skill_defines_complete_read_and_decision_workflow():
         "title, time, organizer, attendees, description, comments, linked materials",
         "the principal's current response state",
         "conflicting accepted events",
+        "A personal `Blocked` or sleep hold is a hard boundary",
+        "If the available facts cannot establish which meeting is more important",
         "A missing description alone is not a reason to clarify",
         "customer, product, personnel, or cross-team",
         "ask the verified inviter one concrete factual question",
@@ -56,6 +58,7 @@ def test_calendar_skill_defines_complete_read_and_decision_workflow():
         "already-applied exact response",
         "already-sent exact clarification",
         "A clarification sent before the invitation's latest update is stale",
+        "accept_already_confirmed",
         "Reuse confirmed facts",
     ):
         assert required in text
