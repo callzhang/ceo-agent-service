@@ -2209,26 +2209,10 @@ def _audited_unsubscribe_lineage(
     if run_chain is None:
         return None
     consumer_run_ids, audit_run_ids = run_chain
-    has_attempts = db.execute(
-        "select 1 from sqlite_master where type='table' and name='reply_attempts'"
-    ).fetchone()
-    attempt_ids = (
-        [
-            int(row["id"])
-            for row in db.execute(
-                """
-                select id
-                from reply_attempts
-                where channel='email'
-                  and conversation_id=?
-                  and trigger_message_id=?
-                order by id
-                """,
-                (expected_conversation_id, receipt["action_identity"]),
-            ).fetchall()
-        ]
-        if has_attempts is not None
-        else []
+    attempt_ids = _email_unsubscribe_attempt_ids(
+        db,
+        conversation_id=expected_conversation_id,
+        action_identity=str(receipt["action_identity"]),
     )
     return {
         "lifecycle_version": "email_unsubscribe_audited_v2",
@@ -2238,6 +2222,32 @@ def _audited_unsubscribe_lineage(
         "audit_run_ids": audit_run_ids,
         "attempt_ids": attempt_ids,
     }
+
+
+def _email_unsubscribe_attempt_ids(
+    db: sqlite3.Connection,
+    *,
+    conversation_id: str,
+    action_identity: str,
+) -> list[int]:
+    if db.execute(
+        "select 1 from sqlite_master where type='table' and name='reply_attempts'"
+    ).fetchone() is None:
+        return []
+    return [
+        int(row["id"])
+        for row in db.execute(
+            """
+            select id
+            from reply_attempts
+            where channel='email'
+              and conversation_id=?
+              and trigger_message_id=?
+            order by id
+            """,
+            (conversation_id, action_identity),
+        ).fetchall()
+    ]
 
 
 def _current_unsubscribe_task_lineage(
@@ -12605,6 +12615,29 @@ class EmailStore:
                 )
                 if lineage is not None:
                     inflight_unsubscribe_events.append(lineage)
+            terminal_attempt_ids_by_action: dict[str, list[int]] = {}
+            for action_identity in terminal_unsubscribe_actions:
+                if action_identity in lineage_by_action:
+                    continue
+                task = next(
+                    (
+                        candidate
+                        for candidate in task_rows
+                        if str(candidate["trigger_message_id"]) == action_identity
+                    ),
+                    None,
+                )
+                if task is None or _current_unsubscribe_task_lineage(
+                    db, task=task, classification=classification
+                ) is None:
+                    continue
+                attempt_ids = _email_unsubscribe_attempt_ids(
+                    db,
+                    conversation_id=str(task["conversation_id"]),
+                    action_identity=action_identity,
+                )
+                if attempt_ids:
+                    terminal_attempt_ids_by_action[action_identity] = attempt_ids
 
         attempts_by_action: dict[str, list[dict[str, Any]]] = {}
         for row in attempts:
@@ -12664,6 +12697,13 @@ class EmailStore:
         for row in unsubscribe_rows:
             action_identity = str(row["action_identity"])
             lineage = lineage_by_action.get(action_identity)
+            attempt_ids = (
+                list(lineage.get("attempt_ids", []))
+                if lineage is not None
+                else []
+            )
+            if not attempt_ids:
+                attempt_ids = terminal_attempt_ids_by_action.get(action_identity, [])
             event = {
                 "kind": "unsubscribe",
                 "operation": "unsubscribe",
@@ -12681,6 +12721,8 @@ class EmailStore:
                 "steps": steps_by_action.get(action_identity, []),
                 "_sort_created_at": row["created_at"],
             }
+            if attempt_ids:
+                event["attempt_ids"] = attempt_ids
             if lineage is not None:
                 event.update(lineage)
             events.append(event)

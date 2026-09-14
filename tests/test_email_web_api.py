@@ -2093,6 +2093,23 @@ def test_email_unsubscribe_entry_url_requires_explicit_verified_receipt(
     assert "fixture-entry" not in unavailable.text
 
 
+def test_email_detail_projects_verified_attempt_for_legacy_receipt_without_audit_run(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    with sqlite3.connect(fixture.database) as db:
+        db.execute(
+            "update email_unsubscribe_effects set audit_agent_run_id=null "
+            "where action_identity=?",
+            (fixture.action_identity,),
+        )
+
+    event = _audited_observability_event(fixture)
+
+    _assert_no_audited_lineage(event)
+    assert event["attempt_ids"] == [fixture.attempt_id]
+
+
 def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
     tmp_path: Path,
 ) -> None:
