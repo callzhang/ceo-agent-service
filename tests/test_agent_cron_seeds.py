@@ -170,7 +170,7 @@ READABLE_BUILTIN_COPY = {
         "发现已启用的好友新消息或群聊 @ 后，由 Agent 判断是否回复；仅按已配置范围和发送模式处理，不读取或回复其他会话。",
     ),
     "dingtalk-oa-check-v1": (
-        "审阅新的或有进展的钉钉 OA",
+        "处理新的钉钉 OA 审批",
         "发现新的或有新处理记录的待审批 OA 后，由 Agent 读取完整材料与审批流水，判断同意、拒绝或评论补充要求，并在执行后核验结果。",
     ),
     "work-source-scan-daily-v1": (
@@ -958,6 +958,48 @@ def test_seed_creates_hourly_oa_check_with_real_operation_skill(
     assert task.working_directory == ""
     assert [ref.skill_name for ref in task.skill_refs] == ["dingtalk-oa-approval"]
     assert task.enabled is True
+
+
+def test_reseed_renames_untouched_oa_default_so_the_approval_task_is_discoverable(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "oa-readable-name.sqlite3")
+    original = store.create_scheduled_task(
+        migration_key="dingtalk-oa-check-v1",
+        name="审阅新的或有进展的钉钉 OA",
+        description="发现新的或有新处理记录的待审批 OA 后，由 Agent 读取完整材料与审批流水，判断同意、拒绝或评论补充要求，并在执行后核验结果。",
+        prompt="",
+        command="scan-oa-approvals",
+        cron_expression="0 0 * * * *",
+        timezone_name="Asia/Shanghai",
+        enabled=True,
+        now=NOW,
+    )
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes={"codex_oauth"},
+        operation_skills=("dingtalk-oa-approval",),
+    )
+
+    reseeded = _task_by_key(
+        seed_scheduled_tasks(
+            store=store,
+            options=options,
+            working_directory=tmp_path,
+            now=NOW + timedelta(minutes=1),
+        ),
+        "dingtalk-oa-check-v1",
+    )
+
+    assert reseeded.id == original.id
+    assert reseeded.name == "处理新的钉钉 OA 审批"
+    assert reseeded.description == original.description
+    assert reseeded.command == "scan-oa-approvals"
+    assert "$dingtalk-oa-approval" in reseeded.prompt
+    assert [ref.skill_name for ref in reseeded.skill_refs] == [
+        "dingtalk-oa-approval"
+    ]
 
 
 def test_seed_creates_daily_work_source_scan(tmp_path: Path) -> None:

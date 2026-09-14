@@ -68,10 +68,10 @@ SCHEDULED_TASK_DEFAULT_COPY = {
         old_description="检查已配置微信会话的新消息，并创建后续处理任务。",
     ),
     DINGTALK_OA_MIGRATION_KEY: ScheduledTaskDefaultCopy(
-        name="审阅新的或有进展的钉钉 OA",
+        name="处理新的钉钉 OA 审批",
         description="发现新的或有新处理记录的待审批 OA 后，由 Agent 读取完整材料与审批流水，判断同意、拒绝或评论补充要求，并在执行后核验结果。",
-        old_name="检查 DingTalk OA 审批",
-        old_description="检查待处理的 DingTalk OA 审批，并创建后续处理任务。",
+        old_name="审阅新的或有进展的钉钉 OA",
+        old_description="发现新的或有新处理记录的待审批 OA 后，由 Agent 读取完整材料与审批流水，判断同意、拒绝或评论补充要求，并在执行后核验结果。",
     ),
     WORK_SOURCE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="整理工作区中的新工作记录",

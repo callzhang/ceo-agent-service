@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-14: The built-in hourly DingTalk OA workflow is now named
+  `处理新的钉钉 OA 审批`, making the approval task directly discoverable in the
+  scheduled-task list. Service startup upgrades only the untouched repository
+  default name; user-edited names, descriptions, Cron settings, prompts,
+  Skills, enablement, and history remain unchanged.
+
 - 2026-09-14: Reply History no longer lets a `reply_task=done` queue envelope
   overwrite a failed Agent run. For Consumer/Audit work, the final run in the
   current execution generation is authoritative: a durable provider receipt
