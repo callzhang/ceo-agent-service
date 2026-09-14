@@ -429,13 +429,12 @@ def test_attempt_detail_api_projects_exact_audit_linked_consumer_result_read_onl
         task.id, task.execution_generation
     ) == before["runs"]
     assert item["consumer_result"] == {
-        "run_id": consumer.id,
         "confidence": "82%",
         "information_completeness": "75%",
         "rule_coverage": "100%",
         "risk": "medium",
-        "error": "",
-        "active_run": None,
+        "error_reason": "",
+        "current_run": None,
     }
 
 
@@ -480,12 +479,11 @@ def test_attempt_detail_api_marks_unavailable_consumer_result_per_field(
     assert status == 200
     assert item is not None
     result = item["consumer_result"]
-    assert result["run_id"] == consumer.id
     assert result["confidence"] == "—"
     assert result["information_completeness"] == "—"
     assert result["rule_coverage"] == "—"
     assert result["risk"] == "—"
-    assert result["error"] == expected_error
+    assert result["error_reason"] == expected_error
     assert "raw-malformed-marker" not in json.dumps(result)
 
 
@@ -504,13 +502,12 @@ def test_attempt_detail_api_marks_missing_linked_consumer_result_unavailable(
 
     assert item is not None
     assert item["consumer_result"] == {
-        "run_id": None,
         "confidence": "—",
         "information_completeness": "—",
         "rule_coverage": "—",
         "risk": "—",
-        "error": "未找到当前 Attempt 关联的 Consumer run",
-        "active_run": None,
+        "error_reason": "未找到当前 Attempt 关联的 Consumer run",
+        "current_run": None,
     }
 
 
@@ -528,13 +525,12 @@ def test_attempt_detail_api_keeps_old_metrics_while_current_generation_is_pendin
 
     assert pending is not None
     assert pending["consumer_result"] == {
-        "run_id": consumer.id,
         "confidence": "82%",
         "information_completeness": "75%",
         "rule_coverage": "100%",
         "risk": "medium",
-        "error": "",
-        "active_run": {"run_id": None, "status": "pending"},
+        "error_reason": "",
+        "current_run": {"id": None, "status": "pending"},
     }
 
     current_task = store.claim_reply_task(task.id)
@@ -554,11 +550,10 @@ def test_attempt_detail_api_keeps_old_metrics_while_current_generation_is_pendin
 
     assert running_detail is not None
     assert running_detail["consumer_result"] == {
-        "run_id": consumer.id,
         "confidence": "82%",
         "information_completeness": "75%",
         "rule_coverage": "100%",
         "risk": "medium",
-        "error": "",
-        "active_run": {"run_id": running.id, "status": "running"},
+        "error_reason": "",
+        "current_run": {"id": running.id, "status": "running"},
     }
