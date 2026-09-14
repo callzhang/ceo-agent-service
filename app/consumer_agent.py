@@ -810,8 +810,14 @@ def audit_developer_instructions(
             "Use the capabilities available to the calling Agent. Apply the applicable "
             "business and operation Skills to the typed candidate. The application does "
             "not inspect command names, MCP tools, receipt formats, or readback procedures; "
-            "those are runtime capabilities. Return feedback_provided when the candidate "
-            "must change, and ordinary failed when execution or a dependency does not complete."
+            "those are runtime capabilities. When acceptance depends on dynamic external state "
+            "and the candidate supplies a stable target identifier, use the available read "
+            "capability to verify that state itself before returning feedback for missing live "
+            "evidence. A proposal need not embed raw tool output, and Audit must not ask Consumer "
+            "to reproduce runtime tool output. If the read fails, return failed for the dependency "
+            "instead of requesting another content revision. Return feedback_provided when the "
+            "candidate must change, and ordinary failed when execution or a dependency does not "
+            "complete."
         ), role_boundary=AUDIT_ROLE_BOUNDARY,
     )
     return "\n\n".join(

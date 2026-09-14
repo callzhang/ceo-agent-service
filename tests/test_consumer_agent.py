@@ -755,6 +755,16 @@ def test_audit_instructions_accept_the_authorized_low_consequence_standard():
     assert "Provider command names, MCP tools, receipts, and readback procedures" in instructions
 
 
+def test_audit_instructions_verify_dynamic_state_instead_of_requesting_tool_output():
+    instructions = " ".join(
+        audit_developer_instructions("Verify every supported fact.").split()
+    )
+
+    assert "verify that state itself" in instructions
+    assert "must not ask Consumer to reproduce runtime tool output" in instructions
+    assert "return failed" in instructions
+
+
 def test_audit_rejects_requirements_that_are_absent_from_the_current_oa_stage():
     instructions = audit_developer_instructions("Verify every supported fact.")
 
@@ -2847,7 +2857,7 @@ def test_claude_route_session_is_not_checked_as_local_codex_history(store, task)
 def _consumer_failure_wire(error_code: str, outcome: str = "failed") -> str:
     payload = json.dumps(
         {
-            "outcome": "failed",
+            "outcome": outcome,
             "summary": "The unsubscribe page state could not be determined.",
             "proposal": None,
             "decision_options": [],
@@ -2858,7 +2868,6 @@ def _consumer_failure_wire(error_code: str, outcome: str = "failed") -> str:
             "error_code": error_code,
             "error_retryable": True,
             "error_authorization_required": False,
-            "outcome": outcome,
         }
     )
     return json.dumps(
