@@ -83,6 +83,332 @@ def _claim_audit_run(store, task, *, owner="worker"):
     )
 
 
+def _consumer_result_payload(
+    *,
+    confidence: float = 0.82,
+    information_completeness: float = 0.75,
+    rule_coverage: float = 1.0,
+    risk: str = "medium",
+) -> dict[str, object]:
+    return {
+        "outcome": "proposal",
+        "summary": "Publish the reviewed group update.",
+        "proposal": {
+            "objective": "Publish the reviewed group update.",
+            "actions": [
+                {
+                    "description": "Send the reviewed update to the group.",
+                    "action_identity": "send-reviewed-group-update",
+                    "capability": "dingtalk-chat",
+                    "operation": "send_to_group",
+                    "target": {"conversation_id": "cid-consumer-result"},
+                    "payload": {"content": "Reviewed update."},
+                }
+            ],
+            "sourced_facts": [
+                {
+                    "assertion": "The group requested a reviewed update.",
+                    "references": ["msg-consumer-result"],
+                }
+            ],
+            "authored_judgment": "Publishing the reviewed update is appropriate.",
+        },
+        "decision_options": [],
+        "error": {
+            "code": "",
+            "retryable": False,
+            "authorization_required": False,
+        },
+        "risk": risk,
+        "confidence": confidence,
+        "rule_coverage": rule_coverage,
+        "information_completeness": information_completeness,
+    }
+
+
+def _consumer_result_task(store: AutoReplyStore):
+    trigger_message_json = DingTalkMessage(
+        open_conversation_id="cid-consumer-result",
+        open_message_id="msg-consumer-result",
+        conversation_title="Consumer result",
+        single_chat=False,
+        sender_name="Mina",
+        create_time="2026-09-14 09:00:00",
+        content="Publish the reviewed update.",
+    ).model_dump_json()
+    assert store.enqueue_reply_task(
+        conversation_id="cid-consumer-result",
+        conversation_title="Consumer result",
+        single_chat=False,
+        trigger_message_id="msg-consumer-result",
+        trigger_create_time="2026-09-14 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="Publish the reviewed update.",
+        trigger_message_json=trigger_message_json,
+        execution_generation="consumer-result-generation",
+    )
+    task = store.claim_reply_task(1)
+    assert task is not None
+    return task
+
+
+def _complete_consumer_run(
+    store: AutoReplyStore,
+    task,
+    *,
+    proposal_revision: int = 0,
+    parent_agent_run_id: int | None = None,
+    owner: str = "consumer-result",
+    payload: dict[str, object] | None = None,
+):
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=proposal_revision,
+        turn_attempt=0,
+        parent_agent_run_id=parent_agent_run_id,
+        operation_id="",
+        owner=owner,
+    ).run
+    return store.complete_agent_run(
+        consumer.id,
+        payload or _consumer_result_payload(),
+        owner=owner,
+    )
+
+
+def _complete_audit_run(
+    store: AutoReplyStore,
+    task,
+    consumer: AgentRun,
+    *,
+    proposal_revision: int = 0,
+    owner: str = "audit-result",
+):
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=proposal_revision,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id=f"audit-consumer-result-{proposal_revision}",
+        owner=owner,
+    ).run
+    return store.complete_agent_run(
+        audit.id,
+        {
+            "outcome": "executed",
+            "summary": "The reviewed update was published.",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+        },
+        owner=owner,
+    )
+
+
+def _finalize_consumer_result_attempt(
+    store: AutoReplyStore,
+    task,
+    terminal_run: AgentRun,
+    *,
+    task_status: str = "done",
+    send_status: str = "completed",
+    send_error: str = "",
+) -> int:
+    return store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=terminal_run.id,
+        task_status=task_status,
+        task_error=send_error,
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="The reviewed update was published.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="The reviewed update was published.",
+        send_status=send_status,
+        send_error=send_error,
+        channel="dingtalk",
+    )
+
+
+def test_attempt_detail_renders_linked_consumer_result(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task)
+    audit = _complete_audit_run(store, task, consumer)
+    attempt_id = _finalize_consumer_result_attempt(store, task, audit)
+
+    status, detail = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "Consumer 执行结果" in detail
+    assert "confidence" in detail and "82%" in detail
+    assert "information_completeness" in detail and "75%" in detail
+    assert "rule_coverage" in detail and "100%" in detail
+    assert "risk" in detail and "medium" in detail
+
+
+def test_attempt_detail_uses_consumer_result_linked_to_terminal_audit_not_latest_revision(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    first_consumer = _complete_consumer_run(
+        store,
+        task,
+        payload=_consumer_result_payload(confidence=0.10),
+        owner="first-consumer-result",
+    )
+    first_audit = _complete_audit_run(
+        store,
+        task,
+        first_consumer,
+        owner="first-audit-result",
+    )
+    second_consumer = _complete_consumer_run(
+        store,
+        task,
+        proposal_revision=1,
+        parent_agent_run_id=first_audit.id,
+        payload=_consumer_result_payload(confidence=0.82),
+        owner="second-consumer-result",
+    )
+    _complete_audit_run(
+        store,
+        task,
+        second_consumer,
+        proposal_revision=1,
+        owner="second-audit-result",
+    )
+    attempt_id = _finalize_consumer_result_attempt(store, task, first_audit)
+
+    status, detail = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "Consumer 执行结果" in detail
+    assert "10%" in detail
+    assert "82%" not in detail
+
+
+def test_attempt_detail_renders_direct_terminal_consumer_result(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task)
+    attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
+
+    status, detail = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "Consumer 执行结果" in detail
+    assert "82%" in detail
+    assert "medium" in detail
+
+
+def test_attempt_detail_marks_malformed_consumer_result_unavailable(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task)
+    attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update agent_runs set final_result_json=? where id=?",
+            ('{"outcome":"proposal"}', consumer.id),
+        )
+
+    status, detail = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert detail.count(">—<") >= 4
+    assert "Consumer 结果不符合当前契约" in detail
+
+
+def test_attempt_detail_renders_failed_consumer_result_safe_detail_and_unavailable_values(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="failed-consumer-result",
+    ).run
+    consumer = store.fail_agent_run(
+        consumer.id,
+        {"code": "consumer_source_failed", "detail": "Source read failed"},
+        owner="failed-consumer-result",
+    )
+    attempt_id = _finalize_consumer_result_attempt(
+        store,
+        task,
+        consumer,
+        task_status="failed",
+        send_status="failed",
+        send_error="consumer_source_failed",
+    )
+
+    status, detail = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "Source read failed" in detail
+    assert detail.count(">—<") >= 4
+    assert '{"code": "consumer_source_failed", "detail": "Source read failed"}' not in detail
+
+
+def test_attempt_detail_keeps_old_consumer_result_while_current_generation_runs(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task)
+    attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
+
+    status, headers, html = handle_rerun_attempt_post(store, attempt_id)
+
+    assert status == 303
+    assert headers["Location"] == f"/attempts/{attempt_id}"
+    assert html == ""
+    _, pending_detail = render_attempt_detail(store, attempt_id)
+    assert "新 Consumer run" in pending_detail
+    assert "等待中" in pending_detail
+
+    current_task = store.claim_reply_task(task.id)
+    assert current_task is not None
+    store.claim_agent_run(
+        current_task.id,
+        current_task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="current-consumer-result",
+    )
+
+    status, running_detail = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "新 Consumer run" in running_detail
+    assert "运行中" in running_detail
+    assert "82%" in running_detail
+
+
 @pytest.fixture(autouse=True)
 def isolate_configuration_environment():
     # Direct legacy settings handlers update process state as well as their file.
