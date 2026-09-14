@@ -180,6 +180,10 @@ business_object（稳定业务对象，例如一条 OA 审批节点）
   只更新一个 `reply_task` 当前投影，每次输入追加到 `reply_task_inputs`。
 - `reply_task` 负责排队、领取、重试、`execution_generation` 和 worker 所有权。
   新输入到达正在执行的 task 时，本轮结束后重新排队同一个 task，不创建并行任务。
+- Provider 若原地更新同一个 DingTalk 日程卡片而继续复用消息 ID，近期消息恢复会把
+  `input_revision_key` 不同的新快照追加到 `reply_task_inputs`，同时更新同一个
+  `reply_task` 的当前投影和 `input_version`。只有卡片内容变化、日程仍有效且本人仍待响应时
+  才开启新的 `execution_generation`；普通已读消息仍按消息 ID 去重。
 - `agent_run` 表示一次实际 Consumer 或 Audit Agent 执行。重试、服务重启接管或
   新的 generation 都会产生新的 run；run 的状态、session、revision、transcript
   范围、tool event 和原始错误是不可覆盖的执行事实。

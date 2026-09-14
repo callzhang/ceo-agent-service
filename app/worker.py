@@ -1089,6 +1089,17 @@ class DingTalkAutoReplyWorker:
                         )
                 else:
                     candidate_unread_messages = unread_messages
+            if recovery and context_messages:
+                queued_tasks += self._requeue_revised_seen_calendar_messages(
+                    conversation,
+                    context_messages,
+                )
+                if max_tasks is not None and queued_tasks >= max_tasks:
+                    self.store.set_service_state(
+                        MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
+                        fast_path_checked_at.isoformat(),
+                    )
+                    return queued_tasks
             if (
                 not context_messages
                 and not unread_messages
@@ -1285,6 +1296,55 @@ class DingTalkAutoReplyWorker:
             if conversation.open_conversation_id not in existing_ids
         }
         return recovered, recovery_conversation_ids
+
+    def _requeue_revised_seen_calendar_messages(
+        self,
+        conversation: DingTalkConversation,
+        messages: list[DingTalkMessage],
+    ) -> int:
+        """Recover in-place calendar card updates that reuse a message id."""
+        queued = 0
+        checked_message_ids: set[str] = set()
+        for message in messages:
+            if message.open_message_id in checked_message_ids:
+                continue
+            checked_message_ids.add(message.open_message_id)
+            if (
+                not self.store.has_seen(message.open_message_id)
+                or not self._is_calendar_message(message)
+                or self._is_current_user_message_for_candidate_filter(message)
+            ):
+                continue
+            invite = self._call_dws(
+                "read_revised_calendar_invite",
+                lambda: self._calendar_invite_from_message_or_sender(
+                    conversation,
+                    message,
+                    context_messages=messages,
+                    include_resolved=True,
+                ),
+                message_id=message.open_message_id,
+                default=None,
+            )
+            if (
+                invite is None
+                or not self._calendar_event_is_active(invite)
+                or not self._calendar_event_is_self_pending(invite)
+            ):
+                continue
+            if self.store.requeue_terminal_reply_task_for_revised_trigger(
+                conversation_id=conversation.open_conversation_id,
+                conversation_title=conversation.title,
+                single_chat=conversation.single_chat,
+                trigger_message_id=message.open_message_id,
+                trigger_create_time=message.create_time,
+                trigger_sender=message.sender_name,
+                trigger_text=message.content,
+                trigger_message_json=self._scheduled_trigger_message_json(message),
+                channel="dingtalk",
+            ):
+                queued += 1
+        return queued
 
     def _conversations_updated_since_fast_path_check(
         self,

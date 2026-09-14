@@ -153,6 +153,12 @@ OA 的稳定身份是 `process_instance_id + task_id`。同一 OA 从 webhook、
 复用同一 task 和业务对象，但必须创建新的 execution generation，并清除旧的持久化 session
 绑定，让新进程重新获得完整的运行时能力；这两类重跑都保留旧 run/session/provider 事实。
 
+DingTalk 日程卡片改期可能原地覆盖卡片内容而不产生新消息 ID。每小时的近期消息恢复读取
+该消息当前可读内容；若它和当前 task 投影不同，且实时日程仍有效、本人仍待响应，就以新的
+`input_revision_key` 追加一条 `reply_task_inputs`，提高 `input_version`，并为同一个 task
+开启新的 execution generation。相同卡片快照不会重复入队，已经接受、拒绝或取消的日程也
+不会因此重新触发。
+
 评论通知只有 `process_instance_id` 时，运行时从事件正文提取该身份；若该实例只有一个已知
 节点，则归并到该节点。存在多个节点而事件没有 `task_id` 时不得猜测。
 

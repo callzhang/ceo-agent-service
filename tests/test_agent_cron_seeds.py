@@ -383,11 +383,21 @@ def test_seed_creates_dingtalk_message_check_every_minute(tmp_path: Path) -> Non
     assert task.timezone_name == "Asia/Shanghai"
     assert task.command == "produce-once"
     assert task.enabled is True
-    assert "$ceo-message-triage" in task.prompt and "$dingtalk-chat" in task.prompt
+    assert all(
+        skill_name in task.prompt
+        for skill_name in (
+            "$ceo-message-triage",
+            "$dingtalk-chat",
+            "$ceo-calendar-invite",
+            "$dingtalk-calendar",
+        )
+    )
     assert task.runtime_id == ""
     assert [ref.skill_name for ref in task.skill_refs] == [
         "ceo-message-triage",
+        "ceo-calendar-invite",
         "dingtalk-chat",
+        "dingtalk-calendar",
     ]
     assert task.runtime_options == {} and task.required_runtime_capabilities == ()
     assert task.working_directory == ""
@@ -444,11 +454,21 @@ def test_startup_seed_moves_legacy_agent_message_check_to_the_service_command(
     assert seeded.id == legacy.id
     assert seeded.version == legacy.version + 1
     assert seeded.command == "produce-once"
-    assert "$ceo-message-triage" in seeded.prompt and "$dingtalk-chat" in seeded.prompt
+    assert all(
+        skill_name in seeded.prompt
+        for skill_name in (
+            "$ceo-message-triage",
+            "$ceo-calendar-invite",
+            "$dingtalk-chat",
+            "$dingtalk-calendar",
+        )
+    )
     assert seeded.runtime_id == ""
     assert [ref.skill_name for ref in seeded.skill_refs] == [
         "ceo-message-triage",
+        "ceo-calendar-invite",
         "dingtalk-chat",
+        "dingtalk-calendar",
     ]
     assert seeded.required_runtime_capabilities == ()
     assert seeded.working_directory == ""
@@ -560,8 +580,14 @@ def test_every_fixed_discovery_check_is_a_service_command(
         "work-source-scan-daily-v1": "scan-work-sources-once",
     }
     expected_skills = {
-        "dingtalk-message-check-v1": ["ceo-message-triage", "dingtalk-chat"],
-        "dingtalk-message-recovery-v1": ["ceo-message-triage", "dingtalk-chat"],
+        "dingtalk-message-check-v1": [
+            "ceo-message-triage", "ceo-calendar-invite",
+            "dingtalk-chat", "dingtalk-calendar",
+        ],
+        "dingtalk-message-recovery-v1": [
+            "ceo-message-triage", "ceo-calendar-invite",
+            "dingtalk-chat", "dingtalk-calendar",
+        ],
         "dingtalk-meeting-check-v1": [
             "ceo-meeting-work", "dingtalk-minutes", "dingtalk-calendar"
         ],
@@ -733,12 +759,23 @@ def test_seed_creates_hourly_recent_message_recovery_at_half_past(
     assert task.command == "recover-recent-messages"
     assert task.cron_expression == "0 30 * * * *"
     assert task.timezone_name == "Asia/Shanghai"
+    assert "原地更新的待响应日程邀请" in task.description
     assert task.enabled is True
-    assert "$ceo-message-triage" in task.prompt and "$dingtalk-chat" in task.prompt
+    assert all(
+        skill_name in task.prompt
+        for skill_name in (
+            "$ceo-message-triage",
+            "$dingtalk-chat",
+            "$ceo-calendar-invite",
+            "$dingtalk-calendar",
+        )
+    )
     assert task.runtime_id == ""
     assert [ref.skill_name for ref in task.skill_refs] == [
         "ceo-message-triage",
+        "ceo-calendar-invite",
         "dingtalk-chat",
+        "dingtalk-calendar",
     ]
 
 

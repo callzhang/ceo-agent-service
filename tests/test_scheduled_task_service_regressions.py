@@ -5,17 +5,40 @@ from pathlib import Path
 from app.agent_cron.commands import SERVICE_COMMAND_OPTIONS
 from app.agent_cron.options import ScheduledTaskOptionService
 from app.agent_cron.seeds import seed_scheduled_tasks
+from app.managed_skills import RuntimeSkillSnapshot, import_repository_managed_skills
 from app.skill_files import SkillFileService
 from app.store import AutoReplyStore
 
 
 def _options(store: AutoReplyStore, root: Path) -> ScheduledTaskOptionService:
+    import_repository_managed_skills(store)
+    config = store.get_pending_or_active_runtime_skill_config()
+    assert config is not None
+    revisions = tuple(
+        revision
+        for binding in store.list_runtime_skill_bindings(config.id)
+        if (revision := store.get_managed_skill_revision(binding.revision_id))
+        is not None
+    )
+    operation_root = root / "operation-skills"
+    for name in (
+        "dingtalk-chat",
+        "dingtalk-calendar",
+        "dingtalk-minutes",
+        "dingtalk-oa-approval",
+    ):
+        skill_path = operation_root / name / "SKILL.md"
+        skill_path.parent.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(
+            f"---\nname: {name}\ndescription: Test Skill\n---\n",
+            encoding="utf-8",
+        )
     return ScheduledTaskOptionService(
         store=store,
         environment={},
         runtime_snapshots={},
-        operation_skill_files=SkillFileService(root / "operation-skills"),
-        runtime_skill_snapshot=None,
+        operation_skill_files=SkillFileService(operation_root),
+        runtime_skill_snapshot=RuntimeSkillSnapshot(config.id, revisions),
     )
 
 

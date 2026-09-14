@@ -374,8 +374,8 @@ Cron：北京时间每天 20:00
 
 | 任务 | 迁移默认计划 | 执行形式 | 主要 Skill |
 | --- | --- | --- | --- |
-| 检查 DingTalk 消息 | 每分钟 | 服务命令 `produce-once` | `$ceo-message-triage`、`$dingtalk-chat` |
-| 恢复近期 DingTalk 消息 | 每小时 `:30` | 服务命令 `recover-recent-messages` | `$ceo-message-triage`、`$dingtalk-chat` |
+| 检查 DingTalk 消息 | 每分钟 | 服务命令 `produce-once` | `$ceo-message-triage`、`$ceo-calendar-invite`、`$dingtalk-chat`、`$dingtalk-calendar` |
+| 恢复近期 DingTalk 消息 | 每小时 `:30` | 服务命令 `recover-recent-messages` | `$ceo-message-triage`、`$ceo-calendar-invite`、`$dingtalk-chat`、`$dingtalk-calendar` |
 | 检查新增会议 | 每分钟 | 服务命令 `scan-meetings-once` | `$ceo-meeting-work`、`$dingtalk-minutes`、`$dingtalk-calendar` |
 | 检查 WeChat 消息 | 每 15 秒；上一轮未结束时跳过本轮 | 服务命令 `wechat-produce-once` | `$ceo-wechat` |
 | 同步 AI 听记 | 北京时间每天 20:00 | 服务命令 `sync-minutes-once` | 无；同步过程确定性完成 |
@@ -520,3 +520,7 @@ Lark 不自动创建没有明确目标的种子任务。用户可以在顶部“
   Prompt 中 `$skill` 与结构化精确 Skill 引用确定性一致，并随队列项传给 DingTalk、WeChat、Meeting、
   OA 与 Work Summary Consumer。定时任务 UI 和选项目录移除全局 Skill、Runtime 路由和角色边界展示；
   执行任务下拉对 seed 和用户任务均可编辑。纯确定性的听记同步与 OKR 周报不显示 Consumer Prompt。
+- 2026-09-14：DingTalk 日程邀请仍由消息 Trigger 发现，不归“检查 DingTalk 会议”所有。由于日程
+  卡片改期可能复用原消息 ID，`recover-recent-messages` 会对内容已变化且本人仍待响应的已处理卡片
+  写入同一业务任务的新输入版本并重新触发 Consumer；两条消息任务的 Consumer Prompt 与精确 Skill
+  引用同时加入 `$ceo-calendar-invite`、`$dingtalk-calendar`。

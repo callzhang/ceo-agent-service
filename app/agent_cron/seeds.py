@@ -26,7 +26,10 @@ WORK_SOURCE_SERVICE_COMMAND = "scan-work-sources-once"
 
 DINGTALK_MESSAGE_CONSUMER_PROMPT = (
     "使用 $ceo-message-triage 判断 Trigger 发现的真实 DingTalk 消息是否需要 CEO "
-    "关注或回复，并使用 $dingtalk-chat 读取所需上下文；不要新增复盘或摘要任务。"
+    "关注或回复；如果消息是日程邀请或原地更新的日程卡片，使用 "
+    "$ceo-calendar-invite 处理。使用 $dingtalk-chat 读取所需消息上下文，并使用 "
+    "$dingtalk-calendar 核验最新日程状态；"
+    "不要新增复盘或摘要任务。"
 )
 WECHAT_MESSAGE_CONSUMER_PROMPT = (
     "使用 $ceo-wechat 处理 Trigger 发现的真实微信消息，严格保留已配置联系人、"
@@ -173,8 +176,8 @@ def _seed_dingtalk_message_task(
     del working_directory
     skill_refs = _consumer_skill_refs(
         options,
-        managed=("ceo-message-triage",),
-        operation=("dingtalk-chat",),
+        managed=("ceo-message-triage", "ceo-calendar-invite"),
+        operation=("dingtalk-chat", "dingtalk-calendar"),
     )
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
@@ -216,14 +219,17 @@ def _seed_dingtalk_message_recovery_task(
     del working_directory
     skill_refs = _consumer_skill_refs(
         options,
-        managed=("ceo-message-triage",),
-        operation=("dingtalk-chat",),
+        managed=("ceo-message-triage", "ceo-calendar-invite"),
+        operation=("dingtalk-chat", "dingtalk-calendar"),
     )
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
         command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
         seed_enabled=True,
-        seed_description="按较宽时间范围恢复近期 DingTalk 消息，补齐漏读记录。",
+        seed_description=(
+            "按较宽时间范围恢复近期 DingTalk 消息，补齐漏读记录及原地更新的"
+            "待响应日程邀请。"
+        ),
         consumer_prompt=DINGTALK_MESSAGE_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
         now=now,
@@ -233,7 +239,10 @@ def _seed_dingtalk_message_recovery_task(
     return store.create_scheduled_task(
         migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
         name="恢复近期 DingTalk 消息",
-        description="按较宽时间范围恢复近期 DingTalk 消息，补齐漏读记录。",
+        description=(
+            "按较宽时间范围恢复近期 DingTalk 消息，补齐漏读记录及原地更新的"
+            "待响应日程邀请。"
+        ),
         prompt=DINGTALK_MESSAGE_CONSUMER_PROMPT,
         command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
         cron_expression="0 30 * * * *",

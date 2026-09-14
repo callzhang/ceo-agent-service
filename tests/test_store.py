@@ -9011,7 +9011,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-13.1"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-14.1"
     assert {
         "lease_owner",
         "lease_expires_at",
@@ -9022,6 +9022,91 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
         "result_envelope_json",
     } <= columns
     assert reopened._schema_is_current() is True
+
+
+def test_schema_upgrade_preserves_reply_inputs_and_adds_revision_identity(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "reply-input-revision-migration.sqlite3"
+    store = AutoReplyStore(db_path)
+    task_id = store.enqueue_reply_task(
+        conversation_id="cid-calendar-revision",
+        conversation_title="Calendar",
+        single_chat=True,
+        trigger_message_id="msg-calendar-revision",
+        trigger_create_time="2026-09-14 10:00:00",
+        trigger_sender="Organizer",
+        trigger_text="旧日程时间",
+        trigger_message_json="{}",
+    )
+    assert task_id is not None
+    with store._connect() as db:
+        with AutoReplyStore._foreign_key_rebuild(
+            db,
+            migration_name="test_legacy_reply_task_inputs",
+        ):
+            db.executescript(
+                """
+                begin immediate;
+                create table reply_task_inputs_legacy (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null,
+                    channel text not null,
+                    conversation_id text not null,
+                    conversation_title text not null,
+                    single_chat integer not null,
+                    trigger_message_id text not null,
+                    trigger_create_time text not null,
+                    trigger_sender text not null,
+                    trigger_text text not null,
+                    trigger_message_json text not null default '{}',
+                    oa_url text not null default '',
+                    business_object_key text not null,
+                    created_at text not null default current_timestamp,
+                    unique(channel, conversation_id, trigger_message_id),
+                    foreign key(reply_task_id) references reply_tasks(id)
+                );
+                insert into reply_task_inputs_legacy (
+                    id, reply_task_id, channel, conversation_id,
+                    conversation_title, single_chat, trigger_message_id,
+                    trigger_create_time, trigger_sender, trigger_text,
+                    trigger_message_json, oa_url, business_object_key, created_at
+                )
+                select
+                    id, reply_task_id, channel, conversation_id,
+                    conversation_title, single_chat, trigger_message_id,
+                    trigger_create_time, trigger_sender, trigger_text,
+                    trigger_message_json, oa_url, business_object_key, created_at
+                from reply_task_inputs;
+                drop table reply_task_inputs;
+                alter table reply_task_inputs_legacy rename to reply_task_inputs;
+                create index idx_reply_task_inputs_task
+                    on reply_task_inputs(reply_task_id, id);
+                """
+            )
+        db.execute(
+            "update service_state set value='2026-09-13.1' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    reopened = AutoReplyStore(db_path)
+
+    with reopened._connect() as db:
+        columns = {
+            row["name"]
+            for row in db.execute("pragma table_info(reply_task_inputs)").fetchall()
+        }
+        version = db.execute(
+            "select value from service_state where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        ).fetchone()["value"]
+    assert "input_revision_key" in columns
+    assert version == store_module.STORE_SCHEMA_VERSION
+    inputs = reopened.list_reply_task_inputs(task_id)
+    assert len(inputs) == 1
+    assert inputs[0]["trigger_text"] == "旧日程时间"
+    assert inputs[0]["input_revision_key"] == ""
 
 
 def test_terminalize_exhausted_pending_reply_tasks_closes_restart_retry_loop(

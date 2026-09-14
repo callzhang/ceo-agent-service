@@ -130,7 +130,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-13.1"
+STORE_SCHEMA_VERSION = "2026-09-14.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -2657,8 +2657,12 @@ class AutoReplyStore:
                     trigger_message_json text not null default '{}',
                     oa_url text not null default '',
                     business_object_key text not null,
+                    input_revision_key text not null default '',
                     created_at text not null default current_timestamp,
-                    unique(channel, conversation_id, trigger_message_id),
+                    unique(
+                        channel, conversation_id, trigger_message_id,
+                        input_revision_key
+                    ),
                     foreign key(reply_task_id) references reply_tasks(id)
                 );
                 create index if not exists idx_reply_task_inputs_task
@@ -3855,6 +3859,7 @@ class AutoReplyStore:
                 )
             self._migrate_reply_task_channel_identity(db)
             self._migrate_reply_task_business_objects(db)
+            self._migrate_reply_task_input_revisions(db)
             db.execute(
                 """
                 create index if not exists idx_reply_tasks_channel_status_id
@@ -7821,8 +7826,12 @@ class AutoReplyStore:
                 trigger_message_json text not null default '{}',
                 oa_url text not null default '',
                 business_object_key text not null,
+                input_revision_key text not null default '',
                 created_at text not null default current_timestamp,
-                unique(channel, conversation_id, trigger_message_id),
+                unique(
+                    channel, conversation_id, trigger_message_id,
+                    input_revision_key
+                ),
                 foreign key(reply_task_id) references reply_tasks(id)
             );
             create index if not exists idx_reply_task_inputs_task
@@ -7892,6 +7901,65 @@ class AutoReplyStore:
                 "insert or ignore into business_object_tasks "
                 "(business_object_key, reply_task_id) values (?, ?)",
                 (task_keys[int(task["id"])], int(task["id"])),
+            )
+
+    @staticmethod
+    def _migrate_reply_task_input_revisions(db: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in db.execute("pragma table_info(reply_task_inputs)").fetchall()
+        }
+        if "input_revision_key" in columns:
+            return
+        with AutoReplyStore._foreign_key_rebuild(
+            db,
+            migration_name="reply_task_inputs_revision",
+        ):
+            db.executescript(
+                """
+                begin immediate;
+                create table reply_task_inputs_revision_migration (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null,
+                    channel text not null,
+                    conversation_id text not null,
+                    conversation_title text not null,
+                    single_chat integer not null,
+                    trigger_message_id text not null,
+                    trigger_create_time text not null,
+                    trigger_sender text not null,
+                    trigger_text text not null,
+                    trigger_message_json text not null default '{}',
+                    oa_url text not null default '',
+                    business_object_key text not null,
+                    input_revision_key text not null default '',
+                    created_at text not null default current_timestamp,
+                    unique(
+                        channel, conversation_id, trigger_message_id,
+                        input_revision_key
+                    ),
+                    foreign key(reply_task_id) references reply_tasks(id)
+                );
+                insert into reply_task_inputs_revision_migration (
+                    id, reply_task_id, channel, conversation_id,
+                    conversation_title, single_chat, trigger_message_id,
+                    trigger_create_time, trigger_sender, trigger_text,
+                    trigger_message_json, oa_url, business_object_key,
+                    input_revision_key, created_at
+                )
+                select
+                    id, reply_task_id, channel, conversation_id,
+                    conversation_title, single_chat, trigger_message_id,
+                    trigger_create_time, trigger_sender, trigger_text,
+                    trigger_message_json, oa_url, business_object_key,
+                    '', created_at
+                from reply_task_inputs;
+                drop table reply_task_inputs;
+                alter table reply_task_inputs_revision_migration
+                    rename to reply_task_inputs;
+                create index idx_reply_task_inputs_task
+                    on reply_task_inputs(reply_task_id, id);
+                """
             )
 
     @staticmethod
@@ -15093,6 +15161,112 @@ class AutoReplyStore:
                 ),
             )
             return cursor.rowcount
+
+    def requeue_terminal_reply_task_for_revised_trigger(
+        self,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        single_chat: bool,
+        trigger_message_id: str,
+        trigger_create_time: str,
+        trigger_sender: str,
+        trigger_text: str,
+        trigger_message_json: str,
+        channel: str = "dingtalk",
+    ) -> bool:
+        """Requeue one terminal provider object when its rendered input changed.
+
+        Some providers update an existing interactive card without issuing a new
+        message id. The original id remains the business identity, while the
+        changed text is a new input version that needs a fresh Agent decision.
+        Unchanged, active, or missing tasks remain untouched.
+        """
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                """
+                select * from reply_tasks
+                where channel=? and conversation_id=? and trigger_message_id=?
+                """,
+                (channel, conversation_id, trigger_message_id),
+            ).fetchone()
+            if (
+                row is None
+                or str(row["status"]) not in {"done", "failed"}
+                or str(row["trigger_text"]) == trigger_text
+            ):
+                return False
+            next_input_version = int(row["input_version"]) + 1
+            revision_digest = hashlib.sha256(
+                json.dumps(
+                    {
+                        "trigger_text": trigger_text,
+                        "trigger_message_json": trigger_message_json,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            input_revision_key = f"v{next_input_version}:{revision_digest}"
+            inserted = db.execute(
+                """
+                insert or ignore into reply_task_inputs (
+                    reply_task_id, channel, conversation_id, conversation_title,
+                    single_chat, trigger_message_id, trigger_create_time,
+                    trigger_sender, trigger_text, trigger_message_json, oa_url,
+                    business_object_key, input_revision_key
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(row["id"]),
+                    channel,
+                    conversation_id,
+                    conversation_title,
+                    int(single_chat),
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    str(row["oa_url"] or ""),
+                    str(row["business_object_key"]),
+                    input_revision_key,
+                ),
+            ).rowcount
+            if inserted != 1:
+                raise RuntimeError("revised reply task input was not persisted")
+            execution_generation = uuid4().hex
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set conversation_title=?, single_chat=?,
+                    trigger_create_time=?, trigger_sender=?, trigger_text=?,
+                    trigger_message_json=?, input_version=?,
+                    execution_generation=?, status='pending', attempts=0,
+                    claimed_input_version=input_version,
+                    force_new_decision=1, manual_rerun_attempt_id=0,
+                    manual_rerun_revision_key='', locked_at=null,
+                    available_at='', error='', recovery_code='',
+                    updated_at=current_timestamp
+                where id=? and execution_generation=?
+                  and status in ('done', 'failed') and trigger_text != ?
+                """,
+                (
+                    conversation_title,
+                    int(single_chat),
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    next_input_version,
+                    execution_generation,
+                    int(row["id"]),
+                    str(row["execution_generation"]),
+                    trigger_text,
+                ),
+            )
+            return cursor.rowcount == 1
 
     def replace_pending_single_chat_reply_task_trigger(
         self,

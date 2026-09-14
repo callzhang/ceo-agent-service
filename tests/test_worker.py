@@ -13958,6 +13958,170 @@ def test_single_chat_recovery_processes_unseen_gap_before_later_seen_anchor(
     assert attempts[0].trigger_message_id == "msg-missed-gap"
 
 
+def test_single_chat_recovery_requeues_revised_pending_calendar_card(
+    tmp_path: Path, monkeypatch
+):
+    original = message(
+        "[日程] 过一下邀请码\n时间：2026-09-14 10:24 - 12:30",
+        message_id="msg-calendar-revised",
+        single_chat=True,
+        message_type="calendar",
+    )
+    revised = original.model_copy(
+        update={
+            "content": "[日程] 过一下邀请码\n时间：2026-09-14 15:45 - 16:45"
+        }
+    )
+    invite = DwsCalendarEvent(
+        event_id="invite-revised",
+        title="过一下邀请码",
+        start_time="2026-09-14T15:45:00+08:00",
+        end_time="2026-09-14T16:45:00+08:00",
+        description="",
+        organizer=original.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    dws = FakeDws(
+        [],
+        {"cid-1": [revised]},
+        unread_messages={"cid-1": []},
+    )
+    dws.calendar_invites[revised.open_message_id] = invite
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
+        monkeypatch,
+    )
+    worker.store.upsert_conversation("cid-1", "Friday", True, None)
+    task_id = worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id=original.open_message_id,
+        trigger_create_time=original.create_time,
+        trigger_sender=original.sender_name,
+        trigger_text=original.content,
+        trigger_message_json=original.model_dump_json(),
+    )
+    assert task_id is not None
+    claimed = worker.store.claim_reply_task(task_id)
+    assert claimed is not None
+    worker.store.complete_reply_task(
+        task_id,
+        expected_execution_generation=claimed.execution_generation,
+    )
+    worker.store.mark_seen(original.open_message_id, "cid-1")
+    before = worker.store.get_reply_task(task_id)
+    assert before is not None and before.status == "done"
+
+    assert worker.produce_once(recovery=True) == 1
+
+    recovered = worker.store.get_reply_task(task_id)
+    assert recovered is not None
+    assert recovered.status == "pending"
+    assert recovered.trigger_message_id == original.open_message_id
+    assert recovered.trigger_text == revised.content
+    assert recovered.execution_generation != before.execution_generation
+    assert recovered.input_version == before.input_version + 1
+    inputs = worker.store.list_reply_task_inputs(task_id)
+    assert [item["trigger_text"] for item in inputs] == [
+        original.content,
+        revised.content,
+    ]
+    assert inputs[0]["input_revision_key"] == ""
+    assert inputs[1]["input_revision_key"]
+    assert worker.produce_once(recovery=True) == 0
+
+
+def test_single_chat_recovery_keeps_seen_non_calendar_message_deduped(
+    tmp_path: Path, monkeypatch
+):
+    original = message(
+        "原消息",
+        message_id="msg-seen-revised",
+        single_chat=True,
+    )
+    revised = original.model_copy(update={"content": "编辑后的普通消息"})
+    dws = FakeDws(
+        [],
+        {"cid-1": [revised]},
+        unread_messages={"cid-1": []},
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
+        monkeypatch,
+    )
+    worker.store.upsert_conversation("cid-1", "Friday", True, None)
+    worker.store.mark_seen(original.open_message_id, "cid-1")
+
+    assert worker.produce_once(recovery=True) == 0
+    assert worker.store.list_reply_tasks(limit=10) == []
+
+
+def test_single_chat_recovery_does_not_requeue_resolved_calendar_card(
+    tmp_path: Path, monkeypatch
+):
+    original = message(
+        "[日程] 已处理邀请\n时间：2026-09-14 10:00 - 11:00",
+        message_id="msg-calendar-resolved",
+        single_chat=True,
+        message_type="calendar",
+    )
+    revised = original.model_copy(
+        update={"content": "[日程] 已处理邀请\n时间：2026-09-14 15:00 - 16:00"}
+    )
+    dws = FakeDws(
+        [],
+        {"cid-1": [revised]},
+        unread_messages={"cid-1": []},
+    )
+    dws.calendar_invites[revised.open_message_id] = DwsCalendarEvent(
+        event_id="invite-resolved",
+        title="已处理邀请",
+        start_time="2026-09-14T15:00:00+08:00",
+        end_time="2026-09-14T16:00:00+08:00",
+        description="",
+        organizer=original.sender_name,
+        self_response_status="accepted",
+        status="confirmed",
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
+        monkeypatch,
+    )
+    worker.store.upsert_conversation("cid-1", "Friday", True, None)
+    task_id = worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id=original.open_message_id,
+        trigger_create_time=original.create_time,
+        trigger_sender=original.sender_name,
+        trigger_text=original.content,
+        trigger_message_json=original.model_dump_json(),
+    )
+    assert task_id is not None
+    claimed = worker.store.claim_reply_task(task_id)
+    assert claimed is not None
+    worker.store.complete_reply_task(
+        task_id,
+        expected_execution_generation=claimed.execution_generation,
+    )
+    worker.store.mark_seen(original.open_message_id, "cid-1")
+
+    assert worker.produce_once(recovery=True) == 0
+    unchanged = worker.store.get_reply_task(task_id)
+    assert unchanged is not None
+    assert unchanged.status == "done"
+    assert unchanged.trigger_text == original.content
+
+
 def test_single_chat_recovery_does_not_coalesce_across_current_user_context(
     tmp_path: Path, monkeypatch
 ):
