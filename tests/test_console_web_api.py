@@ -2281,6 +2281,83 @@ def test_queue_attention_rows_renders_service_generated_needs_human_without_run(
     assert decision["root_cause"] == "高风险且置信度低（0.00）"
 
 
+def test_queue_attention_rows_explains_legacy_audit_revision_authorization(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="audit-revision-conversation",
+        conversation_title="Hiring review",
+        single_chat=True,
+        trigger_message_id="audit-revision-message",
+        trigger_create_time="2026-09-14 02:00:00",
+        trigger_sender="Mina",
+        trigger_text="Submit the verified interview review.",
+        execution_generation="initial",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="audit-revision-conversation",
+        conversation_title="Hiring review",
+        trigger_message_id="audit-revision-message",
+        trigger_sender="Mina",
+        trigger_text="Submit the verified interview review.",
+        action="agent_run",
+        sensitivity_kind="personnel_sensitive",
+        channel="dingtalk",
+        send_status="needs_human",
+    )
+    options = [
+        {
+            "key": "apply_audit_revision",
+            "label": "Apply revision",
+            "instruction": "Apply the saved audit revision and retry.",
+            "consequence": "The external write will be retried and read back.",
+        },
+        {
+            "key": "stop_without_action",
+            "label": "Stop",
+            "instruction": "Stop without retrying the external write.",
+            "consequence": "No external action will run.",
+        },
+    ]
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="audit_revision_exhausted",
+        human_decision_options_json=json.dumps(options),
+    )
+    with store._connect() as db:
+        task_id = db.execute(
+            "select id from reply_tasks where conversation_id=? and trigger_message_id=?",
+            ("audit-revision-conversation", "audit-revision-message"),
+        ).fetchone()[0]
+        db.execute("update reply_tasks set status='done' where id=?", (task_id,))
+        run = db.execute(
+            """insert into agent_runs (
+                reply_task_id, execution_generation, role, status, final_result_json
+            ) values (?, 'initial', 'audit', 'completed', ?)""",
+            (
+                task_id,
+                json.dumps(
+                    {
+                        "outcome": "feedback_provided",
+                        "risk": "low",
+                        "confidence": 1.0,
+                        "rule_coverage": 0.84,
+                    }
+                ),
+            ),
+        )
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (run.lastrowid, attempt_id),
+        )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    decision = next(row for row in rows if row["id"] == str(attempt_id))
+    assert decision["root_cause"] == (
+        "旧运行达到审计修订上限；需授权按已保存的审计意见重试外部写入"
+    )
+
+
 def test_queue_attention_rows_includes_actionable_structured_needs_human_attempts(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

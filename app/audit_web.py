@@ -3299,6 +3299,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 """
             ).fetchall()
             for row in needs_human_rows:
+                service_generated_error = ""
                 classification = _structured_needs_human_classification(row["final_result_json"])
                 if classification == "invalid":
                     classification = _service_generated_needs_human_classification(
@@ -3306,6 +3307,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         row["send_error"],
                         row["human_decision_options_json"],
                     )
+                    if classification == "needs_human":
+                        service_generated_error = str(row["send_error"] or "")
                 if classification != "needs_human":
                     continue
                 result = {}
@@ -3321,10 +3324,20 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 risk = str(result.get("risk") or "high")
                 confidence = result.get("confidence")
                 rule_coverage = result.get("rule_coverage")
-                if risk == "high" and isinstance(confidence, (int, float)) and confidence < 0.5:
+                if service_generated_error == "audit_revision_exhausted":
+                    root_cause = (
+                        "旧运行达到审计修订上限；"
+                        "需授权按已保存的审计意见重试外部写入"
+                    )
+                elif risk == "high" and isinstance(confidence, (int, float)) and confidence < 0.5:
                     root_cause = f"高风险且置信度低（{confidence:.2f}）"
                 else:
-                    root_cause = f"规则覆盖率低（{float(rule_coverage):.2f}）"
+                    coverage = (
+                        float(rule_coverage)
+                        if isinstance(rule_coverage, (int, float))
+                        else 0.0
+                    )
+                    root_cause = f"规则覆盖率低（{coverage:.2f}）"
                 rows.append(
                     {
                         "category": "Reply decision",
