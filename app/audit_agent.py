@@ -223,6 +223,11 @@ class AuditAgentRunner:
                 "Do not publish an external action in this simulation; return failed "
                 "with error code dry_run_execution_suppressed when execution is suppressed."
             )
+        def parse_result(raw: str) -> AuditAgentResult:
+            return _parse_audit_agent_result(
+                raw,
+                has_typed_actions=bool(expected_actions),
+            )
         return process.execute(
             run=run,
             prompt=prompt,
@@ -242,9 +247,9 @@ class AuditAgentRunner:
                 ) if email_unsubscribe_tools else None,
             ),
             parse_result=(
-                self._parse_evidenced_result(task, run)
+                self._parse_evidenced_result(task, run, parse_result=parse_result)
                 if email_unsubscribe_tools
-                else parse_audit_agent_wire_result
+                else parse_result
             ),
             persist_conversation_session=False,
             expected_actions=expected_actions,
@@ -253,7 +258,11 @@ class AuditAgentRunner:
         )
 
     def _parse_evidenced_result(
-        self, task: ReplyTask, run: AgentRun
+        self,
+        task: ReplyTask,
+        run: AgentRun,
+        *,
+        parse_result: Callable[[str], AuditAgentResult] = parse_audit_agent_wire_result,
     ) -> Callable[[str], AuditAgentResult]:
         """Accept `executed` only when the audited tool ran for this turn.
 
@@ -264,7 +273,7 @@ class AuditAgentRunner:
         """
 
         def parse(raw: str) -> AuditAgentResult:
-            result = parse_audit_agent_wire_result(raw)
+            result = parse_result(raw)
             if (
                 result.outcome is not AuditOutcome.EXECUTED
                 or self.domain_continuation is None
@@ -348,3 +357,25 @@ def _external_action_identity_prompt(
         "when the provider supports one.\n"
         + json.dumps(identities, ensure_ascii=False, separators=(",", ":"))
     )
+
+
+def _parse_audit_agent_result(
+    raw: str,
+    *,
+    has_typed_actions: bool,
+) -> AuditAgentResult:
+    """Reject a provider execution flag misreported as a human decision."""
+    result = parse_audit_agent_wire_result(raw)
+    if (
+        has_typed_actions
+        and result.outcome is AuditOutcome.FAILED
+        and result.error.code == "confirmation_required"
+        and result.error.authorization_required
+    ):
+        raise ResultParseError(
+            "error_code: confirmation_required is not a business decision for "
+            "an already reviewed typed action. Audit approval is the execution "
+            "confirmation; execute with the provider's non-interactive "
+            "confirmation flag and verify the result."
+        )
+    return result

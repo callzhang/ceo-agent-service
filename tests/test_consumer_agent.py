@@ -782,6 +782,16 @@ def test_audit_instructions_accept_the_authorized_low_consequence_standard():
     assert "Provider command names, MCP tools, receipts, and readback procedures" in instructions
 
 
+def test_audit_instructions_treat_review_as_confirmation_for_covered_service_write():
+    instructions = " ".join(
+        audit_developer_instructions("Verify every supported fact.").split()
+    )
+
+    assert "Audit approval is the execution confirmation" in instructions
+    assert "pass its non-interactive confirmation flag" in instructions
+    assert "must not request another confirmation from Derek" in instructions
+
+
 def test_audit_instructions_verify_dynamic_state_instead_of_requesting_tool_output():
     instructions = " ".join(
         audit_developer_instructions("Verify every supported fact.").split()

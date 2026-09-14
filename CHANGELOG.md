@@ -1,5 +1,14 @@
 # Changelog
 
+- 2026-09-14: Audit now treats its approval of a typed, Skill-covered
+  service-triggered action as the execution confirmation. Provider
+  non-interactive confirmation flags acknowledge that reviewed action instead
+  of creating a second business decision for the principal. An Audit result
+  that reports `confirmation_required` for an existing typed action is rejected
+  as an invalid result and resumed for correction, preventing low-risk calendar
+  conflict clarifications and other covered automated writes from being closed
+  as `needs_human` without attempting the provider operation.
+
 - 2026-09-14: DingTalk message recovery now detects an in-place calendar-card
   revision even when DingTalk reuses the original message ID. If the rendered
   card changed and the live event is still active and awaiting the current

@@ -1154,6 +1154,54 @@ def test_audit_result_missing_proposal_revision_is_result_invalid(setup):
     assert "proposal_revision" in error["detail"]
 
 
+def test_audit_rejects_provider_confirmation_as_a_human_decision(setup):
+    store, task, audit_context, parent = setup
+    wire = _wire_result(
+        {
+            "outcome": "failed",
+            "summary": "The DingTalk reply requires explicit confirmation.",
+            "proposal_revision": 0,
+            "feedback": None,
+            "external_result": None,
+            "error": {
+                "code": "confirmation_required",
+                "retryable": False,
+                "authorization_required": True,
+            },
+        }
+    )
+    jsonl = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "session-confirm"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": json.dumps(wire)},
+                }
+            ),
+        )
+    )
+
+    with pytest.raises(ResultParseError, match="execution confirmation"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(jsonl),
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None and run.status == "failed"
+    error = json.loads(run.structured_error_json)
+    assert error["code"] == "codex_result_invalid"
+    assert error["session_continuable"] is True
+
+
 def test_audited_email_executed_binds_operation_id_from_the_run(setup):
     store, email_task, email_context, parent = _audited_email_setup(setup)
     executor = CapturingExecutor(
