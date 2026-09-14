@@ -130,7 +130,7 @@ WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-14.1"
+STORE_SCHEMA_VERSION = "2026-09-14.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -141,6 +141,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "conversation_runtime_sessions",
     "weekly_okr_analysis_jobs",
     "wechat_memory_import_jobs",
+    "meeting_memory_write_events",
     "agent_run_events",
     "agent_run_state_events",
     "agent_effect_intents",

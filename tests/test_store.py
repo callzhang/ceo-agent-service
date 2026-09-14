@@ -9030,7 +9030,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-14.1"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-14.2"
     assert {
         "lease_owner",
         "lease_expires_at",
@@ -9041,6 +9041,38 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
         "result_envelope_json",
     } <= columns
     assert reopened._schema_is_current() is True
+
+
+def test_current_schema_sentinel_migrates_missing_meeting_memory_write_table(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "meeting-memory-write-table.sqlite3"
+    store = AutoReplyStore(db_path)
+
+    with store._connect() as db:
+        db.execute("drop table meeting_memory_write_events")
+        db.execute(
+            "update service_state set value=? where key=?",
+            ("2026-09-14.1", store_module.STORE_SCHEMA_VERSION_KEY),
+        )
+
+    assert store._schema_is_current() is False
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+
+    with upgraded._connect() as db:
+        table = db.execute(
+            "select name from sqlite_master where type='table' and name=?",
+            ("meeting_memory_write_events",),
+        ).fetchone()
+        version = db.execute(
+            "select value from service_state where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        ).fetchone()["value"]
+    assert table is not None
+    assert version == store_module.STORE_SCHEMA_VERSION
+    assert upgraded._schema_is_current() is True
 
 
 def test_schema_upgrade_preserves_reply_inputs_and_adds_revision_identity(
