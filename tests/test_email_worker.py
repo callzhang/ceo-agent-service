@@ -8957,6 +8957,9 @@ def _finalize_audited_unsubscribe(module, result, tool_events, *, task_id=383232
         def defer_reply_task(self, *args, **kwargs):
             captured["deferred"] = True
 
+        def retry_failed_reply_task(self, task_id, run_id, *, reason, recovery_code):
+            captured["retry"] = (task_id, run_id, reason, recovery_code)
+
     module._finalize_email_task(Store(), task, result)
     return captured
 
@@ -8986,6 +8989,12 @@ def test_audited_unsubscribe_receipt_does_not_override_a_failed_audit_run():
     assert captured["send_status"] == "failed"
     assert captured["send_error"] == "login_required"
     assert captured["task_error"] == "login_required"
+    assert captured["retry"] == (
+        383232,
+        11859,
+        "receipt_reconciliation_requires_successful_run",
+        "email_unsubscribe_receipt_reconciliation",
+    )
 
 
 def test_audited_unsubscribe_retryable_login_receipt_keeps_retry_pending():
@@ -9014,9 +9023,15 @@ def test_audited_unsubscribe_retryable_login_receipt_keeps_retry_pending():
         task_id=383234,
     )
 
-    # A retryable final run is not rewritten to done by its receipt. The
-    # standard bounded retry path remains the current state.
-    assert captured["deferred"] is True
+    # A receipt gets a new generation instead of another turn in the failed
+    # generation, so the Audit result can become an explicit success.
+    assert "deferred" not in captured
+    assert captured["retry"] == (
+        383234,
+        16936,
+        "receipt_reconciliation_requires_successful_run",
+        "email_unsubscribe_receipt_reconciliation",
+    )
 
 
 @pytest.mark.parametrize(
@@ -9041,6 +9056,7 @@ def test_audited_unsubscribe_no_work_receipt_keeps_failed_audit_visible(outcome)
     assert captured["send_status"] == "failed"
     assert captured["send_error"] == "unsubscribe_entry_missing"
     assert captured["task_error"] == "unsubscribe_entry_missing"
+    assert captured["retry"][0:2] == (383232, 90)
 
 
 def test_audited_unsubscribe_skip_never_overrides_a_management_decision():
@@ -9090,6 +9106,7 @@ def test_audited_unsubscribe_receipt_keeps_bare_authorization_failure_failed():
     assert captured["task_status"] == "failed"
     assert captured["send_status"] == "failed"
     assert captured["send_error"] == "authorization_required"
+    assert captured["retry"][0:2] == (383232, 93)
 
 
 def test_audited_unsubscribe_browser_failure_remains_failed():

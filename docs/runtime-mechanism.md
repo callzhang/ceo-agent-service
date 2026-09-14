@@ -179,6 +179,9 @@ Agent run 决定：最后一个 run 失败则当前投影为 `failed`；只有�
 队列是否仍待领取或已被收口，不能单独把失败 run 改写成成功。外部 provider receipt 仍用于
 防止重放，但它不能覆盖 Agent run 的失败；服务必须创建新的 generation 并完成新的 run 才能
 修正当前投影。真实处于 `pending` 或 `processing` 的 task 则分别显示为等待或执行中。
+当失败 Audit 已持有同一稳定动作身份的 receipt 时，服务自动先持久化失败 run，再通过正式
+重试入口开启新的 generation。新一轮 Audit 只读取 receipt，不重新执行外部动作；它成功后才
+把 current projection 收口为 `done` 或 `skipped`。
 
 `needs_human` 收到明确人工指令后，必须创建新的 reviewed revision 并重新进入统一
 Consumer/Audit 流程；原 `needs_human` attempt 继续作为历史事实保留。没有明确指令时

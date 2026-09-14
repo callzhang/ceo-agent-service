@@ -2923,6 +2923,7 @@ def _finalize_email_task(
         if run is None or send_status == "needs_human"
         else audited_unsubscribe_skip_receipt(run)
     )
+    receipt_reconciliation_required = skip is not None and run.status != "completed"
     if skip is not None and run.status == "completed":
         outcome, terminal_state = skip
         if terminal_state is AuditedUnsubscribeTerminalState.HANDOFF:
@@ -3009,6 +3010,12 @@ def _finalize_email_task(
             else:
                 task_status, send_status = status_map["failed_terminal"]
                 error = code
+    if receipt_reconciliation_required:
+        # A receipt makes a fresh Audit run read-only, so it is safe to repair
+        # the failed generation immediately. The task first records the failed
+        # run through the common finalizer below, then the Store rotates to a
+        # clean generation with the same business/action identity.
+        task_status, send_status = status_map["failed_terminal"]
     if task_status == "pending":
         # A deferred orchestration (runtime not ready, provider recovery, lease
         # race) keeps the task and retries it later, exactly like the DingTalk
@@ -3057,6 +3064,13 @@ def _finalize_email_task(
         send_error=error,
         channel="email",
     )
+    if receipt_reconciliation_required:
+        store.retry_failed_reply_task(
+            task.id,
+            run.id,
+            reason="receipt_reconciliation_requires_successful_run",
+            recovery_code="email_unsubscribe_receipt_reconciliation",
+        )
 
 
 def _email_worker_health_recorder(

@@ -4,9 +4,10 @@
   overwrite a failed Agent run. For Consumer/Audit work, the final run in the
   current execution generation is authoritative: a durable provider receipt
   prevents duplicate external work but cannot transform a failed Audit run
-  into `Done`. Receipt-backed work must complete a fresh generation before it
-  closes successfully; genuine pending and processing tasks continue to show
-  their live queue state.
+  into `Done`. A failed Audit with a receipt now automatically enters a fresh
+  generation whose Audit reads that receipt without repeating the browser
+  action; it closes only after that run succeeds. Genuine pending and
+  processing tasks continue to show their live queue state.
 
 - 2026-09-14: History's activity chart now uses one lifecycle-status dimension:
   `Pending`, `Running`, `Done`, `Skipped`, `Failed`, and `Needs human`.
