@@ -138,6 +138,99 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _linked_consumer_run(terminal_run: Any, agent_runs: list[Any]) -> Any | None:
+    """Resolve only the Consumer run that produced this Attempt's terminal run."""
+    role = _run_role(terminal_run)
+    if role == "consumer":
+        return terminal_run
+    if role != "audit":
+        return None
+    parent_id = getattr(terminal_run, "parent_agent_run_id", None)
+    if parent_id is None:
+        return None
+    return next((run for run in agent_runs if getattr(run, "id", None) == parent_id), None)
+
+
+def _consumer_error_reason(consumer_run: Any | None) -> str:
+    if consumer_run is None:
+        return "未找到当前 Attempt 关联的 Consumer run"
+    if str(getattr(consumer_run, "status", "") or "") == "failed":
+        error = _stored_json(getattr(consumer_run, "structured_error_json", ""), {})
+        if isinstance(error, dict):
+            for key in ("detail", "code"):
+                value = error.get(key)
+                if isinstance(value, str) and value.strip():
+                    from app.history import safe_observability_error
+
+                    return safe_observability_error(value, limit=180)
+        return "Consumer 运行失败"
+    if not str(getattr(consumer_run, "final_result_json", "") or "").strip():
+        return "Consumer 未保存最终结果"
+    return "Consumer 结果不符合当前契约"
+
+
+def _consumer_result_payload(
+    terminal_run: Any | None,
+    agent_runs: list[Any],
+    current_agent_runs: list[Any],
+    reply_task: Any | None,
+) -> dict[str, Any]:
+    """Build the read-only Consumer result DTO for one Attempt.
+
+    The terminal run is the only authority for the historic metrics. Current
+    generation activity is deliberately projected separately, so a rerun never
+    substitutes unfinished values for the Attempt's existing result.
+    """
+    consumer_run = _linked_consumer_run(terminal_run, agent_runs)
+    result = None
+    if consumer_run is not None and str(getattr(consumer_run, "status", "") or "") != "failed":
+        raw_result = str(getattr(consumer_run, "final_result_json", "") or "")
+        if raw_result.strip():
+            from app.agent_contracts import ConsumerAgentResult
+
+            try:
+                result = ConsumerAgentResult.model_validate_json(raw_result)
+            except ValueError:
+                result = None
+
+    if result is None:
+        payload: dict[str, Any] = {
+            "confidence": "—",
+            "information_completeness": "—",
+            "rule_coverage": "—",
+            "risk": "—",
+            "error_reason": _consumer_error_reason(consumer_run),
+            "current_run": None,
+        }
+    else:
+        payload = {
+            "confidence": f"{result.confidence:.0%}",
+            "information_completeness": f"{result.information_completeness:.0%}",
+            "rule_coverage": f"{result.rule_coverage:.0%}",
+            "risk": result.risk.value,
+            "error_reason": "",
+            "current_run": None,
+        }
+
+    active_run = next(
+        (
+            run
+            for run in current_agent_runs
+            if _run_role(run) == "consumer"
+            and str(getattr(run, "status", "") or "") in {"pending", "running"}
+        ),
+        None,
+    )
+    if active_run is not None:
+        payload["current_run"] = {
+            "id": int(getattr(active_run, "id", 0) or 0) or None,
+            "status": str(getattr(active_run, "status", "")),
+        }
+    elif reply_task is not None and str(getattr(reply_task, "status", "") or "") == "pending":
+        payload["current_run"] = {"id": None, "status": "pending"}
+    return payload
+
+
 def _email_payload(
     attempt: Any, reply_task: Any, email_store: Any
 ) -> dict[str, Any] | None:
@@ -365,6 +458,7 @@ def build_attempt_detail(
     )
 
     sent_reply = store.get_sent_reply(attempt.conversation_id, attempt.trigger_message_id)
+    terminal_run = None
     agent_runs: list[Any] = []
     if attempt.agent_run_id:
         terminal_run = store.get_agent_run(attempt.agent_run_id)
@@ -375,6 +469,18 @@ def build_attempt_detail(
     reply_task = store.get_reply_task_for_message(
         attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel
     )
+    current_agent_runs = agent_runs
+    if (
+        reply_task is not None
+        and reply_task.execution_generation
+        and (
+            terminal_run is None
+            or reply_task.execution_generation != terminal_run.execution_generation
+        )
+    ):
+        current_agent_runs = store.list_agent_runs_for_task_generation(
+            reply_task.id, reply_task.execution_generation
+        )
     wechat_delivery = (
         store.get_wechat_delivery_for_task(reply_task.id)
         if reply_task is not None and str(attempt.channel or "") == "wechat"
@@ -464,6 +570,9 @@ def build_attempt_detail(
             {"label": "updated", "value": normalize_display_value(attempt.updated_at)},
             {"label": "reviewed", "value": normalize_display_value(attempt.reviewed_at)},
         ],
+        "consumer_result": _consumer_result_payload(
+            terminal_run, agent_runs, current_agent_runs, reply_task
+        ),
         "trigger": {
             "title": "Trigger",
             "text": normalize_display_value(f"{attempt.trigger_sender}: {attempt.trigger_text}"),

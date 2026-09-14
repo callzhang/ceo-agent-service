@@ -79,6 +79,15 @@ export interface AttemptFeedbackEvent {
   received_at: string;
 }
 
+export interface AttemptConsumerResult {
+  confidence: string;
+  information_completeness: string;
+  rule_coverage: string;
+  risk: string;
+  error_reason: string;
+  current_run: { id: number | null; status: "pending" | "running" } | null;
+}
+
 export interface AttemptDetail {
   id: number;
   title: string;
@@ -92,6 +101,7 @@ export interface AttemptDetail {
     attention: { kind: string; reason: string; external_effect: string; retry_at: string };
   };
   metadata: AttemptMetadata[];
+  consumer_result: AttemptConsumerResult;
   trigger: { title: string; text: string };
   audit_explanation: { title: string; text: string };
   generated_reply: { title: string; text: string };
