@@ -692,6 +692,29 @@ def test_quality_gate_accepts_service_generated_uncertain_unsubscribe_options(tm
     )
 
 
+def test_quality_gate_accepts_legacy_audit_revision_authorization_options(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    attempt_id = _insert_needs_human_projection(
+        store,
+        result={"outcome": "feedback_provided"},
+    )
+    options = _structured_needs_human_result()["decision_options"]
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="audit_revision_exhausted",
+        human_decision_options_json=json.dumps(options),
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert ("reply_attempts", "needs_human", 1) in {
+        (item.source, item.code, item.count) for item in report.attention
+    }
+    assert not any(
+        item.code == "invalid_needs_human_result" for item in report.violations
+    )
+
+
 def test_quality_gate_requires_structured_high_risk_low_confidence_options(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     _insert_needs_human_projection(store, result=_structured_needs_human_result())

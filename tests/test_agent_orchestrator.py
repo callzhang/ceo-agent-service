@@ -1722,13 +1722,13 @@ def test_domain_continuations_do_not_consume_content_feedback_cycles(store):
     ]
 
 
-def test_real_feedback_exhaustion_surfaces_human_choice_after_domain_continuation(store):
+def test_feedback_continues_after_three_cycles_following_domain_continuation(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
         *(
             _consumer_result("proposal", f"candidate-{revision}")
-            for revision in range(5)
+            for revision in range(6)
         ),
     )
     audit = ScriptedAudit(
@@ -1738,6 +1738,7 @@ def test_real_feedback_exhaustion_surfaces_human_choice_after_domain_continuatio
         _audit_result("revision_required", 2),
         _audit_result("revision_required", 3),
         _audit_result("revision_required", 4),
+        _audit_result("executed", 5),
     )
     orchestrator = AgentOrchestrator(
         store=store,
@@ -1752,14 +1753,12 @@ def test_real_feedback_exhaustion_surfaces_human_choice_after_domain_continuatio
         refresh_context=lambda: _domain_context(task),
     )
 
-    assert result.status == "needs_human"
-    assert result.feedback_cycles == 3
-    assert result.error.code == "audit_revision_exhausted"
-    assert result.feedback is not None
+    assert result.status == "executed"
+    assert result.feedback_cycles == 4
     assert orchestrator._feedback_cycles(task) == 4
 
 
-def test_restart_rejects_consumer_materialized_after_feedback_quota_exhaustion(store):
+def test_restart_continues_with_consumer_materialized_after_four_feedback_cycles(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -1773,8 +1772,33 @@ def test_restart_rejects_consumer_materialized_after_feedback_quota_exhaustion(s
         *(_audit_result("revision_required", revision) for revision in range(4)),
     )
     orchestrator = AgentOrchestrator(store=store, consumer=consumer, audit=audit)
-    exhausted = _process(orchestrator, task)
-    assert exhausted.error.code == "audit_revision_exhausted"
+    for revision in range(4):
+        state = orchestrator._derive_state(task)
+        assert isinstance(state, _NextConsumer)
+        consumer.run(
+            task,
+            _context(task),
+            proposal_revision=state.proposal_revision,
+            parent_agent_run_id=state.parent_run_id,
+            feedback=state.feedback,
+        )
+        state = orchestrator._derive_state(task)
+        assert isinstance(state, _NextAudit)
+        audit.run(
+            task,
+            AuditTurnContext(
+                task=_context(task),
+                proposal_revision=state.proposal_revision,
+                operation_id=(
+                    f"agent-task:{task.id}:{task.execution_generation}:"
+                    f"proposal:{state.proposal_revision}"
+                ),
+                proposal=state.proposal,
+                audit_rules="",
+            ),
+            turn_attempt=state.turn_attempt,
+            parent_agent_run_id=state.parent_run_id,
+        )
     latest_audit = next(
         run
         for run in reversed(
@@ -1796,10 +1820,8 @@ def test_restart_rejects_consumer_materialized_after_feedback_quota_exhaustion(s
 
     recovered = orchestrator._derive_state(task)
 
-    assert isinstance(recovered, OrchestrationResult)
-    assert recovered.status == "needs_human"
-    assert recovered.error.code == "audit_revision_exhausted"
-    assert recovered.feedback is not None
+    assert isinstance(recovered, _NextAudit)
+    assert recovered.proposal_revision == 4
 
 
 def test_restart_rejects_orphan_consumer_when_continuation_disappears(store):
@@ -2618,7 +2640,7 @@ def test_newer_context_stale_candidate_is_revised_without_write(store):
     assert audit_run is not None and audit_run.status == "completed"
 
 
-def test_fourth_revision_request_surfaces_last_feedback_as_human_choice(store):
+def test_fourth_revision_request_is_applied_and_reaudited(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -2626,6 +2648,7 @@ def test_fourth_revision_request_surfaces_last_feedback_as_human_choice(store):
         _consumer_result("proposal", "candidate-1"),
         _consumer_result("proposal", "candidate-2"),
         _consumer_result("proposal", "candidate-3"),
+        _consumer_result("proposal", "candidate-4"),
     )
     audit = ScriptedAudit(
         store,
@@ -2633,26 +2656,17 @@ def test_fourth_revision_request_surfaces_last_feedback_as_human_choice(store):
         _audit_result("revision_required", 1),
         _audit_result("revision_required", 2),
         _audit_result("revision_required", 3),
+        _audit_result("executed", 4),
     )
 
     result = _process(
         AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
     )
 
-    assert result.status == "needs_human"
-    assert result.feedback_cycles == 3
-    assert result.error.code == "audit_revision_exhausted"
-    assert result.audit_result is not None
-    assert result.audit_result.outcome is AuditOutcome.NEEDS_HUMAN
-    assert result.feedback is not None
-    assert (
-        result.feedback.requested_revision
-        == "Return a complete replacement proposal."
-    )
-    assert [option.key for option in result.audit_result.decision_options] == [
-        "apply_audit_revision",
-        "stop_without_action",
-    ]
+    assert result.status == "executed"
+    assert result.feedback_cycles == 4
+    assert len(consumer.calls) == 5
+    assert consumer.calls[-1]["feedback"] is not None
     latest_audit = max(
         (
             run
@@ -2665,6 +2679,7 @@ def test_fourth_revision_request_surfaces_last_feedback_as_human_choice(store):
         key=lambda run: run.id,
     )
     assert result.final_run_id == latest_audit.id
+    assert latest_audit.proposal_revision == 4
 
 
 def test_authorization_wait_defers_without_consuming_feedback_cycle(store):

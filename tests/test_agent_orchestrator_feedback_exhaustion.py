@@ -20,7 +20,7 @@ def store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "orchestrator.sqlite3")
 
 
-def test_feedback_exhaustion_surfaces_last_audit_revision_as_human_choice(store):
+def test_fourth_feedback_is_applied_before_audit_executes(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -28,6 +28,7 @@ def test_feedback_exhaustion_surfaces_last_audit_revision_as_human_choice(store)
         _consumer_result("proposal", "candidate-1"),
         _consumer_result("proposal", "candidate-2"),
         _consumer_result("proposal", "candidate-3"),
+        _consumer_result("proposal", "candidate-4"),
     )
     audit = ScriptedAudit(
         store,
@@ -35,6 +36,7 @@ def test_feedback_exhaustion_surfaces_last_audit_revision_as_human_choice(store)
         _audit_result("feedback_provided", 1),
         _audit_result("feedback_provided", 2),
         _audit_result("feedback_provided", 3),
+        _audit_result("executed", 4),
     )
 
     result = _process(
@@ -42,16 +44,7 @@ def test_feedback_exhaustion_surfaces_last_audit_revision_as_human_choice(store)
     )
 
     assert isinstance(result, OrchestrationResult)
-    assert result.status == "needs_human"
-    assert result.error.code == "audit_revision_exhausted"
-    assert result.feedback is not None
-    assert (
-        result.feedback.requested_revision
-        == "Return a complete replacement proposal."
-    )
+    assert result.status == "executed"
+    assert result.feedback_cycles == 4
     assert result.audit_result is not None
-    assert result.audit_result.outcome.value == "needs_human"
-    assert [option.key for option in result.audit_result.decision_options] == [
-        "apply_audit_revision",
-        "stop_without_action",
-    ]
+    assert result.audit_result.outcome.value == "executed"

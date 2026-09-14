@@ -10,7 +10,7 @@ import pytest
 
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
-from app.agent_orchestrator import AgentOrchestrator, MAX_CONTENT_FEEDBACK_CYCLES
+from app.agent_orchestrator import AgentOrchestrator, MAX_TURNS_PER_PROCESS
 from app.agent_turn_runner import AgentTurnRunResult
 from app.store import AgentRole, AutoReplyStore
 from tests.support.audit_sink_mcp import AuditSink
@@ -290,28 +290,17 @@ def test_eval_cases_traverse_orchestration_with_exactly_the_expected_write(case:
             else []
         )
         return
-    # Only a proposal the Audit kept asking to revise reaches here. Exhausting
-    # the revision ceiling used to collapse into an opaque failed task;
-    # 3a9ca3a8 "fix(agent): surface exhausted audit feedback" deliberately
-    # keeps the final concrete revision as a choice Derek can act on, and
-    # missed this contract.
-    assert result.status == "needs_human"
-    assert result.feedback_cycles == MAX_CONTENT_FEEDBACK_CYCLES
-    assert result.feedback is not None
-    assert result.feedback.requested_revision.strip()
-    assert result.audit_result is not None
-    options = result.audit_result.decision_options
-    assert 2 <= len(options) <= 4
-    # The revision the Audit actually asked for is one of the offered choices,
-    # not a summary of it.
-    assert any(
-        option.instruction == result.feedback.requested_revision for option in options
-    )
+    # Repeated technical revision feedback remains machine-actionable. The
+    # global turn limit bounds a non-converging pair without inventing a human
+    # business decision.
+    assert result.status == "failed_retryable"
+    assert result.error.code == "agent_turn_limit_reached"
+    assert result.feedback_cycles == MAX_TURNS_PER_PROCESS // 2
     assert sink.row_count(f"agent-task:{task.id}:{task.execution_generation}:proposal:0") == 0
     expected_oa_reads = (
         [
             f"agent-task:{task.id}:{task.execution_generation}:proposal:{revision}"
-            for revision in range(MAX_CONTENT_FEEDBACK_CYCLES + 1)
+            for revision in range(MAX_TURNS_PER_PROCESS // 2)
         ]
         if case.requires_oa_live_detail
         else []

@@ -526,7 +526,10 @@ def _service_generated_needs_human_classification(
         not isinstance(result_json, str) or not result_json.strip()
     ):
         pass
-    elif error_code == "email_unsubscribe_effect_uncertain":
+    elif error_code in {
+        "email_unsubscribe_effect_uncertain",
+        "audit_revision_exhausted",
+    }:
         pass
     else:
         return "invalid"

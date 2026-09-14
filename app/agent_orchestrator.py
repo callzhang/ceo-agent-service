@@ -29,10 +29,6 @@ from app.email_unsubscribe_continuation import (
 )
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
-# A late live read can legitimately reverse an earlier proposal (for example,
-# from approval to a bounded request for missing material).  Preserve room for
-# that final correction while still keeping the feedback loop finite.
-MAX_CONTENT_FEEDBACK_CYCLES = 3
 MAX_TURNS_PER_PROCESS = 32
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
 _DOMAIN_SNAPSHOT_INVALID = object()
@@ -436,21 +432,6 @@ class AgentOrchestrator:
         by_revision: dict[int, list[AgentRun]] = {}
         for run in runs:
             by_revision.setdefault(run.proposal_revision, []).append(run)
-        if feedback_cycles > MAX_CONTENT_FEEDBACK_CYCLES:
-            feedback_audits: list[AgentRun] = []
-            for run in runs:
-                if run.role is not AgentRole.AUDIT or run.status != "completed":
-                    continue
-                try:
-                    result = _audit_result(run)
-                except (ResultParseError, ValueError):
-                    continue
-                if result.outcome is AuditOutcome.FEEDBACK_PROVIDED:
-                    feedback_audits.append(run)
-            if feedback_audits:
-                return self._feedback_exhausted(
-                    max(feedback_audits, key=lambda item: item.id)
-                )
         highest_materialized_revision = max(
             (run.proposal_revision for run in runs if run.role is AgentRole.CONSUMER),
             default=0,
@@ -1293,66 +1274,6 @@ class AgentOrchestrator:
                     )
                 )
             ),
-        )
-
-    def _feedback_exhausted(self, run: AgentRun) -> OrchestrationResult:
-        feedback = None
-        try:
-            feedback = _audit_result(run).feedback
-        except (ResultParseError, ValueError):
-            pass
-        if feedback is not None:
-            error = AgentError(
-                code="audit_revision_exhausted",
-                retryable=False,
-                authorization_required=True,
-            )
-            exhausted = AuditAgentResult(
-                outcome=AuditOutcome.NEEDS_HUMAN,
-                summary=error.code,
-                proposal_revision=run.proposal_revision,
-                feedback=None,
-                external_result=None,
-                decision_options=(
-                    DecisionOption(
-                        key="apply_audit_revision",
-                        label="按审计意见修订",
-                        instruction=feedback.requested_revision,
-                        consequence="重新生成回复并再次审计。",
-                    ),
-                    DecisionOption(
-                        key="stop_without_action",
-                        label="停止不执行",
-                        instruction="停止当前任务，不发送消息也不执行外部动作。",
-                        consequence="保留审计反馈，任务结束为需要人工判断。",
-                    ),
-                ),
-                risk="high",
-                confidence=0.0,
-                rule_coverage=1.0,
-                information_completeness=1.0,
-                error=error,
-            )
-            return OrchestrationResult(
-                status="needs_human",
-                final_run_id=run.id,
-                final_role=AgentRole.AUDIT,
-                summary=exhausted.summary,
-                error=exhausted.error,
-                feedback_cycles=MAX_CONTENT_FEEDBACK_CYCLES,
-                feedback=feedback,
-                audit_result=exhausted,
-            )
-        exhausted = _failed_audit_result(
-            run,
-            AuditOutcome.FAILED,
-            AgentError(code="audit_revision_exhausted", retryable=False),
-        )
-        return _audit_terminal(
-            "failed_terminal",
-            run,
-            exhausted,
-            MAX_CONTENT_FEEDBACK_CYCLES,
         )
 
     def _feedback_cycles(self, task: ReplyTask) -> int:
