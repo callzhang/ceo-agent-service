@@ -412,6 +412,7 @@ TRANSIENT_BROWSER_ERROR_CODES = frozenset(
 )
 _VISIBLE_TEXT_WAIT_MS = 5_000
 _VISIBLE_TEXT_POLL_MS = 250
+DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS = 30_000
 
 
 # A page the browser reached and read, but whose controls this service will
@@ -1402,7 +1403,7 @@ class PlaywrightUnsubscribeBrowser:
         self,
         page: object,
         *,
-        timeout_ms: int = 5_000,
+        timeout_ms: int = DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS,
         restored_document_url: str = "",
         confirmation_receipt_resolver: Callable[
             [EmailUnsubscribeEffect], UnsubscribeTerminalReceipt | None
@@ -3087,7 +3088,7 @@ class PlaywrightUnsubscribeBrowser:
 def open_live_unsubscribe_session(
     profile: object,
     *,
-    timeout_ms: int = 5_000,
+    timeout_ms: int = DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS,
     connected_recipient: str = "",
     email_otp_resolver: Callable[[EmailOtpChallenge], ConnectedMailboxOtp | None]
     | None = None,
@@ -3152,7 +3153,7 @@ def execute_unsubscribe_in_dedicated_profile(
     store: EmailStore,
     profile: object,
     owner: Mapping[str, object],
-    timeout_ms: int = 5_000,
+    timeout_ms: int = DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS,
     executed_prefix_length: int | None = None,
     connected_recipient: str = "",
     email_otp_resolver: Callable[

@@ -14,6 +14,12 @@
   genuine non-retryable API failures remain terminal through an explicit error
   classification instead of being accidentally requeued.
 
+- 2026-09-14: The dedicated headless email unsubscribe browser now uses a
+  30-second operation budget instead of a five-second page default. Real
+  unsubscribe pages may load or settle beyond five seconds; the longer budget
+  preserves the existing single-profile, bounded-control execution limits while
+  preventing ordinary provider latency from exhausting the task retry ladder.
+
 - 2026-09-14: Audit now treats its approval of a typed, Skill-covered
   service-triggered action as the execution confirmation. Provider
   non-interactive confirmation flags acknowledge that reviewed action instead

@@ -20,10 +20,10 @@ from dataclasses import replace
 from hashlib import sha256
 
 from app.email_unsubscribe import (
+    DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS,
     EmailUnsubscribeEffect,
     RedactedUnsubscribeStep,
     UnsubscribeAuthenticationControlsError,
-    UnsubscribeBrowserError,
     UnsubscribeDiscoveredControl,
     UnsubscribeEntry,
     UnsubscribeExecutionResult,
@@ -319,7 +319,7 @@ def run_unsubscribe_in_dedicated_profile(
     *,
     profile: object,
     one_click_verified: bool = False,
-    timeout_ms: int = 5_000,
+    timeout_ms: int = DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS,
     connected_recipient: str = "",
     email_otp_resolver: object | None = None,
     session_manager: object | None = None,
@@ -417,7 +417,6 @@ class DirectEmailUnsubscribeOperation:
             _normalize_result,
             _rejection_detail,
             _resolve_entries_with_authentication,
-            _store_arguments,
             _task_payload,
             _validate_current_plan,
             _validate_task_identity,

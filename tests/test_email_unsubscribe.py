@@ -2207,6 +2207,38 @@ def test_unsubscribe_executor_has_no_automatic_continuation_api(
     )
 
 
+def test_dedicated_unsubscribe_browser_defaults_allow_real_page_latency() -> None:
+    unsubscribe = __import__("app.email_unsubscribe", fromlist=["*"])
+    direct = __import__("app.email_unsubscribe_direct", fromlist=["*"])
+    expected = unsubscribe.DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS
+
+    assert expected == 30_000
+    assert (
+        inspect.signature(unsubscribe.PlaywrightUnsubscribeBrowser)
+        .parameters["timeout_ms"]
+        .default
+        == expected
+    )
+    assert (
+        inspect.signature(unsubscribe.open_live_unsubscribe_session)
+        .parameters["timeout_ms"]
+        .default
+        == expected
+    )
+    assert (
+        inspect.signature(unsubscribe.execute_unsubscribe_in_dedicated_profile)
+        .parameters["timeout_ms"]
+        .default
+        == expected
+    )
+    assert (
+        inspect.signature(direct.run_unsubscribe_in_dedicated_profile)
+        .parameters["timeout_ms"]
+        .default
+        == expected
+    )
+
+
 def test_accepted_continuation_executes_only_new_operation_and_never_prefix(
     tmp_path: Path,
 ) -> None:
