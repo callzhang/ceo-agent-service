@@ -152,7 +152,9 @@ describe("AttemptDetailPage", () => {
     });
     renderPage();
 
-    expect(await screen.findByRole("heading", { name: "Consumer 执行结果" })).toBeInTheDocument();
+    const consumerHeading = await screen.findByRole("heading", { name: "Consumer 执行结果" });
+    expect(consumerHeading).toBeInTheDocument();
+    expect(consumerHeading.closest(".attempt-metadata-card")).toContainElement(screen.getByText("trigger message id"));
     expect(screen.getByText("confidence")).toBeInTheDocument();
     expect(screen.getByText("82%")).toBeInTheDocument();
     expect(screen.getByText("information_completeness")).toBeInTheDocument();

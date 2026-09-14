@@ -569,6 +569,30 @@ def test_attempt_detail_api_marks_missing_linked_consumer_result_unavailable(
     }
 
 
+def test_attempt_detail_api_rejects_audit_parent_that_is_not_a_consumer(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="wrong-role-consumer-api")
+    audit = _complete_audit_run(store, task, consumer, owner="wrong-role-audit-api")
+    attempt_id = _finalize_consumer_result_attempt(store, task, audit)
+    with store._immediate_write_transaction() as db:
+        db.execute("update agent_runs set parent_agent_run_id=? where id=?", (audit.id, audit.id))
+
+    _, item = build_attempt_detail(store, attempt_id)
+
+    assert item is not None
+    assert item["consumer_result"] == {
+        "confidence": "—",
+        "information_completeness": "—",
+        "rule_coverage": "—",
+        "risk": "—",
+        "error_reason": "未找到当前 Attempt 关联的 Consumer run",
+        "current_run": None,
+    }
+
+
 def test_attempt_detail_api_keeps_old_metrics_while_current_generation_is_pending_then_running(
     tmp_path: Path,
 ):

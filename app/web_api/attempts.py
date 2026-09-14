@@ -148,7 +148,8 @@ def _linked_consumer_run(terminal_run: Any, agent_runs: list[Any]) -> Any | None
     parent_id = getattr(terminal_run, "parent_agent_run_id", None)
     if parent_id is None:
         return None
-    return next((run for run in agent_runs if getattr(run, "id", None) == parent_id), None)
+    parent = next((run for run in agent_runs if getattr(run, "id", None) == parent_id), None)
+    return parent if _run_role(parent) == "consumer" else None
 
 
 def _consumer_error_reason(consumer_run: Any | None) -> str:

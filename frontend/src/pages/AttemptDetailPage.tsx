@@ -16,24 +16,24 @@ function ReviewBlock({ title, value, className = "", lines = 5 }: { title: strin
   return <section className={`attempt-review-block ${className}`}><h2>{title}</h2><SummaryText value={displayValue(value)} lines={lines} /></section>;
 }
 
-function MetadataGrid({ rows }: { rows: AttemptMetadata[] }) {
-  return <section className="console-card attempt-metadata-card"><div className="attempt-metadata-grid">{rows.map((row) => <div className="attempt-metadata-item" key={row.label}><span>{row.label}</span><strong>{row.value || "未记录"}</strong></div>)}</div></section>;
-}
-
 function ConsumerResult({ result }: { result: AttemptConsumerResult }) {
   const currentRun = result.current_run;
   const currentLabel = currentRun
     ? `新 Consumer run${currentRun.id === null ? "" : ` #${currentRun.id}`}`
     : "";
   const currentStatus = currentRun?.status === "running" ? "运行中" : "等待中";
-  return <section className="console-card attempt-metadata-card"><h2>Consumer 执行结果</h2><div className="attempt-metadata-grid">
+  return <><h2>Consumer 执行结果</h2><div className="attempt-metadata-grid">
     <div className="attempt-metadata-item"><span>confidence</span><strong>{result.confidence}</strong></div>
     <div className="attempt-metadata-item"><span>information_completeness</span><strong>{result.information_completeness}</strong></div>
     <div className="attempt-metadata-item"><span>rule_coverage</span><strong>{result.rule_coverage}</strong></div>
     <div className="attempt-metadata-item"><span>risk</span><strong>{result.risk}</strong></div>
     {result.error_reason && <div className="attempt-metadata-item"><span>Consumer error</span><strong>{result.error_reason}</strong></div>}
     {currentRun && <div className="attempt-metadata-item"><span>{currentLabel}</span><strong>{currentStatus}</strong></div>}
-  </div></section>;
+  </div></>;
+}
+
+function MetadataGrid({ rows, consumerResult }: { rows: AttemptMetadata[]; consumerResult?: AttemptConsumerResult }) {
+  return <section className="console-card attempt-metadata-card"><div className="attempt-metadata-grid">{rows.map((row) => <div className="attempt-metadata-item" key={row.label}><span>{row.label}</span><strong>{row.value || "未记录"}</strong></div>)}</div>{consumerResult && <ConsumerResult result={consumerResult} />}</section>;
 }
 
 function ToolUseList({ uses }: { uses: AttemptToolUse[] }) {
@@ -199,8 +199,7 @@ export function AttemptDetailPage() {
     {detail && <>
       <section className="console-card compact-card attempt-conversation-banner"><div className="attempt-conversation-left" data-testid="attempt-conversation-summary"><div className="attempt-conversation-title"><span>{detail.conversation.label}：</span><strong>{detail.conversation.title}</strong></div><div className="attempt-conversation-sub">触发人：{detail.conversation.trigger_sender || "未提供"}</div></div><div className="attempt-banner-actions" data-testid="attempt-conversation-actions">{detail.actions.consumer_url && <Link className="agent-log-button" to={detail.actions.consumer_url} title="查看 Agent 如何形成这次处理方案">查看处理过程</Link>}{detail.actions.audit_url && <Link className="agent-log-button" to={detail.actions.audit_url} title="查看 Agent 如何核验方案、边界和实际结果">查看审计过程</Link>}{detail.actions.agent_url && <Link className="agent-log-button" to={detail.actions.agent_url} title="查看关联的 Agent 会话">查看 Agent session</Link>}{!detail.agent_execution_record && <span className="muted">未记录 Agent 过程</span>}{detail.actions.terminal && <span className="disabled-action">无需操作</span>}{detail.actions.dingtalk_url && <a className="compact-button open-dingtalk-action" href={detail.actions.dingtalk_url} target="_blank" rel="noreferrer">{detail.oa.url ? "查看审批" : "查看钉钉消息"}</a>}</div></section>
       {((detail.status.attention.reason || ["sent", "skipped", "needs_human", "failed"].includes(detail.status.raw.trim().toLowerCase()))) && <section className="console-card compact-card attempt-status-card"><p><strong>事项：</strong>{detail.status.subject}</p><p><strong>当前状态：</strong>{detail.status.message}</p><p><strong>需要你决策：</strong>{detail.status.requires_decision ? "是" : "否"}</p>{detail.status.attention.reason && <dl className="attempt-attention-details"><div><dt>原因</dt><dd>{detail.status.attention.reason}</dd></div><div><dt>外部副作用</dt><dd>{detail.status.attention.external_effect}</dd></div>{detail.status.attention.retry_at && <div><dt>重试计划</dt><dd>{detail.status.attention.retry_at}</dd></div>}</dl>}</section>}
-      <MetadataGrid rows={[...detail.metadata, ...(detail.revision_count ? [{ label: "revisions", value: `${detail.revision_count} revisions` }] : [])]} />
-      {detail.consumer_result && <ConsumerResult result={detail.consumer_result} />}
+      <MetadataGrid rows={[...detail.metadata, ...(detail.revision_count ? [{ label: "revisions", value: `${detail.revision_count} revisions` }] : [])]} consumerResult={detail.consumer_result} />
       <section className="attempt-review-grid"><div className="console-card attempt-review-main"><div className="reply-meta" aria-label="处理状态">{detail.action_pills.map((pill) => <StatusBadge key={`${pill.label}-${pill.status}`} value={pill.status} />)}</div><ReviewBlock title={detail.trigger.title} value={detail.trigger.text} /><ReviewBlock title={detail.audit_explanation.title} value={detail.audit_explanation.text} className="attempt-audit-section" /><ReviewBlock title={detail.generated_reply.title} value={detail.generated_reply.text} className="attempt-generated-reply" /></div><aside className="attempt-review-side" aria-label="反馈与人工处理">{detail.status.requires_decision && <section className="console-card attempt-decision-card"><h2>需要你的判断</h2><p>选择上方方案会创建一个新的处理修订，原始 Attempt 保留。若方案说明会产生外部动作，后续处理会按说明执行并回读。</p>{detail.decision_options.map((option, index) => <button className="attempt-decision-option" type="button" disabled={decisionSubmitting} key={option.instruction} onClick={() => { if (window.confirm(`确认选择“${option.label}”？`)) void runDecision(option.url, option.instruction); }}><strong>{index + 1}. {option.label}</strong><span>{option.consequence}</span></button>)}<label htmlFor="attempt-custom-decision">其他处理指令（默认仅本次）</label><label className="attempt-skill-toggle" htmlFor="attempt-skill-update"><input id="attempt-skill-update" type="checkbox" checked={skillUpdateRequested} onChange={(event) => setSkillUpdateRequested(event.target.checked)} /> 同时把这条反馈沉淀为 Skill 规则</label><textarea id="attempt-custom-decision" value={customDecision} placeholder="例如：采用方案二，并说明交付边界" onChange={(event) => setCustomDecision(event.target.value)} /><p className="attempt-decision-hint">请填写其他处理指令后提交；下方“反馈迭代”只保存反馈，不会执行处理。</p><button type="button" className="primary-button" disabled={!customDecision.trim() || decisionSubmitting} onClick={() => { if (window.confirm("确认提交这条人工处理指令？")) void runDecision(detail.decision_options[0]?.url || `/api/console/history/${detail.id}/human-decision`, customDecision.trim()); }}>{decisionSubmitting ? "提交中…" : "提交处理指令"}</button>{message && <p className="attempt-decision-message" role="status" aria-live="polite">{message}</p>}</section>}<FeedbackPanel detail={detail} onSaved={setMessage} /></aside></section>
       <EmailContext email={detail.email} />
       <References references={detail.references} />
