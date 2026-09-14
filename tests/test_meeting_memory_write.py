@@ -131,7 +131,9 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
         f"meeting_memory_write_event:{event['id']}:"
         f"{event['execution_generation']}"
     )
-    assert "The source is 本周先完成客户验证." in routed.calls[0]["prompt"]
+    assert (
+        'source_description set to the exact literal "本周先完成客户验证".'
+    ) in routed.calls[0]["prompt"]
     with store._connect() as db:
         written = db.execute(
             "select status, memory_id from meeting_memory_write_events where id=?",

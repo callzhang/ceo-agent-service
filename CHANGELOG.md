@@ -10,6 +10,10 @@
   meeting ID has moved to trailing lookup metadata and can no longer become
   the entry title.
 
+- 2026-09-14: The Memory writing agent must pass the supplied conclusion
+  summary verbatim as `source_description`, which is the Memory console's
+  visible title; it can no longer substitute a meeting source identifier.
+
 - 2026-09-14: Successful Memory write receipts now retain their optional
   provider code and explanatory detail. Verified writes are completed rather
   than being misclassified as parse failures and retried.

@@ -132,9 +132,13 @@ def execute_codex_memory_write(
         total_timeout_seconds=timeout_seconds,
         idle_timeout_seconds=idle_timeout_seconds,
     )
+    source_description_literal = json.dumps(source_description, ensure_ascii=False)
     prompt = (
         "Use the available memory connector to persist the following input. "
-        f"The source is {source_description}. "
+        "Call memory_write exactly once with source_description set to the exact "
+        f"literal {source_description_literal}. "
+        "This field is the visible Memory title; do not replace it with an ID, "
+        "a source label, or inferred provenance. "
         "Return the final typed result with status, memory_id, retryable, "
         "source_code, and detail. Preserve any provider error code and diagnostic "
         "in source_code and detail.\n"

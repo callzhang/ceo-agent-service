@@ -77,6 +77,10 @@ def test_memory_write_uses_source_parent_and_persists_only_routed_result(
     assert call["workload_kind"] == "memory"
     assert call["workload_key"] == f"memory_write_event:{event_id}"
     assert call["required_capabilities"] == frozenset({"structured_output"})
+    assert (
+        'Call memory_write exactly once with source_description set to the exact '
+        'literal "reply audit".'
+    ) in call["prompt"]
     with store._connect() as db:
         row = db.execute(
             "select status, memory_episode_id from memory_write_events where id=?",
