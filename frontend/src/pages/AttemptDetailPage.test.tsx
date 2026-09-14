@@ -71,6 +71,19 @@ const detail = {
   updated_at: "2026-08-29T10:01:00Z",
 };
 
+type ConsumerResultFixture = {
+  confidence: string;
+  information_completeness: string;
+  rule_coverage: string;
+  risk: string;
+  error_reason: string;
+  current_run: { id: number; status: "等待中" | "运行中" } | null;
+};
+
+function withConsumerResult(consumer_result: ConsumerResultFixture) {
+  return { ...detail, consumer_result } as typeof detail & { consumer_result: ConsumerResultFixture };
+}
+
 function renderPage(path = "/attempts/8448") {
   return render(
     <MemoryRouter initialEntries={[path]}>
@@ -123,6 +136,82 @@ describe("AttemptDetailPage", () => {
     expect(document.querySelector(".attempt-review-main .attempt-review-block + .attempt-review-block")).toBeInTheDocument();
     expect(document.querySelector(".attempt-status-card")).not.toBeInTheDocument();
     expect(screen.queryByText("session-8448")).not.toBeInTheDocument();
+  });
+
+  it("shows the linked Consumer result group with its scores and risk", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: withConsumerResult({
+        confidence: "82%",
+        information_completeness: "75%",
+        rule_coverage: "100%",
+        risk: "medium",
+        error_reason: "",
+        current_run: null,
+      }),
+      meta: { snapshot_at: "2026-09-14T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Consumer 执行结果" })).toBeInTheDocument();
+    expect(screen.getByText("confidence")).toBeInTheDocument();
+    expect(screen.getByText("82%")).toBeInTheDocument();
+    expect(screen.getByText("information_completeness")).toBeInTheDocument();
+    expect(screen.getByText("75%")).toBeInTheDocument();
+    expect(screen.getByText("rule_coverage")).toBeInTheDocument();
+    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(screen.getByText("risk")).toBeInTheDocument();
+    expect(screen.getByText("medium")).toBeInTheDocument();
+    expect(screen.queryByText("Consumer error")).not.toBeInTheDocument();
+  });
+
+  it("keeps all Consumer metrics visible as unavailable with the safe error reason", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: withConsumerResult({
+        confidence: "—",
+        information_completeness: "—",
+        rule_coverage: "—",
+        risk: "—",
+        error_reason: "Consumer 结果不符合当前契约",
+        current_run: null,
+      }),
+      meta: { snapshot_at: "2026-09-14T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Consumer 执行结果" })).toBeInTheDocument();
+    expect(screen.getByText("confidence")).toBeInTheDocument();
+    expect(screen.getByText("information_completeness")).toBeInTheDocument();
+    expect(screen.getByText("rule_coverage")).toBeInTheDocument();
+    expect(screen.getByText("risk")).toBeInTheDocument();
+    expect(screen.getAllByText("—")).toHaveLength(4);
+    expect(screen.getByText("Consumer error")).toBeInTheDocument();
+    expect(screen.getByText("Consumer 结果不符合当前契约")).toBeInTheDocument();
+  });
+
+  it.each([
+    { id: 912, status: "等待中" as const },
+    { id: 913, status: "运行中" as const },
+  ])("shows the newer Consumer run #$id as $status without replacing the linked metrics", async ({ id, status }) => {
+    getAttemptDetail.mockResolvedValue({
+      item: withConsumerResult({
+        confidence: "82%",
+        information_completeness: "75%",
+        rule_coverage: "100%",
+        risk: "medium",
+        error_reason: "",
+        current_run: { id, status },
+      }),
+      meta: { snapshot_at: "2026-09-14T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Consumer 执行结果" })).toBeInTheDocument();
+    expect(screen.getByText(`新 Consumer run #${id}`)).toBeInTheDocument();
+    expect(screen.getByText(status)).toBeInTheDocument();
+    expect(screen.getByText("82%")).toBeInTheDocument();
+    expect(screen.getByText("75%")).toBeInTheDocument();
+    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(screen.getByText("medium")).toBeInTheDocument();
   });
 
   it("opens the requested Consumer execution instead of silently rendering the generic Attempt page", async () => {
