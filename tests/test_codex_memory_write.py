@@ -115,6 +115,23 @@ def test_memory_write_typed_result_ignores_unrelated_tool_events() -> None:
     assert result.episode_uuid == "episode-2"
 
 
+def test_memory_write_typed_result_accepts_code_fenced_runtime_message() -> None:
+    raw = json.dumps(
+        {
+            "type": "event_msg",
+            "payload": {
+                "last_agent_message": """```json
+{"status":"success","memory_id":"episode-3","retryable":false,"source_code":"","detail":""}
+```"""
+            },
+        }
+    )
+
+    result = memory_result_from_typed_output(raw)
+
+    assert result.episode_uuid == "episode-3"
+
+
 def test_memory_write_typed_failure_preserves_provider_error() -> None:
     raw = json.dumps(
         {

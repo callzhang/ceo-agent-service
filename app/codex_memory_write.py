@@ -7,6 +7,7 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
+from app.agent_result import agent_message_json_objects
 from app.agent_runtime_production import build_production_routed_codex_execution
 from app.agent_runtime_router import (
     CodexCommandFactory,
@@ -187,6 +188,7 @@ def parse_memory_write_typed_result(raw: str) -> MemoryWriteTypedResult:
         if isinstance(payload, dict):
             for text in _decision_text_candidates(payload):
                 candidates.extend(_iter_json_payloads(text))
+                candidates.extend(agent_message_json_objects(text))
     for candidate in reversed(candidates):
         try:
             return MemoryWriteTypedResult.model_validate(candidate)
