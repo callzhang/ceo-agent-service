@@ -1012,6 +1012,38 @@ def test_classifier_retry_uses_shared_capped_backoff_until_success(tmp_path: Pat
     assert adapter.get_task(third.task_id).status == "done"
 
 
+def test_explicit_classifier_repair_reopens_only_selected_failed_tasks(
+    tmp_path: Path,
+):
+    adapter = EmailClassificationTaskAdapter(_email_store(tmp_path))
+    selected = adapter.ensure_task(_classification_input(uid=146))
+    claimed = adapter.claim_next(owner="worker")
+    assert claimed is not None and claimed.task_id == selected.task_id
+    adapter.fail(
+        claimed,
+        error="ValueError:invalid classification input",
+        retryable=False,
+    )
+    untouched = adapter.ensure_task(_classification_input(uid=147))
+    claimed = adapter.claim_next(owner="worker")
+    assert claimed is not None and claimed.task_id == untouched.task_id
+    adapter.fail(
+        claimed,
+        error="ValueError:invalid classification input",
+        retryable=False,
+    )
+
+    assert adapter.retry_failed_tasks((selected.task_id,)) == 1
+
+    reopened = adapter.get_task(selected.task_id)
+    still_failed = adapter.get_task(untouched.task_id)
+    assert reopened is not None
+    assert reopened.status == "pending"
+    assert reopened.attempt_count == 0
+    assert reopened.error == ""
+    assert still_failed is not None and still_failed.status == "failed"
+
+
 def test_classification_task_bootstrap_recovers_crash_interrupted_claim(tmp_path: Path):
     store = _email_store(tmp_path)
     now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]

@@ -347,11 +347,32 @@ class EmailClassificationTaskAdapter:
         return None if row is None else self._row(row)
 
     def recover_running_tasks(self) -> int:
-        """Retry eligible expired claims and terminalize exhausted claims."""
+        """Return expired claims to the retry queue under the same task identity."""
 
         with self.email_store._connect() as db:
             db.execute("begin immediate")
             return self._expire_running_claims(db, now=self._timestamp())
+
+    def retry_failed_tasks(self, task_ids: Sequence[str]) -> int:
+        """Requeue explicitly reviewed failed tasks without changing identity."""
+
+        selected = tuple(dict.fromkeys(task_id.strip() for task_id in task_ids))
+        if not selected or any(not task_id for task_id in selected):
+            raise ValueError("task_ids must contain nonblank task identifiers")
+        placeholders = ",".join("?" for _ in selected)
+        now = self._timestamp()
+        with self.email_store._connect() as db:
+            db.execute("begin immediate")
+            return db.execute(
+                f"""
+                update email_agent_classification_tasks
+                set status='pending', owner='', attempt_count=0,
+                    lease_expires_at='', available_at='', result_json='null',
+                    error='', updated_at=?
+                where status='failed' and task_id in ({placeholders})
+                """,
+                (now, *selected),
+            ).rowcount
 
     def claim_next(self, *, owner: str) -> EmailClassificationTask | None:
         if not owner.strip():
