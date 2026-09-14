@@ -32,7 +32,10 @@ from app.email_classifier_training import (
     train_and_promote,
     _validation_predictions,
 )
-from app.email_classifier_training import train_frozen_embedding_candidate
+from app.email_classifier_training import (
+    train_frozen_classic_candidate,
+    train_frozen_embedding_candidate,
+)
 from app.email_embedding_cache import EmbeddingCache, EmbeddingCacheKey
 from app.email_embedding_classifier import CategoryDescription
 from app.email_description_optimizer import (
@@ -46,6 +49,7 @@ from app.email_important import ImportantSignals
 from app.email_training_snapshot import build_folder_training_snapshot
 from app.email_model_registry import EmailModelRegistry
 from app.email_model_registry import HistoricalSystematicErrorState
+from app.email_model_registry import FASTTEXT_MODEL_FAMILY, MODEL_FAMILY
 from app.email_classifier_retrain import (
     RetrainPolicy,
     RetrainState,
@@ -1448,3 +1452,29 @@ def test_frozen_snapshot_embedding_training_stages_metrics_without_activation(
     assert evaluated.status == "evaluated"
     assert evaluated.evaluated_model_id == proposal_result.model_id
     assert evaluated.evaluated_description_set_digest == overlay.description_set_digest
+
+
+@pytest.mark.parametrize("family", [MODEL_FAMILY, FASTTEXT_MODEL_FAMILY])
+def test_classic_families_stage_a_frozen_candidate_without_activation(tmp_path, family):
+    rows = []
+    for split in ("train", "validation", "test"):
+        for category in ("work", "legal"):
+            rows.append({
+                "stable_message_identity": f"{split}-{category}",
+                "category_key": category, "split": split, "account_id": "account-1",
+                "normalized_model_input": f"subject {category} {split}",
+            })
+    store = type("Store", (), {"get_training_snapshot": lambda self, _: {
+        "snapshot_digest": "a" * 64, "observations": rows,
+    }})()
+    registry = EmailModelRegistry(tmp_path / "models")
+    result = train_frozen_classic_candidate(
+        store=store, snapshot_id="snapshot-1", registry=registry,
+        categories=("work", "legal"), model_family=family,
+        trained_at=datetime(2026, 9, 14, tzinfo=timezone.utc),
+    )
+
+    record = registry.get_model(result.model_id)
+    assert record.metadata.model_family == family
+    assert record.status == "candidate"
+    assert registry.active_manifest() is None

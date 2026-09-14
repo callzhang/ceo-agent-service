@@ -18,6 +18,7 @@ from typing import Mapping
 
 from app.email_classifier_training import (
     TrainingResult,
+    train_frozen_classic_candidate,
     train_frozen_embedding_candidate,
 )
 from app.email_classifier_model_families import validate_model_families
@@ -350,6 +351,7 @@ class TrainingSubprocessRun:
     finished_at: str | None = None
     exit_code: int | None = None
     model_id: str | None = None
+    model_ids: tuple[str, ...] = ()
     reason: str | None = None
     snapshot_id: str = ""
     snapshot_sha: str = ""
@@ -899,12 +901,15 @@ def _run_training_job(
         store = EmailStore(db_path)
         training_selection = started.training_selection
         selected_categories: tuple[str, ...] | None = None
+        selected_message_identities: tuple[str, ...] | None = None
         if training_selection is not None:
             sources = training_selection.get("sources")
             categories = training_selection.get("categories")
             model_families = training_selection.get("model_families", ["embedding-mlp"])
-            if sources != ["folder_snapshot"]:
-                raise RuntimeError("unsupported training selection source")
+            if not isinstance(sources, list) or not sources or not all(
+                isinstance(source, str) and source.strip() for source in sources
+            ):
+                raise RuntimeError("training selection sources are invalid")
             if not isinstance(model_families, list):
                 raise RuntimeError("training selection model families are missing")
             try:
@@ -917,8 +922,14 @@ def _run_training_job(
             ):
                 raise RuntimeError("invalid training selection categories")
             selected_categories = tuple(sorted(set(categories)))
+            identities = training_selection.get("selected_message_identities")
+            if not isinstance(identities, list) or not identities or not all(
+                isinstance(identity, str) and identity.strip()
+                for identity in identities
+            ):
+                raise RuntimeError("training selection identities are missing")
+            selected_message_identities = tuple(sorted(set(identities)))
         historical_error_state = read_frozen_historical_error_state(registry, started)
-        dimension = int(os.environ["CEO_EMAIL_EMBEDDING_DIMENSION"])
         description_overlay = None
         if started.description_proposal_id is not None:
             from app.email_description_optimizer import DescriptionProposalRepository
@@ -958,38 +969,38 @@ def _run_training_job(
                 raise RuntimeError("training selection categories are unavailable")
         from app.email_candidate_benchmark import benchmark_candidate
 
-        result = train_frozen_embedding_candidate(
-            store=store,
-            snapshot_id=snapshot_id,
-            registry=registry,
-            cache=EmbeddingCache(registry.root, dimension=dimension),
-            descriptions=descriptions,
-            embedding_model_id=os.environ.get(
-                "CEO_EMAIL_EMBEDDING_MODEL",
-                "jinaai/jina-embeddings-v5-text-small",
-            ),
-            embedding_revision=os.environ["CEO_EMAIL_EMBEDDING_REVISION"],
-            parent_model_id=registry.active_model_id_unverified(),
-            trained_at=trained_at,
-            expected_snapshot_sha=started.snapshot_sha,
-            expected_description_version=(
-                None if selected_categories is not None else started.description_version
-            ),
-            historical_systematic_error_state=historical_error_state,
-            description_overlay=description_overlay,
-            benchmark_candidate=benchmark_candidate,
-        )
-        if description_overlay is not None:
-            proposal_repository.record_evaluation(
-                description_overlay.proposal_id, model_id=result.model_id
-            )
+        model_ids: list[str] = []
+        for family in model_families if training_selection is not None else ["embedding-mlp"]:
+            if family == "embedding-mlp":
+                dimension = int(os.environ["CEO_EMAIL_EMBEDDING_DIMENSION"])
+                result = train_frozen_embedding_candidate(
+                    store=store, snapshot_id=snapshot_id, registry=registry,
+                    cache=EmbeddingCache(registry.root, dimension=dimension), descriptions=descriptions,
+                    embedding_model_id=os.environ.get("CEO_EMAIL_EMBEDDING_MODEL", "jinaai/jina-embeddings-v5-text-small"),
+                    embedding_revision=os.environ["CEO_EMAIL_EMBEDDING_REVISION"], parent_model_id=registry.active_model_id_unverified(),
+                    trained_at=trained_at, expected_snapshot_sha=started.snapshot_sha,
+                    expected_description_version=(None if selected_categories is not None else started.description_version),
+                    historical_systematic_error_state=historical_error_state, description_overlay=description_overlay,
+                    benchmark_candidate=benchmark_candidate, selected_message_identities=selected_message_identities,
+                )
+                model_ids.append(result.model_id)
+                if description_overlay is not None:
+                    proposal_repository.record_evaluation(description_overlay.proposal_id, model_id=result.model_id)
+            else:
+                classic = train_frozen_classic_candidate(
+                    store=store, snapshot_id=snapshot_id, registry=registry,
+                    categories=tuple(descriptions), model_family=family, trained_at=trained_at,
+                    selected_message_identities=selected_message_identities,
+                )
+                model_ids.append(classic.model_id)
         terminal = replace(
             started,
             status="succeeded",
             updated_at=_format_timestamp(datetime.now(timezone.utc)),
             finished_at=_format_timestamp(datetime.now(timezone.utc)),
             exit_code=0,
-            model_id=result.model_id,
+            model_id=model_ids[-1] if model_ids else None,
+            model_ids=tuple(model_ids),
             reason="candidate_staged_not_activated",
         )
         controller._save_run(terminal)

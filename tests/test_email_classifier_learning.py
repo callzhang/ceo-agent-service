@@ -178,13 +178,13 @@ def test_feedback_api_service_confirms_first_and_records_state_without_retrainin
     assert store.list_training_examples()[0]["label"] == "legal"
 
 
-def test_manual_training_selection_rejects_unmapped_sources(tmp_path: Path):
+def test_manual_training_selection_rejects_unknown_sources(tmp_path: Path):
     service, _store, _rows, _ = _service_with_pending(tmp_path)
 
     with pytest.raises(UnsupportedTrainingSelection):
         service.request_manual_training(
             selection={
-                "sources": ["agent_auto_label", "user_feedback"],
+                "sources": ["not-a-training-source"],
                 "categories": ["work", "legal"],
             }
         )
@@ -242,6 +242,56 @@ def test_manual_folder_selection_is_bound_to_the_training_run(tmp_path: Path):
     payload = json.loads(next((tmp_path / "models").glob("training-request-*.json")).read_text())
     assert payload["run_id"] == "selected-run"
     assert payload["execution"] == "staged_candidate_training"
+
+
+def test_manual_agent_and_user_selection_uses_frozen_folder_labels(tmp_path: Path):
+    service, store, _rows, _ = _service_with_pending(tmp_path)
+    snapshot = {
+        "snapshot_id": "email-folder-snapshot-20260912T000000.000000Z-bbbbbbbbbbbb",
+        "snapshot_sha": "c" * 64,
+        "snapshot_version": "email-folder-training-snapshot-v1",
+        "description_version": "description-set-sha256:" + "d" * 64,
+        "input_schema_version": "email-folder-model-input-v3",
+        "folder_label_watermark": 2, "important_label_watermark": 0,
+        "minimum_ready": True,
+        "observations": [
+            {"stable_message_identity": "mail-user", "category_key": "work"},
+            {"stable_message_identity": "mail-agent", "category_key": "legal"},
+        ],
+    }
+    store.latest_training_snapshot_state = lambda: snapshot
+    store.get_training_snapshot = lambda _snapshot_id: snapshot
+    store.list_training_examples = lambda **_: [
+        {"message_id": "mail-user", "label": "legal"},
+    ]
+    store.list_classifications = lambda **_: ([
+        {"stable_message_identity": "mail-agent", "classification_source": "agent",
+         "predicted_category": "work"},
+    ], 1)
+    service.controller = type("Controller", (), {
+        "start": lambda self, **kwargs: TrainingSubprocessRun(
+            run_id="source-selected-run", status="running", pid=1,
+            started_at=kwargs["now"].isoformat(), updated_at=kwargs["now"].isoformat(),
+            snapshot_id=kwargs["snapshot_id"], snapshot_sha=kwargs["signal"].snapshot_sha,
+            description_version=kwargs["signal"].description_version,
+            training_selection=kwargs["training_selection"],
+        ),
+    })()
+
+    result = service.request_manual_training(selection={
+        "sources": ["agent_auto_label", "user_feedback"],
+        "categories": ["work", "legal"],
+        "model_families": ["embedding-mlp"],
+    })
+
+    selection = result.training_run.training_selection
+    assert selection["selected_message_identities"] == ["mail-agent", "mail-user"]
+    by_source_category = {
+        (row["source"], row["category"]): row["sample_count"]
+        for row in selection["provenance"]
+    }
+    assert by_source_category[("user_feedback", "work")] == 1
+    assert by_source_category[("agent_auto_label", "legal")] == 1
 
 
 def test_manual_training_selection_is_idempotent_for_same_scope(tmp_path: Path):
