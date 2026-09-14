@@ -156,3 +156,40 @@ def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
     assert event["available_at"] == ""
     assert event["execution_generation"]
     assert event["execution_generation"] != original_generation
+
+
+def test_failed_meeting_memory_write_can_be_closed_from_verified_memory_readback(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    job_id = _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    with store._connect() as db:
+        event_id = int(
+            db.execute(
+                "select id from meeting_memory_write_events where meeting_job_id=?",
+                (job_id,),
+            ).fetchone()["id"]
+        )
+    store.fail_meeting_memory_write_event(event_id, error="result parser failed")
+
+    assert store.reconcile_failed_meeting_memory_write_event(
+        event_id,
+        memory_id="verified-memory-7",
+    )
+    assert not store.reconcile_failed_meeting_memory_write_event(
+        event_id,
+        memory_id="verified-memory-7",
+    )
+    with store._connect() as db:
+        event = db.execute(
+            "select status, attempts, error, memory_id from meeting_memory_write_events "
+            "where id=?",
+            (event_id,),
+        ).fetchone()
+    assert dict(event) == {
+        "status": "done",
+        "attempts": 1,
+        "error": "",
+        "memory_id": "verified-memory-7",
+    }

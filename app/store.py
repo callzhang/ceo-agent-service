@@ -14237,6 +14237,42 @@ class AutoReplyStore:
             )
         return cursor.rowcount == 1
 
+    def reconcile_failed_meeting_memory_write_event(
+        self,
+        event_id: int,
+        *,
+        memory_id: str,
+    ) -> bool:
+        """Close a failed projection after an independent Memory readback.
+
+        The caller must verify ``memory_id`` through the Memory service before
+        calling this method. This records an already accepted write and never
+        starts a second Memory delivery.
+        """
+        if event_id <= 0:
+            raise ValueError("meeting Memory write event id must be positive")
+        memory_id = memory_id.strip()
+        if not memory_id:
+            raise ValueError("meeting Memory write reconciliation requires memory_id")
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update meeting_memory_write_events as events
+                set status='done', available_at='', error='', memory_id=?,
+                    updated_at=current_timestamp
+                where events.id=? and events.status='failed'
+                  and exists (
+                    select 1
+                    from meeting_alignment_jobs as jobs
+                    where jobs.id=events.meeting_job_id
+                      and jobs.status='sent'
+                      and trim(jobs.final_message)<>''
+                  )
+                """,
+                (memory_id, event_id),
+            )
+        return cursor.rowcount == 1
+
     def claim_meeting_alignment_jobs(
         self,
         limit: int,
