@@ -113,3 +113,40 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
         ).fetchone()
     assert dict(written) == {"status": "done", "memory_id": "meeting-memory-7"}
     assert meeting["status"] == "sent"
+
+
+def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    job_id = _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    with store._connect() as db:
+        event_id = int(
+            db.execute(
+                "select id from meeting_memory_write_events where meeting_job_id=?",
+                (job_id,),
+            ).fetchone()["id"]
+        )
+
+    store.fail_meeting_memory_write_event(event_id, error="provider configuration failed")
+
+    assert store.requeue_failed_meeting_memory_write_event(
+        event_id,
+        reason="provider configuration repaired",
+    )
+    assert not store.requeue_failed_meeting_memory_write_event(
+        event_id,
+        reason="duplicate recovery",
+    )
+    with store._connect() as db:
+        event = db.execute(
+            "select status, attempts, error, available_at from meeting_memory_write_events where id=?",
+            (event_id,),
+        ).fetchone()
+    assert dict(event) == {
+        "status": "pending",
+        "attempts": 1,
+        "error": "provider configuration repaired",
+        "available_at": "",
+    }

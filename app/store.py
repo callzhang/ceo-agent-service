@@ -14141,6 +14141,35 @@ class AutoReplyStore:
         if cursor.rowcount != 1:
             raise ValueError("meeting Memory write event is not pending")
 
+    def requeue_failed_meeting_memory_write_event(
+        self,
+        event_id: int,
+        *,
+        reason: str,
+    ) -> bool:
+        """Reopen one failed Memory projection after its service root cause is fixed."""
+        if event_id <= 0:
+            raise ValueError("meeting Memory write event id must be positive")
+        if not reason.strip():
+            raise ValueError("meeting Memory write recovery reason is required")
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update meeting_memory_write_events as events
+                set status='pending', available_at='', error=?, updated_at=current_timestamp
+                where events.id=? and events.status='failed'
+                  and exists (
+                    select 1
+                    from meeting_alignment_jobs as jobs
+                    where jobs.id=events.meeting_job_id
+                      and jobs.status='sent'
+                      and trim(jobs.final_message)<>''
+                  )
+                """,
+                (reason[:500], event_id),
+            )
+        return cursor.rowcount == 1
+
     def claim_meeting_alignment_jobs(
         self,
         limit: int,
