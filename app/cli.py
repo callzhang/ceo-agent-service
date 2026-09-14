@@ -3834,15 +3834,21 @@ def _service_component_target(
         try:
             target()
         except Exception as exc:
-            _record_service_failure(settings, component, exc)
-            exit_process(1)
+            try:
+                _record_service_failure(settings, component, exc)
+            finally:
+                # SQLite can be the component failure and the health sink.
+                # Always let the supervisor restart the complete worker.
+                exit_process(1)
             return
-        _record_service_failure(
-            settings,
-            component,
-            RuntimeError(f"{component} stopped unexpectedly"),
-        )
-        exit_process(1)
+        try:
+            _record_service_failure(
+                settings,
+                component,
+                RuntimeError(f"{component} stopped unexpectedly"),
+            )
+        finally:
+            exit_process(1)
 
     return run_component
 

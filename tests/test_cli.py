@@ -7339,6 +7339,31 @@ def test_service_component_failure_persists_scheduler_error_health(
     assert component["latest_error_at"]
 
 
+def test_service_component_failure_exits_when_failure_recording_also_fails(
+    monkeypatch, tmp_path
+):
+    exits = []
+
+    def fail_to_record(*_args, **_kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    def fail_component():
+        raise RuntimeError("scheduler scan failed")
+
+    monkeypatch.setattr(cli, "_record_service_failure", fail_to_record)
+    run_component = cli._service_component_target(
+        settings=WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        component="agent-cron-scheduler",
+        target=fail_component,
+        exit_process=exits.append,
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        run_component()
+
+    assert exits == [1]
+
+
 def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
     monkeypatch, tmp_path
 ):
