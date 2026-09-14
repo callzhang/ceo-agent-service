@@ -77,7 +77,7 @@ type ConsumerResultFixture = {
   rule_coverage: string;
   risk: string;
   error_reason: string;
-  current_run: { id: number; status: "pending" | "running" } | null;
+  current_run: { id: number | null; status: "pending" | "running" } | null;
 };
 
 function withConsumerResult(consumer_result: ConsumerResultFixture) {
@@ -208,6 +208,30 @@ describe("AttemptDetailPage", () => {
     expect(await screen.findByRole("heading", { name: "Consumer 执行结果" })).toBeInTheDocument();
     expect(screen.getByText(`新 Consumer run #${id}`)).toBeInTheDocument();
     expect(screen.getByText(displayStatus)).toBeInTheDocument();
+    expect(screen.getByText("82%")).toBeInTheDocument();
+    expect(screen.getByText("75%")).toBeInTheDocument();
+    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(screen.getByText("medium")).toBeInTheDocument();
+  });
+
+  it("shows a queued new Consumer run without rendering a null run id", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: withConsumerResult({
+        confidence: "82%",
+        information_completeness: "75%",
+        rule_coverage: "100%",
+        risk: "medium",
+        error_reason: "",
+        current_run: { id: null, status: "pending" },
+      }),
+      meta: { snapshot_at: "2026-09-14T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Consumer 执行结果" })).toBeInTheDocument();
+    expect(screen.getByText("新 Consumer run")).toBeInTheDocument();
+    expect(screen.getByText("等待中")).toBeInTheDocument();
+    expect(screen.queryByText("#null")).not.toBeInTheDocument();
     expect(screen.getByText("82%")).toBeInTheDocument();
     expect(screen.getByText("75%")).toBeInTheDocument();
     expect(screen.getByText("100%")).toBeInTheDocument();
