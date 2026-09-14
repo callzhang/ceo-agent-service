@@ -981,6 +981,31 @@ def test_classification_body_display_removes_html_style_payload(
     assert detail["message_text"] == "Hello world. Keep this original message."
 
 
+def test_classification_body_display_removes_standalone_css_prefix(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "css-prefix-display.sqlite3")
+    classification = _classification(status=EmailClassificationStatus.PENDING_FEEDBACK)
+    _persist_scan(
+        store,
+        classification,
+        normalized_text=(
+            "/* stylesheet emitted by an earlier HTML text extraction */\n"
+            "@media screen { @font-face { src: url(font.woff2); } }\n"
+            "Visible original email text.\n\nSecond visible paragraph."
+        ),
+    )
+
+    rows, total = store.list_classifications(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        limit=20,
+        offset=0,
+    )
+
+    assert total == 1
+    assert rows[0]["message_text"] == "Visible original email text.\n\nSecond visible paragraph."
+
+
 def test_persist_scan_result_stores_thread_reference_metadata(tmp_path: Path):
     database = tmp_path / "thread-metadata.sqlite3"
     store = EmailStore(database)

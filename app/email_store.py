@@ -62,7 +62,7 @@ from app.email_category_config import (
     legacy_config_row,
     validate_category_descriptions,
 )
-from app.email_html_text import html_to_text
+from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
@@ -125,7 +125,7 @@ def _display_message_body(message: Message) -> str:
         return ""
     if message.get_content_type() == "text/html":
         return html_to_text(payload)
-    return payload
+    return visible_email_text(payload)
 
 
 _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = """
