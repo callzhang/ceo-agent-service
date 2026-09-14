@@ -40,7 +40,7 @@ class MemoryWriteTypedResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["success", "failed"]
-    memory_id: str
+    memory_id: str | None = None
     retryable: bool
     source_code: str
     detail: str
@@ -48,11 +48,11 @@ class MemoryWriteTypedResult(BaseModel):
     @model_validator(mode="after")
     def validate_status_fields(self) -> Self:
         if self.status == "success":
-            if not self.memory_id.strip():
+            if not str(self.memory_id or "").strip():
                 raise ValueError("successful memory write requires memory_id")
             if self.retryable or self.source_code.strip() or self.detail.strip():
                 raise ValueError("successful memory write cannot contain failure fields")
-        elif self.memory_id.strip():
+        elif str(self.memory_id or "").strip():
             raise ValueError("failed memory write cannot contain memory_id")
         return self
 
@@ -174,7 +174,7 @@ def memory_result_from_typed_output(raw: str) -> MemoryWriteResult:
             retryable=typed.retryable,
         )
     return MemoryWriteResult(
-        episode_uuid=typed.memory_id.strip(),
+        episode_uuid=str(typed.memory_id).strip(),
         processing_status="completed",
         duplicate=False,
     )

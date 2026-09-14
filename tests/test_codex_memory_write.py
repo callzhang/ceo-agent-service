@@ -134,6 +134,24 @@ def test_memory_write_typed_failure_preserves_provider_error() -> None:
     assert str(caught.value) == "provider connection refused"
 
 
+def test_memory_write_typed_failure_accepts_null_memory_id_from_connector_runtime() -> None:
+    raw = json.dumps(
+        {
+            "status": "failed",
+            "memory_id": None,
+            "retryable": False,
+            "source_code": "400",
+            "detail": "embedding provider rejected an unsupported dimensions parameter",
+        }
+    )
+
+    with pytest.raises(CodexMemoryWriteFailed) as caught:
+        memory_result_from_typed_output(raw)
+
+    assert caught.value.retryable is False
+    assert caught.value.source_code == "400"
+
+
 def test_runtime_failure_is_explicit_and_preserves_runtime_code(tmp_path: Path) -> None:
     class FailedRoutedExecution:
         def execute(self, **_kwargs):

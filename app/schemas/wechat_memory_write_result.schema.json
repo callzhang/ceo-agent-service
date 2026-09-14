@@ -6,7 +6,7 @@
   "required": ["status", "memory_id", "retryable", "source_code", "detail"],
   "properties": {
     "status": {"type": "string", "enum": ["success", "failed"]},
-    "memory_id": {"type": "string"},
+    "memory_id": {"type": ["string", "null"]},
     "retryable": {"type": "boolean"},
     "source_code": {"type": "string"},
     "detail": {"type": "string"}
