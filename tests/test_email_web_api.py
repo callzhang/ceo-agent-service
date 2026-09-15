@@ -1686,6 +1686,22 @@ def test_training_projection_rejects_invalid_metadata(container, field, value):
         _project_staged_model_evidence(evidence)
 
 
+@pytest.mark.parametrize("snapshot_id", (
+    "email-folder-snapshot-20260908T080000.000000Z-abcdef123456",
+    "email-selected-training-20260915T204910.123456Z-84b3983b9a28",
+))
+def test_staged_evidence_accepts_every_training_snapshot_source(snapshot_id):
+    from app.web_api.email import _project_staged_model_evidence
+    evidence = _valid_model_detail_evidence()
+    evidence.update(
+        training=_training_metadata(),
+        parameters=_training_parameters(),
+        source_snapshot_id=snapshot_id,
+    )
+    projected = _project_staged_model_evidence(evidence)
+    assert projected["training_snapshot_id"] == snapshot_id
+
+
 def _valid_model_detail_evidence() -> dict[str, object]:
     metric = {
         "accepted_precision": 0.97,

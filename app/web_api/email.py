@@ -64,6 +64,7 @@ from app.email_store import (
     EmailStore,
 )
 from app.email_store import EmailPersistenceCorruption
+from app.email_training_snapshot import TRAINING_SNAPSHOT_ID_PATTERN
 
 
 @dataclass(frozen=True)
@@ -138,9 +139,6 @@ def _controlled_integrity_error(value: object) -> str:
 
 
 _MODEL_EVIDENCE_ID = re.compile(r"email-embedding-mlp-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}")
-_SNAPSHOT_EVIDENCE_ID = re.compile(
-    r"email-folder-snapshot-[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{12}"
-)
 _DESCRIPTION_EVIDENCE_VERSION = re.compile(r"description-set-sha256:[0-9a-f]{64}")
 
 
@@ -520,7 +518,7 @@ def _project_staged_model_evidence(
         "training_snapshot_id": _safe_evidence_identifier(
             maturity.source_snapshot_id,
             "source_snapshot_id",
-            _SNAPSHOT_EVIDENCE_ID,
+            TRAINING_SNAPSHOT_ID_PATTERN,
         ),
         "training_snapshot_digest": _safe_digest(
             maturity.source_snapshot_digest, "source_snapshot_digest"

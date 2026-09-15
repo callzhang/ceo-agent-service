@@ -10,6 +10,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import unicodedata
 from urllib.parse import urlsplit
@@ -27,6 +28,16 @@ from app.email_provider_folders import FolderRole, ProviderFolder
 MODEL_INPUT_SCHEMA_VERSION = "email-folder-model-input-v3"
 TRAINING_SNAPSHOT_VERSION = "email-folder-training-snapshot-v1"
 SELECTED_TRAINING_SNAPSHOT_VERSION = "email-selected-training-snapshot-v1"
+FOLDER_SNAPSHOT_ID_PREFIX = "email-folder-snapshot-"
+SELECTED_TRAINING_SNAPSHOT_ID_PREFIX = "email-selected-training-"
+TRAINING_SNAPSHOT_ID_PATTERN = re.compile(
+    "(?:"
+    + "|".join(
+        re.escape(prefix)
+        for prefix in (FOLDER_SNAPSHOT_ID_PREFIX, SELECTED_TRAINING_SNAPSHOT_ID_PREFIX)
+    )
+    + r")[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{12}"
+)
 MAX_BODY_CHARACTERS = 2_048
 FOLDER_TRAINING_CATEGORY_SAMPLE_LIMIT = 500
 _APPROVED_HEADERS = frozenset(
@@ -44,6 +55,14 @@ _SOURCES = frozenset({
     "agent_auto_label",
     "user_feedback",
 })
+
+
+def training_snapshot_id(prefix: str, observed_at: datetime, token: str) -> str:
+    return (
+        prefix
+        + observed_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ-")
+        + token[:12]
+    )
 
 
 class FolderTrainingSnapshotError(ValueError):
@@ -141,10 +160,8 @@ class EmailTrainingSnapshotPublicationJob:
         identity_digest = deterministic_payload_digest(
             sorted(_identity(item) for item in observations)
         )
-        snapshot_id = (
-            "email-folder-snapshot-"
-            + observed_at.strftime("%Y%m%dT%H%M%S.%fZ-")
-            + identity_digest[:12]
+        snapshot_id = training_snapshot_id(
+            FOLDER_SNAPSHOT_ID_PREFIX, observed_at, identity_digest
         )
         snapshot = build_folder_training_snapshot(
             observations,

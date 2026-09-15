@@ -28,7 +28,11 @@ from app.email_classifier_retrain import (
 from app.email_model_registry import EmailModelRegistry, ModelRegistryError
 from app.email_pipeline import apply_human_confirmation
 from app.email_store import EmailStore
-from app.email_training_snapshot import build_selected_training_snapshot
+from app.email_training_snapshot import (
+    SELECTED_TRAINING_SNAPSHOT_ID_PREFIX,
+    build_selected_training_snapshot,
+    training_snapshot_id,
+)
 
 
 @dataclass(frozen=True)
@@ -370,10 +374,8 @@ class EmailClassifierLearningService:
                 )
         selected_snapshot = build_selected_training_snapshot(
             selected_records,
-            snapshot_id=(
-                "email-selected-training-"
-                + now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ-")
-                + uuid.uuid4().hex[:12]
+            snapshot_id=training_snapshot_id(
+                SELECTED_TRAINING_SNAPSHOT_ID_PREFIX, now, uuid.uuid4().hex
             ),
             description_version="selected-training-input-v1",
             observed_at=now,
