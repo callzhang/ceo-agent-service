@@ -214,6 +214,10 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 但不得删除旧输入、run、session、tool event、provider 结果或错误事件。当前投影修正不能被解释为
 “历史从未失败过”。
 
+旧版本曾在同一个 `reply_task` 的不同 generation 各写入一条 `reply_attempt` 投影。此类遗留行仍
+保留其 `agent_run` 作为执行事实，但 History（包括 Console API）只展示该 task 的最新 Attempt；它们
+不是多个独立业务事项，也不能重复计数或形成多张处理卡片。
+
 当一个旧 `needs_human` Attempt 的来源 `agent_run.reply_task_id` 与该业务对象的 current task
 不同，且 current task 已终态时，启动收口会把旧 Attempt 标为 `skipped`，并写入“新任务已接管”的
 resolution。相同规则也适用于同一 trigger 已有更晚的完成或无动作终态 Attempt。它只修正过期的当前

@@ -2997,6 +2997,68 @@ def test_skip_obsolete_needs_human_attempt_with_later_terminal_trigger_attempt(
     assert updated_attempt.send_status == expected_status
 
 
+def test_history_hides_legacy_duplicate_attempt_projections_for_one_reply_task(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="legacy-attempt-conversation",
+        conversation_title="历史管理群",
+        single_chat=False,
+        trigger_message_id="legacy-attempt-message",
+        trigger_create_time="2026-08-27 04:00:00",
+        trigger_sender="Derek",
+        trigger_text="同一条触发消息",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    attempt_ids = [
+        store.record_reply_attempt(
+            conversation_id=task.conversation_id,
+            conversation_title=task.conversation_title,
+            trigger_message_id=task.trigger_message_id,
+            trigger_sender=task.trigger_sender,
+            trigger_text=task.trigger_text,
+            action="agent_run",
+            sensitivity_kind="general",
+            send_status="skipped",
+        )
+        for _ in range(5)
+    ]
+    with store._connect() as db:
+        for generation, attempt_id in enumerate(attempt_ids):
+            run = db.execute(
+                """
+                insert into agent_runs (
+                    reply_task_id, execution_generation, role, operation_id, status
+                ) values (?, ?, 'consumer', ?, 'completed')
+                """,
+                (task.id, f"legacy-generation-{generation}", f"legacy-{generation}"),
+            )
+            db.execute(
+                "update reply_attempts set agent_run_id=? where id=?",
+                (run.lastrowid, attempt_id),
+            )
+
+    history_ids = [
+        item.source_id
+        for item in store.list_history_items(kinds=("reply",))
+        if item.source_id in attempt_ids
+    ]
+    operation_log_total, operation_logs = store.list_operation_logs_with_count(
+        limit=20,
+        source_tables=("reply_attempts",),
+    )
+    operation_log_ids = [
+        item.source_id
+        for item in operation_logs
+        if item.source_id in attempt_ids
+    ]
+
+    assert history_ids == [attempt_ids[-1]]
+    assert operation_log_total == 1
+    assert operation_log_ids == [attempt_ids[-1]]
+
+
 @pytest.mark.parametrize(
     ("attempt_status", "expected_task_status"),
     (

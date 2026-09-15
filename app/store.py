@@ -22274,8 +22274,9 @@ class AutoReplyStore:
                     send_error || ' ' || reviewer_feedback || ' ' || corrected_reply_text
                     , '') as search_text
                 from reply_attempts
-                where oa_process_instance_id = ''
-                   or id = (
+                where (
+                    oa_process_instance_id = ''
+                    or id = (
                         select process_attempts.id
                         from reply_attempts as process_attempts
                         where process_attempts.oa_process_instance_id = reply_attempts.oa_process_instance_id
@@ -22283,7 +22284,21 @@ class AutoReplyStore:
                         order by process_attempts.created_at desc,
                             process_attempts.id desc
                         limit 1
-                   )
+                    )
+                )
+                  -- Legacy retries can have distinct physical projections for
+                  -- one reply task. Keep their immutable runs, but show only
+                  -- the task's newest business-result projection in History.
+                  and not exists (
+                    select 1
+                    from agent_runs as historical_run
+                    join reply_attempts as newer_attempt
+                      on newer_attempt.id > reply_attempts.id
+                    join agent_runs as newer_run
+                      on newer_run.id = newer_attempt.agent_run_id
+                    where historical_run.id = reply_attempts.agent_run_id
+                      and newer_run.reply_task_id = historical_run.reply_task_id
+                  )
                 union all
                 select
                     'meeting' as kind,
@@ -27050,6 +27065,16 @@ class AutoReplyStore:
                     0 as todo_id,
                     0 as follow_up_id
                 from reply_attempts
+                where not exists (
+                    select 1
+                    from agent_runs as historical_run
+                    join reply_attempts as newer_attempt
+                      on newer_attempt.id > reply_attempts.id
+                    join agent_runs as newer_run
+                      on newer_run.id = newer_attempt.agent_run_id
+                    where historical_run.id = reply_attempts.agent_run_id
+                      and newer_run.reply_task_id = historical_run.reply_task_id
+                )
                 union all
                 select
                     'meeting:' || runs.id as id,
