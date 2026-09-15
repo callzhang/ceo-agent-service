@@ -352,7 +352,14 @@ export function ModelTraining({
         />
       </section>
       <div className="training-middle">
-        <ModelTrend models={models} config={learning.promotion_gate?.config} />
+        <ModelTrend
+          models={allVersions.map((item) =>
+            item.kind === "staged"
+              ? item.model
+              : legacyModelForTrend(item.model),
+          )}
+          config={learning.promotion_gate?.config}
+        />
         <aside className="training-gate-summary">
           <h3>
             晋升检查{" "}
@@ -654,6 +661,54 @@ function shortModelId(modelId: string) {
   return modelId.length <= 26
     ? modelId
     : `${modelId.slice(0, 14)}…${modelId.slice(-8)}`;
+}
+function legacyModelForTrend(
+  model: EmailLearningEvidence["models"][number],
+): EmailStagedModel {
+  const categories = Object.fromEntries(
+    Object.entries(model.per_category_metrics || {}).map(([category, metrics]) => [
+      category,
+      {
+        precision: numberOrNull(metrics.precision),
+        recall: numberOrNull(metrics.recall),
+        f1: numberOrNull(metrics.f1),
+      },
+    ]),
+  );
+  const datasetVersion = model.training_dataset_version || "";
+  const validationMethod = model.validation_method || "";
+  return {
+    model_id: model.model_id,
+    model_family: model.model_family,
+    status: model.status,
+    trained_at: model.trained_at,
+    metrics: {
+      accuracy: numberOrNull(model.accuracy),
+      macro_f1: numberOrNull(model.macro_f1),
+      categories,
+    },
+    evaluation:
+      datasetVersion && validationMethod
+        ? {
+            protocol: `legacy:${validationMethod}`,
+            test_digest: datasetVersion,
+            comparability_key: datasetVersion,
+          }
+        : null,
+    head_timing_percentiles_ms: null,
+    end_to_end_latency_ms: {
+      p50: numberOrNull(model.prediction_latency_p50_ms),
+      p95: numberOrNull(model.prediction_latency_p95_ms),
+      p99: null,
+    },
+    compatibility: {
+      enabled_categories: Object.keys(categories).sort(),
+      description_version: model.training_dataset_version || "legacy",
+    },
+  };
+}
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 function ModelTrend({
   models,

@@ -179,6 +179,53 @@ it("keeps the runtime header visible and opens compact setup and promotion dialo
   );
 });
 
+it("uses measurable historical registry models when no staged model is available", () => {
+  const historical = {
+    model_id: "email-tfidf-lr-history",
+    model_family: "tfidf-logistic-regression",
+    model_version: "email-tfidf-lr-history",
+    status: "previous",
+    status_reason: "",
+    candidate_reason: "",
+    promotion_reason: "",
+    rejection_reason: "",
+    failure_reason: "",
+    superseded_reason: "",
+    integrity_status: "verified",
+    integrity_error: "",
+    lifecycle: [],
+    trained_at: "2026-09-13T12:00:00Z",
+    training_started_at: "2026-09-13T11:59:00Z",
+    training_finished_at: "2026-09-13T12:00:00Z",
+    sample_count: 120,
+    new_sample_count: 20,
+    category_counts: { work: 120 },
+    account_counts: { primary: 1 },
+    validation_method: "time-ordered-holdout",
+    training_dataset_version: "dataset-v1",
+    accuracy: 0.8,
+    macro_f1: 0.78,
+    per_category_metrics: {
+      work: { precision: 0.82, recall: 0.76, f1: 0.78 },
+    },
+    prediction_latency_p50_ms: 0.2,
+    prediction_latency_p95_ms: 0.4,
+    artifact_sha256: "a".repeat(64),
+  };
+  render(
+    <ModelTraining
+      learning={{ ...learning, models: [historical] }}
+      configs={[]}
+      reload={async () => learning}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+  expect(screen.queryByText("暂无可测量趋势数据。")).not.toBeInTheDocument();
+  expect(screen.getAllByText("email-tfidf-lr-history")).not.toHaveLength(0);
+});
+
 it("keeps structured effect, data coverage, and technical evidence in Chinese detail tabs", async () => {
   const user = userEvent.setup();
   const model = {
