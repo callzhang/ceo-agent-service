@@ -479,6 +479,18 @@ def build_attempt_detail(
         current_agent_runs = store.list_agent_runs_for_task_generation(
             reply_task.id, reply_task.execution_generation
         )
+    # The stored Attempt row is historical.  Render the current projection
+    # from the task generation's last effective run so an old pending row
+    # cannot mask a later done/skipped result.
+    from app.attempt_projection import project_attempt_status
+
+    attempt = attempt.model_copy(
+        update={
+            "send_status": project_attempt_status(
+                attempt, reply_task, current_agent_runs
+            )
+        }
+    )
     wechat_delivery = (
         store.get_wechat_delivery_for_task(reply_task.id)
         if reply_task is not None and str(attempt.channel or "") == "wechat"

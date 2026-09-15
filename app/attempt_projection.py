@@ -1,0 +1,46 @@
+"""Current Attempt state projection from the owning task generation."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+_TERMINAL_TASK_STATES = {"done", "skipped", "needs_human"}
+
+
+def project_attempt_status(attempt: Any, task: Any, runs: list[Any]) -> str:
+    """Return the current state for an Attempt without rewriting history.
+
+    Physical ``reply_attempts.send_status`` is immutable history.  The current
+    state belongs to the task's current execution generation and its last
+    effective run; a task already closed as done/skipped must therefore not be
+    reported as the stale pending state of an older attempt row.
+    """
+    fallback = str(getattr(attempt, "send_status", "") or "").strip() or "failed"
+    if task is None:
+        return fallback
+    task_status = str(getattr(task, "status", "") or "").strip()
+    generation = str(getattr(task, "execution_generation", "") or "").strip()
+    current_runs = [
+        run
+        for run in runs
+        if not generation
+        or str(getattr(run, "execution_generation", "") or "").strip() == generation
+    ]
+    if current_runs:
+        last_run = max(
+            current_runs,
+            key=lambda run: (
+                int(getattr(run, "turn_attempt", 0) or 0),
+                int(getattr(run, "proposal_revision", 0) or 0),
+                int(getattr(run, "id", 0) or 0),
+            ),
+        )
+        run_status = str(getattr(last_run, "status", "") or "").strip()
+        if run_status in {"pending", "running", "failed"}:
+            return run_status
+    if task_status in _TERMINAL_TASK_STATES:
+        return task_status
+    if task_status in {"pending", "processing", "running"}:
+        return "running" if task_status == "processing" else task_status
+    return fallback
