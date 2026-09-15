@@ -3334,6 +3334,7 @@ def run_meeting_memory_write_loop(
         total_timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
+    limit = 20 if settings.max_batches is None else settings.max_batches
     while True:
         if not settings.dry_run and network_ready():
             try:
@@ -3342,7 +3343,7 @@ def run_meeting_memory_write_loop(
                     workspace=settings.workspace,
                     routed_execution=routed_execution,
                     now=datetime.now().astimezone(),
-                    limit=1,
+                    limit=limit,
                 )
                 store.set_service_health_component(
                     "meeting-memory-write",

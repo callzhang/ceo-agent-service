@@ -6588,7 +6588,7 @@ def test_meeting_memory_write_loop_processes_sent_conclusions(
     assert calls[0][0] == "build"
     assert calls[1][:4] == ("process", store, tmp_path, routed_execution)
     assert calls[1][4].utcoffset() is not None
-    assert calls[1][5] == 1
+    assert calls[1][5] == 20
     assert calls[2][:4] == (
         "health",
         "meeting-memory-write",
