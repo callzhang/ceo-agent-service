@@ -2671,6 +2671,53 @@ def test_skip_failed_reply_task_superseded_by_terminal_business_object(
     assert updated.error == "superseded_by_terminal_business_object_task"
 
 
+@pytest.mark.parametrize(
+    ("attempt_status", "expected_task_status"),
+    (
+        ("completed", "done"),
+        ("skipped", "skipped"),
+        ("needs_human", "needs_human"),
+    ),
+)
+def test_failed_reply_task_follows_latest_terminal_trigger_attempt(
+    tmp_path: Path,
+    attempt_status: str,
+    expected_task_status: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-terminal-attempt",
+        conversation_title="Management",
+        single_chat=True,
+        trigger_message_id="msg-terminal-attempt",
+        trigger_create_time="2026-09-15 09:00:00",
+        trigger_sender="Derek",
+        trigger_text="Handle this.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    store.fail_reply_task(
+        task.id,
+        "codex_result_missing",
+        expected_execution_generation=task.execution_generation,
+    )
+    store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status=attempt_status,
+    )
+
+    assert store.reconcile_failed_reply_tasks_with_terminal_attempts() == 1
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == expected_task_status
+    assert updated.error == ""
+
+
 def test_skip_failed_reply_task_with_terminal_no_action_run(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

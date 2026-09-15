@@ -137,6 +137,18 @@ TERMINAL_NO_ACTION_RUN_FAILURE_CODES = frozenset(
         "task_already_completed",
     }
 )
+TERMINAL_REPLY_ATTEMPT_TASK_STATUSES = MappingProxyType(
+    {
+        "sent": "done",
+        "completed": "done",
+        "reacted": "done",
+        "commented": "done",
+        "calendar": "done",
+        "document": "done",
+        "skipped": "skipped",
+        "needs_human": "needs_human",
+    }
+)
 _SCHEDULED_TASK_RUN_ID_JSON_PATHS = (
     "$.scheduled_consumer.scheduled_task_run_id",
     "$.raw_payload.scheduled_consumer.scheduled_task_run_id",
@@ -20495,6 +20507,55 @@ class AutoReplyStore:
                 """
             )
             return cursor.rowcount
+
+    def reconcile_failed_reply_tasks_with_terminal_attempts(self) -> int:
+        """Project the latest terminal trigger attempt onto an old failed task.
+
+        A reply attempt records the business outcome for one exact channel,
+        conversation, and trigger message.  If its latest state is terminal,
+        a stale failed reply-task projection cannot remain current: it would
+        show the same work both as settled in History and as an error in
+        Attention.  This only changes the local projection; it never invokes
+        a provider or replays the original action.
+        """
+        statuses = tuple(TERMINAL_REPLY_ATTEMPT_TASK_STATUSES)
+        placeholders = ", ".join("?" for _ in statuses)
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                f"""
+                select tasks.id, tasks.execution_generation, attempts.send_status
+                from reply_tasks as tasks
+                join reply_attempts as attempts on attempts.id=(
+                    select latest.id
+                    from reply_attempts as latest
+                    where latest.channel=tasks.channel
+                      and latest.conversation_id=tasks.conversation_id
+                      and latest.trigger_message_id=tasks.trigger_message_id
+                    order by latest.id desc
+                    limit 1
+                )
+                where tasks.status='failed'
+                  and attempts.send_status in ({placeholders})
+                order by tasks.id
+                """,
+                statuses,
+            ).fetchall()
+            reconciled = 0
+            for row in rows:
+                task_status = TERMINAL_REPLY_ATTEMPT_TASK_STATUSES[
+                    str(row["send_status"])
+                ]
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status=?, error='', available_at='', locked_at=null,
+                        updated_at=current_timestamp
+                    where id=? and status='failed' and execution_generation=?
+                    """,
+                    (task_status, row["id"], row["execution_generation"]),
+                )
+                reconciled += cursor.rowcount
+            return reconciled
 
     def skip_failed_reply_tasks_with_terminal_no_action_run(self) -> int:
         """Close failures whose final run already proves no action remains."""

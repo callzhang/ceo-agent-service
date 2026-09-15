@@ -6,6 +6,11 @@
   failures remain failed. Recovery is keyed by the immutable email action
   identity and never reopens a browser or repeats an unsubscribe action.
 
+- 2026-09-15: Startup recovery now also reconciles a failed reply task with
+  the latest terminal attempt for the same channel, conversation and trigger.
+  This removes duplicate Attention errors after a later sent, completed,
+  skipped or real human-decision outcome without replaying an external action.
+
 - 2026-09-15: Dispatcher queue `latest_error` now reports only errors attached
   to sources the Dispatcher can currently claim. Terminal source failures stay
   visible in Queue, Attention, and history without leaving an obsolete
