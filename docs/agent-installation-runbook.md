@@ -576,7 +576,7 @@ Install launchd only after dry-run behavior and configuration are reviewed.
    defaults match the deployment.
 
    For the local production installation, `CEO_SERVICE_ROOT` must resolve to
-   `/Users/derek/Documents/Projects/ceo-agent-service` (the clean `main`
+   `/Users/derek/Projects/ceo-agent-service` (the clean `main`
    checkout). Do not point the installed job at a `.worktrees/*` checkout;
    worktrees are for development or temporary recovery only.
 
