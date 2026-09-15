@@ -2453,6 +2453,89 @@ def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
     assert attempt.final_reply_text == sent_reply_text
 
 
+def test_finalize_orchestration_never_projects_failed_current_run_as_done(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-failed-final-run",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-failed-final-run",
+        trigger_create_time="2026-09-14 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please handle this",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="audit"
+    ).run
+    store.fail_agent_run(
+        run.id,
+        {"code": "runtime_result_validation_failed"},
+        owner="audit",
+    )
+
+    store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=run.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="incorrect caller projection",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="incorrect caller projection",
+        send_status="completed",
+        send_error="",
+        channel=task.channel,
+    )
+
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error == "runtime_result_validation_failed"
+
+
+def test_reconcile_done_reply_tasks_with_failed_current_run(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-reconcile-failed-run",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-reconcile-failed-run",
+        trigger_create_time="2026-09-14 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please handle this",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="audit"
+    ).run
+    store.fail_agent_run(
+        run.id, {"code": "codex_process_failed"}, owner="audit"
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='done', error='' where id=?",
+            (task.id,),
+        )
+
+    assert store.reconcile_done_reply_tasks_with_failed_current_run() == 1
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error == "codex_process_failed"
+
+
 def test_earliest_delivery_receipt_records_exact_configured_feedback_token(
     tmp_path: Path,
     monkeypatch,

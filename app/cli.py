@@ -3884,6 +3884,9 @@ def _resolve_recovered_errors_on_service_start(settings: WorkerSettings) -> int:
 
 def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
+    reconciled_terminal_projections = (
+        store.reconcile_done_reply_tasks_with_failed_current_run()
+    )
     recovered_orphaned_agent_runs = (
         store.recover_orphaned_agent_runs_for_terminal_reply_tasks()
     )
@@ -3892,7 +3895,11 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
         + store.recover_interrupted_agent_runs_after_service_restart()
         + store.resume_completed_agent_turns_after_service_restart()
     )
-    return len(recovered_tasks) + recovered_orphaned_agent_runs
+    return (
+        reconciled_terminal_projections
+        + len(recovered_tasks)
+        + recovered_orphaned_agent_runs
+    )
 
 
 def _recover_okr_review_requests_on_service_start(settings: WorkerSettings) -> int:

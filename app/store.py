@@ -20085,6 +20085,21 @@ class AutoReplyStore:
                 or row["run_status"] not in {"completed", "failed"}
             ):
                 raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
+            if task_status == "done" and row["run_status"] == "failed":
+                if sent_reply_text:
+                    raise ValueError(
+                        "failed agent run cannot finalize a newly sent reply"
+                    )
+                failed_run = db.execute(
+                    "select structured_error_json from agent_runs where id=?",
+                    (run_id,),
+                ).fetchone()
+                task_status = "failed"
+                task_error = self._agent_run_failure_code(
+                    failed_run["structured_error_json"] if failed_run is not None else ""
+                )
+                send_status = "failed"
+                send_error = task_error
             persisted_oa_url = oa_url.strip() or str(row["task_oa_url"] or "").strip()
             task_process_id, task_oa_task_id = self._oa_identifiers_from_url(
                 persisted_oa_url
@@ -20252,6 +20267,61 @@ class AutoReplyStore:
                     ),
                 )
             return attempt_id
+
+    @staticmethod
+    def _agent_run_failure_code(structured_error_json: str) -> str:
+        """Return a concise failure code suitable for the task projection."""
+        try:
+            payload = json.loads(structured_error_json)
+        except (TypeError, json.JSONDecodeError):
+            return "agent_run_failed"
+        if not isinstance(payload, dict):
+            return "agent_run_failed"
+        code = payload.get("code")
+        return code.strip() if isinstance(code, str) and code.strip() else "agent_run_failed"
+
+    def reconcile_done_reply_tasks_with_failed_current_run(self) -> int:
+        """Restore truthful current state when a failed final run was projected done.
+
+        ``agent_runs`` is immutable execution history.  The latest terminal run
+        in a task's current execution generation is the authoritative current
+        result, so a stale ``reply_tasks.status='done'`` must not hide a failed
+        run from Attention or History.
+        """
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                """
+                select tasks.id, tasks.execution_generation, runs.structured_error_json
+                from reply_tasks as tasks
+                join agent_runs as runs on runs.id=(
+                    select latest.id
+                    from agent_runs as latest
+                    where latest.reply_task_id=tasks.id
+                      and latest.execution_generation=tasks.execution_generation
+                    order by latest.id desc
+                    limit 1
+                )
+                where tasks.status='done' and runs.status='failed'
+                order by tasks.id
+                """
+            ).fetchall()
+            repaired = 0
+            for row in rows:
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='failed', error=?, available_at='', locked_at=null,
+                        updated_at=current_timestamp
+                    where id=? and status='done' and execution_generation=?
+                    """,
+                    (
+                        self._agent_run_failure_code(row["structured_error_json"]),
+                        row["id"],
+                        row["execution_generation"],
+                    ),
+                )
+                repaired += cursor.rowcount
+            return repaired
 
     def finalize_reply_task_without_run(
         self,
