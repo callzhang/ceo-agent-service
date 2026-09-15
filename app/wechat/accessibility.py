@@ -717,11 +717,6 @@ class MacWechatAccessibility:
             )
 
         def scroll_session_list():
-            from ApplicationServices import (
-                AXValueGetValue,
-                kAXValueCGPointType,
-                kAXValueCGSizeType,
-            )
             session_list = first(id_eq="session_list")
             c = center(session_list) if session_list is not None else None
             if c is None:

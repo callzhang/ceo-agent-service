@@ -68,8 +68,6 @@ from app.email_unsubscribe import (
     _ChromiumIsolatedWorld,
     _AuditedControlBinding,
     _BROWSER_FAILURE_CODES,
-    _assert_opaque_reference,
-    _BROWSER_FAILURE_CODES,
     _browser_failure_category,
     _browser_failure_code,
     _browser_failure_observation_fields,

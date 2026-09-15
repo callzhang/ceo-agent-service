@@ -1875,7 +1875,6 @@ def test_a_continuation_offering_a_choice_is_not_prescribed(
     """
     from app.email_task_adapter import (
         _CONTINUATION_CONTROL_KINDS,
-        continuation_email_unsubscribe_proposal_action,
     )
 
     ambiguous = [

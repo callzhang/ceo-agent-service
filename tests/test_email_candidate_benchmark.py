@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from app.email_embedding_client import EmbeddingResult, EmbeddingTiming
-from app.email_training_snapshot import _model_input
+from app.email_training_snapshot import MODEL_INPUT_SCHEMA_VERSION, _model_input
 
 
 class Clock:
@@ -45,7 +45,7 @@ class Classifier:
     model_id = Client.model_id
     embedding_model_id = Client.model_id
     embedding_revision = "r1"
-    input_schema_version = "email-folder-model-input-v2"
+    input_schema_version = MODEL_INPUT_SCHEMA_VERSION
     dimension = 2
 
     def __init__(self, clock):

@@ -46,7 +46,6 @@ from app.email_unsubscribe import (
     extract_unsubscribe_entries,
     UnsubscribeOperationKind,
     browser_unsubscribe_entries,
-    execute_unsubscribe_in_dedicated_profile,
 )
 from app.email_unsubscribe_direct import (
     DirectEmailUnsubscribeOperation,
@@ -340,8 +339,6 @@ class _AuditedTurnExecutor:
                 "authored_judgment": "One reversible provider step is justified.",
             },
             "decision_options": [],
-            "risk": "low",
-            "confidence": 1.0,
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,
@@ -409,8 +406,6 @@ class _AuditedTurnExecutor:
                 },
             },
             "decision_options": [],
-            "risk": "low",
-            "confidence": 1.0,
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,

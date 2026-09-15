@@ -290,8 +290,6 @@ class _E2EConsumerRunner:
                 },
                 "decision_options": [],
                 "error": {"code": "", "retryable": False},
-                "risk": "low",
-                "confidence": 1.0,
             }
         )
         completed = self.store.complete_agent_run(

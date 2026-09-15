@@ -42,7 +42,6 @@ from app.email_unsubscribe import (
     UnsubscribeEntrySource,
     UnsubscribeContinuationResult,
     UnsubscribeDiscoveredControl,
-    UnsubscribeBrowserError,
     UnsubscribeExecutor,
     UnsubscribeOperation,
     UnsubscribeOperationKind,
@@ -902,11 +901,6 @@ def _setup(
         scheme=urlsplit(private_url).scheme,
         host=urlsplit(private_url).hostname or "",
         context="Unsubscribe",
-    )
-    parsed = urlsplit(private_url)
-    origin = (
-        f"{parsed.scheme}://{parsed.hostname}:"
-        f"{parsed.port or (443 if parsed.scheme == 'https' else 80)}"
     )
     effect = EmailUnsubscribeEffect(
         action_identity=email_action_identity(

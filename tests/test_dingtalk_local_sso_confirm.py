@@ -70,7 +70,7 @@ def test_press_login_action_requires_successful_ax_press(monkeypatch):
 
 
 def test_ax_tree_walk_does_not_use_python_wrapper_identity():
-    module = load_module()
+    load_module()
 
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 

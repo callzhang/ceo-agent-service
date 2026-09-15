@@ -63,7 +63,6 @@ from app.audit_rules import (
     write_audit_rules_template,
 )
 from app.codex_decision import audit_summary_explains_no_documents
-from app.codex_capacity import is_codex_provider_recovery_code
 from app.codex_history import (
     RenderedCodexEvent,
     extract_codex_audit_events_from_session,

@@ -14,13 +14,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
-@pytest.fixture(autouse=True)
-def configured_email_classifier_api(monkeypatch):
-    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_api")
-    monkeypatch.setenv("CEO_CODEX_API_KEY", "test-email-api-key")
-    monkeypatch.setenv("CEO_CODEX_API_MODEL", "gpt-5.5")
-
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import DecisionOption, ProposedAction
 from app.email_classifier_contracts import (
@@ -70,6 +63,13 @@ from app.email_historical_classifier import (
 )
 from app.email_provider_actions import ProviderActionResult
 from app.email_store import StoredEmailLocator
+
+
+@pytest.fixture(autouse=True)
+def configured_email_classifier_api(monkeypatch):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_api")
+    monkeypatch.setenv("CEO_CODEX_API_KEY", "test-email-api-key")
+    monkeypatch.setenv("CEO_CODEX_API_MODEL", "gpt-5.5")
 
 
 def _module():

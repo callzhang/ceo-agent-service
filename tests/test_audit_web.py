@@ -6003,7 +6003,7 @@ def test_attention_api_excludes_needs_human_after_queue_task_closes(
     assert task is not None
     with store._connect() as db:
         db.execute("update reply_tasks set status='done' where id=?", (task.id,))
-    attempt_id = store.record_reply_attempt(
+    store.record_reply_attempt(
         conversation_id=task.conversation_id,
         conversation_title=task.conversation_title,
         trigger_message_id=task.trigger_message_id,
@@ -7582,8 +7582,6 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
         claimed.run.id,
         {
             "outcome": "needs_human",
-            "risk": "low",
-            "confidence": 1.0,
             "rule_coverage": 1.0,
             "information_completeness": 1.0,
             "summary": "A management choice is required.",
@@ -10422,8 +10420,6 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
             "final_result_json": json.dumps(
                 {
                     "outcome": "needs_human",
-                    "risk": "low",
-                    "confidence": 1.0,
                     "rule_coverage": 1.0,
                     "information_completeness": 1.0,
                     "summary": "需要管理判断。",
@@ -10545,8 +10541,6 @@ def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
             "final_result_json": json.dumps(
                 {
                     "outcome": "needs_human",
-                    "risk": "low",
-                    "confidence": 1.0,
                     "rule_coverage": 1.0,
                     "information_completeness": 1.0,
                     "summary": "实时状态与此前回执冲突，需要管理判断。",
