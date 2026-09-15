@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-14: Meeting-to-Memory writes now recognize the current Codex CLI
+  `response_item` result shape and safely normalize a structured success
+  diagnostic. A valid `success` receipt with a Memory ID can no longer be
+  misclassified as a parser failure solely because its optional `detail`
+  field is an object.
+
 - 2026-09-14: Attention now includes failed meeting-to-Memory deliveries as
   service errors. Pending and active Memory deliveries remain outside
   Attention, while each failed delivery identifies its delivered meeting and

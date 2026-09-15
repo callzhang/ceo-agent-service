@@ -136,6 +136,41 @@ def test_memory_write_typed_result_accepts_code_fenced_runtime_message() -> None
     assert result.episode_uuid == "episode-3"
 
 
+def test_memory_write_typed_result_accepts_codex_response_item_output() -> None:
+    raw = "\n".join(
+        [
+            json.dumps({"type": "turn.started", "payload": {}}),
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": (
+                                    "Memory persisted successfully.\n\n"
+                                    "```json\n"
+                                    '{"status":"success","memory_id":"episode-5",'
+                                    '"retryable":false,"source_code":null,'
+                                    '"detail":{"provider":"memory"}}\n'
+                                    "```"
+                                ),
+                            }
+                        ],
+                    },
+                }
+            ),
+            json.dumps({"type": "turn.completed", "payload": {}}),
+        ]
+    )
+
+    result = memory_result_from_typed_output(raw)
+
+    assert result.episode_uuid == "episode-5"
+
+
 def test_memory_write_typed_result_accepts_null_unused_success_code() -> None:
     raw = json.dumps(
         {

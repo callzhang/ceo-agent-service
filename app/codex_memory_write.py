@@ -5,9 +5,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
-from app.agent_result import agent_message_json_objects
+from app.agent_result import (
+    ResultParseError,
+    agent_message_json_objects,
+    parse_typed_agent_result,
+)
 from app.agent_runtime_production import build_production_routed_codex_execution
 from app.agent_runtime_router import (
     CodexCommandFactory,
@@ -45,6 +55,21 @@ class MemoryWriteTypedResult(BaseModel):
     retryable: bool
     source_code: str | None = None
     detail: str
+
+    @field_validator("detail", mode="before")
+    @classmethod
+    def normalize_structured_success_detail(cls, value: object) -> object:
+        """Keep a successful provider receipt independent of its optional detail.
+
+        ``memory_id`` and ``status`` determine whether the write completed. The
+        model is instructed to emit a string detail, but current Codex sessions
+        can carry the connector's structured success receipt in that optional
+        field. Do not retain that raw receipt in the runtime result; it is not
+        needed to confirm a successful Memory write.
+        """
+        if isinstance(value, (dict, list)):
+            return "provider returned structured success detail"
+        return value
 
     @model_validator(mode="after")
     def validate_status_fields(self) -> Self:
@@ -141,7 +166,9 @@ def execute_codex_memory_write(
         "a source label, or inferred provenance. "
         "Return the final typed result with status, memory_id, retryable, "
         "source_code, and detail. Preserve any provider error code and diagnostic "
-        "in source_code and detail.\n"
+        "in source_code and detail. detail must always be a JSON string; for a "
+        "successful write use an empty string or a short plain-text confirmation, "
+        "never the provider result object.\n"
         + json.dumps(
             {"data": data, "type": type, "created_at": created_at},
             ensure_ascii=False,
@@ -198,6 +225,10 @@ def parse_memory_write_typed_result(raw: str) -> MemoryWriteTypedResult:
             return MemoryWriteTypedResult.model_validate(candidate)
         except ValidationError:
             continue
+    try:
+        return parse_typed_agent_result(raw, MemoryWriteTypedResult)
+    except ResultParseError:
+        pass
     raise ValueError("memory write returned no valid typed result")
 
 
