@@ -13,7 +13,10 @@ from threading import Barrier
 import pytest
 
 import app.email_store as email_store_module
-from app.email_training_snapshot import build_folder_training_snapshot
+from app.email_training_snapshot import (
+    build_folder_training_snapshot,
+    build_selected_training_snapshot,
+)
 from app.email_experiment_snapshot import deterministic_payload_digest
 from app.email_classifier_contracts import (
     EmailAction,
@@ -207,8 +210,8 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     assert "email_training_snapshots" in tables
     assert "email_training_snapshot_observations" in tables
     assert preserved_model_text == "__subject__preserved migration row"
-    assert versions == list(range(22, 38))
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 37
+    assert versions == list(range(22, 39))
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 38
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select frozen from email_training_snapshots").fetchall() == []
@@ -249,7 +252,7 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == list(range(23, 38))
+        ] == list(range(23, 39))
 
 
 def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path):
@@ -306,7 +309,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == list(range(23, 38))
+    ] == list(range(23, 39))
 
 
 def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
@@ -363,6 +366,31 @@ def test_store_round_trips_frozen_training_snapshot(tmp_path: Path):
     assert loaded is not None
     assert loaded["manifest"] == snapshot.manifest
     assert loaded["observations"] == [row.to_dict() for row in snapshot.observations]
+
+
+def test_store_persists_agent_label_selected_training_snapshot(tmp_path: Path):
+    store = EmailStore(tmp_path / "agent-selected-training-snapshot.sqlite3")
+    snapshot = build_selected_training_snapshot(
+        [
+            {
+                "source": "agent_auto_label",
+                "account_id": "account-a",
+                "stable_message_identity": f"account-a:agent-label:{index}",
+                "provider_thread_id": f"thread-agent-{index}",
+                "category_key": "work",
+                "normalized_model_input": json.dumps({"body": f"Agent labelled work mail {index}"}),
+            }
+            for index in range(8)
+        ],
+        snapshot_id="agent-selected-snapshot",
+        description_version="selected-training-input-v1",
+        observed_at=datetime(2026, 9, 15, tzinfo=timezone.utc),
+        seed=20260905,
+    )
+
+    stored = store.persist_training_snapshot(snapshot)
+
+    assert stored["observations"][0]["source"] == "agent_auto_label"
 
 
 def test_identical_training_snapshot_persistence_is_idempotent(tmp_path: Path):
@@ -3288,8 +3316,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_37() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 37
+def test_email_schema_version_is_38() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 38
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:
@@ -9493,7 +9521,7 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
 
     migrated = EmailStore(database)
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 37
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 38
     assert migrated.get_account("primary")["imap_move_mode"] == "copy_as_move"
     assert (
         migrated.list_account_folder_bindings("junk")[0]["provider_folder_id"]
@@ -9860,7 +9888,7 @@ def test_v36_drops_policy_keys_from_immutable_email_task_inputs(tmp_path: Path) 
         }
     )
     with sqlite3.connect(database) as db:
-        db.execute("update email_schema_migrations set version=35 where version=37")
+        db.execute("update email_schema_migrations set version=35 where version=38")
         db.execute(
             """
             insert into reply_task_inputs (
@@ -9893,7 +9921,7 @@ def test_v36_drops_policy_keys_from_immutable_email_task_inputs(tmp_path: Path) 
     assert "unsubscribe_network_policy_reference" not in payload
     assert "unsubscribe_network_policy_origin_references" not in payload
     assert payload["action_type"] == "unsubscribe"
-    assert versions[-1] == 37
+    assert versions[-1] == 38
 
 
 def _fd_regression_account_values() -> dict[str, object]:

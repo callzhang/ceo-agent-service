@@ -67,7 +67,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 37
+EMAIL_SCHEMA_VERSION = 38
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -730,7 +730,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "sender_template_signature is null or length(sender_template_signature) = 64",
         "length(group_key) = 64",
         "trim(observed_at) != ''",
-        "source in ('natural', 'targeted')",
+        "source in ('natural', 'targeted', 'agent_auto_label', 'user_feedback')",
         "split in ('train', 'validation', 'test')",
         "selected_for_training in (0, 1)",
         "length(ordered_record_digest) = 64",
@@ -2985,6 +2985,9 @@ class EmailStore:
                 latest_version = 36
             if latest_version == 36:
                 self._migrate_v36_to_v37(db, replace_version=is_prototype)
+                latest_version = 37
+            if latest_version == 37:
+                self._migrate_v37_to_v38(db, replace_version=is_prototype)
             self._validate_durable_state(db)
 
     @classmethod
@@ -4811,6 +4814,99 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v37_to_v38(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Allow selected Agent and user-feedback samples in frozen snapshots.
+
+        The snapshot format already records ``agent_auto_label`` and
+        ``user_feedback`` as distinct provenance values.  The original table
+        check only admitted folder-sampling provenance (``natural`` and
+        ``targeted``), so a manual training request passed preview but failed
+        while atomically persisting its frozen snapshot.
+        """
+
+        for trigger in (
+            "trg_email_training_observations_immutable_update",
+            "trg_email_training_observations_immutable_delete",
+            "trg_email_training_observations_require_unfrozen_snapshot",
+        ):
+            db.execute(f"drop trigger if exists {trigger}")
+        for index in (
+            "idx_email_training_observations_split",
+            "idx_email_training_observations_provider_truth",
+        ):
+            db.execute(f"drop index if exists {index}")
+        db.execute(
+            "alter table email_training_snapshot_observations "
+            "rename to email_training_snapshot_observations_v38"
+        )
+        db.execute(
+            """
+            create table email_training_snapshot_observations (
+                snapshot_id text not null check(trim(snapshot_id) != ''),
+                account_id text not null check(trim(account_id) != ''),
+                stable_message_identity text not null
+                    check(trim(stable_message_identity) != ''),
+                provider_folder_id text not null
+                    check(trim(provider_folder_id) != ''),
+                provider_folder_name text not null
+                    check(trim(provider_folder_name) != ''),
+                category_key text
+                    check(category_key is null or trim(category_key) != ''),
+                important integer not null check(important in (0, 1)),
+                normalized_model_input text not null
+                    check(trim(normalized_model_input) != ''),
+                normalized_model_input_hash text not null
+                    check(length(normalized_model_input_hash) = 64),
+                input_schema_version text not null
+                    check(trim(input_schema_version) != ''),
+                provider_thread_id text,
+                normalized_body_digest text not null
+                    check(length(normalized_body_digest) = 64),
+                sender_template_signature text
+                    check(sender_template_signature is null or length(sender_template_signature) = 64),
+                explicit_matter_group text,
+                group_key text not null check(length(group_key) = 64),
+                observed_at text not null check(trim(observed_at) != ''),
+                source text not null check(source in (
+                    'natural', 'targeted', 'agent_auto_label', 'user_feedback'
+                )),
+                split text not null check(split in ('train', 'validation', 'test')),
+                selected_for_training integer not null check(selected_for_training in (0, 1)),
+                ordered_record_digest text not null check(length(ordered_record_digest) = 64),
+                primary key(snapshot_id, account_id, stable_message_identity),
+                foreign key(snapshot_id)
+                    references email_training_snapshots(snapshot_id)
+                    on delete restrict
+            )
+            """
+        )
+        columns = (
+            "snapshot_id, account_id, stable_message_identity, "
+            "provider_folder_id, provider_folder_name, category_key, important, "
+            "normalized_model_input, normalized_model_input_hash, input_schema_version, "
+            "provider_thread_id, normalized_body_digest, sender_template_signature, "
+            "explicit_matter_group, group_key, observed_at, source, split, "
+            "selected_for_training, ordered_record_digest"
+        )
+        db.execute(
+            "insert into email_training_snapshot_observations (" + columns + ") "
+            "select " + columns + " from email_training_snapshot_observations_v38"
+        )
+        db.execute("drop table email_training_snapshot_observations_v38")
+        self._create_indexes_and_triggers(db)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=38, applied_at=? where version=37",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (38, ?)",
+                (self._now(),),
+            )
+
     def _next_model_control_timestamp(self, db: sqlite3.Connection, table: str) -> str:
         """Allocate insertion order while the caller holds BEGIN IMMEDIATE."""
         previous = db.execute(f"select max(created_at) from {table}").fetchone()[0]
@@ -5598,7 +5694,9 @@ class EmailStore:
                 explicit_matter_group text,
                 group_key text not null check(length(group_key) = 64),
                 observed_at text not null check(trim(observed_at) != ''),
-                source text not null check(source in ('natural', 'targeted')),
+                source text not null check(source in (
+                    'natural', 'targeted', 'agent_auto_label', 'user_feedback'
+                )),
                 split text not null
                     check(split in ('train', 'validation', 'test')),
                 selected_for_training integer not null
