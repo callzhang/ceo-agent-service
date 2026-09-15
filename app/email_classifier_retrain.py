@@ -1002,10 +1002,10 @@ def _run_training_job(
                 client = EmailEmbeddingClient.from_environment(
                     embedding_revision=embedding_revision,
                     dimension=dimension,
-                    # The shared provider serves a heterogeneous GPU workload.
-                    # Keep its proven small request shape; only the offline
-                    # training deadline differs from online classification.
-                    max_batch_size=8,
+                    # The shared provider's one-item probe is reliable, while
+                    # larger warmup batches can stall behind heterogeneous GPU
+                    # work. Cache hydration is one-time, so favor completion.
+                    max_batch_size=1,
                     timeout_seconds=60.0,
                 )
                 try:
