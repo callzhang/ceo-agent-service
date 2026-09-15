@@ -2536,6 +2536,37 @@ def test_reconcile_done_reply_tasks_with_failed_current_run(tmp_path: Path) -> N
     assert updated.error == "codex_process_failed"
 
 
+def test_complete_reply_task_never_hides_failed_current_run(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-complete-failed-run",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-complete-failed-run",
+        trigger_create_time="2026-09-14 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please handle this",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="audit"
+    ).run
+    store.fail_agent_run(
+        run.id,
+        {"code": "runtime_result_validation_failed"},
+        owner="audit",
+    )
+
+    store.complete_reply_task(
+        task.id, expected_execution_generation=task.execution_generation
+    )
+
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error == "runtime_result_validation_failed"
+
+
 def test_skip_failed_reply_task_superseded_by_terminal_business_object(
     tmp_path: Path,
 ) -> None:

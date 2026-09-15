@@ -11685,6 +11685,32 @@ class AutoReplyStore:
             ).fetchone()
             if row is None:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            latest_run = db.execute(
+                """
+                select status, structured_error_json
+                from agent_runs
+                where reply_task_id=? and execution_generation=?
+                order by id desc
+                limit 1
+                """,
+                (task_id, expected_execution_generation),
+            ).fetchone()
+            if latest_run is not None and latest_run["status"] == "failed":
+                failure_code = self._agent_run_failure_code(
+                    latest_run["structured_error_json"]
+                )
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='failed', locked_at=null, available_at='', error=?,
+                        updated_at=current_timestamp
+                    where id=? and status='processing' and execution_generation=?
+                    """,
+                    (failure_code, task_id, expected_execution_generation),
+                )
+                if cursor.rowcount != 1:
+                    raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+                return
             has_new_input = int(row["input_version"]) > int(row["claimed_input_version"])
             next_status = "pending" if has_new_input else "done"
             next_generation = uuid4().hex if has_new_input else expected_execution_generation
