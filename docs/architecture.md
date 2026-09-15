@@ -341,10 +341,12 @@ metadata-only，没有 image/content material；只投影文件名、MIME、字�
 下载、打开、OCR、解析、总结或推断附件正文。不可变 ActionPlan 是唯一动作授权；Adapter
 只排队，不发送、不打开退订页面。
 
-退订是低风险的直接 Email worker 动作，不做 Consumer 或结构化审核。worker 以 task id 从
+退订是低风险的直接 Email worker 动作；退订不做结构化审核，也不做 Consumer 或 Audit turn。
+worker 以 task id 从
 durable 状态读取 ActionPlan 已授权的 entry，一次调用完成整件事——打开该 entry，按页面当场呈现的
 精确链接、表单或独立退订按钮操作，直到第一个终态页面，然后保存 outcome 和脱敏后的页面原文。
-没有 proposal 要抄写、没有 acceptance 要绑定、没有 Audit turn，也没有 continuation 要续。
+兼容调用语义仍称为 `unsubscribe_email(task_id)`，但它由 worker 直接执行；没有 proposal 要抄写、没有
+acceptance 要绑定、没有 Audit turn，也没有 continuation 要续。
 
 幂等性只靠 receipt：`email_unsubscribe_receipts` 里每个动作身份一条，已有 receipt 时再调一次只会
 把它原样返回，不会重复退订。这取代了原先的 claim 租约、effect digest 链、owner fence 和

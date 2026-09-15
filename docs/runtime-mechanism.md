@@ -315,11 +315,10 @@ image/content material，只包含文件名、MIME、字节大小、数量和 in
 或 image path。任何组件都不得下载、打开、OCR、解析、总结或推断附件正文。持久 trigger payload 不包含凭证、附件内容、本地路径、
 完整私密 URL 或 query token。
 
-退订不做结构化审核。Agent 自己退订并带回证据：Audit turn 调用 `unsubscribe_email(task_id)`，
-一次调用完成整件事——打开 ActionPlan 已授权的 entry，按页面当场呈现的控件操作，直到第一个
-终态页面，然后返回 outcome 和脱敏后的页面原文。工具只接受 task id 这一个调用方无法伪造的
-参数，其余全部从 durable 状态读出，所以没有 proposal 要抄写、没有 acceptance 要绑定、
-也没有 continuation 要续。
+退订不做结构化审核。Email worker 直接执行兼容调用语义 `unsubscribe_email(task_id)`：一次调用完成整件事——
+打开 ActionPlan 已授权的 entry，按页面当场呈现的控件操作，直到第一个终态页面，然后返回
+outcome 和脱敏后的页面原文。它只接受 task id 这一个调用方无法伪造的参数，其余全部从 durable 状态
+读出，所以没有 proposal 要抄写、没有 acceptance 要绑定、没有 Audit turn，也没有 continuation 要续。
 
 幂等性只靠 receipt：`email_unsubscribe_receipts` 里每个动作身份一条，已有 receipt 时再调一次
 只会把它原样返回，不会重复退订。这取代了原先的 claim 租约、effect digest 链、owner fence 和
