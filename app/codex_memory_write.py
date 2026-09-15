@@ -67,6 +67,8 @@ class MemoryWriteTypedResult(BaseModel):
         field. Do not retain that raw receipt in the runtime result; it is not
         needed to confirm a successful Memory write.
         """
+        if value is None:
+            return ""
         if isinstance(value, (dict, list)):
             return "provider returned structured success detail"
         return value

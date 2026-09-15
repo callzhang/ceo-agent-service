@@ -4,7 +4,7 @@
   `response_item` result shape and safely normalize a structured success
   diagnostic. A valid `success` receipt with a Memory ID can no longer be
   misclassified as a parser failure solely because its optional `detail`
-  field is an object.
+  field is an object or `null`.
 
 - 2026-09-14: Attention now includes failed meeting-to-Memory deliveries as
   service errors. Pending and active Memory deliveries remain outside
