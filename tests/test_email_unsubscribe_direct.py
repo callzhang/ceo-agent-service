@@ -522,7 +522,9 @@ def test_an_explicit_retry_promotes_a_previous_unreliable_entry_skip(
     assert current["effect_digest"] != old_receipt["effect_digest"]
     assert current["receipt_id"] != old_receipt["receipt_id"]
     assert len(browser.calls) == 2
-    # The retry is linked to, rather than overwriting, the original effect.
+    # The retry keeps the original effect row and writes a complete new
+    # current effect; the lineage format requires one operation per effect
+    # row, while a retry can perform several browser operations.
     with email_store._connect() as db:
         row = db.execute(
             "select previous_effect_digest from email_unsubscribe_effects "
@@ -530,7 +532,10 @@ def test_an_explicit_retry_promotes_a_previous_unreliable_entry_skip(
             (ACTION_IDENTITY, current["effect_digest"]),
         ).fetchone()
     assert row is not None
-    assert row["previous_effect_digest"] == old_receipt["effect_digest"]
+    assert row["previous_effect_digest"] == ""
+    assert email_store.get_email_unsubscribe_effect(
+        ACTION_IDENTITY, old_receipt["effect_digest"]
+    ) is not None
 
 
 def test_a_claim_left_by_the_audited_lifecycle_no_longer_blocks_the_receipt(

@@ -600,6 +600,12 @@ class DirectEmailUnsubscribeOperation:
     ) -> None:
         from app.email_unsubscribe_audit import _store_arguments
 
+        # A retry may have more than one browser operation. The durable
+        # lineage format appends exactly one operation per effect row, so a
+        # multi-step retry is stored as a complete new root effect while the
+        # predecessor row remains available as historical evidence.
+        if effect.previous_effect_digest:
+            effect = replace(effect, previous_effect_digest="")
         store_arguments = _store_arguments(effect)
         receipt = result.receipt
         assert receipt is not None
