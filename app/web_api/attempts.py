@@ -477,6 +477,19 @@ def build_attempt_detail(
     reply_task = store.get_reply_task_for_message(
         attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel
     )
+    # Some historical/manual rerun Attempts have no agent_run_id.  In that
+    # case the Attempt key still identifies the owning task, so load its runs
+    # directly instead of incorrectly rendering "no Consumer run".
+    if reply_task is not None and not agent_runs and hasattr(store, "_connect"):
+        with store._connect() as db:
+            rows = db.execute(
+                "select * from agent_runs where reply_task_id=? order by id",
+                (reply_task.id,),
+            ).fetchall()
+            agent_runs = [
+                store._agent_run_from_row(row, db=db, load_events=False)
+                for row in rows
+            ]
     current_agent_runs = agent_runs
     if (
         reply_task is not None
@@ -489,6 +502,11 @@ def build_attempt_detail(
         current_agent_runs = store.list_agent_runs_for_task_generation(
             reply_task.id, reply_task.execution_generation
         )
+        if not current_agent_runs:
+            # A manual rerun may close without creating a run.  Keep the
+            # historical Consumer evidence readable, while current state
+            # remains governed by the task itself.
+            current_agent_runs = agent_runs
     # The stored Attempt row is historical.  Render the current projection
     # from the task generation's last effective run so an old pending row
     # cannot mask a later done/skipped result.

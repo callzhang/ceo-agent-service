@@ -38,6 +38,18 @@ def test_linked_consumer_run_falls_back_to_latest_consumer_sibling():
     assert _linked_consumer_run(audit, [old, latest, audit]) is latest
 
 
+def test_attempt_detail_loads_task_runs_when_attempt_has_no_run_id(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="task-run-fallback")
+    attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
+    with store._immediate_write_transaction() as db:
+        db.execute("update reply_attempts set agent_run_id=null where id=?", (attempt_id,))
+    _, item = build_attempt_detail(store, attempt_id)
+    assert item is not None
+    assert item["consumer_result"]["confidence"] == "82%"
+
+
 TRIGGER_PAYLOAD = {
     "account_id": "mailbox",
     "action_identity": TRIGGER,
