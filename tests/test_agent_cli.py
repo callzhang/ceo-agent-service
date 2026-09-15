@@ -27,6 +27,7 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
         "unsubscribe_email",
     }
     assert all(description.strip() for description in descriptions.values())
+    assert "PDF" in descriptions["read_text_file"]
     assert "email unsubscribe" in descriptions["execute_audited_email_unsubscribe"]
     assert "Unsubscribe this email task" in descriptions["unsubscribe_email"]
     assert "Consumer and Audit commands" in agent_cli.server.instructions
@@ -245,6 +246,31 @@ def test_read_text_file_rejects_non_utf8_material(tmp_path: Path):
         match="text_material_invalid_utf8",
     ):
         agent_cli.read_text_file(str(material))
+
+
+def test_read_text_file_extracts_bounded_pdf_material(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    material = tmp_path / "business-plan.pdf"
+    material.write_bytes(b"%PDF-1.7\xff")
+
+    class Page:
+        def extract_text(self):
+            return "Verified plan evidence"
+
+    class Reader:
+        is_encrypted = False
+        pages = [Page()]
+
+    monkeypatch.setattr(agent_cli, "PdfReader", lambda _stream: Reader())
+
+    result = agent_cli.read_text_file(str(material))
+
+    assert result["format"] == "pdf"
+    assert result["page_count"] == 1
+    assert result["pages"] == [{"index": 1, "text": "Verified plan evidence"}]
+    assert result["content"] == "Verified plan evidence"
+    assert result["sha256"]
 
 
 def test_read_text_file_detects_xlsx_without_filename_extension(tmp_path: Path):

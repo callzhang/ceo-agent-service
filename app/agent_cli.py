@@ -17,6 +17,8 @@ from xml.etree import ElementTree
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 from app.agent_result import EffectKind
 from app.agent_effects import McpToolEffectRegistry
@@ -48,6 +50,7 @@ MAX_SPREADSHEET_BYTES = 20 * 1024 * 1024
 MAX_SPREADSHEET_ROWS = 200
 MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
+MAX_PDF_PAGES = 100
 CLI_TIMEOUT_SECONDS = 15 * 60
 CliOutputLimitError = ProcessOutputLimitError
 SPREADSHEET_MATERIAL_ROOTS = (
@@ -359,7 +362,7 @@ def read_spreadsheet(
 
 
 def read_text_file(path: str) -> dict[str, object]:
-    """Read one bounded text or OOXML workbook material without shell access."""
+    """Read bounded text, PDF, or OOXML material without shell access."""
     material_path = Path(path).expanduser().resolve(strict=True)
     if not any(material_path.is_relative_to(root) for root in TEXT_MATERIAL_ROOTS):
         raise AgentReadOnlyViolationError("text_material_path_forbidden")
@@ -372,6 +375,13 @@ def read_text_file(path: str) -> dict[str, object]:
         if file_stat.st_size > MAX_TEXT_MATERIAL_BYTES:
             if file_stat.st_size > MAX_SPREADSHEET_BYTES:
                 raise AgentReadOnlyViolationError("material_file_too_large")
+        material_file.seek(0)
+        is_pdf = material_path.suffix.casefold() == ".pdf" or material_file.read(
+            5
+        ) == b"%PDF-"
+        material_file.seek(0)
+        if is_pdf:
+            return _read_pdf_material(material_file, material_path)
         material_file.seek(0)
         if zipfile.is_zipfile(material_file):
             material_file.seek(0)
@@ -403,6 +413,42 @@ def read_text_file(path: str) -> dict[str, object]:
         "content": content,
         "path": str(material_path),
         "sha256": hashlib.sha256(content_bytes).hexdigest(),
+    }
+
+
+def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
+    try:
+        reader = PdfReader(material_file)
+    except (PdfReadError, ValueError) as exc:
+        raise AgentReadOnlyViolationError("pdf_material_invalid") from exc
+    if reader.is_encrypted:
+        raise AgentReadOnlyViolationError("pdf_material_encrypted")
+    if len(reader.pages) > MAX_PDF_PAGES:
+        raise AgentReadOnlyViolationError("pdf_material_page_limit_exceeded")
+
+    previews: list[dict[str, object]] = []
+    remaining_chars = MAX_TEXT_MATERIAL_BYTES
+    for index, page in enumerate(reader.pages, start=1):
+        try:
+            text = page.extract_text() or ""
+        except (PdfReadError, ValueError) as exc:
+            raise AgentReadOnlyViolationError("pdf_material_text_unavailable") from exc
+        if len(text) > remaining_chars:
+            text = text[:remaining_chars]
+        previews.append({"index": index, "text": text})
+        remaining_chars -= len(text)
+        if remaining_chars == 0:
+            break
+
+    material_file.seek(0)
+    digest = hashlib.file_digest(material_file, "sha256").hexdigest()
+    return {
+        "format": "pdf",
+        "page_count": len(reader.pages),
+        "pages": previews,
+        "content": "\n\n".join(page["text"] for page in previews),
+        "path": str(material_path),
+        "sha256": digest,
     }
 
 
@@ -827,7 +873,7 @@ def read_skill_tool(path: str) -> dict[str, str]:
     ),
 )
 def read_text_file_tool(path: str) -> dict[str, object]:
-    """Read bounded text, workbook, or presentation material from the temp directory."""
+    """Read bounded text, PDF, workbook, or presentation material from the temp directory."""
     return read_text_file(path)
 
 
