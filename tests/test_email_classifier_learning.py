@@ -65,6 +65,15 @@ def test_selection_provenance_rejects_empty_selection_by_default() -> None:
             categories=["legal"],
         )
 
+    preview = _selection_provenance(
+        EmptySelectedSourceStore(),
+        sources=["user_feedback"],
+        categories=["legal"],
+        allow_empty=True,
+    )
+    assert preview["selected_training_records"] == []
+    assert preview["provenance"][0]["sample_count"] == 0
+
 
 def _classification(message_id: str, category: EmailCategory) -> EmailClassification:
     classification_id = (

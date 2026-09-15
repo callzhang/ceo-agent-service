@@ -8546,13 +8546,14 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
         )
         db.execute(
             """
-            insert into scheduled_task_runs (
-                event_id, scheduled_task_id, trigger_kind, scheduled_for,
-                dispatch_status, snapshot_json, execution_kind, execution_id,
-                dispatched_at
-            ) values (
-                    'event-success', ?, 'scheduled', '2026-09-10T12:01:00+00:00',
-                    'dispatched', '{}', 'service_command', 'scan-meetings-once',
+                insert into scheduled_task_runs (
+                    event_id, scheduled_task_id, trigger_kind, scheduled_for, first_scheduled_for,
+                    dispatch_status, snapshot_json, execution_kind, execution_id,
+                    dispatched_at
+                ) values (
+                        'event-success', ?, 'scheduled', '2026-09-10T12:01:00+00:00',
+                        '2026-09-10T12:01:00+00:00',
+                        'dispatched', '{}', 'service_command', 'scan-meetings-once',
                     '2026-09-10 12:01:00'
                 )
             """,
@@ -10046,7 +10047,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-15.2"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-15.3"
     assert {
         "lease_owner",
         "lease_expires_at",
@@ -10833,24 +10834,41 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
         ):
             db.execute(
                 "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-                " scheduled_for, dispatch_status, snapshot_json) values (?, ?, 'scheduled', ?, 'pending', ?)",
-                (f"evt-{index}", task.id, f"2026-09-11T0{index}:00:00+00:00", payload),
+                " scheduled_for, first_scheduled_for, dispatch_status, snapshot_json) "
+                "values (?, ?, 'scheduled', ?, ?, 'pending', ?)",
+                (
+                    f"evt-{index}", task.id,
+                    f"2026-09-11T0{index}:00:00+00:00",
+                    f"2026-09-11T0{index}:00:00+00:00", payload,
+                ),
             )
         assert store._scheduled_task_run_snapshots_are_current(db) is True
 
         # Unparseable JSON is corrupt data, not a stale schema.
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-            " scheduled_for, dispatch_status, snapshot_json) values ('evt-bad', ?, 'scheduled', ?, 'pending', ?)",
-            (task.id, "2026-09-11T05:00:00+00:00", "{not json"),
+            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_json) "
+            "values ('evt-bad', ?, 'scheduled', ?, ?, 'pending', ?)",
+            (
+                task.id,
+                "2026-09-11T05:00:00+00:00",
+                "2026-09-11T05:00:00+00:00",
+                "{not json",
+            ),
         )
         assert store._scheduled_task_run_snapshots_are_current(db) is True
 
         # A snapshot missing the command keys is what the check must catch.
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-            " scheduled_for, dispatch_status, snapshot_json) values ('evt-stale', ?, 'scheduled', ?, 'pending', ?)",
-            (task.id, "2026-09-11T06:00:00+00:00", stale),
+            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_json) "
+            "values ('evt-stale', ?, 'scheduled', ?, ?, 'pending', ?)",
+            (
+                task.id,
+                "2026-09-11T06:00:00+00:00",
+                "2026-09-11T06:00:00+00:00",
+                stale,
+            ),
         )
         assert store._scheduled_task_run_snapshots_are_current(db) is False
 

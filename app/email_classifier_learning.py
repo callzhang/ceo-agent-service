@@ -133,7 +133,10 @@ def _selection_provenance(
         for row in source_records[source]
         if row.get("category_key") is not None
     }
-    if snapshot is not None:
+    # Submission validates availability against the selected sources. Preview
+    # may retain a known snapshot category with zero samples in those sources
+    # so the UI can show the empty-selection blocker before submission.
+    if allow_empty and snapshot is not None:
         available.update(
             str(row["category_key"])
             for row in snapshot["observations"]

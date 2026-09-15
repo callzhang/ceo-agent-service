@@ -525,10 +525,10 @@ DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 cla
 用户配置。Status 为每个实际 adapter 展示 pending、oldest、running 和 latest error；scheduler
 进程/扫描健康与 scheduled run 的业务结果分别展示，空队列不会制造 Agent run。
 
-默认业务生产任务通过稳定 migration key 幂等 seed。钉钉消息、每小时 `:30` 的“恢复近期 DingTalk 消息”、
-会议、微信 reader、OA、每日工作来源、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）的 AI 听记同步
-共八项；其中除 OKR 周报之外的七项都是服务命令，旧的 producer timing loops 已移除。以 Agent 形式
-创建的旧 `dingtalk-message-check-v1`、`wechat-message-check-v1`、会议、OA、工作来源和
+默认业务生产任务通过稳定 migration key 幂等 seed，共十个：邮件、钉钉消息、钉钉日历邀请、每小时
+`:30` 的“恢复近期 DingTalk 消息”、会议、微信 reader、OA、会议行动项、每周 OKR，以及每天
+`20:00`（`Asia/Shanghai`）的 AI 听记同步。十个任务全部是服务命令，旧的 producer timing loops
+已移除。以 Agent 形式创建的旧 `dingtalk-message-check-v1`、`wechat-message-check-v1`、会议、OA、工作来源和
 `ceo-minutes-sync-daily-v1` 在启动时原地转换为命令形式（保留名称、Cron、时区，未编辑过的旧 seed
 转换后启用，已编辑的保留用户的启用状态，已删除的不动）。AI 听记同步不再需要 Skill 判断：分页读取
 摘要与逐字稿、写入本地归档、维护内容游标都由 `app/minutes_sync.py` 确定性完成，时长不足五分钟的
