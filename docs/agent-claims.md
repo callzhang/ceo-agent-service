@@ -28,6 +28,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| Codex root | `app/agent_orchestrator.py`, `app/agent_result.py`, `app/cli.py`, `app/store.py`, `app/meeting_memory_write.py`, `tests/test_store.py`, `tests/test_meeting_memory_write.py`, `CHANGELOG.md`, `docs/agent-claims.md` | Take over unclaimed confirmation-boundary and meeting-Memory repair changes; verify and finish the full test gate. | 2026-09-15 |
 
 
 ## Recent overlaps worth knowing

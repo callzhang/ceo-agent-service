@@ -2505,6 +2505,80 @@ def test_finalize_orchestration_never_projects_failed_current_run_as_done(
     assert updated.error == "runtime_result_validation_failed"
 
 
+def test_finalize_orchestration_keeps_confirmation_boundary_as_needs_human(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-confirmation-boundary",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-confirmation-boundary",
+        trigger_create_time="2026-09-15 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please handle this",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="audit"
+    ).run
+    store.fail_agent_run(
+        run.id,
+        {
+            "code": "confirmation_required",
+            "retryable": True,
+            "authorization_required": True,
+        },
+        owner="audit",
+    )
+    options = json.dumps(
+        [
+            {
+                "key": "confirm_external_action",
+                "instruction": "Confirm the reviewed external action.",
+            },
+            {
+                "key": "stop_without_action",
+                "instruction": "Stop without an external action.",
+            },
+        ]
+    )
+
+    attempt_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=run.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="Provider confirmation is required.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="Provider confirmation is required.",
+        human_decision_options_json=options,
+        send_status="needs_human",
+        send_error="confirmation_required",
+        channel=task.channel,
+    )
+
+    updated = store.get_reply_task(task.id)
+    attempt = store.get_reply_attempt(attempt_id)
+
+    assert updated is not None
+    assert updated.status == "done"
+    assert updated.error == ""
+    assert attempt is not None
+    assert attempt.send_status == "needs_human"
+    assert attempt.send_error == "confirmation_required"
+
+
 def test_reconcile_done_reply_tasks_with_failed_current_run(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
