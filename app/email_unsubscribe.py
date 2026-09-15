@@ -2824,7 +2824,7 @@ class PlaywrightUnsubscribeBrowser:
     def _execute_audited_control(
         self,
         binding: _AuditedControlBinding,
-    ) -> None:
+    ) -> str | None:
         self._validate_navigation_target(binding.target_url)
         if binding.control.kind == "link":
             self.page.goto(
@@ -2836,7 +2836,7 @@ class PlaywrightUnsubscribeBrowser:
             self._document_url = self._validate_navigation_target(
                 str(getattr(self.page, "url"))
             )
-            return
+            return None
         if binding.control.kind == "button":
             if not binding.click_selector:
                 raise UnsubscribeBrowserError(
@@ -2858,7 +2858,7 @@ class PlaywrightUnsubscribeBrowser:
             self._document_url = self._validate_navigation_target(
                 str(getattr(self.page, "url"))
             )
-            return
+            return None
         if binding.control.kind != "form":
             raise UnsubscribeBrowserError(
                 UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
@@ -2881,7 +2881,7 @@ class PlaywrightUnsubscribeBrowser:
             self._document_url = self._validate_navigation_target(
                 str(getattr(self.page, "url"))
             )
-            return
+            return None
         if binding.method != "POST" or binding.enctype != (
             "application/x-www-form-urlencoded"
         ):
@@ -2915,6 +2915,14 @@ class PlaywrightUnsubscribeBrowser:
             timeout=self.timeout_ms,
         )
         self._raise_if_blocked()
+        # Some list providers accept the form POST and return an empty 2xx
+        # response instead of rendering a confirmation page.  The request
+        # itself is the provider receipt in that case; letting the subsequent
+        # page read classify the blank document as ``page-not-operable`` loses
+        # the successful write and causes needless retries.
+        if not body.strip():
+            return f"form-submit-provider-http-{response.status}"
+        return None
 
     def _execute_email_otp_control(
         self,
@@ -3021,6 +3029,7 @@ class PlaywrightUnsubscribeBrowser:
         operation: UnsubscribeOperation,
     ) -> UnsubscribeObservation:
         try:
+            submission_receipt: str | None = None
             if operation.kind is UnsubscribeOperationKind.POST_ONE_CLICK:
                 self._validate_navigation_target(private_url)
                 isolated = self._context.browser.new_context(accept_downloads=False)
@@ -3107,7 +3116,7 @@ class PlaywrightUnsubscribeBrowser:
                 if control.control.kind == "email_otp":
                     self._execute_email_otp_control(effect, control)
                 else:
-                    self._execute_audited_control(control)
+                    submission_receipt = self._execute_audited_control(control)
             elif operation.kind is UnsubscribeOperationKind.CLICK_CONFIRMATION:
                 control = next(
                     (
@@ -3164,6 +3173,24 @@ class PlaywrightUnsubscribeBrowser:
                 raise UnsubscribeBrowserError(
                     UnsubscribeBrowserFailure.OPERATION_KIND_REJECTED,
                     "browser operation kind rejected",
+                )
+            if submission_receipt:
+                return UnsubscribeObservation(
+                    state=UnsubscribePageState.DONE,
+                    state_reference="state-form-submit-provider",
+                    receipt=UnsubscribeTerminalReceipt(
+                        receipt_id=(
+                            f"unsubscribe-receipt:{effect.effect_digest[:24]}"
+                            ":form-submit"
+                        ),
+                        evidence="form-submit-provider",
+                        entry_reference=effect.entry_reference,
+                        effect_digest=effect.effect_digest,
+                    ),
+                    visible_text=(
+                        "Form submission accepted by provider "
+                        f"(HTTP {submission_receipt.rsplit('-', 1)[-1]})"
+                    ),
                 )
             observation = self.inspect_current_state(effect, private_url)
             if (

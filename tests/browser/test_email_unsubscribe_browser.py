@@ -252,6 +252,17 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     )
                 },
             )
+        elif path == "/empty-form":
+            self._send(
+                _page(
+                    "action_required",
+                    "Confirm unsubscribe",
+                    content=(
+                        '<form method="post" action="/empty-form-submit">'
+                        '<button type="submit">Unsubscribe</button></form>'
+                    ),
+                )
+            )
         elif path.startswith("/auth-control-"):
             secret = "profile-secret-never-persist"
             controls = {
@@ -500,6 +511,9 @@ class _FixtureHandler(BaseHTTPRequestHandler):
             self._send(b"browser session missing", status=403)
         elif path in {"/safe-form-terminal", "/implicit-terminal"}:
             self._send(_page("done", "You are unsubscribed"))
+        elif path == "/empty-form-submit":
+            self.send_response(204)
+            self.end_headers()
         elif path == "/delete-profile":
             self._send(_page("done", "Profile deleted"))
         elif path == "/one-click":
@@ -1051,6 +1065,29 @@ def test_direct_success_fixture(tmp_path: Path, chrome_browser) -> None:
     )
     assert result.outcome is UnsubscribeOutcome.DONE
     assert requests[0][0] == "GET"
+
+
+def test_empty_form_response_is_recorded_as_provider_accepted(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    """A successful form POST may return 204 with no confirmation document."""
+
+    _first, result, requests, _details, _durable = (
+        _open_then_execute_discovered_control(
+            tmp_path,
+            chrome_browser,
+            path="/empty-form",
+            operation_kind=UnsubscribeOperationKind.SUBMIT_FORM,
+        )
+    )
+
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert result.receipt is not None
+    assert result.receipt.evidence == "form-submit-provider"
+    assert result.result_text == "Form submission accepted by provider (HTTP 204)"
+    assert requests[-1][0] == "POST"
+    assert sum(method == "POST" for method, _path in requests) == 1
 
 
 def _open_then_execute_discovered_control(
