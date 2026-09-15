@@ -1062,7 +1062,7 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-feedback-card label { color: var(--ink-soft); font-size: .75rem; font-weight: 700; }
 .feedback-iteration-section { display: grid; gap: 8px; }
 .feedback-iteration-section h3 { margin: 0; color: var(--ink); font-size: .82rem; }
-.feedback-iteration-input { width: 100%; min-height: 40px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 9px; color: var(--ink); background: var(--surface); line-height: 1.55; resize: vertical; }
+.feedback-iteration-input { width: 100%; min-height: 40px; max-height: 240px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 9px; color: var(--ink); background: var(--surface); line-height: 1.55; resize: vertical; field-sizing: content; }
 .feedback-iteration-input::placeholder { color: var(--ink-soft); opacity: .72; }
 .attempt-feedback-card button { justify-self: start; min-height: 38px; padding: 0 13px; border: 1px solid var(--accent); border-radius: 9px; color: white; background: var(--accent); cursor: pointer; font-weight: 680; }
 .attempt-feedback-card button:disabled { cursor: wait; opacity: .55; }
