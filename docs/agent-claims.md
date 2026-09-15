@@ -28,7 +28,6 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| Codex root | `tests/test_task_store.py`, `docs/agent-claims.md` | Align the SQLite connection performance assertion with the committed WAL mmap-disabled contract. | 2026-09-15 |
 
 
 ## Recent overlaps worth knowing
