@@ -114,7 +114,10 @@ FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 SQLITE_READ_CACHE_SIZE = -65536
-SQLITE_MMAP_SIZE_BYTES = 512 * 1024 * 1024
+# The service database is a mutable WAL database shared by long-lived workers.
+# Keep SQLite reads on its normal VFS path instead of retaining mapped pages
+# across concurrent checkpoints and external maintenance snapshots.
+SQLITE_MMAP_SIZE_BYTES = 0
 STORE_WRITE_LOCK_RETRY_ATTEMPTS = 3
 STORE_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = 3
@@ -2173,9 +2176,9 @@ class AutoReplyStore:
                 f"pragma busy_timeout = {self.busy_timeout_milliseconds}"
             )
             connection.execute("pragma synchronous = normal")
-            # History is a read-heavy UNION over a large, text-heavy database. A
-            # bounded per-connection cache plus mmap keeps cold scans off the
-            # filesystem path without allowing unbounded process memory growth.
+            # History is a read-heavy UNION over a large, text-heavy database.
+            # Bound the per-connection cache, but keep the mutable WAL database
+            # off SQLite's mapped-page path.
             connection.execute(f"pragma cache_size = {SQLITE_READ_CACHE_SIZE}")
             connection.execute(f"pragma mmap_size = {SQLITE_MMAP_SIZE_BYTES}")
             connection.execute("pragma foreign_keys = on")

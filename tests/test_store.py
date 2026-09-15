@@ -9996,6 +9996,32 @@ def test_open_connection_names_and_reraises_connect_io_error_once(
     assert str(store.path) in captured
 
 
+def test_open_connection_disables_mmap_for_mutable_service_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store_without_initialization(tmp_path / "mutable-service.sqlite3")
+    executed: list[str] = []
+
+    class TrackingConnection:
+        def execute(self, sql: str):
+            executed.append(sql)
+            return self
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        store_module.sqlite3,
+        "connect",
+        lambda *_args, **_kwargs: TrackingConnection(),
+    )
+
+    store._open_connection().close()
+
+    assert "pragma mmap_size = 0" in executed
+
+
 @pytest.mark.parametrize(
     "failed_pragma",
     [

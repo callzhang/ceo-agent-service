@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-15: Mutable WAL connections no longer retain SQLite memory-mapped
+  pages. This prevents short-read I/O failures when long-lived workers overlap
+  checkpoints or maintenance snapshots, while preserving the bounded read
+  cache and normal WAL transactions.
+
 - 2026-09-14: Scheduled-task run history now resolves Agent Attempt lineage
   from the three supported Trigger payload locations instead of recursively
   expanding every JSON node. Unrelated nested identifiers are ignored, while
