@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- 2026-09-15: History's time chart now classifies reply attempts through the
+  same current-result projection as the History list. A failed attempt that a
+  later terminal task or replacement attempt recovered no longer leaves a
+  false `Failed` bar; genuinely queued work remains Pending or Running.
+
 - 2026-09-15: A successful Meeting-to-Memory worker cycle now clears the
   component's previous `latest_error` and error timestamp. The durable error
   remains in History, but Status no longer presents an already-recovered

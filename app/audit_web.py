@@ -5187,10 +5187,6 @@ def _history_lifecycle_label(status: str) -> str:
     return "Failed"
 
 
-def _history_event_label(attempt: ReplyAttempt) -> str:
-    return _history_lifecycle_label(attempt.send_status)
-
-
 def _history_item_event_label(item) -> str:
     return _history_lifecycle_label(item.status)
 
@@ -5215,6 +5211,13 @@ def _history_chart_payload(
     attempts = store.list_reply_attempts_since(since_utc)
     bucket_values: dict[str, list[int]] = {}
     label_indexes = {label: index for index, label in enumerate(labels)}
+    # Keep terminal reply history consistent with the History list. Reply
+    # attempts retain their raw execution outcome, while OperationLog projects
+    # the current terminal result for that message and task.
+    projected_statuses = {
+        operation.source_id: operation.status
+        for operation in store.list_operation_logs(source_tables=("reply_attempts",))
+    }
     for attempt in attempts:
         created_at = _parse_utc_timestamp(attempt.created_at)
         if created_at is None:
@@ -5224,12 +5227,13 @@ def _history_chart_payload(
             second=0,
             microsecond=0,
         )
-        label = local_bucket.strftime("%m-%d %H:%M")
-        bucket_index = label_indexes.get(label)
+        bucket_index = label_indexes.get(local_bucket.strftime("%m-%d %H:%M"))
         if bucket_index is None:
             continue
-        event_label = _history_event_label(attempt)
-        if attempt.send_status == "failed" and event_label == "Failed":
+        event_label = _history_lifecycle_label(
+            projected_statuses.get(attempt.id, attempt.send_status)
+        )
+        if event_label == "Failed":
             task = store.get_reply_task_for_message(
                 attempt.conversation_id,
                 attempt.trigger_message_id,

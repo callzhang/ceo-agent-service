@@ -2559,7 +2559,7 @@ def test_history_chart_shows_provider_capacity_wait_without_failed_red_series(
     assert series_names == {"Pending"}
 
 
-def test_history_chart_does_not_reclassify_failed_reply_without_a_current_success_run(
+def test_history_chart_projects_terminal_reply_task_as_done(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2591,13 +2591,13 @@ def test_history_chart_does_not_reclassify_failed_reply_without_a_current_succes
     payload = audit_web_module._history_chart_payload(store)
     series_names = {series["name"] for series in payload["series"]}
 
-    # A reply-task status is only the queue envelope.  It is not evidence that
-    # this attempt acquired a successful terminal Agent run, so it must not
-    # erase the failed attempt from History.
-    assert series_names == {"Failed"}
+    # History uses the current task projection. Once the task has a terminal
+    # result, its earlier failed attempt is recovered rather than current failed
+    # work, and the chart must show the same status as the History list.
+    assert series_names == {"Done"}
 
 
-def test_history_chart_keeps_failed_attempt_visible_after_later_attempt(tmp_path: Path):
+def test_history_chart_projects_replaced_failed_attempt_as_done(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     failed_id = store.record_reply_attempt(
         conversation_id="cid-recovered-later-attempt",
@@ -2624,7 +2624,7 @@ def test_history_chart_keeps_failed_attempt_visible_after_later_attempt(tmp_path
     series_names = {series["name"] for series in payload["series"]}
 
     assert failed_id
-    assert series_names == {"Done", "Failed"}
+    assert series_names == {"Done"}
 
 
 def test_history_chart_keeps_retry_event_distinct_from_current_processing(
