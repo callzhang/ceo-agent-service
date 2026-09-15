@@ -31,7 +31,9 @@
   even when it is older than the current history page, so the UI keeps its
   Attempt detail link visible. The scheduled Dispatcher queue treats overlap
   skips as normal control flow and clears an older execution error after a
-  later successful dispatch.
+  later successful dispatch. A scheduled Trigger whose recorded owner PID no
+  longer exists is now reclaimed immediately with a new fenced generation,
+  rather than waiting for the old five-minute lease to expire.
 
 - 2026-09-14: The former `整理工作区中的新工作记录` Cron now appears as
   `将会议行动项整理到 Tasks`. Its deterministic Trigger reads explicit

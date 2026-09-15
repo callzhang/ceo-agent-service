@@ -462,12 +462,22 @@ def test_all_source_adapters_report_and_atomically_claim_due_facts(tmp_path: Pat
 def test_scheduled_claim_is_recoverable_after_lease_expiry(tmp_path: Path):
     store = _store(tmp_path)
     _scheduled_run(store)
-    adapter = ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: False)
+    alive = {101: True}
+    adapter = ScheduledTaskQueueAdapter(
+        store,
+        owner_alive=lambda pid: alive.get(pid, False),
+    )
 
-    first = adapter.claim(NOW, owner="dispatcher-a", lease=timedelta(seconds=1))
+    first = adapter.claim(
+        NOW,
+        owner="dispatcher-a",
+        owner_pid=101,
+        lease=timedelta(seconds=1),
+    )
     assert first is not None
     assert adapter.claim(NOW, owner="dispatcher-b", lease=timedelta(seconds=1)) is None
 
+    alive[101] = False
     recovered = adapter.claim(
         NOW + timedelta(seconds=2),
         owner="dispatcher-b",
@@ -475,6 +485,44 @@ def test_scheduled_claim_is_recoverable_after_lease_expiry(tmp_path: Path):
     )
     assert recovered.source_id == first.source_id
     assert recovered.generation > first.generation
+
+
+def test_scheduled_claim_immediately_reclaims_unexpired_lease_from_dead_owner(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    _scheduled_run(store)
+    alive = {101: True, 202: True}
+    adapter = ScheduledTaskQueueAdapter(
+        store,
+        owner_alive=lambda pid: alive.get(pid, False),
+    )
+
+    first = adapter.claim(
+        NOW,
+        owner="dispatcher-a",
+        owner_pid=101,
+        lease=timedelta(minutes=5),
+    )
+    assert first is not None
+
+    alive[101] = False
+    recovered = adapter.claim(
+        NOW + timedelta(seconds=1),
+        owner="dispatcher-b",
+        owner_pid=202,
+        lease=timedelta(minutes=5),
+    )
+
+    assert recovered is not None
+    assert recovered.source_id == first.source_id
+    assert recovered.generation > first.generation
+    with pytest.raises(ValueError, match="no longer owned"):
+        adapter.assert_current(
+            first,
+            owner="dispatcher-a",
+            now=NOW + timedelta(seconds=1),
+        )
 
 
 def test_scheduled_claim_ceil_preserves_full_lease_for_source_and_ledger(

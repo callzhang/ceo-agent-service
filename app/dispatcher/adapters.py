@@ -144,7 +144,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
 
             def fetch_page(after: sqlite3.Row | None, limit: int):
                 keyset = ""
-                params: list[object] = [self.name, now_text, now_text, now_text]
+                params: list[object] = [self.name, now_text]
                 if after is not None:
                     keyset = (
                         "and (run.scheduled_for>? or "
@@ -157,34 +157,61 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 return db.execute(
                     "select run.*, claim.owner as claim_owner, "
                     "claim.owner_pid as claim_owner_pid, "
+                    "claim.generation as claim_generation, "
                     "claim.lease_expires_at as claim_expires_at "
                     "from scheduled_task_runs run "
                     "left join dispatcher_claim_leases claim "
                     "on claim.adapter_name=? and claim.source_id=cast(run.id as text) "
                     "where run.dispatch_status='pending' and run.scheduled_for<=? "
-                    "and (run.lease_owner='' or run.lease_expires_at<=?) "
-                    "and (claim.owner is null or claim.owner='' "
-                    "or claim.lease_expires_at<=?) "
                     + keyset
                     + "order by run.scheduled_for,run.id limit ?",
                     params,
                 ).fetchall()
 
-            candidate = _scan_claimable_candidate(
+            candidate = _scan_scheduled_claimable_candidate(
                 fetch_page,
                 now=now_text,
                 owner_alive=self.owner_alive,
             )
             if candidate is None:
                 return None
+            previous_source_owner = str(candidate["lease_owner"] or "")
             cursor = db.execute(
                 "update scheduled_task_runs set lease_owner=?, lease_expires_at=? "
                 "where id=? and dispatch_status='pending' and scheduled_for<=? "
-                "and (lease_owner='' or lease_expires_at<=?)",
-                (owner, lease_text, candidate["id"], now_text, now_text),
+                "and (lease_owner='' or lease_expires_at<=? or lease_owner=?)",
+                (
+                    owner,
+                    lease_text,
+                    candidate["id"],
+                    now_text,
+                    now_text,
+                    previous_source_owner,
+                ),
             )
             if cursor.rowcount != 1:
                 return None
+            if _scheduled_claim_owner_is_dead(
+                candidate,
+                now=now_text,
+                owner_alive=self.owner_alive,
+            ):
+                cleared = db.execute(
+                    "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+                    "updated_at=? where adapter_name=? and source_id=? and owner=? "
+                    "and owner_pid=? and generation=? and lease_expires_at=?",
+                    (
+                        now_text,
+                        self.name,
+                        str(candidate["id"]),
+                        candidate["claim_owner"],
+                        candidate["claim_owner_pid"],
+                        candidate["claim_generation"],
+                        candidate["claim_expires_at"],
+                    ),
+                )
+                if cleared.rowcount != 1:
+                    raise ValueError("scheduled dead-owner claim changed during takeover")
             generation = _acquire_lease(
                 db,
                 adapter_name=self.name,
@@ -1357,6 +1384,46 @@ def _scan_claimable_candidate(
         if len(candidates) < _CLAIM_SCAN_PAGE_SIZE:
             return None
         after = candidates[-1]
+
+
+def _scan_scheduled_claimable_candidate(
+    fetch_page: Callable[[sqlite3.Row | None, int], list[sqlite3.Row]],
+    *,
+    now: str,
+    owner_alive,
+) -> sqlite3.Row | None:
+    after = None
+    while True:
+        candidates = fetch_page(after, _CLAIM_SCAN_PAGE_SIZE)
+        if not candidates:
+            return None
+        for candidate in candidates:
+            if not _scheduled_candidate_is_protected(candidate, now, owner_alive):
+                return candidate
+        if len(candidates) < _CLAIM_SCAN_PAGE_SIZE:
+            return None
+        after = candidates[-1]
+
+
+def _scheduled_candidate_is_protected(row, now: str, owner_alive) -> bool:
+    source_owner = str(row["lease_owner"] or "")
+    source_active = bool(
+        source_owner and str(row["lease_expires_at"] or "") > now
+    )
+    claim_owner = str(row["claim_owner"] or "")
+    if not claim_owner:
+        return source_active
+    if owner_alive(int(row["claim_owner_pid"] or 0)):
+        return True
+    return bool(source_active and source_owner != claim_owner)
+
+
+def _scheduled_claim_owner_is_dead(row, *, now: str, owner_alive) -> bool:
+    return bool(
+        str(row["claim_owner"] or "")
+        and str(row["claim_expires_at"] or "") > now
+        and not owner_alive(int(row["claim_owner_pid"] or 0))
+    )
 
 
 def _live_expired_owner(row, now: str, owner_alive) -> bool:
