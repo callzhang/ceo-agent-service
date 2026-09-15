@@ -2836,6 +2836,55 @@ def test_call_dws_projects_service_level_read_recovery_to_component_health(
     assert worker.store.list_service_health_components()[0]["state"] == "healthy"
 
 
+def test_call_dws_closes_recovered_message_read_error_for_same_conversation(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.record_error(
+        "cid-recovered", "", "read_unread_messages", "provider parameter error"
+    )
+    worker.store.record_error(
+        "cid-other", "", "read_unread_messages", "provider parameter error"
+    )
+    worker.store.record_error(
+        "cid-recovered", "", "read_recent_messages", "still failing"
+    )
+
+    assert (
+        worker._call_dws(
+            "read_unread_messages",
+            lambda: [],
+            conversation_id="cid-recovered",
+            default=[],
+        )
+        == []
+    )
+
+    errors = {error.id: error for error in worker.store.list_errors()}
+    recovered = next(
+        error
+        for error in errors.values()
+        if error.conversation_id == "cid-recovered"
+        and error.kind == "read_unread_messages"
+    )
+    assert recovered.resolved_at
+    assert recovered.resolution == "recovered by a later successful DWS message read"
+    assert any(
+        not error.resolved_at
+        for error in errors.values()
+        if error.conversation_id == "cid-other"
+        and error.kind == "read_unread_messages"
+    )
+    assert any(
+        not error.resolved_at
+        for error in errors.values()
+        if error.conversation_id == "cid-recovered"
+        and error.kind == "read_recent_messages"
+    )
+
+
 def test_call_dws_suppresses_prepare_call_tool_error_for_mentioned_messages(
     tmp_path: Path, monkeypatch
 ):

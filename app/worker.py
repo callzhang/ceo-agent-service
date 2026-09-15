@@ -680,6 +680,12 @@ class DingTalkAutoReplyWorker:
             result = call()
             self._sqlite_lock_failures.pop(kind, None)
             self._clear_dws_transient_error(kind)
+            if self._is_dws_message_read_kind(kind) and conversation_id:
+                self.store.resolve_unresolved_errors_for_conversation_kind(
+                    conversation_id,
+                    kind,
+                    resolution="recovered by a later successful DWS message read",
+                )
             if self._is_service_level_dws_read(kind, conversation_id, message_id):
                 self.store.set_service_health_component(
                     f"dws.{kind}",

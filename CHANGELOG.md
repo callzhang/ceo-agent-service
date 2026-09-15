@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-15: A successful DWS conversation read now closes only the matching
+  unresolved read incident for that conversation and reader type. Transient
+  provider parameter failures therefore leave Attention after an actual
+  successful retry, without hiding a failure from another conversation or
+  reader.
+
 - 2026-09-15: Status now reports Meeting-to-Memory queue health from the
   durable event lease and matching runtime lease rather than a historical
   runtime status. It shows pending/due/delayed/processing/retryable/failed,

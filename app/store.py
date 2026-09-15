@@ -26255,6 +26255,41 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def resolve_unresolved_errors_for_conversation_kind(
+        self,
+        conversation_id: str,
+        kind: str,
+        *,
+        resolution: str,
+    ) -> int:
+        """Close only read incidents verified by a later success in that conversation."""
+        normalized_conversation_id = conversation_id.strip()
+        normalized_kind = kind.strip()
+        normalized_resolution = resolution.strip()
+        if not normalized_conversation_id:
+            raise ValueError("conversation id must be non-empty")
+        if not normalized_kind:
+            raise ValueError("error kind must be non-empty")
+        if not normalized_resolution:
+            raise ValueError("error resolution must be non-empty")
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update errors
+                set resolved_at=current_timestamp,
+                    resolution=?
+                where conversation_id=?
+                  and replace(kind, '-', '_')=replace(?, '-', '_')
+                  and coalesce(resolved_at, '')=''
+                """,
+                (
+                    normalized_resolution,
+                    normalized_conversation_id,
+                    normalized_kind,
+                ),
+            )
+            return cursor.rowcount
+
     def resolve_errors_recovered_by_wechat_reader(self) -> int:
         """Close reader incidents after a later successful reader cycle.
 
