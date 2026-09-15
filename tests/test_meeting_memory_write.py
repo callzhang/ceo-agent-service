@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -74,9 +77,9 @@ def _sent_job() -> SimpleNamespace:
     )
 
 
-def _store_sent_job(store: AutoReplyStore) -> int:
+def _store_sent_job(store: AutoReplyStore, *, meeting_id: str = "minutes-7") -> int:
     job_id = store.upsert_meeting_alignment_job(
-        meeting_id="minutes-7",
+        meeting_id=meeting_id,
         title="经营复盘",
         source_json=json.dumps({"summary": "这是听记摘要"}, ensure_ascii=False),
         participants_json="[]",
@@ -90,6 +93,36 @@ def _store_sent_job(store: AutoReplyStore) -> int:
         final_message="【经营复盘结论】\n本周先完成客户验证。",
     )
     return job_id
+
+
+class _BlockingMemoryRuntime:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.active = 0
+        self.max_active = 0
+        self.workload_keys: list[str] = []
+
+    def execute(self, **kwargs):
+        with self._lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            self.workload_keys.append(str(kwargs["workload_key"]))
+        try:
+            time.sleep(0.04)
+            return SimpleNamespace(
+                value=json.dumps(
+                    {
+                        "status": "success",
+                        "memory_id": f"memory-{kwargs['workload_key']}",
+                        "retryable": False,
+                        "source_code": "",
+                        "detail": "",
+                    }
+                )
+            )
+        finally:
+            with self._lock:
+                self.active -= 1
 
 
 def test_meeting_memory_payload_contains_only_delivered_conclusion() -> None:
@@ -213,7 +246,7 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
         now=datetime.fromisoformat("2026-09-14T10:00:00+08:00"),
     )
 
-    assert processed == 1
+    assert processed.processed == 1
     assert routed.calls[0]["workload_key"] == (
         f"meeting_memory_write_event:{event['id']}:"
         f"{event['execution_generation']}"
@@ -233,6 +266,162 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
     assert meeting["status"] == "sent"
 
 
+def test_meeting_memory_claims_are_disjoint_and_reclaim_only_expired_leases(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    now = "2026-09-15T10:00:00+00:00"
+
+    first = store.claim_due_meeting_memory_write_events(
+        now=now,
+        limit=1,
+        owner="worker-a",
+        lease_seconds=30,
+    )
+    second = store.claim_due_meeting_memory_write_events(
+        now=now,
+        limit=1,
+        owner="worker-b",
+        lease_seconds=30,
+    )
+    reclaimed = store.claim_due_meeting_memory_write_events(
+        now="2026-09-15T10:00:31+00:00",
+        limit=1,
+        owner="worker-b",
+        lease_seconds=30,
+    )
+
+    assert len(first) == 1
+    assert second == []
+    assert [event.id for event in reclaimed] == [first[0].id]
+    assert reclaimed[0].lease_owner == "worker-b"
+    assert reclaimed[0].status == "processing"
+
+
+def test_simultaneous_meeting_memory_claimers_cannot_claim_the_same_event(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    start = threading.Barrier(2)
+
+    def claim(owner: str) -> list[int]:
+        worker_store = AutoReplyStore(store.path)
+        start.wait()
+        return [
+            event.id
+            for event in worker_store.claim_due_meeting_memory_write_events(
+                now="2026-09-15T10:00:00+00:00",
+                limit=1,
+                owner=owner,
+                lease_seconds=30,
+            )
+        ]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first, second = list(executor.map(claim, ("worker-a", "worker-b")))
+
+    assert sorted(first + second) == [1]
+
+
+def test_meeting_memory_terminal_transition_requires_the_current_lease_owner(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    event = store.claim_due_meeting_memory_write_events(
+        now="2026-09-15T10:00:00+00:00",
+        limit=1,
+        owner="worker-a",
+        lease_seconds=30,
+    )[0]
+
+    assert not store.complete_meeting_memory_write_event(
+        event.id,
+        owner="worker-b",
+        memory_id="wrong-owner",
+    )
+    assert store.complete_meeting_memory_write_event(
+        event.id,
+        owner="worker-a",
+        memory_id="correct-owner",
+    )
+    with store._connect() as db:
+        row = db.execute(
+            "select status, memory_id, lease_owner, lease_expires_at "
+            "from meeting_memory_write_events where id=?",
+            (event.id,),
+        ).fetchone()
+    assert dict(row) == {
+        "status": "done",
+        "memory_id": "correct-owner",
+        "lease_owner": "",
+        "lease_expires_at": "",
+    }
+
+
+def test_idle_meeting_memory_enqueue_does_not_mutate_rows_or_sequence(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    with store._connect() as db:
+        before = db.execute(
+            "select id, meeting_job_id, execution_generation, created_at, updated_at "
+            "from meeting_memory_write_events"
+        ).fetchall()
+        sequence_before = db.execute(
+            "select seq from sqlite_sequence where name='meeting_memory_write_events'"
+        ).fetchone()["seq"]
+
+    assert enqueue_sent_meeting_memory_writes(store) == 0
+    assert enqueue_sent_meeting_memory_writes(store) == 0
+    with store._connect() as db:
+        after = db.execute(
+            "select id, meeting_job_id, execution_generation, created_at, updated_at "
+            "from meeting_memory_write_events"
+        ).fetchall()
+        sequence_after = db.execute(
+            "select seq from sqlite_sequence where name='meeting_memory_write_events'"
+        ).fetchone()["seq"]
+
+    assert [dict(row) for row in after] == [dict(row) for row in before]
+    assert sequence_after == sequence_before
+
+
+def test_meeting_memory_processing_uses_bounded_parallelism_and_returns_outcome(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    for index in range(3):
+        _store_sent_job(store, meeting_id=f"minutes-parallel-{index}")
+    runtime = _BlockingMemoryRuntime()
+
+    outcome = process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=runtime,
+        now=datetime.fromisoformat("2026-09-15T10:00:00+00:00"),
+        limit=3,
+        concurrency=2,
+    )
+
+    assert outcome.claimed == 3
+    assert outcome.completed == 3
+    assert outcome.retried == 0
+    assert outcome.failed == 0
+    assert outcome.processed == 3
+    assert runtime.max_active == 2
+    assert len(runtime.workload_keys) == 3
+    assert len(set(runtime.workload_keys)) == 3
+
+
 def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
     tmp_path: Path,
 ) -> None:
@@ -249,7 +438,18 @@ def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
     event_id = int(created_event["id"])
     original_generation = str(created_event["execution_generation"])
 
-    store.fail_meeting_memory_write_event(event_id, error="provider configuration failed")
+    claimed = store.claim_due_meeting_memory_write_events(
+        now="2026-09-15T10:00:00+00:00",
+        limit=1,
+        owner="test-requeue",
+        lease_seconds=30,
+    )
+    assert [event.id for event in claimed] == [event_id]
+    assert store.fail_meeting_memory_write_event(
+        event_id,
+        owner="test-requeue",
+        error="provider configuration failed",
+    )
 
     assert store.requeue_failed_meeting_memory_write_event(
         event_id,
@@ -283,7 +483,7 @@ def test_active_meeting_memory_runtime_defers_instead_of_failing(tmp_path: Path)
         workspace=tmp_path,
         routed_execution=_ActiveMemoryRuntime(),
         now=datetime.fromisoformat("2026-09-14T10:00:00+08:00"),
-    ) == 1
+    ).processed == 1
 
     with store._connect() as db:
         event = db.execute(
@@ -314,7 +514,7 @@ def test_invalid_memory_result_defers_instead_of_failing(
         workspace=tmp_path,
         routed_execution=_InvalidMemoryResultRuntime(failure_code),
         now=datetime.fromisoformat("2026-09-14T10:00:00+08:00"),
-    ) == 1
+    ).processed == 1
 
     with store._connect() as db:
         event = db.execute(
@@ -339,7 +539,7 @@ def test_unexpected_memory_runtime_error_defers_one_event(tmp_path: Path) -> Non
         workspace=tmp_path,
         routed_execution=_UnexpectedMemoryRuntime(),
         now=datetime.fromisoformat("2026-09-14T10:00:00+08:00"),
-    ) == 1
+    ).processed == 1
 
     with store._connect() as db:
         event = db.execute(
@@ -370,7 +570,18 @@ def test_failed_meeting_memory_write_can_be_closed_from_verified_memory_readback
                 (job_id,),
             ).fetchone()["id"]
         )
-    store.fail_meeting_memory_write_event(event_id, error="result parser failed")
+    claimed = store.claim_due_meeting_memory_write_events(
+        now="2026-09-15T10:00:00+00:00",
+        limit=1,
+        owner="test-reconcile",
+        lease_seconds=30,
+    )
+    assert [event.id for event in claimed] == [event_id]
+    assert store.fail_meeting_memory_write_event(
+        event_id,
+        owner="test-reconcile",
+        error="result parser failed",
+    )
 
     assert store.reconcile_failed_meeting_memory_write_event(
         event_id,

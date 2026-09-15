@@ -9501,7 +9501,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-14.4"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-15.1"
     assert {
         "lease_owner",
         "lease_expires_at",
@@ -9584,6 +9584,34 @@ def test_schema_upgrade_removes_meeting_memory_payload_copies(tmp_path: Path) ->
             (job_id,),
         ).fetchone()["payload_json"]
     assert payload_json == "{}"
+    assert upgraded._schema_is_current() is True
+
+
+def test_schema_upgrade_adds_meeting_memory_processing_lease_fields(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "meeting-memory-lease-fields.sqlite3"
+    store = AutoReplyStore(db_path)
+    with store._connect() as db:
+        db.execute("drop index idx_meeting_memory_write_events_lease")
+        for column in ("lease_owner", "lease_expires_at", "started_at"):
+            db.execute(
+                f"alter table meeting_memory_write_events drop column {column}"
+            )
+        db.execute(
+            "update service_state set value=? where key=?",
+            ("2026-09-14.4", store_module.STORE_SCHEMA_VERSION_KEY),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+
+    with upgraded._connect() as db:
+        columns = {
+            row["name"]
+            for row in db.execute("pragma table_info(meeting_memory_write_events)")
+        }
+    assert {"lease_owner", "lease_expires_at", "started_at"} <= columns
     assert upgraded._schema_is_current() is True
 
 
@@ -9891,7 +9919,18 @@ def test_supersede_obsolete_meeting_memory_runtime_attempts_after_requeue(
         owner="interrupted-memory-owner",
         now="2026-09-14T23:00:01+00:00",
     )
-    store.fail_meeting_memory_write_event(event["id"], error="interrupted before write")
+    claimed_event = store.claim_due_meeting_memory_write_events(
+        now="2026-09-14T23:00:02+00:00",
+        limit=1,
+        owner="test-interrupted-meeting-memory",
+        lease_seconds=30,
+    )
+    assert [item.id for item in claimed_event] == [event["id"]]
+    assert store.fail_meeting_memory_write_event(
+        event["id"],
+        owner="test-interrupted-meeting-memory",
+        error="interrupted before write",
+    )
     assert store.requeue_failed_meeting_memory_write_event(
         event["id"], reason="verified pre-write interruption"
     )

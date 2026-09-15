@@ -8470,7 +8470,18 @@ def test_worker_attention_includes_failed_meeting_memory_writes(tmp_path: Path):
                 (meeting_id,),
             ).fetchone()["id"]
         )
-    store.fail_meeting_memory_write_event(event_id, error="provider unavailable")
+    claimed = store.claim_due_meeting_memory_write_events(
+        now="2026-09-15T10:00:00+00:00",
+        limit=1,
+        owner="test-meeting-memory-attention",
+        lease_seconds=30,
+    )
+    assert [event.id for event in claimed] == [event_id]
+    assert store.fail_meeting_memory_write_event(
+        event_id,
+        owner="test-meeting-memory-attention",
+        error="provider unavailable",
+    )
 
     rows = audit_web_module._queue_attention_rows(store)
 

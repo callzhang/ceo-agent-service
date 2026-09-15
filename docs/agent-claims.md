@@ -28,7 +28,6 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| Codex subagent `meeting-memory-queue-fix` | `app/store.py`, `app/meeting_memory_write.py`, `tests/test_meeting_memory_write.py`, `tests/test_store.py`, `tests/test_audit_web.py`, `README.md`, `CHANGELOG.md` | atomically lease Meeting Memory events, bounded parallel execution, structured outcomes, and mutation-free duplicate enqueue | 2026-09-15 |
 
 
 ## Recent overlaps worth knowing

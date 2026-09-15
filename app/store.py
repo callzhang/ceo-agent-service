@@ -169,7 +169,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-14.4"
+STORE_SCHEMA_VERSION = "2026-09-15.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -258,6 +258,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_dispatcher_claim_leases_expiry",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
+    "idx_meeting_memory_write_events_lease",
     "idx_feedback_iteration_decisions_batch",
     "idx_feedback_iteration_decision_items_feedback_round",
 )
@@ -353,7 +354,12 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "finished_at",
         "updated_at",
     ),
-    "meeting_memory_write_events": ("execution_generation",),
+    "meeting_memory_write_events": (
+        "execution_generation",
+        "lease_owner",
+        "lease_expires_at",
+        "started_at",
+    ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_feedback_processing_round_integer_v2_insert",
@@ -895,6 +901,9 @@ class MeetingMemoryWriteEvent(BaseModel):
     available_at: str
     error: str
     memory_id: str
+    lease_owner: str = ""
+    lease_expires_at: str = ""
+    started_at: str = ""
     created_at: str
     updated_at: str
 
@@ -2691,6 +2700,9 @@ class AutoReplyStore:
                     available_at text not null default '',
                     error text not null default '',
                     memory_id text not null default '',
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    started_at text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
                     foreign key(meeting_job_id) references meeting_alignment_jobs(id)
@@ -3908,6 +3920,20 @@ class AutoReplyStore:
                     "alter table meeting_memory_write_events add column "
                     "execution_generation text not null default ''"
                 )
+            for column, definition in (
+                ("lease_owner", "text not null default ''"),
+                ("lease_expires_at", "text not null default ''"),
+                ("started_at", "text not null default ''"),
+            ):
+                if column not in meeting_memory_write_columns:
+                    db.execute(
+                        "alter table meeting_memory_write_events add column "
+                        f"{column} {definition}"
+                    )
+            db.execute(
+                "create index if not exists idx_meeting_memory_write_events_lease "
+                "on meeting_memory_write_events(status, lease_expires_at, id)"
+            )
             db.execute(
                 "update meeting_memory_write_events "
                 "set execution_generation='migrated-' || id "
@@ -14256,7 +14282,7 @@ class AutoReplyStore:
         The unique meeting-job key deliberately keeps Memory delivery separate
         from the meeting's terminal send state while making restarts idempotent.
         """
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             parent = db.execute(
                 """
                 select 1
@@ -14274,12 +14300,41 @@ class AutoReplyStore:
                 insert into meeting_memory_write_events (
                     meeting_job_id, execution_generation, payload_json
                 )
-                values (?, ?, ?)
-                on conflict(meeting_job_id) do nothing
+                select ?, ?, ?
+                where not exists (
+                    select 1 from meeting_memory_write_events
+                    where meeting_job_id=?
+                )
                 """,
-                (meeting_job_id, uuid4().hex, "{}"),
+                (meeting_job_id, uuid4().hex, "{}", meeting_job_id),
             )
         return cursor.rowcount == 1
+
+    def enqueue_sent_meeting_memory_write_events(self) -> int:
+        """Queue every delivered conclusion without conflict-writing old rows.
+
+        The anti-join is deliberately performed inside an immediate write
+        transaction. Repeated idle scans therefore do not execute an ignored
+        insert (which would still advance an AUTOINCREMENT sequence in SQLite).
+        """
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                insert into meeting_memory_write_events (
+                    meeting_job_id, execution_generation, payload_json
+                )
+                select jobs.id, lower(hex(randomblob(16))), '{}'
+                from meeting_alignment_jobs as jobs
+                where jobs.status='sent'
+                  and trim(jobs.final_message)<>''
+                  and not exists (
+                      select 1
+                      from meeting_memory_write_events as events
+                      where events.meeting_job_id=jobs.id
+                  )
+                """
+            )
+        return cursor.rowcount
 
     def list_due_meeting_memory_write_events(
         self,
@@ -14303,58 +14358,119 @@ class AutoReplyStore:
             ).fetchall()
         return [self._meeting_memory_write_event_from_row(row) for row in rows]
 
+    def claim_due_meeting_memory_write_events(
+        self,
+        *,
+        now: str,
+        limit: int,
+        owner: str,
+        lease_seconds: int,
+    ) -> list[MeetingMemoryWriteEvent]:
+        """Atomically claim due writes, reclaiming only expired processing leases."""
+        if limit <= 0:
+            return []
+        owner = owner.strip()
+        if not owner:
+            raise ValueError("meeting Memory lease owner is required")
+        if lease_seconds <= 0:
+            raise ValueError("meeting Memory lease duration must be positive")
+        try:
+            claimed_at = datetime.fromisoformat(now.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("meeting Memory claim time must be ISO-8601") from exc
+        if claimed_at.tzinfo is None or claimed_at.utcoffset() is None:
+            raise ValueError("meeting Memory claim time must include a timezone")
+        lease_expires_at = (claimed_at + timedelta(seconds=lease_seconds)).isoformat()
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                """
+                update meeting_memory_write_events
+                set status='processing', lease_owner=?, lease_expires_at=?,
+                    started_at=?, updated_at=current_timestamp
+                where id in (
+                    select id
+                    from meeting_memory_write_events
+                    where (
+                        status='pending'
+                        and (
+                            available_at=''
+                            or datetime(available_at)<=datetime(?)
+                        )
+                    ) or (
+                        status='processing'
+                        and (
+                            trim(lease_expires_at)=''
+                            or datetime(lease_expires_at)<=datetime(?)
+                        )
+                    )
+                    order by id
+                    limit ?
+                )
+                returning *
+                """,
+                (owner, lease_expires_at, now, now, now, limit),
+            ).fetchall()
+        return [self._meeting_memory_write_event_from_row(row) for row in rows]
+
     def complete_meeting_memory_write_event(
         self,
         event_id: int,
         *,
+        owner: str,
         memory_id: str,
-    ) -> None:
+    ) -> bool:
         with self._connect() as db:
             cursor = db.execute(
                 """
                 update meeting_memory_write_events
                 set status='done', attempts=attempts+1, available_at='',
-                    error='', memory_id=?, updated_at=current_timestamp
-                where id=? and status='pending'
+                    error='', memory_id=?, lease_owner='', lease_expires_at='',
+                    updated_at=current_timestamp
+                where id=? and status='processing' and lease_owner=?
                 """,
-                (memory_id, event_id),
+                (memory_id, event_id, owner),
             )
-        if cursor.rowcount != 1:
-            raise ValueError("meeting Memory write event is not pending")
+        return cursor.rowcount == 1
 
     def retry_meeting_memory_write_event(
         self,
         event_id: int,
         *,
+        owner: str,
         error: str,
         available_at: str,
-    ) -> None:
+    ) -> bool:
         with self._connect() as db:
             cursor = db.execute(
                 """
                 update meeting_memory_write_events
-                set attempts=attempts+1, available_at=?, error=?,
-                    updated_at=current_timestamp
-                where id=? and status='pending'
+                set status='pending', attempts=attempts+1, available_at=?, error=?,
+                    lease_owner='', lease_expires_at='', updated_at=current_timestamp
+                where id=? and status='processing' and lease_owner=?
                 """,
-                (available_at, error[:500], event_id),
+                (available_at, error[:500], event_id, owner),
             )
-        if cursor.rowcount != 1:
-            raise ValueError("meeting Memory write event is not pending")
+        return cursor.rowcount == 1
 
-    def fail_meeting_memory_write_event(self, event_id: int, *, error: str) -> None:
+    def fail_meeting_memory_write_event(
+        self,
+        event_id: int,
+        *,
+        owner: str,
+        error: str,
+    ) -> bool:
         with self._connect() as db:
             cursor = db.execute(
                 """
                 update meeting_memory_write_events
                 set status='failed', attempts=attempts+1, available_at='',
-                    error=?, updated_at=current_timestamp
-                where id=? and status='pending'
+                    error=?, lease_owner='', lease_expires_at='',
+                    updated_at=current_timestamp
+                where id=? and status='processing' and lease_owner=?
                 """,
-                (error[:500], event_id),
+                (error[:500], event_id, owner),
             )
-        if cursor.rowcount != 1:
-            raise ValueError("meeting Memory write event is not pending")
+        return cursor.rowcount == 1
 
     def requeue_failed_meeting_memory_write_event(
         self,
@@ -14372,7 +14488,8 @@ class AutoReplyStore:
                 """
                 update meeting_memory_write_events as events
                 set status='pending', available_at='', error=?,
-                    execution_generation=?, updated_at=current_timestamp
+                    execution_generation=?, lease_owner='', lease_expires_at='',
+                    started_at='', updated_at=current_timestamp
                 where events.id=? and events.status='failed'
                   and exists (
                     select 1
@@ -14408,7 +14525,7 @@ class AutoReplyStore:
                 """
                 update meeting_memory_write_events as events
                 set status='done', available_at='', error='', memory_id=?,
-                    updated_at=current_timestamp
+                    lease_owner='', lease_expires_at='', updated_at=current_timestamp
                 where events.id=? and events.status='failed'
                   and exists (
                     select 1

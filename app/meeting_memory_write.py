@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from app.agent_runtime_router import RoutedCodexExecution
 from app.codex_memory_write import CodexMemoryWriteFailed, execute_codex_memory_write
@@ -19,6 +22,7 @@ MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS = 60.0
 MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS = 15 * 60
 MEETING_MEMORY_TITLE_LIMIT = 80
 MEETING_MEMORY_START_STALL_SECONDS = 60
+MEETING_MEMORY_WRITE_LEASE_SECONDS = 45 * 60
 # A result-validation failure terminates the individual runtime attempt, but
 # does not prove that the already-delivered meeting conclusion is invalid. A
 # new event generation can use the current result schema and route health.
@@ -116,12 +120,24 @@ def meeting_memory_payload(job: Any) -> dict[str, str]:
 
 
 def enqueue_sent_meeting_memory_writes(store: AutoReplyStore) -> int:
-    """Create one idempotent Memory-delivery record for each sent meeting."""
-    created = 0
-    for job in store.list_sent_meeting_alignment_jobs():
-        if store.create_meeting_memory_write_event(job.id):
-            created += 1
-    return created
+    """Create each missing Memory-delivery record without idle conflict writes."""
+    return store.enqueue_sent_meeting_memory_write_events()
+
+
+@dataclass(frozen=True)
+class MeetingMemoryWriteOutcome:
+    """One worker tick's durable queue outcome."""
+
+    claimed: int = 0
+    completed: int = 0
+    retried: int = 0
+    failed: int = 0
+    lost_lease: int = 0
+
+    @property
+    def processed(self) -> int:
+        """Compatibility count: every claimed event was given one worker turn."""
+        return self.claimed
 
 
 def process_meeting_memory_writes(
@@ -131,29 +147,59 @@ def process_meeting_memory_writes(
     routed_execution: RoutedCodexExecution,
     now: datetime,
     limit: int = 1,
-) -> int:
-    """Write due delivered conclusions and preserve their terminal meeting state."""
+    concurrency: int = 1,
+) -> MeetingMemoryWriteOutcome:
+    """Claim and write due conclusions with bounded, lease-safe concurrency."""
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("meeting Memory processing time must include a timezone")
+    if concurrency <= 0:
+        raise ValueError("meeting Memory concurrency must be positive")
     store.supersede_obsolete_meeting_memory_runtime_attempts()
     store.recover_unstarted_runtime_operation_attempts(
         stale_after_seconds=MEETING_MEMORY_START_STALL_SECONDS,
         now=now,
     )
     enqueue_sent_meeting_memory_writes(store)
-    processed = 0
-    for event in store.list_due_meeting_memory_write_events(
-        now=now.isoformat(), limit=limit
-    ):
-        _process_event(
-            store,
+    owner = f"meeting-memory-{uuid4().hex}"
+    events = store.claim_due_meeting_memory_write_events(
+        now=now.isoformat(),
+        limit=limit,
+        owner=owner,
+        lease_seconds=MEETING_MEMORY_WRITE_LEASE_SECONDS,
+    )
+    if not events:
+        return MeetingMemoryWriteOutcome()
+
+    def process_claimed_event(event: MeetingMemoryWriteEvent) -> str:
+        # SQLite connections must be confined to their worker thread. The
+        # routed execution has no held SQLite connection; its persisted runtime
+        # methods open their own short-lived connections as well.
+        worker_store = AutoReplyStore(
+            store.path,
+            busy_timeout_seconds=store.busy_timeout_seconds,
+        )
+        return _process_event(
+            worker_store,
             event,
             workspace=workspace,
             routed_execution=routed_execution,
             now=now,
+            owner=owner,
         )
-        processed += 1
-    return processed
+
+    worker_count = min(concurrency, len(events))
+    if worker_count == 1:
+        results = [process_claimed_event(event) for event in events]
+    else:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            results = list(executor.map(process_claimed_event, events))
+    return MeetingMemoryWriteOutcome(
+        claimed=len(events),
+        completed=results.count("completed"),
+        retried=results.count("retried"),
+        failed=results.count("failed"),
+        lost_lease=results.count("lost_lease"),
+    )
 
 
 def _process_event(
@@ -163,7 +209,8 @@ def _process_event(
     workspace: Path,
     routed_execution: RoutedCodexExecution,
     now: datetime,
-) -> None:
+    owner: str,
+) -> str:
     try:
         payload = meeting_memory_payload(store.get_meeting_alignment_job(event.meeting_job_id))
         result = execute_codex_memory_write(
@@ -190,18 +237,27 @@ def _process_event(
                 event.attempts,
                 max_delay_seconds=MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS,
             )
-            store.retry_meeting_memory_write_event(
+            settled = store.retry_meeting_memory_write_event(
                 event.id,
+                owner=owner,
                 error=f"{exc.source_code}: {exc}",
                 available_at=(now + timedelta(seconds=delay)).isoformat(),
             )
+            return "retried" if settled else "lost_lease"
         else:
-            store.fail_meeting_memory_write_event(
+            settled = store.fail_meeting_memory_write_event(
                 event.id,
+                owner=owner,
                 error=f"{exc.source_code}: {exc}",
             )
+            return "failed" if settled else "lost_lease"
     except (TypeError, ValueError) as exc:
-        store.fail_meeting_memory_write_event(event.id, error=str(exc))
+        settled = store.fail_meeting_memory_write_event(
+            event.id,
+            owner=owner,
+            error=str(exc),
+        )
+        return "failed" if settled else "lost_lease"
     except Exception as exc:  # keep one malformed runtime result from stopping the queue
         LOGGER.exception("meeting Memory write event %s crashed", event.id)
         delay = retry_delay_seconds(
@@ -209,18 +265,23 @@ def _process_event(
             event.attempts,
             max_delay_seconds=MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS,
         )
-        store.retry_meeting_memory_write_event(
+        settled = store.retry_meeting_memory_write_event(
             event.id,
+            owner=owner,
             error=(
                 "meeting_memory_runtime_error: "
                 f"{type(exc).__name__}: {exc}"
             ),
             available_at=(now + timedelta(seconds=delay)).isoformat(),
         )
+        return "retried" if settled else "lost_lease"
     else:
-        store.complete_meeting_memory_write_event(
-            event.id, memory_id=result.episode_uuid
+        settled = store.complete_meeting_memory_write_event(
+            event.id,
+            owner=owner,
+            memory_id=result.episode_uuid,
         )
+        return "completed" if settled else "lost_lease"
 
 
 def _required_payload_text(payload: dict[str, object], key: str) -> str:

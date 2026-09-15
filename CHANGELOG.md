@@ -1,5 +1,13 @@
 # Changelog
 
+- 2026-09-15: Meeting-to-Memory delivery now atomically leases due events
+  before execution and settles only from the current lease owner. The worker
+  can process a bounded number of independently connected events in parallel;
+  expired leases recover safely through the existing runtime generation fence.
+  Idle sent-meeting scans use a set-based anti-join, so already-enqueued rows
+  are not conflict-written and SQLite's event sequence no longer grows on an
+  empty scan.
+
 - 2026-09-15: Folder-derived Email training observations now look up processed
   message identities in bounded batches instead of opening SQLite once per
   cached message. Large Junk and Trash folders remain eligible training
