@@ -14,6 +14,16 @@ from pathlib import Path
 import numpy as np
 
 
+EMBEDDING_INPUT_MAX_CHARS = 2_000
+
+
+def embedding_input_text(value: str) -> str:
+    """Bound remote embedding work while preserving the canonical prefix."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("embedding input must be non-empty text")
+    return value[:EMBEDDING_INPUT_MAX_CHARS]
+
+
 @dataclass(frozen=True)
 class EmbeddingCacheKey:
     normalized_input_hash: str
@@ -45,7 +55,9 @@ class EmbeddingCacheKey:
         embedding_revision: str,
     ) -> "EmbeddingCacheKey":
         return cls(
-            normalized_input_hash=sha256(normalized_text.encode("utf-8")).hexdigest(),
+            normalized_input_hash=sha256(
+                embedding_input_text(normalized_text).encode("utf-8")
+            ).hexdigest(),
             input_schema_version=input_schema_version,
             embedding_model_id=embedding_model_id,
             embedding_revision=embedding_revision,

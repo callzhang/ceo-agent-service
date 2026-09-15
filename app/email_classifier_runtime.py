@@ -30,7 +30,11 @@ from app.email_classifier_scan import EmailScanConfig, EmailScanResult, scan_rea
 from app.email_store import EmailStore
 from app.email_model_registry import EmailModelRegistry, ModelRegistryError
 from app.email_model_registry import assess_staged_candidate_readiness
-from app.email_embedding_cache import EmbeddingCache, EmbeddingCacheKey
+from app.email_embedding_cache import (
+    EmbeddingCache,
+    EmbeddingCacheKey,
+    embedding_input_text,
+)
 from app.email_embedding_classifier import DescriptionAwareEmailClassifier
 from app.email_embedding_client import EmailEmbeddingClient, EmbeddingResult, EmbeddingTiming
 from app.jieba_loader import jieba_lcut
@@ -728,7 +732,7 @@ class OnlineEmbeddingPredictor:
             if value.input_schema_version != self.classifier.input_schema_version:
                 raise ValueError("online model input version mismatch")
             key = EmbeddingCacheKey.for_text(
-                normalized_text=value.normalized_text,
+                normalized_text=embedding_input_text(value.normalized_text),
                 input_schema_version=value.input_schema_version,
                 embedding_model_id=self.classifier.embedding_model_id,
                 embedding_revision=self.classifier.embedding_revision,
@@ -736,7 +740,7 @@ class OnlineEmbeddingPredictor:
             vector = self.cache.get(key)
             if vector is None:
                 embedded = self.embedding_batcher.embed_one(
-                    value.normalized_text, self.compatibility
+                    embedding_input_text(value.normalized_text), self.compatibility
                 )
                 vector = embedded.vectors[0]
                 self.cache.put(key, vector)

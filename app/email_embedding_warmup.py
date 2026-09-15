@@ -7,7 +7,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from app.email_embedding_cache import EmbeddingCache, EmbeddingCacheKey
+from app.email_embedding_cache import (
+    EmbeddingCache,
+    EmbeddingCacheKey,
+    embedding_input_text,
+)
 from app.email_embedding_classifier import CategoryDescription
 
 
@@ -101,7 +105,7 @@ def warm_frozen_training_embeddings(
     cache_writes = 0
     for offset in range(0, len(entries), 8):
         batch = entries[offset : offset + 8]
-        result = embed([text for _key, text in batch])
+        result = embed([embedding_input_text(text) for _key, text in batch])
         vectors = getattr(result, "vectors", None)
         matrix = np.asarray(vectors, dtype=np.float32)
         if matrix.shape != (len(batch), cache.dimension):

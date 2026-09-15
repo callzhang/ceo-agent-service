@@ -3515,7 +3515,7 @@ def build_email_worker_dependencies(
         ) -> tuple[object, ...]:
             """Run one explicit cached historical batch; never scheduled by worker."""
 
-            from app.email_embedding_cache import EmbeddingCache
+            from app.email_embedding_cache import EmbeddingCache, embedding_input_text
             from app.email_embedding_classifier import DescriptionAwareEmailClassifier
             from app.email_historical_classifier import (
                 MAX_HISTORICAL_BATCH_SIZE,
@@ -3745,7 +3745,7 @@ def build_email_worker_dependencies(
                                 provider_message=candidate.provider_message,
                             )
                             key = EmbeddingCacheKey.for_text(
-                                normalized_text=candidate.normalized_text,
+                                normalized_text=embedding_input_text(candidate.normalized_text),
                                 input_schema_version=str(model.input_schema_version),
                                 embedding_model_id=str(model.embedding_model_id),
                                 embedding_revision=str(model.embedding_revision),

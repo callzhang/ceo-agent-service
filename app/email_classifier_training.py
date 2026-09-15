@@ -195,7 +195,7 @@ def train_frozen_embedding_candidate(
         historical_systematic_error_state.unresolved
     )
 
-    from app.email_embedding_cache import EmbeddingCacheKey
+    from app.email_embedding_cache import EmbeddingCacheKey, embedding_input_text
     from app.email_embedding_classifier import (
         CategoryDescription,
         DescriptionAwareEmailClassifier,
@@ -290,7 +290,7 @@ def train_frozen_embedding_candidate(
 
     def vector_for(row: Mapping[str, object]) -> np.ndarray:
         key = EmbeddingCacheKey.for_text(
-            normalized_text=str(row["normalized_model_input"]),
+            normalized_text=embedding_input_text(str(row["normalized_model_input"])),
             input_schema_version=input_schema,
             embedding_model_id=embedding_model_id,
             embedding_revision=embedding_revision,

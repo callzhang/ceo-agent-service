@@ -1006,7 +1006,7 @@ def _run_training_job(
                     # larger warmup batches can stall behind heterogeneous GPU
                     # work. Cache hydration is one-time, so favor completion.
                     max_batch_size=1,
-                    timeout_seconds=60.0,
+                    timeout_seconds=300.0,
                 )
                 try:
                     warm_frozen_training_embeddings(

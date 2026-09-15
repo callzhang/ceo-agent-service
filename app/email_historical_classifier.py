@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from app.email_classifier_contracts import validate_email_category_key
-from app.email_embedding_cache import EmbeddingCacheKey
+from app.email_embedding_cache import EmbeddingCacheKey, embedding_input_text
 from app.email_embedding_classifier import EmbeddingModelPrediction
 from app.email_provider_folders import FolderRole
 
@@ -233,7 +233,7 @@ class HistoricalClassifier:
         if not planning_state.eligible:
             return self._outcome(candidate, action_outcome="not_historical_candidate")
         key = EmbeddingCacheKey.for_text(
-            normalized_text=candidate.normalized_text,
+            normalized_text=embedding_input_text(candidate.normalized_text),
             input_schema_version=str(self.model.input_schema_version),
             embedding_model_id=str(self.model.embedding_model_id),
             embedding_revision=str(self.model.embedding_revision),
