@@ -1000,7 +1000,10 @@ def _run_training_job(
                 if snapshot is None:
                     raise RuntimeError("frozen training snapshot is unavailable")
                 client = EmailEmbeddingClient.from_environment(
-                    embedding_revision=embedding_revision, dimension=dimension
+                    embedding_revision=embedding_revision,
+                    dimension=dimension,
+                    max_batch_size=64,
+                    timeout_seconds=60.0,
                 )
                 try:
                     warm_frozen_training_embeddings(

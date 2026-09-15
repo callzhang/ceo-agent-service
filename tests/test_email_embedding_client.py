@@ -124,6 +124,24 @@ def test_client_reads_optional_secret_from_environment(
     }
 
 
+def test_client_allows_offline_training_batch_and_deadline_overrides() -> None:
+    transport = RecordingTransport()
+    client = EmailEmbeddingClient(
+        url="https://gpu4.example/v1/embeddings",
+        embedding_revision="offline-r1",
+        dimension=3,
+        transport=transport,
+        clock=FakeClock(),
+        max_batch_size=64,
+        timeout_seconds=60.0,
+    )
+
+    client.embed([f"mail-{index}" for index in range(65)])
+
+    assert [len(call["json"]["input"]) for call in transport.calls] == [64, 1]  # type: ignore[index]
+    assert all(call["timeout"].read <= 60.0 for call in transport.calls)  # type: ignore[union-attr]
+
+
 @pytest.mark.parametrize(
     "payload",
     [

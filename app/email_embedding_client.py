@@ -68,6 +68,8 @@ class EmailEmbeddingClient:
         model_id: str = DEFAULT_EMBEDDING_MODEL_ID,
         transport: EmbeddingTransport | None = None,
         clock: Callable[[], float] = time.perf_counter,
+        max_batch_size: int = MAX_EMBEDDING_BATCH_SIZE,
+        timeout_seconds: float = EMBEDDING_TIMEOUT_SECONDS,
     ) -> None:
         self.url = _required_text(url, "url")
         self.model_id = _required_text(model_id, "model_id")
@@ -81,6 +83,20 @@ class EmailEmbeddingClient:
         ):
             raise ValueError("dimension must be a positive integer")
         self.dimension = dimension
+        if (
+            isinstance(max_batch_size, bool)
+            or not isinstance(max_batch_size, int)
+            or max_batch_size < 1
+        ):
+            raise ValueError("max_batch_size must be a positive integer")
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be positive")
+        self.max_batch_size = max_batch_size
+        self.timeout_seconds = float(timeout_seconds)
         self._api_key = api_key.strip() if api_key and api_key.strip() else None
         self._transport = transport or httpx.Client(trust_env=False)
         self._owns_transport = transport is None
@@ -102,6 +118,8 @@ class EmailEmbeddingClient:
         transport: EmbeddingTransport | None = None,
         clock: Callable[[], float] = time.perf_counter,
         environ: Mapping[str, str] | None = None,
+        max_batch_size: int = MAX_EMBEDDING_BATCH_SIZE,
+        timeout_seconds: float = EMBEDDING_TIMEOUT_SECONDS,
     ) -> "EmailEmbeddingClient":
         values = os.environ if environ is None else environ
         return cls(
@@ -113,6 +131,8 @@ class EmailEmbeddingClient:
             dimension=dimension,
             transport=transport,
             clock=clock,
+            max_batch_size=max_batch_size,
+            timeout_seconds=timeout_seconds,
         )
 
     def embed(
@@ -131,10 +151,10 @@ class EmailEmbeddingClient:
         vectors: list[np.ndarray] = []
         http_seconds = 0.0
         embedding_started = self._clock()
-        for offset in range(0, len(texts), MAX_EMBEDDING_BATCH_SIZE):
-            batch = texts[offset : offset + MAX_EMBEDDING_BATCH_SIZE]
+        for offset in range(0, len(texts), self.max_batch_size):
+            batch = texts[offset : offset + self.max_batch_size]
             http_started = self._clock()
-            deadline = http_started + EMBEDDING_TIMEOUT_SECONDS
+            deadline = http_started + self.timeout_seconds
             try:
                 payload = self._stream_json_response(
                     batch=batch,
