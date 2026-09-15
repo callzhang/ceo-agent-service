@@ -15,6 +15,12 @@ MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS = 60.0
 MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS = 15 * 60
 MEETING_MEMORY_TITLE_LIMIT = 80
 MEETING_MEMORY_START_STALL_SECONDS = 60
+# A result-validation failure terminates the individual runtime attempt, but
+# does not prove that the already-delivered meeting conclusion is invalid. A
+# new event generation can use the current result schema and route health.
+MEETING_MEMORY_WRITE_RETRYABLE_RUNTIME_CODES = frozenset(
+    {"runtime_result_invalid", "friday_runtime_result_invalid"}
+)
 
 
 def _meeting_memory_content_title(final_message: str, decision_json: str = "") -> str:
@@ -149,7 +155,11 @@ def _process_event(
             routed_execution=routed_execution,
         )
     except CodexMemoryWriteFailed as exc:
-        if exc.retryable or exc.source_code == "runtime_attempt_active":
+        if (
+            exc.retryable
+            or exc.source_code == "runtime_attempt_active"
+            or exc.source_code in MEETING_MEMORY_WRITE_RETRYABLE_RUNTIME_CODES
+        ):
             delay = retry_delay_seconds(
                 MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS,
                 event.attempts,
