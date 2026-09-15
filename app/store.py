@@ -10043,6 +10043,42 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def supersede_obsolete_meeting_memory_runtime_attempts(self) -> int:
+        """Close an interrupted Memory generation after its event was safely reopened.
+
+        Meeting Memory events receive a new execution generation only when a
+        failed event is explicitly requeued.  An active runtime attempt for the
+        old generation can therefore no longer complete the current event.  It
+        is safe to terminalize that stale attempt only while it has not crossed
+        the persisted external-effect fence.
+        """
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts as attempt
+                set status='superseded', failure_class='', failure_code='',
+                    failover_permitted=0, lease_owner='', lease_expires_at='',
+                    finished_at=?, updated_at=?
+                where attempt.agent_run_id is null
+                  and attempt.workload_kind='memory'
+                  and attempt.status in ('starting', 'running')
+                  and attempt.first_effect_started_at=''
+                  and exists (
+                      select 1
+                      from meeting_memory_write_events as event
+                      where attempt.workload_key like (
+                          'meeting_memory_write_event:' || event.id || ':%'
+                      )
+                        and substr(
+                            attempt.workload_key,
+                            length('meeting_memory_write_event:' || event.id || ':') + 1
+                        ) <> event.execution_generation
+                  )
+                """,
+                (now_text, now_text),
+            )
+            return cursor.rowcount
+
     def set_agent_runtime_attempt_session(
         self,
         attempt_id: int,
