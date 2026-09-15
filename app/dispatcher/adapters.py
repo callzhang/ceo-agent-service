@@ -119,7 +119,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                     "and (source.lease_owner='' or source.lease_expires_at<=?)"
                 ),
                 source_params=(now_text, now_text),
-                order_by="source.id desc",
+                order_by="id desc",
             )
         return QueueMetrics(
             pending=int(pending),
@@ -1697,7 +1697,7 @@ def _latest_actionable_error(
     column: str,
     source_projection: str,
     source_params: tuple[object, ...],
-    order_by: str = "source.updated_at desc, source.id desc",
+    order_by: str = "updated_at desc, id desc",
 ) -> str:
     claim_error = db.execute(
         "select claim.last_error from dispatcher_claim_leases claim "
@@ -1711,9 +1711,10 @@ def _latest_actionable_error(
     if claim_error is not None:
         return str(claim_error[0])
     source_error = db.execute(
-        f"select source.{column} "
+        f"select actionable.{column} from (select source.* "
         + source_projection
-        + f" and trim(source.{column})<>'' order by {order_by} limit 1",
+        + f") actionable where trim(actionable.{column})<>'' "
+        f"order by {order_by} limit 1",
         source_params,
     ).fetchone()
     return "" if source_error is None else str(source_error[0])

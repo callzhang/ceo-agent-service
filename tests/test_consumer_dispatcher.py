@@ -1603,7 +1603,7 @@ def test_renew_failure_keeps_dispatching_other_adapter_and_reports_error(
         "reply",
         "scheduled",
     ]
-    assert "no longer owned" in reply.metrics(NOW + timedelta(seconds=1)).latest_error
+    assert reply.metrics(NOW + timedelta(seconds=1)).latest_error == ""
 
 
 def test_completion_prunes_terminal_ledger_without_removing_active_generation(
@@ -1808,6 +1808,65 @@ def test_scheduled_metrics_exclude_terminal_source_failures_from_latest_error(
 
     assert metrics.pending == metrics.due == metrics.running == 0
     assert metrics.latest_error == ""
+
+
+def test_actionable_error_ignores_newer_blank_rows_for_or_based_adapters(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    meeting_id = _meeting(store)
+    blank_meeting_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-blank",
+        title="Blank meeting",
+        source_json="{}",
+        participants_json="[]",
+        ended_at=(NOW - timedelta(minutes=20)).isoformat(),
+        eligible_at=(NOW - timedelta(minutes=10)).isoformat(),
+        status="pending",
+    )
+    work_summary_id = _work_summary(store)
+    blank_work_summary_id = store.enqueue_work_summary_input(
+        "reply_attempt", "task-blank", "{}"
+    )
+    okr_id = _okr_review(store)
+    blank_okr_id = _okr_review(store, index=2)
+    older = NOW.strftime("%Y-%m-%d %H:%M:%S")
+    newer = (NOW + timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
+    with store._connect() as db:
+        db.execute(
+            "update meeting_alignment_jobs set error='retryable meeting failure', "
+            "updated_at=? where id=?",
+            (older, meeting_id),
+        )
+        db.execute(
+            "update meeting_alignment_jobs set error='', updated_at=? where id=?",
+            (newer, blank_meeting_id),
+        )
+        db.execute(
+            "update work_summary_inputs set error='retryable work-summary failure', "
+            "updated_at=? where id=?",
+            (older, work_summary_id),
+        )
+        db.execute(
+            "update work_summary_inputs set error='', updated_at=? where id=?",
+            (newer, blank_work_summary_id),
+        )
+        db.execute(
+            "update okr_review_requests set error='retryable OKR failure', updated_at=? "
+            "where id=?",
+            (older, okr_id),
+        )
+        db.execute(
+            "update okr_review_requests set error='', updated_at=? where id=?",
+            (newer, blank_okr_id),
+        )
+
+    assert MeetingQueueAdapter(store).metrics(NOW).latest_error == "retryable meeting failure"
+    assert (
+        WorkSummaryQueueAdapter(store).metrics(NOW).latest_error
+        == "retryable work-summary failure"
+    )
+    assert OkrReviewQueueAdapter(store).metrics(NOW).latest_error == "retryable OKR failure"
 
 
 def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
