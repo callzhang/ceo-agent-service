@@ -127,8 +127,12 @@ def test_store_upgrades_point_seven_schema_with_current_indexes(tmp_path: Path):
                 "select name from sqlite_master where type='index'"
             )
         }
+        schema_version = db.execute(
+            "select value from service_state where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        ).fetchone()["value"]
 
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-14.4"
+    assert schema_version == store_module.STORE_SCHEMA_VERSION
     assert "idx_workbench_events_event_type" in indexes
     assert "idx_workbench_events_turn_id_id" in indexes
     assert "idx_workbench_turns_task_sequence" in indexes
@@ -223,8 +227,13 @@ def test_store_upgrades_point_eight_turns_with_stable_per_task_sequence(
 
     upgraded = WorkbenchStore(db_path)
     turns = upgraded.list_turns(task.id)
+    with upgraded._connect() as db:
+        schema_version = db.execute(
+            "select value from service_state where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        ).fetchone()["value"]
 
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-14.4"
+    assert schema_version == store_module.STORE_SCHEMA_VERSION
     assert [(turn.id, turn.task_sequence) for turn in turns] == [
         (second_id, 2),
         (first_id, 1),

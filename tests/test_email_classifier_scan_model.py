@@ -404,8 +404,10 @@ def test_snapshot_online_and_benchmark_use_identical_canonical_input(tmp_path):
         account_id=message["accountId"],
         folder=SimpleNamespace(provider_folder_id="work", display_name="Work"),
         role=FolderRole.CATEGORY, binding={"category_key": "work", "binding_status": "active"},
-        message=message, email_store=SimpleNamespace(has_stable_classification=lambda _: True),
+        message=message,
     )
+    # Classification is now refreshed outside the pure provider adapter.
+    observation["processed_by_email_service"] = True
     snapshot = build_folder_training_snapshot(
         [observation], snapshot_id="same-input-snapshot", description_version="description-v1",
         observed_at=datetime(2026, 9, 8, tzinfo=timezone.utc), seed=17,
