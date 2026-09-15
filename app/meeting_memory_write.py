@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -145,19 +146,27 @@ def process_meeting_memory_writes(
     *,
     workspace: Path,
     routed_execution: RoutedCodexExecution,
-    now: datetime,
+    now: datetime | None = None,
     limit: int = 1,
     concurrency: int = 1,
+    clock: Callable[[], datetime] | None = None,
 ) -> MeetingMemoryWriteOutcome:
-    """Claim and write due conclusions with bounded, lease-safe concurrency."""
-    if now.tzinfo is None or now.utcoffset() is None:
+    """Claim and write due conclusions with bounded, lease-safe concurrency.
+
+    ``clock`` controls every durable queue timestamp. It defaults to current
+    UTC time; callers can inject it for deterministic tests. ``now`` remains
+    accepted for source compatibility with the former API, but is not reused
+    as a long-running worker tick's clock.
+    """
+    if now is not None and (now.tzinfo is None or now.utcoffset() is None):
         raise ValueError("meeting Memory processing time must include a timezone")
     if concurrency <= 0:
         raise ValueError("meeting Memory concurrency must be positive")
+    tick_started_at = _meeting_memory_current_time(clock)
     store.supersede_obsolete_meeting_memory_runtime_attempts()
     store.recover_unstarted_runtime_operation_attempts(
         stale_after_seconds=MEETING_MEMORY_START_STALL_SECONDS,
-        now=now,
+        now=tick_started_at,
     )
     enqueue_sent_meeting_memory_writes(store)
     owner = f"meeting-memory-{uuid4().hex}"
@@ -175,8 +184,8 @@ def process_meeting_memory_writes(
             event,
             workspace=workspace,
             routed_execution=routed_execution,
-            now=now,
             owner=owner,
+            clock=clock,
         )
 
     results: list[str] = []
@@ -186,8 +195,9 @@ def process_meeting_memory_writes(
         # Do not lease the next wave until all events in the current wave can
         # begin. This keeps a slow single worker from parking the rest of a
         # large batch in ``processing`` until their lease expires.
+        wave_started_at = _meeting_memory_current_time(clock)
         events = store.claim_due_meeting_memory_write_events(
-            now=now.isoformat(),
+            now=wave_started_at.isoformat(),
             limit=min(concurrency, remaining),
             owner=owner,
             lease_seconds=MEETING_MEMORY_WRITE_LEASE_SECONDS,
@@ -217,8 +227,8 @@ def _process_event(
     *,
     workspace: Path,
     routed_execution: RoutedCodexExecution,
-    now: datetime,
     owner: str,
+    clock: Callable[[], datetime] | None,
 ) -> str:
     try:
         payload = meeting_memory_payload(store.get_meeting_alignment_job(event.meeting_job_id))
@@ -250,7 +260,10 @@ def _process_event(
                 event.id,
                 owner=owner,
                 error=f"{exc.source_code}: {exc}",
-                available_at=(now + timedelta(seconds=delay)).isoformat(),
+                available_at=(
+                    _meeting_memory_current_time(clock)
+                    + timedelta(seconds=delay)
+                ).isoformat(),
             )
             return "retried" if settled else "lost_lease"
         else:
@@ -281,7 +294,10 @@ def _process_event(
                 "meeting_memory_runtime_error: "
                 f"{type(exc).__name__}: {exc}"
             ),
-            available_at=(now + timedelta(seconds=delay)).isoformat(),
+            available_at=(
+                _meeting_memory_current_time(clock)
+                + timedelta(seconds=delay)
+            ).isoformat(),
         )
         return "retried" if settled else "lost_lease"
     else:
@@ -291,6 +307,15 @@ def _process_event(
             memory_id=result.episode_uuid,
         )
         return "completed" if settled else "lost_lease"
+
+
+def _meeting_memory_current_time(
+    clock: Callable[[], datetime] | None,
+) -> datetime:
+    value = clock() if clock is not None else datetime.now(timezone.utc)
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("meeting Memory clock must include a timezone")
+    return value
 
 
 def _required_payload_text(payload: dict[str, object], key: str) -> str:

@@ -3890,6 +3890,9 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
     reconciled_terminal_projections = (
         store.reconcile_done_reply_tasks_with_failed_current_run()
     )
+    reconciled_confirmation_boundaries = (
+        store.reconcile_failed_reply_tasks_with_confirmation_required_runs()
+    )
     reconciled_email_unsubscribe_receipts = (
         store.reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts()
     )
@@ -3914,6 +3917,7 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
         reconciled_recorded_deliveries
         + reconciled_email_unsubscribe_receipts
         + reconciled_terminal_projections
+        + reconciled_confirmation_boundaries
         + skipped_superseded_tasks
         + reconciled_terminal_attempts
         + skipped_terminal_no_action_tasks

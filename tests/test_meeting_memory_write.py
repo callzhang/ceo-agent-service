@@ -4,13 +4,14 @@ import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.meeting_memory_write import (
+    MEETING_MEMORY_WRITE_LEASE_SECONDS,
     enqueue_sent_meeting_memory_writes,
     meeting_memory_payload,
     process_meeting_memory_writes,
@@ -467,6 +468,106 @@ def test_meeting_memory_does_not_claim_a_later_wave_before_it_can_start(
 
     assert outcome.completed == 3
     assert runtime.statuses_while_running[0] == ["processing", "pending", "pending"]
+
+
+def test_later_meeting_memory_wave_leases_from_its_actual_start_time(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    for index in range(2):
+        _store_sent_job(store, meeting_id=f"minutes-lease-wave-{index}")
+    current_time = datetime.fromisoformat("2026-09-15T10:00:00+00:00")
+
+    def clock() -> datetime:
+        return current_time
+
+    class _AdvancingRuntime:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.second_wave_lease = ""
+            self.intruder_claim_count = -1
+
+        def execute(self, **kwargs):
+            nonlocal current_time
+            self.calls += 1
+            if self.calls == 1:
+                current_time += timedelta(seconds=MEETING_MEMORY_WRITE_LEASE_SECONDS + 1)
+            else:
+                with store._connect() as db:
+                    self.second_wave_lease = str(
+                        db.execute(
+                            "select lease_expires_at from meeting_memory_write_events "
+                            "where status='processing'"
+                        ).fetchone()["lease_expires_at"]
+                    )
+                self.intruder_claim_count = len(
+                    store.claim_due_meeting_memory_write_events(
+                        now=current_time.isoformat(),
+                        limit=1,
+                        owner="intruder",
+                        lease_seconds=30,
+                    )
+                )
+            return SimpleNamespace(
+                value=json.dumps(
+                    {
+                        "status": "success",
+                        "memory_id": f"memory-{kwargs['workload_key']}",
+                        "retryable": False,
+                        "source_code": "",
+                        "detail": "",
+                    }
+                )
+            )
+
+    runtime = _AdvancingRuntime()
+    outcome = process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=runtime,
+        now=current_time,
+        clock=clock,
+        limit=2,
+        concurrency=1,
+    )
+
+    assert outcome.completed == 2
+    assert runtime.second_wave_lease == "2026-09-15T11:30:01+00:00"
+    assert runtime.intruder_claim_count == 0
+
+
+def test_meeting_memory_retry_delay_starts_when_the_worker_finishes(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    current_time = datetime.fromisoformat("2026-09-15T10:00:00+00:00")
+
+    def clock() -> datetime:
+        return current_time
+
+    class _LateRetryRuntime:
+        def execute(self, **kwargs):
+            nonlocal current_time
+            current_time += timedelta(seconds=120)
+            raise RoutedCodexExecutionError("runtime_attempt_active")
+
+    outcome = process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=_LateRetryRuntime(),
+        now=current_time,
+        clock=clock,
+    )
+
+    assert outcome.retried == 1
+    with store._connect() as db:
+        available_at = str(
+            db.execute(
+                "select available_at from meeting_memory_write_events"
+            ).fetchone()["available_at"]
+        )
+    assert available_at == "2026-09-15T10:03:00+00:00"
 
 
 def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(

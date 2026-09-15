@@ -15,7 +15,12 @@ from app.agent_contracts import (
     ConsumerProposal,
     DecisionOption,
 )
-from app.agent_result import AgentError, ResultParseError
+from app.agent_result import (
+    RUNTIME_CONFIRMATION_REQUIRED_CODE,
+    AgentError,
+    ResultParseError,
+    requires_explicit_operator_confirmation,
+)
 from app.agent_turn_runner import AgentTurnRunResult
 from app.codex_capacity import is_codex_provider_recovery_code
 from app.config import principal_display_name
@@ -1471,13 +1476,13 @@ def _failure_status(error: AgentError) -> str:
 
 
 def _is_runtime_confirmation_required(error: AgentError) -> bool:
-    return error.authorization_required and error.code == "confirmation_required"
+    return requires_explicit_operator_confirmation(error)
 
 
 def _terminal_confirmation_error(error: AgentError) -> AgentError:
     return error.model_copy(
         update={
-            "code": "confirmation_required",
+            "code": RUNTIME_CONFIRMATION_REQUIRED_CODE,
             "retryable": False,
             "authorization_required": True,
         }

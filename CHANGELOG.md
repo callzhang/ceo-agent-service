@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-15: A runtime that stops at an explicit provider confirmation now
+  retains a valid `needs_human` Attempt instead of being overwritten as a
+  technical failure. Startup also restores that decision projection for legacy
+  failed runs without replaying their external action.
+
 - 2026-09-15: Meeting-to-Memory delivery now atomically leases due events
   before execution and settles only from the current lease owner. The worker
   can process a bounded number of independently connected events in parallel;
