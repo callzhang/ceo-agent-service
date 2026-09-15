@@ -56,6 +56,9 @@ def test_consumer_result_prefers_current_generation_when_attempt_has_no_run_id()
             "structured_error_json": '{"code":"service_restart_before_effect"}',
         },
     )()
+    partial_result = _consumer_result_payload(confidence=0.97, risk="low")
+    partial_result.pop("information_completeness")
+    partial_result.pop("rule_coverage")
     current = type(
         "Run",
         (),
@@ -65,12 +68,7 @@ def test_consumer_result_prefers_current_generation_when_attempt_has_no_run_id()
             "status": "completed",
             "turn_attempt": 0,
             "proposal_revision": 0,
-            "final_result_json": json.dumps(
-                {
-                    "confidence": 0.97,
-                    "risk": "low",
-                }
-            ),
+            "final_result_json": json.dumps(partial_result),
             "structured_error_json": "",
         },
     )()
@@ -79,7 +77,7 @@ def test_consumer_result_prefers_current_generation_when_attempt_has_no_run_id()
 
     assert result["confidence"] == "97%"
     assert result["risk"] == "low"
-    assert result["error_reason"] == "Consumer 结果不符合当前契约"
+    assert result["error_reason"] == ""
 
 
 def test_attempt_detail_loads_task_runs_when_attempt_has_no_run_id(tmp_path: Path):
@@ -612,10 +610,10 @@ def test_attempt_detail_api_preserves_valid_metrics_from_partial_consumer_result
     assert item is not None
     assert item["consumer_result"] == {
         "confidence": "97%",
-        "information_completeness": "—",
-        "rule_coverage": "—",
+        "information_completeness": "100%",
+        "rule_coverage": "100%",
         "risk": "low",
-        "error_reason": "Consumer 结果不符合当前契约",
+        "error_reason": "",
         "current_run": None,
     }
 

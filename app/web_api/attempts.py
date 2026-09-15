@@ -207,7 +207,20 @@ def _consumer_result_payload(
             from app.agent_contracts import ConsumerAgentResult
 
             try:
-                result = ConsumerAgentResult.model_validate_json(raw_result)
+                parsed_result = _stored_json(raw_result, {})
+                if isinstance(parsed_result, dict):
+                    hydrated_result = dict(parsed_result)
+                    # Results written before the coverage fields were added
+                    # remain valid historical judgements. Match the worker's
+                    # delivery-reconstruction compatibility policy: coverage
+                    # defaults are safe, while risk and confidence remain
+                    # required evidence.
+                    if "confidence" in hydrated_result and "risk" in hydrated_result:
+                        hydrated_result.setdefault("rule_coverage", 1.0)
+                        hydrated_result.setdefault("information_completeness", 1.0)
+                    result = ConsumerAgentResult.model_validate(hydrated_result)
+                else:
+                    result = None
             except ValueError:
                 result = None
 
@@ -227,11 +240,7 @@ def _consumer_result_payload(
                 return value.strip()
             return "—"
 
-        partial_error = (
-            "Consumer 结果不符合当前契约"
-            if partial and raw_result.strip()
-            else _consumer_error_reason(consumer_run)
-        )
+        partial_error = "Consumer 结果不符合当前契约" if partial and raw_result.strip() else _consumer_error_reason(consumer_run)
         payload: dict[str, Any] = {
             "confidence": metric("confidence", lambda value: f"{value:.0%}"),
             "information_completeness": metric(
