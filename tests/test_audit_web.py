@@ -1048,6 +1048,31 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "/codex/session-1" not in html
 
 
+def test_legacy_history_separates_email_unsubscribe_from_reply(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="legacy-email-unsubscribe",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="legacy-email-unsubscribe-message",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="reviewed_message_reply",
+        send_status="skipped",
+        channel="email",
+    )
+
+    reply_html = render_attempt_list(store, search_object_type="replay")
+    unsubscribe_html = render_attempt_list(
+        store, search_object_type="email_unsubscribe"
+    )
+
+    assert "history-type-email_unsubscribe" not in reply_html
+    assert "history-type-email_unsubscribe" in unsubscribe_html
+    assert "history-type-email_unsubscribe" in unsubscribe_html
+
+
 def test_history_hides_runtime_internals_and_shows_agent_outcome(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(

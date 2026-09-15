@@ -22186,6 +22186,13 @@ class AutoReplyStore:
                     case
                         when action='oa_approval' or oa_process_instance_id<>'' then 'approval'
                         when channel='wechat' then 'wechat'
+                        when channel='email' and (
+                            action='direct_unsubscribe'
+                            or (
+                                conversation_title='Email unsubscribe'
+                                and trigger_text='Immutable ActionPlan authorizes unsubscribe.'
+                            )
+                        ) then 'email_unsubscribe'
                         else 'replay'
                     end as object_type,
                     id as source_id,

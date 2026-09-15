@@ -771,7 +771,14 @@ HISTORY_TYPE_FILTERS = (
     "failed",
     "done",
 )
-HISTORY_SEARCH_OBJECT_TYPES = ("replay", "wechat", "approval", "task", "meeting")
+HISTORY_SEARCH_OBJECT_TYPES = (
+    "replay",
+    "email_unsubscribe",
+    "wechat",
+    "approval",
+    "task",
+    "meeting",
+)
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20
 LOG_PAGE_SIZE_OPTIONS = (20, 50, 100)
@@ -5699,6 +5706,7 @@ def _history_type_select(type_filters: tuple[str, ...]) -> str:
 def _history_search_object_type_select(search_object_type: str) -> str:
     labels = {
         "replay": "replay",
+        "email_unsubscribe": "Email unsubscribe",
         "wechat": "wechat",
         "approval": "审批",
         "task": "task",
@@ -6304,6 +6312,15 @@ def _history_attempt_type(attempt: ReplyAttempt) -> tuple[str, str]:
         return ("wechat", "WeChat")
 
     action = (attempt.action or "").strip().lower()
+    if channel == "email" and (
+        action == "direct_unsubscribe"
+        or (
+            attempt.conversation_title.strip() == "Email unsubscribe"
+            and attempt.trigger_text.strip()
+            == "Immutable ActionPlan authorizes unsubscribe."
+        )
+    ):
+        return ("email_unsubscribe", "Email unsubscribe")
     status = (attempt.send_status or "").strip().lower()
     if action == "oa_approval" or attempt.oa_process_instance_id.strip():
         return ("oa", "审批")

@@ -16,6 +16,7 @@ class HistoryItem(BaseModel):
     kind: Literal["reply", "meeting", "task"]
     object_type: Literal[
         "replay",
+        "email_unsubscribe",
         "wechat",
         "approval",
         "meeting",
