@@ -128,6 +128,7 @@ from app.developer_prompt import (
     write_configurable_prompt_variables,
     write_user_prompt_template,
 )
+from app.prompt import work_profile_instruction, write_work_profile
 from app.dingtalk_models import DingTalkMessage
 from app.wechat.models import WechatMessage
 from app.dws_client import DwsClient
@@ -3604,6 +3605,7 @@ def render_settings_page(
     log_query: str = "",
     log_type: str = "",
     worker_status_payload: dict[str, object] | None = None,
+    saved: bool = False,
 ) -> str:
     if active_tab == "config":
         # ``config`` was the former parent menu. Resolve old deep links to the
@@ -3627,6 +3629,7 @@ def render_settings_page(
         "configuration",
         "agent-runtime",
         "prompts",
+        "work-profile",
         "connectors",
         "audit-rules",
         "attention",
@@ -3654,6 +3657,8 @@ def render_settings_page(
         content = _render_configuration_content(db_path=store.path)
     elif active_tab == "prompts":
         content = _render_prompts_content(prompt=prompt, view=view)
+    elif active_tab == "work-profile":
+        content = _render_work_profile_content(view=view, saved=saved)
     elif active_tab == "connectors":
         content = _render_connectors_content(
             store,
@@ -3719,6 +3724,7 @@ def _settings_tabs(active_tab: str, *, attention_count: int = 0) -> str:
         ("configuration", "Configuration"),
         ("agent-runtime", "Agent Runtime"),
         ("prompts", "Prompts"),
+        ("work-profile", "Work Profile"),
         ("connectors", "Connectors"),
         ("audit-rules", "Audit Rules"),
         ("attention", "Attention"),
@@ -3901,6 +3907,61 @@ def _render_prompts_content(*, prompt: str = "developer", view: str = "template"
         "<h2>Prompts</h2>"
         f"<p class=\"muted\">{escape(prompt_label)} · template path: {escape(str(template_path))}</p>"
         f"{tabs}{toggle}{error_html}{editor}{runtime_variables}"
+        "</section>"
+    )
+
+
+def _work_profile_view_link(view: str, label: str, active: bool) -> str:
+    class_name = "prompt-tab active" if active else "prompt-tab"
+    return (
+        f'<a class="{class_name}" href="/settings?tab=work-profile&view='
+        f'{escape(view, quote=True)}">{escape(label)}</a>'
+    )
+
+
+def _render_work_profile_content(*, view: str = "source", saved: bool = False) -> str:
+    view = view if view in {"source", "injection"} else "source"
+    path = work_profile_path()
+    try:
+        instruction = work_profile_instruction()
+        profile = path.read_text(encoding="utf-8").strip()
+        error_html = ""
+    except OSError as exc:
+        instruction = ""
+        profile = ""
+        error_html = (
+            '<p class="attempt-warning">'
+            f"Cannot read work profile: {escape(str(exc))}</p>"
+        )
+    tabs = (
+        '<nav class="prompt-pill-tabs" aria-label="Work Profile sections">'
+        f"{_work_profile_view_link('source', 'Profile source', view == 'source')}"
+        f"{_work_profile_view_link('injection', 'Runtime injection', view == 'injection')}"
+        "</nav>"
+    )
+    saved_html = (
+        "<p class=\"muted\">Saved. New Consumer and Audit turns use this profile immediately.</p>"
+        if saved
+        else ""
+    )
+    if view == "source":
+        content = (
+            '<form method="post" action="/settings/work-profile">'
+            '<label for="work-profile">Distilled work profile</label>'
+            f'<textarea id="work-profile" name="profile" style="min-height:520px">{escape(profile)}</textarea>'
+            '<p><button type="submit">Save work profile</button></p>'
+            "</form>"
+        )
+    else:
+        content = (
+            '<p class="muted">This is the exact instruction appended to new Consumer and Audit turns.</p>'
+            f'<pre class="prompt-rendered-preview">{escape(instruction)}</pre>'
+        )
+    return (
+        '<section class="card">'
+        '<h2>Work Profile</h2>'
+        f'<p class="muted">Source path: {escape(str(path))}</p>'
+        f"{tabs}{saved_html}{error_html}{content}"
         "</section>"
     )
 
@@ -9146,6 +9207,16 @@ def handle_settings_audit_rules_post(body: bytes) -> tuple[int, dict[str, str], 
     }, ""
 
 
+def handle_work_profile_post(body: bytes) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    profile = parsed.get("profile", [""])[0]
+    try:
+        write_work_profile(profile)
+    except (OSError, ValueError) as exc:
+        return 400, {}, render_page("Work Profile invalid", escape(str(exc)))
+    return 303, {"Location": "/settings?tab=work-profile&view=source&saved=1"}, ""
+
+
 def handle_prompt_variables_post(body: bytes) -> tuple[int, dict[str, str], str]:
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
     active_tab = parsed.get("active_tab", ["info"])[0]
@@ -10827,6 +10898,7 @@ def create_audit_app(
             view=str(request.query_params.get("view", "template")),
             connector=str(request.query_params.get("connector", "dingtalk")),
             audit_rule=str(request.query_params.get("rule", "template")),
+            saved=request.query_params.get("saved") == "1",
             log_limit=_bounded_log_page_size(
                 _positive_int_query(request, "limit", default=DEFAULT_ERROR_LIST_LIMIT)
             ),
@@ -11108,6 +11180,11 @@ def create_audit_app(
     @app.post("/settings/audit-rules")
     async def settings_audit_rules_save(request: Request):
         status, headers, html = handle_settings_audit_rules_post(await request.body())
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/settings/work-profile")
+    async def settings_work_profile_save(request: Request):
+        status, headers, html = handle_work_profile_post(await request.body())
         return _fastapi_post_response(status, headers, html)
 
     @app.post("/config/agent-runtime")

@@ -3,6 +3,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from html import unescape
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from app.config import (
@@ -65,6 +66,17 @@ def work_profile_instruction() -> str:
 Profile 内容:
 {profile}
 """
+
+
+def write_work_profile(profile: str) -> Path:
+    """Persist the profile consumed by the next Consumer or Audit turn."""
+    normalized = profile.strip()
+    if not normalized:
+        raise ValueError("work profile must not be empty")
+    path = work_profile_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(normalized + "\n", encoding="utf-8")
+    return path
 
 
 def ceo_agent_thread_prompt() -> str:

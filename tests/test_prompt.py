@@ -29,6 +29,7 @@ from app.prompt import (
     ceo_agent_thread_prompt,
     message_lines,
     sanitize_dingtalk_prompt_text,
+    write_work_profile,
     work_profile_instruction,
 )
 from app.consumer_agent import (
@@ -344,6 +345,17 @@ def test_work_profile_instruction_seeds_missing_configured_profile(
     assert "No distilled work profile has been generated yet." in profile.read_text(
         encoding="utf-8"
     )
+
+
+def test_write_work_profile_updates_the_next_runtime_instruction(tmp_path, monkeypatch):
+    profile = tmp_path / "data" / "work-profile" / "work_profile.md"
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+
+    written = write_work_profile("# Work Profile\n\nPrefer concrete evidence.")
+
+    assert written == profile
+    assert profile.read_text(encoding="utf-8") == "# Work Profile\n\nPrefer concrete evidence.\n"
+    assert "Prefer concrete evidence." in work_profile_instruction()
 
 
 def test_user_prompt_template_path_can_be_overridden(tmp_path, monkeypatch):

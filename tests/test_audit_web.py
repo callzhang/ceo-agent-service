@@ -24,6 +24,7 @@ from app.audit_web import (
     handle_agent_runtime_config_post,
     handle_prompt_variables_post,
     handle_system_config_post,
+    handle_work_profile_post,
     handle_user_prompt_post,
     handle_feedback_post,
     handle_needs_human_decision_post,
@@ -6233,6 +6234,54 @@ def test_render_config_dynamic_functions_do_not_hardcode_principal_name(monkeypa
     assert "work_profile_instruction()" in html
     assert "读取并注入工作人格 Profile；通常用于 Developer Prompt。" in html
     assert "Alex 工作人格 Profile" not in html
+
+
+def test_settings_work_profile_shows_source_and_runtime_injection(tmp_path: Path, monkeypatch):
+    profile = tmp_path / "work_profile.md"
+    profile.write_text("# Work Profile\n\nPROFILE-SENTINEL", encoding="utf-8")
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    source = render_settings_page(store, active_tab="work-profile", view="source")
+    injection = render_settings_page(store, active_tab="work-profile", view="injection")
+
+    assert 'href="/settings?tab=work-profile"' in source
+    assert 'name="profile"' in source
+    assert "PROFILE-SENTINEL" in source
+    assert "Runtime injection" in injection
+    assert "明哥 工作人格 Profile" in injection
+    assert "PROFILE-SENTINEL" in injection
+
+
+def test_settings_work_profile_post_writes_profile(tmp_path: Path, monkeypatch):
+    profile = tmp_path / "work_profile.md"
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+
+    status, headers, body = handle_work_profile_post(
+        "profile=%23+Work+Profile%0A%0AUse+evidence+first.".encode()
+    )
+
+    assert status == 303
+    assert body == ""
+    assert headers["Location"] == "/settings?tab=work-profile&view=source&saved=1"
+    assert profile.read_text(encoding="utf-8") == "# Work Profile\n\nUse evidence first.\n"
+
+
+def test_settings_work_profile_route_persists_profile(tmp_path: Path, monkeypatch):
+    profile = tmp_path / "work_profile.md"
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+    client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post(
+        "/settings/work-profile",
+        content="profile=%23+Work+Profile%0A%0AUse+evidence+first.",
+        headers={"content-type": "application/x-www-form-urlencoded"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings?tab=work-profile&view=source&saved=1"
+    assert profile.read_text(encoding="utf-8") == "# Work Profile\n\nUse evidence first.\n"
 
 
 def test_config_route_is_available(tmp_path: Path):
