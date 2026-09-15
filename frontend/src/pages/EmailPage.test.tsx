@@ -359,7 +359,7 @@ it("selects only executable training sources and records a narrowed folder scope
   const user=userEvent.setup();
   api.listEmailLearning.mockResolvedValue({learning:learning({model_families:[{family:"embedding-mlp",display_name:"Embedding + MLP",supported:true,configured:true}],training_sources:[
     {source:"agent_auto_label",category:"work",sample_count:12,supported:false,provenance:{classification_source:"agent"}},
-    {source:"folder_snapshot",category:"work",sample_count:12,supported:true,provenance:{snapshot_id:"snapshot-1"}},
+    {source:"folder_snapshot",category:"work",sample_count:24,supported:true,provenance:{snapshot_id:"snapshot-1"}},
     {source:"folder_snapshot",category:"legal",sample_count:4,supported:true,provenance:{snapshot_id:"snapshot-1"}},
   ]})});
   api.requestEmailTraining.mockResolvedValue({ok:true,learning:{training_status:"running",training_run_id:"run-1",selection:{sources:["folder_snapshot"],categories:["work"]}}});
@@ -367,7 +367,7 @@ it("selects only executable training sources and records a narrowed folder scope
   await user.click(await screen.findByRole("button",{name:"新建训练"}));
   expect(await screen.findByRole("dialog",{name:"新建训练"})).toHaveTextContent("Agent 自动标注");
   const source=screen.getByRole("checkbox",{name:/Agent 自动标注\s*（当前不可用）/});expect(source).not.toBeChecked();expect(source).toBeDisabled();
-  const category=screen.getByRole("checkbox",{name:"legal"});expect(category).toBeChecked();await user.click(category);
+  const category=screen.getByRole("checkbox",{name:"legal"});expect(category).not.toBeChecked();
   await waitFor(()=>expect(screen.getByRole("button",{name:"开始训练"})).toBeEnabled());
   await user.click(screen.getByRole("button",{name:"开始训练"}));
   expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]});
@@ -381,7 +381,7 @@ it("shows model family support and submits the selected family",async()=>{
       {family:"tfidf-logistic-regression",display_name:"TF-IDF",supported:false,configured:true},
       {family:"fasttext",display_name:"fastText",supported:false,configured:false},
     ],
-    training_sources:[{source:"folder_snapshot",category:"work",sample_count:12,supported:true,provenance:{snapshot_id:"snapshot-1"}}],
+    training_sources:[{source:"folder_snapshot",category:"work",sample_count:24,supported:true,provenance:{snapshot_id:"snapshot-1"}}],
   })});
   api.requestEmailTraining.mockResolvedValue({ok:true,learning:{training_status:"running",training_run_id:"run-family",selection:{sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]}}});
   show("/email?tab=learning");
