@@ -14,6 +14,34 @@ function learning(overrides = {}) { return {runtime, promotion_gate:{config:gate
 function Location() {return <output aria-label="URL">{useLocation().search}</output>;}
 function show(path = "/email") {return render(<MemoryRouter initialEntries={[path]}><Location/><EmailPage/></MemoryRouter>);}
 function deferred<T>() {let resolve!: (value:T)=>void; let reject!: (error:Error)=>void; const promise=new Promise<T>((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
+it("searches all saved mail via URL while preserving filter and page size",async()=>{
+  const user=userEvent.setup();show("/email?filter=processed&page=2&page_size=20&q=old");
+  const search=await screen.findByRole("searchbox",{name:"搜索邮件"});
+  expect(search).toHaveValue("old");
+  await user.clear(search);await user.type(search,"合同");
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("processed",{page:1,page_size:20,q:"合同"},expect.any(AbortSignal)));
+  await user.click(screen.getByRole("button",{name:"待确认"}));
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("pending_feedback",{page:1,page_size:20,q:"合同"},expect.any(AbortSignal)));
+  await user.click(screen.getByRole("button",{name:"清空搜索"}));
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("pending_feedback",{page:1,page_size:20},expect.any(AbortSignal)));
+  expect(screen.getByLabelText("URL")).not.toHaveTextContent("q=");
+});
+it("waits for Chinese composition and distinguishes empty search results from errors",async()=>{
+  show("/email?q=initial");
+  const search=await screen.findByRole("searchbox",{name:"搜索邮件"});
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenCalled());
+  const count=api.listEmailClassifications.mock.calls.length;
+  fireEvent.compositionStart(search);fireEvent.change(search,{target:{value:"合同"}});
+  await act(async()=>{await new Promise(resolve=>setTimeout(resolve,350));});
+  expect(api.listEmailClassifications).toHaveBeenCalledTimes(count);
+  api.listEmailClassifications.mockResolvedValue({items:[],meta:{total:0,page:1,page_size:50}});
+  fireEvent.compositionEnd(search);
+  expect(await screen.findByText("未找到匹配邮件")).toBeInTheDocument();
+  api.listEmailClassifications.mockRejectedValue(new Error("搜索读取失败"));
+  fireEvent.change(search,{target:{value:"另一个"}});
+  expect(await screen.findByRole("alert")).toHaveTextContent("搜索读取失败");
+  expect(screen.queryByText("未找到匹配邮件")).not.toBeInTheDocument();
+});
 beforeEach(() => {
   vi.resetAllMocks();
   api.listEmailConfigs.mockResolvedValue({items:[config]});

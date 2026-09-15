@@ -1134,21 +1134,26 @@ def register_email_routes(
         status: str = Query(default=EmailClassificationStatus.PROCESSED.value),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),
+        q: str = Query(default="", max_length=500),
     ):
         email_store = require_store()
+        search_params = {"q": q.strip()} if q.strip() else {}
         if status == "unsubscribe":
             rows, total = email_store.list_unsubscribe_classifications(
+                **search_params,
                 limit=page_size,
                 offset=(page - 1) * page_size,
             )
         elif status == "all":
             fetch_limit = page * page_size
             pending_rows, pending_total = email_store.list_classifications(
+                **search_params,
                 status=EmailClassificationStatus.PENDING_FEEDBACK,
                 limit=fetch_limit,
                 offset=0,
             )
             processed_rows, processed_total = email_store.list_classifications(
+                **search_params,
                 status=EmailClassificationStatus.PROCESSED,
                 limit=fetch_limit,
                 offset=0,
@@ -1173,6 +1178,7 @@ def register_email_routes(
                     status_code=400,
                 )
             rows, total = email_store.list_classifications(
+                **search_params,
                 status=classification_status,
                 limit=page_size,
                 offset=(page - 1) * page_size,

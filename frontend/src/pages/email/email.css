@@ -64,6 +64,13 @@
 }
 
 /* Reading workspace: scoped to Email, with the existing Console navigation. */
+.email-list-controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 14px 12px; }
+.email-workspace .email-list-controls .email-filter-row { margin:0; }
+.email-search { display:flex; flex:1 1 220px; min-width:0; align-items:center; border:1px solid var(--line); border-radius:6px; background:var(--panel,#fff); }
+.email-search input { flex:1; width:100%; min-width:0; padding:9px 10px; border:0; background:transparent; color:var(--ink); font:inherit; font-size:13px; }
+.email-search button { border:0; background:none; color:var(--ink-soft); padding:6px 10px; cursor:pointer; }
+.email-search:focus-within { outline:2px solid var(--accent); outline-offset:1px; }
+@media(max-width:600px) { .email-search { flex-basis:100%; } }
 .console-page:has(.email-tabs) { max-width: 1560px; width: 100%; padding: 18px 28px 28px; box-sizing: border-box; }
 .console-page:has(.email-tabs) .console-page-header .eyebrow { display: none; }
 .console-page:has(.email-tabs) .console-page-header h1 { font-size: 28px; }

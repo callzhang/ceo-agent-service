@@ -875,6 +875,16 @@ def test_email_classification_list_all_unifies_statuses_with_persisted_body(
     assert all(isinstance(item["id"], str) for item in payload["items"])
     assert {item["message_text"] for item in payload["items"]} == {"正文 101", "正文 102"}
 
+    for query, expected in [("正文 101", ["101"]), ("MESSAGE 102", ["102"]), ("SENDER@EXAMPLE", ["102", "101"]), ("%", []), ("' OR 1=1 --", [])]:
+        found = client.get("/api/console/email/classifications", params={"status":"all", "q":query, "page_size":1}).json()
+        assert found["meta"]["total"] == len(expected)
+        assert [item["id"] for item in found["items"]] == expected[:1]
+    found = client.get("/api/console/email/classifications", params={"status":"pending_feedback", "q":"正文 102"}).json()
+    assert found["meta"]["total"] == 0
+    found = client.get("/api/console/email/classifications", params={"status":"all", "q":"sender", "page_size":1,"page":2}).json()
+    assert [item["id"] for item in found["items"]] == ["101"]
+    assert found["meta"]["total"] == 2
+
 
 def test_email_classification_display_projects_residual_html_without_links(
     tmp_path: Path,
@@ -2248,6 +2258,17 @@ def _audited_observability_event(fixture: SimpleNamespace) -> dict[str, object]:
     )
     assert response.status_code == 200
     return response.json()["observability"][0]
+
+
+def test_unsubscribe_search_uses_same_predicate_for_rows_and_count(tmp_path: Path):
+    fixture = _audited_email_detail_fixture(tmp_path)
+    endpoint = "/api/console/email/classifications"
+    found = fixture.client.get(endpoint, params={"status":"unsubscribe","q":"NEWSLETTER"}).json()
+    assert found["meta"]["total"] == 1
+    assert [row["id"] for row in found["items"]] == [str(fixture.classification_id)]
+    absent = fixture.client.get(endpoint, params={"status":"unsubscribe","q":"no-such-message"}).json()
+    assert absent["meta"]["total"] == 0
+    assert absent["items"] == []
 
 
 def _assert_no_audited_lineage(event: dict[str, object]) -> None:

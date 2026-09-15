@@ -12078,13 +12078,14 @@ class EmailStore:
         }
 
     def list_classifications(
-        self, *, status: EmailClassificationStatus, limit: int, offset: int
+        self, *, status: EmailClassificationStatus, limit: int, offset: int, q: str = ""
     ) -> tuple[list[dict[str, Any]], int]:
         with self._connect() as db:
+            search, search_params = self._classification_search(db, q)
             total = int(
                 db.execute(
-                    "select count(*) from email_classifications where status=?",
-                    (status.value,),
+                    "select count(*) from email_classifications as classifications where status=?" + search,
+                    (status.value, *search_params),
                 ).fetchone()[0]
             )
             rows = db.execute(
@@ -12099,10 +12100,11 @@ class EmailStore:
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
                 where classifications.status=?
+                """ + search + """
                 order by classifications.updated_at desc, classifications.id desc
                 limit ? offset ?
                 """,
-                (status.value, limit, offset),
+                (status.value, *search_params, limit, offset),
             ).fetchall()
         items = []
         for row in rows:
@@ -12112,8 +12114,28 @@ class EmailStore:
             items.append(item)
         return items, total
 
+    @staticmethod
+    def _classification_search(db: sqlite3.Connection, q: str) -> tuple[str, tuple[str, ...]]:
+        query = q.strip().casefold()
+        if not query:
+            return "", ()
+        db.create_function("email_casefold", 1, lambda value: (value or "").casefold(), deterministic=True)
+        db.create_function("email_visible_body", 1, lambda value: _display_message_body(Parser().parsestr(value or "")).casefold(), deterministic=True)
+        return """
+            and (
+                instr(email_casefold(classifications.sender), ?) > 0
+                or instr(email_casefold(classifications.subject), ?) > 0
+                or exists (
+                    select 1 from email_messages as search_message
+                    where search_message.account_id=classifications.account_id
+                      and search_message.stable_message_identity=classifications.stable_message_identity
+                      and instr(email_visible_body(search_message.normalized_text), ?) > 0
+                )
+            )
+        """, (query, query, query)
+
     def list_unsubscribe_classifications(
-        self, *, limit: int, offset: int
+        self, *, limit: int, offset: int, q: str = ""
     ) -> tuple[list[dict[str, Any]], int]:
         """List every email with a durable unsubscribe lifecycle record.
 
@@ -12125,6 +12147,7 @@ class EmailStore:
         if limit <= 0 or offset < 0:
             raise ValueError("unsubscribe list pagination is invalid")
         with self._connect() as db:
+            search, search_params = self._classification_search(db, q)
             task_tables = {
                 str(row["name"])
                 for row in db.execute(
@@ -12159,10 +12182,11 @@ class EmailStore:
                     where receipts.classification_id=classifications.id
                 )
             """ + task_clause
+            where = "(" + where + ")" + search
             total = int(
                 db.execute(
                     "select count(*) from email_classifications as classifications "
-                    f"where {where}"
+                    f"where {where}", search_params
                 ).fetchone()[0]
             )
             rows = db.execute(
@@ -12179,7 +12203,7 @@ class EmailStore:
                 order by classifications.updated_at desc, classifications.id desc
                 limit ? offset ?
                 """,
-                (limit, offset),
+                (*search_params, limit, offset),
             ).fetchall()
         items = []
         for row in rows:

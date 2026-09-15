@@ -224,6 +224,7 @@ export interface EmailClassificationItem {
 }
 export type EmailClassificationStatus = "all" | "pending_feedback" | "processed" | "unsubscribe";
 export interface EmailClassificationListParams {
+  q?: string;
   page?: number;
   page_size?: number;
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-09-14: Email list search now matches sender, subject and saved visible
+  body before pagination, including the unsubscribe filter. The debounced search
+  preserves its query in the URL, supports Chinese composition and clearing,
+  and distinguishes zero matches from request failures.
+
 - 2026-09-14: Email now uses an in-flow reading panel with compact mail rows,
   original-text and processing tabs, persistent reader navigation, and editable
   classifications for both pending and processed mail. Structured unsubscribe
