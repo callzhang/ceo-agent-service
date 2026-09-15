@@ -147,8 +147,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 }
 
 .console-page-card {
-  max-width: 1180px;
-  margin: 0 auto;
+  margin: 0;
   padding: 28px;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -158,15 +157,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 
 .console-page-card h1 { margin-bottom: 0; }
 
-.console-page-header { display: flex; align-items: end; justify-content: space-between; gap: 16px; max-width: 1180px; margin: 0 auto 18px; }
+.console-page-header { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
 .console-page-header h1 { margin: 0; font-size: clamp(1.5rem, 3vw, 2.2rem); }
 .console-page-actions { display: flex; align-items: center; gap: 10px; }
-.attempt-title-row { display: flex; align-items: end; justify-content: space-between; gap: 16px; max-width: 1180px; margin: 0 auto 18px; }
+.attempt-title-row { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
 .attempt-title-leading, .attempt-title-actions { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .attempt-title-leading .eyebrow { margin-bottom: 3px; }
 .attempt-title-leading h1 { margin: 0; font-size: clamp(1.5rem, 3vw, 2.2rem); }
 .attempt-title-actions { justify-content: flex-end; flex-wrap: wrap; }
-.console-card { max-width: 1180px; margin: 0 auto 16px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: 0 8px 24px rgb(24 31 27 / 5%); }
+.console-card { margin: 0 0 16px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: 0 8px 24px rgb(24 31 27 / 5%); }
 .console-card h2 { margin-bottom: 14px; font-size: 1.05rem; }
 .console-card-muted { color: var(--ink-soft); }
 .console-filter-bar { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -247,7 +246,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .codex-related-attempts a { color: var(--accent); font-size: .8rem; font-weight: 750; text-decoration: none; }
 @media (max-width: 680px) { .execution-detail-overview, .execution-detail-context, .execution-detail-list-header, .codex-session-timeline-header, .codex-related-attempts, .codex-session-unavailable { flex-direction: column; gap: 10px; } .execution-detail-context { gap: 7px; } .codex-related-attempts ul { justify-content: flex-start; } .codex-session-event { grid-template-columns: 1fr; gap: 6px; } .codex-session-event-rail { grid-template-columns: auto 1fr; justify-items: start; align-items: center; justify-content: start; padding: 0 0 0 18px; } .codex-session-event-rail::after { top: 9px; right: auto; bottom: -22px; left: 5px; } .codex-session-event-rail span { position: absolute; left: 0; } }
 .task-overview-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; color: var(--ink-soft); font-size: .82rem; }
-.status-metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; max-width: 1180px; margin: 0 auto 16px; }
+.status-metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin: 0 0 16px; }
 .status-metric { display: grid; gap: 8px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .status-metric span { color: var(--ink-soft); font-size: .78rem; }
 .status-metric strong { overflow-wrap: anywhere; }
@@ -277,7 +276,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .attention-details p { margin: 0 0 10px; }
 .attention-details p:last-child { margin-bottom: 0; }
 .attention-links { display: flex; flex-wrap: wrap; gap: 10px; }
-.settings-layout-react { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; max-width: 1180px; margin: 0 auto; align-items: start; }
+.settings-layout-react { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; margin: 0; align-items: start; }
 .settings-page { padding: 24px; }
 .settings-page .settings-layout-react { max-width: none; }
 .settings-nav-react { position: sticky; top: 16px; display: grid; align-content: start; gap: 3px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
@@ -591,7 +590,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .task-facts-section .responsive-data-list td { overflow-wrap: anywhere; }
   .task-facts-section .details-toggle { min-width: 78px; white-space: nowrap; }
 }
-.history-page, .tasks-page, .feedback-page { width: 100%; max-width: 1180px; min-width: 0; margin: 0 auto; }
+.history-page, .tasks-page, .feedback-page { width: 100%; min-width: 0; margin: 0; }
 .history-chart-card { min-width: 0; padding: 16px 18px; margin-bottom: 12px; }
 .history-chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
 .history-chart-head-meta { display: inline-flex; align-items: center; gap: 8px; }
@@ -1128,7 +1127,7 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-runtime-grid div { min-width: 0; }
 .attempt-runtime-grid dt { color: var(--ink-soft); font-size: .68rem; }
 .attempt-runtime-grid dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: .76rem; line-height: 1.4; }
-.attempt-action-message { margin: 0 auto 14px; max-width: 1180px; padding: 10px 12px; border-radius: 8px; color: var(--ink); background: var(--accent-soft); font-size: .8rem; }
+.attempt-action-message { margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; color: var(--ink); background: var(--accent-soft); font-size: .8rem; }
 
 /* Attempt detail keeps the legacy reading order: one review card plus a side rail. */
 .attempt-conversation-banner { width: 100%; }
@@ -1158,7 +1157,7 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-banner-actions .open-dingtalk-action { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .attempt-banner-actions .open-dingtalk-action:hover { color: white; background: var(--accent); }
 .attempt-banner-actions .disabled-action { color: var(--ink-soft); background: var(--surface-muted); }
-.attempt-review-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 16px; width: 100%; max-width: 1180px; margin: 0 auto; align-items: start; }
+.attempt-review-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 16px; width: 100%; margin: 0; align-items: start; }
 .attempt-review-main, .attempt-review-side { min-width: 0; width: 100%; }
 .attempt-review-side { display: grid; gap: 16px; align-content: start; }
 .attempt-review-main { border-color: #cbded3; box-shadow: 0 12px 28px rgb(24 31 27 / 7%); }
@@ -1554,8 +1553,8 @@ h1, h2, h3, p { margin-top: 0; }
 .scheduled-tasks-page { min-width: 0; }
 .scheduled-tasks-page .console-page-header { align-items: flex-start; }
 .scheduled-tasks-page .console-page-header .muted { max-width: 720px; margin: 7px 0 0; line-height: 1.5; }
-.scheduled-task-notice { max-width: 1180px; margin: 0 auto 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--accent); background: var(--accent-soft); }
-.scheduled-task-workspace { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); max-width: 1180px; min-width: 0; margin: 0 auto; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
+.scheduled-task-notice { margin: 0 0 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--accent); background: var(--accent-soft); }
+.scheduled-task-workspace { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); min-width: 0; margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
 .scheduled-task-master, .scheduled-task-detail { min-width: 0; }
 .scheduled-task-master { border-right: 1px solid var(--line); background: var(--surface-muted); }
 .scheduled-task-detail { padding: 18px 20px 24px; }

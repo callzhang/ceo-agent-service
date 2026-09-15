@@ -18,6 +18,31 @@ describe("Tasks responsive layout contract", () => {
     expect(workbenchStyles).toMatch(/\.console-page\s*\{[^}]*min-width:\s*0;/);
   });
 
+  it("lets every shared page shell use the available console width", () => {
+    const fullWidthShells = [
+      ".console-page-card",
+      ".console-page-header",
+      ".attempt-title-row",
+      ".console-card",
+      ".status-metric-grid",
+      ".settings-layout-react",
+      ".history-page, .tasks-page, .feedback-page",
+      ".attempt-action-message",
+      ".attempt-review-grid",
+      ".scheduled-task-notice",
+      ".scheduled-task-workspace",
+    ];
+
+    for (const selector of fullWidthShells) {
+      const rule = workbenchStyles.match(
+        new RegExp(`${selector.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`),
+      )?.[1];
+      expect(rule, selector).toBeDefined();
+      expect(rule, selector).not.toContain("max-width: 1180px");
+      expect(rule, selector).not.toContain("margin: 0 auto");
+    }
+  });
+
   it("keeps wide filters dense and introduces the medium breakpoint before mobile", () => {
     expect(workbenchStyles).toMatch(
       /\.filter-bar\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto;/,
