@@ -28,9 +28,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| Codex session `consumer-email-minutes-repair` | `app/email_worker.py`, `app/task_scanners.py`, `tests/test_task_scanners.py`, `app/minutes_sync.py`, `tests/test_minutes_sync.py`, `app/quality_gate.py`, `tests/test_quality_gate.py` | repair technical needs_human projection, runtime confirmation quality projection, and avoidable minute scanner pagination failures; `tests/test_email_worker.py` lint ownership transferred to `lint-gate-repair` with Derek's authorization | 2026-09-11 |
-| Codex session `meeting-target-repair` | `app/meeting_alignment_agent.py`, `app/meeting_alignment_delivery.py`, `app/meeting_alignment_source.py`, `tests/test_meeting_alignment_agent.py`, `tests/test_meeting_alignment_delivery.py`, `tests/test_meeting_alignment_source.py` | retry source-aware meeting target validation failures and resolve organizer fallback before marking meeting jobs failed | 2026-09-11 |
-| Codex session `calendar-invite-cron` | `app/worker.py`, `app/cli.py`, `app/agent_cron/commands.py`, `app/agent_cron/seeds.py`, `tests/test_worker.py`, `tests/test_cli.py`, `tests/test_agent_cron_seeds.py`, `tests/test_agent_cron_options.py`, `tests/test_console_scheduled_tasks_api.py` | expose calendar-invitation trigger as a distinct scheduled service command while keeping it disjoint from general DingTalk message scans | 2026-09-14 |
+| Codex subagent `meeting-memory-queue-fix` | `app/store.py`, `app/meeting_memory_write.py`, `tests/test_meeting_memory_write.py`, `tests/test_store.py`, `tests/test_audit_web.py`, `README.md`, `CHANGELOG.md` | atomically lease Meeting Memory events, bounded parallel execution, structured outcomes, and mutation-free duplicate enqueue | 2026-09-15 |
 
 
 ## Recent overlaps worth knowing
