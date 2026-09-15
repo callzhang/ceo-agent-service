@@ -710,6 +710,26 @@ def test_lark_gate_accepts_current_verified_status_and_user_probe_shape():
     assert result.state is ChannelGateState.READY
 
 
+def test_lark_gate_marks_expired_user_identity_as_needs_login():
+    runner = ScriptedRunner(
+        [
+            completed(
+                0,
+                '{"verified":true,"identity":"bot","identities":'
+                '{"bot":{"available":true,"verified":true,"status":"ready"},'
+                '"user":{"available":false,"status":"missing",'
+                '"tokenStatus":"expired"}}}',
+            )
+        ]
+    )
+
+    result = LarkChannelGate(runner=runner).check()
+
+    assert result.state is ChannelGateState.NEEDS_LOGIN
+    assert result.reason_code == "status_auth_invalid"
+    assert len(runner.commands) == 1
+
+
 def test_lark_gate_rejects_empty_status_object():
     runner = ScriptedRunner([completed(0, "{}")])
 

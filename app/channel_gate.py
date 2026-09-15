@@ -474,6 +474,14 @@ class LarkChannelGate:
                 commands,
                 detail=_safe_detail(status.stdout, status.stderr),
             )
+        if any(_lark_user_identity_needs_login(payload) for payload in status_payloads):
+            return _result(
+                self.channel_name,
+                ChannelGateState.NEEDS_LOGIN,
+                "status_auth_invalid",
+                commands,
+                detail="Lark user identity is unavailable; bot identity remains ready",
+            )
         if not any(_lark_status_ready(payload) for payload in status_payloads):
             return _result(
                 self.channel_name,
@@ -1091,6 +1099,12 @@ def _lark_status_ready(payload: dict[str, object]) -> bool:
         and user.get("status") == "ready"
         and user.get("tokenStatus") == "valid"
     )
+
+
+def _lark_user_identity_needs_login(payload: dict[str, object]) -> bool:
+    identities = payload.get("identities")
+    user = identities.get("user") if isinstance(identities, dict) else None
+    return isinstance(user, dict) and user.get("available") is False
 
 
 def _lark_probe_ready(payload: dict[str, object]) -> bool:
