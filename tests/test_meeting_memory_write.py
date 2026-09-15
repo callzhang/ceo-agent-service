@@ -175,6 +175,21 @@ def test_meeting_memory_title_summarizes_reported_ingest_topics() -> None:
     assert payload["source_description"] == "recipe 卡点升级机制；定价讨论方法；项目进展同步机制"
 
 
+def test_meeting_memory_title_uses_content_heading_before_feedback_link() -> None:
+    job = _sent_job()
+    job.final_message = (
+        "【会议跟进】曾诗维 - 招聘专员 - 三面\n\n"
+        "【招聘专员岗位面试跟进】本场已完成招聘画像校准。\n\n"
+        "反馈：[👍 有帮助](https://example.test/feedback)"
+    )
+    job.decision_json = json.dumps({"topics": []}, ensure_ascii=False)
+
+    payload = meeting_memory_payload(job)
+
+    assert payload["source_description"] == "招聘专员岗位面试跟进"
+    assert not payload["source_description"].startswith("反馈：")
+
+
 def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "store.sqlite3")
     job_id = _store_sent_job(store)

@@ -32,9 +32,14 @@ def _meeting_memory_content_title(final_message: str, decision_json: str = "") -
     structured_title = _structured_topic_title(decision_json)
     if structured_title:
         return structured_title[:MEETING_MEMORY_TITLE_LIMIT]
+    heading_title = _content_heading_title(final_message)
+    if heading_title:
+        return heading_title[:MEETING_MEMORY_TITLE_LIMIT]
     for line in final_message.splitlines():
         candidate = line.strip()
         if not candidate or candidate.startswith("【") or candidate.endswith(("：", ":")):
+            continue
+        if "](" in candidate:
             continue
         while candidate.startswith("@"):
             _, separator, remainder = candidate.partition(" ")
@@ -53,6 +58,22 @@ def _meeting_memory_content_title(final_message: str, decision_json: str = "") -
         if candidate:
             return candidate[:MEETING_MEMORY_TITLE_LIMIT]
     return "会议结论"
+
+
+def _content_heading_title(final_message: str) -> str | None:
+    for line in final_message.splitlines():
+        candidate = line.strip()
+        if not candidate.startswith("【"):
+            continue
+        heading, separator, remainder = candidate[1:].partition("】")
+        if not separator or not remainder.strip():
+            continue
+        normalized_heading = " ".join(heading.split())
+        if normalized_heading == "会议跟进":
+            continue
+        if normalized_heading:
+            return normalized_heading
+    return None
 
 
 def _structured_topic_title(decision_json: str) -> str | None:
