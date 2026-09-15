@@ -28,9 +28,16 @@ _PROCESS_LOCKS: dict[str, threading.RLock] = {}
 def provider_training_folder_is_relevant(
     folder: object, binding: Mapping[str, object] | None
 ) -> bool:
-    """Limit provider-body reads to folders that can supply training labels."""
+    """Read inbox/provider-labeled folders without inventing categories.
+
+    INBOX is included so classifications can observe the provider's current
+    Star/Flag state even before a business-folder binding exists. Other
+    unbound folders remain excluded; only explicitly bound folders and the
+    provider's Junk/Trash folders can supply training labels.
+    """
 
     return binding is not None or getattr(folder, "role", None) in {
+        FolderRole.INBOX,
         FolderRole.JUNK,
         FolderRole.TRASH,
     }

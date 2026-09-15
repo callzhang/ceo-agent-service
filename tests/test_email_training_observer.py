@@ -126,7 +126,7 @@ def test_observer_uses_bounded_uid_watermark_and_resumes_after_restart(tmp_path)
     assert store.current_observation_calls[-1][1] == ()
 
 
-def test_production_training_scope_reads_only_bound_categories_and_system_junk(
+def test_production_training_scope_reads_inbox_bound_categories_and_system_junk(
     tmp_path,
 ):
     from app.email_training_observer import (
@@ -167,7 +167,7 @@ def test_production_training_scope_reads_only_bound_categories_and_system_junk(
         include_folder=provider_training_folder_is_relevant,
     ).run_once(({"account_id": "account-1"},))
 
-    assert fetched == ["work", "spam"]
+    assert fetched == ["inbox", "work", "spam"]
 
 
 def test_new_unbound_provider_folder_is_not_a_reverse_category_creation_signal(
@@ -194,8 +194,9 @@ def test_new_unbound_provider_folder_is_not_a_reverse_category_creation_signal(
                 _folder("new-provider-folder", role=FolderRole.UNBOUND),
             )
 
-        def fetch_uid_batch(self, *_args, **_kwargs):
-            raise AssertionError("unbound provider folders must not be read")
+        def fetch_uid_batch(self, folder, **_kwargs):
+            assert folder == "inbox"
+            return SimpleNamespace(uidvalidity=10, messages=())
 
         def logout(self):
             return None
