@@ -216,8 +216,9 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 
 当一个旧 `needs_human` Attempt 的来源 `agent_run.reply_task_id` 与该业务对象的 current task
 不同，且 current task 已终态时，启动收口会把旧 Attempt 标为 `skipped`，并写入“新任务已接管”的
-resolution。它只修正过期的当前投影，不删除旧 run 或改变外部结果；同一 current task 上仍待选择的
-`needs_human` 不满足这个条件，必须继续保留。
+resolution。相同规则也适用于同一 trigger 已有更晚的完成或无动作终态 Attempt。它只修正过期的当前
+投影，不删除旧 run 或改变外部结果；同一 current task 上仍待选择的 `needs_human`，或后续结果为
+`failed` 的 Attempt，都不满足这个条件，必须继续保留。
 
 ### 外部动作身份、顺序与发送投影
 

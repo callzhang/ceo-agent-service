@@ -2960,6 +2960,44 @@ def test_skip_obsolete_needs_human_attempt_superseded_by_terminal_business_objec
 
 
 @pytest.mark.parametrize(
+    ("latest_status", "expected_reconciled"),
+    (("completed", 1), ("failed", 0)),
+)
+def test_skip_obsolete_needs_human_attempt_with_later_terminal_trigger_attempt(
+    tmp_path: Path,
+    latest_status: str,
+    expected_reconciled: int,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_arguments = {
+        "conversation_id": "same-trigger-history",
+        "conversation_title": "管理群",
+        "trigger_message_id": "same-trigger-message",
+        "trigger_sender": "Derek",
+        "trigger_text": "处理这件事",
+        "action": "agent_run",
+        "sensitivity_kind": "general",
+    }
+    old_attempt_id = store.record_reply_attempt(
+        **attempt_arguments,
+        send_status="needs_human",
+    )
+    store.record_reply_attempt(
+        **attempt_arguments,
+        send_status=latest_status,
+    )
+
+    assert (
+        store.skip_failed_reply_tasks_superseded_by_terminal_business_object()
+        == expected_reconciled
+    )
+    updated_attempt = store.get_reply_attempt(old_attempt_id)
+    assert updated_attempt is not None
+    expected_status = "skipped" if expected_reconciled else "needs_human"
+    assert updated_attempt.send_status == expected_status
+
+
+@pytest.mark.parametrize(
     ("attempt_status", "expected_task_status"),
     (
         ("completed", "done"),

@@ -149,6 +149,17 @@ TERMINAL_REPLY_ATTEMPT_TASK_STATUSES = MappingProxyType(
         "needs_human": "needs_human",
     }
 )
+SUPERSEDED_HUMAN_ATTEMPT_SUCCESSOR_STATUSES = frozenset(
+    {
+        "sent",
+        "completed",
+        "reacted",
+        "commented",
+        "calendar",
+        "document",
+        "skipped",
+    }
+)
 _SCHEDULED_TASK_RUN_ID_JSON_PATHS = (
     "$.scheduled_consumer.scheduled_task_run_id",
     "$.raw_payload.scheduled_consumer.scheduled_task_run_id",
@@ -20946,6 +20957,12 @@ class AutoReplyStore:
         owner.  This never closes a decision belonging to that current task;
         it only retires an Attempt whose own Agent run belongs to an older task.
         """
+        terminal_attempt_statuses = tuple(
+            SUPERSEDED_HUMAN_ATTEMPT_SUCCESSOR_STATUSES
+        )
+        terminal_attempt_placeholders = ", ".join(
+            "?" for _ in terminal_attempt_statuses
+        )
         with self._immediate_write_transaction() as db:
             task_cursor = db.execute(
                 """
@@ -20993,7 +21010,47 @@ class AutoReplyStore:
                   )
                 """
             )
-            return task_cursor.rowcount + attempt_cursor.rowcount
+            trigger_attempt_cursor = db.execute(
+                f"""
+                update reply_attempts as historical_attempt
+                set send_status='skipped',
+                    send_error='',
+                    resolved_at=current_timestamp,
+                    resolution='同一触发的后续处理已终态；原人工决策不再有效。',
+                    updated_at=current_timestamp
+                where historical_attempt.send_status='needs_human'
+                  and trim(coalesce(historical_attempt.resolved_at, ''))=''
+                  and exists (
+                      select 1
+                      from reply_attempts as latest_attempt
+                      where latest_attempt.channel=historical_attempt.channel
+                        and latest_attempt.conversation_id=
+                            historical_attempt.conversation_id
+                        and latest_attempt.trigger_message_id=
+                            historical_attempt.trigger_message_id
+                        and latest_attempt.id<>(historical_attempt.id)
+                        and latest_attempt.id=(
+                            select newest.id
+                            from reply_attempts as newest
+                            where newest.channel=historical_attempt.channel
+                              and newest.conversation_id=
+                                  historical_attempt.conversation_id
+                              and newest.trigger_message_id=
+                                  historical_attempt.trigger_message_id
+                            order by datetime(newest.updated_at) desc, newest.id desc
+                            limit 1
+                        )
+                        and latest_attempt.send_status in
+                            ({terminal_attempt_placeholders})
+                  )
+                """,
+                terminal_attempt_statuses,
+            )
+            return (
+                task_cursor.rowcount
+                + attempt_cursor.rowcount
+                + trigger_attempt_cursor.rowcount
+            )
 
     def reconcile_failed_reply_tasks_with_terminal_attempts(self) -> int:
         """Project the latest terminal trigger attempt onto an old failed task.
