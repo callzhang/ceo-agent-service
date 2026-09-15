@@ -14,6 +14,7 @@ from app.email_pipeline import (
 )
 from app.email_store import EmailStore
 from app.email_classifier_runtime import StageLatencyRecorder
+from app.email_training_snapshot import TRAINING_SNAPSHOT_VERSION
 
 
 def test_runtime_observability_sink_failure_never_changes_classification_path():
@@ -176,7 +177,7 @@ def test_latest_snapshot_projects_counts_and_provider_folder_truth(tmp_path):
             """,
             (
                 "snapshot-observability",
-                "email-folder-snapshot.v1",
+                TRAINING_SNAPSHOT_VERSION,
                 "description-set-v1",
                 "email-model-input.v3",
                 20260905,
@@ -264,7 +265,7 @@ def test_latest_snapshot_projects_counts_and_provider_folder_truth(tmp_path):
     provider = store.get_provider_classification_state(91)
 
     assert state is not None
-    assert state["snapshot_version"] == "email-folder-snapshot.v1"
+    assert state["snapshot_version"] == TRAINING_SNAPSHOT_VERSION
     assert state["sample_count"] == 3
     assert state["group_count"] == 3
     assert state["category_sample_counts"] == {"financing": 1, "legal": 2}

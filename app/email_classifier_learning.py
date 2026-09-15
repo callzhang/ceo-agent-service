@@ -86,6 +86,8 @@ def _selection_provenance(
         if state is not None
         else None
     )
+    if "folder_snapshot" in sources and snapshot is None:
+        raise ValueError("folder training snapshot is unavailable")
     source_records: dict[str, list[dict[str, object]]] = {
         "folder_snapshot": [],
         "agent_auto_label": [],
@@ -131,6 +133,12 @@ def _selection_provenance(
         for row in source_records[source]
         if row.get("category_key") is not None
     }
+    if snapshot is not None:
+        available.update(
+            str(row["category_key"])
+            for row in snapshot["observations"]
+            if row.get("category_key") is not None
+        )
     if not set(categories) <= available:
         raise ValueError("training selection category is unavailable")
 

@@ -4093,6 +4093,7 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
             35,
             36,
             37,
+            38,
         ]
         assert {
             row[1]
@@ -4354,6 +4355,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
         35,
         36,
         37,
+        38,
     ]
 
     EmailStore(database)
@@ -4441,6 +4443,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
         35,
         36,
         37,
+        38,
     ]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
@@ -4867,6 +4870,7 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
         35,
         36,
         37,
+        38,
     ]
 
 

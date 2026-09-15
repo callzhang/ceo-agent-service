@@ -951,19 +951,42 @@ def test_email_training_preview_returns_unique_frozen_selection_without_writes()
             assert snapshot_id == "snapshot-preview-1"
             return {
                 "observations": [
-                    {"stable_message_identity": "message-1", "category_key": "legal"},
-                    {"stable_message_identity": "message-2", "category_key": "legal"},
+                    {
+                        "account_id": "account-preview",
+                        "stable_message_identity": "message-1",
+                        "provider_thread_id": "thread-1",
+                        "normalized_model_input": '{"body":"Legal one"}',
+                        "category_key": "legal",
+                    },
+                    {
+                        "account_id": "account-preview",
+                        "stable_message_identity": "message-2",
+                        "provider_thread_id": "thread-2",
+                        "normalized_model_input": '{"body":"Legal two"}',
+                        "category_key": "legal",
+                    },
                 ]
             }
 
-        def list_training_examples(self, *, include_inclusion: bool):
-            assert include_inclusion is True
-            return [{"message_id": "message-1"}]
-
-        def list_classifications(self, *, status, limit: int, offset: int):
-            assert status is EmailClassificationStatus.PROCESSED
-            assert (limit, offset) == (100_000, 0)
-            return ([{"stable_message_identity": "message-2", "classification_source": "agent"}], 1)
+        def list_selected_training_records(self):
+            return [
+                {
+                    "source": "user_feedback",
+                    "account_id": "account-preview",
+                    "stable_message_identity": "message-1",
+                    "provider_thread_id": "thread-1",
+                    "normalized_model_input": '{"body":"Legal one"}',
+                    "category_key": "legal",
+                },
+                {
+                    "source": "agent_auto_label",
+                    "account_id": "account-preview",
+                    "stable_message_identity": "message-2",
+                    "provider_thread_id": "thread-2",
+                    "normalized_model_input": '{"body":"Legal two"}',
+                    "category_key": "legal",
+                },
+            ]
 
     store = PreviewStore()
     app = FastAPI()
@@ -986,6 +1009,8 @@ def test_email_training_preview_returns_unique_frozen_selection_without_writes()
             "snapshot_digest": "a" * 64,
             "snapshot_version": "email-folder-snapshot.v1",
             "description_version": "description-set-sha256:" + "b" * 64,
+            "training_ready": False,
+            "training_blockers": ["legal:validation", "legal:test"],
         },
     }
     assert store.writes == []
@@ -1046,6 +1071,8 @@ def test_email_training_preview_allows_empty_valid_source_selection_without_muta
         "snapshot_digest": snapshot.snapshot_digest,
         "snapshot_version": snapshot.snapshot_version,
         "description_version": snapshot_state["description_version"],
+        "training_ready": False,
+        "training_blockers": ["legal:train", "legal:validation", "legal:test"],
     }
     with sqlite3.connect(database) as connection:
         after = tuple(connection.iterdump())
