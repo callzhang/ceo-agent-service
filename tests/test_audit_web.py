@@ -8481,6 +8481,7 @@ def test_worker_attention_includes_failed_meeting_memory_writes(tmp_path: Path):
         event_id,
         owner="test-meeting-memory-attention",
         error="provider unavailable",
+        now=datetime.fromisoformat("2026-09-15T10:00:01+00:00"),
     )
 
     rows = audit_web_module._queue_attention_rows(store)

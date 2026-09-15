@@ -1,5 +1,18 @@
 # Changelog
 
+- 2026-09-15: Meeting-to-Memory writes now settle only while their worker lease
+  is still live, claim work only when a bounded worker can start it, and derive
+  lease duration from the configured runtime timeout plus a recovery margin.
+  `CEO_MEETING_MEMORY_WORKERS` controls this queue independently (default 2,
+  bounded to 1–4), so slower Memory writes do not consume message-consumer
+  capacity or permit a stale worker to overwrite a reclaimed event.
+
+- 2026-09-15: Meeting-to-Memory runtime attempts now recognize their parent
+  event while it holds the worker lease (`processing`). Previously the parent
+  check expected the pre-lease `pending` state and rejected every actual write
+  as missing. Existing failed events can be safely requeued after deployment;
+  no meeting conclusion or Memory content is changed by this lifecycle fix.
+
 - 2026-09-15: A runtime that stops at an explicit provider confirmation now
   retains a valid `needs_human` Attempt instead of being overwritten as a
   technical failure. Startup also restores that decision projection for legacy

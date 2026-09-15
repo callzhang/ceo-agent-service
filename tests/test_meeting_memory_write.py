@@ -13,6 +13,7 @@ import pytest
 from app.meeting_memory_write import (
     MEETING_MEMORY_WRITE_LEASE_SECONDS,
     enqueue_sent_meeting_memory_writes,
+    meeting_memory_write_lease_seconds,
     meeting_memory_payload,
     process_meeting_memory_writes,
 )
@@ -244,7 +245,6 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
         store,
         workspace=tmp_path,
         routed_execution=routed,
-        now=datetime.fromisoformat("2026-09-14T10:00:00+08:00"),
     )
 
     assert processed.processed == 1
@@ -345,11 +345,13 @@ def test_meeting_memory_terminal_transition_requires_the_current_lease_owner(
         event.id,
         owner="worker-b",
         memory_id="wrong-owner",
+        now=datetime.fromisoformat("2026-09-15T10:00:01+00:00"),
     )
     assert store.complete_meeting_memory_write_event(
         event.id,
         owner="worker-a",
         memory_id="correct-owner",
+        now=datetime.fromisoformat("2026-09-15T10:00:01+00:00"),
     )
     with store._connect() as db:
         row = db.execute(
@@ -363,6 +365,110 @@ def test_meeting_memory_terminal_transition_requires_the_current_lease_owner(
         "lease_owner": "",
         "lease_expires_at": "",
     }
+
+
+@pytest.mark.parametrize("operation", ["complete", "retry", "fail"])
+def test_expired_meeting_memory_owner_cannot_settle_an_event(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    event = store.claim_due_meeting_memory_write_events(
+        now="2026-09-15T10:00:00+00:00",
+        limit=1,
+        owner="expired-worker",
+        lease_seconds=30,
+    )[0]
+
+    if operation == "complete":
+        settled = store.complete_meeting_memory_write_event(
+            event.id,
+            owner="expired-worker",
+            memory_id="late-memory",
+            now=datetime.fromisoformat("2026-09-15T10:00:31+00:00"),
+        )
+    elif operation == "retry":
+        settled = store.retry_meeting_memory_write_event(
+            event.id,
+            owner="expired-worker",
+            error="late retry",
+            available_at="2026-09-15T10:01:31+00:00",
+            now=datetime.fromisoformat("2026-09-15T10:00:31+00:00"),
+        )
+    else:
+        settled = store.fail_meeting_memory_write_event(
+            event.id,
+            owner="expired-worker",
+            error="late failure",
+            now=datetime.fromisoformat("2026-09-15T10:00:31+00:00"),
+        )
+
+    assert not settled
+    with store._connect() as db:
+        row = db.execute(
+            "select status, lease_owner from meeting_memory_write_events where id=?",
+            (event.id,),
+        ).fetchone()
+    assert dict(row) == {"status": "processing", "lease_owner": "expired-worker"}
+
+
+def test_meeting_memory_lease_covers_configured_runtime_timeout() -> None:
+    assert meeting_memory_write_lease_seconds(1200, 900) == 2700
+    assert meeting_memory_write_lease_seconds(3600, 60) == 3900
+    assert meeting_memory_write_lease_seconds(60, 3600) == 3900
+
+
+def test_meeting_memory_processing_uses_the_configured_long_runtime_lease(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    current_time = datetime.fromisoformat("2026-09-15T10:00:00+00:00")
+
+    def clock() -> datetime:
+        return current_time
+
+    class _LongRunningRuntime:
+        def __init__(self) -> None:
+            self.intruder_claim_count = -1
+
+        def execute(self, **_kwargs):
+            nonlocal current_time
+            current_time += timedelta(seconds=3000)
+            self.intruder_claim_count = len(
+                store.claim_due_meeting_memory_write_events(
+                    now=current_time.isoformat(),
+                    limit=1,
+                    owner="intruder",
+                    lease_seconds=30,
+                )
+            )
+            return SimpleNamespace(
+                value=json.dumps(
+                    {
+                        "status": "success",
+                        "memory_id": "long-runtime-memory",
+                        "retryable": False,
+                        "source_code": "",
+                        "detail": "",
+                    }
+                )
+            )
+
+    runtime = _LongRunningRuntime()
+    outcome = process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=runtime,
+        lease_seconds=meeting_memory_write_lease_seconds(3600, 60),
+        clock=clock,
+    )
+
+    assert outcome.completed == 1
+    assert outcome.lost_lease == 0
+    assert runtime.intruder_claim_count == 0
 
 
 def test_idle_meeting_memory_enqueue_does_not_mutate_rows_or_sequence(
@@ -408,7 +514,6 @@ def test_meeting_memory_processing_uses_bounded_parallelism_and_returns_outcome(
         store,
         workspace=tmp_path,
         routed_execution=runtime,
-        now=datetime.fromisoformat("2026-09-15T10:00:00+00:00"),
         limit=3,
         concurrency=2,
     )
@@ -461,7 +566,6 @@ def test_meeting_memory_does_not_claim_a_later_wave_before_it_can_start(
         store,
         workspace=tmp_path,
         routed_execution=runtime,
-        now=datetime.fromisoformat("2026-09-15T10:00:00+00:00"),
         limit=3,
         concurrency=1,
     )
@@ -491,7 +595,7 @@ def test_later_meeting_memory_wave_leases_from_its_actual_start_time(
             nonlocal current_time
             self.calls += 1
             if self.calls == 1:
-                current_time += timedelta(seconds=MEETING_MEMORY_WRITE_LEASE_SECONDS + 1)
+                current_time += timedelta(seconds=MEETING_MEMORY_WRITE_LEASE_SECONDS - 1)
             else:
                 with store._connect() as db:
                     self.second_wave_lease = str(
@@ -525,14 +629,14 @@ def test_later_meeting_memory_wave_leases_from_its_actual_start_time(
         store,
         workspace=tmp_path,
         routed_execution=runtime,
-        now=current_time,
         clock=clock,
         limit=2,
         concurrency=1,
     )
 
     assert outcome.completed == 2
-    assert runtime.second_wave_lease == "2026-09-15T11:30:01+00:00"
+    assert outcome.lost_lease == 0
+    assert runtime.second_wave_lease == "2026-09-15T11:29:59+00:00"
     assert runtime.intruder_claim_count == 0
 
 
@@ -556,7 +660,6 @@ def test_meeting_memory_retry_delay_starts_when_the_worker_finishes(
         store,
         workspace=tmp_path,
         routed_execution=_LateRetryRuntime(),
-        now=current_time,
         clock=clock,
     )
 
@@ -597,6 +700,7 @@ def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
         event_id,
         owner="test-requeue",
         error="provider configuration failed",
+        now=datetime.fromisoformat("2026-09-15T10:00:01+00:00"),
     )
 
     assert store.requeue_failed_meeting_memory_write_event(
@@ -630,7 +734,6 @@ def test_active_meeting_memory_runtime_defers_instead_of_failing(tmp_path: Path)
         store,
         workspace=tmp_path,
         routed_execution=_ActiveMemoryRuntime(),
-        now=datetime.fromisoformat("2026-09-14T10:00:00+08:00"),
     ).processed == 1
 
     with store._connect() as db:
@@ -661,7 +764,6 @@ def test_invalid_memory_result_defers_instead_of_failing(
         store,
         workspace=tmp_path,
         routed_execution=_InvalidMemoryResultRuntime(failure_code),
-        now=datetime.fromisoformat("2026-09-14T10:00:00+08:00"),
     ).processed == 1
 
     with store._connect() as db:
@@ -686,7 +788,6 @@ def test_unexpected_memory_runtime_error_defers_one_event(tmp_path: Path) -> Non
         store,
         workspace=tmp_path,
         routed_execution=_UnexpectedMemoryRuntime(),
-        now=datetime.fromisoformat("2026-09-14T10:00:00+08:00"),
     ).processed == 1
 
     with store._connect() as db:
@@ -729,6 +830,7 @@ def test_failed_meeting_memory_write_can_be_closed_from_verified_memory_readback
         event_id,
         owner="test-reconcile",
         error="result parser failed",
+        now=datetime.fromisoformat("2026-09-15T10:00:01+00:00"),
     )
 
     assert store.reconcile_failed_meeting_memory_write_event(

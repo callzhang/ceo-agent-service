@@ -355,6 +355,13 @@ def consumer_worker_count() -> int:
     return count
 
 
+def meeting_memory_worker_count() -> int:
+    count = env_int("CEO_MEETING_MEMORY_WORKERS", 2)
+    if not 1 <= count <= 4:
+        raise ValueError("CEO_MEETING_MEMORY_WORKERS must be between 1 and 4")
+    return count
+
+
 def repository_upgrade_remote() -> str:
     return os.getenv("CEO_REPOSITORY_UPGRADE_REMOTE", "origin").strip() or "origin"
 

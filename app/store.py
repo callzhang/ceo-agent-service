@@ -1436,6 +1436,13 @@ def _is_sqlite_missing_schema_error(exc: sqlite3.Error) -> bool:
     )
 
 
+def _meeting_memory_settlement_time(now: datetime | None) -> str:
+    value = datetime.now(timezone.utc) if now is None else now
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("meeting Memory settlement time must include a timezone")
+    return value.isoformat()
+
+
 class AutoReplyStore:
     def __init__(
         self,
@@ -9289,7 +9296,7 @@ class AutoReplyStore:
                 ),
                 "meeting_memory_write_event": (
                     "select 1 from meeting_memory_write_events where id=? "
-                    "and status='pending' and execution_generation=?"
+                    "and status='processing' and execution_generation=?"
                 ),
                 "wechat_memory_candidate": (
                     "select 1 from wechat_memory_candidates where id=? "
@@ -14419,7 +14426,9 @@ class AutoReplyStore:
         *,
         owner: str,
         memory_id: str,
+        now: datetime | None = None,
     ) -> bool:
+        settlement_time = _meeting_memory_settlement_time(now)
         with self._connect() as db:
             cursor = db.execute(
                 """
@@ -14428,8 +14437,9 @@ class AutoReplyStore:
                     error='', memory_id=?, lease_owner='', lease_expires_at='',
                     updated_at=current_timestamp
                 where id=? and status='processing' and lease_owner=?
+                  and datetime(lease_expires_at)>datetime(?)
                 """,
-                (memory_id, event_id, owner),
+                (memory_id, event_id, owner, settlement_time),
             )
         return cursor.rowcount == 1
 
@@ -14440,7 +14450,9 @@ class AutoReplyStore:
         owner: str,
         error: str,
         available_at: str,
+        now: datetime | None = None,
     ) -> bool:
+        settlement_time = _meeting_memory_settlement_time(now)
         with self._connect() as db:
             cursor = db.execute(
                 """
@@ -14448,8 +14460,9 @@ class AutoReplyStore:
                 set status='pending', attempts=attempts+1, available_at=?, error=?,
                     lease_owner='', lease_expires_at='', updated_at=current_timestamp
                 where id=? and status='processing' and lease_owner=?
+                  and datetime(lease_expires_at)>datetime(?)
                 """,
-                (available_at, error[:500], event_id, owner),
+                (available_at, error[:500], event_id, owner, settlement_time),
             )
         return cursor.rowcount == 1
 
@@ -14459,7 +14472,9 @@ class AutoReplyStore:
         *,
         owner: str,
         error: str,
+        now: datetime | None = None,
     ) -> bool:
+        settlement_time = _meeting_memory_settlement_time(now)
         with self._connect() as db:
             cursor = db.execute(
                 """
@@ -14468,8 +14483,9 @@ class AutoReplyStore:
                     error=?, lease_owner='', lease_expires_at='',
                     updated_at=current_timestamp
                 where id=? and status='processing' and lease_owner=?
+                  and datetime(lease_expires_at)>datetime(?)
                 """,
-                (error[:500], event_id, owner),
+                (error[:500], event_id, owner, settlement_time),
             )
         return cursor.rowcount == 1
 

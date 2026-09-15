@@ -3878,6 +3878,8 @@ def test_parser_supports_single_service_command(monkeypatch):
             "8765",
             "--consumer-workers",
             "3",
+            "--meeting-memory-workers",
+            "4",
         ]
     )
 
@@ -3885,6 +3887,7 @@ def test_parser_supports_single_service_command(monkeypatch):
     assert args.host == "127.0.0.1"
     assert args.port == 8765
     assert args.consumer_workers == 3
+    assert args.meeting_memory_workers == 4
 
 
 @pytest.mark.parametrize(
@@ -6573,8 +6576,16 @@ def test_meeting_memory_write_loop_processes_sent_conclusions(
     monkeypatch.setattr(
         cli,
         "process_meeting_memory_writes",
-        lambda received_store, *, workspace, routed_execution, now, limit: calls.append(
-            ("process", received_store, workspace, routed_execution, now, limit)
+        lambda received_store, *, workspace, routed_execution, limit, concurrency, lease_seconds: calls.append(
+            (
+                "process",
+                received_store,
+                workspace,
+                routed_execution,
+                limit,
+                concurrency,
+                lease_seconds,
+            )
         ),
     )
 
@@ -6587,8 +6598,9 @@ def test_meeting_memory_write_loop_processes_sent_conclusions(
 
     assert calls[0][0] == "build"
     assert calls[1][:4] == ("process", store, tmp_path, routed_execution)
-    assert calls[1][4].utcoffset() is not None
-    assert calls[1][5] == 20
+    assert calls[1][4] == 20
+    assert calls[1][5] == 2
+    assert calls[1][6] == 2700
     assert calls[2][:4] == (
         "health",
         "meeting-memory-write",
@@ -6596,6 +6608,50 @@ def test_meeting_memory_write_loop_processes_sent_conclusions(
         "running",
     )
     assert calls[2][4]
+
+
+def test_meeting_memory_write_loop_uses_its_own_workers_and_runtime_lease(
+    monkeypatch, tmp_path
+):
+    class StopLoop(Exception):
+        pass
+
+    calls: list[dict[str, object]] = []
+    store = SimpleNamespace(
+        set_service_health_component=lambda *_args, **_kwargs: None,
+        resolve_unresolved_errors_by_kind=lambda *_args, **_kwargs: 0,
+        record_error=lambda *_args, **_kwargs: pytest.fail("unexpected error"),
+    )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: store)
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_meeting_memory_writes",
+        lambda *_args, **kwargs: calls.append(kwargs),
+    )
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_memory_write_loop(
+            WorkerSettings(
+                db_path=tmp_path / "worker.sqlite3",
+                workspace=tmp_path,
+                meeting_memory_workers=3,
+                codex_timeout_seconds=3600,
+                codex_idle_timeout_seconds=60,
+            ),
+            sleep=lambda _seconds: (_ for _ in ()).throw(StopLoop()),
+            network_ready=lambda: True,
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["workspace"] == tmp_path
+    assert calls[0]["routed_execution"] is not None
+    assert calls[0]["limit"] == 20
+    assert calls[0]["concurrency"] == 3
+    assert calls[0]["lease_seconds"] == 3900
 
 
 def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_path):

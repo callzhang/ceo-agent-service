@@ -24,6 +24,7 @@ MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS = 15 * 60
 MEETING_MEMORY_TITLE_LIMIT = 80
 MEETING_MEMORY_START_STALL_SECONDS = 60
 MEETING_MEMORY_WRITE_LEASE_SECONDS = 45 * 60
+MEETING_MEMORY_WRITE_LEASE_GRACE_SECONDS = 5 * 60
 # A result-validation failure terminates the individual runtime attempt, but
 # does not prove that the already-delivered meeting conclusion is invalid. A
 # new event generation can use the current result schema and route health.
@@ -141,27 +142,39 @@ class MeetingMemoryWriteOutcome:
         return self.claimed
 
 
+def meeting_memory_write_lease_seconds(
+    total_timeout_seconds: int,
+    idle_timeout_seconds: int,
+) -> int:
+    """Return a lease that outlives the configured runtime plus recovery time."""
+    if total_timeout_seconds <= 0 or idle_timeout_seconds <= 0:
+        raise ValueError("meeting Memory runtime timeouts must be positive")
+    return max(
+        MEETING_MEMORY_WRITE_LEASE_SECONDS,
+        total_timeout_seconds + MEETING_MEMORY_WRITE_LEASE_GRACE_SECONDS,
+        idle_timeout_seconds + MEETING_MEMORY_WRITE_LEASE_GRACE_SECONDS,
+    )
+
+
 def process_meeting_memory_writes(
     store: AutoReplyStore,
     *,
     workspace: Path,
     routed_execution: RoutedCodexExecution,
-    now: datetime | None = None,
     limit: int = 1,
     concurrency: int = 1,
+    lease_seconds: int = MEETING_MEMORY_WRITE_LEASE_SECONDS,
     clock: Callable[[], datetime] | None = None,
 ) -> MeetingMemoryWriteOutcome:
     """Claim and write due conclusions with bounded, lease-safe concurrency.
 
     ``clock`` controls every durable queue timestamp. It defaults to current
-    UTC time; callers can inject it for deterministic tests. ``now`` remains
-    accepted for source compatibility with the former API, but is not reused
-    as a long-running worker tick's clock.
+    UTC time; callers inject it for deterministic tests.
     """
-    if now is not None and (now.tzinfo is None or now.utcoffset() is None):
-        raise ValueError("meeting Memory processing time must include a timezone")
     if concurrency <= 0:
         raise ValueError("meeting Memory concurrency must be positive")
+    if lease_seconds <= 0:
+        raise ValueError("meeting Memory lease duration must be positive")
     tick_started_at = _meeting_memory_current_time(clock)
     store.supersede_obsolete_meeting_memory_runtime_attempts()
     store.recover_unstarted_runtime_operation_attempts(
@@ -200,7 +213,7 @@ def process_meeting_memory_writes(
             now=wave_started_at.isoformat(),
             limit=min(concurrency, remaining),
             owner=owner,
-            lease_seconds=MEETING_MEMORY_WRITE_LEASE_SECONDS,
+            lease_seconds=lease_seconds,
         )
         if not events:
             break
@@ -256,28 +269,31 @@ def _process_event(
                 event.attempts,
                 max_delay_seconds=MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS,
             )
+            settled_at = _meeting_memory_current_time(clock)
             settled = store.retry_meeting_memory_write_event(
                 event.id,
                 owner=owner,
                 error=f"{exc.source_code}: {exc}",
-                available_at=(
-                    _meeting_memory_current_time(clock)
-                    + timedelta(seconds=delay)
-                ).isoformat(),
+                available_at=(settled_at + timedelta(seconds=delay)).isoformat(),
+                now=settled_at,
             )
             return "retried" if settled else "lost_lease"
         else:
+            settled_at = _meeting_memory_current_time(clock)
             settled = store.fail_meeting_memory_write_event(
                 event.id,
                 owner=owner,
                 error=f"{exc.source_code}: {exc}",
+                now=settled_at,
             )
             return "failed" if settled else "lost_lease"
     except (TypeError, ValueError) as exc:
+        settled_at = _meeting_memory_current_time(clock)
         settled = store.fail_meeting_memory_write_event(
             event.id,
             owner=owner,
             error=str(exc),
+            now=settled_at,
         )
         return "failed" if settled else "lost_lease"
     except Exception as exc:  # keep one malformed runtime result from stopping the queue
@@ -287,6 +303,7 @@ def _process_event(
             event.attempts,
             max_delay_seconds=MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS,
         )
+        settled_at = _meeting_memory_current_time(clock)
         settled = store.retry_meeting_memory_write_event(
             event.id,
             owner=owner,
@@ -294,17 +311,17 @@ def _process_event(
                 "meeting_memory_runtime_error: "
                 f"{type(exc).__name__}: {exc}"
             ),
-            available_at=(
-                _meeting_memory_current_time(clock)
-                + timedelta(seconds=delay)
-            ).isoformat(),
+            available_at=(settled_at + timedelta(seconds=delay)).isoformat(),
+            now=settled_at,
         )
         return "retried" if settled else "lost_lease"
     else:
+        settled_at = _meeting_memory_current_time(clock)
         settled = store.complete_meeting_memory_write_event(
             event.id,
             owner=owner,
             memory_id=result.episode_uuid,
+            now=settled_at,
         )
         return "completed" if settled else "lost_lease"
 

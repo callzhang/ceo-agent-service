@@ -471,6 +471,11 @@ def _seed_runtime_operation_parent(
                     "values (?, 1, ?, '{}')",
                     (int(source_id), execution_generation),
                 )
+                db.execute(
+                    "update meeting_memory_write_events set status='processing' "
+                    "where id=?",
+                    (int(source_id),),
+                )
             elif table_name == "wechat_memory_candidates":
                 db.execute("insert into wechat_memory_candidates (id, import_run_id, account_id, statement, category, confidence, sensitivity, status, memory_write_status) values (?, 'import', 'account', 'statement', 'fact', 1, 'low', 'approved', 'writing')", (int(source_id),))
             else:
@@ -10029,6 +10034,13 @@ def test_supersede_obsolete_meeting_memory_runtime_attempts_after_requeue(
         )
     assert event is not None
     stale_key = f"meeting_memory_write_event:{event['id']}:old-generation"
+    claimed_event = store.claim_due_meeting_memory_write_events(
+        now="2026-09-14T23:00:00+00:00",
+        limit=1,
+        owner="interrupted-memory-owner",
+        lease_seconds=1800,
+    )
+    assert [item.id for item in claimed_event] == [event["id"]]
     claimed = store.claim_runtime_operation_attempt(
         "memory",
         stale_key,
@@ -10053,17 +10065,11 @@ def test_supersede_obsolete_meeting_memory_runtime_attempts_after_requeue(
         owner="interrupted-memory-owner",
         now="2026-09-14T23:00:01+00:00",
     )
-    claimed_event = store.claim_due_meeting_memory_write_events(
-        now="2026-09-14T23:00:02+00:00",
-        limit=1,
-        owner="test-interrupted-meeting-memory",
-        lease_seconds=30,
-    )
-    assert [item.id for item in claimed_event] == [event["id"]]
     assert store.fail_meeting_memory_write_event(
         event["id"],
-        owner="test-interrupted-meeting-memory",
+        owner="interrupted-memory-owner",
         error="interrupted before write",
+        now=datetime.fromisoformat("2026-09-14T23:00:01+00:00"),
     )
     assert store.requeue_failed_meeting_memory_write_event(
         event["id"], reason="verified pre-write interruption"

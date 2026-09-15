@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from pydantic import BaseModel, NonNegativeInt, PositiveInt
+from pydantic import BaseModel, NonNegativeInt, PositiveInt, field_validator
 
 from app.codex_decision import CodexDecisionRunner
 from app.database_backup import (
@@ -29,6 +29,7 @@ from app.config import (
     embedding_timeout_seconds,
     feedback_spike_vercel_base_url,
     principal_display_name,
+    meeting_memory_worker_count,
     repository_upgrade_branch,
     repository_upgrade_check_interval_seconds,
     repository_upgrade_enabled,
@@ -77,6 +78,7 @@ from app.meeting_alignment import (
 from app.meeting_alignment_agent import MeetingAlignmentCodexRunner
 from app.meeting_memory_write import (
     enqueue_sent_meeting_memory_writes,
+    meeting_memory_write_lease_seconds,
     process_meeting_memory_writes,
 )
 from app.org_cache import (
@@ -235,11 +237,19 @@ class WorkerSettings(BaseModel):
     task_codex_idle_timeout_seconds: PositiveInt = 900
     oa_pending_scan_lookback_days: PositiveInt = 365
     consumer_workers: PositiveInt = 2
+    meeting_memory_workers: PositiveInt = 2
     max_batches: NonNegativeInt | None = None
     repository_upgrade_enabled: bool = repository_upgrade_enabled()
     repository_upgrade_remote: str = repository_upgrade_remote()
     repository_upgrade_branch: str = repository_upgrade_branch()
     repository_upgrade_check_interval_seconds: PositiveInt = repository_upgrade_check_interval_seconds()
+
+    @field_validator("meeting_memory_workers")
+    @classmethod
+    def validate_meeting_memory_workers(cls, value: int) -> int:
+        if not 1 <= value <= 4:
+            raise ValueError("meeting_memory_workers must be between 1 and 4")
+        return value
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -671,6 +681,12 @@ def build_parser() -> argparse.ArgumentParser:
                 default=consumer_worker_count(),
                 help="global concurrent Agent execution capacity; each queue remains independently scheduled",
             )
+            subparser.add_argument(
+                "--meeting-memory-workers",
+                type=_positive_int,
+                default=meeting_memory_worker_count(),
+                help="concurrent Meeting Memory writes; independent from message consumers",
+            )
         if command == "export-feedback":
             subparser.add_argument(
                 "--output",
@@ -825,6 +841,9 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         task_codex_idle_timeout_seconds=args.task_codex_idle_timeout_seconds,
         oa_pending_scan_lookback_days=args.oa_pending_scan_lookback_days,
         consumer_workers=getattr(args, "consumer_workers", consumer_worker_count()),
+        meeting_memory_workers=getattr(
+            args, "meeting_memory_workers", meeting_memory_worker_count()
+        ),
         max_batches=args.max_batches,
         repository_upgrade_enabled=repository_upgrade_enabled(),
         repository_upgrade_remote=repository_upgrade_remote(),
@@ -3335,6 +3354,10 @@ def run_meeting_memory_write_loop(
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
     limit = 20 if settings.max_batches is None else settings.max_batches
+    lease_seconds = meeting_memory_write_lease_seconds(
+        settings.codex_timeout_seconds,
+        settings.codex_idle_timeout_seconds,
+    )
     while True:
         if not settings.dry_run and network_ready():
             try:
@@ -3342,8 +3365,9 @@ def run_meeting_memory_write_loop(
                     store,
                     workspace=settings.workspace,
                     routed_execution=routed_execution,
-                    now=datetime.now().astimezone(),
                     limit=limit,
+                    concurrency=settings.meeting_memory_workers,
+                    lease_seconds=lease_seconds,
                 )
                 store.set_service_health_component(
                     "meeting-memory-write",
