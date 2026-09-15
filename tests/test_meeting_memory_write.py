@@ -984,8 +984,9 @@ def test_unexpected_memory_runtime_error_defers_one_event(tmp_path: Path) -> Non
     assert event["available_at"]
 
 
-def test_failed_meeting_memory_write_can_be_closed_from_verified_memory_readback(
-    tmp_path: Path,
+@pytest.mark.parametrize("initial_status", ["pending", "failed"])
+def test_unsettled_meeting_memory_write_can_be_closed_from_verified_memory_readback(
+    tmp_path: Path, initial_status: str
 ) -> None:
     store = AutoReplyStore(tmp_path / "store.sqlite3")
     job_id = _store_sent_job(store)
@@ -997,19 +998,20 @@ def test_failed_meeting_memory_write_can_be_closed_from_verified_memory_readback
                 (job_id,),
             ).fetchone()["id"]
         )
-    claimed = store.claim_due_meeting_memory_write_events(
-        now="2026-09-15T10:00:00+00:00",
-        limit=1,
-        owner="test-reconcile",
-        lease_seconds=30,
-    )
-    assert [event.id for event in claimed] == [event_id]
-    assert store.fail_meeting_memory_write_event(
-        event_id,
-        owner="test-reconcile",
-        error="result parser failed",
-        now=datetime.fromisoformat("2026-09-15T10:00:01+00:00"),
-    )
+    if initial_status == "failed":
+        claimed = store.claim_due_meeting_memory_write_events(
+            now="2026-09-15T10:00:00+00:00",
+            limit=1,
+            owner="test-reconcile",
+            lease_seconds=30,
+        )
+        assert [event.id for event in claimed] == [event_id]
+        assert store.fail_meeting_memory_write_event(
+            event_id,
+            owner="test-reconcile",
+            error="result parser failed",
+            now=datetime.fromisoformat("2026-09-15T10:00:01+00:00"),
+        )
 
     assert store.reconcile_failed_meeting_memory_write_event(
         event_id,
@@ -1027,7 +1029,7 @@ def test_failed_meeting_memory_write_can_be_closed_from_verified_memory_readback
         ).fetchone()
     assert dict(event) == {
         "status": "done",
-        "attempts": 1,
+        "attempts": 1 if initial_status == "failed" else 0,
         "error": "",
         "memory_id": "verified-memory-7",
     }

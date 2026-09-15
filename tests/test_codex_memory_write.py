@@ -81,6 +81,10 @@ def test_memory_write_uses_source_parent_and_persists_only_routed_result(
         'Call memory_write exactly once with source_description set to the exact '
         'literal "reply audit".'
     ) in call["prompt"]
+    assert (
+        "If the success receipt omits that identifier, do not call memory_write "
+        "again: recall the exact unique source marker"
+    ) in call["prompt"]
     with store._connect() as db:
         row = db.execute(
             "select status, memory_episode_id from memory_write_events where id=?",

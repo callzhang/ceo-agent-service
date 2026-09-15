@@ -14778,7 +14778,7 @@ class AutoReplyStore:
         *,
         memory_id: str,
     ) -> bool:
-        """Close a failed projection after an independent Memory readback.
+        """Close an unsettled projection after an independent Memory readback.
 
         The caller must verify ``memory_id`` through the Memory service before
         calling this method. This records an already accepted write and never
@@ -14795,7 +14795,7 @@ class AutoReplyStore:
                 update meeting_memory_write_events as events
                 set status='done', available_at='', error='', memory_id=?,
                     lease_owner='', lease_expires_at='', updated_at=current_timestamp
-                where events.id=? and events.status='failed'
+                where events.id=? and events.status in ('pending', 'failed')
                   and exists (
                     select 1
                     from meeting_alignment_jobs as jobs
