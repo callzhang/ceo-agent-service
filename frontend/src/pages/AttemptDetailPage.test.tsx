@@ -129,7 +129,7 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByRole("link", { name: "查看 Agent session" })).toHaveAttribute("href", "/codex/session-8448");
     expect(screen.queryByRole("heading", { name: "Draft reply (raw Codex reply)" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "处理过程" })).toBeInTheDocument();
-    expect(screen.getByText(/每一轮会先由处理 Agent 形成方案，再由审计 Agent 核验。多条记录表示修订、重试或重新核验，不代表重复发送。/)).toBeInTheDocument();
+    expect(screen.getByText("这里集中展示处理上下文、工具调用和每一轮处理结果。")).toBeInTheDocument();
     expect(screen.getByText("处理判断 · 第 1 轮")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-grid")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-side")).toBeInTheDocument();
@@ -256,9 +256,9 @@ describe("AttemptDetailPage", () => {
 
     expect(await screen.findByRole("link", { name: "查看处理过程" })).toHaveAttribute("href", "/attempts/8448/execution/consumer");
     expect(screen.getByRole("link", { name: "查看审计过程" })).toHaveAttribute("href", "/attempts/8448/execution/audit");
-    // The Agent record holds the calls with their inputs, outputs and the
-    // reasoning around them; a thinner copy here only split the evidence.
-    expect(screen.queryByRole("heading", { name: "执行过程" })).not.toBeInTheDocument();
+    // The overview keeps a single merged processing section; role-specific
+    // Agent records remain available through the action bar.
+    expect(screen.getByRole("heading", { name: "处理过程" })).toBeInTheDocument();
   });
 
   it("sends the Consumer execution page to that role's Agent record", async () => {
@@ -358,7 +358,9 @@ describe("AttemptDetailPage", () => {
 
     expect(await screen.findByRole("heading", { name: "关联邮件" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Audit context" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "处理过程" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "处理过程" })).toBeInTheDocument();
+    expect(screen.getByText("重复的审计上下文")).toBeInTheDocument();
+    expect(document.querySelector(".attempt-detail-layout + .attempt-process-card")).not.toBeInTheDocument();
   });
 
   it("keeps the process visible for an Attempt whose transcripts are gone", async () => {
@@ -372,9 +374,22 @@ describe("AttemptDetailPage", () => {
     });
     renderPage();
 
-    expect(await screen.findByRole("heading", { name: "执行过程" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "处理过程" })).toBeInTheDocument();
     expect(screen.getByText("exec_command")).toBeInTheDocument();
     expect(screen.getByText("2 个匹配")).toBeInTheDocument();
+  });
+
+  it("keeps every post-header section inside the main and sidebar columns", async () => {
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
+    const layout = document.querySelector(".attempt-detail-layout");
+    expect(layout).toBeInTheDocument();
+    expect(layout?.querySelector(".attempt-detail-main")).toContainElement(screen.getByRole("heading", { name: "Trigger" }));
+    expect(layout?.querySelector(".attempt-detail-main")).toContainElement(screen.getByRole("heading", { name: "处理过程" }));
+    expect(layout?.querySelector(".attempt-review-side")).toContainElement(screen.getByRole("heading", { name: "反馈迭代" }));
+    expect(screen.queryByRole("heading", { name: "Audit context" })).not.toBeInTheDocument();
+    expect(document.querySelector(".attempt-detail-layout + *")).toBeNull();
   });
 
   it("submits the inline feedback form with the edited values", async () => {
