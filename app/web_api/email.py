@@ -1464,10 +1464,20 @@ def register_email_routes(
             "ok": True,
             "preview": {
                 "unique_sample_count": len(selection["selected_message_identities"]),
-                "snapshot_id": snapshot["snapshot_id"],
-                "snapshot_digest": snapshot["snapshot_digest"],
-                "snapshot_version": snapshot["snapshot_version"],
-                "description_version": snapshot["description_version"],
+                # The selected sources are deliberately frozen only at
+                # submission.  Until then show an honest, non-empty planned
+                # binding instead of pretending that an unrelated folder
+                # snapshot is the data version being previewed.
+                "snapshot_id": snapshot["snapshot_id"] or "提交时冻结",
+                "snapshot_digest": snapshot["snapshot_digest"] or "提交时计算",
+                "snapshot_version": (
+                    snapshot["snapshot_version"]
+                    or "email-selected-training-snapshot-v1"
+                ),
+                "description_version": (
+                    snapshot["description_version"]
+                    or "selected-training-input-v1"
+                ),
             },
         }
 

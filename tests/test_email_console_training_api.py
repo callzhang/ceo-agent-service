@@ -85,6 +85,27 @@ def test_learning_exposes_training_source_provenance_and_selection_is_executable
     )
 
 
+def test_training_preview_marks_selected_sources_as_frozen_on_submission(tmp_path, monkeypatch):
+    client, store, _registry = client_for(tmp_path)
+    monkeypatch.setattr(store, "latest_training_snapshot_state", lambda: None)
+    monkeypatch.setattr(store, "list_selected_training_records", lambda: [
+        {"source": "agent_auto_label", "stable_message_identity": "agent-1", "category_key": "work", "account_id": "a", "normalized_model_input": "{}"},
+    ])
+
+    response = client.post("/api/console/email/training/preview", json={
+        "sources": ["agent_auto_label"], "categories": ["work"],
+    })
+
+    assert response.status_code == 200
+    assert response.json()["preview"] == {
+        "unique_sample_count": 1,
+        "snapshot_id": "提交时冻结",
+        "snapshot_digest": "提交时计算",
+        "snapshot_version": "email-selected-training-snapshot-v1",
+        "description_version": "selected-training-input-v1",
+    }
+
+
 def test_learning_exposes_model_family_support_and_persists_selection(tmp_path, monkeypatch):
     client, store, registry = client_for(tmp_path)
     monkeypatch.setattr(store, "latest_training_snapshot_state", lambda: {
