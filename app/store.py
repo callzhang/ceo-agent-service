@@ -130,6 +130,13 @@ SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
+TERMINAL_NO_ACTION_RUN_FAILURE_CODES = frozenset(
+    {
+        "historical_reconciliation_superseded",
+        "invalid_service_task_discarded",
+        "task_already_completed",
+    }
+)
 _SCHEDULED_TASK_RUN_ID_JSON_PATHS = (
     "$.scheduled_consumer.scheduled_task_run_id",
     "$.raw_payload.scheduled_consumer.scheduled_task_run_id",
@@ -20378,6 +20385,46 @@ class AutoReplyStore:
                 """
             )
             return cursor.rowcount
+
+    def skip_failed_reply_tasks_with_terminal_no_action_run(self) -> int:
+        """Close failures whose final run already proves no action remains."""
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                """
+                select tasks.id, tasks.execution_generation, runs.structured_error_json
+                from reply_tasks as tasks
+                join agent_runs as runs on runs.id=(
+                    select latest.id
+                    from agent_runs as latest
+                    where latest.reply_task_id=tasks.id
+                      and latest.execution_generation=tasks.execution_generation
+                    order by latest.id desc
+                    limit 1
+                )
+                where tasks.status='failed' and runs.status='failed'
+                order by tasks.id
+                """
+            ).fetchall()
+            skipped = 0
+            for row in rows:
+                code = self._agent_run_failure_code(row["structured_error_json"])
+                if code not in TERMINAL_NO_ACTION_RUN_FAILURE_CODES:
+                    continue
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='skipped', error=?, available_at='', locked_at=null,
+                        updated_at=current_timestamp
+                    where id=? and status='failed' and execution_generation=?
+                    """,
+                    (
+                        f"skipped_terminal_no_action:{code}",
+                        row["id"],
+                        row["execution_generation"],
+                    ),
+                )
+                skipped += cursor.rowcount
+            return skipped
 
     def finalize_reply_task_without_run(
         self,

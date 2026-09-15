@@ -2617,6 +2617,37 @@ def test_skip_failed_reply_task_superseded_by_terminal_business_object(
     assert updated.error == "superseded_by_terminal_business_object_task"
 
 
+def test_skip_failed_reply_task_with_terminal_no_action_run(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-already-completed",
+        conversation_title="Approval scan",
+        single_chat=True,
+        trigger_message_id="msg-already-completed",
+        trigger_create_time="2026-09-14 10:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="This approval is already complete",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="audit"
+    ).run
+    store.fail_agent_run(
+        run.id, {"code": "task_already_completed"}, owner="audit"
+    )
+    store.fail_reply_task(
+        task.id,
+        "task_already_completed",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    assert store.skip_failed_reply_tasks_with_terminal_no_action_run() == 1
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "skipped"
+    assert updated.error == "skipped_terminal_no_action:task_already_completed"
+
+
 def test_earliest_delivery_receipt_records_exact_configured_feedback_token(
     tmp_path: Path,
     monkeypatch,
