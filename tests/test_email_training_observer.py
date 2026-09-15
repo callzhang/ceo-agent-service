@@ -70,6 +70,38 @@ class _Store:
         )
 
 
+def test_folder_training_cache_keeps_a_stable_per_category_sample_limit():
+    from app.email_training_observer import _cap_cached_category_samples
+
+    def state(order):
+        return {
+            "accounts": {"account-a": {"folders": {"trash": {
+                "observations": {
+                    identity: {
+                        "uid": index + 1,
+                        "observation": {
+                            "folder_role": "trash",
+                            "bound_category_key": None,
+                        },
+                    }
+                    for index, identity in enumerate(order)
+                },
+            }}}},
+        }
+
+    first = state([f"message-{index}" for index in range(501)])
+    second = state(list(reversed([f"message-{index}" for index in range(501)])))
+    first_capped = _cap_cached_category_samples(first, limit=500)
+    second_capped = _cap_cached_category_samples(second, limit=500)
+
+    assert first_capped == {"account-a:trash"}
+    assert second_capped == {"account-a:trash"}
+    assert set(first["accounts"]["account-a"]["folders"]["trash"]["observations"]) == set(
+        second["accounts"]["account-a"]["folders"]["trash"]["observations"]
+    )
+    assert len(first["accounts"]["account-a"]["folders"]["trash"]["observations"]) == 500
+
+
 def test_observer_uses_bounded_uid_watermark_and_resumes_after_restart(tmp_path):
     from app.email_training_observer import ProviderTrainingObservationJob
 

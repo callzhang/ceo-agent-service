@@ -42,14 +42,11 @@ def test_training_console_empty_registry_explains_agent_mode(tmp_path):
 
 def test_learning_exposes_training_source_provenance_and_selection_is_executable(tmp_path, monkeypatch):
     client, store, registry = client_for(tmp_path)
-    monkeypatch.setattr(store, "list_training_examples", lambda **_: [
-        {"message_id": "user-1", "label": "work", "confirmed_at": "2026-09-12T00:00:00Z", "included_in_model_id": None},
-        {"message_id": "user-2", "label": "work", "confirmed_at": "2026-09-12T00:00:01Z", "included_in_model_id": None},
+    monkeypatch.setattr(store, "list_selected_training_records", lambda: [
+        {"source": "user_feedback", "stable_message_identity": "user-1", "category_key": "work", "account_id": "a", "normalized_model_input": "one"},
+        {"source": "user_feedback", "stable_message_identity": "user-2", "category_key": "work", "account_id": "a", "normalized_model_input": "two"},
+        {"source": "agent_auto_label", "stable_message_identity": "agent-1", "category_key": "legal", "account_id": "a", "normalized_model_input": "three"},
     ])
-    monkeypatch.setattr(store, "list_classifications", lambda **_: ([
-        {"id": 2, "stable_message_identity": "agent-1", "classification_source": "agent", "predicted_category": "legal",
-         "confirmed_category": "legal", "status": "processed"},
-    ], 1))
     monkeypatch.setattr(store, "latest_training_snapshot_state", lambda: {
         "snapshot_id": "email-folder-snapshot-20260912T000000.000000Z-aaaaaaaaaaaa",
         "snapshot_sha": "a" * 64, "snapshot_version": "email-folder-training-snapshot-v1",
@@ -70,6 +67,7 @@ def test_learning_exposes_training_source_provenance_and_selection_is_executable
     assert all(row["supported"] is True for row in rows)
     assert all(row["provenance"] for row in rows)
     assert next(row["sample_count"] for row in rows if row["source"] == "user_feedback" and row["category"] == "work") == 2
+    assert next(row["unique_trainable_count"] for row in rows if row["source"] == "agent_auto_label") == 1
     response = client.post("/api/console/email/training", json={
         "sources": ["agent_auto_label", "folder_snapshot", "user_feedback"],
         "categories": ["legal", "work"],

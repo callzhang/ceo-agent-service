@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from typing import Any
 from app.email_important import ImportantSignals
 from app.email_imap_readonly import ProviderFolderFingerprint
 from app.email_provider_folders import FolderRole
+from app.email_experiment_snapshot import deterministic_payload_digest
 from app.email_training_snapshot import provider_model_input_fields
 
 
@@ -61,6 +63,7 @@ class ProviderTrainingObservationJob:
         email_store: object,
         batch_size: int = 200,
         reconciliation_batch_size: int = 50,
+        max_category_samples: int = 500,
         include_folder: Callable[[object, Mapping[str, object] | None], bool]
         | None = None,
     ) -> None:
@@ -74,11 +77,16 @@ class ProviderTrainingObservationJob:
             raise TypeError("reconciliation_batch_size must be an integer")
         if reconciliation_batch_size <= 0:
             raise ValueError("reconciliation_batch_size must be positive")
+        if isinstance(max_category_samples, bool) or not isinstance(max_category_samples, int):
+            raise TypeError("max_category_samples must be an integer")
+        if max_category_samples <= 0:
+            raise ValueError("max_category_samples must be positive")
         self.state_path = Path(state_path)
         self.source_factory = source_factory
         self.email_store = email_store
         self.batch_size = batch_size
         self.reconciliation_batch_size = reconciliation_batch_size
+        self.max_category_samples = max_category_samples
         self.include_folder = include_folder or (lambda _folder, _binding: True)
 
     def run_once(
@@ -87,6 +95,9 @@ class ProviderTrainingObservationJob:
         with _state_lock(self.state_path):
             state = _load_observation_state(self.state_path)
             updated = json.loads(json.dumps(state))
+            capped_folders = _cap_cached_category_samples(
+                updated, limit=self.max_category_samples
+            )
             bindings = tuple(self.email_store.list_account_folder_bindings())
             more_available = False
             unavailable: list[str] = []
@@ -137,6 +148,10 @@ class ProviderTrainingObservationJob:
                             _new_folder_state(),
                         )
                         key = f"{account_id}:{folder_id}"
+                        if key in capped_folders:
+                            folder_state["status"] = "sample_cap_reached"
+                            authoritative_folders.add(key)
+                            continue
                         cached_identities = tuple(folder_state["observations"])
                         classified_identities = (
                             self.email_store.classified_stable_message_identities(
@@ -674,6 +689,58 @@ def _decode_observation(value: Mapping[str, object]) -> dict[str, object]:
     )
     result["folder_role"] = FolderRole(result["folder_role"])
     return result
+
+
+def _cap_cached_category_samples(
+    state: dict[str, object], *, limit: int
+) -> set[str]:
+    """Keep a stable random sample of each labelled folder category.
+
+    A deterministic digest gives every historical message an equal, stable
+    rank without retaining unbounded oldest-first cursor history.  The return
+    value identifies folders that have reached their category's sample budget,
+    so the caller can stop expensive historical fetches for them.
+    """
+
+    by_category: dict[str, list[tuple[str, str, dict[str, object]]]] = defaultdict(list)
+    for account_id, account_state in state["accounts"].items():
+        for folder_id, folder_state in account_state["folders"].items():
+            for identity, cached in folder_state["observations"].items():
+                observation = cached["observation"]
+                role = FolderRole(str(observation["folder_role"]))
+                if role in {FolderRole.JUNK, FolderRole.TRASH}:
+                    category = "junk"
+                elif role is FolderRole.CATEGORY and observation.get("bound_category_key"):
+                    category = str(observation["bound_category_key"])
+                else:
+                    continue
+                by_category[category].append(
+                    (str(account_id), str(folder_id), {"identity": str(identity), "cached": cached})
+                )
+    capped_folders: set[str] = set()
+    for category, rows in by_category.items():
+        ordered = sorted(
+            rows,
+            key=lambda row: (
+                deterministic_payload_digest(
+                    ["folder-training-cap-v1", category, row[0], row[2]["identity"]]
+                ),
+                row[0], row[1], row[2]["identity"],
+            ),
+        )
+        keep = {(account_id, folder_id, row["identity"]) for account_id, folder_id, row in ordered[:limit]}
+        for account_id, folder_id, row in ordered[limit:]:
+            del state["accounts"][account_id]["folders"][folder_id]["observations"][row["identity"]]
+        if len(ordered) >= limit:
+            capped_folders.update(
+                f"{account_id}:{folder_id}"
+                for account_id, folder_id, _ in ordered
+                if any(
+                    existing_account == account_id and existing_folder == folder_id
+                    for existing_account, existing_folder, _ in keep
+                )
+            )
+    return capped_folders
 
 
 def _state_observations(state: Mapping[str, object]) -> tuple[dict[str, object], ...]:

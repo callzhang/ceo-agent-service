@@ -58,7 +58,7 @@ def test_selection_provenance_rejects_empty_selection_by_default() -> None:
             assert include_inclusion is True
             return []
 
-    with pytest.raises(ValueError, match="has no frozen snapshot samples"):
+    with pytest.raises(ValueError, match="category is unavailable"):
         _selection_provenance(
             EmptySelectedSourceStore(),
             sources=["user_feedback"],
@@ -233,8 +233,8 @@ def test_manual_folder_selection_is_bound_to_the_training_run(tmp_path: Path):
         "important_label_watermark": 2,
         "minimum_ready": True,
         "observations": [
-            {"stable_message_identity": "mail-1", "category_key": "work"},
-            {"stable_message_identity": "mail-2", "category_key": "legal"},
+            {"stable_message_identity": "mail-1", "category_key": "work", "account_id": "account-a", "provider_thread_id": None, "normalized_model_input": '{"body":"mail one"}'},
+            {"stable_message_identity": "mail-2", "category_key": "legal", "account_id": "account-a", "provider_thread_id": None, "normalized_model_input": '{"body":"mail two"}'},
         ],
     }
     store.latest_training_snapshot_state = lambda: snapshot
@@ -275,7 +275,7 @@ def test_manual_folder_selection_is_bound_to_the_training_run(tmp_path: Path):
     assert payload["execution"] == "staged_candidate_training"
 
 
-def test_manual_agent_and_user_selection_uses_frozen_folder_labels(tmp_path: Path):
+def test_manual_agent_and_user_selection_uses_selected_labels(tmp_path: Path, monkeypatch):
     service, store, _rows, _ = _service_with_pending(tmp_path)
     snapshot = {
         "snapshot_id": "email-folder-snapshot-20260912T000000.000000Z-bbbbbbbbbbbb",
@@ -286,19 +286,26 @@ def test_manual_agent_and_user_selection_uses_frozen_folder_labels(tmp_path: Pat
         "folder_label_watermark": 2, "important_label_watermark": 0,
         "minimum_ready": True,
         "observations": [
-            {"stable_message_identity": "mail-user", "category_key": "work"},
-            {"stable_message_identity": "mail-agent", "category_key": "legal"},
+            {"stable_message_identity": "mail-user", "category_key": "work", "account_id": "account-a", "provider_thread_id": None, "normalized_model_input": '{"body":"folder user"}'},
+            {"stable_message_identity": "mail-agent", "category_key": "legal", "account_id": "account-a", "provider_thread_id": None, "normalized_model_input": '{"body":"folder agent"}'},
         ],
     }
     store.latest_training_snapshot_state = lambda: snapshot
     store.get_training_snapshot = lambda _snapshot_id: snapshot
-    store.list_training_examples = lambda **_: [
-        {"message_id": "mail-user", "label": "legal"},
+    store.list_selected_training_records = lambda: [
+        {"source": "user_feedback", "stable_message_identity": "mail-user", "category_key": "legal", "account_id": "account-a", "normalized_model_input": '{"body":"user confirmation"}'},
+        {"source": "agent_auto_label", "stable_message_identity": "mail-agent", "category_key": "work", "account_id": "account-a", "normalized_model_input": '{"body":"agent label"}'},
     ]
-    store.list_classifications = lambda **_: ([
-        {"stable_message_identity": "mail-agent", "classification_source": "agent",
-         "predicted_category": "work"},
-    ], 1)
+    monkeypatch.setattr(
+        "app.email_classifier_learning.build_selected_training_snapshot",
+        lambda *_, **__: object(),
+    )
+    store.persist_training_snapshot = lambda _: {
+        "snapshot_id": "email-selected-training-test",
+        "snapshot_digest": "e" * 64,
+        "snapshot_version": "email-selected-training-snapshot-v1",
+        "description_version": "selected-training-input-v1",
+    }
     service.controller = type("Controller", (), {
         "start": lambda self, **kwargs: TrainingSubprocessRun(
             run_id="source-selected-run", status="running", pid=1,
@@ -321,8 +328,8 @@ def test_manual_agent_and_user_selection_uses_frozen_folder_labels(tmp_path: Pat
         (row["source"], row["category"]): row["sample_count"]
         for row in selection["provenance"]
     }
-    assert by_source_category[("user_feedback", "work")] == 1
-    assert by_source_category[("agent_auto_label", "legal")] == 1
+    assert by_source_category[("user_feedback", "legal")] == 1
+    assert by_source_category[("agent_auto_label", "work")] == 1
 
 
 def test_manual_training_selection_is_idempotent_for_same_scope(tmp_path: Path):
@@ -333,7 +340,7 @@ def test_manual_training_selection_is_idempotent_for_same_scope(tmp_path: Path):
         "description_version": "description-set-sha256:" + "b" * 64,
         "input_schema_version": "email-folder-model-input-v2", "folder_label_watermark": 2,
         "important_label_watermark": 2, "minimum_ready": True,
-        "observations": [{"stable_message_identity": "mail-1", "category_key": "work"}],
+        "observations": [{"stable_message_identity": "mail-1", "category_key": "work", "account_id": "account-a", "provider_thread_id": None, "normalized_model_input": '{"body":"mail one"}'}],
     }
     store.latest_training_snapshot_state = lambda: snapshot
     store.get_training_snapshot = lambda _snapshot_id: snapshot

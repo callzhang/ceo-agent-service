@@ -1477,73 +1477,32 @@ def register_email_routes(
         return {
             key: value
             for key, value in selection.items()
-            if key != "selected_message_identities"
+            if key not in {"selected_message_identities", "selected_training_records"}
         }
 
     def training_source_catalog(email_store: EmailStore) -> list[dict[str, object]]:
         rows: dict[tuple[str, str], dict[str, object]] = {}
         snapshot = email_store.latest_training_snapshot_state()
-        get_snapshot = getattr(email_store, "get_training_snapshot", None)
-        snapshot_data = (
-            get_snapshot(str(snapshot["snapshot_id"]))
-            if snapshot and callable(get_snapshot)
-            else None
-        )
-        frozen_rows = (
-            snapshot_data["observations"]
-            if snapshot_data is not None
-            else ()
-        )
-        frozen_category_by_identity = {
-            str(item["stable_message_identity"]): str(item["category_key"])
-            for item in frozen_rows
-            if item.get("category_key") is not None
-        }
-        list_feedback = getattr(email_store, "list_training_examples", None)
-        feedback_samples = (
-            list_feedback(include_inclusion=True)
-            if callable(list_feedback)
-            else []
-        )
-        for sample in feedback_samples:
-            identity = str(sample.get("message_id") or "")
-            category = frozen_category_by_identity.get(identity, "")
-            if category:
-                row = rows.setdefault(("user_feedback", category), {
-                    "source": "user_feedback", "category": category,
-                    "sample_count": 0, "supported": True, "_identities": [],
-                    "provenance": {"classification_source": "user"},
-                })
-                row["sample_count"] += 1
-                row["_identities"].append(identity)
-        list_classifications = getattr(email_store, "list_classifications", None)
-        processed, _ = (
-            list_classifications(
-                status=EmailClassificationStatus.PROCESSED,
-                limit=100000,
-                offset=0,
-            )
-            if callable(list_classifications)
-            else ([], 0)
-        )
-        for sample in processed:
-            if sample.get("classification_source") != "agent":
-                continue
+        list_records = getattr(email_store, "list_selected_training_records", None)
+        records = list_records() if callable(list_records) else []
+        for sample in records:
+            source = str(sample.get("source") or "")
             identity = str(sample.get("stable_message_identity") or "")
-            category = frozen_category_by_identity.get(identity, "")
-            if category:
-                row = rows.setdefault(("agent_auto_label", category), {
-                    "source": "agent_auto_label", "category": category,
-                    "sample_count": 0, "supported": True, "_identities": [],
-                    "provenance": {"classification_source": "agent"},
-                })
-                row["sample_count"] += 1
-                row["_identities"].append(identity)
+            category = str(sample.get("category_key") or "")
+            if source not in {"agent_auto_label", "user_feedback"} or not identity or not category:
+                continue
+            row = rows.setdefault((source, category), {
+                "source": source, "category": category, "sample_count": 0,
+                "record_count": 0, "supported": True, "_identities": [],
+                "provenance": {"classification_source": "agent" if source == "agent_auto_label" else "user"},
+            })
+            row["record_count"] += 1
+            row["_identities"].append(identity)
         if snapshot:
             for category, count in dict(snapshot.get("category_sample_counts") or {}).items():
                 rows[("folder_snapshot", str(category))] = {
                     "source": "folder_snapshot", "category": str(category),
-                    "sample_count": int(count),
+                    "sample_count": int(count), "record_count": int(count),
                     "supported": True,
                     "_identities": [str(snapshot.get("snapshot_sha") or snapshot.get("snapshot_id") or "")],
                     "provenance": {"snapshot_id": snapshot.get("snapshot_id"),
@@ -1553,9 +1512,12 @@ def register_email_routes(
                 }
         result = []
         for row in sorted(rows.values(), key=lambda row: (str(row["source"]), str(row["category"]))):
-            identities = sorted(str(value) for value in row.pop("_identities", []))
+            identities = sorted({str(value) for value in row.pop("_identities", [])})
+            row["sample_count"] = len(identities) if row["source"] != "folder_snapshot" else row["sample_count"]
+            row["unique_trainable_count"] = row["sample_count"]
             provenance = dict(row["provenance"])
             provenance["sample_count"] = row["sample_count"]
+            provenance["record_count"] = row["record_count"]
             provenance["dataset_digest"] = sha256(
                 json.dumps(identities, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             ).hexdigest()

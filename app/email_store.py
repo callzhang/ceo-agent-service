@@ -12868,6 +12868,55 @@ class EmailStore:
             result.append(sample)
         return result
 
+    def list_selected_training_records(self) -> list[dict[str, Any]]:
+        """Return the service-produced labels that can be frozen for training.
+
+        The caller decides which sources and categories participate.  This
+        method deliberately does not require a provider-folder snapshot: user
+        feedback and Agent labels are valid, independently selectable sources.
+        """
+
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select id, account_id, stable_message_identity, thread_id,
+                       model_text, classification_source, category,
+                       confirmed_category, confirmed_at, updated_at
+                from email_classifications
+                where status='processed'
+                  and classification_source in ('agent', 'user')
+                  and trim(model_text) != ''
+                  and (
+                    (classification_source='agent' and category is not null and category != '')
+                    or (classification_source='user' and confirmed_category is not null and confirmed_category != '')
+                  )
+                order by id asc
+                """
+            ).fetchall()
+        return [
+            {
+                "classification_id": int(row["id"]),
+                "account_id": str(row["account_id"]),
+                "stable_message_identity": str(row["stable_message_identity"]),
+                "provider_thread_id": str(row["thread_id"]) if row["thread_id"] else None,
+                "normalized_model_input": str(row["model_text"]),
+                "source": (
+                    "agent_auto_label"
+                    if row["classification_source"] == "agent"
+                    else "user_feedback"
+                ),
+                "category_key": str(
+                    row["category"]
+                    if row["classification_source"] == "agent"
+                    else row["confirmed_category"]
+                ),
+                "label_recorded_at": str(
+                    row["confirmed_at"] or row["updated_at"]
+                ),
+            }
+            for row in rows
+        ]
+
     def persist_training_snapshot(self, snapshot: object) -> dict[str, object]:
         """Atomically append one validated immutable training snapshot."""
 
@@ -12907,6 +12956,7 @@ class EmailStore:
                        important_label_watermark
                 from email_training_snapshots
                 where frozen=1
+                  and snapshot_version='email-folder-training-snapshot-v1'
                 order by observed_at desc, snapshot_id desc
                 limit 1
                 """
@@ -13229,6 +13279,7 @@ class EmailStore:
                        folder_label_watermark, important_label_watermark
                 from email_training_snapshots
                 where frozen=1
+                  and snapshot_version='email-folder-training-snapshot-v1'
                 order by observed_at desc, snapshot_id desc
                 limit 1
                 """

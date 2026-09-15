@@ -895,7 +895,7 @@ def _independent_labeled_message(identity, category, *, source="natural"):
     )
 
 
-def test_training_selection_balances_every_category_to_minimum_group_count():
+def test_training_selection_keeps_each_category_up_to_the_independent_cap():
     messages = [
         *[_independent_labeled_message(f"work-{index}", "work") for index in range(5)],
         *[
@@ -925,13 +925,13 @@ def test_training_selection_balances_every_category_to_minimum_group_count():
     )
 
     assert first.manifest["selected_category_counts"] == {
-        "junk": 2,
+        "junk": 7,
         "legal": 2,
-        "work": 2,
+        "work": 5,
     }
-    assert len(first.manifest["training_selection"]) == 6
+    assert len(first.manifest["training_selection"]) == 14
     assert first.manifest["observation_count"] == 14
-    assert first.manifest["selected_group_count"] == 6
+    assert first.manifest["selected_group_count"] == 14
     assert first.manifest["training_selection"] == second.manifest["training_selection"]
     assert first.snapshot_digest == second.snapshot_digest
     selected = [row for row in first.observations if row.selected_for_training]
@@ -986,6 +986,31 @@ def test_fixed_hash_splits_produce_stable_equal_category_balance():
     }
     assert first.manifest["training_selection"] == ["stable-0", "stable-1"]
     assert first.snapshot_digest == second.snapshot_digest
+
+
+def test_folder_snapshot_caps_each_category_at_five_hundred_stable_samples():
+    messages = [
+        _independent_labeled_message(f"work-{index}", "work")
+        for index in range(501)
+    ] + [
+        _independent_labeled_message(f"legal-{index}", "legal")
+        for index in range(501)
+    ]
+    proposed = {
+        message["stable_message_identity"]: "train"
+        for message in messages
+    }
+
+    first = _snapshot(messages, snapshot_id="per-category-cap-a", proposed_splits=proposed)
+    second = _snapshot(
+        list(reversed(messages)),
+        snapshot_id="per-category-cap-b",
+        proposed_splits=proposed,
+    )
+
+    assert first.manifest["selected_category_counts"] == {"legal": 500, "work": 500}
+    assert len(first.manifest["training_selection"]) == 1000
+    assert first.manifest["training_selection"] == second.manifest["training_selection"]
 
 
 def test_explicit_split_with_zero_train_category_is_rejected_as_untrainable():

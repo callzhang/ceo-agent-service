@@ -28,6 +28,7 @@ from app.email_classifier_retrain import (
 from app.email_model_registry import EmailModelRegistry, ModelRegistryError
 from app.email_pipeline import apply_human_confirmation
 from app.email_store import EmailStore
+from app.email_training_snapshot import build_selected_training_snapshot
 
 
 @dataclass(frozen=True)
@@ -78,66 +79,67 @@ def _selection_provenance(
     if not set(sources) <= supported_sources:
         raise UnsupportedTrainingSelection("unknown training selection source")
     state = store.latest_training_snapshot_state()
-    if state is None:
-        raise ValueError("folder training snapshot is unavailable")
-    snapshot_id = str(state["snapshot_id"])
-    snapshot = store.get_training_snapshot(snapshot_id)
-    if snapshot is None:
-        raise ValueError("folder training snapshot is unavailable")
-    rows = tuple(snapshot["observations"])
+    snapshot = (
+        store.get_training_snapshot(str(state["snapshot_id"]))
+        if state is not None
+        else None
+    )
+    source_records: dict[str, list[dict[str, object]]] = {
+        "folder_snapshot": [], "agent_auto_label": [], "user_feedback": [],
+    }
+    if snapshot is not None and "folder_snapshot" in sources:
+        for row in snapshot["observations"]:
+            if row["category_key"] is None:
+                continue
+            source_records["folder_snapshot"].append({
+                "source": "folder_snapshot",
+                "account_id": row["account_id"],
+                "stable_message_identity": row["stable_message_identity"],
+                "provider_thread_id": row["provider_thread_id"],
+                "normalized_model_input": row["normalized_model_input"],
+                "category_key": row["category_key"],
+            })
+    list_records = getattr(store, "list_selected_training_records", None)
+    if callable(list_records):
+        for row in list_records():
+            source = str(row.get("source") or "")
+            if source in source_records:
+                source_records[source].append(dict(row))
+    else:
+        # Kept only for narrow, legacy test doubles. Production EmailStore
+        # always supplies redacted model input through the method above.
+        for row in store.list_training_examples(include_inclusion=True):
+            source_records["user_feedback"].append({
+                "source": "user_feedback", "account_id": row.get("account_id", "legacy"),
+                "stable_message_identity": row["message_id"],
+                "normalized_model_input": row.get("model_text", "legacy"),
+                "category_key": row["label"], "provider_thread_id": None,
+            })
     available = {
         str(row["category_key"])
-        for row in rows
-        if row["category_key"] is not None
+        for source in sources
+        for row in source_records[source]
+        if row.get("category_key") is not None
     }
-    if not set(categories) <= available:
-        raise ValueError("training selection category is unavailable")
     if not set(categories) <= available:
         raise ValueError("training selection category is unavailable")
 
-    # Folder placement is the label authority.  Agent and user records only
-    # select which already-frozen observations participate; their historical
-    # labels never replace the current folder label in the snapshot.
-    snapshot_category_by_identity = {
-        str(row["stable_message_identity"]): str(row["category_key"])
-        for row in rows
-        if row["category_key"] is not None
-    }
-    selected_by_source: dict[str, set[str]] = {source: set() for source in sources}
-    if "folder_snapshot" in selected_by_source:
-        selected_by_source["folder_snapshot"] = {
-            identity
-            for identity, category in snapshot_category_by_identity.items()
-            if category in categories
-        }
-    if "user_feedback" in selected_by_source:
-        selected_by_source["user_feedback"] = {
-            str(sample["message_id"])
-            for sample in store.list_training_examples(include_inclusion=True)
-            if str(sample.get("message_id") or "") in snapshot_category_by_identity
-            and snapshot_category_by_identity[str(sample["message_id"])] in categories
-        }
-    if "agent_auto_label" in selected_by_source:
-        classifications, _ = store.list_classifications(
-            status=EmailClassificationStatus.PROCESSED, limit=100_000, offset=0
-        )
-        selected_by_source["agent_auto_label"] = {
-            str(item["stable_message_identity"])
-            for item in classifications
-            if item.get("classification_source") == "agent"
-            and str(item.get("stable_message_identity") or "")
-            in snapshot_category_by_identity
-            and snapshot_category_by_identity[str(item["stable_message_identity"])]
-            in categories
-        }
+    selected_by_source: dict[str, list[dict[str, object]]] = {}
+    for source in sources:
+        selected_by_source[source] = [
+            row for row in source_records[source]
+            if str(row.get("category_key") or "") in categories
+            and str(row.get("stable_message_identity") or "")
+            and str(row.get("normalized_model_input") or "").strip()
+        ]
     provenance: list[dict[str, object]] = []
     for source in sources:
         for category in categories:
-            identities = sorted(
-                identity
-                for identity in selected_by_source[source]
-                if snapshot_category_by_identity[identity] == category
-            )
+            identities = sorted({
+                str(row["stable_message_identity"])
+                for row in selected_by_source[source]
+                if row["category_key"] == category
+            })
             digest = sha256(
                 json.dumps(identities, ensure_ascii=False, separators=(",", ":")).encode(
                     "utf-8"
@@ -148,17 +150,21 @@ def _selection_provenance(
                     "source": source,
                     "category": category,
                     "sample_count": len(identities),
-                    "snapshot_id": snapshot_id,
-                    "snapshot_digest": state["snapshot_sha"],
-                    "snapshot_version": state["snapshot_version"],
-                    "description_version": state["description_version"],
+                    "snapshot_id": state["snapshot_id"] if state else None,
+                    "snapshot_digest": state["snapshot_sha"] if state else None,
+                    "snapshot_version": state["snapshot_version"] if state else None,
+                    "description_version": state["description_version"] if state else None,
                     "dataset_digest": digest,
                 }
             )
-    selected_identities = sorted(
-        set().union(*selected_by_source.values()) if selected_by_source else set()
-    )
-    if not selected_identities and not allow_empty:
+    # One frozen sample per message: folder placement remains the label
+    # authority when selected, then explicit user feedback, then the Agent.
+    precedence = ("folder_snapshot", "user_feedback", "agent_auto_label")
+    selected_records: dict[str, dict[str, object]] = {}
+    for source in precedence:
+        for row in selected_by_source.get(source, []):
+            selected_records.setdefault(str(row["stable_message_identity"]), row)
+    if not selected_records and not allow_empty:
         raise ValueError("training selection has no frozen snapshot samples")
     return {
         "sources": sources,
@@ -166,7 +172,8 @@ def _selection_provenance(
         "provenance": provenance,
         # The run file is private durable execution evidence.  This list is
         # intentionally removed from the console response below.
-        "selected_message_identities": selected_identities,
+        "selected_message_identities": sorted(selected_records),
+        "selected_training_records": [selected_records[key] for key in sorted(selected_records)],
     }
 
 
@@ -276,14 +283,29 @@ class EmailClassifierLearningService:
         canonical = _selection_provenance(
             self.store, sources=sources, categories=categories
         )
+        selected_records = canonical.pop("selected_training_records")
+        assert isinstance(selected_records, list)
         model_families = validate_model_families(
             _selection_values(selection, "model_families")
             if "model_families" in selection
             else ["embedding-mlp"]
         )
         canonical["model_families"] = model_families
+        request_fingerprint = {
+            **canonical,
+            "provenance": [
+                {
+                    key: value for key, value in row.items()
+                    if key not in {
+                        "snapshot_id", "snapshot_digest", "snapshot_version",
+                        "description_version",
+                    }
+                }
+                for row in canonical["provenance"]
+            ],
+        }
         selection_json = json.dumps(
-            canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            request_fingerprint, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
         selection_digest = sha256(selection_json.encode("utf-8")).hexdigest()
         self.registry.root.mkdir(parents=True, exist_ok=True)
@@ -307,13 +329,38 @@ class EmailClassifierLearningService:
                 None,
                 existing_run,
             )
-        snapshot = self.store.latest_training_snapshot_state()
-        assert snapshot is not None
-        signal = _snapshot_signal(snapshot, manual=True)
+        selected_snapshot = build_selected_training_snapshot(
+            selected_records,
+            snapshot_id=(
+                "email-selected-training-"
+                + now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ-")
+                + uuid.uuid4().hex[:12]
+            ),
+            description_version="selected-training-input-v1",
+            observed_at=now,
+            seed=20260905,
+        )
+        stored_snapshot = self.store.persist_training_snapshot(selected_snapshot)
+        for provenance in canonical["provenance"]:
+            assert isinstance(provenance, dict)
+            provenance.update({
+                "snapshot_id": stored_snapshot["snapshot_id"],
+                "snapshot_digest": stored_snapshot["snapshot_digest"],
+                "snapshot_version": stored_snapshot["snapshot_version"],
+                "description_version": stored_snapshot["description_version"],
+            })
+        signal = SnapshotTrainingSignal(
+            snapshot_sha=str(stored_snapshot["snapshot_digest"]),
+            description_version=str(stored_snapshot["description_version"]),
+            folder_label_watermark=0,
+            important_label_watermark=0,
+            minimum_ready=True,
+            manual=True,
+        )
         run = self.controller.start(
             now=now,
             signal=signal,
-            snapshot_id=str(snapshot["snapshot_id"]),
+            snapshot_id=str(stored_snapshot["snapshot_id"]),
             training_selection=canonical,
         )
         updated = state.with_active_run(run.run_id)

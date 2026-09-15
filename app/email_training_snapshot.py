@@ -26,7 +26,9 @@ from app.email_provider_folders import FolderRole, ProviderFolder
 
 MODEL_INPUT_SCHEMA_VERSION = "email-folder-model-input-v3"
 TRAINING_SNAPSHOT_VERSION = "email-folder-training-snapshot-v1"
+SELECTED_TRAINING_SNAPSHOT_VERSION = "email-selected-training-snapshot-v1"
 MAX_BODY_CHARACTERS = 2_048
+FOLDER_TRAINING_CATEGORY_SAMPLE_LIMIT = 500
 _APPROVED_HEADERS = frozenset(
     {
         "message-id",
@@ -36,7 +38,12 @@ _APPROVED_HEADERS = frozenset(
     }
 )
 _SPLITS = frozenset({"train", "validation", "test"})
-_SOURCES = frozenset({"natural", "targeted"})
+_SOURCES = frozenset({
+    "natural",
+    "targeted",
+    "agent_auto_label",
+    "user_feedback",
+})
 
 
 class FolderTrainingSnapshotError(ValueError):
@@ -442,7 +449,7 @@ def build_folder_training_snapshot(
         )
         for item in sorted(candidates, key=lambda row: row.stable_message_identity)
     )
-    selected, conflicts = _balanced_training_selection(initially_frozen, seed=seed)
+    selected, conflicts = _capped_training_selection(initially_frozen, seed=seed)
     frozen = tuple(
         replace(
             row,
@@ -478,6 +485,124 @@ def build_folder_training_snapshot(
     return snapshot
 
 
+def build_selected_training_snapshot(
+    samples: Sequence[Mapping[str, object]],
+    *,
+    snapshot_id: str,
+    description_version: str,
+    observed_at: datetime,
+    seed: int,
+) -> FolderTrainingSnapshot:
+    """Freeze a user-selected training set without waiting for folder crawling.
+
+    Folder observations and labels produced by the Email service share the same
+    immutable snapshot format so every candidate model is evaluated against one
+    reproducible input and split.  The selection has already resolved any
+    duplicate message identity before it reaches this boundary.
+    """
+
+    snapshot_identity = _required_text(snapshot_id, "snapshot_id")
+    description = _required_text(description_version, "description_version")
+    observed_timestamp = _timestamp(observed_at, "observed_at")
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise FolderTrainingSnapshotError("seed must be a non-negative integer")
+
+    candidates: list[_Candidate] = []
+    identities: set[str] = set()
+    for sample in samples:
+        if not isinstance(sample, Mapping):
+            raise FolderTrainingSnapshotError("selected training sample must be an object")
+        source = _required_text(sample.get("source"), "source")
+        if source == "folder_snapshot":
+            source = "natural"
+        if source not in {"agent_auto_label", "user_feedback", "natural", "targeted"}:
+            raise FolderTrainingSnapshotError("unsupported selected training source")
+        identity = _required_text(sample.get("stable_message_identity"), "stable_message_identity")
+        if identity in identities:
+            raise FolderTrainingSnapshotError("selected training samples contain duplicate identity")
+        identities.add(identity)
+        category = _required_text(sample.get("category_key"), "category_key")
+        model_input = _required_text(sample.get("normalized_model_input"), "normalized_model_input")
+        candidates.append(
+            _Candidate(
+                account_id=_required_text(sample.get("account_id"), "account_id"),
+                stable_message_identity=identity,
+                provider_folder_id="training-source:" + source,
+                provider_folder_name=source,
+                category_key=category,
+                important=bool(sample.get("important", False)),
+                normalized_model_input=model_input,
+                normalized_model_input_hash=sha256(model_input.encode("utf-8")).hexdigest(),
+                provider_thread_id=_optional_text(sample.get("provider_thread_id"), "provider_thread_id"),
+                normalized_body_digest=sha256(model_input.encode("utf-8")).hexdigest(),
+                sender_template_signature=None,
+                explicit_matter_group=None,
+                observed_at=observed_timestamp,
+                source=source,
+            )
+        )
+    group_keys = _group_keys(candidates)
+    splits = _split_groups(group_keys, proposed={}, seed=seed)
+    initially_frozen = tuple(
+        TrainingSnapshotObservation(
+            snapshot_id=snapshot_identity,
+            account_id=item.account_id,
+            stable_message_identity=item.stable_message_identity,
+            provider_folder_id=item.provider_folder_id,
+            provider_folder_name=item.provider_folder_name,
+            category_key=item.category_key,
+            important=item.important,
+            normalized_model_input=item.normalized_model_input,
+            normalized_model_input_hash=item.normalized_model_input_hash,
+            input_schema_version=MODEL_INPUT_SCHEMA_VERSION,
+            provider_thread_id=item.provider_thread_id,
+            normalized_body_digest=item.normalized_body_digest,
+            sender_template_signature=item.sender_template_signature,
+            explicit_matter_group=item.explicit_matter_group,
+            group_key=group_keys[item.stable_message_identity],
+            observed_at=observed_timestamp,
+            source=item.source,
+            split=splits[item.stable_message_identity],
+            selected_for_training=False,
+            ordered_record_digest="",
+        )
+        for item in sorted(candidates, key=lambda row: row.stable_message_identity)
+    )
+    selected, conflicts = _capped_training_selection(initially_frozen, seed=seed)
+    frozen = tuple(
+        replace(
+            row,
+            selected_for_training=row.stable_message_identity in selected,
+            ordered_record_digest=_record_digest(
+                row,
+                selected_for_training=row.stable_message_identity in selected,
+            ),
+        )
+        for row in initially_frozen
+    )
+    manifest_without_digest = _manifest(
+        frozen,
+        description_version=description,
+        seed=seed,
+        observed_at=observed_timestamp,
+        conflicts=conflicts,
+    )
+    digest = deterministic_payload_digest(manifest_without_digest)
+    snapshot = FolderTrainingSnapshot(
+        snapshot_id=snapshot_identity,
+        snapshot_version=SELECTED_TRAINING_SNAPSHOT_VERSION,
+        description_version=description,
+        input_schema_version=MODEL_INPUT_SCHEMA_VERSION,
+        seed=seed,
+        observed_at=observed_timestamp,
+        observations=frozen,
+        snapshot_digest=digest,
+        _manifest_json=_canonical_json({**manifest_without_digest, "overall_sha256": digest}),
+    )
+    validate_folder_training_snapshot(snapshot)
+    return snapshot
+
+
 def validate_folder_training_snapshot(
     snapshot: object, *, allow_legacy_manifest: bool = False
 ) -> None:
@@ -485,7 +610,10 @@ def validate_folder_training_snapshot(
 
     if type(snapshot) is not FolderTrainingSnapshot:
         raise TypeError("snapshot must be a FolderTrainingSnapshot")
-    if snapshot.snapshot_version != TRAINING_SNAPSHOT_VERSION:
+    if snapshot.snapshot_version not in {
+        TRAINING_SNAPSHOT_VERSION,
+        SELECTED_TRAINING_SNAPSHOT_VERSION,
+    }:
         raise FolderTrainingSnapshotError("unsupported training snapshot version")
     if snapshot.input_schema_version != MODEL_INPUT_SCHEMA_VERSION:
         raise FolderTrainingSnapshotError("unsupported model input schema version")
@@ -545,7 +673,7 @@ def validate_folder_training_snapshot(
         if snapshot.snapshot_digest != expected_digest:
             raise FolderTrainingSnapshotError("legacy training digest mismatch")
         return
-    expected_selected, conflicts = _balanced_training_selection(
+    expected_selected, conflicts = _capped_training_selection(
         snapshot.observations,
         seed=snapshot.seed,
     )
@@ -555,7 +683,7 @@ def validate_folder_training_snapshot(
         if row.selected_for_training
     }
     if actual_selected != expected_selected:
-        raise FolderTrainingSnapshotError("training selection is not balanced")
+        raise FolderTrainingSnapshotError("training selection does not match category cap")
     expected_manifest = _manifest(
         snapshot.observations,
         description_version=snapshot.description_version,
@@ -1040,7 +1168,7 @@ def _split_groups(
     return {identity: split_by_group[group] for identity, group in group_keys.items()}
 
 
-def _balanced_training_selection(
+def _capped_training_selection(
     observations: Sequence[TrainingSnapshotObservation], *, seed: int
 ) -> tuple[set[str], tuple[dict[str, object], ...]]:
     rows_by_group: dict[str, list[TrainingSnapshotObservation]] = defaultdict(list)
@@ -1081,10 +1209,6 @@ def _balanced_training_selection(
             "snapshot is untrainable: categories without train groups: "
             + ", ".join(missing_categories)
         )
-    category_cap = min(
-        (len(rows) for rows in by_category.values() if rows),
-        default=0,
-    )
     selected: set[str] = set()
     for category, rows in by_category.items():
         ordered = sorted(
@@ -1096,7 +1220,10 @@ def _balanced_training_selection(
                 item.stable_message_identity,
             ),
         )
-        selected.update(row.stable_message_identity for row in ordered[:category_cap])
+        selected.update(
+            row.stable_message_identity
+            for row in ordered[:FOLDER_TRAINING_CATEGORY_SAMPLE_LIMIT]
+        )
     return selected, tuple(conflicts)
 
 
@@ -1155,8 +1282,8 @@ def _manifest(
     observed_at: str,
     conflicts: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
-    source_counts = {source: 0 for source in sorted(_SOURCES)}
-    training_source_counts = {source: 0 for source in sorted(_SOURCES)}
+    source_counts: dict[str, int] = defaultdict(int)
+    training_source_counts: dict[str, int] = defaultdict(int)
     category_counts: dict[str, int] = defaultdict(int)
     selected_category_counts: dict[str, int] = defaultdict(int)
     group_counts: dict[str, int] = defaultdict(int)
