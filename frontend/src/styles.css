@@ -369,6 +369,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .save-error, .field-error { color: var(--danger); font-size: 0.82rem; }
 .prompt-runtime-note { margin-top: 10px; }
 .prompt-runtime-note code { margin-left: 4px; padding: 3px 5px; border-radius: 5px; color: var(--accent-hover); background: var(--accent-soft); }
+.prompt-editor-shell { margin-top: 16px; }
+.prompt-editor-toolbar { display: flex; justify-content: flex-end; min-height: 38px; }
+.prompt-editor-toolbar .settings-pill-row { margin: 0 0 8px; }
 .prompt-preview { max-height: 600px; margin: 8px 0 0; padding: 16px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
 .prompt-preview mark { padding: 0 2px; border-radius: 3px; color: #145d49; background: #d9f2e6; }
 .info-list { display: grid; gap: 0; margin: 22px 0 0; }
@@ -503,6 +506,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .token-editor-highlight { color: var(--ink); pointer-events: none; }
 .token-editor-highlight mark { padding: 0 2px; border-radius: 3px; color: #145d49; background: #d9f2e6; }
 .token-editor-input { z-index: 1; resize: vertical; color: transparent; caret-color: var(--ink); background: transparent; }
+.token-editor[data-auto-resize="true"] { min-height: 160px; }
+.token-editor[data-auto-resize="true"] .token-editor-input { resize: none; }
 .token-editor[data-has-error="true"] { border-color: var(--danger); }
 .token-editor-field .field-error { margin: 0; }
 .status-section { padding: 20px; }

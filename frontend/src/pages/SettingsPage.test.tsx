@@ -161,24 +161,25 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Friday", { selector: "mark" })).toBeInTheDocument();
   });
 
-  it("edits the work profile separately and shows the exact runtime injection", async () => {
+  it("edits the distilled work profile from Prompts and shows its runtime injection", async () => {
     const user = userEvent.setup();
-    getSettings.mockResolvedValueOnce({ item: { section: "work-profile", fields: { profile: "Prefer concrete evidence.", path: "/service/data/work-profile/work_profile.md" }, preview: { injection: "Alex 工作人格 Profile:\nPrefer concrete evidence." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
-    renderSettings("/settings?tab=work-profile&view=source");
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { profile: "Prefer concrete evidence." }, preview: { profile: "Alex 工作人格 Profile:\nPrefer concrete evidence." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=prompts&prompt=profile&view=template");
 
-    expect(await screen.findByRole("heading", { name: "Work Profile" })).toBeInTheDocument();
-    const editor = screen.getByRole("textbox", { name: "Distilled work profile" });
+    expect(await screen.findByRole("heading", { name: "Prompts" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Work Profile" })).not.toBeInTheDocument();
+    const editor = screen.getByRole("textbox", { name: "Template" });
     expect(editor).toHaveValue("Prefer concrete evidence.");
-    expect(screen.getByText("/service/data/work-profile/work_profile.md")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Distilled work profile" })).toHaveAttribute("aria-selected", "true");
     await user.clear(editor);
     await user.type(editor, "Prefer explicit ownership.");
     saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存" });
     fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
-    expect(saveSettings).toHaveBeenCalledWith("work-profile", { profile: "Prefer explicit ownership." }, {});
+    expect(saveSettings).toHaveBeenCalledWith("prompts", { template: "Prefer explicit ownership." }, { prompt: "profile" });
 
-    getSettings.mockResolvedValueOnce({ item: { section: "work-profile", fields: { profile: "Prefer explicit ownership." }, preview: { injection: "Alex 工作人格 Profile:\nPrefer explicit ownership." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
-    renderSettings("/settings?tab=work-profile&view=injection");
-    const injectionPanel = await screen.findByRole("tabpanel", { name: "Runtime injection" });
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { profile: "Prefer explicit ownership." }, preview: { profile: "Alex 工作人格 Profile:\nPrefer explicit ownership." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=prompts&prompt=profile&view=preview");
+    const injectionPanel = await screen.findByRole("tabpanel", { name: "Rendered preview" });
     expect(injectionPanel).toHaveTextContent("Alex 工作人格 Profile:");
     expect(injectionPanel).toHaveTextContent("Prefer explicit ownership.");
   });

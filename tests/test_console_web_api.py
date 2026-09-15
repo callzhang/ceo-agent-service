@@ -1762,7 +1762,7 @@ def test_console_audit_rules_template_preview_is_rendered_but_template_is_preser
     assert "{{principal}}" not in item["preview"]["template"]
 
 
-def test_console_work_profile_exposes_and_updates_the_runtime_injection(
+def test_console_prompts_expose_and_update_the_work_profile_runtime_injection(
     monkeypatch, tmp_path: Path
 ):
     profile_path = tmp_path / "work_profile.md"
@@ -1771,19 +1771,21 @@ def test_console_work_profile_exposes_and_updates_the_runtime_injection(
     monkeypatch.setenv("USER_ALIAS", "Alex")
 
     with _client(tmp_path) as client:
-        loaded = client.get("/api/console/settings/work-profile")
+        loaded = client.get("/api/console/settings/prompts")
         saved = client.post(
-            "/api/console/settings/work-profile",
-            json={"fields": {"profile": "Prefer explicit ownership."}},
+            "/api/console/settings/prompts",
+            json={"prompt": "profile", "fields": {"template": "Prefer explicit ownership."}},
         )
-        readback = client.get("/api/console/settings/work-profile")
+        readback = client.get("/api/console/settings/prompts")
+        retired = client.get("/api/console/settings/work-profile")
 
     assert loaded.status_code == 200
     assert loaded.json()["item"]["fields"]["profile"] == "Prefer concrete evidence."
-    assert "Alex 工作人格 Profile" in loaded.json()["item"]["preview"]["injection"]
+    assert "Alex 工作人格 Profile" in loaded.json()["item"]["preview"]["profile"]
     assert saved.status_code == 200
     assert readback.json()["item"]["fields"]["profile"] == "Prefer explicit ownership."
-    assert "Prefer explicit ownership." in readback.json()["item"]["preview"]["injection"]
+    assert "Prefer explicit ownership." in readback.json()["item"]["preview"]["profile"]
+    assert retired.status_code == 404
 
 
 def test_console_agent_runtime_returns_saved_credentials_for_prefill(monkeypatch, tmp_path: Path):

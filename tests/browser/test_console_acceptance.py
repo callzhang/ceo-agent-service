@@ -139,7 +139,7 @@ def _install_interaction_routes(page) -> None:
         if path.endswith("/api/console/settings/connectors"):
             payload = {"item": {"section": "connectors", "fields": {}, "wechat": {"state": "ready"}}, "meta": {"snapshot_at": SNAPSHOT}}
         elif path.endswith("/api/console/settings/prompts"):
-            payload = {"item": {"section": "prompts", "fields": {"user_template": "Reply to {{principal}} in {{conversation}}.", "developer_template": "Review for {{principal}}."}, "preview": {"user": "Reply to Derek in Friday.", "developer": "Review for Derek."}}, "meta": {"snapshot_at": SNAPSHOT}}
+            payload = {"item": {"section": "prompts", "fields": {"user_template": "Reply to {{principal}} in {{conversation}}.", "developer_template": "Review for {{principal}}.", "profile": "Prefer concrete evidence."}, "preview": {"user": "Reply to Derek in Friday.", "developer": "Review for Derek.", "profile": "Derek 工作人格 Profile:\nPrefer concrete evidence."}}, "meta": {"snapshot_at": SNAPSHOT}}
         elif path.endswith("/api/console/settings/audit-rules"):
             payload = {"item": {"section": "audit-rules", "fields": {"template": "Check {{principal}}."}, "preview": {"template": "Check Derek.", "consumer": "Consumer: Check Derek.", "audit": "Audit: Check Derek."}}, "meta": {"snapshot_at": SNAPSHOT}}
         elif path.endswith("/api/console/settings/agent-runtime"):
@@ -356,6 +356,12 @@ def test_console_keyboard_and_aria_acceptance(viewport):
             editor.focus()
             page.keyboard.press("Tab")
             assert page.locator("button[name='settings-save']").evaluate("element => element === document.activeElement")
+
+            page.goto(f"{BASE_URL}/settings?tab=prompts&prompt=profile&view=preview", wait_until="domcontentloaded")
+            _wait_for_root(page)
+            assert page.get_by_role("tab", name="Distilled work profile").get_attribute("aria-selected") == "true"
+            assert page.get_by_role("tabpanel", name="Rendered preview").get_by_text("Prefer concrete evidence.").is_visible()
+            assert page.get_by_role("navigation", name="Settings navigation").get_by_role("link", name="Work Profile").count() == 0
 
             page.goto(f"{BASE_URL}/settings?tab=audit-rules&rule=template&view=template", wait_until="domcontentloaded")
             _wait_for_root(page)

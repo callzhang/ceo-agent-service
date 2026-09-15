@@ -1553,7 +1553,7 @@ def register_console_routes(
     @app.get("/api/console/settings/{section}")
     def console_settings(section: str):
         payload: Any = None
-        allowed = {"status", "info", "configuration", "agent-runtime", "prompts", "work-profile", "connectors", "audit-rules", "attention"}
+        allowed = {"status", "info", "configuration", "agent-runtime", "prompts", "connectors", "audit-rules", "attention"}
         if section not in allowed:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Unknown settings section", "details": {}}, status_code=404)
         if section == "status":
@@ -1614,29 +1614,25 @@ def register_console_routes(
                     render_developer_prompt_template,
                     render_user_prompt_template,
                 )
+                from app.prompt import work_profile_instruction, work_profile_path
+
                 developer_template = read_developer_prompt_template()
                 user_template = read_user_prompt_template()
-                fields = {"developer_template": developer_template, "user_template": user_template}
+                profile_path = work_profile_path()
+                profile_instruction = work_profile_instruction()
+                fields = {
+                    "developer_template": developer_template,
+                    "user_template": user_template,
+                    "profile": profile_path.read_text(encoding="utf-8").strip(),
+                }
                 payload = {
                     "section": section,
                     "fields": fields,
                     "preview": {
                         "developer": render_developer_prompt_template(developer_template),
                         "user": render_user_prompt_template(user_template, {}),
+                        "profile": profile_instruction,
                     },
-                }
-            elif section == "work-profile":
-                from app.prompt import work_profile_instruction, work_profile_path
-
-                path = work_profile_path()
-                instruction = work_profile_instruction()
-                payload = {
-                    "section": section,
-                    "fields": {
-                        "profile": path.read_text(encoding="utf-8").strip(),
-                        "path": str(path),
-                    },
-                    "preview": {"injection": instruction},
                 }
             elif section == "audit-rules":
                 from app.audit_rules import (
@@ -1944,8 +1940,6 @@ def register_console_routes(
             encoded: dict[str, Any] = {"config_key": list(fields), "config_value": [str(value) for value in fields.values()]}
         elif section in {"prompts", "audit-rules"}:
             encoded = {"prompt": str(payload.get("prompt") or "developer"), "template": str(payload.get("template") or fields.get("template") or "")}
-        elif section == "work-profile":
-            encoded = {"profile": str(fields.get("profile") or "")}
         elif section == "agent-runtime":
             from app import config as app_config
 
@@ -1989,8 +1983,16 @@ def register_console_routes(
         else:
             encoded = {str(k): str(v) for k, v in fields.items()}
         body = urlencode(encoded, doseq=True).encode()
-        from app.audit_web import handle_agent_runtime_config_post, handle_configuration_post, handle_settings_audit_rules_post, handle_settings_prompt_post, handle_work_profile_post
-        handlers = {"configuration": handle_configuration_post, "prompts": handle_settings_prompt_post, "audit-rules": handle_settings_audit_rules_post, "agent-runtime": handle_agent_runtime_config_post, "work-profile": handle_work_profile_post}
+        if section == "prompts" and encoded["prompt"] == "profile":
+            from app.prompt import write_work_profile
+
+            try:
+                write_work_profile(encoded["template"])
+            except (OSError, ValueError) as exc:
+                return JSONResponse({"ok": False, "code": "validation_error", "message": normalize_display_value(str(exc)), "details": {}}, status_code=400)
+            return command_result(message="已保存")
+        from app.audit_web import handle_agent_runtime_config_post, handle_configuration_post, handle_settings_audit_rules_post, handle_settings_prompt_post
+        handlers = {"configuration": handle_configuration_post, "prompts": handle_settings_prompt_post, "audit-rules": handle_settings_audit_rules_post, "agent-runtime": handle_agent_runtime_config_post}
         handler = handlers.get(section)
         if handler is None:
             return JSONResponse({"ok": False, "code": "unsupported", "message": "此 Settings 区域不支持写入", "details": {}}, status_code=400)

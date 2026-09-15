@@ -26,4 +26,15 @@ describe("TokenEditor", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("第 2 行，第 7 列");
     expect(screen.getByRole("textbox", { name: "Template" })).toHaveAttribute("aria-invalid", "true");
   });
+
+  it("fits the editor to the current content when auto resize is enabled", () => {
+    const { rerender } = render(<TokenEditor id="template" label="Template" value="short" onChange={vi.fn()} autoResize />);
+    const input = screen.getByRole("textbox", { name: "Template" });
+    Object.defineProperty(input, "scrollHeight", { configurable: true, value: 384 });
+
+    rerender(<TokenEditor id="template" label="Template" value={"a longer template\nwith more lines"} onChange={vi.fn()} autoResize />);
+
+    expect(input).toHaveStyle({ height: "384px" });
+    expect(input.closest(".token-editor")).toHaveStyle({ height: "384px" });
+  });
 });
