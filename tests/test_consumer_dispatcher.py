@@ -1982,6 +1982,57 @@ def test_expired_live_owner_hides_dispatcher_error_until_owner_is_dead(
         )
 
 
+def test_error_metrics_skip_owner_checks_and_payload_projection_for_no_error_backlog(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    for index in range(64):
+        assert store.enqueue_reply_task(
+            conversation_id=f"cid-{index}",
+            conversation_title="No-error backlog",
+            single_chat=False,
+            trigger_message_id=f"msg-{index}",
+            trigger_create_time=NOW.isoformat(),
+            trigger_sender="Derek",
+            trigger_text="This payload must not enter the metrics projection.",
+            execution_generation=f"generation-{index}",
+        )
+    expired = (NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
+    now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
+    with store._connect() as db:
+        ids = [row[0] for row in db.execute("select id from reply_tasks").fetchall()]
+        db.executemany(
+            "insert into dispatcher_claim_leases "
+            "(adapter_name, source_id, owner, owner_pid, generation, "
+            "lease_expires_at, terminal_at, last_error, created_at, updated_at) "
+            "values ('reply', ?, 'live-owner', 123, 1, ?, '', '', ?, ?)",
+            ((str(source_id), expired, now_text, now_text) for source_id in ids),
+        )
+
+    owner_checks: list[int] = []
+    statements: list[str] = []
+    adapter = ReplyQueueAdapter(
+        store, owner_alive=lambda pid: owner_checks.append(pid) or True
+    )
+    with store.read_snapshot():
+        snapshot = store._read_snapshot_connection.get()
+        assert snapshot is not None
+        snapshot.set_trace_callback(statements.append)
+        try:
+            assert adapter.metrics(NOW).latest_error == ""
+        finally:
+            snapshot.set_trace_callback(None)
+
+    assert owner_checks == []
+    error_projection = next(
+        statement
+        for statement in statements
+        if "source_claim.last_error as claim_last_error" in statement
+    )
+    assert "source.*" not in error_projection
+    assert "trigger_text" not in error_projection
+
+
 def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
     tmp_path: Path,
 ) -> None:

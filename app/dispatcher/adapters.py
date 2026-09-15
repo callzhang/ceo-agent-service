@@ -125,6 +125,11 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 candidate_is_protected=_scheduled_candidate_is_protected,
                 owner_alive=self.owner_alive,
                 now=now_text,
+                source_updated_at_column="scheduled_for",
+                source_fields=(
+                    "source.lease_owner as lease_owner",
+                    "source.lease_expires_at as lease_expires_at",
+                ),
             )
         return QueueMetrics(
             pending=int(pending),
@@ -1711,20 +1716,40 @@ def _latest_actionable_error(
     column: str,
     source_projection: str,
     source_params: tuple[object, ...],
-    order_by: str = "updated_at desc, id desc",
+    order_by: str = "source_updated_at desc, id desc",
     candidate_is_protected,
     owner_alive,
     now: str,
+    source_updated_at_column: str = "updated_at",
+    source_fields: tuple[str, ...] = (),
 ) -> str:
-    source_rows = db.execute(
-        "select source.*, source_claim.owner as claim_owner, "
+    base_fields = (
+        "source.id, "
+        f"source.{column} as source_error, "
+        f"source.{source_updated_at_column} as source_updated_at, "
+        "source_claim.owner as claim_owner, "
         "source_claim.owner_pid as claim_owner_pid, "
         "source_claim.lease_expires_at as claim_expires_at, "
         "source_claim.last_error as claim_last_error, "
         "source_claim.updated_at as claim_updated_at, "
-        "source_claim.rowid as claim_rowid "
+        "source_claim.rowid as claim_rowid"
+    )
+    source_field_names = tuple(field.rsplit(" as ", maxsplit=1)[1] for field in source_fields)
+    candidate_fields = (
+        "id, source_error, source_updated_at, claim_owner, claim_owner_pid, "
+        "claim_expires_at, claim_last_error, claim_updated_at, claim_rowid"
+        + (", " + ", ".join(source_field_names) if source_field_names else "")
+    )
+    source_rows = db.execute(
+        "select "
+        + candidate_fields
+        + " from (select "
+        + base_fields
+        + (", " + ", ".join(source_fields) if source_fields else "")
+        + " "
         + source_projection
-        + f" order by {order_by}",
+        + ") candidate where trim(source_error)<>'' or trim(claim_last_error)<>'' "
+        + f"order by {order_by}",
         source_params,
     ).fetchall()
     actionable_rows = [
@@ -1742,8 +1767,8 @@ def _latest_actionable_error(
         )
         return str(claim_error["claim_last_error"])
     for row in actionable_rows:
-        if str(row[column] or "").strip():
-            return str(row[column])
+        if str(row["source_error"] or "").strip():
+            return str(row["source_error"])
     return ""
 
 
