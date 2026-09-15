@@ -29,7 +29,6 @@ reverts committed work they did not author.
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
 | codex-agent-health-metrics | app/store.py, app/audit_web.py, app/cli.py, frontend/src/api/console.ts, frontend/src/pages/StatusPage.tsx, tests/test_store.py, tests/test_audit_web.py, tests/test_cli.py, tests/test_console_status_response.py, frontend/src/api/console.test.ts, frontend/src/pages/StatusPage.test.tsx, README.md, CHANGELOG.md | Meeting Memory lease-backed health payload, degraded health gate, components and status UI | 2026-09-15 |
-| codex-history-email-filter | app/store.py (narrow `_operation_logs_base_query` reply history_type branch), frontend/src/pages/HistoryPage.tsx, frontend/src/pages/HistoryPage.test.tsx, tests/test_console_web_api.py | Split email unsubscribe from generic reply in History object filtering; existing health-metrics claim has no live owner | 2026-09-15 |
 
 
 ## Recent overlaps worth knowing
