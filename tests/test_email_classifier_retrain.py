@@ -804,8 +804,19 @@ def test_training_subprocess_reads_frozen_error_state_and_description_overlay(
         def list_category_configs(self):
             raise AssertionError("proposal subprocess must use immutable overlay")
 
+        def get_training_snapshot(self, _snapshot_id):
+            return {"input_schema_version": "input-v3", "observations": []}
+
     monkeypatch.setattr(retrain_module, "EmailStore", Store)
     monkeypatch.setattr(retrain_module, "EmbeddingCache", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        retrain_module,
+        "EmailEmbeddingClient",
+        SimpleNamespace(from_environment=lambda **_kwargs: object()),
+    )
+    monkeypatch.setattr(
+        retrain_module, "warm_frozen_training_embeddings", lambda **_kwargs: None
+    )
     monkeypatch.setattr(
         retrain_module,
         "train_frozen_embedding_candidate",
@@ -838,6 +849,7 @@ def test_training_subprocess_reads_frozen_error_state_and_description_overlay(
     assert observed["description_overlay"] == overlay
     assert observed["historical_systematic_error_state"] == error_state
     from app.email_candidate_benchmark import benchmark_candidate
+
     assert observed["benchmark_candidate"] is benchmark_candidate
     assert evaluations == [(proposal.proposal_id, "email-embedding-mlp-overlay")]
 
@@ -931,10 +943,10 @@ def test_selected_folder_categories_reach_the_staged_trainer(tmp_path, monkeypat
         historical_systematic_error_updated_at=error_state.updated_at,
         training_selection={
             "sources": ["folder_snapshot"],
-                "categories": ["legal"],
-                "model_families": ["embedding-mlp"],
-                "selected_message_identities": ["selected-legal-message"],
-                "provenance": [{"source": "folder_snapshot", "category": "legal"}],
+            "categories": ["legal"],
+            "model_families": ["embedding-mlp"],
+            "selected_message_identities": ["selected-legal-message"],
+            "provenance": [{"source": "folder_snapshot", "category": "legal"}],
         },
     )
     controller = TrainingSubprocessController(registry, store_path=tmp_path / "db")
@@ -946,18 +958,38 @@ def test_selected_folder_categories_reach_the_staged_trainer(tmp_path, monkeypat
             pass
 
         def list_category_configs(self):
-            return [{
-                "category_key": "work", "core_description": "Routine work.",
-                "include": ["Projects"], "exclude": ["Contracts"],
-                "description_version": "work-v1", "enabled": True,
-            }, {
-                "category_key": "legal", "core_description": "External legal matters.",
-                "include": ["Contracts"], "exclude": ["Routine"],
-                "description_version": "legal-v1", "enabled": True,
-            }]
+            return [
+                {
+                    "category_key": "work",
+                    "core_description": "Routine work.",
+                    "include": ["Projects"],
+                    "exclude": ["Contracts"],
+                    "description_version": "work-v1",
+                    "enabled": True,
+                },
+                {
+                    "category_key": "legal",
+                    "core_description": "External legal matters.",
+                    "include": ["Contracts"],
+                    "exclude": ["Routine"],
+                    "description_version": "legal-v1",
+                    "enabled": True,
+                },
+            ]
+
+        def get_training_snapshot(self, _snapshot_id):
+            return {"input_schema_version": "input-v3", "observations": []}
 
     monkeypatch.setattr(retrain_module, "EmailStore", Store)
     monkeypatch.setattr(retrain_module, "EmbeddingCache", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        retrain_module,
+        "EmailEmbeddingClient",
+        SimpleNamespace(from_environment=lambda **_kwargs: object()),
+    )
+    monkeypatch.setattr(
+        retrain_module, "warm_frozen_training_embeddings", lambda **_kwargs: None
+    )
     monkeypatch.setenv("CEO_EMAIL_EMBEDDING_DIMENSION", "2")
     monkeypatch.setenv("CEO_EMAIL_EMBEDDING_REVISION", "gpu4-r1")
     monkeypatch.setattr(
@@ -969,11 +1001,14 @@ def test_selected_folder_categories_reach_the_staged_trainer(tmp_path, monkeypat
         ),
     )
 
-    assert retrain_module._run_training_job(
-        db_path=tmp_path / "db",
-        registry_path=registry.root,
-        run_id=queued.run_id,
-        snapshot_id=queued.snapshot_id,
-        trained_at=NOW,
-    ) == 0
+    assert (
+        retrain_module._run_training_job(
+            db_path=tmp_path / "db",
+            registry_path=registry.root,
+            run_id=queued.run_id,
+            snapshot_id=queued.snapshot_id,
+            trained_at=NOW,
+        )
+        == 0
+    )
     assert tuple(observed["descriptions"]) == ("legal",)

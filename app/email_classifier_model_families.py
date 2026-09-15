@@ -2,26 +2,74 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from typing import Final
 
 
 MODEL_FAMILY_CATALOG: Final[tuple[dict[str, object], ...]] = (
-    {"family": "tfidf-logistic-regression", "display_name": "TF-IDF", "supported": True, "configured": True, "reason": "已接入 durable staged controller"},
-    {"family": "fasttext", "display_name": "fastText", "supported": True, "configured": True, "reason": "已接入 durable staged controller"},
-    {"family": "embedding-mlp", "display_name": "Embedding + MLP", "supported": True, "configured": True, "reason": "当前 durable staged controller 已接入 Embedding + MLP executor"},
+    {
+        "family": "tfidf-logistic-regression",
+        "display_name": "TF-IDF",
+        "supported": True,
+        "configured": True,
+        "reason": "已接入 durable staged controller",
+    },
+    {
+        "family": "fasttext",
+        "display_name": "fastText",
+        "supported": True,
+        "configured": True,
+        "reason": "已接入 durable staged controller",
+    },
+    {
+        "family": "embedding-mlp",
+        "display_name": "Embedding + MLP",
+        "supported": True,
+        "configured": True,
+        "reason": "当前 durable staged controller 已接入 Embedding + MLP executor",
+    },
 )
-MODEL_FAMILY_BY_KEY: Final[dict[str, dict[str, object]]] = {str(row["family"]): dict(row) for row in MODEL_FAMILY_CATALOG}
+MODEL_FAMILY_BY_KEY: Final[dict[str, dict[str, object]]] = {
+    str(row["family"]): dict(row) for row in MODEL_FAMILY_CATALOG
+}
 SUPPORTED_STAGED_MODEL_FAMILIES: Final[frozenset[str]] = frozenset(
     family for family, row in MODEL_FAMILY_BY_KEY.items() if row["supported"] is True
 )
 
 
-def model_family_catalog() -> list[dict[str, object]]:
-    return [dict(row) for row in MODEL_FAMILY_CATALOG]
+def model_family_catalog(
+    *, environ: Mapping[str, str] | None = None
+) -> list[dict[str, object]]:
+    values = os.environ if environ is None else environ
+    catalog = [dict(row) for row in MODEL_FAMILY_CATALOG]
+    embedding = next(row for row in catalog if row["family"] == "embedding-mlp")
+    missing = [
+        key
+        for key in (
+            "CEO_EMAIL_EMBEDDING_URL",
+            "CEO_EMAIL_EMBEDDING_DIMENSION",
+            "CEO_EMAIL_EMBEDDING_REVISION",
+        )
+        if not values.get(key, "").strip()
+    ]
+    if missing:
+        embedding["configured"] = False
+        embedding["reason"] = "缺少 Embedding 训练配置：" + "、".join(missing)
+    else:
+        try:
+            if int(values["CEO_EMAIL_EMBEDDING_DIMENSION"]) < 1:
+                raise ValueError
+        except ValueError:
+            embedding["configured"] = False
+            embedding["reason"] = "CEO_EMAIL_EMBEDDING_DIMENSION 必须是正整数"
+    return catalog
 
 
 def validate_model_families(values: list[str]) -> list[str]:
-    if not values or any(not isinstance(value, str) or not value.strip() for value in values):
+    if not values or any(
+        not isinstance(value, str) or not value.strip() for value in values
+    ):
         raise ValueError("model_families must be a non-empty list of strings")
     normalized = sorted({value.strip() for value in values})
     if len(normalized) != len(values):

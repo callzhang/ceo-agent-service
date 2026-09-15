@@ -23,7 +23,9 @@ from app.email_classifier_training import (
 )
 from app.email_classifier_model_families import validate_model_families
 from app.email_embedding_cache import EmbeddingCache
+from app.email_embedding_client import EmailEmbeddingClient
 from app.email_embedding_classifier import CategoryDescription
+from app.email_embedding_warmup import warm_frozen_training_embeddings
 from app.email_model_registry import (
     EmailModelRegistry,
     HistoricalSystematicErrorState,
@@ -906,8 +908,12 @@ def _run_training_job(
             sources = training_selection.get("sources")
             categories = training_selection.get("categories")
             model_families = training_selection.get("model_families", ["embedding-mlp"])
-            if not isinstance(sources, list) or not sources or not all(
-                isinstance(source, str) and source.strip() for source in sources
+            if (
+                not isinstance(sources, list)
+                or not sources
+                or not all(
+                    isinstance(source, str) and source.strip() for source in sources
+                )
             ):
                 raise RuntimeError("training selection sources are invalid")
             if not isinstance(model_families, list):
@@ -915,17 +921,27 @@ def _run_training_job(
             try:
                 validate_model_families(model_families)
             except ValueError as exc:
-                raise RuntimeError("unsupported training selection model family") from exc
-            if not isinstance(categories, list) or not categories or not all(
-                isinstance(category, str) and category.strip()
-                for category in categories
+                raise RuntimeError(
+                    "unsupported training selection model family"
+                ) from exc
+            if (
+                not isinstance(categories, list)
+                or not categories
+                or not all(
+                    isinstance(category, str) and category.strip()
+                    for category in categories
+                )
             ):
                 raise RuntimeError("invalid training selection categories")
             selected_categories = tuple(sorted(set(categories)))
             identities = training_selection.get("selected_message_identities")
-            if not isinstance(identities, list) or not identities or not all(
-                isinstance(identity, str) and identity.strip()
-                for identity in identities
+            if (
+                not isinstance(identities, list)
+                or not identities
+                or not all(
+                    isinstance(identity, str) and identity.strip()
+                    for identity in identities
+                )
             ):
                 raise RuntimeError("training selection identities are missing")
             selected_message_identities = tuple(sorted(set(identities)))
@@ -970,26 +986,70 @@ def _run_training_job(
         from app.email_candidate_benchmark import benchmark_candidate
 
         model_ids: list[str] = []
-        for family in model_families if training_selection is not None else ["embedding-mlp"]:
+        for family in (
+            model_families if training_selection is not None else ["embedding-mlp"]
+        ):
             if family == "embedding-mlp":
                 dimension = int(os.environ["CEO_EMAIL_EMBEDDING_DIMENSION"])
+                embedding_model_id = os.environ.get(
+                    "CEO_EMAIL_EMBEDDING_MODEL", "jinaai/jina-embeddings-v5-text-small"
+                )
+                embedding_revision = os.environ["CEO_EMAIL_EMBEDDING_REVISION"]
+                cache = EmbeddingCache(registry.root, dimension=dimension)
+                snapshot = store.get_training_snapshot(snapshot_id)
+                if snapshot is None:
+                    raise RuntimeError("frozen training snapshot is unavailable")
+                client = EmailEmbeddingClient.from_environment(
+                    embedding_revision=embedding_revision, dimension=dimension
+                )
+                try:
+                    warm_frozen_training_embeddings(
+                        cache=cache,
+                        embedding_client=client,
+                        snapshot=snapshot,
+                        descriptions=descriptions,
+                        embedding_model_id=embedding_model_id,
+                        embedding_revision=embedding_revision,
+                        selected_message_identities=selected_message_identities,
+                    )
+                finally:
+                    close = getattr(client, "close", None)
+                    if callable(close):
+                        close()
                 result = train_frozen_embedding_candidate(
-                    store=store, snapshot_id=snapshot_id, registry=registry,
-                    cache=EmbeddingCache(registry.root, dimension=dimension), descriptions=descriptions,
-                    embedding_model_id=os.environ.get("CEO_EMAIL_EMBEDDING_MODEL", "jinaai/jina-embeddings-v5-text-small"),
-                    embedding_revision=os.environ["CEO_EMAIL_EMBEDDING_REVISION"], parent_model_id=registry.active_model_id_unverified(),
-                    trained_at=trained_at, expected_snapshot_sha=started.snapshot_sha,
-                    expected_description_version=(None if selected_categories is not None else started.description_version),
-                    historical_systematic_error_state=historical_error_state, description_overlay=description_overlay,
-                    benchmark_candidate=benchmark_candidate, selected_message_identities=selected_message_identities,
+                    store=store,
+                    snapshot_id=snapshot_id,
+                    registry=registry,
+                    cache=cache,
+                    descriptions=descriptions,
+                    embedding_model_id=embedding_model_id,
+                    embedding_revision=embedding_revision,
+                    parent_model_id=registry.active_model_id_unverified(),
+                    trained_at=trained_at,
+                    expected_snapshot_sha=started.snapshot_sha,
+                    expected_description_version=(
+                        None
+                        if selected_categories is not None
+                        else started.description_version
+                    ),
+                    historical_systematic_error_state=historical_error_state,
+                    description_overlay=description_overlay,
+                    benchmark_candidate=benchmark_candidate,
+                    selected_message_identities=selected_message_identities,
                 )
                 model_ids.append(result.model_id)
                 if description_overlay is not None:
-                    proposal_repository.record_evaluation(description_overlay.proposal_id, model_id=result.model_id)
+                    proposal_repository.record_evaluation(
+                        description_overlay.proposal_id, model_id=result.model_id
+                    )
             else:
                 classic = train_frozen_classic_candidate(
-                    store=store, snapshot_id=snapshot_id, registry=registry,
-                    categories=tuple(descriptions), model_family=family, trained_at=trained_at,
+                    store=store,
+                    snapshot_id=snapshot_id,
+                    registry=registry,
+                    categories=tuple(descriptions),
+                    model_family=family,
+                    trained_at=trained_at,
                     selected_message_identities=selected_message_identities,
                 )
                 model_ids.append(classic.model_id)

@@ -137,9 +137,7 @@ def _controlled_integrity_error(value: object) -> str:
     return code if code in _MODEL_INTEGRITY_CODES else "registry_integrity_error"
 
 
-_MODEL_EVIDENCE_ID = re.compile(
-    r"email-embedding-mlp-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}"
-)
+_MODEL_EVIDENCE_ID = re.compile(r"email-embedding-mlp-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}")
 _SNAPSHOT_EVIDENCE_ID = re.compile(
     r"email-folder-snapshot-[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{12}"
 )
@@ -175,8 +173,11 @@ def _safe_external_reference(value: object, field: str, placeholder: str) -> str
 
 
 def _safe_evidence_timestamp(value: object, field: str) -> str:
-    if not isinstance(value, str) or not value or len(value) > 64 or any(
-        character.isspace() for character in value
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > 64
+        or any(character.isspace() for character in value)
     ):
         raise ValueError(f"{field} is invalid")
     text = value
@@ -190,7 +191,11 @@ def _safe_evidence_timestamp(value: object, field: str) -> str:
 
 
 def _safe_evidence_count(value: object, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 1_000_000_000:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 <= value <= 1_000_000_000
+    ):
         raise ValueError(f"{field} is invalid")
     return value
 
@@ -223,7 +228,14 @@ def _project_staged_model_evidence(
 
     if not isinstance(evidence, dict):
         raise ValueError("model evidence must be an object")
-    for key in ("metrics", "head_latency_ms", "end_to_end_latency_ms", "evaluation", "training", "parameters"):
+    for key in (
+        "metrics",
+        "head_latency_ms",
+        "end_to_end_latency_ms",
+        "evaluation",
+        "training",
+        "parameters",
+    ):
         if key in evidence and not isinstance(evidence[key], dict):
             raise ValueError(f"{key} evidence must be an object")
     maturity = candidate_maturity_from_mapping(evidence)
@@ -351,47 +363,93 @@ def _project_staged_model_evidence(
             raise ValueError("important split counts are invalid")
     else:
         raise ValueError("split counts are invalid")
+
     def measured(value, *, unit=False, count=False):
         if value is None:
             return None
-        return (_safe_evidence_count(value, "metric") if count
-                else _safe_evidence_float(value, "metric", unit=unit))
+        return (
+            _safe_evidence_count(value, "metric")
+            if count
+            else _safe_evidence_float(value, "metric", unit=unit)
+        )
 
     training = evidence.get("training")
     projected_training = None
     if training is not None:
-        times = {key: (_safe_evidence_timestamp(training[key], key) if training.get(key) is not None else None)
-                 for key in ("started_at", "completed_at")}
-        if (all(times.values()) and datetime.fromisoformat(times["completed_at"])
-                < datetime.fromisoformat(times["started_at"])):
+        times = {
+            key: (
+                _safe_evidence_timestamp(training[key], key)
+                if training.get(key) is not None
+                else None
+            )
+            for key in ("started_at", "completed_at")
+        }
+        if all(times.values()) and datetime.fromisoformat(
+            times["completed_at"]
+        ) < datetime.fromisoformat(times["started_at"]):
             raise ValueError("training completion precedes start")
         projected_training = {
-            **times, "duration_ms": measured(training.get("duration_ms")),
-            **{key: measured(training.get(key), count=True) for key in (
-                "sample_count", "category_sample_count", "account_count", "group_count",
-            )},
+            **times,
+            "duration_ms": measured(training.get("duration_ms")),
+            **{
+                key: measured(training.get(key), count=True)
+                for key in (
+                    "sample_count",
+                    "category_sample_count",
+                    "account_count",
+                    "group_count",
+                )
+            },
         }
     parameters = evidence.get("parameters")
     projected_parameters = None
     if parameters is not None:
         layers = parameters.get("hidden_layer_sizes")
-        if layers is not None and (not isinstance(layers, list) or not layers
-                or any(type(size) is not int or not 0 < size <= 1_000_000_000 for size in layers)):
+        if layers is not None and (
+            not isinstance(layers, list)
+            or not layers
+            or any(
+                type(size) is not int or not 0 < size <= 1_000_000_000
+                for size in layers
+            )
+        ):
             raise ValueError("hidden layer sizes are invalid")
         thresholds = parameters.get("category_thresholds")
         if thresholds is not None and not isinstance(thresholds, dict):
             raise ValueError("category thresholds are invalid")
         projected_parameters = {
-            **{key: measured(parameters.get(key)) for key in ("alpha", "beta", "regularization_alpha")},
-            **{key: measured(parameters.get(key), count=True) for key in ("max_iter", "random_seed")},
-            "important_threshold": measured(parameters.get("important_threshold"), unit=True),
-            "category_thresholds": ({key: measured(thresholds.get(key), unit=True) for key in safe_categories}
-                                    if thresholds is not None else None),
+            **{
+                key: measured(parameters.get(key))
+                for key in ("alpha", "beta", "regularization_alpha")
+            },
+            **{
+                key: measured(parameters.get(key), count=True)
+                for key in ("max_iter", "random_seed")
+            },
+            "important_threshold": measured(
+                parameters.get("important_threshold"), unit=True
+            ),
+            "category_thresholds": (
+                {
+                    key: measured(thresholds.get(key), unit=True)
+                    for key in safe_categories
+                }
+                if thresholds is not None
+                else None
+            ),
             "hidden_layer_sizes": layers,
-            "solver": (_safe_exact_evidence_value(parameters["solver"], "solver", "lbfgs")
-                       if parameters.get("solver") is not None else None),
-            "head_format": (_safe_exact_evidence_value(parameters["head_format"], "head_format", "description-mlp-v1")
-                            if parameters.get("head_format") is not None else None),
+            "solver": (
+                _safe_exact_evidence_value(parameters["solver"], "solver", "lbfgs")
+                if parameters.get("solver") is not None
+                else None
+            ),
+            "head_format": (
+                _safe_exact_evidence_value(
+                    parameters["head_format"], "head_format", "description-mlp-v1"
+                )
+                if parameters.get("head_format") is not None
+                else None
+            ),
         }
     raw_metrics = evidence.get("metrics", {})
     metric_categories = raw_metrics.get("categories", {})
@@ -400,11 +458,22 @@ def _project_staged_model_evidence(
         "macro_f1": measured(raw_metrics.get("macro_f1"), unit=True),
         "categories": {
             category: {
-                **{key: measured(metric_categories[category].get(key), unit=True)
-                   for key in ("precision", "recall", "f1", "accepted_precision", "threshold")},
-                **{key: measured(metric_categories[category].get(key), count=True)
-                   for key in ("support", "accepted_hits", "independent_groups")},
-            } for category in safe_categories
+                **{
+                    key: measured(metric_categories[category].get(key), unit=True)
+                    for key in (
+                        "precision",
+                        "recall",
+                        "f1",
+                        "accepted_precision",
+                        "threshold",
+                    )
+                },
+                **{
+                    key: measured(metric_categories[category].get(key), count=True)
+                    for key in ("support", "accepted_hits", "independent_groups")
+                },
+            }
+            for category in safe_categories
         },
         "important": {
             key: measured(raw_metrics.get("important", {}).get(key), unit=True)
@@ -413,12 +482,22 @@ def _project_staged_model_evidence(
     }
     evaluation = evidence.get("evaluation")
     projected_evaluation = None
-    if isinstance(evaluation, dict) and evaluation.get("protocol") == "email-folder-heldout-v1":
+    if (
+        isinstance(evaluation, dict)
+        and evaluation.get("protocol") == "email-folder-heldout-v1"
+    ):
         test_digest = _safe_digest(evaluation.get("test_digest"), "test_digest")
-        comparison = json.dumps([evaluation["protocol"], test_digest, sorted(safe_categories)])
-        projected_evaluation = {"protocol": evaluation["protocol"], "test_digest": test_digest,
-                                "comparability_key": sha256(comparison.encode()).hexdigest()}
-    projected_end_to_end = measured_end_to_end_latency(evidence.get("end_to_end_latency_ms"))
+        comparison = json.dumps(
+            [evaluation["protocol"], test_digest, sorted(safe_categories)]
+        )
+        projected_evaluation = {
+            "protocol": evaluation["protocol"],
+            "test_digest": test_digest,
+            "comparability_key": sha256(comparison.encode()).hexdigest(),
+        }
+    projected_end_to_end = measured_end_to_end_latency(
+        evidence.get("end_to_end_latency_ms")
+    )
     return {
         "training": projected_training,
         "parameters": projected_parameters,
@@ -435,7 +514,9 @@ def _project_staged_model_evidence(
             "embedding-mlp",
         ),
         "status": _safe_evidence_status(evidence.get("status")),
-        "trained_at": _safe_evidence_timestamp(evidence.get("trained_at"), "trained_at"),
+        "trained_at": _safe_evidence_timestamp(
+            evidence.get("trained_at"), "trained_at"
+        ),
         "training_snapshot_id": _safe_evidence_identifier(
             maturity.source_snapshot_id,
             "source_snapshot_id",
@@ -491,14 +572,20 @@ def _safe_staged_evidence(
         except (KeyError, OverflowError, TypeError, ValueError):
             registry_issues.append(
                 {
-                    "model_id": (entry["model_id"] if _MODEL_EVIDENCE_ID.fullmatch(str(entry["model_id"])) else "staged-evidence"),
+                    "model_id": (
+                        entry["model_id"]
+                        if _MODEL_EVIDENCE_ID.fullmatch(str(entry["model_id"]))
+                        else "staged-evidence"
+                    ),
                     "integrity_status": "corrupt",
                     "integrity_error": "staged_evidence_invalid",
                 }
             )
             continue
         valid.append(dict(row))
-    return sorted(valid, key=lambda row: (str(row.get("trained_at", "")), str(row["model_id"])))
+    return sorted(
+        valid, key=lambda row: (str(row.get("trained_at", "")), str(row["model_id"]))
+    )
 
 
 def _project_legacy_model_inventory(entry: object) -> dict[str, object] | None:
@@ -585,9 +672,7 @@ def _project_legacy_model_inventory(entry: object) -> dict[str, object] | None:
             "rejection_reason": latest_reason("rejected"),
             "failure_reason": latest_reason("failed")
             or _controlled_model_reason(metadata.get("failure_reason")),
-            "superseded_reason": (
-                "superseded" if latest_reason("previous") else ""
-            ),
+            "superseded_reason": ("superseded" if latest_reason("previous") else ""),
             "integrity_status": getattr(entry, "integrity_status", "corrupt"),
             "integrity_error": (
                 _controlled_integrity_error(getattr(entry, "integrity_error", ""))
@@ -1186,9 +1271,14 @@ def register_email_routes(
         items = []
         for row in rows:
             provider_state = email_store.get_provider_classification_state(row["id"])
-            items.append({**row, "id": str(row["id"]),
-                          "important": provider_state.get("important"),
-                          "provider_classification": provider_state})
+            items.append(
+                {
+                    **row,
+                    "id": str(row["id"]),
+                    "important": provider_state.get("important"),
+                    "provider_classification": provider_state,
+                }
+            )
         return {
             "items": items,
             "meta": meta(page=page, page_size=page_size, total=total),
@@ -1359,9 +1449,13 @@ def register_email_routes(
             try:
                 body = json.loads(raw_body)
             except (ValueError, TypeError, json.JSONDecodeError):
-                return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+                return error_response(
+                    "invalid_training_selection", "训练数据来源选择无效", 400
+                )
             if not isinstance(body, dict):
-                return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+                return error_response(
+                    "invalid_training_selection", "训练数据来源选择无效", 400
+                )
             if not body:
                 body = None
         payload = None
@@ -1369,28 +1463,38 @@ def register_email_routes(
             try:
                 payload = EmailTrainingSelectionPayload.model_validate(body)
             except (ValueError, TypeError, ValidationError):
-                return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+                return error_response(
+                    "invalid_training_selection", "训练数据来源选择无效", 400
+                )
         service = email_learning_factory()
         request_selection = payload.model_dump() if payload is not None else None
         try:
             if payload is not None:
                 catalog = training_source_catalog(require_store())
                 family_catalog = {row["family"]: row for row in model_family_catalog()}
-                unknown_families = sorted(set(payload.model_families) - set(family_catalog))
-                unsupported_families = sorted(
-                    family for family in payload.model_families
-                    if family in family_catalog and family_catalog[family]["supported"] is not True
+                unknown_families = sorted(
+                    set(payload.model_families) - set(family_catalog)
                 )
-                if unknown_families or unsupported_families:
+                unsupported_families = sorted(
+                    family
+                    for family in payload.model_families
+                    if family in family_catalog
+                    and family_catalog[family]["supported"] is not True
+                )
+                unconfigured_families = sorted(
+                    family
+                    for family in payload.model_families
+                    if family in family_catalog
+                    and family_catalog[family]["configured"] is not True
+                )
+                if unknown_families or unsupported_families or unconfigured_families:
                     return error_response(
                         "unsupported_model_family",
                         "所选模型家族暂不支持训练，请只选择已接入 executor 的家族",
                         400,
                     )
                 supported_sources = {
-                    str(row["source"])
-                    for row in catalog
-                    if row["supported"] is True
+                    str(row["source"]) for row in catalog if row["supported"] is True
                 }
                 if not set(payload.sources) <= supported_sources:
                     return error_response(
@@ -1401,23 +1505,35 @@ def register_email_routes(
                 allowed_categories = {
                     str(row["category"])
                     for row in catalog
-                    if row["source"] in payload.sources
-                    and row["supported"] is True
+                    if row["source"] in payload.sources and row["supported"] is True
                 }
-                unknown_categories = sorted(set(payload.categories) - allowed_categories)
+                unknown_categories = sorted(
+                    set(payload.categories) - allowed_categories
+                )
                 if unknown_categories:
-                    return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+                    return error_response(
+                        "invalid_training_selection", "训练数据来源选择无效", 400
+                    )
                 provenance = [
-                    row for row in catalog
-                    if row["source"] in payload.sources and row["category"] in payload.categories
+                    row
+                    for row in catalog
+                    if row["source"] in payload.sources
+                    and row["category"] in payload.categories
                 ]
                 if not provenance:
-                    return error_response("invalid_training_selection", "所选训练范围没有可用样本", 400)
+                    return error_response(
+                        "invalid_training_selection", "所选训练范围没有可用样本", 400
+                    )
                 request_selection["provenance"] = provenance
-            result = (service.request_manual_training(selection=request_selection)
-                      if payload is not None else service.request_manual_training())
+            result = (
+                service.request_manual_training(selection=request_selection)
+                if payload is not None
+                else service.request_manual_training()
+            )
         except ValueError:
-            return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+            return error_response(
+                "invalid_training_selection", "训练数据来源选择无效", 400
+            )
         run = result.training_run
         if run is not None and getattr(run, "training_selection", None) is not None:
             request_selection = _public_training_selection(run.training_selection)
@@ -1429,10 +1545,18 @@ def register_email_routes(
                     "retrain_reason": result.decision.reason,
                     "pending_examples": result.decision.pending_examples,
                     "training_run_id": run.run_id if run else None,
-                    "training_status": (run.status if run else
-                                         "recorded" if result.decision.reason == "training_selection_recorded"
-                                         else None),
-                    **({"selection": request_selection} if request_selection is not None else {}),
+                    "training_status": (
+                        run.status
+                        if run
+                        else "recorded"
+                        if result.decision.reason == "training_selection_recorded"
+                        else None
+                    ),
+                    **(
+                        {"selection": request_selection}
+                        if request_selection is not None
+                        else {}
+                    ),
                 },
             },
             status_code=202 if payload is not None or run else 200,
@@ -1445,7 +1569,9 @@ def register_email_routes(
             body = json.loads(raw_body)
             payload = EmailTrainingPreviewPayload.model_validate(body)
         except (TypeError, ValueError, json.JSONDecodeError, ValidationError):
-            return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+            return error_response(
+                "invalid_training_selection", "训练数据来源选择无效", 400
+            )
         from datetime import datetime, timezone
 
         from app.email_classifier_learning import _selection_provenance
@@ -1463,7 +1589,9 @@ def register_email_routes(
                 allow_empty=True,
             )
         except ValueError:
-            return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+            return error_response(
+                "invalid_training_selection", "训练数据来源选择无效", 400
+            )
         provenance = selection["provenance"]
         assert isinstance(provenance, list) and provenance
         snapshot = provenance[0]
@@ -1498,8 +1626,7 @@ def register_email_routes(
                     or "email-selected-training-snapshot-v1"
                 ),
                 "description_version": (
-                    snapshot["description_version"]
-                    or "selected-training-input-v1"
+                    snapshot["description_version"] or "selected-training-input-v1"
                 ),
                 "training_ready": not blockers,
                 "training_blockers": list(blockers),
@@ -1524,37 +1651,72 @@ def register_email_routes(
             source = str(sample.get("source") or "")
             identity = str(sample.get("stable_message_identity") or "")
             category = str(sample.get("category_key") or "")
-            if source not in {"agent_auto_label", "user_feedback"} or not identity or not category:
+            if (
+                source not in {"agent_auto_label", "user_feedback"}
+                or not identity
+                or not category
+            ):
                 continue
-            row = rows.setdefault((source, category), {
-                "source": source, "category": category, "sample_count": 0,
-                "record_count": 0, "supported": True, "_identities": [],
-                "provenance": {"classification_source": "agent" if source == "agent_auto_label" else "user"},
-            })
+            row = rows.setdefault(
+                (source, category),
+                {
+                    "source": source,
+                    "category": category,
+                    "sample_count": 0,
+                    "record_count": 0,
+                    "supported": True,
+                    "_identities": [],
+                    "provenance": {
+                        "classification_source": "agent"
+                        if source == "agent_auto_label"
+                        else "user"
+                    },
+                },
+            )
             row["record_count"] += 1
             row["_identities"].append(identity)
         if snapshot:
-            for category, count in dict(snapshot.get("category_sample_counts") or {}).items():
+            for category, count in dict(
+                snapshot.get("category_sample_counts") or {}
+            ).items():
                 rows[("folder_snapshot", str(category))] = {
-                    "source": "folder_snapshot", "category": str(category),
-                    "sample_count": int(count), "record_count": int(count),
+                    "source": "folder_snapshot",
+                    "category": str(category),
+                    "sample_count": int(count),
+                    "record_count": int(count),
                     "supported": True,
-                    "_identities": [str(snapshot.get("snapshot_sha") or snapshot.get("snapshot_id") or "")],
-                    "provenance": {"snapshot_id": snapshot.get("snapshot_id"),
-                                   "snapshot_digest": snapshot.get("snapshot_sha"),
-                                   "snapshot_version": snapshot.get("snapshot_version"),
-                                   "description_version": snapshot.get("description_version")},
+                    "_identities": [
+                        str(
+                            snapshot.get("snapshot_sha")
+                            or snapshot.get("snapshot_id")
+                            or ""
+                        )
+                    ],
+                    "provenance": {
+                        "snapshot_id": snapshot.get("snapshot_id"),
+                        "snapshot_digest": snapshot.get("snapshot_sha"),
+                        "snapshot_version": snapshot.get("snapshot_version"),
+                        "description_version": snapshot.get("description_version"),
+                    },
                 }
         result = []
-        for row in sorted(rows.values(), key=lambda row: (str(row["source"]), str(row["category"]))):
+        for row in sorted(
+            rows.values(), key=lambda row: (str(row["source"]), str(row["category"]))
+        ):
             identities = sorted({str(value) for value in row.pop("_identities", [])})
-            row["sample_count"] = len(identities) if row["source"] != "folder_snapshot" else row["sample_count"]
+            row["sample_count"] = (
+                len(identities)
+                if row["source"] != "folder_snapshot"
+                else row["sample_count"]
+            )
             row["unique_trainable_count"] = row["sample_count"]
             provenance = dict(row["provenance"])
             provenance["sample_count"] = row["sample_count"]
             provenance["record_count"] = row["record_count"]
             provenance["dataset_digest"] = sha256(
-                json.dumps(identities, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                json.dumps(
+                    identities, ensure_ascii=False, separators=(",", ":")
+                ).encode("utf-8")
             ).hexdigest()
             row["provenance"] = provenance
             result.append(row)
@@ -1568,39 +1730,78 @@ def register_email_routes(
             transitions = online_control_history(service.registry)
         except (OSError, ValueError, TypeError):
             transitions = []
-            registry_issues.append({"model_id": "online-control", "integrity_status": "corrupt",
-                                    "integrity_error": "online_control_invalid"})
+            registry_issues.append(
+                {
+                    "model_id": "online-control",
+                    "integrity_status": "corrupt",
+                    "integrity_error": "online_control_invalid",
+                }
+            )
         config = email_store.current_model_promotion_config()
         descriptions = {
             row["category_key"]: CategoryDescription(
-                core=row["core_description"], include=tuple(row["include"]),
-                exclude=tuple(row["exclude"]), version=row["description_version"],
-            ) for row in email_store.list_category_configs() if row["enabled"]
+                core=row["core_description"],
+                include=tuple(row["include"]),
+                exclude=tuple(row["exclude"]),
+                version=row["description_version"],
+            )
+            for row in email_store.list_category_configs()
+            if row["enabled"]
         }
         latest = staged_evidence[-1] if staged_evidence else None
         verified = False
         if latest:
-            artifact = Path(service.registry.embedding_artifacts) / f"{latest['model_id']}.artifact"
+            artifact = (
+                Path(service.registry.embedding_artifacts)
+                / f"{latest['model_id']}.artifact"
+            )
             try:
-                verified = artifact.is_file() and sha256(artifact.read_bytes()).hexdigest() == latest["hashes"]["artifact_sha256"]
+                verified = (
+                    artifact.is_file()
+                    and sha256(artifact.read_bytes()).hexdigest()
+                    == latest["hashes"]["artifact_sha256"]
+                )
             except OSError:
-                registry_issues.append({"model_id": latest["model_id"], "integrity_status": "corrupt",
-                                        "integrity_error": "artifact_unreadable"})
+                registry_issues.append(
+                    {
+                        "model_id": latest["model_id"],
+                        "integrity_status": "corrupt",
+                        "integrity_error": "artifact_unreadable",
+                    }
+                )
         readiness = assess_staged_candidate_readiness(staged_evidence)
         gate = assess_online_promotion_gate(
-            evidence=latest, config=config, enabled_category_keys=tuple(descriptions),
-            description_version=("description-set-sha256:" + description_set_digest(descriptions)
-                                 if descriptions else "description-set-unavailable"),
-            readiness=readiness, registry_issues=registry_issues, artifact_verified=verified,
+            evidence=latest,
+            config=config,
+            enabled_category_keys=tuple(descriptions),
+            description_version=(
+                "description-set-sha256:" + description_set_digest(descriptions)
+                if descriptions
+                else "description-set-unavailable"
+            ),
+            readiness=readiness,
+            registry_issues=registry_issues,
+            artifact_verified=verified,
         )
         mode = _active_runtime_mode(service.registry)
         active_id = _active_embedding_model_id(service.registry, mode)
         eligible = gate["promotion_eligible"]
-        runtime = {"mode": mode.value, "active_model_id": active_id,
-                   "candidate_model_id": latest["model_id"] if latest else None,
-                   "candidate_ready": bool(eligible and mode is EmailClassifierRuntimeMode.AGENT_PRIMARY),
-                   "toggle_enabled": bool(eligible or mode is EmailClassifierRuntimeMode.MODEL_PRIMARY)}
-        return {"runtime": runtime, "promotion_gate": gate, "mode_transitions": list(reversed(transitions))}
+        runtime = {
+            "mode": mode.value,
+            "active_model_id": active_id,
+            "candidate_model_id": latest["model_id"] if latest else None,
+            "candidate_ready": bool(
+                eligible and mode is EmailClassifierRuntimeMode.AGENT_PRIMARY
+            ),
+            "toggle_enabled": bool(
+                eligible or mode is EmailClassifierRuntimeMode.MODEL_PRIMARY
+            ),
+        }
+        return {
+            "runtime": runtime,
+            "promotion_gate": gate,
+            "mode_transitions": list(reversed(transitions)),
+        }
 
     def registry_inventory(registry, issues):
         """Use the same complete registry assessment for display and activation."""
@@ -1609,16 +1810,25 @@ def register_email_routes(
             active_id = manifest.model_id if manifest is not None else None
         except (OSError, ValueError, ModelRegistryError):
             active_id = None
-            issues.append({"model_id": "active-manifest", "integrity_status": "corrupt",
-                           "integrity_error": "active_manifest_invalid"})
+            issues.append(
+                {
+                    "model_id": "active-manifest",
+                    "integrity_status": "corrupt",
+                    "integrity_error": "active_manifest_invalid",
+                }
+            )
         models = []
         for entry in registry.list_model_inventory():
             if entry.integrity_status != "verified":
-                issues.append({
-                    "model_id": "model-inventory-evidence",
-                    "integrity_status": entry.integrity_status,
-                    "integrity_error": _controlled_integrity_error(entry.integrity_error),
-                })
+                issues.append(
+                    {
+                        "model_id": "model-inventory-evidence",
+                        "integrity_status": entry.integrity_status,
+                        "integrity_error": _controlled_integrity_error(
+                            entry.integrity_error
+                        ),
+                    }
+                )
             projected = _project_legacy_model_inventory(entry)
             if projected is not None:
                 models.append(projected)
@@ -1634,14 +1844,18 @@ def register_email_routes(
         try:
             config = email_store.create_model_promotion_config(**payload.model_dump())
         except ValueError:
-            return error_response("promotion_config_conflict", "门槛版本已更新，请刷新后重试", 409)
+            return error_response(
+                "promotion_config_conflict", "门槛版本已更新，请刷新后重试", 409
+            )
         return {"ok": True, "config": config}
 
     @app.put("/api/console/email/runtime-mode")
     async def update_runtime_mode(request: Request):
         email_store = require_store()
         if email_learning_factory is None:
-            return error_response("email_learning_unavailable", "模型训练服务不可用", 503)
+            return error_response(
+                "email_learning_unavailable", "模型训练服务不可用", 503
+            )
         try:
             payload = EmailRuntimeModePayload.model_validate(await request.json())
         except (ValueError, TypeError):
@@ -1660,20 +1874,29 @@ def register_email_routes(
             rows = _safe_staged_evidence(service.registry, issues)
             controls = training_controls(service, email_store, rows, issues)
             gate = controls["promotion_gate"]
-            if not gate["promotion_eligible"] or gate["candidate_model_id"] != payload.model_id:
+            if (
+                not gate["promotion_eligible"]
+                or gate["candidate_model_id"] != payload.model_id
+            ):
                 raise ValueError("candidate is not eligible")
             return gate["config"]["config_version"]
 
         try:
-            switch_online_model(service.registry, **payload.model_dump(), actor="console-user",
-                                validate_promotion=validate_promotion,
-                                configuration_guard=configuration_guard)
+            switch_online_model(
+                service.registry,
+                **payload.model_dump(),
+                actor="console-user",
+                validate_promotion=validate_promotion,
+                configuration_guard=configuration_guard,
+            )
             issues = []
             registry_inventory(service.registry, issues)
             rows = _safe_staged_evidence(service.registry, issues)
             controls = training_controls(service, email_store, rows, issues)
         except (OSError, ValueError, ModelRegistryError):
-            return error_response("runtime_mode_conflict", "模型未达标或状态已变化，请刷新后重试", 409)
+            return error_response(
+                "runtime_mode_conflict", "模型未达标或状态已变化，请刷新后重试", 409
+            )
         return {"ok": True, **controls}
 
     @app.get("/api/console/email/learning")
@@ -1719,7 +1942,9 @@ def register_email_routes(
         return {
             "ok": True,
             "learning": {
-                **training_controls(service, email_store, staged_evidence, registry_issues),
+                **training_controls(
+                    service, email_store, staged_evidence, registry_issues
+                ),
                 "active_model_id": active_model_id,
                 "active_mode": active_mode.value,
                 "pending_examples": pending_examples,
@@ -1827,7 +2052,14 @@ def register_email_routes(
             if evidence.get("model_id") != model_id:
                 raise ValueError("model identity mismatch")
             projected = _project_staged_model_evidence(evidence)
-        except (KeyError, OSError, OverflowError, TypeError, ValueError, ModelRegistryError):
+        except (
+            KeyError,
+            OSError,
+            OverflowError,
+            TypeError,
+            ValueError,
+            ModelRegistryError,
+        ):
             return error_response(
                 "email_model_integrity_error",
                 "Email model evidence failed integrity validation",
@@ -1842,9 +2074,7 @@ def register_email_routes(
     def category_response(email_store: EmailStore, row: dict[str, Any]):
         return {
             **row,
-            "bindings": email_store.list_account_folder_bindings(
-                row["category_key"]
-            ),
+            "bindings": email_store.list_account_folder_bindings(row["category_key"]),
         }
 
     def category_actions(
@@ -1900,19 +2130,46 @@ def register_email_routes(
         try:
             category_key = validate_email_category_key(category_key)
         except ValueError:
-            return error_response("invalid_email_category", "Email category is invalid", 400)
+            return error_response(
+                "invalid_email_category", "Email category is invalid", 400
+            )
         if email_store.get_category_config(category_key) is None:
-            return error_response("email_category_not_found", "Email category was not found", 404)
+            return error_response(
+                "email_category_not_found", "Email category was not found", 404
+            )
         fields = (
-            "category_key", "display_name", "core_description", "include", "exclude",
-            "threshold", "enabled", "description_version", "config_version", "updated_at",
+            "category_key",
+            "display_name",
+            "core_description",
+            "include",
+            "exclude",
+            "threshold",
+            "enabled",
+            "description_version",
+            "config_version",
+            "updated_at",
         )
-        return {"ok": True, "items": [
-            {**{key: revision[key] for key in ("revision_id", "category_key", "config_version", "created_at")},
-             "description_version": revision["config"]["description_version"],
-             "config": {key: revision["config"][key] for key in fields}}
-            for revision in email_store.list_category_description_revisions(category_key)
-        ]}
+        return {
+            "ok": True,
+            "items": [
+                {
+                    **{
+                        key: revision[key]
+                        for key in (
+                            "revision_id",
+                            "category_key",
+                            "config_version",
+                            "created_at",
+                        )
+                    },
+                    "description_version": revision["config"]["description_version"],
+                    "config": {key: revision["config"][key] for key in fields},
+                }
+                for revision in email_store.list_category_description_revisions(
+                    category_key
+                )
+            ],
+        }
 
     @app.post("/api/console/email/config")
     async def email_config_create(request: Request):
@@ -1928,9 +2185,7 @@ def register_email_routes(
             category_key = validate_email_category_key(payload.category_key)
             if category_key == "junk":
                 raise ValueError("junk is a system category")
-            provider_folder_name = (
-                payload.provider_folder_name or payload.display_name
-            )
+            provider_folder_name = payload.provider_folder_name or payload.display_name
             validate_category_descriptions(
                 display_name=payload.display_name,
                 core_description=payload.core_description,
@@ -2080,7 +2335,11 @@ def register_email_routes(
                     404,
                 )
             if payload.expected_current_version != existing["config_version"]:
-                return error_response("email_category_version_conflict", "类别配置已更新，请刷新后重试", 409)
+                return error_response(
+                    "email_category_version_conflict",
+                    "类别配置已更新，请刷新后重试",
+                    409,
+                )
             enabled_accounts = [
                 account for account in email_store.list_accounts() if account["enabled"]
             ]
@@ -2094,10 +2353,12 @@ def register_email_routes(
                 existing["display_name"],
             )
             assert folder_binding_coordinator is not None
-            coordinator_bindings = folder_binding_coordinator.create_and_verify_bindings(
-                category_key=category_key,
-                provider_folder_name=provider_folder_name,
-                enabled_accounts=enabled_accounts,
+            coordinator_bindings = (
+                folder_binding_coordinator.create_and_verify_bindings(
+                    category_key=category_key,
+                    provider_folder_name=provider_folder_name,
+                    enabled_accounts=enabled_accounts,
+                )
             )
             if isinstance(coordinator_bindings, (str, bytes)) or not isinstance(
                 coordinator_bindings, Sequence
