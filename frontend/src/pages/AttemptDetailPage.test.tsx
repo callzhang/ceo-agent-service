@@ -164,6 +164,7 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("risk")).toBeInTheDocument();
     expect(screen.getByText("medium")).toBeInTheDocument();
     expect(screen.queryByText("Consumer error")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".attempt-metadata-grid")).toHaveLength(1);
   });
 
   it("keeps all Consumer metrics visible as unavailable with the safe error reason", async () => {
@@ -307,6 +308,7 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("有 4 种新图像风格等你尝试")).toBeInTheDocument();
     expect(screen.getByText("已删除邮件")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "打开这封邮件" })).toHaveAttribute("href", "/email?tab=list&selected=6811963115514558557");
+    expect(screen.getByTestId("attempt-conversation-actions")).toContainElement(screen.getByRole("link", { name: "打开这封邮件" }));
     expect(screen.getByRole("heading", { name: "退订回执" })).toBeInTheDocument();
     expect(screen.getAllByText("skipped_no_reliable_entry").length).toBeGreaterThan(0);
     expect(screen.getByText("page-not-operable")).toBeInTheDocument();
@@ -314,6 +316,49 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("open_entry")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "https://r.openai.com/asm/unsubscribe?token=private-token" })).not.toBeInTheDocument();
     expect(screen.queryByText("退订入口（打开会真实执行退订）")).not.toBeInTheDocument();
+  });
+
+  it("does not expand an empty counterparty feedback section", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: { ...detail, feedback: { ...detail.feedback, events: [] } },
+      meta: { snapshot_at: "2026-08-29T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "反馈迭代" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "对方反馈" })).not.toBeInTheDocument();
+    expect(screen.queryByText("对方反馈（1-5星）")).not.toBeInTheDocument();
+  });
+
+  it("keeps unsubscribe attempts focused on the email receipt instead of duplicate context/process cards", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        context_only_info: "重复的审计上下文",
+        email: {
+          classification_id: "email-1",
+          classification_url: "/email?tab=list&selected=email-1",
+          account_id: "primary",
+          action_type: "unsubscribe",
+          category: "subscription",
+          action_plan_id: "plan-1",
+          stable_message_identity: "message-1",
+          subject: "退订测试",
+          sender: "sender@example.com",
+          folder: "收件箱",
+          received_at: "2026-09-12T00:00:00Z",
+          rfc_message_id: "<message-1>",
+          candidate_source: "header",
+          unsubscribe: null,
+        },
+      },
+      meta: { snapshot_at: "2026-09-12T00:00:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "关联邮件" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Audit context" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "处理过程" })).not.toBeInTheDocument();
   });
 
   it("keeps the process visible for an Attempt whose transcripts are gone", async () => {
@@ -418,7 +463,7 @@ describe("AttemptDetailPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps navigation and WeChat controls in the Attempt title row", async () => {
+  it("keeps navigation in the title row and moves WeChat controls into the first action bar", async () => {
     getAttemptDetail.mockResolvedValueOnce({
       item: {
         ...detail,
@@ -437,8 +482,11 @@ describe("AttemptDetailPage", () => {
     const backLink = screen.getByRole("link", { name: "返回 History" });
     expect(header).toContainElement(backLink);
     expect(backLink).toHaveTextContent("←");
-    expect(header).toContainElement(screen.getByRole("button", { name: "查看微信消息" }));
-    expect(header).toContainElement(screen.getByRole("button", { name: "重试发送" }));
+    expect(header).not.toContainElement(screen.getByRole("button", { name: "查看微信消息" }));
+    expect(header).not.toContainElement(screen.getByRole("button", { name: "重试发送" }));
+    const actionBar = screen.getByTestId("attempt-conversation-actions");
+    expect(actionBar).toContainElement(screen.getByRole("button", { name: "查看微信消息" }));
+    expect(actionBar).toContainElement(screen.getByRole("button", { name: "重试发送" }));
     expect(document.querySelector(".attempt-bottom-actions")).toBeNull();
   });
 });
