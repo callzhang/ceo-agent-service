@@ -1869,6 +1869,119 @@ def test_actionable_error_ignores_newer_blank_rows_for_or_based_adapters(
     assert OkrReviewQueueAdapter(store).metrics(NOW).latest_error == "retryable OKR failure"
 
 
+def test_expired_live_owner_hides_dispatcher_error_until_owner_is_dead(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    scheduled_id = _scheduled_run(store).id
+    _reply(store)
+    assert store.enqueue_reply_task(
+        conversation_id="scheduled-cid",
+        conversation_title="Scheduled task",
+        single_chat=False,
+        trigger_message_id="scheduled-message",
+        trigger_create_time=NOW.isoformat(),
+        trigger_sender="Derek",
+        trigger_text="Run the scheduled task.",
+        channel="scheduled",
+    )
+    meeting_id = _meeting(store)
+    work_summary_id = _work_summary(store)
+    okr_id = _okr_review(store)
+    todo_id = _todo_outbox(store)
+    now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
+    expired = (NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
+    with store._connect() as db:
+        reply_id = db.execute(
+            "select id from reply_tasks where channel='dingtalk'"
+        ).fetchone()[0]
+        scheduled_execution_id = db.execute(
+            "select id from reply_tasks where channel='scheduled'"
+        ).fetchone()[0]
+        db.execute(
+            "update scheduled_task_runs set skip_or_error_reason='scheduled error' "
+            "where id=?",
+            (scheduled_id,),
+        )
+        db.execute(
+            "update reply_tasks set error='reply error' where id=?", (reply_id,)
+        )
+        db.execute(
+            "update reply_tasks set error='scheduled execution error' where id=?",
+            (scheduled_execution_id,),
+        )
+        db.execute(
+            "update meeting_alignment_jobs set error='meeting error' where id=?",
+            (meeting_id,),
+        )
+        db.execute(
+            "update work_summary_inputs set error='work-summary error' where id=?",
+            (work_summary_id,),
+        )
+        db.execute(
+            "update okr_review_requests set error='OKR error' where id=?", (okr_id,)
+        )
+        db.execute(
+            "update task_todo_sync_outbox set error='todo error' where id=?", (todo_id,)
+        )
+        db.executemany(
+            "insert into dispatcher_claim_leases "
+            "(adapter_name, source_id, owner, owner_pid, generation, "
+            "lease_expires_at, terminal_at, last_error, created_at, updated_at) "
+            "values (?, ?, 'live-owner', 123, 1, ?, '', '', ?, ?)",
+            (
+                (adapter_name, str(source_id), expired, now_text, now_text)
+                for adapter_name, source_id in (
+                    ("scheduled", scheduled_id),
+                    ("reply", reply_id),
+                    ("scheduled_execution", scheduled_execution_id),
+                    ("meeting", meeting_id),
+                    ("work_summary", work_summary_id),
+                    ("okr_review", okr_id),
+                    ("task_todo_sync_outbox", todo_id),
+                )
+            ),
+        )
+
+    adapter_types = (
+        ScheduledTaskQueueAdapter,
+        ReplyQueueAdapter,
+        dispatcher_adapters.ScheduledExecutionQueueAdapter,
+        MeetingQueueAdapter,
+        WorkSummaryQueueAdapter,
+        OkrReviewQueueAdapter,
+        dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter,
+    )
+    live_adapters = tuple(
+        adapter_type(store, owner_alive=lambda _pid: True)
+        for adapter_type in adapter_types
+    )
+    for adapter in live_adapters:
+        assert adapter.metrics(NOW).latest_error == ""
+        assert (
+            adapter.claim(
+                NOW,
+                owner="dispatcher-a",
+                owner_pid=456,
+                lease=timedelta(minutes=5),
+            )
+            is None
+        )
+
+    dead_adapters = tuple(
+        adapter_type(store, owner_alive=lambda _pid: False)
+        for adapter_type in adapter_types
+    )
+    for adapter in dead_adapters:
+        assert adapter.metrics(NOW).latest_error
+        assert adapter.claim(
+            NOW,
+            owner="dispatcher-a",
+            owner_pid=456,
+            lease=timedelta(minutes=5),
+        )
+
+
 def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
     tmp_path: Path,
 ) -> None:

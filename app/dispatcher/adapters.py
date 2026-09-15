@@ -111,15 +111,20 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
             ).fetchone()[0]
             latest_error = _latest_actionable_error(
                 db,
-                adapter_name=self.name,
                 column="skip_or_error_reason",
                 source_projection=(
                     "from scheduled_task_runs source "
+                    "left join dispatcher_claim_leases source_claim "
+                    "on source_claim.adapter_name=? "
+                    "and source_claim.source_id=cast(source.id as text) "
                     "where source.dispatch_status='pending' and source.scheduled_for<=? "
                     "and (source.lease_owner='' or source.lease_expires_at<=?)"
                 ),
-                source_params=(now_text, now_text),
+                source_params=(self.name, now_text, now_text),
                 order_by="id desc",
+                candidate_is_protected=_scheduled_candidate_is_protected,
+                owner_alive=self.owner_alive,
+                now=now_text,
             )
         return QueueMetrics(
             pending=int(pending),
@@ -401,7 +406,6 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
             ).fetchone()[0]
             latest_error = _latest_actionable_error(
                 db,
-                adapter_name=self.name,
                 column="error",
                 source_projection=(
                     "from reply_tasks source "
@@ -418,6 +422,9 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
                     "and source_claim.lease_expires_at<=?))"
                 ),
                 source_params=(self.name, now_text, now_text, now_text),
+                candidate_is_protected=_live_expired_owner,
+                owner_alive=self.owner_alive,
+                now=now_text,
             )
         return QueueMetrics(
             pending=int(pending),
@@ -596,7 +603,6 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
             ).fetchone()[0]
             latest_error = _latest_actionable_error(
                 db,
-                adapter_name=self.name,
                 column="error",
                 source_projection=(
                     "from meeting_alignment_jobs source "
@@ -612,6 +618,9 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                     "and source_claim.lease_expires_at<=?)"
                 ),
                 source_params=(self.name, now_text, now_text, now_text, now_text),
+                candidate_is_protected=_live_expired_owner,
+                owner_alive=self.owner_alive,
+                now=now_text,
             )
         return QueueMetrics(
             pending=int(pending),
@@ -794,7 +803,6 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
             ).fetchone()[0]
             latest_error = _latest_actionable_error(
                 db,
-                adapter_name=self.name,
                 column="error",
                 source_projection=(
                     "from okr_review_requests source "
@@ -807,6 +815,9 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                     "and source_claim.lease_expires_at<=?)"
                 ),
                 source_params=(self.name, now_text, now_text),
+                candidate_is_protected=_live_expired_owner,
+                owner_alive=self.owner_alive,
+                now=now_text,
             )
         return QueueMetrics(
             pending=int(pending),
@@ -965,7 +976,6 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
             ).fetchone()[0]
             latest_error = _latest_actionable_error(
                 db,
-                adapter_name=self.name,
                 column="error",
                 source_projection=(
                     "from work_summary_inputs source "
@@ -980,6 +990,9 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
                     "and source_claim.lease_expires_at<=?)"
                 ),
                 source_params=(self.name, now_text, now_text, now_text),
+                candidate_is_protected=_live_expired_owner,
+                owner_alive=self.owner_alive,
+                now=now_text,
             )
         return QueueMetrics(
             pending=int(pending),
@@ -1145,7 +1158,6 @@ class TaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
             ).fetchone()[0]
             latest_error = _latest_actionable_error(
                 db,
-                adapter_name=self.name,
                 column="error",
                 source_projection=(
                     "from task_todo_sync_outbox source "
@@ -1158,6 +1170,9 @@ class TaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
                     "or source_claim.lease_expires_at<=?)"
                 ),
                 source_params=(self.name, now_text, now_text),
+                candidate_is_protected=_live_expired_owner,
+                owner_alive=self.owner_alive,
+                now=now_text,
             )
         return QueueMetrics(
             pending=int(pending),
@@ -1693,31 +1708,43 @@ def _record_ledger_error(
 def _latest_actionable_error(
     db: sqlite3.Connection,
     *,
-    adapter_name: str,
     column: str,
     source_projection: str,
     source_params: tuple[object, ...],
     order_by: str = "updated_at desc, id desc",
+    candidate_is_protected,
+    owner_alive,
+    now: str,
 ) -> str:
-    claim_error = db.execute(
-        "select claim.last_error from dispatcher_claim_leases claim "
-        "join (select source.id "
+    source_rows = db.execute(
+        "select source.*, source_claim.owner as claim_owner, "
+        "source_claim.owner_pid as claim_owner_pid, "
+        "source_claim.lease_expires_at as claim_expires_at, "
+        "source_claim.last_error as claim_last_error, "
+        "source_claim.updated_at as claim_updated_at, "
+        "source_claim.rowid as claim_rowid "
         + source_projection
-        + ") actionable on cast(actionable.id as text)=claim.source_id "
-        "where claim.adapter_name=? and trim(claim.last_error)<>'' "
-        "order by claim.updated_at desc, claim.rowid desc limit 1",
-        (*source_params, adapter_name),
-    ).fetchone()
-    if claim_error is not None:
-        return str(claim_error[0])
-    source_error = db.execute(
-        f"select actionable.{column} from (select source.* "
-        + source_projection
-        + f") actionable where trim(actionable.{column})<>'' "
-        f"order by {order_by} limit 1",
+        + f" order by {order_by}",
         source_params,
-    ).fetchone()
-    return "" if source_error is None else str(source_error[0])
+    ).fetchall()
+    actionable_rows = [
+        row
+        for row in source_rows
+        if not candidate_is_protected(row, now=now, owner_alive=owner_alive)
+    ]
+    claim_errors = [
+        row for row in actionable_rows if str(row["claim_last_error"] or "").strip()
+    ]
+    if claim_errors:
+        claim_error = max(
+            claim_errors,
+            key=lambda row: (str(row["claim_updated_at"] or ""), int(row["claim_rowid"] or 0)),
+        )
+        return str(claim_error["claim_last_error"])
+    for row in actionable_rows:
+        if str(row[column] or "").strip():
+            return str(row[column])
+    return ""
 
 
 def _validate_claim(owner: str, lease: timedelta) -> None:
