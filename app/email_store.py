@@ -13836,6 +13836,7 @@ class EmailStore:
             self._assert_no_email_reply_dispatch_in_flight(db, row_id)
             actions, action_parameters, config_version = self._category_action_snapshot(
                 db,
+                account_id=row["account_id"],
                 category=category,
                 fallback_config_version=row["config_version"],
             )
@@ -13920,6 +13921,7 @@ class EmailStore:
     def _category_action_snapshot(
         db: sqlite3.Connection,
         *,
+        account_id: str,
         category: EmailCategoryKey,
         fallback_config_version: str,
     ) -> tuple[
@@ -13948,6 +13950,31 @@ class EmailStore:
         )
         if not selected_config["enabled"]:
             return (), {}, selected_config["config_version"]
+        if not stored_actions:
+            if category == EmailCategory.JUNK.value:
+                return (
+                    (EmailAction.TRASH,),
+                    {EmailAction.TRASH: {}},
+                    selected_config["config_version"],
+                )
+            binding = db.execute(
+                """
+                select provider_folder_name
+                from email_category_folder_bindings
+                where account_id=? and category_key=? and binding_status='active'
+                """,
+                (account_id, category),
+            ).fetchone()
+            if binding is not None:
+                return (
+                    (EmailAction.MOVE,),
+                    {
+                        EmailAction.MOVE: {
+                            "target_folder": binding["provider_folder_name"]
+                        }
+                    },
+                    selected_config["config_version"],
+                )
         return (
             tuple(EmailAction(value) for value in stored_actions),
             {

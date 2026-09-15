@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.email_category_config import VerifiedEmailFolderBinding
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
     EmailClassification,
+    EmailClassificationStatus,
     EmailProviderLocator,
 )
 from app.email_classifier_training import CategoryEligibility
@@ -253,3 +255,82 @@ def test_confirmed_plan_binds_user_model_and_current_config_without_reply(
         action != EmailAction.AUTO_REPLY.value
         for action in confirmed_plan["action_plan"]["actions"]
     )
+
+
+def test_confirmed_empty_config_moves_to_bound_category_folder(tmp_path: Path):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    store.create_account(
+        {
+            "account_id": "account-1",
+            "display_name": "Account 1",
+            "email_address": "account-1@example.com",
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_tls": True,
+            "imap_username": "account-1@example.com",
+            "imap_secret_reference": "keychain://account-1",
+            "imap_move_mode": "move",
+            "smtp_host": "",
+            "smtp_port": 465,
+            "smtp_tls": True,
+            "smtp_username": "",
+            "smtp_secret_reference": "",
+            "enabled": True,
+            "scan_folders": ["INBOX"],
+            "scan_interval_seconds": 60,
+        }
+    )
+    store.upsert_verified_folder_binding(
+        "work",
+        VerifiedEmailFolderBinding(
+            account_id="account-1",
+            provider_folder_id="folder-work",
+            provider_folder_name="工作",
+            binding_status="active",
+            last_verified_at="2026-08-30T00:00:00+00:00",
+        ),
+    )
+    store.upsert_config(
+        category=EmailCategory.WORK,
+        description="Work",
+        threshold=0.95,
+        actions=(),
+        action_parameters={},
+        enabled=True,
+        config_version="email-shadow-no-actions-v1",
+    )
+    classification = EmailClassification(
+        classification_id=10,
+        stable_message_identity="account-1:message-id:<move@example.com>",
+        provider_locator=EmailProviderLocator(
+            account_id="account-1",
+            folder="INBOX",
+            uidvalidity=1,
+            uid=10,
+            rfc_message_id="<move@example.com>",
+        ),
+        category=EmailCategory.WORK,
+        confidence=0.7,
+        margin=0.1,
+        probabilities={"work": 0.7, "personal": 0.3},
+        model_id="email-model:shadow-v1",
+        config_version="email-shadow-no-actions-v1",
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        classification_source="model",
+        action_plan=None,
+    )
+    persisted = store.upsert_classification(classification)
+
+    application = store.apply_human_classification(
+        persisted["id"],
+        EmailCategory.WORK,
+        feedback_request_id="move-confirmation-1",
+        expected_current_action_plan_id=None,
+        created_at=NOW,
+    )
+
+    assert application is not None
+    assert application.confirmed["action_plan"]["actions"] == ["move"]
+    assert application.confirmed["action_plan"]["action_parameters"] == {
+        "move": {"target_folder": "工作"}
+    }
