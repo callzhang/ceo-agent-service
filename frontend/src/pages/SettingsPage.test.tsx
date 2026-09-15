@@ -161,6 +161,28 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Friday", { selector: "mark" })).toBeInTheDocument();
   });
 
+  it("edits the work profile separately and shows the exact runtime injection", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "work-profile", fields: { profile: "Prefer concrete evidence.", path: "/service/data/work-profile/work_profile.md" }, preview: { injection: "Alex 工作人格 Profile:\nPrefer concrete evidence." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=work-profile&view=source");
+
+    expect(await screen.findByRole("heading", { name: "Work Profile" })).toBeInTheDocument();
+    const editor = screen.getByRole("textbox", { name: "Distilled work profile" });
+    expect(editor).toHaveValue("Prefer concrete evidence.");
+    expect(screen.getByText("/service/data/work-profile/work_profile.md")).toBeInTheDocument();
+    await user.clear(editor);
+    await user.type(editor, "Prefer explicit ownership.");
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存" });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    expect(saveSettings).toHaveBeenCalledWith("work-profile", { profile: "Prefer explicit ownership." }, {});
+
+    getSettings.mockResolvedValueOnce({ item: { section: "work-profile", fields: { profile: "Prefer explicit ownership." }, preview: { injection: "Alex 工作人格 Profile:\nPrefer explicit ownership." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=work-profile&view=injection");
+    const injectionPanel = await screen.findByRole("tabpanel", { name: "Runtime injection" });
+    expect(injectionPanel).toHaveTextContent("Alex 工作人格 Profile:");
+    expect(injectionPanel).toHaveTextContent("Prefer explicit ownership.");
+  });
+
   it("highlights template substitutions inside audit wrapper previews", async () => {
     getSettings.mockResolvedValueOnce({
       item: {
