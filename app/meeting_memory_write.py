@@ -81,6 +81,7 @@ def process_meeting_memory_writes(
     """Write due delivered conclusions and preserve their terminal meeting state."""
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("meeting Memory processing time must include a timezone")
+    store.supersede_obsolete_meeting_memory_runtime_attempts()
     store.recover_unstarted_runtime_operation_attempts(
         stale_after_seconds=MEETING_MEMORY_START_STALL_SECONDS,
         now=now,

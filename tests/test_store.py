@@ -9534,6 +9534,76 @@ def test_recover_unstarted_runtime_operation_attempts_keeps_session_evidence(
     assert store.get_agent_runtime_attempt(claimed.id).status == "running"
 
 
+def test_supersede_obsolete_meeting_memory_runtime_attempts_after_requeue(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "obsolete-meeting-memory-runtime.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="obsolete-meeting-memory-runtime",
+        title="Meeting",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-09-14T22:00:00+00:00",
+        eligible_at="2026-09-14T22:10:00+00:00",
+        status="sent",
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="sent",
+        final_message="Delivered conclusion",
+    )
+    assert store.create_meeting_memory_write_event(job_id) is True
+    with store._connect() as db:
+        event = db.execute(
+            "select id, execution_generation from meeting_memory_write_events "
+            "where meeting_job_id=?",
+            (job_id,),
+        ).fetchone()
+        db.execute(
+            "update meeting_memory_write_events set execution_generation='old-generation' "
+            "where id=?",
+            (event["id"],),
+        )
+    assert event is not None
+    stale_key = f"meeting_memory_write_event:{event['id']}:old-generation"
+    claimed = store.claim_runtime_operation_attempt(
+        "memory",
+        stale_key,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="interrupted-memory-owner",
+        lease_seconds=1800,
+        now="2026-09-14T23:00:00+00:00",
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        claimed.id,
+        owner="interrupted-memory-owner",
+        lease_seconds=1800,
+        now="2026-09-14T23:00:00+00:00",
+    )
+    store.set_agent_runtime_attempt_session(
+        claimed.id,
+        "session-before-requeue",
+        "codex_session:session-before-requeue",
+        owner="interrupted-memory-owner",
+        now="2026-09-14T23:00:01+00:00",
+    )
+    store.fail_meeting_memory_write_event(event["id"], error="interrupted before write")
+    assert store.requeue_failed_meeting_memory_write_event(
+        event["id"], reason="verified pre-write interruption"
+    )
+
+    assert store.supersede_obsolete_meeting_memory_runtime_attempts() == 1
+
+    superseded = store.get_agent_runtime_attempt(claimed.id)
+    assert superseded is not None
+    assert superseded.status == "superseded"
+    assert superseded.lease_owner == ""
+    assert superseded.lease_expires_at == ""
+
+
 def test_recover_stale_runtime_attempts_immediately_closes_terminal_meeting_parent(
     tmp_path: Path,
 ):
